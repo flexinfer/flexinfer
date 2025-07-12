@@ -165,27 +165,9 @@ Lint: golangci-lint run
 🤝 Contributing
 
 We love contributions of all kinds—code, docs, bug reports. Start by reading our CONTRIBUTING.md and look for issues tagged good first issue.
----
 
-## Contributing
-
-We welcome contributions from the community! If you would like to contribute to FlexInfer, please follow these steps:
-
-1. **Fork the repository** on GitHub.
-2. **Create a new branch** for your changes.
-3. **Make your changes** and commit them with a descriptive commit message.
-4. **Push your changes** to your fork.
-5. **Open a pull request** to the `main` branch of the FlexInfer repository.
-
-Please make sure to read our [contributing guidelines](CONTRIBUTING.md) before opening a pull request.
 ---
 
 📜 License
-
-FlexInfer is licensed under the Apache License 2.0.
-
----
-
-## License
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
