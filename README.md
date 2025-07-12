@@ -1,5 +1,9 @@
 # FlexInfer
 
+<p align="center">
+  <img src="logo.png" width="200">
+</p>
+
 > **Kubernetes operator + scheduler plugin that routes LLM inference to the best mix of AMD, NVIDIA, or CPU nodes—automatically.**
 
 [![CI](https://github.com/crb2nu/flexinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/crb2nu/flexinfer/actions/workflows/ci.yml)
