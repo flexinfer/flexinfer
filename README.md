@@ -183,3 +183,9 @@ Please make sure to read our [contributing guidelines](CONTRIBUTING.md) before o
 📜 License
 
 FlexInfer is licensed under the Apache License 2.0.
+
+---
+
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
