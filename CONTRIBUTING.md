@@ -135,14 +135,3 @@ Instead, email security@flexinfer.ai (PGP key in SECURITY.md). We follow a 90-da
 ---
 
 Happy hacking – we look forward to your PR! 🚀
-
-**Next steps**
-
-```bash
-# Add to repo
-git add CONTRIBUTING.md
-git commit -m "docs: add contributor guide"
-git push origin main
-```
-
-The CONTRIBUTING.md file will automatically appear in the PR template sidebar, and GitHub surfaces it when newcomers open issues or pull requests.
