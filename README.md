@@ -130,6 +130,22 @@ graph TD
 ```
 
 A deeper dive into each component lives in AGENTS.md.
+
+---
+
+## ToDo
+
+- [ ] Add support for more LLM backends (e.g., TGI, SGL)
+- [ ] Implement a more sophisticated scoring algorithm
+- [ ] Add support for multi-GPU nodes
+- [ ] Add support for more cloud providers
+- [ ] Add more tests
+- [ ] Add more documentation
+- [ ] Add more examples
+- [ ] Add a CI/CD pipeline
+- [ ] Add a proper logo
+- [ ] Add a website
+
 ---
 
 ⚙️ Requirements
