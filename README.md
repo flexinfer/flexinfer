@@ -1,7 +1,7 @@
 # FlexInfer
 
 <p align="center">
-  <img src="logo.png" width="200">
+  <img src="logo.png" width="400">
 </p>
 
 > **Kubernetes operator + scheduler plugin that routes LLM inference to the best mix of AMD, NVIDIA, or CPU nodes—automatically.**
