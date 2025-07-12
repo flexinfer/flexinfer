@@ -137,7 +137,7 @@ A deeper dive into each component lives in AGENTS.md.
 
 ---
 
-## ToDo
+## To-Do
 
 - [ ] Add support for more LLM backends (e.g., TGI, SGL)
 - [ ] Implement a more sophisticated scoring algorithm
