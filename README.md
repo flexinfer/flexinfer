@@ -21,7 +21,7 @@ Home-labbers and on-prem teams can declare **one** `ModelDeployment` CRD; FlexIn
 
 ---
 
-## 🚀 Quick start (Kind demo)
+## 🚀 Quick start
 
 ```bash
 # 1. Create a local multi-node cluster (kind + containerd runtime-class support)
