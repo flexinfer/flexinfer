@@ -100,14 +100,16 @@ The FlexInfer operator will automatically detect the best node to run the model 
 
 📂 Repository layout
 
+```text
 .
 ├── api/               # CRD types and validation
 ├── cmd/               # flexinfer-manager main()
 ├── controllers/       # Reconciler logic
 ├── scheduler/         # Scheduler extender (gRPC)
 ├── agents/            # Node agent & benchmarker
-├���─ charts/            # Helm chart
+├── charts/            # Helm chart
 └── examples/          # Sample ModelDeployment manifests
+```
 
 Architecture overview:
 
