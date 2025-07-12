@@ -104,7 +104,7 @@ A shared Go module embedded in every binary.
 | `flexinfer_gpu_temperature_celsius` | `gpu`, `node` | From rocm-smi/nvidia-smi |
 
 
-⸻
+---
 
 ## Sequence diagram (CRD → running pod)
 
@@ -128,14 +128,14 @@ sequenceDiagram
 ```
 
 
-⸻
+---
 
 Advanced topics
 * KV-Cache tiering: planned for v0.2—swap key-value cache between GPU HBM and host DDR.
 * Harbor model OCI plugin: v0.4—push/pull LLM weights straight from your private registry.
 * CNCF Sandbox: target submission once CI/CD passes conformance on Kind, K3s, and MicroK8s.
 
-⸻
+---
 
 Feedback & questions
 
