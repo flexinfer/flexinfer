@@ -36,8 +36,6 @@ kubectl apply -f examples/llama3-8b.yaml
 
 # 4. Watch the pods land on the optimal node
 kubectl get pods -l flexinfer.ai/model=llama3-8b -o wide
-
-Note: On real hardware you’ll also install the NVIDIA and/or AMD ROCm device plugins. FlexInfer layers on top of those.
 ---
 
 📂 Repository layout
