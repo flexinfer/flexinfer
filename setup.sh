@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# setup.sh  —  Provision a fresh Ubuntu‑like host so that Codex (or CI) can
-#              compile & test the flexinfer/flexinfer repository.
+# setup.sh — provision a host so that Codex / CI can build & test
+#            https://github.com/flexinfer/flexinfer
 
 set -euo pipefail
 
@@ -30,7 +30,13 @@ grep -qxF 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' ~/.bashrc || \
 if ! command -v docker >/dev/null; then
   echo ">> Installing Docker Engine…"
   curl -fsSL https://get.docker.com | sh
-  sudo usermod -aG docker "$USER"
+fi
+
+# Add effective user to group *if* we’re not running as root‑only CI
+login_user="${SUDO_USER:-${USER:-$(id -un)}}"   # safe even when $USER unset
+if [[ "${login_user}" != "root" ]] && getent passwd "${login_user}" >/dev/null; then
+  sudo usermod -aG docker "${login_user}" || \
+    echo "⚠️  Could not add ${login_user} to group docker (continuing)"
   echo "   (Log out/in or run 'newgrp docker' for group change to take effect)"
 fi
 
