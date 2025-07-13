@@ -161,6 +161,10 @@ type ModelDeploymentSpec struct {
     // +kubebuilder:validation:Minimum=0
     Replicas *int32 `json:"replicas,omitempty"`
 
+    // Resources defines the resources required by the model.
+    // +optional
+    Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
     // Benchmark defines tuning knobs for the benchmarking process.
     // +optional
     Benchmark *BenchmarkSpec `json:"benchmark,omitempty"`
@@ -179,8 +183,9 @@ type ModelDeploymentStatus struct {
     Conditions []metav1.Condition `json:"conditions,omitempty"`
 
     // TokensPerSecond is the measured tokens per second for the model on a specific device class.
+    // Stored as a string to avoid precision issues with floats.
     // +optional
-    TokensPerSecond float64 `json:"tokensPerSecond,omitempty"`
+    TokensPerSecond string `json:"tokensPerSecond,omitempty"`
 }
 ```
 

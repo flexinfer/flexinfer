@@ -90,9 +90,15 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			log.Error(err, "Failed to get Benchmark Job")
 			return ctrl.Result{}, err
 		}
-		// If the job is found, we just wait for it to complete. The next reconciliation will handle it.
-		log.Info("Benchmark job is still running")
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+
+		// If the job is found, check its status
+		if benchmarkJob.Status.Succeeded > 0 {
+			log.Info("Benchmark job completed successfully")
+		} else {
+			// If the job is still running, requeue the request.
+			log.Info("Benchmark job is still running")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 	} else if err != nil {
 		log.Error(err, "Failed to get Benchmark ConfigMap")
 		return ctrl.Result{}, err
@@ -194,7 +200,16 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 							ContainerPort: 11434,
 							Name:          "http",
 						}},
-						Resources: m.Spec.Resources,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    m.Spec.Resources.Requests[corev1.ResourceCPU],
+								corev1.ResourceMemory: m.Spec.Resources.Requests[corev1.ResourceMemory],
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    m.Spec.Resources.Limits[corev1.ResourceCPU],
+								corev1.ResourceMemory: m.Spec.Resources.Limits[corev1.ResourceMemory],
+							},
+						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-cache",
 							MountPath: "/models",

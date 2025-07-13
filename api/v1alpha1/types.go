@@ -64,8 +64,9 @@ type ModelDeploymentStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// TokensPerSecond is the measured tokens per second for the model on a specific device class.
+	// Stored as a string to avoid precision issues with floats.
 	// +optional
-	TokensPerSecond float64 `json:"tokensPerSecond,omitempty"`
+	TokensPerSecond string `json:"tokensPerSecond,omitempty"`
 }
 
 //+kubebuilder:object:root=true

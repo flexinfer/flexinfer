@@ -1,4 +1,11 @@
-.PHONY: all docker-build docker-push deploy test lint docs
+.PHONY: all build docker-build docker-push deploy test lint docs
+
+# Build all binaries
+build:
+	go build -o bin/flexinfer-agent ./cmd/flexinfer-agent
+	go build -o bin/flexinfer-bench ./cmd/flexinfer-bench
+	go build -o bin/flexinfer-manager ./cmd/flexinfer-manager
+	go build -o bin/flexinfer-sched ./cmd/flexinfer-sched
 
 # Build and push the docker image
 docker-build:
