@@ -1,104 +1,264 @@
-# Each item becomes one GitHub Issue
-# Required: title
-# Optional: body, labels (array), assignees (array), milestone
-- title: "Bootstrap: Initial project scaffolding"
-  body: |
-    Initialize the project structure based on the specifications in AGENTS.md and README.md.
+# .github/seed-issues.yaml
+# Issues to seed the FlexInfer project board.
+# Run `gh workflow run seed-issues.yml` to create these issues in your repo.
 
-    Includes:
-    - Directory structure for Go packages
-    - Placeholder Go source files
-    - Basic Helm chart structure
-    - Example manifests
-    - Makefile with build, test, and lint targets
-  labels: ["area/operator", "priority/P0"]
-  milestone: "M0 – Bootstrap"
+issues:
+  # --- 0: Repo housekeeping ---
+  - title: "Create GitHub Project board"
+    labels: [housekeeping, documentation]
+    body: |
+      **Task:** Create a GitHub Project board for the `flexinfer` roadmap.
+      **Acceptance Criteria:**
+      - Kanban view with columns: `Backlog`, `In progress`, `Review / CI`, `Done`.
+      - Link the project board in the `README.md`.
 
-- title: "API: Define ModelDeployment v1alpha1 CRD"
-  body: |
-    Define the `ModelDeployment` Custom Resource Definition with spec and status fields.
-    Includes validation markers for `kubebuilder`.
-  labels: ["area/api", "priority/P0"]
-  milestone: "M0 – Bootstrap"
+  - title: "Add CODE_OF_CONDUCT.md"
+    labels: [housekeeping, documentation]
+    body: |
+      **Task:** Add a `CODE_OF_CONDUCT.md` file to the repository.
+      **Acceptance Criteria:**
+      - Use the standard CNCF Code of Conduct template.
+      - Link to it from the `README.md` footer.
 
-- title: "Controller: Implement core reconciliation logic"
-  body: |
-    Implement the core reconciliation loop in the `flexinfer-manager`.
+  - title: "Add SECURITY.md"
+    labels: [housekeeping, documentation, security]
+    body: |
+      **Task:** Add a `SECURITY.md` file with a security policy.
+      **Acceptance Criteria:**
+      - Include a PGP fingerprint for `security@flexinfer.ai`.
+      - Specify a 90-day disclosure window.
 
-    The controller should:
-    - Watch `ModelDeployment` resources.
-    - Create and manage `Deployment`, `Service`, and `PersistentVolumeClaim` resources.
-    - Set owner references for garbage collection.
-  labels: ["area/operator", "priority/P1"]
-  milestone: "M1 – Core Functionality"
+  # --- 1: Scaffold the operator (Milestone M0) ---
+  - title: "Scaffold operator with Kubebuilder"
+    labels: [milestone-0, kind/feature]
+    body: |
+      **Task:** Initialize the project structure using Kubebuilder.
+      **Command:** `kubebuilder init --domain flexinfer.ai --repo github.com/flexinfer/flexinfer`
+      **Acceptance Criteria:**
+      - `/cmd`, `/api`, `/controllers`, `config/` directories are created.
+      - Project builds successfully with `make`.
 
-- title: "Controller: Add benchmark Job creation"
-  body: |
-    Enhance the controller to create a benchmark `Job` when a new `ModelDeployment` is created and no benchmark data exists.
-  labels: ["area/operator", "area/benchmarker", "priority/P1"]
-  milestone: "M1 – Core Functionality"
+  - title: "Define ModelDeployment API (v1alpha1)"
+    labels: [milestone-0, kind/feature, api]
+    body: |
+      **Task:** Create the `ModelDeployment` API (v1alpha1).
+      **Acceptance Criteria:**
+      - CRD YAML is generated in `config/crd/`.
+      - Go structs in `api/v1alpha1/` include fields for `backend`, `model`, and `replicas`.
+      - Validation webhooks are implemented (e.g., `replicas >= 0`).
+      - Unit tests pass for the API types.
 
-- title: "Agent: Implement hardware detection"
-  body: |
-    Implement the hardware detection logic in the `flexinfer-agent`.
+  - title: "Implement basic controller-runtime manager"
+    labels: [milestone-0, kind/feature, controller]
+    body: |
+      **Task:** Implement a basic reconciler for the `ModelDeployment` CRD.
+      **Acceptance Criteria:**
+      - The controller manager starts without errors.
+      - The reconciler logs "Reconciling ModelDeployment" when a CRD is created/updated.
+      - The operator can be deployed to a Kind cluster using `make deploy`.
 
-    This involves shelling out to system tools to detect:
-    - GPU Vendor, VRAM, Architecture, and INT4 support
-    - CPU AVX512 support
-  labels: ["area/agent", "priority/P1"]
-  milestone: "M1 – Core Functionality"
+  - title: "CI: Build and push multi-arch container image"
+    labels: [milestone-0, kind/ci]
+    body: |
+      **Task:** Create a GitHub Action to build and push a multi-arch container image.
+      **Acceptance Criteria:**
+      - Pushes to `master` tag and push a `ghcr.io/flexinfer/flexinfer:<sha>` image.
+      - Image is built for `amd64` and `arm64`.
 
-- title: "Benchmarker: Implement benchmark execution"
-  body: |
-    Implement the core logic in the `flexinfer-bench` binary.
+  # --- 2: Node Agent (Milestone M1) ---
+  - title: "Agent: Detect GPU hardware from node"
+    labels: [milestone-1, kind/feature, agent]
+    body: |
+      **Task:** Implement GPU hardware detection logic in the node agent.
+      **Details:** Can fork or be inspired by the Node Feature Discovery (NFD) plugin.
+      **Acceptance Criteria:**
+      - `pkg/agent/detect_gpu.go` is created.
+      - Detects GPU vendor (NVIDIA/AMD), VRAM, and architecture.
+      - Populates node labels like `flexinfer.ai/gpu.vendor`.
 
-    This should:
-    1. Pull the model specified in its arguments.
-    2. Launch the backend container with a micro-batch.
-    3. Record median tokens/s across multiple runs.
-    4. Publish the result to the `ConfigMap` specified in its arguments.
-  labels: ["area/benchmarker", "priority/P1"]
-  milestone: "M1 – Core Functionality"
+  - title: "Agent: Containerize flexinfer-agent"
+    labels: [milestone-1, kind/feature, agent]
+    body: |
+      **Task:** Create a Dockerfile for the `flexinfer-agent`.
+      **Acceptance Criteria:**
+      - Final image is a minimal scratch image.
+      - Binary is statically compiled.
+      - Image size is < 20 MB.
 
-- title: "Scheduler: Implement filter and score logic"
-  body: |
-    Implement the core filtering and scoring logic in the `flexinfer-sched` extender.
+  - title: "Agent: Create DaemonSet Helm chart"
+    labels: [milestone-1, kind/feature, agent, helm]
+    body: |
+      **Task:** Add a DaemonSet to the Helm chart to deploy the agent.
+      **Acceptance Criteria:**
+      - The DaemonSet is only scheduled on nodes with the `gpu=true` label.
+      - `values.yaml` allows configuration of the agent's image and resource limits.
 
-    - **Filter:** Keep only nodes that have labels satisfying the model’s requirements.
-    - **Score:** Combine benchmarked tokens/s, GPU utilization, and node cost.
-  labels: ["area/scheduler", "priority/P1"]
-  milestone: "M1 – Core Functionality"
+  - title: "Agent: e2e test for node labels"
+    labels: [milestone-1, kind/testing, agent]
+    body: |
+      **Task:** Create an end-to-end test to verify node labeling.
+      **Acceptance Criteria:**
+      - A Kind cluster is created in CI.
+      - The test uses a mock/fake PCI device to simulate a GPU.
+      - The test asserts that the expected `flexinfer.ai/gpu.*` labels are present on the node.
 
-- title: "Metrics: Implement Prometheus exporter"
-  body: |
-    Implement the shared Prometheus metrics exporter module and integrate it into all binaries.
+  # --- 3: Benchmarker (Milestone M2) ---
+  - title: "API: Add spec.benchmark to ModelDeployment"
+    labels: [milestone-2, kind/feature, api]
+    body: |
+      **Task:** Add a `benchmark` sub-struct to the `ModelDeployment` CRD.
+      **Acceptance Criteria:**
+      - `spec.benchmark.warmupIterations` and `spec.benchmark.minDuration` fields are available.
+      - Defaults are set (e.g., 5 runs, 128-token micro-batch).
 
-    Metrics to include:
-    - `flexinfer_tokens_per_second`
-    - `flexinfer_model_load_seconds`
-    - `flexinfer_gpu_temperature_celsius`
-  labels: ["area/observability", "priority/P2"]
-  milestone: "M1 – Core Functionality"
+  - title: "Benchmarker: Implement Job template"
+    labels: [milestone-2, kind/feature, benchmarker]
+    body: |
+      **Task:** The controller should be able to create a benchmarker Job.
+      **Acceptance Criteria:**
+      - The Job uses the specified backend image (e.g., Ollama).
+      - It runs a short benchmark and writes the median tokens/s to a file like `/metrics/result.json`.
 
-- title: "CI: Add end-to-end tests"
-  body: |
-    Create a CI workflow that runs end-to-end tests on a Kind cluster.
-    This should involve:
-    1. Creating a mixed-GPU Kind cluster.
-    2. Installing FlexInfer.
-    3. Deploying a sample `ModelDeployment`.
-    4. Verifying that the pod is scheduled to the correct node.
-  labels: ["area/ci", "priority/P1"]
-  milestone: "M2 – Polish & Hardening"
+  - title: "Controller: Watch Job and update ConfigMap"
+    labels: [milestone-2, kind/feature, controller]
+    body: |
+      **Task:** The controller should watch for benchmarker Job completion.
+      **Acceptance Criteria:**
+      - When a Job succeeds, the controller reads the `result.json`.
+      - It creates or updates a `ConfigMap` named `flexinfer-benchmarks`.
+      - The ConfigMap key is a composite of `modelSHA-deviceClass` (e.g., `llama3-8b-sm_89`).
 
-- title: "Feature: Add support for more LLM backends"
-  body: |
-    Add support for more LLM backends, such as TGI and SGL, as mentioned in the README.
-  labels: ["area/operator", "enhancement", "good first issue"]
-  milestone: "M2 – Polish & Hardening"
+  - title: "Benchmarker: Use host-path PVC for shared model cache"
+    labels: [milestone-2, kind/feature, benchmarker]
+    body: |
+      **Task:** Configure a shared model cache on each node to avoid duplicate downloads.
+      **Acceptance Criteria:**
+      - A `hostPath` PersistentVolumeClaim is mounted to `/models` on benchmarker pods.
+      - An init-container can be used to set up caching tools like `rclone` if necessary.
 
-- title: "Feature: Implement a more sophisticated scoring algorithm"
-  body: |
-    The current scoring algorithm is a simple placeholder. A more sophisticated algorithm should be implemented that can be tuned via the Helm chart.
-  labels: ["area/scheduler", "enhancement"]
-  milestone: "M2 – Polish & Hardening"
+  # --- 4: Scheduler extender (Milestone M3) ---
+  - title: "Scheduler: Implement gRPC extender"
+    labels: [milestone-3, kind/feature, scheduler]
+    body: |
+      **Task:** Create the gRPC server for the scheduler extender.
+      **Acceptance Criteria:**
+      - `pkg/scheduler/extender.go` is created.
+      - Implements the `Filter` and `Score` APIs required by kube-scheduler.
+      - Filter logic removes nodes that don't meet VRAM/quantization requirements.
+      - Score logic uses the formula: `score = TPS_normalized × 0.7 - GPU_util × 0.2 - cost × 0.1`.
+
+  - title: "Scheduler: Integrate extender with kube-scheduler"
+    labels: [milestone-3, kind/feature, scheduler]
+    body: |
+      **Task:** Configure the cluster's kube-scheduler to use the extender.
+      **Acceptance Criteria:**
+      - The `make deploy` command includes patching the scheduler configuration in Kind.
+      - Documentation explains how to configure this for production clusters.
+
+  - title: "Scheduler: Unit tests for scoring logic"
+    labels: [milestone-3, kind/testing, scheduler]
+    body: |
+      **Task:** Write unit tests for the scheduler's scoring logic.
+      **Acceptance Criteria:**
+      - Test fixture includes 5 mock nodes with different labels and utilization.
+      - Test includes 3 benchmark entries in a mock ConfigMap.
+      - The test asserts that the extender correctly chooses the highest-scoring node.
+
+  - title: "Scheduler: CI e2e tests on multi-arch"
+    labels: [milestone-3, kind/testing, scheduler, ci]
+    body: |
+      **Task:** Run scheduler end-to-end tests in a multi-architecture CI environment.
+      **Acceptance Criteria:**
+      - GitHub Actions Matrix is used to run tests on both `amd64` and `arm64`.
+      - Can use a service like `actuated` for native arm64 runners if needed.
+
+  # --- 5: Observability (Milestone M4) ---
+  - title: "Metrics: Embed promhttp exporter"
+    labels: [milestone-4, kind/feature, observability]
+    body: |
+      **Task:** Expose Prometheus metrics from the agent and controller.
+      **Acceptance Criteria:**
+      - The `/metrics` endpoint is available on port `9100` (agent) and `2112` (controller).
+      - Uses the `promhttp` library.
+
+  - title: "Metrics: Define and register core metrics"
+    labels: [milestone-4, kind/feature, observability]
+    body: |
+      **Task:** Define and register the core Prometheus metrics.
+      **Acceptance Criteria:**
+      - `flexinfer_tokens_per_second` (gauge)
+      - `flexinfer_gpu_temperature_celsius` (gauge)
+      - `flexinfer_model_load_seconds` (histogram)
+
+  - title: "Metrics: Create Grafana dashboard"
+    labels: [milestone-4, kind/feature, observability, documentation]
+    body: |
+      **Task:** Create a Grafana dashboard for visualizing the metrics.
+      **Acceptance Criteria:**
+      - A JSON model for the dashboard is saved at `hack/grafana/flexinfer.json`.
+      - The dashboard includes panels for tokens/s, GPU temperature, and model load latency.
+
+  - title: "Metrics: Add Helm option to create ServiceMonitor"
+    labels: [milestone-4, kind/feature, helm, observability]
+    body: |
+      **Task:** Add an option to the Helm chart to enable Prometheus metrics scraping.
+      **Acceptance Criteria:**
+      - `helm install ... --set metrics.enabled=true` creates `ServiceMonitor` CRs.
+      - The `ServiceMonitor`s correctly target the agent and controller metrics endpoints.
+
+  # --- 6: Helm chart hardening & docs (Milestone M5) ---
+  - title: "Helm: Add values.schema.json"
+    labels: [milestone-5, kind/feature, helm]
+    body: |
+      **Task:** Add a `values.schema.json` file to the Helm chart.
+      **Acceptance Criteria:**
+      - The schema validates all fields in `values.yaml`.
+      - `helm install` with invalid values fails with a clear error message.
+
+  - title: "Docs: Add table of all configurable flags"
+    labels: [milestone-5, kind/documentation, helm]
+    body: |
+      **Task:** Add a table to the chart's `README.md` documenting all configurable values.
+      **Acceptance Criteria:**
+      - The table includes the parameter name, description, and default value.
+
+  - title: "CI: Add chart linting"
+    labels: [milestone-5, kind/ci, helm]
+    body: |
+      **Task:** Add a step to the CI workflow to lint the Helm chart.
+      **Acceptance Criteria:**
+      - Uses `ct lint` (from the chart-testing tool).
+      - The CI job fails if the chart has linting errors.
+
+  - title: "CI: Publish chart to gh-pages"
+    labels: [milestone-5, kind/ci, helm]
+    body: |
+      **Task:** Create a GitHub Action to publish the Helm chart.
+      **Acceptance Criteria:**
+      - On new tags (e.g., `v0.1.0`), the action packages the chart.
+      - It pushes the packaged chart and updates the index on the `gh-pages` branch.
+
+  # --- 8: Good First Issues ---
+  - title: "Good First Issue: Add support for KV-cache tiering"
+    labels: [good first issue, kind/feature]
+    body: |
+      **Task:** Explore and implement a mechanism for KV-cache tiering.
+      **Details:** This would allow swapping the key-value cache between GPU HBM and host DDR memory to support larger models than would otherwise fit in VRAM.
+      **Acceptance Criteria:**
+      - A new field in the `ModelDeployment` spec to configure the cache policy.
+      - The backend (e.g., Ollama, vLLM) is configured to use the tiered cache.
+
+  - title: "Good First Issue: Improve unit test coverage"
+    labels: [good first issue, kind/testing]
+    body: |
+      **Task:** Identify areas of the codebase with low unit test coverage and add more tests.
+      **Details:** Use `go test -coverprofile=coverage.out` and `go tool cover -html=coverage.out` to find gaps.
+      **Acceptance Criteria:**
+      - Overall test coverage increases by at least 10%.
+
+  - title: "Good First Issue: Fix documentation typos"
+    labels: [good first issue, kind/documentation]
+    body: |
+      **Task:** Read through the project's documentation (`README.md`, `AGENTS.md`, etc.) and fix any typos or grammatical errors.
+      **Acceptance Criteria:**
+      - A pull request is submitted with the corrections.

@@ -5,17 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       preview:
-        description: "Show actions without creating issues (true/false)"
+        description: "Set to 'true' for a dry-run"
         required: false
         default: "false"
 
 jobs:
   create_issues:
     runs-on: ubuntu-latest
-    permissions:
-      issues: write # Required to create issues
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Go
@@ -23,24 +21,15 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-          # Install the correct yq version (by Mike Farah)
-          curl -L https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64 -o /usr/local/bin/yq
-          chmod +x /usr/local/bin/yq
+          sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Run seeder
+      - name: Run issue seeder
         env:
-          # Use the PAT for authentication with project permissions
+          # The PAT is required for project board access
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          PREVIEW: ${{ github.event.inputs.preview }}
+          DRY_RUN: ${{ github.event.inputs.preview }}
         run: |
           gh auth setup-git
-          if [ "$PREVIEW" == "true" ]; then
-            echo "Dry run: would create the following issues"
-            yq e '.issues[].title' .github/seed-issues.yaml
-          else
-            go run ./hack/seed-issues.go
-          fi
+          go run ./hack/seed-issues.go
