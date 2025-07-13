@@ -30,6 +30,14 @@ jobs:
 
       - name: Create issues
         if: ${{ inputs.preview != 'true' }}
+        id: create_issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./hack/seed-issues.sh
+
+      - name: Add to project
+        if: ${{ inputs.preview != 'true' }}
+        uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/orgs/flexinfer/projects/1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
