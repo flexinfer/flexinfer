@@ -24,10 +24,28 @@ jobs:
       - name: Tidy Go modules
         run: go mod tidy
 
+      - name: Authenticate and Find Project ID
+        id: project
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          echo "1. Verifying authentication..."
+          gh auth status -t
+
+          echo "2. Finding project ID for project #1..."
+          PROJECT_ID=$(gh project list --owner flexinfer --format json | jq -r '.projects[] | select(.number == 1) | .id')
+          
+          if [ -z "$PROJECT_ID" ]; then
+            echo "Error: Could not find project #1 for organization 'flexinfer'."
+            exit 1
+          fi
+          
+          echo "Found project ID: $PROJECT_ID"
+          echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_OUTPUT
+
       - name: Run issue seeder
         env:
-          # The PAT is required for project board access
           GH_TOKEN: ${{ secrets.GH_PAT }}
           DRY_RUN: ${{ github.event.inputs.preview }}
         run: |
-          go run ./hack/seed-issues.go
+          go run ./hack/seed-issues.go ${{ steps.project.outputs.PROJECT_ID }}

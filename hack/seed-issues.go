@@ -11,7 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Issue defines the structure for an issue in the YAML file.
 type Issue struct {
 	Title     string   `yaml:"title"`
 	Body      string   `yaml:"body"`
@@ -20,32 +19,20 @@ type Issue struct {
 	Assignees []string `yaml:"assignees"`
 }
 
-// Config holds the list of issues from the YAML file.
 type Config struct {
 	Issues []Issue `yaml:"issues"`
 }
 
-// GhProject defines the structure for a GitHub project from the gh CLI JSON output.
-type GhProject struct {
-	ID     string `json:"id"`
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-}
-
-// GhProjectList holds a list of GitHub projects.
-type GhProjectList struct {
-	Projects []GhProject `json:"projects"`
-}
-
 func main() {
-	// --- Configuration ---
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "Error: Project ID must be provided as the first argument.")
+		os.Exit(1)
+	}
+	projectID := os.Args[1]
 	isDryRun := os.Getenv("DRY_RUN") == "true"
 	configFile := ".github/seed-issues.yaml"
 	repo := "flexinfer/flexinfer"
-	organization := "flexinfer"
-	projectNumber := 1 // Using the project number you provided.
 
-	// --- Read and parse the YAML config file ---
 	yamlFile, err := os.ReadFile(configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
@@ -58,26 +45,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- Handle Dry Run ---
 	if isDryRun {
 		fmt.Println("--- This is a dry run. No issues will be created. ---")
-		fmt.Printf("Found %d issues to be created for project number %d:\n", len(config.Issues), projectNumber)
+		fmt.Printf("Found %d issues to be created for project ID %s:\n", len(config.Issues), projectID)
 		for _, issue := range config.Issues {
 			fmt.Printf("- %s\n", issue.Title)
 		}
 		fmt.Println("--- End of dry run. ---")
-		return // Exit successfully
+		return
 	}
 
-	// --- Find the Project ID ---
-	projectID, err := findProjectID(organization, projectNumber)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding project: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Found project #%d with ID: %s\n", projectNumber, projectID)
+	fmt.Printf("Starting issue creation for project ID: %s\n", projectID)
 
-	// --- Create Issues ---
 	for _, issue := range config.Issues {
 		if issueExists(repo, issue.Title) {
 			fmt.Printf("✅ Issue already exists: %s\n", issue.Title)
@@ -99,28 +78,6 @@ func main() {
 	}
 
 	fmt.Println("🎉 Done seeding issues.")
-}
-
-func findProjectID(organization string, projectNumber int) (string, error) {
-	cmd := exec.Command("gh", "project", "list", "--owner", organization, "--format", "json")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh project list failed: %w", err)
-	}
-
-	var projectList GhProjectList
-	if err := json.Unmarshal(out.Bytes(), &projectList); err != nil {
-		return "", fmt.Errorf("failed to parse gh project list JSON: %w", err)
-	}
-
-	for _, p := range projectList.Projects {
-		if p.Number == projectNumber {
-			return p.ID, nil
-		}
-	}
-
-	return "", fmt.Errorf("project with number #%d not found in organization '%s'", projectNumber, organization)
 }
 
 func issueExists(repo, title string) bool {
