@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -34,6 +35,10 @@ type ModelDeploymentSpec struct {
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Resources defines the resources required by the model.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// Benchmark defines tuning knobs for the benchmarking process.
 	// +optional
