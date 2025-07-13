@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	os"
-	os/exec"
+	"os"
+	"os/exec"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Issue defines the structure for an issue in the YAML file.
 type Issue struct {
 	Title     string   `yaml:"title"`
 	Body      string   `yaml:"body"`
@@ -17,31 +20,44 @@ type Issue struct {
 	Assignees []string `yaml:"assignees"`
 }
 
+// Config holds the list of issues from the YAML file.
 type Config struct {
 	Issues []Issue `yaml:"issues"`
 }
 
+// GhProject defines the structure for a GitHub project from the gh CLI JSON output.
+type GhProject struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// GhProjectList holds a list of GitHub projects.
+type GhProjectList struct {
+	Projects []GhProject `json:"projects"`
+}
+
 func main() {
+	// --- Configuration ---
 	isDryRun := os.Getenv("DRY_RUN") == "true"
 	configFile := ".github/seed-issues.yaml"
 	repo := "flexinfer/flexinfer"
 	organization := "flexinfer"
 	projectTitle := "flexinfer Roadmap"
 
-	// Read the config file
+	// --- Read and parse the YAML config file ---
 	yamlFile, err := os.ReadFile(configFile)
 	if err != nil {
-		fmt.Printf("Error reading config file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
 		os.Exit(1)
 	}
 
 	var config Config
-	err = yaml.Unmarshal(yamlFile, &config)
-	if err != nil {
-		fmt.Printf("Error unmarshalling config file: %v\n", err)
+	if err := yaml.Unmarshal(yamlFile, &config); err != nil {
+		fmt.Fprintf(os.Stderr, "Error unmarshalling YAML: %v\n", err)
 		os.Exit(1)
 	}
 
+	// --- Handle Dry Run ---
 	if isDryRun {
 		fmt.Println("--- This is a dry run. No issues will be created. ---")
 		fmt.Printf("Found %d issues to be created:\n", len(config.Issues))
@@ -49,69 +65,101 @@ func main() {
 			fmt.Printf("- %s\n", issue.Title)
 		}
 		fmt.Println("--- End of dry run. ---")
-		os.Exit(0)
+		return // Exit successfully
 	}
 
-	// Get the project ID
-	projectIDCmd := fmt.Sprintf("gh project list --owner %s --format=json | jq -r '.projects[] | select(.title == \"%s\") | .id'", organization, projectTitle)
-	projectIDBytes, err := exec.Command("bash", "-c", projectIDCmd).Output()
+	// --- Find the Project ID ---
+	projectID, err := findProjectID(organization, projectTitle)
 	if err != nil {
-		fmt.Printf("Error getting project ID: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error finding project: %v\n", err)
 		os.Exit(1)
 	}
-	projectID := strings.TrimSpace(string(projectIDBytes))
-
-	if projectID == "" {
-		fmt.Printf("Error: Project with title '%s' not found in organization '%s'.\n", projectTitle, organization)
-		os.Exit(1)
-	}
-
 	fmt.Printf("Found project '%s' with ID: %s\n", projectTitle, projectID)
 
-	// Create the issues
+	// --- Create Issues ---
 	for _, issue := range config.Issues {
-		// Check if the issue already exists
-		checkCmd := fmt.Sprintf("gh issue list -R %s --state all --search 'in:title \"%s\"' --json number | jq -e '.[0]'", repo, issue.Title)
-		if err := exec.Command("bash", "-c", checkCmd).Run() == nil {
+		if issueExists(repo, issue.Title) {
 			fmt.Printf("✅ Issue already exists: %s\n", issue.Title)
 			continue
 		}
 
-		// Create the issue
-		createCmd := []string{
-			"issue", "create", "-R", repo,
-			"--title", issue.Title,
-			"--body", issue.Body,
-		}
-		if len(issue.Labels) > 0 {
-			createCmd = append(createCmd, "--label", strings.Join(issue.Labels, ","))
-		}
-		if issue.Milestone != "" {
-			createCmd = append(createCmd, "--milestone", issue.Milestone)
-		}
-		if len(issue.Assignees) > 0 {
-			createCmd = append(createCmd, "--assignee", strings.Join(issue.Assignees, ","))
-		}
-
-		issueURLBytes, err := exec.Command("gh", createCmd...).Output()
+		issueURL, err := createIssue(repo, issue)
 		if err != nil {
-			fmt.Printf("Error creating issue '%s': %v\n", issue.Title, err)
+			fmt.Fprintf(os.Stderr, "Error creating issue '%s': %v\n", issue.Title, err)
 			continue
 		}
-		issueURL := strings.TrimSpace(string(issueURLBytes))
 		fmt.Printf("📄 Created issue: %s (%s)\n", issue.Title, issueURL)
 
-		// Add the issue to the project
-		addCmd := []string{
-			"project", "item-add", projectID,
-			"--url", issueURL,
-		}
-\t	if err := exec.Command("gh", addCmd...).Run(); err != nil {
-			fmt.Printf("Error adding issue to project: %v\n", err)
+		if err := addItemToProject(projectID, issueURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Error adding issue to project: %v\n", err)
 		} else {
 			fmt.Println("   └── Added to project board.")
 		}
 	}
 
 	fmt.Println("🎉 Done seeding issues.")
+}
+
+func findProjectID(organization, projectTitle string) (string, error) {
+	cmd := exec.Command("gh", "project", "list", "--owner", organization, "--format", "json")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh project list failed: %w", err)
+	}
+
+	var projectList GhProjectList
+	if err := json.Unmarshal(out.Bytes(), &projectList); err != nil {
+		return "", fmt.Errorf("failed to parse gh project list JSON: %w", err)
+	}
+
+	for _, p := range projectList.Projects {
+		if p.Title == projectTitle {
+			return p.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("project with title '%s' not found in organization '%s'", projectTitle, organization)
+}
+
+func issueExists(repo, title string) bool {
+	// Using --limit 1 is more efficient
+	cmd := exec.Command("gh", "issue", "list", "-R", repo, "--state", "all", "--search", fmt.Sprintf(`in:title "%s"`, title), "--limit", "1", "--json", "number")
+	// We only care if the command succeeds, not what it outputs.
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
+}
+
+func createIssue(repo string, issue Issue) (string, error) {
+	args := []string{
+		"issue", "create", "-R", repo,
+		"--title", issue.Title,
+		"--body", issue.Body,
+	}
+	if len(issue.Labels) > 0 {
+		args = append(args, "--label", strings.Join(issue.Labels, ","))
+	}
+	if issue.Milestone != "" {
+		args = append(args, "--milestone", issue.Milestone)
+	}
+	if len(issue.Assignees) > 0 {
+		args = append(args, "--assignee", strings.Join(issue.Assignees, ","))
+	}
+
+	cmd := exec.Command("gh", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("gh issue create failed: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func addItemToProject(projectID, issueURL string) error {
+	cmd := exec.Command("gh", "project", "item-add", projectID, "--url", issueURL)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh project item-add failed: %w", err)
+	}
+	return nil
 }
