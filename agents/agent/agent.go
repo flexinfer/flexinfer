@@ -1,3 +1,5 @@
+// Package agent implements the FlexInfer node agent, which is responsible for
+// detecting hardware capabilities on a node and reporting them as labels.
 package agent
 
 import (
@@ -6,24 +8,25 @@ import (
 	"os"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8s "k8s.io/client-go/kubernetes"
-	k8srest "k8s.io/client-go/rest"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Agent discovers node capabilities and applies them as labels.
 type Agent struct {
-	kubeClient  k8s.Interface
+	kubeClient  kubernetes.Interface
 	nodeName    string
 	labelPrefix string
 }
 
 // NewAgent creates a new Agent.
 func NewAgent(labelPrefix string) (*Agent, error) {
-	config, err := k8srest.InClusterConfig()
+	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
 	}
-	clientset, err := k8s.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -41,20 +44,17 @@ func NewAgent(labelPrefix string) (*Agent, error) {
 }
 
 // ProbeAndLabel detects hardware and updates node labels.
-func (a *Agent) ProbeAndLabel() error {
-	fmt.Println("Probing for hardware capabilities...")
+func (a *Agent) ProbeAndLabel(ctx context.Context) error {
+	log := log.FromContext(ctx)
+	log.Info("Probing for hardware capabilities...")
+
 	labels := make(map[string]string)
+	a.detectGPU(labels)
+	a.detectCPU(labels)
 
-	// TODO: Implement actual hardware detection
-	labels[a.labelPrefix+"gpu.vendor"] = "NVIDIA" // Placeholder
-	labels[a.labelPrefix+"gpu.vram"] = "24Gi"     // Placeholder
-	labels[a.labelPrefix+"gpu.arch"] = "sm_89"    // Placeholder
-	labels[a.labelPrefix+"gpu.int4"] = "true"     // Placeholder
-	labels[a.labelPrefix+"cpu.avx512"] = "false"  // Placeholder
+	log.Info("Applying labels", "labels", labels)
 
-	fmt.Printf("Applying labels: %v\n", labels)
-
-	node, err := a.kubeClient.CoreV1().Nodes().Get(context.TODO(), a.nodeName, metav1.GetOptions{})
+	node, err := a.kubeClient.CoreV1().Nodes().Get(ctx, a.nodeName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get node %s: %w", a.nodeName, err)
 	}
@@ -67,11 +67,27 @@ func (a *Agent) ProbeAndLabel() error {
 		node.Labels[k] = v
 	}
 
-	_, err = a.kubeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+	_, err = a.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update node %s: %w", a.nodeName, err)
 	}
 
-	fmt.Println("Successfully applied labels to node.")
+	log.Info("Successfully applied labels to node.")
 	return nil
+}
+
+// detectGPU populates the label map with GPU-related features.
+func (a *Agent) detectGPU(labels map[string]string) {
+	// Placeholder: In a real implementation, this would shell out to tools
+	// like `lspci`, `nvidia-smi`, or `rocm-smi`.
+	labels[a.labelPrefix+"gpu.vendor"] = "NVIDIA"
+	labels[a.labelPrefix+"gpu.vram"] = "24Gi"
+	labels[a.labelPrefix+"gpu.arch"] = "sm_89"
+	labels[a.labelPrefix+"gpu.int4"] = "true"
+}
+
+// detectCPU populates the label map with CPU-related features.
+func (a *Agent) detectCPU(labels map[string]string) {
+	// Placeholder: In a real implementation, this would inspect /proc/cpuinfo.
+	labels[a.labelPrefix+"cpu.avx512"] = "false"
 }

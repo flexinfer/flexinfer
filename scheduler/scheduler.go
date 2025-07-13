@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/flexinfer/flexinfer/internal/cache"
 	"k8s.io/client-go/kubernetes"
