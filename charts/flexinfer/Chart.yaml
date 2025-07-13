@@ -1,0 +1,4 @@
+apiVersion: v2
+name: flexinfer
+description: A Helm chart for FlexInfer
+version: 0.1.0

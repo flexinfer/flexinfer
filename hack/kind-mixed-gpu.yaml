@@ -1,0 +1,15 @@
+# kind-mixed-gpu.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+- role: worker
+  extraMounts:
+  - hostPath: /dev/kfd
+    containerPath: /dev/kfd
+  - hostPath: /dev/dri
+    containerPath: /dev/dri
+- role: worker
+  extraMounts:
+  - hostPath: /var/run/nvidia-container-devices
+    containerPath: /var/run/nvidia-container-devices

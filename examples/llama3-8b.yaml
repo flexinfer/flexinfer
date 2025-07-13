@@ -1,0 +1,8 @@
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-8b
+spec:
+  backend: ollama
+  model: llama3:8b
+  replicas: 1
