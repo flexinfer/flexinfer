@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -27,8 +28,9 @@ type Config struct {
 
 // GhProject defines the structure for a GitHub project from the gh CLI JSON output.
 type GhProject struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
+	ID     string `json:"id"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
 }
 
 // GhProjectList holds a list of GitHub projects.
@@ -42,7 +44,7 @@ func main() {
 	configFile := ".github/seed-issues.yaml"
 	repo := "flexinfer/flexinfer"
 	organization := "flexinfer"
-	projectTitle := "flexinfer Roadmap"
+	projectNumber := 1 // Using the project number you provided.
 
 	// --- Read and parse the YAML config file ---
 	yamlFile, err := os.ReadFile(configFile)
@@ -60,7 +62,7 @@ func main() {
 	// --- Handle Dry Run ---
 	if isDryRun {
 		fmt.Println("--- This is a dry run. No issues will be created. ---")
-		fmt.Printf("Found %d issues to be created:\n", len(config.Issues))
+		fmt.Printf("Found %d issues to be created for project number %d:\n", len(config.Issues), projectNumber)
 		for _, issue := range config.Issues {
 			fmt.Printf("- %s\n", issue.Title)
 		}
@@ -69,12 +71,12 @@ func main() {
 	}
 
 	// --- Find the Project ID ---
-	projectID, err := findProjectID(organization, projectTitle)
+	projectID, err := findProjectID(organization, projectNumber)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error finding project: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Found project '%s' with ID: %s\n", projectTitle, projectID)
+	fmt.Printf("Found project #%d with ID: %s\n", projectNumber, projectID)
 
 	// --- Create Issues ---
 	for _, issue := range config.Issues {
@@ -100,7 +102,7 @@ func main() {
 	fmt.Println("🎉 Done seeding issues.")
 }
 
-func findProjectID(organization, projectTitle string) (string, error) {
+func findProjectID(organization string, projectNumber int) (string, error) {
 	cmd := exec.Command("gh", "project", "list", "--owner", organization, "--format", "json")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -114,18 +116,16 @@ func findProjectID(organization, projectTitle string) (string, error) {
 	}
 
 	for _, p := range projectList.Projects {
-		if p.Title == projectTitle {
+		if p.Number == projectNumber {
 			return p.ID, nil
 		}
 	}
 
-	return "", fmt.Errorf("project with title '%s' not found in organization '%s'", projectTitle, organization)
+	return "", fmt.Errorf("project with number #%d not found in organization '%s'", projectNumber, organization)
 }
 
 func issueExists(repo, title string) bool {
-	// Using --limit 1 is more efficient
 	cmd := exec.Command("gh", "issue", "list", "-R", repo, "--state", "all", "--search", fmt.Sprintf(`in:title "%s"`, title), "--limit", "1", "--json", "number")
-	// We only care if the command succeeds, not what it outputs.
 	if err := cmd.Run(); err != nil {
 		return false
 	}
