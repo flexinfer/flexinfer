@@ -18,13 +18,18 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -43,6 +48,9 @@ type ModelDeploymentReconciler struct {
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modeldeployments/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -58,6 +66,35 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "Failed to get ModelDeployment")
+		return ctrl.Result{}, err
+	}
+
+	// Check if a benchmark has been run
+	benchmarkCM := &corev1.ConfigMap{}
+	err = r.Get(ctx, types.NamespacedName{Name: r.benchmarkConfigMapName(modelDeployment), Namespace: modelDeployment.Namespace}, benchmarkCM)
+	if err != nil && errors.IsNotFound(err) {
+		// If the ConfigMap is not found, it means we need to run a benchmark.
+		// Check if a benchmark job is already running
+		benchmarkJob := &batchv1.Job{}
+		err = r.Get(ctx, types.NamespacedName{Name: r.benchmarkJobName(modelDeployment), Namespace: modelDeployment.Namespace}, benchmarkJob)
+		if err != nil && errors.IsNotFound(err) {
+			// If the Job is not found, create it
+			job := r.jobForBenchmark(modelDeployment)
+			log.Info("Creating a new Benchmark Job", "Job.Namespace", job.Namespace, "Job.Name", job.Name)
+			if err = r.Create(ctx, job); err != nil {
+				log.Error(err, "Failed to create new Benchmark Job", "Job.Namespace", job.Namespace, "Job.Name", job.Name)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		} else if err != nil {
+			log.Error(err, "Failed to get Benchmark Job")
+			return ctrl.Result{}, err
+		}
+		// If the job is found, we just wait for it to complete. The next reconciliation will handle it.
+		log.Info("Benchmark job is still running")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Benchmark ConfigMap")
 		return ctrl.Result{}, err
 	}
 
@@ -151,12 +188,13 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image: "ghcr.io/flexinfer/ollama:latest", // Placeholder image
+						Image: r.getBackendImage(),
 						Name:  "llm-backend",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 11434,
 							Name:          "http",
 						}},
+						Resources: m.Spec.Resources,
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-cache",
 							MountPath: "/models",
@@ -191,8 +229,9 @@ func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.Mode
 		Spec: corev1.ServiceSpec{
 			Selector: ls,
 			Ports: []corev1.ServicePort{{
-				Port: 80,
-				Name: "http",
+				Port:       11434,
+				TargetPort: intstr.FromString("http"),
+				Name:       "http",
 			}},
 		},
 	}
@@ -224,6 +263,49 @@ func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDep
 	return pvc
 }
 
+// jobForBenchmark returns a benchmark Job object
+func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) *batchv1.Job {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      r.benchmarkJobName(m),
+			Namespace: m.Namespace,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Image: "flexinfer-bench:latest", // This will be built locally
+						Name:  "flexinfer-bench",
+						Args: []string{
+							"--model", m.Spec.Model,
+							"--configmap", r.benchmarkConfigMapName(m),
+						},
+					}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, job, r.Scheme)
+	return job
+}
+
+func (r *ModelDeploymentReconciler) benchmarkJobName(m *aiv1alpha1.ModelDeployment) string {
+	return fmt.Sprintf("%s-benchmark", m.Name)
+}
+
+func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDeployment) string {
+	return fmt.Sprintf("%s-benchmark-results", m.Name)
+}
+
+// getBackendImage returns the backend image from the environment variable or a default.
+func (r *ModelDeploymentReconciler) getBackendImage() string {
+	if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE"); ok {
+		return image
+	}
+	return "ghcr.io/flexinfer/ollama:latest"
+}
+
 // labelsForModelDeployment returns the labels for selecting the resources
 // belonging to the given ModelDeployment CR name.
 func labelsForModelDeployment(name string) map[string]string {
@@ -237,5 +319,6 @@ func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&batchv1.Job{}).
 		Complete(r)
 }
