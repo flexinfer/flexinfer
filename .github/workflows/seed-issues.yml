@@ -30,5 +30,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           DRY_RUN: ${{ github.event.inputs.preview }}
         run: |
-          gh auth setup-git
           go run ./hack/seed-issues.go
