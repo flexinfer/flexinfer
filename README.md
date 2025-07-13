@@ -7,7 +7,7 @@
 > **Kubernetes operator + scheduler plugin that routes LLM inference to the best mix of AMD, NVIDIA, or CPU nodes—automatically.**
 
 <p align="center">
-  [![CI](https://github.com/flexinfer/flexinfer/actions/workflows/seed-issues.yml/badge.svg)](https://github.com/flexinfer/flexinfer/actions/workflows/seed-issues.yml)
+  [![CI](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml)
   [![License](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
 </p>
 
