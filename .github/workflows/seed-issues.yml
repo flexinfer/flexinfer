@@ -27,7 +27,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-          go install gopkg.in/yaml.v3
+          # Install the correct yq version (by Mike Farah)
+          curl -L https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
 
       - name: Run seeder
         env:
@@ -38,7 +40,6 @@ jobs:
           gh auth setup-git
           if [ "$PREVIEW" == "true" ]; then
             echo "Dry run: would create the following issues"
-            # This is a simplified dry-run. A more robust version would be in the Go program itself.
             yq e '.issues[].title' .github/seed-issues.yaml
           else
             go run ./hack/seed-issues.go
