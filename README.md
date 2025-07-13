@@ -6,8 +6,10 @@
 
 > **Kubernetes operator + scheduler plugin that routes LLM inference to the best mix of AMD, NVIDIA, or CPU nodes—automatically.**
 
-[![CI](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
+<p align="center">
+  [![CI](https://github.com/flexinfer/flexinfer/actions/workflows/seed-issues.yml/badge.svg)](https://github.com/flexinfer/flexinfer/actions/workflows/seed-issues.yml)
+  [![License](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
+</p>
 
 FlexInfer closes the gap between “I have whatever GPUs are lying around” and “I want my models to run fast, cheaply, and with no manual node labels.”
 Home-labbers and on-prem teams can declare **one** `ModelDeployment` CRD; FlexInfer discovers the cluster’s capabilities, benchmarks each model once, and schedules pods to the cheapest node that meets their throughput SLO.
