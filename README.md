@@ -7,8 +7,12 @@
 > **Kubernetes operator + scheduler plugin that routes LLM inference to the best mix of AMD, NVIDIA, or CPU nodes—automatically.**
 
 <p align="center">
-  [![CI](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml)
-  [![License](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
+  <a href="https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml">
+    <img src="https://github.com/flexinfer/flexinfer/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-Apache-2.0-blue.svg" alt="License">
+  </a>
 </p>
 
 FlexInfer closes the gap between “I have whatever GPUs are lying around” and “I want my models to run fast, cheaply, and with no manual node labels.”
