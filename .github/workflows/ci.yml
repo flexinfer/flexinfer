@@ -15,9 +15,9 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.22'
-    - name: Set up envtest
-      uses: sigs.k8s.io/controller-runtime/tools/setup-envtest@v0
-      with:
-        version: '0.16.3'
+    - name: Set up controller-runtime envtest
+      run: |
+        go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+        export KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
     - name: Run tests
       run: go test ./...
