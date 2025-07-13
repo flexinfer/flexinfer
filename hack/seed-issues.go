@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	os"
 	os/exec"
 	"strings"
@@ -30,7 +29,7 @@ func main() {
 	projectTitle := "flexinfer Roadmap"
 
 	// Read the config file
-	yamlFile, err := ioutil.ReadFile(configFile)
+	yamlFile, err := os.ReadFile(configFile)
 	if err != nil {
 		fmt.Printf("Error reading config file: %v\n", err)
 		os.Exit(1)
@@ -73,7 +72,7 @@ func main() {
 	for _, issue := range config.Issues {
 		// Check if the issue already exists
 		checkCmd := fmt.Sprintf("gh issue list -R %s --state all --search 'in:title \"%s\"' --json number | jq -e '.[0]'", repo, issue.Title)
-		if err := exec.Command("bash", "-c", checkCmd).Run(); err == nil {
+		if err := exec.Command("bash", "-c", checkCmd).Run() == nil {
 			fmt.Printf("✅ Issue already exists: %s\n", issue.Title)
 			continue
 		}
@@ -107,7 +106,7 @@ func main() {
 			"project", "item-add", projectID,
 			"--url", issueURL,
 		}
-		if err := exec.Command("gh", addCmd...).Run(); err != nil {
+\t	if err := exec.Command("gh", addCmd...).Run(); err != nil {
 			fmt.Printf("Error adding issue to project: %v\n", err)
 		} else {
 			fmt.Println("   └── Added to project board.")
