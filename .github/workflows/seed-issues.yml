@@ -1,0 +1,35 @@
+name: Seed issues from YAML
+run-name: Seed issues (${{ github.event.inputs.preview == 'true' && 'dry-run' || 'live' }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: "Show actions without creating issues (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  create_issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          curl -L https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+          gh auth setup-git
+
+      - name: Dry-run?
+        if: ${{ inputs.preview == 'true' }}
+        run: ./hack/seed-issues.sh | sed 's/gh issue create/echo gh issue create/'
+
+      - name: Create issues
+        if: ${{ inputs.preview != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./hack/seed-issues.sh

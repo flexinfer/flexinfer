@@ -1,0 +1,104 @@
+# Each item becomes one GitHub Issue
+# Required: title
+# Optional: body, labels (array), assignees (array), milestone
+- title: "Bootstrap: Initial project scaffolding"
+  body: |
+    Initialize the project structure based on the specifications in AGENTS.md and README.md.
+
+    Includes:
+    - Directory structure for Go packages
+    - Placeholder Go source files
+    - Basic Helm chart structure
+    - Example manifests
+    - Makefile with build, test, and lint targets
+  labels: ["area/operator", "priority/P0"]
+  milestone: "M0 – Bootstrap"
+
+- title: "API: Define ModelDeployment v1alpha1 CRD"
+  body: |
+    Define the `ModelDeployment` Custom Resource Definition with spec and status fields.
+    Includes validation markers for `kubebuilder`.
+  labels: ["area/api", "priority/P0"]
+  milestone: "M0 – Bootstrap"
+
+- title: "Controller: Implement core reconciliation logic"
+  body: |
+    Implement the core reconciliation loop in the `flexinfer-manager`.
+
+    The controller should:
+    - Watch `ModelDeployment` resources.
+    - Create and manage `Deployment`, `Service`, and `PersistentVolumeClaim` resources.
+    - Set owner references for garbage collection.
+  labels: ["area/operator", "priority/P1"]
+  milestone: "M1 – Core Functionality"
+
+- title: "Controller: Add benchmark Job creation"
+  body: |
+    Enhance the controller to create a benchmark `Job` when a new `ModelDeployment` is created and no benchmark data exists.
+  labels: ["area/operator", "area/benchmarker", "priority/P1"]
+  milestone: "M1 – Core Functionality"
+
+- title: "Agent: Implement hardware detection"
+  body: |
+    Implement the hardware detection logic in the `flexinfer-agent`.
+
+    This involves shelling out to system tools to detect:
+    - GPU Vendor, VRAM, Architecture, and INT4 support
+    - CPU AVX512 support
+  labels: ["area/agent", "priority/P1"]
+  milestone: "M1 – Core Functionality"
+
+- title: "Benchmarker: Implement benchmark execution"
+  body: |
+    Implement the core logic in the `flexinfer-bench` binary.
+
+    This should:
+    1. Pull the model specified in its arguments.
+    2. Launch the backend container with a micro-batch.
+    3. Record median tokens/s across multiple runs.
+    4. Publish the result to the `ConfigMap` specified in its arguments.
+  labels: ["area/benchmarker", "priority/P1"]
+  milestone: "M1 – Core Functionality"
+
+- title: "Scheduler: Implement filter and score logic"
+  body: |
+    Implement the core filtering and scoring logic in the `flexinfer-sched` extender.
+
+    - **Filter:** Keep only nodes that have labels satisfying the model’s requirements.
+    - **Score:** Combine benchmarked tokens/s, GPU utilization, and node cost.
+  labels: ["area/scheduler", "priority/P1"]
+  milestone: "M1 – Core Functionality"
+
+- title: "Metrics: Implement Prometheus exporter"
+  body: |
+    Implement the shared Prometheus metrics exporter module and integrate it into all binaries.
+
+    Metrics to include:
+    - `flexinfer_tokens_per_second`
+    - `flexinfer_model_load_seconds`
+    - `flexinfer_gpu_temperature_celsius`
+  labels: ["area/observability", "priority/P2"]
+  milestone: "M1 – Core Functionality"
+
+- title: "CI: Add end-to-end tests"
+  body: |
+    Create a CI workflow that runs end-to-end tests on a Kind cluster.
+    This should involve:
+    1. Creating a mixed-GPU Kind cluster.
+    2. Installing FlexInfer.
+    3. Deploying a sample `ModelDeployment`.
+    4. Verifying that the pod is scheduled to the correct node.
+  labels: ["area/ci", "priority/P1"]
+  milestone: "M2 – Polish & Hardening"
+
+- title: "Feature: Add support for more LLM backends"
+  body: |
+    Add support for more LLM backends, such as TGI and SGL, as mentioned in the README.
+  labels: ["area/operator", "enhancement", "good first issue"]
+  milestone: "M2 – Polish & Hardening"
+
+- title: "Feature: Implement a more sophisticated scoring algorithm"
+  body: |
+    The current scoring algorithm is a simple placeholder. A more sophisticated algorithm should be implemented that can be tuned via the Helm chart.
+  labels: ["area/scheduler", "enhancement"]
+  milestone: "M2 – Polish & Hardening"
