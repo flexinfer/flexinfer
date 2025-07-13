@@ -22,12 +22,16 @@ yq -o=json '.[]' "$CONFIG" | while read -r row; do
   milestone=$(echo "$row" | jq -r '.milestone // empty')
   assignees=$(echo "$row" | jq -r '.assignees | join(",")')
 
-  gh issue create -R "$REPO" \
+  issue_url=$(gh issue create -R "$REPO" \
     --title "$title" \
     ${body:+--body "$body"} \
     ${labels:+--label "$labels"} \
     ${milestone:+--milestone "$milestone"} \
-    ${assignees:+--assignee "$assignees"}
+    ${assignees:+--assignee "$assignees"})
 
-  echo " Created: $title"
+  echo " Created: $title ($issue_url)"
+
+  # Add the new issue to the project board
+  gh project item-create --project "https://github.com/orgs/flexinfer/projects/1" --add-url "$issue_url"
+  echo "   └── Added to project board."
 done
