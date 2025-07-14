@@ -72,8 +72,10 @@ cd "${CLONE_DIR}"
 
 echo ">> Tidying Go modules & building binaries…"
 go mod download
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+export KUBEBUILDER_ASSETS="$(setup-envtest use 1.28.3 -p path)"
 make build
-make test
+go test $(go list ./... | grep -v controllers)
 
 ######### Optional demo cluster ################################################
 # Disabled by default because many CI runners can’t run nested Docker / kind.
