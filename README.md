@@ -149,7 +149,7 @@ A deeper dive into each component lives in AGENTS.md.
 
 - [ ] Add support for more LLM backends (e.g., TGI, SGL)
 - [ ] Implement a more sophisticated scoring algorithm
-- [ ] Add support for multi-GPU nodes
+- [x] Add support for multi-GPU nodes
 - [ ] Add support for more cloud providers
 - [ ] Add more tests
 - [ ] Add more documentation
