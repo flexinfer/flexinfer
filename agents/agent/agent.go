@@ -78,16 +78,37 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 
 // detectGPU populates the label map with GPU-related features.
 func (a *Agent) detectGPU(labels map[string]string) {
-	// Placeholder: In a real implementation, this would shell out to tools
-	// like `lspci`, `nvidia-smi`, or `rocm-smi`.
-	labels[a.labelPrefix+"gpu.vendor"] = "NVIDIA"
-	labels[a.labelPrefix+"gpu.vram"] = "24Gi"
-	labels[a.labelPrefix+"gpu.arch"] = "sm_89"
-	labels[a.labelPrefix+"gpu.int4"] = "true"
+	vendor := os.Getenv("GPU_VENDOR")
+	if vendor == "" {
+		vendor = "NVIDIA"
+	}
+
+	vram := os.Getenv("GPU_VRAM")
+	if vram == "" {
+		vram = "24Gi"
+	}
+
+	arch := os.Getenv("GPU_ARCH")
+	if arch == "" {
+		arch = "sm_89"
+	}
+
+	int4 := os.Getenv("GPU_INT4")
+	if int4 == "" {
+		int4 = "true"
+	}
+
+	labels[a.labelPrefix+"gpu.vendor"] = vendor
+	labels[a.labelPrefix+"gpu.vram"] = vram
+	labels[a.labelPrefix+"gpu.arch"] = arch
+	labels[a.labelPrefix+"gpu.int4"] = int4
 }
 
 // detectCPU populates the label map with CPU-related features.
 func (a *Agent) detectCPU(labels map[string]string) {
-	// Placeholder: In a real implementation, this would inspect /proc/cpuinfo.
-	labels[a.labelPrefix+"cpu.avx512"] = "false"
+	avx := os.Getenv("CPU_AVX512")
+	if avx == "" {
+		avx = "false"
+	}
+	labels[a.labelPrefix+"cpu.avx512"] = avx
 }
