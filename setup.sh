@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# setup.sh — provision a host so that Codex / CI can build & test
-#            https://github.com/flexinfer/flexinfer
+# setup.sh — Provision a fresh Ubuntu-like host so that Codex / CI can
+#            compile, test, and optionally demo the flexinfer/flexinfer repo.
 
 set -euo pipefail
 
@@ -32,11 +32,10 @@ if ! command -v docker >/dev/null; then
   curl -fsSL https://get.docker.com | sh
 fi
 
-# Add effective user to group *if* we’re not running as root‑only CI
-login_user="${SUDO_USER:-${USER:-$(id -un)}}"   # safe even when $USER unset
+# Add the effective login user to the docker group when appropriate.
+login_user="${SUDO_USER:-${USER:-$(id -un)}}"         # SUDO_USER → USER → id -un
 if [[ "${login_user}" != "root" ]] && getent passwd "${login_user}" >/dev/null; then
-  sudo usermod -aG docker "${login_user}" || \
-    echo "⚠️  Could not add ${login_user} to group docker (continuing)"
+  sudo usermod -aG docker "${login_user}" 2>/dev/null || true
   echo "   (Log out/in or run 'newgrp docker' for group change to take effect)"
 fi
 
@@ -77,7 +76,8 @@ make build
 make test
 
 ######### Optional demo cluster ################################################
-if [[ "${RUN_DEMO:-yes}" == "yes" ]]; then
+# Disabled by default because many CI runners can’t run nested Docker / kind.
+if [[ "${RUN_DEMO:-no}" == "yes" ]]; then
   echo ">> Spinning up a local kind cluster '${KIND_CLUSTER_NAME}'…"
   kind create cluster --name "${KIND_CLUSTER_NAME}" \
       --config hack/kind-mixed-gpu.yaml || true
@@ -86,10 +86,10 @@ if [[ "${RUN_DEMO:-yes}" == "yes" ]]; then
   helm repo add flexinfer https://flexinfer.github.io/charts
   helm repo update
   helm install flexinfer flexinfer/flexinfer \
-      --namespace flexinfer-system --create-namespace
+      --namespace flexinfer-system --create-namespace || true
 
-  echo ">> Deploying sample Llama‑3 8B model…"
-  kubectl apply -f examples/llama3-8b.yaml
+  echo ">> Deploying sample Llama-3 8B model…"
+  kubectl apply -f examples/llama3-8b.yaml || true
   echo "   Use 'kubectl get pods -l flexinfer.ai/model=llama3-8b -o wide' to watch placement."
 fi
 
