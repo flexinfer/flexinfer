@@ -194,6 +194,8 @@ Lint: golangci-lint run
 
 We love contributions of all kinds—code, docs, bug reports. Start by reading our CONTRIBUTING.md and look for issues tagged good first issue.
 
+Please see our [Code of Conduct](CODE_OF_CONDUCT.md) for community guidelines and the [Security Policy](SECURITY.md) for how to report vulnerabilities.
+
 ---
 
 📜 License
