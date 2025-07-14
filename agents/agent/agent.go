@@ -98,10 +98,16 @@ func (a *Agent) detectGPU(labels map[string]string) {
 		int4 = "true"
 	}
 
+	count := os.Getenv("GPU_COUNT")
+	if count == "" {
+		count = "1"
+	}
+
 	labels[a.labelPrefix+"gpu.vendor"] = vendor
 	labels[a.labelPrefix+"gpu.vram"] = vram
 	labels[a.labelPrefix+"gpu.arch"] = arch
 	labels[a.labelPrefix+"gpu.int4"] = int4
+	labels[a.labelPrefix+"gpu.count"] = count
 }
 
 // detectCPU populates the label map with CPU-related features.

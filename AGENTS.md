@@ -24,6 +24,7 @@ This document explains what each agent does, how they communicate, and which opt
 | `flexinfer.ai/gpu.vram` | `24Gi` | MiB rounded down to GiB |
 | `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | Exposed by `rocm-smi` / `nvidia-smi` |
 | `flexinfer.ai/gpu.int4` | `true` | Capability to run INT4 kernels |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs on the node |
 | `flexinfer.ai/cpu.avx512` | `false` | Allows CPU-fallback scoring |
 
 ### Config flags
