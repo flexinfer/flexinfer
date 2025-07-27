@@ -444,25 +444,25 @@ func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDepl
 	// - Check if cluster has GPU nodes available
 	// - Validate specific GPU types/models
 	// - Check resource quotas
-	
+
 	// Basic validation: ensure backend supports GPU workloads
 	supportedBackends := map[string]bool{
 		"ollama": true,
 		"vllm":   true,
 		"tgi":    true, // Text Generation Inference
 	}
-	
+
 	if !supportedBackends[m.Spec.Backend] {
 		return fmt.Errorf("backend %s is not supported for GPU workloads", m.Spec.Backend)
 	}
-	
+
 	return nil
 }
 
 // cleanupModelDeployment handles cleanup of all resources when ModelDeployment is deleted
 func (r *ModelDeploymentReconciler) cleanupModelDeployment(ctx context.Context, m *aiv1alpha1.ModelDeployment) error {
 	log := log.FromContext(ctx)
-	
+
 	// Clean up Deployment
 	deployment := &appsv1.Deployment{}
 	err := r.Get(ctx, types.NamespacedName{Name: m.Name, Namespace: m.Namespace}, deployment)
@@ -552,12 +552,11 @@ func removeString(slice []string, s string) []string {
 
 // updateModelDeploymentStatus updates the overall status of the ModelDeployment
 func (r *ModelDeploymentReconciler) updateModelDeploymentStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, phase aiv1alpha1.ModelDeploymentPhase, message string) error {
-	// Create a copy to avoid modifying the original
-	updated := m.DeepCopy()
-	updated.Status.Phase = phase
-	
+	// Update the original object so tests can verify changes
+	m.Status.Phase = phase
+
 	// Update the progressing condition
-	return r.updateCondition(ctx, updated, aiv1alpha1.ConditionTypeProgressing, metav1.ConditionTrue, aiv1alpha1.ReasonReconciling, message)
+	return r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeProgressing, metav1.ConditionTrue, aiv1alpha1.ReasonReconciling, message)
 }
 
 // updateCondition updates a specific condition in the ModelDeployment status
@@ -570,9 +569,9 @@ func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1
 			break
 		}
 	}
-	
+
 	now := metav1.NewTime(time.Now())
-	
+
 	if existingCondition != nil {
 		// Update existing condition
 		if existingCondition.Status != status || existingCondition.Reason != reason || existingCondition.Message != message {
@@ -592,29 +591,28 @@ func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1
 		}
 		m.Status.Conditions = append(m.Status.Conditions, newCondition)
 	}
-	
+
 	// Update the status
 	return r.Status().Update(ctx, m)
 }
 
 // updateEndpointStatus updates the endpoint information in the status
 func (r *ModelDeploymentReconciler) updateEndpointStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, service *corev1.Service) error {
-	updated := m.DeepCopy()
-	
-	if updated.Status.Endpoints == nil {
-		updated.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
+	// Update the original object so tests can verify changes
+	if m.Status.Endpoints == nil {
+		m.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
 	}
-	
+
 	// Set internal endpoint
-	updated.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
+	m.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
 		service.Name, service.Namespace, service.Spec.Ports[0].Port)
-	
+
 	// Update endpoint ready condition
-	if err := r.updateCondition(ctx, updated, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
+	if err := r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
 		return err
 	}
-	
-	return r.Status().Update(ctx, updated)
+
+	return r.Status().Update(ctx, m)
 }
 
 // labelsForModelDeployment returns the labels for selecting the resources
@@ -627,7 +625,7 @@ func labelsForModelDeployment(name string) map[string]string {
 func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize the event recorder
 	r.Recorder = mgr.GetEventRecorderFor("modeldeployment-controller")
-	
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha1.ModelDeployment{}).
 		Owns(&appsv1.Deployment{}).

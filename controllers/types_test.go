@@ -387,6 +387,7 @@ func TestBenchmarkSpecStructure(t *testing.T) {
 				MinDuration:      &metav1.Duration{Duration: metav1.Duration{Duration: 300000000000}.Duration}, // 5 minutes
 			},
 			expectedWarmupIterations: func() *int32 { i := int32(5); return &i }(),
+			expectedMinDuration:      &metav1.Duration{Duration: metav1.Duration{Duration: 300000000000}.Duration}, // Match the actual value
 		},
 		{
 			name: "Minimal benchmark configuration",
