@@ -4,9 +4,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
 
+	"golang.org/x/sys/cpu"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -18,6 +24,7 @@ type Agent struct {
 	kubeClient  kubernetes.Interface
 	nodeName    string
 	labelPrefix string
+	runCmd      func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 // NewAgent creates a new Agent.
@@ -40,6 +47,9 @@ func NewAgent(labelPrefix string) (*Agent, error) {
 		kubeClient:  clientset,
 		nodeName:    nodeName,
 		labelPrefix: labelPrefix,
+		runCmd: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		},
 	}, nil
 }
 
@@ -49,7 +59,7 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 	log.Info("Probing for hardware capabilities...")
 
 	labels := make(map[string]string)
-	a.detectGPU(labels)
+	a.detectGPU(ctx, labels)
 	a.detectCPU(labels)
 
 	log.Info("Applying labels", "labels", labels)
@@ -77,44 +87,96 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 }
 
 // detectGPU populates the label map with GPU-related features.
-func (a *Agent) detectGPU(labels map[string]string) {
-	vendor := os.Getenv("GPU_VENDOR")
-	if vendor == "" {
-		vendor = "NVIDIA"
+func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
+	log := log.FromContext(ctx)
+
+	out, err := a.runCmd(ctx, "nvidia-smi", "--query-gpu=memory.total,compute_cap", "--format=csv,noheader")
+	if err == nil {
+		a.parseNvidia(string(out), labels)
+		return
 	}
 
-	vram := os.Getenv("GPU_VRAM")
-	if vram == "" {
-		vram = "24Gi"
+	out, err = a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+	if err == nil {
+		archOut, _ := a.runCmd(ctx, "rocminfo")
+		a.parseRocm(string(out), string(archOut), labels)
+		return
 	}
 
-	arch := os.Getenv("GPU_ARCH")
-	if arch == "" {
-		arch = "sm_89"
-	}
-
-	int4 := os.Getenv("GPU_INT4")
-	if int4 == "" {
-		int4 = "true"
-	}
-
-	count := os.Getenv("GPU_COUNT")
-	if count == "" {
-		count = "1"
-	}
-
-	labels[a.labelPrefix+"gpu.vendor"] = vendor
-	labels[a.labelPrefix+"gpu.vram"] = vram
-	labels[a.labelPrefix+"gpu.arch"] = arch
-	labels[a.labelPrefix+"gpu.int4"] = int4
-	labels[a.labelPrefix+"gpu.count"] = count
+	log.Info("no GPU detected")
 }
 
 // detectCPU populates the label map with CPU-related features.
 func (a *Agent) detectCPU(labels map[string]string) {
-	avx := os.Getenv("CPU_AVX512")
-	if avx == "" {
-		avx = "false"
+	labels[a.labelPrefix+"cpu.avx512"] = strconv.FormatBool(cpu.X86.HasAVX512)
+}
+
+// parseNvidia parses output from nvidia-smi and fills the GPU labels.
+func (a *Agent) parseNvidia(out string, labels map[string]string) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) == 0 || len(strings.TrimSpace(lines[0])) == 0 {
+		return
 	}
-	labels[a.labelPrefix+"cpu.avx512"] = avx
+
+	memLine := strings.Split(lines[0], ",")
+	if len(memLine) < 2 {
+		return
+	}
+
+	memFields := strings.Fields(strings.TrimSpace(memLine[0]))
+	if len(memFields) > 0 {
+		if miB, err := strconv.Atoi(memFields[0]); err == nil {
+			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", miB/1024)
+		}
+	}
+
+	cc := strings.TrimSpace(memLine[1])
+	ccParts := strings.Split(cc, ".")
+	arch := ""
+	if len(ccParts) >= 2 {
+		arch = fmt.Sprintf("sm_%s%s", ccParts[0], ccParts[1])
+	}
+	labels[a.labelPrefix+"gpu.arch"] = arch
+	if major, err := strconv.Atoi(ccParts[0]); err == nil && major >= 8 {
+		labels[a.labelPrefix+"gpu.int4"] = "true"
+	} else {
+		labels[a.labelPrefix+"gpu.int4"] = "false"
+	}
+
+	labels[a.labelPrefix+"gpu.vendor"] = "NVIDIA"
+	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(lines))
+}
+
+// parseRocm parses output from rocm-smi and rocminfo to fill GPU labels.
+func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
+	var data map[string]map[string]interface{}
+	if err := json.Unmarshal([]byte(smiOut), &data); err != nil {
+		return
+	}
+	labels[a.labelPrefix+"gpu.vendor"] = "AMD"
+	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(data))
+
+	for _, v := range data {
+		for key, val := range v {
+			k := strings.ToLower(key)
+			if strings.Contains(k, "vram") && strings.Contains(k, "total") {
+				str := fmt.Sprint(val)
+				num, _ := strconv.Atoi(strings.Fields(str)[0])
+				// value may be in MiB or bytes; assume MiB if < 1e7
+				if num > 1<<30 {
+					num = num / (1024 * 1024)
+				}
+				labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", num/1024)
+				break
+			}
+		}
+		break
+	}
+
+	re := regexp.MustCompile(`gfx[0-9a-z]+`)
+	if match := re.FindString(infoOut); match != "" {
+		labels[a.labelPrefix+"gpu.arch"] = match
+	}
+
+	labels[a.labelPrefix+"gpu.int4"] = "true"
 }
