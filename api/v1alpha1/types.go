@@ -21,6 +21,53 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// ModelDeploymentFinalizer is the finalizer used for ModelDeployment cleanup
+	ModelDeploymentFinalizer = "flexinfer.ai/cleanup"
+)
+
+// Condition types for ModelDeployment status
+const (
+	// ConditionTypeReady indicates the ModelDeployment is ready to serve requests
+	ConditionTypeReady = "Ready"
+	
+	// ConditionTypeGPUAllocated indicates a GPU has been allocated
+	ConditionTypeGPUAllocated = "GPUAllocated"
+	
+	// ConditionTypeModelLoaded indicates the model has been loaded successfully
+	ConditionTypeModelLoaded = "ModelLoaded"
+	
+	// ConditionTypeEndpointReady indicates the service endpoint is ready
+	ConditionTypeEndpointReady = "EndpointReady"
+	
+	// ConditionTypeProgressing indicates the ModelDeployment is progressing
+	ConditionTypeProgressing = "Progressing"
+)
+
+// Condition reasons
+const (
+	// ReasonReconciling indicates the resource is being reconciled
+	ReasonReconciling = "Reconciling"
+	
+	// ReasonGPUAllocated indicates GPU has been successfully allocated
+	ReasonGPUAllocated = "GPUAllocated"
+	
+	// ReasonGPUAllocationFailed indicates GPU allocation failed
+	ReasonGPUAllocationFailed = "GPUAllocationFailed"
+	
+	// ReasonDeploymentReady indicates the deployment is ready
+	ReasonDeploymentReady = "DeploymentReady"
+	
+	// ReasonServiceReady indicates the service is ready
+	ReasonServiceReady = "ServiceReady"
+	
+	// ReasonModelLoadFailed indicates model loading failed
+	ReasonModelLoadFailed = "ModelLoadFailed"
+	
+	// ReasonValidationFailed indicates validation failed
+	ReasonValidationFailed = "ValidationFailed"
+)
+
 // ModelDeploymentSpec defines the desired state of ModelDeployment
 type ModelDeploymentSpec struct {
 	// Backend is the name of the LLM backend to use (e.g., ollama, vllm).
@@ -59,14 +106,89 @@ type BenchmarkSpec struct {
 
 // ModelDeploymentStatus defines the observed state of ModelDeployment
 type ModelDeploymentStatus struct {
+	// Phase represents the current phase of the ModelDeployment
+	// +optional
+	Phase ModelDeploymentPhase `json:"phase,omitempty"`
+
 	// Conditions represent the latest available observations of the ModelDeployment's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// AllocatedGPU contains information about the allocated GPU
+	// +optional
+	AllocatedGPU *GPUAllocation `json:"allocatedGPU,omitempty"`
+
+	// Endpoints contains the service endpoints for accessing the model
+	// +optional
+	Endpoints *ModelEndpoints `json:"endpoints,omitempty"`
+
+	// Metrics contains runtime metrics for the deployment
+	// +optional
+	Metrics *ModelMetrics `json:"metrics,omitempty"`
 
 	// TokensPerSecond is the measured tokens per second for the model on a specific device class.
 	// Stored as a string to avoid precision issues with floats.
 	// +optional
 	TokensPerSecond string `json:"tokensPerSecond,omitempty"`
+}
+
+// ModelDeploymentPhase represents the current phase of a ModelDeployment
+type ModelDeploymentPhase string
+
+const (
+	// ModelDeploymentPhasePending indicates the ModelDeployment is being processed
+	ModelDeploymentPhasePending ModelDeploymentPhase = "Pending"
+	// ModelDeploymentPhaseRunning indicates the ModelDeployment is running
+	ModelDeploymentPhaseRunning ModelDeploymentPhase = "Running"
+	// ModelDeploymentPhaseFailed indicates the ModelDeployment has failed
+	ModelDeploymentPhaseFailed ModelDeploymentPhase = "Failed"
+	// ModelDeploymentPhaseTerminating indicates the ModelDeployment is being terminated
+	ModelDeploymentPhaseTerminating ModelDeploymentPhase = "Terminating"
+)
+
+// GPUAllocation represents the GPU allocation details
+type GPUAllocation struct {
+	// Node is the name of the node where the GPU is allocated
+	// +optional
+	Node string `json:"node,omitempty"`
+
+	// Device is the GPU device index
+	// +optional
+	Device string `json:"device,omitempty"`
+
+	// Type is the GPU type/model
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// MemoryMB is the GPU memory in megabytes
+	// +optional
+	MemoryMB int64 `json:"memoryMB,omitempty"`
+}
+
+// ModelEndpoints represents the service endpoints
+type ModelEndpoints struct {
+	// Internal is the internal cluster endpoint
+	// +optional
+	Internal string `json:"internal,omitempty"`
+
+	// External is the external endpoint if exposed
+	// +optional
+	External string `json:"external,omitempty"`
+}
+
+// ModelMetrics represents runtime metrics
+type ModelMetrics struct {
+	// TotalRequests is the total number of requests processed
+	// +optional
+	TotalRequests int64 `json:"totalRequests,omitempty"`
+
+	// AvgLatencyMs is the average latency in milliseconds
+	// +optional
+	AvgLatencyMs float64 `json:"avgLatencyMs,omitempty"`
+
+	// ErrorRate is the error rate as a percentage
+	// +optional
+	ErrorRate float64 `json:"errorRate,omitempty"`
 }
 
 //+kubebuilder:object:root=true

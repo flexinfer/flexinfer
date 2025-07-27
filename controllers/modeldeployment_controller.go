@@ -26,10 +26,12 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -40,7 +42,8 @@ import (
 // ModelDeploymentReconciler reconciles a ModelDeployment object
 type ModelDeploymentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modeldeployments,verbs=get;list;watch;create;update;patch;delete
@@ -66,6 +69,61 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "Failed to get ModelDeployment")
+		return ctrl.Result{}, err
+	}
+
+	// Handle finalizer logic for cleanup
+	if modelDeployment.ObjectMeta.DeletionTimestamp.IsZero() {
+		// Object is not being deleted, ensure finalizer is present
+		if !containsString(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer) {
+			modelDeployment.SetFinalizers(append(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer))
+			if err := r.Update(ctx, modelDeployment); err != nil {
+				log.Error(err, "Failed to add finalizer")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+	} else {
+		// Object is being deleted
+		if containsString(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer) {
+			// Perform cleanup operations
+			if err := r.cleanupModelDeployment(ctx, modelDeployment); err != nil {
+				log.Error(err, "Failed to cleanup ModelDeployment resources")
+				return ctrl.Result{}, err
+			}
+
+			// Remove finalizer to allow deletion
+			modelDeployment.SetFinalizers(removeString(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer))
+			if err := r.Update(ctx, modelDeployment); err != nil {
+				log.Error(err, "Failed to remove finalizer")
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Initialize status if needed
+	if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhasePending, "Initializing ModelDeployment"); err != nil {
+		log.Error(err, "Failed to update initial status")
+		return ctrl.Result{}, err
+	}
+
+	// Record event for reconciliation start
+	r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, aiv1alpha1.ReasonReconciling, "Starting ModelDeployment reconciliation")
+
+	// Validate GPU resource requirements
+	if err := r.validateGPUResources(modelDeployment); err != nil {
+		log.Error(err, "GPU resource validation failed")
+		r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, aiv1alpha1.ReasonValidationFailed, fmt.Sprintf("GPU validation failed: %v", err))
+		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, aiv1alpha1.ReasonValidationFailed, err.Error()); err != nil {
+			log.Error(err, "Failed to update condition")
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Update condition for GPU validation success
+	if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeGPUAllocated, metav1.ConditionTrue, aiv1alpha1.ReasonGPUAllocated, "GPU resources validated and will be allocated"); err != nil {
+		log.Error(err, "Failed to update GPU condition")
 		return ctrl.Result{}, err
 	}
 
@@ -159,17 +217,40 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// Define a new service
 		svc := r.serviceForModelDeployment(modelDeployment)
 		log.Info("Creating a new Service", "Service.Namespace", svc.Namespace, "Service.Name", svc.Name)
+		r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ServiceCreating", "Creating service for ModelDeployment")
 		if err = r.Create(ctx, svc); err != nil {
 			log.Error(err, "Failed to create new Service", "Service.Namespace", svc.Namespace, "Service.Name", svc.Name)
+			r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, "ServiceCreateFailed", fmt.Sprintf("Failed to create service: %v", err))
 			return ctrl.Result{}, err
 		}
+		r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ServiceCreated", "Service created successfully")
 		// Service created successfully - return and requeue
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
 		log.Error(err, "Failed to get Service")
+		r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, "ServiceGetFailed", fmt.Sprintf("Failed to get service: %v", err))
 		return ctrl.Result{}, err
 	}
 
+	// Update endpoint status now that service exists
+	if err := r.updateEndpointStatus(ctx, modelDeployment, service); err != nil {
+		log.Error(err, "Failed to update endpoint status")
+		return ctrl.Result{}, err
+	}
+
+	// All resources are ready - update final status
+	if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhaseRunning, "ModelDeployment is running successfully"); err != nil {
+		log.Error(err, "Failed to update final status")
+		return ctrl.Result{}, err
+	}
+
+	// Update Ready condition
+	if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionTrue, aiv1alpha1.ReasonDeploymentReady, "All resources are ready and healthy"); err != nil {
+		log.Error(err, "Failed to update Ready condition")
+		return ctrl.Result{}, err
+	}
+
+	r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ReconcileComplete", "ModelDeployment reconciliation completed successfully")
 	return ctrl.Result{}, nil
 }
 
@@ -193,6 +274,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
+					NodeSelector: r.getNodeSelector(m),
 					Containers: []corev1.Container{{
 						Image: r.getBackendImage(),
 						Name:  "llm-backend",
@@ -200,16 +282,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 							ContainerPort: 11434,
 							Name:          "http",
 						}},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    m.Spec.Resources.Requests[corev1.ResourceCPU],
-								corev1.ResourceMemory: m.Spec.Resources.Requests[corev1.ResourceMemory],
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    m.Spec.Resources.Limits[corev1.ResourceCPU],
-								corev1.ResourceMemory: m.Spec.Resources.Limits[corev1.ResourceMemory],
-							},
-						},
+						Resources: r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-cache",
 							MountPath: "/models",
@@ -321,6 +394,229 @@ func (r *ModelDeploymentReconciler) getBackendImage() string {
 	return "ghcr.io/flexinfer/ollama:latest"
 }
 
+// getNodeSelector returns the node selector for GPU nodes
+func (r *ModelDeploymentReconciler) getNodeSelector(m *aiv1alpha1.ModelDeployment) map[string]string {
+	// Ensure GPU workloads are scheduled only on nodes with GPUs
+	return map[string]string{
+		"flexinfer.ai/gpu-present": "true",
+	}
+}
+
+// getResourceRequirements returns the resource requirements including GPU resources
+func (r *ModelDeploymentReconciler) getResourceRequirements(m *aiv1alpha1.ModelDeployment) corev1.ResourceRequirements {
+	requirements := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{},
+		Limits:   corev1.ResourceList{},
+	}
+
+	// Add CPU and Memory resources from spec if present
+	if m.Spec.Resources.Requests != nil {
+		if cpu := m.Spec.Resources.Requests[corev1.ResourceCPU]; !cpu.IsZero() {
+			requirements.Requests[corev1.ResourceCPU] = cpu
+		}
+		if memory := m.Spec.Resources.Requests[corev1.ResourceMemory]; !memory.IsZero() {
+			requirements.Requests[corev1.ResourceMemory] = memory
+		}
+	}
+
+	if m.Spec.Resources.Limits != nil {
+		if cpu := m.Spec.Resources.Limits[corev1.ResourceCPU]; !cpu.IsZero() {
+			requirements.Limits[corev1.ResourceCPU] = cpu
+		}
+		if memory := m.Spec.Resources.Limits[corev1.ResourceMemory]; !memory.IsZero() {
+			requirements.Limits[corev1.ResourceMemory] = memory
+		}
+	}
+
+	// CRITICAL FIX: Add GPU resource requests
+	// Ensure all ModelDeployment pods request at least 1 GPU
+	// This prevents pods from being scheduled on non-GPU nodes
+	requirements.Requests["nvidia.com/gpu"] = *resource.NewQuantity(1, resource.DecimalSI)
+	requirements.Limits["nvidia.com/gpu"] = *resource.NewQuantity(1, resource.DecimalSI)
+
+	return requirements
+}
+
+// validateGPUResources validates that GPU resources are properly configured
+func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDeployment) error {
+	// For now, we ensure that GPU resources will be added by our controller
+	// In future iterations, we could add more sophisticated validation:
+	// - Check if cluster has GPU nodes available
+	// - Validate specific GPU types/models
+	// - Check resource quotas
+	
+	// Basic validation: ensure backend supports GPU workloads
+	supportedBackends := map[string]bool{
+		"ollama": true,
+		"vllm":   true,
+		"tgi":    true, // Text Generation Inference
+	}
+	
+	if !supportedBackends[m.Spec.Backend] {
+		return fmt.Errorf("backend %s is not supported for GPU workloads", m.Spec.Backend)
+	}
+	
+	return nil
+}
+
+// cleanupModelDeployment handles cleanup of all resources when ModelDeployment is deleted
+func (r *ModelDeploymentReconciler) cleanupModelDeployment(ctx context.Context, m *aiv1alpha1.ModelDeployment) error {
+	log := log.FromContext(ctx)
+	
+	// Clean up Deployment
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: m.Name, Namespace: m.Namespace}, deployment)
+	if err == nil {
+		log.Info("Cleaning up Deployment", "Deployment.Name", deployment.Name)
+		if err := r.Delete(ctx, deployment); err != nil {
+			return fmt.Errorf("failed to delete deployment: %w", err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get deployment for cleanup: %w", err)
+	}
+
+	// Clean up Service
+	service := &corev1.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: m.Name, Namespace: m.Namespace}, service)
+	if err == nil {
+		log.Info("Cleaning up Service", "Service.Name", service.Name)
+		if err := r.Delete(ctx, service); err != nil {
+			return fmt.Errorf("failed to delete service: %w", err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get service for cleanup: %w", err)
+	}
+
+	// Clean up PVC
+	pvc := &corev1.PersistentVolumeClaim{}
+	err = r.Get(ctx, types.NamespacedName{Name: m.Name, Namespace: m.Namespace}, pvc)
+	if err == nil {
+		log.Info("Cleaning up PVC", "PVC.Name", pvc.Name)
+		if err := r.Delete(ctx, pvc); err != nil {
+			return fmt.Errorf("failed to delete pvc: %w", err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get pvc for cleanup: %w", err)
+	}
+
+	// Clean up benchmark Job
+	job := &batchv1.Job{}
+	jobName := r.benchmarkJobName(m)
+	err = r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: m.Namespace}, job)
+	if err == nil {
+		log.Info("Cleaning up benchmark Job", "Job.Name", job.Name)
+		if err := r.Delete(ctx, job); err != nil {
+			return fmt.Errorf("failed to delete benchmark job: %w", err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get benchmark job for cleanup: %w", err)
+	}
+
+	// Clean up benchmark ConfigMap
+	configMap := &corev1.ConfigMap{}
+	configMapName := r.benchmarkConfigMapName(m)
+	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: m.Namespace}, configMap)
+	if err == nil {
+		log.Info("Cleaning up benchmark ConfigMap", "ConfigMap.Name", configMap.Name)
+		if err := r.Delete(ctx, configMap); err != nil {
+			return fmt.Errorf("failed to delete benchmark configmap: %w", err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get benchmark configmap for cleanup: %w", err)
+	}
+
+	log.Info("ModelDeployment cleanup completed successfully")
+	return nil
+}
+
+// containsString checks if a slice contains a string
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// removeString removes a string from a slice
+func removeString(slice []string, s string) []string {
+	var result []string
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// updateModelDeploymentStatus updates the overall status of the ModelDeployment
+func (r *ModelDeploymentReconciler) updateModelDeploymentStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, phase aiv1alpha1.ModelDeploymentPhase, message string) error {
+	// Create a copy to avoid modifying the original
+	updated := m.DeepCopy()
+	updated.Status.Phase = phase
+	
+	// Update the progressing condition
+	return r.updateCondition(ctx, updated, aiv1alpha1.ConditionTypeProgressing, metav1.ConditionTrue, aiv1alpha1.ReasonReconciling, message)
+}
+
+// updateCondition updates a specific condition in the ModelDeployment status
+func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1alpha1.ModelDeployment, conditionType string, status metav1.ConditionStatus, reason, message string) error {
+	// Find existing condition
+	var existingCondition *metav1.Condition
+	for i := range m.Status.Conditions {
+		if m.Status.Conditions[i].Type == conditionType {
+			existingCondition = &m.Status.Conditions[i]
+			break
+		}
+	}
+	
+	now := metav1.NewTime(time.Now())
+	
+	if existingCondition != nil {
+		// Update existing condition
+		if existingCondition.Status != status || existingCondition.Reason != reason || existingCondition.Message != message {
+			existingCondition.Status = status
+			existingCondition.Reason = reason
+			existingCondition.Message = message
+			existingCondition.LastTransitionTime = now
+		}
+	} else {
+		// Add new condition
+		newCondition := metav1.Condition{
+			Type:               conditionType,
+			Status:             status,
+			LastTransitionTime: now,
+			Reason:             reason,
+			Message:            message,
+		}
+		m.Status.Conditions = append(m.Status.Conditions, newCondition)
+	}
+	
+	// Update the status
+	return r.Status().Update(ctx, m)
+}
+
+// updateEndpointStatus updates the endpoint information in the status
+func (r *ModelDeploymentReconciler) updateEndpointStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, service *corev1.Service) error {
+	updated := m.DeepCopy()
+	
+	if updated.Status.Endpoints == nil {
+		updated.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
+	}
+	
+	// Set internal endpoint
+	updated.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
+		service.Name, service.Namespace, service.Spec.Ports[0].Port)
+	
+	// Update endpoint ready condition
+	if err := r.updateCondition(ctx, updated, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
+		return err
+	}
+	
+	return r.Status().Update(ctx, updated)
+}
+
 // labelsForModelDeployment returns the labels for selecting the resources
 // belonging to the given ModelDeployment CR name.
 func labelsForModelDeployment(name string) map[string]string {
@@ -329,6 +625,9 @@ func labelsForModelDeployment(name string) map[string]string {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize the event recorder
+	r.Recorder = mgr.GetEventRecorderFor("modeldeployment-controller")
+	
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha1.ModelDeployment{}).
 		Owns(&appsv1.Deployment{}).
