@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.loom.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/cblevins/.local/bin/loomd</string>
+        <string>--registry</string>
+        <string>/Users/cblevins/workspace/gitops/mcp/context/registry.yaml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/cblevins/.config/loom/logs/daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/cblevins/.config/loom/logs/daemon.err</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/cblevins/workspace/gitops</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/cblevins</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
