@@ -12,7 +12,13 @@ import (
 )
 
 // GenerateConfigs generates MCP client configurations.
+// registryPath is used to determine the repo root for resolving ${repo} tokens.
 func GenerateConfigs(reg *registry.Registry, outputDir string, targets []string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+	return GenerateConfigsWithPath(reg, "", outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
+}
+
+// GenerateConfigsWithPath generates MCP client configurations with an explicit registry path.
+func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, outputDir string, targets []string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
@@ -21,17 +27,22 @@ func GenerateConfigs(reg *registry.Registry, outputDir string, targets []string,
 		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity"}
 	}
 
+	// Resolve repo root from registry path
+	repoRoot := registry.GetRepoRoot(registryPath)
+
 	for _, target := range targets {
 		var err error
 		switch target {
-		case "vscode":
-			err = generateVSCodeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary)
+		case "vscode", "antigravity":
+			// VSCode and Antigravity (VSCode fork) use mcp.json format
+			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, repoRoot)
 		case "claude":
-			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary)
+			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, repoRoot)
 		case "claude_desktop":
-			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary)
+			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, repoRoot)
 		default:
-			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary)
+			// Codex, Kilocode, Gemini use TOML format
+			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, repoRoot)
 		}
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
@@ -41,7 +52,7 @@ func GenerateConfigs(reg *registry.Registry, outputDir string, targets []string,
 	return nil
 }
 
-func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string) (map[string]*registry.TargetSpec, error) {
+func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string, repoRoot string) (map[string]*registry.TargetSpec, error) {
 	if loomMode {
 		return map[string]*registry.TargetSpec{
 			"loom": {
@@ -56,7 +67,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 	}
 
 	resolved := make(map[string]*registry.TargetSpec)
-	repoPath, _ := os.Getwd() // Assuming running from repo root
+	repoPath := repoRoot // Use provided repo root instead of cwd
 
 	for _, server := range reg.Servers {
 		spec, err := reg.GetServerSpec(server.Name, target)
@@ -114,46 +125,39 @@ func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile str
 	}
 }
 
-func generateVSCodeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
-	return generateJSONConfig(reg, outputDir, "vscode", hubMode, hubURL, loomMode, loomBinary)
+func generateVSCodeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
+	return generateJSONConfig(reg, outputDir, "vscode", hubMode, hubURL, loomMode, loomBinary, repoRoot)
 }
 
-func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
-	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary)
+func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
+	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary, repoRoot)
 }
 
 // generateJSONConfig generates mcp.json format configs for vscode and claude targets
-func generateJSONConfig(reg *registry.Registry, outputDir string, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+// Uses "mcpServers" as root key per Claude Code CLI specification
+func generateJSONConfig(reg *registry.Registry, outputDir string, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
 	// Use the actual target from registry (claude, vscode, etc.)
 	// The registry.GetServerSpec() will fall back to common config if target not found
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary)
+	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, repoRoot)
 	if err != nil {
 		return err
 	}
 
 	type JSONServer struct {
-		ID      string            `json:"id"`
-		Type    string            `json:"type"`
 		Command string            `json:"command"`
 		Args    []string          `json:"args"`
 		Env     map[string]string `json:"env,omitempty"`
 	}
 
-	config := map[string]map[string]JSONServer{"servers": {}}
+	// Claude Code CLI expects "mcpServers" as the root key
+	config := map[string]map[string]JSONServer{"mcpServers": {}}
 	for name, spec := range targets {
 		args := []string{}
 		for _, a := range spec.Args {
 			args = append(args, fmt.Sprintf("%v", a))
 		}
 
-		srvType := spec.Type
-		if srvType == "" {
-			srvType = "stdio"
-		}
-
-		config["servers"][name] = JSONServer{
-			ID:      name,
-			Type:    srvType,
+		config["mcpServers"][name] = JSONServer{
 			Command: spec.Command,
 			Args:    args,
 			Env:     spec.Env,
@@ -172,9 +176,9 @@ func generateJSONConfig(reg *registry.Registry, outputDir string, target string,
 	return os.WriteFile(filepath.Join(destDir, "mcp.json"), data, 0644)
 }
 
-func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
 	// Claude Desktop uses claude_desktop target, falling back to common config
-	targets, err := buildTargetMap(reg, "claude_desktop", hubMode, hubURL, "claude_desktop", loomMode, loomBinary)
+	targets, err := buildTargetMap(reg, "claude_desktop", hubMode, hubURL, "claude_desktop", loomMode, loomBinary, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -211,8 +215,8 @@ func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMo
 	return os.WriteFile(filepath.Join(destDir, "claude_desktop_config.json"), data, 0644)
 }
 
-func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary)
+func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
+	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, repoRoot)
 	if err != nil {
 		return err
 	}

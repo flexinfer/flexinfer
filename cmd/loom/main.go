@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.1"
+var version = "0.2.0"
 
 func main() {
 	var socketPath string
@@ -149,7 +149,7 @@ Example config.toml:
 
 			cwd, _ := os.Getwd()
 			if registryPath == "" {
-				registryPath = filepath.Join(cwd, "mcp", "context", "registry.yaml")
+				registryPath = registry.FindRegistryOrDefault(filepath.Join(cwd, "mcp", "context", "registry.yaml"))
 			}
 
 			reg, err := registry.Load(registryPath)
@@ -185,7 +185,7 @@ Example config.toml:
 
 			cwd, _ := os.Getwd()
 			if registryPath == "" {
-				registryPath = filepath.Join(cwd, "mcp", "context", "registry.yaml")
+				registryPath = registry.FindRegistryOrDefault(filepath.Join(cwd, "mcp", "context", "registry.yaml"))
 			}
 
 			reg, err := registry.Load(registryPath)
@@ -203,7 +203,8 @@ Example config.toml:
 			}
 
 			fmt.Printf("Generating configs in %s...\n", outputDir)
-			return generator.GenerateConfigs(reg, outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
+			fmt.Printf("Using repo root: %s\n", registry.GetRepoRoot(registryPath))
+			return generator.GenerateConfigsWithPath(reg, registryPath, outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
 		},
 	}
 	genConfigsCmd.Flags().String("output-dir", "generated/mcp", "Output directory")
@@ -383,22 +384,11 @@ func startDaemon(socketPath, registryPath string) error {
 
 	// Auto-detect registry if not provided
 	if registryPath == "" {
-		home, _ := os.UserHomeDir()
-		candidates := []string{
-			filepath.Join(home, "workspace", "gitops", "mcp", "context", "registry.yaml"),
-			filepath.Join(home, ".config", "loom", "registry.yaml"),
-			filepath.Join(".", "mcp", "context", "registry.yaml"),
+		var found bool
+		registryPath, found = registry.FindRegistry()
+		if !found {
+			return fmt.Errorf("registry not found (pass --registry or place at ~/.config/loom/registry.yaml)")
 		}
-		for _, p := range candidates {
-			if _, err := os.Stat(p); err == nil {
-				registryPath = p
-				break
-			}
-		}
-	}
-
-	if registryPath == "" {
-		return fmt.Errorf("registry not found (pass --registry)")
 	}
 
 	// Try launchctl first (if installed)
@@ -517,7 +507,8 @@ func installService() error {
 	plistSources := []string{
 		filepath.Join(exeDir, "..", "launchd", launchdLabel+".plist"),
 		filepath.Join(exeDir, "launchd", launchdLabel+".plist"),
-		"/Users/cblevins/workspace/gitops/services/loom-core/launchd/" + launchdLabel + ".plist",
+		filepath.Join(home, "workspace", "services", "loom-core", "launchd", launchdLabel+".plist"),
+		filepath.Join(home, "workspace", "gitops", "services", "loom-core", "launchd", launchdLabel+".plist"),
 	}
 
 	var plistSrc string
@@ -633,24 +624,11 @@ func runDoctor(socketPath string) error {
 	}
 
 	// Check for registry
-	home, _ := os.UserHomeDir()
-	registryPaths := []string{
-		filepath.Join(home, "workspace", "gitops", "mcp", "context", "registry.yaml"),
-		filepath.Join(home, ".config", "loom", "registry.yaml"),
-		filepath.Join(".", "mcp", "context", "registry.yaml"),
-	}
-
 	fmt.Print("Registry: ")
-	found := false
-	for _, p := range registryPaths {
-		if _, err := os.Stat(p); err == nil {
-			fmt.Printf("OK (%s)\n", p)
-			found = true
-			break
-		}
-	}
-	if !found {
-		fmt.Println("NOT FOUND")
+	if regPath, found := registry.FindRegistry(); found {
+		fmt.Printf("OK (%s)\n", regPath)
+	} else {
+		fmt.Println("NOT FOUND (expected at ~/.config/loom/registry.yaml or ./mcp/context/registry.yaml)")
 	}
 
 	return nil

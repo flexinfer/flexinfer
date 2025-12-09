@@ -34,15 +34,19 @@ func ResolveTokens(value string, repoPath string, context string) string {
 		value = homeRegex.ReplaceAllString(value, home)
 	}
 
-	// Replace ${env:VAR}
-	// In cluster mode, we strip the wrapper to let K8s handle env vars,
-	// or we might want to keep it if we are generating the env var value itself.
-	// For now, let's strip the wrapper so "FOO" becomes "FOO" (or value of FOO).
-	// The Python script did: sanitized = re.sub(r"\$\{env:([^}]+)\}", r"\1", sanitized)
-	value = envVarRegex.ReplaceAllString(value, "$1")
+	// Replace ${env:VAR} with actual environment variable value
+	// If env var is not set, keep the placeholder for runtime resolution
+	value = envVarRegex.ReplaceAllStringFunc(value, func(match string) string {
+		varName := envVarRegex.FindStringSubmatch(match)[1]
+		if envVal := os.Getenv(varName); envVal != "" {
+			return envVal
+		}
+		// Keep placeholder for clients that support runtime env resolution
+		return match
+	})
 
-	// Replace ${keychain:VAR} -> VAR
-	value = keychainVarRegex.ReplaceAllString(value, "$1")
+	// Keep ${keychain:VAR} as-is for VSCode extension to resolve via macOS keychain
+	// The extension has keychain resolution logic that will handle these
 
 	return value
 }

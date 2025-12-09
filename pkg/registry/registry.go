@@ -10,6 +10,62 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Config holds the loom configuration from ~/.config/loom/config.yaml
+type Config struct {
+	RepoRoot string `yaml:"repo_root"`
+	Hub      struct {
+		URL     string `yaml:"url"`
+		Enabled bool   `yaml:"enabled"`
+	} `yaml:"hub"`
+	Debug bool `yaml:"debug"`
+}
+
+// LoadConfig loads the loom config from ~/.config/loom/config.yaml
+func LoadConfig() (*Config, error) {
+	home, _ := os.UserHomeDir()
+	configPath := filepath.Join(home, ".config", "loom", "config.yaml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return &Config{}, nil // Return empty config if not found
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// GetRepoRoot returns the repository root path (workspace root, not loom-core).
+// The registry uses ${repo} to mean the workspace root (e.g., ~/workspace),
+// since paths in registry are like ${repo}/services/loom-core/bin/...
+// Priority:
+// 1. Explicit repo_root from config.yaml
+// 2. If registry was loaded from ./mcp/context/registry.yaml, derive from that
+// 3. Default to ~/workspace
+func GetRepoRoot(registryPath string) string {
+	home, _ := os.UserHomeDir()
+
+	// Check config.yaml first
+	cfg, err := LoadConfig()
+	if err == nil && cfg.RepoRoot != "" {
+		if strings.HasPrefix(cfg.RepoRoot, "~/") {
+			return filepath.Join(home, cfg.RepoRoot[2:])
+		}
+		return cfg.RepoRoot
+	}
+
+	// If registry is in mcp/context/registry.yaml, repo root is two levels up
+	if strings.HasSuffix(registryPath, filepath.Join("mcp", "context", "registry.yaml")) {
+		return filepath.Dir(filepath.Dir(filepath.Dir(registryPath)))
+	}
+
+	// Default to workspace root (not loom-core, since registry paths include services/loom-core)
+	return filepath.Join(home, "workspace")
+}
+
 // Registry holds the parsed registry configuration.
 type Registry struct {
 	Version int       `yaml:"version"`
@@ -54,6 +110,43 @@ func Load(path string) (*Registry, error) {
 // FindDefaultPath returns the default registry path in a gitops workspace.
 func FindDefaultPath(workspaceRoot string) string {
 	return filepath.Join(workspaceRoot, "mcp", "context", "registry.yaml")
+}
+
+// FindRegistry searches for a registry file with the following priority:
+// 1. Local directory override: ./mcp/context/registry.yaml
+// 2. Home directory default: ~/.config/loom/registry.yaml
+// 3. Legacy workspace paths as fallback
+// Returns the path and whether it was found.
+func FindRegistry() (string, bool) {
+	home, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+
+	candidates := []string{
+		// Local override (current directory)
+		filepath.Join(cwd, "mcp", "context", "registry.yaml"),
+		// Home directory default
+		filepath.Join(home, ".config", "loom", "registry.yaml"),
+		// Legacy paths for backwards compatibility
+		filepath.Join(home, "workspace", "gitops", "mcp", "context", "registry.yaml"),
+		filepath.Join(home, "workspace", "platform", "gitops", "mcp", "context", "registry.yaml"),
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+
+	return "", false
+}
+
+// FindRegistryOrDefault returns a registry path, using FindRegistry with a fallback to
+// the provided default path if no registry is found.
+func FindRegistryOrDefault(defaultPath string) string {
+	if path, found := FindRegistry(); found {
+		return path
+	}
+	return defaultPath
 }
 
 // GetServerSpec returns the effective spec for a server and target, merging common with target-specific config.

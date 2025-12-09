@@ -9,8 +9,9 @@ import (
 // Profile defines the configuration for a specific tool profile.
 type Profile struct {
 	Name            string
-	RepoDir         string // Relative to repo root
-	HomeDir         string // Absolute path or relative to home
+	RepoDir         string   // Relative to repo root
+	HomeDir         string   // Absolute path or relative to home
+	WorkspaceDir    string   // Additional workspace-relative dir to copy to (e.g., ".vscode")
 	Excludes        []string
 	SecretFiles     []string
 	GeneratorTarget string // Target name for the generator (e.g. "codex")
@@ -95,30 +96,26 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["antigravity"] = &Profile{
-		Name:            "antigravity",
-		RepoDir:         ".antigravity",
-		HomeDir:         ".antigravity",
-		Excludes:        []string{"auth.json", "sessions", "backups"},
+		Name:    "antigravity",
+		RepoDir: ".antigravity",
+		HomeDir: ".antigravity",
+		Excludes: []string{
+			"auth.json", "sessions", "backups", "extensions",
+			"antigravity", "argv.json", "logs", "CachedData",
+		},
 		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "antigravity",
-		GeneratedFile:   "config.toml",
+		GeneratorTarget: "antigravity", // Uses mcp.json format (VSCode fork)
+		GeneratedFile:   "mcp.json",
 	}
 
 	m.Profiles["vscode"] = &Profile{
 		Name: "vscode",
-		// For global VSCode MCP, it's often in User data dir, but VSCode MCP extension is new.
-		// Assuming standard location or project specific.
-		// The python script didn't seem to sync vscode explicitly in the sync_all_configs.sh,
-		// but generate_mcp_configs.py did generate it.
-		// Let's assume a repo dir of "vscode" or ".vscode-mcp" and home dir of...
-		// Actually, VSCode MCP config location varies.
-		// Let's check where the user expects it.
-		// The generator outputs to "vscode/mcp.json".
-		// Let's put it in ".vscode-mcp" in repo for now to avoid conflict with .vscode
-		RepoDir: ".vscode-mcp",
-		HomeDir: "Library/Application Support/Code/User",
-		// So if we set GeneratorTarget="vscode", it generates in <tmp>/vscode/mcp.json.
-		// We copy <tmp>/vscode/mcp.json to <RepoRoot>/.vscode-mcp/mcp.json.
+		// Generated config goes to .vscode-mcp/ first, then synced to:
+		// 1. ~/Library/Application Support/Code/User (global VSCode config)
+		// 2. .vscode/ in workspace (for VSCode MCP extension to find)
+		RepoDir:      ".vscode-mcp",
+		HomeDir:      "Library/Application Support/Code/User",
+		WorkspaceDir: ".vscode", // Also copy to workspace .vscode/ for local MCP config
 		Excludes: []string{
 			"globalStorage",
 			"workspaceStorage",

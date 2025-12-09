@@ -44,7 +44,28 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
-	return CopyDir(repoPath, homePath, p.Excludes)
+	if err := CopyDir(repoPath, homePath, p.Excludes); err != nil {
+		return err
+	}
+
+	// Also copy to workspace directory if specified (e.g., .vscode/ for local MCP config)
+	if p.WorkspaceDir != "" {
+		workspacePath := filepath.Join(m.RepoRoot, p.WorkspaceDir)
+		// Only copy the generated file, not the whole directory
+		srcFile := filepath.Join(repoPath, p.GeneratedFile)
+		if Exists(srcFile) {
+			if err := os.MkdirAll(workspacePath, 0755); err != nil {
+				return fmt.Errorf("create workspace dir: %w", err)
+			}
+			dstFile := filepath.Join(workspacePath, p.GeneratedFile)
+			if err := CopyFile(srcFile, dstFile); err != nil {
+				return fmt.Errorf("copy to workspace: %w", err)
+			}
+			fmt.Printf("Also copied to %s\n", dstFile)
+		}
+	}
+
+	return nil
 }
 
 // SyncAll syncs all profiles.
@@ -69,12 +90,13 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 		return fmt.Errorf("profile %s has no generator target", p.Name)
 	}
 
-	// Load registry
-	regPath := filepath.Join(m.RepoRoot, "mcp", "context", "registry.yaml")
+	// Load registry - prefer local override, then home directory
+	regPath := registry.FindRegistryOrDefault(filepath.Join(m.RepoRoot, "mcp", "context", "registry.yaml"))
 	reg, err := registry.Load(regPath)
 	if err != nil {
-		return fmt.Errorf("load registry: %w", err)
+		return fmt.Errorf("load registry from %s: %w", regPath, err)
 	}
+	fmt.Printf("Using registry: %s\n", regPath)
 
 	// Create temp dir
 	tmpDir, err := os.MkdirTemp("", "loom-gen")
@@ -85,7 +107,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 
 	// Generate
 	fmt.Printf("Regenerating config for %s...\n", p.Name)
-	err = generator.GenerateConfigs(reg, tmpDir, []string{p.GeneratorTarget}, hubMode, hubURL, loomMode, loomBinary)
+	err = generator.GenerateConfigsWithPath(reg, regPath, tmpDir, []string{p.GeneratorTarget}, hubMode, hubURL, loomMode, loomBinary)
 	if err != nil {
 		return err
 	}
