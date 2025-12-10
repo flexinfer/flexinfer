@@ -44,7 +44,7 @@ func main() {
 
 func registerTools(server *mcp.Server) {
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.apply",
+		Name:        "k8s_apply",
 		Description: "Apply a configuration file",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -56,7 +56,7 @@ func registerTools(server *mcp.Server) {
 	}, handleApply)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.getPods",
+		Name:        "k8s_getPods",
 		Description: "Get pods in a namespace",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -71,7 +71,7 @@ func registerTools(server *mcp.Server) {
 	}, handleGetPods)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.logs",
+		Name:        "k8s_logs",
 		Description: "Get logs for a pod or deployment",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -88,7 +88,7 @@ func registerTools(server *mcp.Server) {
 	}, handleLogs)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.get",
+		Name:        "k8s_get",
 		Description: "Get resources",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -107,7 +107,7 @@ func registerTools(server *mcp.Server) {
 	}, handleGet)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.describe",
+		Name:        "k8s_describe",
 		Description: "Describe a resource",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -122,7 +122,7 @@ func registerTools(server *mcp.Server) {
 	}, handleDescribe)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.exec",
+		Name:        "k8s_exec",
 		Description: "Execute a command in a container",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -138,7 +138,7 @@ func registerTools(server *mcp.Server) {
 	}, handleExec)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.listNamespaces",
+		Name:        "k8s_listNamespaces",
 		Description: "List all namespaces",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -149,7 +149,7 @@ func registerTools(server *mcp.Server) {
 	}, handleListNamespaces)
 
 	server.AddTool(mcp.Tool{
-		Name:        "k8s.listContexts",
+		Name:        "k8s_listContexts",
 		Description: "List available kubeconfig contexts",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
 	}, handleListContexts)

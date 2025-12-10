@@ -60,7 +60,7 @@ func main() {
 
 func registerTools(server *mcp.Server) {
 	server.AddTool(mcp.Tool{
-		Name:        "morph_embeddings.embed",
+		Name:        "morph_embeddings_embed",
 		Description: "Generate embeddings using Morph's embedding API",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -78,7 +78,7 @@ func registerTools(server *mcp.Server) {
 	}, handleEmbed)
 
 	server.AddTool(mcp.Tool{
-		Name:        "morph_embeddings.upsert",
+		Name:        "morph_embeddings_upsert",
 		Description: "Embed text with Morph and upsert into a Qdrant collection",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -105,7 +105,7 @@ func registerTools(server *mcp.Server) {
 	}, handleUpsert)
 
 	server.AddTool(mcp.Tool{
-		Name:        "morph_embeddings.search",
+		Name:        "morph_embeddings_search",
 		Description: "Semantic search in Qdrant using Morph embeddings",
 		InputSchema: mcp.InputSchema{
 			Type: "object",

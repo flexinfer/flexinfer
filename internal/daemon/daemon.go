@@ -118,10 +118,16 @@ func New(cfg Config) (*Daemon, error) {
 		}
 		logger.Info("loaded registry", "path", cfg.RegistryPath, "servers", len(reg.Servers))
 
-		// Derive repo root from registry path (registry is at ${repo}/mcp/context/registry.yaml)
-		absPath, _ := filepath.Abs(cfg.RegistryPath)
-		repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(absPath))) // Go up 3 levels
-		logger.Debug("derived repo root", "path", repoRoot)
+		// Use repo_root from config if set, otherwise derive from registry path (legacy behavior)
+		if fileCfg.RepoRoot != "" {
+			repoRoot = fileCfg.RepoRoot
+			logger.Debug("using configured repo root", "path", repoRoot)
+		} else {
+			// Derive repo root from registry path (registry is at ${repo}/mcp/context/registry.yaml)
+			absPath, _ := filepath.Abs(cfg.RegistryPath)
+			repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(absPath))) // Go up 3 levels
+			logger.Debug("derived repo root", "path", repoRoot)
+		}
 	}
 
 	// Create process manager

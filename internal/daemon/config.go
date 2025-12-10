@@ -14,6 +14,10 @@ type FileConfig struct {
 	// Hub configuration
 	Hub HubConfig `yaml:"hub"`
 
+	// RepoRoot is the root path for ${repo} variable expansion in the registry.
+	// If not set, it will be derived from the registry path (legacy behavior).
+	RepoRoot string `yaml:"repo_root,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }

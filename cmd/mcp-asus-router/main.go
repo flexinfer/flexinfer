@@ -63,13 +63,13 @@ func main() {
 
 func registerTools(server *mcp.Server) {
 	server.AddTool(mcp.Tool{
-		Name:        "router.status",
+		Name:        "router_status",
 		Description: "Uptime, WAN, and memory utilization snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
 	}, handleStatus)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.logread",
+		Name:        "router_logread",
 		Description: "Tail BusyBox syslog (logread -n <lines>).",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -80,7 +80,7 @@ func registerTools(server *mcp.Server) {
 	}, handleLogread)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.kernelTail",
+		Name:        "router_kernelTail",
 		Description: "Tail kernel messages (dmesg | tail).",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -91,7 +91,7 @@ func registerTools(server *mcp.Server) {
 	}, handleKernelTail)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.execCommand",
+		Name:        "router_execCommand",
 		Description: "Run a whitelisted maintenance command",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -106,7 +106,7 @@ func registerTools(server *mcp.Server) {
 	}, handleExecCommand)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.reboot",
+		Name:        "router_reboot",
 		Description: "Reboot the ASUS router (requires confirm=true).",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
@@ -118,13 +118,13 @@ func registerTools(server *mcp.Server) {
 	}, handleReboot)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.wanStatus",
+		Name:        "router_wanStatus",
 		Description: "WAN IP, gateway, DNS, and link snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
 	}, handleWanStatus)
 
 	server.AddTool(mcp.Tool{
-		Name:        "router.wifiStatus",
+		Name:        "router_wifiStatus",
 		Description: "Wi-Fi chanspec/bandwidth and assoc list.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
 	}, handleWifiStatus)
