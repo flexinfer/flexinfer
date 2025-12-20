@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-scheduler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "flexinfer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: {{ include "flexinfer.serviceAccountName" . }}
+      containers:
+        - name: flexinfer-scheduler
+          image: "{{ .Values.scheduler.image.repository }}:{{ .Values.scheduler.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.scheduler.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          env:
+            - name: SCHED_TPS_WEIGHT
+              value: "{{ .Values.scheduler.weights.tps }}"
+            - name: SCHED_UTIL_WEIGHT
+              value: "{{ .Values.scheduler.weights.util }}"
+            - name: SCHED_COST_WEIGHT
+              value: "{{ .Values.scheduler.weights.cost }}"
+        - name: kube-scheduler
+          image: registry.k8s.io/kube-scheduler:v1.28.0
+          command:
+            - kube-scheduler
+            - --config=/etc/kubernetes/scheduler-config.yaml
+            - --v=2
+          volumeMounts:
+            - name: scheduler-config
+              mountPath: /etc/kubernetes
+      volumes:
+        - name: scheduler-config
+          configMap:
+            name: {{ include "flexinfer.fullname" . }}-scheduler-config

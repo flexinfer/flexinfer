@@ -2,10 +2,73 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+controller:
+  replicas: 1
+  image:
+    repository: flexinfer/flexinfer-manager
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+
+agent:
+  image:
+    repository: flexinfer/flexinfer-agent
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+backend:
+  image:
+    repository: ghcr.io/flexinfer/ollama
+    tag: "latest"
 
 scheduler:
+  replicas: 1
+  image:
+    repository: flexinfer/flexinfer-sched
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
   weights:
     tps: 0.7
     util: 0.2
     cost: 0.1
+
+benchmarker:
+  image:
+    repository: flexinfer/flexinfer-bench
+    pullPolicy: IfNotPresent
+    tag: "latest"

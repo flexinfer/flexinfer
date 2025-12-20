@@ -274,7 +274,9 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
-					NodeSelector: r.getNodeSelector(m),
+					// Use our custom scheduler
+					SchedulerName: "flexinfer-scheduler",
+					NodeSelector:  r.getNodeSelector(m),
 					Containers: []corev1.Container{{
 						Image: r.getBackendImage(),
 						Name:  "llm-backend",
@@ -351,8 +353,21 @@ func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDep
 	return pvc
 }
 
+// getBenchmarkerImage returns the benchmarker image from the environment variable or a default.
+func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
+	if image, ok := os.LookupEnv("BENCHMARKER_IMAGE"); ok {
+		return image
+	}
+	return "flexinfer-bench:latest"
+}
+
 // jobForBenchmark returns a benchmark Job object
 func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) *batchv1.Job {
+	// Standardize sidecar configuration
+	backendImage := r.getBackendImage()
+	benchmarkerImage := r.getBenchmarkerImage()
+	backendPort := int32(11434)
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.benchmarkJobName(m),
@@ -361,14 +376,58 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Image: "flexinfer-bench:latest", // This will be built locally
-						Name:  "flexinfer-bench",
-						Args: []string{
-							"--model", m.Spec.Model,
-							"--configmap", r.benchmarkConfigMapName(m),
+					// Ensure the job pod requests a GPU so it lands on a GPU node for accurate benchmarking
+					// Benchmark jobs bypass the custom scheduler to run on any suitable node initially
+					// or we can use the custom scheduler but ensure they don't get filtered out.
+					// For now, let default scheduler handle benchmark jobs to avoid circular dependencies.
+					NodeSelector: r.getNodeSelector(m),
+					Containers: []corev1.Container{
+						{
+							Name:  "flexinfer-bench",
+							Image: benchmarkerImage,
+							Env: []corev1.EnvVar{
+								{
+									Name:  "BACKEND_URL",
+									Value: fmt.Sprintf("http://localhost:%d", backendPort),
+								},
+								{
+									Name: "POD_NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+							},
+							Args: []string{
+								"--model", m.Spec.Model,
+								"--configmap", r.benchmarkConfigMapName(m),
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
 						},
-					}},
+						{
+							Name:  "llm-backend",
+							Image: backendImage,
+							Ports: []corev1.ContainerPort{{
+								ContainerPort: backendPort,
+								Name:          "http",
+							}},
+							// IMPORTANT: The backend in the benchmark job MUST request the GPU
+							// to actually be able to run and measure performance.
+							Resources: r.getResourceRequirements(m),
+							Env: []corev1.EnvVar{
+								{
+									Name:  "OLLAMA_HOST",
+									Value: "0.0.0.0",
+								},
+							},
+						},
+					},
 					RestartPolicy: corev1.RestartPolicyNever,
 				},
 			},
