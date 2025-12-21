@@ -1,24 +1,137 @@
 stages:
+  - lint
   - test
+  - build
+  - publish
 
 variables:
   GO_VERSION: "1.22"
+  # Disable CGO for static binaries where possible
+  CGO_ENABLED: "0"
+  REGISTRY: "registry.harbor.lan/flexinfer"
 
 .go-cache: &go-cache
+  image: golang:${GO_VERSION}
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
       - .go/pkg/mod/
-
-test:
-  stage: test
-  image: golang:${GO_VERSION}
   before_script:
     - mkdir -p .go
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export PATH=$PATH:$GOPATH/bin
+
+# --- Lint Stage ---
+lint:
+  stage: lint
+  image: golangci/golangci-lint:v1.55.2
+  script:
+    - golangci-lint run -v --timeout=5m ./...
+  allow_failure: true
+
+fmt:
+  stage: lint
+  <<: *go-cache
+  script:
+    - if [ -n "$(gofmt -l .)" ]; then echo "Go code is not formatted"; exit 1; fi
+
+vet:
+  stage: lint
+  <<: *go-cache
+  script:
+    - go vet ./...
+
+# --- Test Stage ---
+unit_test:
+  stage: test
+  <<: *go-cache
+  script:
+    - go test -v -short ./...
+
+integration_test:
+  stage: test
+  <<: *go-cache
   script:
     - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
     - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
-    - go test -v ./...
+    - go test -v ./controllers/...
+
+# --- Build Stage ---
+build_manager:
+  stage: build
   <<: *go-cache
+  script:
+    - go build -o bin/manager cmd/flexinfer-manager/main.go
+  artifacts:
+    paths:
+      - bin/manager
+    expire_in: 1 day
+
+build_agent:
+  stage: build
+  <<: *go-cache
+  script:
+    - go build -o bin/agent ./agents/agent
+  artifacts:
+    paths:
+      - bin/agent
+    expire_in: 1 day
+
+build_proxy:
+  stage: build
+  <<: *go-cache
+  script:
+    - go build -o bin/proxy cmd/flexinfer-proxy/main.go
+  artifacts:
+    paths:
+      - bin/proxy
+    expire_in: 1 day
+    
+build_scheduler:
+  stage: build
+  <<: *go-cache
+  script:
+    - go build -o bin/scheduler cmd/flexinfer-sched/main.go
+  artifacts:
+    paths:
+      - bin/scheduler
+    expire_in: 1 day
+
+build_benchmarker:
+  stage: build
+  <<: *go-cache
+  script:
+    - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
+  artifacts:
+    paths:
+      - bin/benchmarker
+    expire_in: 1 day
+
+# --- Publish Stage ---
+# Note: Requires docker-in-docker or valid docker socket
+publish:
+  stage: publish
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  before_script:
+    - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
+  script:
+    # Build and Push Manager
+    - docker build -t ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.manager .
+    - docker push ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}
+    - docker tag ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA} ${REGISTRY}/flexinfer-controller:latest
+    - docker push ${REGISTRY}/flexinfer-controller:latest
+    
+    # Build and Push Agent
+    - docker build -t ${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.agent .
+    - docker push ${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}
+    
+    # Build and Push Proxy
+    - docker build -t ${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.proxy .
+    - docker push ${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

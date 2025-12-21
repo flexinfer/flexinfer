@@ -186,17 +186,32 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName 
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
-						Image:   "flexinfer/flexinfer-agent:latest", // Assumed to contain 'huggingface-cli' or equivalent
+						Image:   "python:3.10-slim",
 						Command: []string{"/bin/sh", "-c"},
-						// Rough implementation: check dir, download if empty
-						// This script would need to be robust
+						// Install HF Hub and download
+						// We use --local-dir to download directly to the PVC mount
+						// We assume the Source is "huggingface://repoid" or just "repoid"
+						// We need to parse the source to handle "huggingface://" prefix if present
 						Args: []string{
-							fmt.Sprintf("echo Downloading %s... && mkdir -p /models && touch /models/ready", m.Spec.Source),
+							fmt.Sprintf(`
+								pip install --no-cache-dir huggingface_hub && \
+								model_id=$(echo "%s" | sed 's|^huggingface://||') && \
+								echo "Downloading $model_id to /models..." && \
+								huggingface-cli download "$model_id" --local-dir /models --local-dir-use-symlinks False && \
+								echo "Download complete."
+							`, m.Spec.Source),
 						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-store",
 							MountPath: "/models",
 						}},
+						Env: []corev1.EnvVar{
+							{
+								Name:  "HF_HUB_ENABLE_HF_TRANSFER",
+								Value: "0", // Enable if we add hf_transfer lib for speed
+							},
+							// TODO: Add HF_TOKEN support from Secret
+						},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "model-store",

@@ -35,13 +35,16 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 
 - **Deployment Tooling**: Basic Helm chart structure exists but needs completion
 - **Integration Testing**: Framework exists but needs more comprehensive scenarios
+- **ModelCache Downloader**: Currently a stub (`echo`). Needs real implementation (HuggingFace/OCI).
+- **Scale-to-Zero Proxy**: Basic skeleton exists. Needs robust "Activator" pattern (request buffering, API compatibility).
+- **Smart Routing (L7)**: Current scheduler is L4 (Pods). Missing L7 Router for KV-Cache locality (requests).
 
-### 📋 **Planned Features**
+### 📋 **Planned Features / Innovation Roadmap**
 
-- **Advanced Benchmarking**: Real model loading and inference testing
-- **KV-Cache Tiering**: GPU HBM to host DDR memory management
-- **Harbor OCI Plugin**: Direct model registry integration
-- **Multi-tenancy**: Namespace isolation and resource quotas
+- **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O.
+- **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads.
+- **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments.
+- **Spot-Instance Resilience**: Proactive draining on termination notice.
 
 ## Architecture
 

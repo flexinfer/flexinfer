@@ -82,32 +82,30 @@ This document provides a comprehensive overview of the current implementation st
 
 #### 5. Scale-to-Zero (Serverless) Infrastructure
 
-- **Activator Pattern (Proxy)**:
-  - `flexinfer-proxy`: Lightweight Go reverse proxy intercepting all inference requests.
-  - **Auto-Scale Up**: Triggers `Replicas=1` on incoming traffic when scaled to zero.
-  - **Request Buffering**: Holds requests until the backend `ModelDeployment` is Ready.
+- **Activator Pattern (Proxy) [PARTIAL]**:
+  - `flexinfer-proxy`: Lightweight Go reverse proxy exists but uses polling and lacks request buffering.
+  - **Needs**: Robust request holding (not busy loops) and OpenAI API body inspection.
 - **Idler (Controller)**:
-  - Automatic scale-down to `MinReplicas` (0) after configurable `IdleTimeoutSeconds`.
-  - Tracks `LastAccessTime` based on proxy traffic.
+  - Automatic scale-down implemented partially (logic present but needs proxy integration for accurate `LastAccessTime`).
 
-2.  **Homelab Workload Migration**:
+### Known Gaps (Immediate Fixes)
 
-    - Migration guides for existing `faster-whisper` and `llamacpp` workloads to FlexInfer `ModelDeployments`.
+1.  **ModelCache Downloader Stub**: The current `ModelCache` controller uses a dummy `echo` job. Needs real `huggingface-cli` or OCI implementation.
+2.  **L7 Routing Missing**: Scheduler places Pods, but we miss a Router for Requests to optimize KV-cache reuse.
 
-### Roadmap / Future Work
+### Innovation Roadmap (New)
 
-#### Phase 5: Advanced Model Management (From Research)
+#### Phase 5: Advanced Model Management
 
 - [x] **ModelCache CRD**: Extract model artifacts into first-class Citizens.
-- [x] **Tiered Storage**:
-  - [ ] `NodeLocal` (DaemonSet): Prefer local NVMe caches for max IOPS (Planned).
-  - [x] `SharedPVC` (RWX): Support shared storage for smaller models/easier management.
-- [x] **Pre-Flight Caching**: Decouple model downloading from Pod startup time.
+- [ ] **Real Downloader Implementation**: Replace stub with robust downloader.
+- [ ] **Dynamic Multi-LoRA**: Support hot-swapping adapters without restarting pods.
 
-#### Phase 6: Advanced Scheduling
+#### Phase 6: Next-Gen Scheduling & Routing
 
-- **KV-Cache Awareness**: Schedule requests based on existing KV cache locality.
-- **Preemption**: Priority classes for critical inference workloads.
+- [ ] **Context-Aware Router**: L7 Ingress that routes based on prompt prefix (KV-cache locality).
+- [ ] **"Flash-Loader"**: RDMA/P2P model weight distribution.
+- [ ] **Spot Resilience**: Proactive draining on termination.
 
 #### Phase 7: Reliability & Observability
 
