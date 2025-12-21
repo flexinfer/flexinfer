@@ -1,0 +1,24 @@
+stages:
+  - test
+
+variables:
+  GO_VERSION: "1.22"
+
+.go-cache: &go-cache
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - .go/pkg/mod/
+
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export PATH=$PATH:$GOPATH/bin
+  script:
+    - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+    - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
+    - go test -v ./...
+  <<: *go-cache
