@@ -5,7 +5,7 @@ stages:
   - publish
 
 variables:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.24.4"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
@@ -24,7 +24,7 @@ variables:
 # --- Lint Stage ---
 lint:
   stage: lint
-  image: golangci/golangci-lint:v1.55.2
+  image: golangci/golangci-lint:v1.64.0
   script:
     - golangci-lint run -v --timeout=5m ./...
   allow_failure: true
