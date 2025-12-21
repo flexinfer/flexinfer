@@ -9,6 +9,7 @@ variables:
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
+  GOPROXY: "direct"
 
 .go-cache: &go-cache
   image: golang:${GO_VERSION}
