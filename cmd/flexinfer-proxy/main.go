@@ -14,6 +14,9 @@ import (
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,18 +28,48 @@ import (
 
 var (
 	scheme = runtime.NewScheme()
+
+	requestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "proxy_requests_total",
+			Help: "Total number of requests processed by the proxy.",
+		},
+		[]string{"model", "status"},
+	)
+
+	scaleUpsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "proxy_scale_ups_total",
+			Help: "Total number of scale-up operations triggered.",
+		},
+		[]string{"model"},
+	)
+
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "proxy_request_duration_seconds",
+			Help:    "Histogram of request processing duration.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"model"},
+	)
 )
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(aiv1alpha1.AddToScheme(scheme))
+
+	// Register metrics
+	prometheus.MustRegister(requestsTotal)
+	prometheus.MustRegister(scaleUpsTotal)
+	prometheus.MustRegister(requestDuration)
 }
 
 type Proxy struct {
-	client      client.Client
-	namespace   string
-	proxyMap    sync.Map // cache of httputil.ReverseProxy by model name
-	activations sync.Map // map[string]*sync.Cond to coalesce activation requests
+	client       client.Client
+	namespace    string
+	proxyMap     sync.Map           // cache of httputil.ReverseProxy by model name
+	requestGroup singleflight.Group // coalescing activation requests
 }
 
 func main() {
@@ -64,6 +97,7 @@ func main() {
 		namespace: namespace,
 	}
 
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/", p.handleRequest)
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -107,8 +141,10 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// 2. Ensure Model is Active
+	start := time.Now()
 	if err := p.ensureActive(ctx, modelName); err != nil {
 		log.Printf("Failed to activate model %s: %v", modelName, err)
+		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		http.Error(w, fmt.Sprintf("Failed to activate model: %v", err), http.StatusServiceUnavailable)
 		return
 	}
@@ -118,55 +154,61 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Forward Request
 	p.serveProxy(w, r, modelName)
+
+	// Metrics update
+	requestsTotal.WithLabelValues(modelName, "success").Inc()
+	requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
 }
 
 func (p *Proxy) ensureActive(ctx context.Context, modelName string) error {
-	// This is the critical Scale-Up logic
-
-	for {
-		// Fetch current state
-		md := &aiv1alpha1.ModelDeployment{}
-		err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				return fmt.Errorf("model deployment %s not found", modelName)
+	// Use Singleflight to deduplicate concurrent scale-up requests for the same model
+	_, err, _ := p.requestGroup.Do(modelName, func() (interface{}, error) {
+		// This block is executed only once per modelName for concurrent requests
+		for {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
 			}
-			return err
-		}
 
-		// Check if scaled to zero
-		if md.Spec.Replicas == nil || *md.Spec.Replicas == 0 {
-			log.Printf("Model %s is scaled to zero. Activating...", modelName)
-
-			// Trigger Scale Up
-			one := int32(1)
-			md.Spec.Replicas = &one
-			if err := p.client.Update(ctx, md); err != nil {
-				// Optimization: Conflict error means someone else updated it, which is fine, we just loop
-				if errors.IsConflict(err) {
-					continue
+			// Fetch current state
+			md := &aiv1alpha1.ModelDeployment{}
+			err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					return nil, fmt.Errorf("model deployment %s not found", modelName)
 				}
-				return fmt.Errorf("failed to scale up: %v", err)
+				return nil, err
 			}
 
-			// Wait loop is entered next iteration
-		}
+			// Check if scaled to zero
+			if md.Spec.Replicas == nil || *md.Spec.Replicas == 0 {
+				log.Printf("Model %s is scaled to zero. Activating...", modelName)
+				scaleUpsTotal.WithLabelValues(modelName).Inc()
 
-		// Check if Ready
-		// We verify Status.Conditions has Ready=True
-		if isReady(md) {
-			return nil
-		}
+				// Trigger Scale Up
+				one := int32(1)
+				md.Spec.Replicas = &one
+				if err := p.client.Update(ctx, md); err != nil {
+					// Optimization: Conflict error means someone else updated it, which is fine, we just loop
+					if errors.IsConflict(err) {
+						continue
+					}
+					return nil, fmt.Errorf("failed to scale up: %v", err)
+				}
+			}
 
-		// Wait for readiness
-		// In a real implementation we would use a Watch. For MVP, we poll.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(1 * time.Second):
-			continue
+			// Check if Ready
+			if isReady(md) {
+				return nil, nil
+			}
+
+			// Wait for readiness
+			time.Sleep(1 * time.Second)
 		}
-	}
+	})
+
+	return err
 }
 
 func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
