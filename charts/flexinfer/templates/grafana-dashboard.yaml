@@ -44,7 +44,7 @@ data:
           "targets": [
             {
               "expr": "sum by (node, model) (flexinfer_tokens_per_second)",
-              "legendFormat": "{{node}} - {{model}}",
+              "legendFormat": "{{ "{{" }}node{{ "}}" }} - {{ "{{" }}model{{ "}}" }}",
               "refId": "A"
             }
           ],
@@ -91,7 +91,7 @@ data:
           "targets": [
             {
               "expr": "max by (node) (flexinfer_gpu_temperature_celsius)",
-              "legendFormat": "{{node}}",
+              "legendFormat": "{{ "{{" }}node{{ "}}" }}",
               "refId": "A"
             }
           ],
@@ -117,7 +117,7 @@ data:
           "targets": [
             {
               "expr": "avg by (model) (flexinfer_model_load_seconds)",
-              "legendFormat": "{{model}}",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }}",
               "refId": "A"
             }
           ],

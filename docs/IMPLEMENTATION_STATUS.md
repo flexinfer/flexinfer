@@ -32,9 +32,17 @@ This document provides a comprehensive overview of the current implementation st
   - Configurable weighted scoring system.
 
 - **Benchmarker (`agents/benchmarker/`)**: Performance measurement framework
+
   - **Real Inference**: Replaced mocks with real HTTP clients for Ollama (`/api/generate`) and vLLM (`/v1/completions`).
   - **Configurable Images**: Benchmarker and Backend images are configurable via EnvVars.
   - Result storage in ConfigMaps for the Scheduler to consume.
+
+- **Model Management (`controllers/modelcache_controller.go`)**: **NEW**
+  - **`ModelCache` CRD**: Decoupled model artifact lifecycle management.
+  - **Smart Caching**:
+    - **SharedPVC Strategy**: Deduplicated storage using ReadWriteMany (or ReadOnly mounts) to prevent storage waste.
+    - **Pre-warming**: Models are downloaded and ready _before_ inference pods start.
+    - **Corruption Safety**: Centralized downloader job and ReadOnly mounting for inference prevent "Stale File Handle" and locking issues.
 
 ### API and Data Structures
 
@@ -70,19 +78,41 @@ This document provides a comprehensive overview of the current implementation st
 
 ## ❌ Missing/TODO
 
-### High Priority (Roadmap Phase 2/3)
+### Fully Implemented Components
 
-1.  **Scale-to-Zero (Idler)**:
+#### 5. Scale-to-Zero (Serverless) Infrastructure
 
-    - Mechanism to scale deployments to 0 when unused and wake on traffic.
+- **Activator Pattern (Proxy)**:
+  - `flexinfer-proxy`: Lightweight Go reverse proxy intercepting all inference requests.
+  - **Auto-Scale Up**: Triggers `Replicas=1` on incoming traffic when scaled to zero.
+  - **Request Buffering**: Holds requests until the backend `ModelDeployment` is Ready.
+- **Idler (Controller)**:
+  - Automatic scale-down to `MinReplicas` (0) after configurable `IdleTimeoutSeconds`.
+  - Tracks `LastAccessTime` based on proxy traffic.
 
 2.  **Homelab Workload Migration**:
 
     - Migration guides for existing `faster-whisper` and `llamacpp` workloads to FlexInfer `ModelDeployments`.
 
-3.  **Advanced Scheduling**:
-    - Preemption and priority queuing.
-    - KV-Cache aware scheduling.
+### Roadmap / Future Work
+
+#### Phase 5: Advanced Model Management (From Research)
+
+- [x] **ModelCache CRD**: Extract model artifacts into first-class Citizens.
+- [x] **Tiered Storage**:
+  - [ ] `NodeLocal` (DaemonSet): Prefer local NVMe caches for max IOPS (Planned).
+  - [x] `SharedPVC` (RWX): Support shared storage for smaller models/easier management.
+- [x] **Pre-Flight Caching**: Decouple model downloading from Pod startup time.
+
+#### Phase 6: Advanced Scheduling
+
+- **KV-Cache Awareness**: Schedule requests based on existing KV cache locality.
+- **Preemption**: Priority classes for critical inference workloads.
+
+#### Phase 7: Reliability & Observability
+
+- **Proxy Hardening**: Singleflight pattern for request coalescing and Prometheus metrics.
+- **Deep Observability**: Cold start tracking and GPU temperature alerting.
 
 ## Quality Assessment
 

@@ -40,8 +40,9 @@ func TestScore(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						"flexinfer.ai/gpu.util": "50",
-						"flexinfer.ai/cost":     "5",
+						"flexinfer.ai/gpu.util":       "50",
+						"flexinfer.ai/cost":           "5",
+						"flexinfer.ai/kv-cache-usage": "0.9",
 					},
 				},
 			},
@@ -49,8 +50,9 @@ func TestScore(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						"flexinfer.ai/gpu.util": "10",
-						"flexinfer.ai/cost":     "2",
+						"flexinfer.ai/gpu.util":       "10",
+						"flexinfer.ai/cost":           "2",
+						"flexinfer.ai/kv-cache-usage": "0.1",
 					},
 				},
 			},
@@ -66,7 +68,7 @@ func TestScore(t *testing.T) {
 		},
 	}
 
-	sched := &Scheduler{cache: cache, tpsWeight: 0.7, utilWeight: 0.2, costWeight: 0.1}
+	sched := &Scheduler{cache: cache, tpsWeight: 0.7, utilWeight: 0.2, costWeight: 0.1, cacheWeight: 0.5}
 
 	args := extenderv1.ExtenderArgs{
 		Pod: &corev1.Pod{
@@ -98,7 +100,23 @@ func TestScore(t *testing.T) {
 		t.Fatalf("expected 2 results got %d", len(result))
 	}
 
-	if result[0].Host == result[1].Host {
-		t.Fatalf("hosts should differ")
+	// Calculate expected scores
+	// Node 1: TPS=100(0.7) - Util=50(0.2) - Cost=5(0.1) - Cache=0.9(0.5) = 70 - 10 - 0.5 - 0.45 = 59.05 -> 59
+	// Node 2: TPS=100(0.7) - Util=10(0.2) - Cost=2(0.1) - Cache=0.1(0.5) = 70 - 2 - 0.2 - 0.05 = 67.75 -> 67
+
+	score1 := getScore(result, "node1")
+	score2 := getScore(result, "node2")
+
+	if score2 <= score1 {
+		t.Errorf("expected node2 score (%d) > node1 score (%d) due to lower cache usage", score2, score1)
 	}
+}
+
+func getScore(res []extenderv1.HostPriority, host string) int64 {
+	for _, r := range res {
+		if r.Host == host {
+			return r.Score
+		}
+	}
+	return -1
 }

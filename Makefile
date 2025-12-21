@@ -21,6 +21,13 @@ all: build
 help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
+.PHONY: setup
+setup: ## Install all development dependencies
+	@echo "Setting up development environment..."
+	make kustomize controller-gen envtest
+	go mod download
+	@echo "Setup complete."
+
 ##@ Development
 
 .PHONY: manifests
@@ -98,7 +105,7 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v3.8.7
-CONTROLLER_TOOLS_VERSION ?= v0.16.0
+CONTROLLER_TOOLS_VERSION ?= latest
 ENVTEST_K8S_VERSION = 1.28.x
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"

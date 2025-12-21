@@ -162,22 +162,46 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Check if the pvc already exists, if not create a new one
-	pvc := &corev1.PersistentVolumeClaim{}
-	err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, pvc)
-	if err != nil && errors.IsNotFound(err) {
-		// Define a new pvc
-		pvc := r.pvcForModelDeployment(modelDeployment)
-		log.Info("Creating a new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
-		if err = r.Create(ctx, pvc); err != nil {
-			log.Error(err, "Failed to create new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
+	// Determine Volume Name and if we need to provision a PVC
+	volumeName := modelDeployment.Name
+	volumeReadOnly := false
+
+	if modelDeployment.Spec.ModelCacheRef != nil {
+		// Using ModelCache
+		cacheName := *modelDeployment.Spec.ModelCacheRef
+		modelCache := &aiv1alpha1.ModelCache{}
+		if err := r.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: modelDeployment.Namespace}, modelCache); err != nil {
+			log.Error(err, "Failed to get ModelCache", "ModelCache", cacheName)
 			return ctrl.Result{}, err
 		}
-		// Pvc created successfully - return and requeue
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
-		log.Error(err, "Failed to get Pvc")
-		return ctrl.Result{}, err
+
+		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+			log.Info("ModelCache not ready", "ModelCache", cacheName, "Phase", modelCache.Status.Phase)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		volumeName = modelCache.Status.Path
+		// ENFORCE READ-ONLY to prevent locking issues
+		volumeReadOnly = true
+	} else {
+		// Legacy/Private PVC Logic
+		// Check if the pvc already exists, if not create a new one
+		pvc := &corev1.PersistentVolumeClaim{}
+		err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, pvc)
+		if err != nil && errors.IsNotFound(err) {
+			// Define a new pvc
+			pvc := r.pvcForModelDeployment(modelDeployment)
+			log.Info("Creating a new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
+			if err = r.Create(ctx, pvc); err != nil {
+				log.Error(err, "Failed to create new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
+				return ctrl.Result{}, err
+			}
+			// Pvc created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		} else if err != nil {
+			log.Error(err, "Failed to get Pvc")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Check if the deployment already exists, if not create a new one
@@ -185,7 +209,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new deployment
-		dep := r.deploymentForModelDeployment(modelDeployment)
+		dep := r.deploymentForModelDeployment(modelDeployment, volumeName, volumeReadOnly)
 		log.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 		if err = r.Create(ctx, dep); err != nil {
 			log.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
@@ -250,12 +274,68 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Check for Scale-to-Zero (Idler)
+	if err := r.checkIdleScaleDown(ctx, modelDeployment, found); err != nil {
+		log.Error(err, "Failed to check idle scale down")
+		// Don't return error here, just log it, as it's not critical for basic operation
+	}
+
 	r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ReconcileComplete", "ModelDeployment reconciliation completed successfully")
 	return ctrl.Result{}, nil
 }
 
+// checkIdleScaleDown checks if the deployment should be scaled to zero
+func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) error {
+	// If MinReplicas is not set or > 0, we don't scale to zero
+	if m.Spec.MinReplicas == nil || *m.Spec.MinReplicas > 0 {
+		return nil
+	}
+
+	// If already at MinReplicas, nothing to do
+	if *deployment.Spec.Replicas <= *m.Spec.MinReplicas {
+		return nil
+	}
+
+	// detailed logic:
+	// 1. Get LastAccessTime from status
+	// 2. If nil, assume active (or set to now if we want to start timer)
+	// 3. If time.Since(LastAccessTime) > IdleTimeout, scale down
+
+	lastAccess := m.Status.LastAccessTime
+	if lastAccess == nil {
+		// If no last access time is recorded, we assume it's active or just deployed.
+		// However, to start the timer, the Proxy MUST set this.
+		// For safety, if it's missing, we do nothing.
+		return nil
+	}
+
+	idleTimeout := int32(300) // Default 5 minutes
+	if m.Spec.IdleTimeoutSeconds != nil {
+		idleTimeout = *m.Spec.IdleTimeoutSeconds
+	}
+
+	if time.Since(lastAccess.Time) > time.Duration(idleTimeout)*time.Second {
+		// Verify we are not already scaling / being scaled by something else (like HPA)
+		// For now, we are the HPA.
+
+		newReplicas := *m.Spec.MinReplicas
+		deployment.Spec.Replicas = &newReplicas
+		if err := r.Update(ctx, deployment); err != nil {
+			return fmt.Errorf("failed to scale down deployment: %w", err)
+		}
+
+		r.Recorder.Event(m, corev1.EventTypeNormal, "ScaledDown", fmt.Sprintf("Scaled down to %d replicas due to inactivity", newReplicas))
+
+		// Update status to reflect we triggered this
+		err := r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Deployment scaled down to zero due to inactivity")
+		return err
+	}
+
+	return nil
+}
+
 // deploymentForModelDeployment returns a ModelDeployment Deployment object
-func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.ModelDeployment) *appsv1.Deployment {
+func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.ModelDeployment, volumeName string, readOnly bool) *appsv1.Deployment {
 	ls := labelsForModelDeployment(m.Name)
 	replicas := m.Spec.Replicas
 
@@ -289,13 +369,15 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-cache",
 							MountPath: "/models",
+							ReadOnly:  readOnly,
 						}},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "model-cache",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: m.Name,
+								ClaimName: volumeName,
+								ReadOnly:  readOnly,
 							},
 						},
 					}},

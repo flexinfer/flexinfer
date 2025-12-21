@@ -24,7 +24,8 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 - **Hardware Discovery**: Automatic detection of GPU vendor, architecture, VRAM, and capabilities
 - **Model Performance Benchmarking**: Automated measurement of tokens/second for model-device pairs
 - **Intelligent Scheduling**: Multi-factor scoring combining performance, utilization, and cost
-- **Resource Management**: Complete lifecycle management of AI workload deployments
+- [x] **Model Caching**: Intelligent model artifact management with deduplication and pre-warming
+- [x] **Resource Management**: Complete lifecycle management of AI workload deployments
 - **Status Tracking**: Comprehensive status conditions and phase management
 - **Event System**: Detailed event recording for debugging and monitoring
 - **Metrics Collection**: Prometheus-compatible metrics for all components
@@ -52,7 +53,7 @@ graph TB
     Benchmarker[Benchmarker<br/>Performance Testing] --> Controller
     Controller --> Scheduler[Scheduler Extender<br/>Smart Placement]
     Scheduler --> K8s[Kubernetes Scheduler]
-    
+
     Agent -.-> Metrics[Prometheus Metrics]
     Controller -.-> Metrics
     Benchmarker -.-> Metrics
@@ -98,6 +99,14 @@ spec:
     limits:
       nvidia.com/gpu: 1
       memory: "16Gi"
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama-7b-cache
+spec:
+  source: "huggingface://meta-llama/Llama-2-7b-chat-hf"
+  storageStrategy: SharedPVC
 ```
 
 ## Development

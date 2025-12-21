@@ -30,16 +30,16 @@ const (
 const (
 	// ConditionTypeReady indicates the ModelDeployment is ready to serve requests
 	ConditionTypeReady = "Ready"
-	
+
 	// ConditionTypeGPUAllocated indicates a GPU has been allocated
 	ConditionTypeGPUAllocated = "GPUAllocated"
-	
+
 	// ConditionTypeModelLoaded indicates the model has been loaded successfully
 	ConditionTypeModelLoaded = "ModelLoaded"
-	
+
 	// ConditionTypeEndpointReady indicates the service endpoint is ready
 	ConditionTypeEndpointReady = "EndpointReady"
-	
+
 	// ConditionTypeProgressing indicates the ModelDeployment is progressing
 	ConditionTypeProgressing = "Progressing"
 )
@@ -48,27 +48,28 @@ const (
 const (
 	// ReasonReconciling indicates the resource is being reconciled
 	ReasonReconciling = "Reconciling"
-	
+
 	// ReasonGPUAllocated indicates GPU has been successfully allocated
 	ReasonGPUAllocated = "GPUAllocated"
-	
+
 	// ReasonGPUAllocationFailed indicates GPU allocation failed
 	ReasonGPUAllocationFailed = "GPUAllocationFailed"
-	
+
 	// ReasonDeploymentReady indicates the deployment is ready
 	ReasonDeploymentReady = "DeploymentReady"
-	
+
 	// ReasonServiceReady indicates the service is ready
 	ReasonServiceReady = "ServiceReady"
-	
+
 	// ReasonModelLoadFailed indicates model loading failed
 	ReasonModelLoadFailed = "ModelLoadFailed"
-	
+
 	// ReasonValidationFailed indicates validation failed
 	ReasonValidationFailed = "ValidationFailed"
 )
 
 // ModelDeploymentSpec defines the desired state of ModelDeployment
+// +kubebuilder:object:generate=true
 type ModelDeploymentSpec struct {
 	// Backend is the name of the LLM backend to use (e.g., ollama, vllm).
 	// +kubebuilder:validation:Required
@@ -83,6 +84,16 @@ type ModelDeploymentSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
+	// MinReplicas is the minimum number of replicas to scale down to (e.g., 0 for serverless).
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// IdleTimeoutSeconds is the duration in seconds before scaling down to MinReplicas.
+	// +kubebuilder:default=300
+	// +kubebuilder:validation:Minimum=0
+	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
+
 	// Resources defines the resources required by the model.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -90,9 +101,15 @@ type ModelDeploymentSpec struct {
 	// Benchmark defines tuning knobs for the benchmarking process.
 	// +optional
 	Benchmark *BenchmarkSpec `json:"benchmark,omitempty"`
+
+	// ModelCacheRef references a ModelCache object to use for model storage.
+	// If set, the deployment will use the cached model volume instead of creating its own.
+	// +optional
+	ModelCacheRef *string `json:"modelCacheRef,omitempty"`
 }
 
 // BenchmarkSpec defines the tuning knobs for the benchmarking process.
+// +kubebuilder:object:generate=true
 type BenchmarkSpec struct {
 	// WarmupIterations is the number of warmup iterations to run before the main benchmark.
 	// +kubebuilder:default=2
@@ -105,6 +122,7 @@ type BenchmarkSpec struct {
 }
 
 // ModelDeploymentStatus defines the observed state of ModelDeployment
+// +kubebuilder:object:generate=true
 type ModelDeploymentStatus struct {
 	// Phase represents the current phase of the ModelDeployment
 	// +optional
@@ -118,9 +136,13 @@ type ModelDeploymentStatus struct {
 	// +optional
 	AllocatedGPU *GPUAllocation `json:"allocatedGPU,omitempty"`
 
-	// Endpoints contains the service endpoints for accessing the model
+	// Endpoints defines the access endpoints for the model.
 	// +optional
 	Endpoints *ModelEndpoints `json:"endpoints,omitempty"`
+
+	// LastAccessTime is the timestamp of the last request to the model.
+	// +optional
+	LastAccessTime *metav1.Time `json:"lastAccessTime,omitempty"`
 
 	// Metrics contains runtime metrics for the deployment
 	// +optional
@@ -147,6 +169,7 @@ const (
 )
 
 // GPUAllocation represents the GPU allocation details
+// +kubebuilder:object:generate=true
 type GPUAllocation struct {
 	// Node is the name of the node where the GPU is allocated
 	// +optional
@@ -166,6 +189,7 @@ type GPUAllocation struct {
 }
 
 // ModelEndpoints represents the service endpoints
+// +kubebuilder:object:generate=true
 type ModelEndpoints struct {
 	// Internal is the internal cluster endpoint
 	// +optional
@@ -177,18 +201,23 @@ type ModelEndpoints struct {
 }
 
 // ModelMetrics represents runtime metrics
+// +kubebuilder:object:generate=true
 type ModelMetrics struct {
-	// TotalRequests is the total number of requests processed
+	// TokensPerSecond is the current generation speed.
 	// +optional
-	TotalRequests int64 `json:"totalRequests,omitempty"`
+	TokensPerSecond string `json:"tokensPerSecond,omitempty"`
+
+	// AvgModelLoadTime is the average time to load the model.
+	// +optional
+	AvgModelLoadTime string `json:"avgModelLoadTime,omitempty"`
 
 	// AvgLatencyMs is the average latency in milliseconds
 	// +optional
-	AvgLatencyMs float64 `json:"avgLatencyMs,omitempty"`
+	AvgLatencyMs string `json:"avgLatencyMs,omitempty"`
 
 	// ErrorRate is the error rate as a percentage
 	// +optional
-	ErrorRate float64 `json:"errorRate,omitempty"`
+	ErrorRate string `json:"errorRate,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -196,7 +225,7 @@ type ModelMetrics struct {
 //+kubebuilder:printcolumn:name="Backend",type="string",JSONPath=".spec.backend"
 //+kubebuilder:printcolumn:name="Model",type="string",JSONPath=".spec.model"
 //+kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
-//+kubebuilder:printcolumn:name="TPS",type="number",JSONPath=".status.tokensPerSecond"
+//+kubebuilder:printcolumn:name="TPS",type="string",JSONPath=".status.tokensPerSecond"
 
 // ModelDeployment is the Schema for the modeldeployments API
 type ModelDeployment struct {

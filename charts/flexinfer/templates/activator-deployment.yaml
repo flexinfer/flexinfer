@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-proxy
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app: flexinfer-proxy
+spec:
+  replicas: {{ .Values.proxy.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" . | nindent 6 }}
+      app: flexinfer-proxy
+  template:
+    metadata:
+      labels:
+        {{- include "flexinfer.selectorLabels" . | nindent 8 }}
+        app: flexinfer-proxy
+    spec:
+      serviceAccountName: {{ include "flexinfer.serviceAccountName" . }}
+      containers:
+        - name: proxy
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}

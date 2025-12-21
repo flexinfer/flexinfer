@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.14.0
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: modeldeployments.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -26,7 +26,7 @@ spec:
       type: integer
     - jsonPath: .status.tokensPerSecond
       name: TPS
-      type: number
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -71,9 +71,28 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              idleTimeoutSeconds:
+                default: 300
+                description: IdleTimeoutSeconds is the duration in seconds before
+                  scaling down to MinReplicas.
+                format: int32
+                minimum: 0
+                type: integer
+              minReplicas:
+                default: 0
+                description: MinReplicas is the minimum number of replicas to scale
+                  down to (e.g., 0 for serverless).
+                format: int32
+                minimum: 0
+                type: integer
               model:
                 description: Model is the identifier for the model to be deployed
                   (e.g., llama3:8b).
+                type: string
+              modelCacheRef:
+                description: |-
+                  ModelCacheRef references a ModelCache object to use for model storage.
+                  If set, the deployment will use the cached model volume instead of creating its own.
                 type: string
               replicas:
                 default: 1
@@ -89,10 +108,8 @@ spec:
                       Claims lists the names of resources, defined in spec.resourceClaims,
                       that are used by this container.
 
-
                       This is an alpha field and requires enabling the
                       DynamicResourceAllocation feature gate.
-
 
                       This field is immutable. It can only be set for containers.
                     items:
@@ -143,20 +160,30 @@ spec:
           status:
             description: ModelDeploymentStatus defines the observed state of ModelDeployment
             properties:
+              allocatedGPU:
+                description: AllocatedGPU contains information about the allocated
+                  GPU
+                properties:
+                  device:
+                    description: Device is the GPU device index
+                    type: string
+                  memoryMB:
+                    description: MemoryMB is the GPU memory in megabytes
+                    format: int64
+                    type: integer
+                  node:
+                    description: Node is the name of the node where the GPU is allocated
+                    type: string
+                  type:
+                    description: Type is the GPU type/model
+                    type: string
+                type: object
               conditions:
                 description: Conditions represent the latest available observations
                   of the ModelDeployment's state.
                 items:
-                  description: "Condition contains details for one aspect of the current
-                    state of this API Resource.\n---\nThis struct is intended for
-                    direct use as an array at the field path .status.conditions.  For
-                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
-                    observations of a foo's current state.\n\t    // Known .status.conditions.type
-                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
-                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
-                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
-                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
-                    \   // other fields\n\t}"
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
                       description: |-
@@ -197,12 +224,7 @@ spec:
                       - Unknown
                       type: string
                     type:
-                      description: |-
-                        type of condition in CamelCase or in foo.example.com/CamelCase.
-                        ---
-                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
-                        useful (see .node.status.conditions), the ability to deconflict is important.
-                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
                       maxLength: 316
                       pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                       type: string
@@ -214,6 +236,41 @@ spec:
                   - type
                   type: object
                 type: array
+              endpoints:
+                description: Endpoints defines the access endpoints for the model.
+                properties:
+                  external:
+                    description: External is the external endpoint if exposed
+                    type: string
+                  internal:
+                    description: Internal is the internal cluster endpoint
+                    type: string
+                type: object
+              lastAccessTime:
+                description: LastAccessTime is the timestamp of the last request to
+                  the model.
+                format: date-time
+                type: string
+              metrics:
+                description: Metrics contains runtime metrics for the deployment
+                properties:
+                  avgLatencyMs:
+                    description: AvgLatencyMs is the average latency in milliseconds
+                    type: string
+                  avgModelLoadTime:
+                    description: AvgModelLoadTime is the average time to load the
+                      model.
+                    type: string
+                  errorRate:
+                    description: ErrorRate is the error rate as a percentage
+                    type: string
+                  tokensPerSecond:
+                    description: TokensPerSecond is the current generation speed.
+                    type: string
+                type: object
+              phase:
+                description: Phase represents the current phase of the ModelDeployment
+                type: string
               tokensPerSecond:
                 description: |-
                   TokensPerSecond is the measured tokens per second for the model on a specific device class.

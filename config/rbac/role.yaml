@@ -5,8 +5,23 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - persistentvolumeclaims
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ai.flexinfer
   resources:
+  - modelcaches
   - modeldeployments
   verbs:
   - create
@@ -19,12 +34,14 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - modelcaches/finalizers
   - modeldeployments/finalizers
   verbs:
   - update
 - apiGroups:
   - ai.flexinfer
   resources:
+  - modelcaches/status
   - modeldeployments/status
   verbs:
   - get
@@ -46,42 +63,6 @@ rules:
   - batch
   resources:
   - jobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - services
   verbs:
   - create
   - delete

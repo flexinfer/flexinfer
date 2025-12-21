@@ -25,10 +25,11 @@ type objectCache interface {
 }
 
 type Scheduler struct {
-	cache      objectCache
-	tpsWeight  float64
-	utilWeight float64
-	costWeight float64
+	cache       objectCache
+	tpsWeight   float64
+	utilWeight  float64
+	costWeight  float64
+	cacheWeight float64
 }
 
 // NewScheduler creates a new Scheduler.
@@ -49,6 +50,7 @@ func NewScheduler() (*Scheduler, error) {
 	s.tpsWeight = parseWeight("SCHED_TPS_WEIGHT", 0.7)
 	s.utilWeight = parseWeight("SCHED_UTIL_WEIGHT", 0.2)
 	s.costWeight = parseWeight("SCHED_COST_WEIGHT", 0.1)
+	s.cacheWeight = parseWeight("SCHED_CACHE_WEIGHT", 0.3)
 	return s, nil
 }
 
@@ -151,8 +153,13 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		util, _ := strconv.ParseFloat(utilStr, 64)
 		costStr := node.Annotations["flexinfer.ai/cost"]
 		cost, _ := strconv.ParseFloat(costStr, 64)
+		cacheStr := node.Annotations["flexinfer.ai/kv-cache-usage"]
+		cacheUsage, _ := strconv.ParseFloat(cacheStr, 64)
 
-		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight
+		// Higher score is better.
+		// We subtract penalties for utilization, cost, and cache usage.
+		// Use tps as base reward.
+		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight
 
 		scores[i] = extenderv1.HostPriority{
 			Host:  nodeName,
