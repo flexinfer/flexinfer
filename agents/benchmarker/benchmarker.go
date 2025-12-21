@@ -2,8 +2,8 @@
 package benchmarker
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,13 +21,14 @@ import (
 
 // Benchmarker runs benchmarks for a model on a specific device.
 type Benchmarker struct {
-	kubeClient kubernetes.Interface
-	namespace  string
-	backendURL string
+	kubeClient  kubernetes.Interface
+	namespace   string
+	backendURL  string
+	backendType string
 }
 
 // NewBenchmarker creates a new Benchmarker.
-func NewBenchmarker() (*Benchmarker, error) {
+func NewBenchmarker(backendType string) (*Benchmarker, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
@@ -47,10 +48,16 @@ func NewBenchmarker() (*Benchmarker, error) {
 		backendURL = "http://localhost:11434"
 	}
 
+	// Default backend to ollama if not specified
+	if backendType == "" {
+		backendType = "ollama"
+	}
+
 	return &Benchmarker{
-		kubeClient: clientset,
-		namespace:  namespace,
-		backendURL: backendURL,
+		kubeClient:  clientset,
+		namespace:   namespace,
+		backendURL:  backendURL,
+		backendType: backendType,
 	}, nil
 }
 
@@ -99,12 +106,17 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 	log := log.FromContext(ctx)
 	log.Info("Waiting for backend to be ready...", "url", b.backendURL)
-	
+
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	
+
 	timeout := time.After(5 * time.Minute)
-	
+
+	checkPath := ""
+	if b.backendType == "vllm" {
+		checkPath = "/health"
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -112,7 +124,7 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 		case <-timeout:
 			return fmt.Errorf("timed out waiting for backend")
 		case <-ticker.C:
-			resp, err := http.Get(b.backendURL)
+			resp, err := http.Get(b.backendURL + checkPath)
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
@@ -126,6 +138,11 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 
 // pullModel triggers the model pull on the backend.
 func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
+	// vLLM loads model at startup, no pull needed
+	if b.backendType == "vllm" {
+		return nil
+	}
+
 	log := log.FromContext(ctx)
 	log.Info("Pulling model...", "model", model)
 
@@ -150,18 +167,31 @@ func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
 // runBenchmark executes inference and calculates tokens per second.
 func (b *Benchmarker) runBenchmark(ctx context.Context, model string) (float64, error) {
 	log := log.FromContext(ctx)
-	log.Info("Executing benchmark queries...")
+	log.Info("Executing benchmark queries...", "backend", b.backendType)
 
-	// Use a standard prompt ensuring enough generation for measurement
 	prompt := "Write a long story about a space adventure to Mars."
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"model":  model,
-		"prompt": prompt,
-		"stream": false,
-	})
+
+	var reqBody []byte
+	var endpoint string
+
+	if b.backendType == "vllm" {
+		endpoint = "/v1/completions"
+		reqBody, _ = json.Marshal(map[string]interface{}{
+			"model":      model,
+			"prompt":     prompt,
+			"max_tokens": 100, // Force generation for TPS measurement
+		})
+	} else {
+		endpoint = "/api/generate"
+		reqBody, _ = json.Marshal(map[string]interface{}{
+			"model":  model,
+			"prompt": prompt,
+			"stream": false,
+		})
+	}
 
 	start := time.Now()
-	resp, err := http.Post(b.backendURL+"/api/generate", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := http.Post(b.backendURL+endpoint, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -174,19 +204,35 @@ func (b *Benchmarker) runBenchmark(ctx context.Context, model string) (float64, 
 		return 0, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		EvalCount    int   `json:"eval_count"`
-		EvalDuration int64 `json:"eval_duration"` // in nanoseconds
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Calculate tokens per second based on Ollama's reported metrics if available
-	if result.EvalDuration > 0 && result.EvalCount > 0 {
-		tps := float64(result.EvalCount) / (float64(result.EvalDuration) / 1e9)
-		return tps, nil
+	// Parse response
+	if b.backendType == "vllm" {
+		// OpenAI API format
+		var result struct {
+			Usage struct {
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return 0, fmt.Errorf("failed to decode vLLM response: %w", err)
+		}
+		if result.Usage.CompletionTokens > 0 {
+			tps := float64(result.Usage.CompletionTokens) / duration.Seconds()
+			return tps, nil
+		}
+	} else {
+		// Ollama API format
+		var result struct {
+			EvalCount    int   `json:"eval_count"`
+			EvalDuration int64 `json:"eval_duration"` // in nanoseconds
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return 0, fmt.Errorf("failed to decode Ollama response: %w", err)
+		}
+		// Calculate tokens per second based on Ollama's reported metrics if available
+		if result.EvalDuration > 0 && result.EvalCount > 0 {
+			tps := float64(result.EvalCount) / (float64(result.EvalDuration) / 1e9)
+			return tps, nil
+		}
 	}
 
 	// Fallback to client-side timing if metrics missing

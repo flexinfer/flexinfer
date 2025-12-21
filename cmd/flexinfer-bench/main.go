@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	model := flag.String("model", "", "The model to benchmark.")
+	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
+	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm).")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -20,18 +24,14 @@ func main() {
 	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := log.Log.WithName("setup")
 
-	model := flag.String("model", "", "The model to benchmark.")
-	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
-	flag.Parse()
-
 	if *model == "" || *configMapName == "" {
 		setupLog.Error(nil, "Both --model and --configmap flags are required.")
 		os.Exit(1)
 	}
 
-	setupLog.Info("Starting benchmark", "model", *model)
+	setupLog.Info("Starting benchmark", "model", *model, "backend", *backend)
 
-	bm, err := benchmarker.NewBenchmarker()
+	bm, err := benchmarker.NewBenchmarker(*backend)
 	if err != nil {
 		setupLog.Error(err, "Failed to create benchmarker")
 		os.Exit(1)

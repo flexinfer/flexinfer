@@ -91,6 +91,56 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 
 		})
 	})
+
+	Context("When creating a ModelDeployment with vLLM", func() {
+		It("Should create a Job with vLLM backend image and port", func() {
+			ctx := context.Background()
+			name := "test-model-vllm"
+
+			modelDeployment := &aiv1alpha1.ModelDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: ModelNamespace,
+				},
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Model:    "llama3:8b",
+					Backend:  "vllm",
+					Replicas: int32Ptr(1),
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: resource.MustParse("10Gi"),
+						},
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, modelDeployment)).To(Succeed())
+
+			jobKey := types.NamespacedName{
+				Name:      fmt.Sprintf("%s-benchmark", name),
+				Namespace: ModelNamespace,
+			}
+			createdJob := &batchv1.Job{}
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, jobKey, createdJob)
+			}, time.Minute, time.Second).Should(Succeed())
+
+			var backendContainer corev1.Container
+			for _, c := range createdJob.Spec.Template.Spec.Containers {
+				if c.Name == "llm-backend" {
+					backendContainer = c
+				}
+			}
+
+			Expect(backendContainer.Image).To(ContainSubstring("vllm-openai"), "Backend should use vllm image")
+			Expect(backendContainer.Ports[0].ContainerPort).To(Equal(int32(8000)))
+			Expect(backendContainer.Args).To(ContainElement("--model"))
+			Expect(backendContainer.Args).To(ContainElement("llama3:8b"))
+		})
+	})
 })
 
 func int32Ptr(i int32) *int32 {

@@ -334,8 +334,7 @@ func TestValidateGPUResources(t *testing.T) {
 					Model:   "some-model",
 				},
 			},
-			expectError:  true,
-			errorMessage: "backend  is not supported for GPU workloads",
+			expectError: false,
 		},
 		{
 			name: "case sensitive backend validation",

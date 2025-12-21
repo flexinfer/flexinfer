@@ -278,12 +278,13 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					SchedulerName: "flexinfer-scheduler",
 					NodeSelector:  r.getNodeSelector(m),
 					Containers: []corev1.Container{{
-						Image: r.getBackendImage(),
+						Image: r.getBackendImage(m),
 						Name:  "llm-backend",
 						Ports: []corev1.ContainerPort{{
-							ContainerPort: 11434,
+							ContainerPort: r.getBackendPort(m),
 							Name:          "http",
 						}},
+						Args:      r.getBackendArgs(m),
 						Resources: r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "model-cache",
@@ -319,7 +320,7 @@ func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.Mode
 		Spec: corev1.ServiceSpec{
 			Selector: ls,
 			Ports: []corev1.ServicePort{{
-				Port:       11434,
+				Port:       r.getBackendPort(m),
 				TargetPort: intstr.FromString("http"),
 				Name:       "http",
 			}},
@@ -364,9 +365,10 @@ func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
 // jobForBenchmark returns a benchmark Job object
 func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) *batchv1.Job {
 	// Standardize sidecar configuration
-	backendImage := r.getBackendImage()
+	// Standardize sidecar configuration
+	backendImage := r.getBackendImage(m)
 	benchmarkerImage := r.getBenchmarkerImage()
-	backendPort := int32(11434)
+	backendPort := r.getBackendPort(m)
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -402,6 +404,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 							Args: []string{
 								"--model", m.Spec.Model,
 								"--configmap", r.benchmarkConfigMapName(m),
+								"--backend", m.Spec.Backend,
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -417,6 +420,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								ContainerPort: backendPort,
 								Name:          "http",
 							}},
+							Args: r.getBackendArgs(m),
 							// IMPORTANT: The backend in the benchmark job MUST request the GPU
 							// to actually be able to run and measure performance.
 							Resources: r.getResourceRequirements(m),
@@ -445,12 +449,32 @@ func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDe
 	return fmt.Sprintf("%s-benchmark-results", m.Name)
 }
 
-// getBackendImage returns the backend image from the environment variable or a default.
-func (r *ModelDeploymentReconciler) getBackendImage() string {
+// getBackendImage returns the backend image based on spec
+func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeployment) string {
+	if m.Spec.Backend == "vllm" {
+		return "vllm/vllm-openai:latest"
+	}
+	// Default to ollama
 	if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE"); ok {
 		return image
 	}
 	return "ghcr.io/flexinfer/ollama:latest"
+}
+
+// getBackendPort returns the port based on backend
+func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment) int32 {
+	if m.Spec.Backend == "vllm" {
+		return 8000
+	}
+	return 11434
+}
+
+// getBackendArgs returns the arguments based on backend
+func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment) []string {
+	if m.Spec.Backend == "vllm" {
+		return []string{"--model", m.Spec.Model}
+	}
+	return nil
 }
 
 // getNodeSelector returns the node selector for GPU nodes
@@ -511,7 +535,12 @@ func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDepl
 		"tgi":    true, // Text Generation Inference
 	}
 
-	if !supportedBackends[m.Spec.Backend] {
+	backend := m.Spec.Backend
+	if backend == "" {
+		backend = "ollama"
+	}
+
+	if !supportedBackends[backend] {
 		return fmt.Errorf("backend %s is not supported for GPU workloads", m.Spec.Backend)
 	}
 
