@@ -64,6 +64,10 @@ type ModelCacheSpec struct {
 	// ClusterStorageClassName is the storage class to use for SharedPVC strategy
 	// +optional
 	ClusterStorageClassName *string `json:"clusterStorageClassName,omitempty"`
+
+	// SecretRef is the name of the secret containing authentication credentials (key: HF_TOKEN)
+	// +optional
+	SecretRef *string `json:"secretRef,omitempty"`
 }
 
 // ModelCacheStatus defines the observed state of ModelCache

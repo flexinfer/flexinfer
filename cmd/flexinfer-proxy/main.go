@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -123,13 +126,30 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	modelName := r.Header.Get("X-Model-ID")
 	if modelName == "" {
-		// Fallback: If OpenAI API, try to peek? No, too complex.
 		// Fallback: Use path prefix? e.g. /model/<name>/v1/...
 		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		if len(pathParts) > 1 && pathParts[0] == "model" {
 			modelName = pathParts[1]
 			// Strip the /model/<name> prefix for upstream
 			r.URL.Path = "/" + strings.Join(pathParts[2:], "/")
+		}
+	}
+
+	// Fallback: Check JSON Body (OpenAI Standard)
+	if modelName == "" && r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		// Read body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err == nil {
+			// Restore body immediately so the proxy can upstream it
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+			// Parse partial JSON to find "model" field
+			var payload struct {
+				Model string `json:"model"`
+			}
+			if err := json.Unmarshal(bodyBytes, &payload); err == nil && payload.Model != "" {
+				modelName = payload.Model
+			}
 		}
 	}
 

@@ -53,6 +53,10 @@ spec:
                 description: ClusterStorageClassName is the storage class to use for
                   SharedPVC strategy
                 type: string
+              secretRef:
+                description: 'SecretRef is the name of the secret containing authentication
+                  credentials (key: HF_TOKEN)'
+                type: string
               source:
                 description: Source is the URI of the model to cache (e.g., huggingface://meta-llama/Llama-2-7b-chat-hf)
                 type: string

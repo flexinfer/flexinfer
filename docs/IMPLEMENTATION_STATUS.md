@@ -82,23 +82,22 @@ This document provides a comprehensive overview of the current implementation st
 
 #### 5. Scale-to-Zero (Serverless) Infrastructure
 
-- **Activator Pattern (Proxy) [PARTIAL]**:
-  - `flexinfer-proxy`: Lightweight Go reverse proxy exists but uses polling and lacks request buffering.
-  - **Needs**: Robust request holding (not busy loops) and OpenAI API body inspection.
+- **Activator Pattern (Proxy) [WORKING]**:
+  - `flexinfer-proxy`: Lightweight Go reverse proxy with request holding (singleflight) and OpenAI API body inspection.
+  - **Note**: Uses polling (1s) for readiness check, valid for v1.
 - **Idler (Controller)**:
-  - Automatic scale-down implemented partially (logic present but needs proxy integration for accurate `LastAccessTime`).
+  - Automatic scale-down implemented (logic present and proxy updates `LastAccessTime`).
 
 ### Known Gaps (Immediate Fixes)
 
-1.  **ModelCache Downloader Stub**: The current `ModelCache` controller uses a dummy `echo` job. Needs real `huggingface-cli` or OCI implementation.
-2.  **L7 Routing Missing**: Scheduler places Pods, but we miss a Router for Requests to optimize KV-cache reuse.
+1.  **L7 Routing Missing**: Scheduler places Pods, but we miss a Router for Requests to optimize KV-cache reuse.
 
 ### Innovation Roadmap (New)
 
 #### Phase 5: Advanced Model Management
 
 - [x] **ModelCache CRD**: Extract model artifacts into first-class Citizens.
-- [ ] **Real Downloader Implementation**: Replace stub with robust downloader.
+- [x] **Real Downloader Implementation**: Supports `huggingface-cli` with `HF_TOKEN` from Secrets.
 - [ ] **Dynamic Multi-LoRA**: Support hot-swapping adapters without restarting pods.
 
 #### Phase 6: Next-Gen Scheduling & Routing

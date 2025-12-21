@@ -173,8 +173,30 @@ func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) *corev
 }
 
 func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName string) *batchv1.Job {
+	// 1. Prepare Environment Variables
+	envVars := []corev1.EnvVar{
+		{
+			Name:  "HF_HUB_ENABLE_HF_TRANSFER",
+			Value: "0", // Enable if we add hf_transfer lib for speed
+		},
+	}
+
+	// Inject HF_TOKEN if SecretRef is provided
+	if m.Spec.SecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "HF_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: *m.Spec.SecretRef,
+					},
+					Key: "HF_TOKEN",
+				},
+			},
+		})
+	}
+
 	// This job downloads the model from Source to the mounted PVC
-	// Using a dummy downloader image for now, replace with actual
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-downloader",
@@ -205,13 +227,7 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName 
 							Name:      "model-store",
 							MountPath: "/models",
 						}},
-						Env: []corev1.EnvVar{
-							{
-								Name:  "HF_HUB_ENABLE_HF_TRANSFER",
-								Value: "0", // Enable if we add hf_transfer lib for speed
-							},
-							// TODO: Add HF_TOKEN support from Secret
-						},
+						Env: envVars,
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "model-store",
