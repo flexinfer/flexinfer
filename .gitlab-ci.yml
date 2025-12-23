@@ -16,6 +16,7 @@ variables:
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
   GOPROXY: "http://athens.ci.svc.cluster.local:3000,direct"
+  BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
 
 .go-cache: &go-cache
   image: golang:${GO_VERSION}
@@ -115,30 +116,36 @@ build_benchmarker:
     expire_in: 1 day
 
 # --- Publish Stage ---
-# Note: Requires docker-in-docker or valid docker socket
+# Build via BuildKit (no Docker-in-Docker)
 publish:
   stage: publish
-  image: docker:24.0.5
-  services:
-    - docker:24.0.5-dind
-  variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+  image: moby/buildkit:v0.12.5
   before_script:
     - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
   script:
-    # Build and Push Manager
-    - docker build -t ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.manager .
-    - docker push ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}
-    - docker tag ${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA} ${REGISTRY}/flexinfer-controller:latest
-    - docker push ${REGISTRY}/flexinfer-controller:latest
-    
-    # Build and Push Agent
-    - docker build -t ${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.agent .
-    - docker push ${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}
-    
-    # Build and Push Proxy
-    - docker build -t ${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA} -f build/Dockerfile.proxy .
-    - docker push ${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+      buildctl --addr "${BUILDKIT_HOST}" debug info
+    - |
+      build_image() {
+        local name="$1" dockerfile="$2" tags="$3"
+        buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="${dockerfile}" \
+          --opt platform=linux/amd64 \
+          --output "type=image,name=${tags},push=true"
+      }
+
+      build_image "flexinfer-controller" "Dockerfile.manager" "${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA},${REGISTRY}/flexinfer-controller:latest"
+      build_image "flexinfer-agent" "Dockerfile.agent" "${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+      build_image "flexinfer-proxy" "Dockerfile.proxy" "${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
