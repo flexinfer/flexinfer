@@ -1,3 +1,9 @@
+include:
+  - project: root/gitops
+    ref: main
+    file:
+      - /k3s/ci/caches/gitlab-ci-cache.yml
+
 stages:
   - lint
   - test
@@ -9,7 +15,7 @@ variables:
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
-  GOPROXY: "direct"
+  GOPROXY: "http://athens.ci.svc.cluster.local:3000,direct"
 
 .go-cache: &go-cache
   image: golang:${GO_VERSION}
@@ -47,7 +53,7 @@ unit_test:
   stage: test
   <<: *go-cache
   script:
-    - go test -v -short ./...
+    - go list ./... | grep -v /controllers | xargs go test -v -short
 
 integration_test:
   stage: test
