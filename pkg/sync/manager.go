@@ -139,6 +139,20 @@ func (m *Manager) GetProfile(name string) (*Profile, error) {
 	return p, nil
 }
 
+// Get returns a profile by name, or nil if not found.
+func (m *Manager) Get(name string) *Profile {
+	return m.Profiles[name]
+}
+
+// List returns all profile names.
+func (m *Manager) List() []string {
+	names := make([]string, 0, len(m.Profiles))
+	for name := range m.Profiles {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ResolveRepoPath returns the absolute path to the repo directory for a profile.
 func (m *Manager) ResolveRepoPath(p *Profile) string {
 	return filepath.Join(m.RepoRoot, p.RepoDir)

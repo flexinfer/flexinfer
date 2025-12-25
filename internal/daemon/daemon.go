@@ -57,6 +57,7 @@ type ToolCache struct {
 // Daemon is the main Loom daemon.
 type Daemon struct {
 	cfg       Config
+	fileCfg   FileConfig // File-based configuration
 	registry  *registry.Registry
 	repoRoot  string // Repository root for ${repo} expansion
 	procMgr   *process.Manager
@@ -67,6 +68,7 @@ type Daemon struct {
 	listener  net.Listener
 	logger    *slog.Logger
 	toolCache *ToolCache
+	manifest  *ManifestManager // Persistent tool cache
 	wg        sync.WaitGroup
 	done      chan struct{}
 }
@@ -170,8 +172,15 @@ func New(cfg Config) (*Daemon, error) {
 		RecoveryTime:     30 * time.Second,
 	})
 
+	// Create manifest manager for persistent tool cache
+	manifest := NewManifestManager()
+
+	// Determine cache TTL from config
+	cacheTTL := fileCfg.Resources.GetManifestTTL()
+
 	return &Daemon{
 		cfg:       cfg,
+		fileCfg:   fileCfg,
 		registry:  reg,
 		repoRoot:  repoRoot,
 		procMgr:   procMgr,
@@ -181,9 +190,10 @@ func New(cfg Config) (*Daemon, error) {
 		hubClient: hubClient,
 		logger:    logger,
 		toolCache: &ToolCache{
-			ttl: 5 * time.Minute, // Cache tools for 5 minutes
+			ttl: cacheTTL,
 		},
-		done: make(chan struct{}),
+		manifest: manifest,
+		done:     make(chan struct{}),
 	}, nil
 }
 
@@ -192,6 +202,22 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// Bail out early if registry was not provided; running without it will panic.
 	if d.registry == nil {
 		return fmt.Errorf("registry not loaded (pass --registry /path/to/registry.yaml)")
+	}
+
+	// Load cached manifest for instant tool availability
+	if err := d.manifest.Load(); err != nil {
+		d.logger.Warn("failed to load manifest", "error", err)
+	} else if d.manifest.ServerCount() > 0 {
+		// Pre-populate tool cache from manifest
+		cachedTools := d.manifest.GetAllTools()
+		d.toolCache.mu.Lock()
+		d.toolCache.tools = cachedTools
+		d.toolCache.updatedAt = d.manifest.LastUpdated()
+		d.toolCache.mu.Unlock()
+		d.logger.Info("loaded cached tools from manifest",
+			"tools", len(cachedTools),
+			"servers", d.manifest.ServerCount(),
+			"age", time.Since(d.manifest.LastUpdated()).Round(time.Second))
 	}
 
 	// Ensure socket directory exists
@@ -219,18 +245,43 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	}
 
-	// Proactively warm up tool cache in background
+	// Background refresh of tool cache (non-blocking)
 	go func() {
-		warmCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		warmCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		d.refreshToolCache(warmCtx)
+		if _, err := d.refreshToolCache(warmCtx); err != nil {
+			d.logger.Warn("background tool cache refresh failed", "error", err)
+		}
 	}()
+
+	// Start idle server reaper
+	go d.idleReaperLoop()
 
 	// Accept connections
 	d.wg.Add(1)
 	go d.acceptLoop(ctx)
 
 	return nil
+}
+
+// idleReaperLoop periodically terminates idle server processes.
+func (d *Daemon) idleReaperLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	idleTimeout := d.fileCfg.Resources.GetIdleTimeout()
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ticker.C:
+			reaped := d.procMgr.ReapIdle(idleTimeout)
+			if len(reaped) > 0 {
+				d.logger.Info("reaped idle servers", "servers", reaped, "count", len(reaped))
+			}
+		}
+	}
 }
 
 // Stop stops the daemon.
@@ -249,6 +300,11 @@ func (d *Daemon) Stop() error {
 		d.hubClient.Close()
 	}
 	d.procMgr.StopAll()
+
+	// Save manifest for next startup
+	if err := d.manifest.Save(); err != nil {
+		d.logger.Warn("failed to save manifest", "error", err)
+	}
 
 	d.wg.Wait()
 	d.logger.Info("daemon stopped")
@@ -338,6 +394,10 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleTools(ctx, msg)
 	case "loom/call":
 		return d.handleCall(ctx, msg)
+	case "loom/reload":
+		return d.handleReload(ctx, msg)
+	case "loom/config-hash":
+		return d.handleConfigHash(ctx, msg)
 	default:
 		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
 	}
@@ -578,7 +638,9 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 			continue
 		}
 		successCount++
+
 		// Namespace tools with server prefix
+		var namespacedTools []mcp.Tool
 		for _, tool := range result.tools {
 			// Sanitize the original tool name first
 			safeToolName := sanitize(tool.Name)
@@ -586,8 +648,12 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 			namespacedName := result.name + "__" + safeToolName
 			// Sanitize again just in case server name had issues (though registry should be clean)
 			tool.Name = sanitize(namespacedName)
+			namespacedTools = append(namespacedTools, tool)
 			allTools = append(allTools, tool)
 		}
+
+		// Update manifest with this server's tools
+		d.manifest.UpdateServerTools(result.name, namespacedTools)
 	}
 
 	// Enforce 100 tool limit (VS Code extension limit)
@@ -603,6 +669,13 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 	d.toolCache.tools = allTools
 	d.toolCache.updatedAt = time.Now()
 	d.toolCache.mu.Unlock()
+
+	// Persist manifest in background
+	go func() {
+		if err := d.manifest.Save(); err != nil {
+			d.logger.Warn("failed to save manifest", "error", err)
+		}
+	}()
 
 	return allTools, nil
 }
@@ -812,5 +885,88 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	latencyMs := float64(time.Since(start).Milliseconds())
 	d.router.RecordSuccess(params.Server, target, latencyMs)
 
+	// Track activity for idle reaping (local servers only)
+	if target == router.TargetLocal {
+		d.procMgr.MarkActivity(params.Server)
+	}
+
 	return resp, nil
+}
+
+// handleReload reloads the registry and refreshes the tool cache.
+func (d *Daemon) handleReload(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if err := d.Reload(ctx); err != nil {
+		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
+	}
+
+	return mcp.NewResponse(msg.ID, map[string]any{
+		"reloaded": true,
+		"servers":  len(d.registry.Servers),
+	})
+}
+
+// Reload reloads the registry and refreshes servers.
+func (d *Daemon) Reload(ctx context.Context) error {
+	d.logger.Info("reloading configuration")
+
+	// Reload registry
+	if d.cfg.RegistryPath != "" {
+		newReg, err := registry.Load(d.cfg.RegistryPath)
+		if err != nil {
+			return fmt.Errorf("load registry: %w", err)
+		}
+
+		// Find servers that were removed
+		oldServers := make(map[string]bool)
+		for _, s := range d.registry.Servers {
+			oldServers[s.Name] = true
+		}
+		newServers := make(map[string]bool)
+		for _, s := range newReg.Servers {
+			newServers[s.Name] = true
+		}
+
+		// Stop removed servers
+		for name := range oldServers {
+			if !newServers[name] {
+				d.logger.Info("stopping removed server", "server", name)
+				d.procMgr.Stop(name)
+				d.manifest.RemoveServer(name)
+			}
+		}
+
+		d.registry = newReg
+		d.logger.Info("registry reloaded", "servers", len(newReg.Servers))
+	}
+
+	// Refresh tool cache
+	refreshCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	if _, err := d.refreshToolCache(refreshCtx); err != nil {
+		d.logger.Warn("tool cache refresh failed after reload", "error", err)
+	}
+
+	return nil
+}
+
+type configHashResult struct {
+	RegistryHash string `json:"registryHash"`
+	ManifestHash string `json:"manifestHash"`
+	ToolCount    int    `json:"toolCount"`
+	ServerCount  int    `json:"serverCount"`
+}
+
+// handleConfigHash returns hash of current configuration for drift detection.
+func (d *Daemon) handleConfigHash(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	d.toolCache.mu.RLock()
+	toolCount := len(d.toolCache.tools)
+	d.toolCache.mu.RUnlock()
+
+	result := configHashResult{
+		ToolCount:   toolCount,
+		ServerCount: len(d.registry.Servers),
+	}
+
+	return mcp.NewResponse(msg.ID, result)
 }

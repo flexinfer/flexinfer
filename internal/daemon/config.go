@@ -4,6 +4,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,8 +19,41 @@ type FileConfig struct {
 	// If not set, it will be derived from the registry path (legacy behavior).
 	RepoRoot string `yaml:"repo_root,omitempty"`
 
+	// Resources controls process management settings
+	Resources ResourceConfig `yaml:"resources,omitempty"`
+
+	// Context controls tool filtering and profile settings
+	Context ContextConfig `yaml:"context,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// ResourceConfig controls process and connection resource limits.
+type ResourceConfig struct {
+	// MaxProcesses limits concurrent server processes (0 = unlimited)
+	MaxProcesses int `yaml:"max_processes,omitempty"`
+
+	// IdleTimeoutMinutes before terminating unused servers (default: 5)
+	IdleTimeoutMinutes int `yaml:"idle_timeout_minutes,omitempty"`
+
+	// ManifestTTLMinutes is how long cached tools are considered fresh (default: 5)
+	ManifestTTLMinutes int `yaml:"manifest_ttl_minutes,omitempty"`
+}
+
+// ContextConfig controls tool filtering and profile selection.
+type ContextConfig struct {
+	// ActiveProfile is the current tool profile (dev, k8s-ops, research, full)
+	ActiveProfile string `yaml:"active_profile,omitempty"`
+
+	// AutoDetect enables context-aware profile selection based on cwd
+	AutoDetect bool `yaml:"auto_detect,omitempty"`
+
+	// EnrichDescriptions adds usage hints to tool descriptions
+	EnrichDescriptions bool `yaml:"enrich_descriptions,omitempty"`
+
+	// CustomProfilePath points to custom profile definitions
+	CustomProfilePath string `yaml:"custom_profile_path,omitempty"`
 }
 
 // HubConfig configures the MCP hub connection.
@@ -38,18 +72,56 @@ type HubConfig struct {
 
 	// CFAccessClientSecret for Cloudflare Access authentication
 	CFAccessClientSecret string `yaml:"cf_access_client_secret,omitempty"`
+
+	// ReconnectIntervalSeconds between reconnection attempts (default: 5)
+	ReconnectIntervalSeconds int `yaml:"reconnect_interval_seconds,omitempty"`
+
+	// PingIntervalSeconds for keepalive pings (default: 30)
+	PingIntervalSeconds int `yaml:"ping_interval_seconds,omitempty"`
+
+	// MaxRetries before giving up on hub connection (default: 3)
+	MaxRetries int `yaml:"max_retries,omitempty"`
 }
 
 // DefaultFileConfig returns the default configuration.
 func DefaultFileConfig() FileConfig {
 	return FileConfig{
 		Hub: HubConfig{
-			URL:     "wss://mcp.flexinfer.ai/ws",
-			Enabled: true,
-			Profile: "codex",
+			URL:                      "wss://mcp.flexinfer.ai/ws",
+			Enabled:                  true,
+			Profile:                  "codex",
+			ReconnectIntervalSeconds: 5,
+			PingIntervalSeconds:      30,
+			MaxRetries:               3,
+		},
+		Resources: ResourceConfig{
+			MaxProcesses:       0, // Unlimited
+			IdleTimeoutMinutes: 5,
+			ManifestTTLMinutes: 5,
+		},
+		Context: ContextConfig{
+			ActiveProfile:      "full",
+			AutoDetect:         false,
+			EnrichDescriptions: false,
 		},
 		Debug: false,
 	}
+}
+
+// GetIdleTimeout returns the idle timeout duration.
+func (c *ResourceConfig) GetIdleTimeout() time.Duration {
+	if c.IdleTimeoutMinutes <= 0 {
+		return 5 * time.Minute
+	}
+	return time.Duration(c.IdleTimeoutMinutes) * time.Minute
+}
+
+// GetManifestTTL returns the manifest TTL duration.
+func (c *ResourceConfig) GetManifestTTL() time.Duration {
+	if c.ManifestTTLMinutes <= 0 {
+		return 5 * time.Minute
+	}
+	return time.Duration(c.ManifestTTLMinutes) * time.Minute
 }
 
 // LoadConfigFile loads configuration from ~/.config/loom/config.yaml.

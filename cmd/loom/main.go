@@ -10,10 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"time"
 
+	loomcontext "github.com/crb2nu/loom/pkg/context"
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/mcp"
+	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/sync"
 	"github.com/spf13/cobra"
@@ -300,7 +303,151 @@ Example config.toml:
 		},
 	}
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd)
+	// Profile commands
+	profileCmd := &cobra.Command{
+		Use:   "profile",
+		Short: "Manage tool profiles",
+	}
+
+	profileListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List available profiles",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mgr := profiles.NewManager()
+			names := mgr.List()
+			sort.Strings(names)
+
+			fmt.Println("Available profiles:")
+			for _, name := range names {
+				p := mgr.Get(name)
+				if p != nil {
+					fmt.Printf("  %-12s %s (max %d tools)\n", name, p.Description, p.MaxTools)
+				}
+			}
+			return nil
+		},
+	}
+
+	profileShowCmd := &cobra.Command{
+		Use:   "show [name]",
+		Short: "Show profile details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mgr := profiles.NewManager()
+			p := mgr.Get(args[0])
+			if p == nil {
+				return fmt.Errorf("profile not found: %s", args[0])
+			}
+
+			fmt.Printf("Profile: %s\n", p.Name)
+			fmt.Printf("Description: %s\n", p.Description)
+			fmt.Printf("Max Tools: %d\n", p.MaxTools)
+			if len(p.Include.Servers) > 0 {
+				fmt.Printf("Servers: %v\n", p.Include.Servers)
+			}
+			if len(p.Include.Categories) > 0 {
+				fmt.Printf("Categories: %v\n", p.Include.Categories)
+			}
+			return nil
+		},
+	}
+
+	profileCmd.AddCommand(profileListCmd, profileShowCmd)
+
+	// Context command
+	contextCmd := &cobra.Command{
+		Use:   "context",
+		Short: "Workspace context detection",
+	}
+
+	contextDetectCmd := &cobra.Command{
+		Use:   "detect",
+		Short: "Detect workspace context and suggest profile",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+
+			detector := loomcontext.NewDetector(cwd)
+			ctx := detector.Detect()
+
+			fmt.Printf("Working Directory: %s\n", ctx.CWD)
+			fmt.Printf("Project Type: %s\n", ctx.ProjectType)
+			fmt.Printf("Is Git Repo: %v\n", ctx.IsGitRepo)
+			fmt.Printf("Has Kubeconfig: %v\n", ctx.HasKubeConfig)
+			fmt.Printf("Has Dockerfile: %v\n", ctx.HasDockerfile)
+			if len(ctx.DetectedTags) > 0 {
+				fmt.Printf("Detected Tags: %v\n", ctx.DetectedTags)
+			}
+			fmt.Printf("Suggested Profile: %s\n", ctx.SuggestedProfile)
+			return nil
+		},
+	}
+
+	contextCmd.AddCommand(contextDetectCmd)
+
+	// Reload command
+	reloadCmd := &cobra.Command{
+		Use:   "reload",
+		Short: "Reload daemon configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := call(socketPath, "loom/reload", nil)
+			if err != nil {
+				return err
+			}
+			fmt.Println("Reload result:", string(result))
+			return nil
+		},
+	}
+
+	// Sync status subcommand
+	syncStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show sync status for all profiles",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			mgr, err := sync.NewManager(cwd)
+			if err != nil {
+				return err
+			}
+
+			statuses, err := mgr.GetAllSyncStatus()
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("%-16s %-8s %-8s %s\n", "Profile", "Repo", "Home", "Status")
+			fmt.Printf("%-16s %-8s %-8s %s\n", "-------", "----", "----", "------")
+
+			names := make([]string, 0, len(statuses))
+			for name := range statuses {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+
+			for _, name := range names {
+				s := statuses[name]
+				repoStatus := "missing"
+				if s.RepoExists {
+					repoStatus = "ok"
+				}
+				homeStatus := "missing"
+				if s.HomeExists {
+					homeStatus = "ok"
+				}
+				syncStatus := "in-sync"
+				if !s.InSync {
+					syncStatus = "drift"
+				}
+				fmt.Printf("%-16s %-8s %-8s %s\n", name, repoStatus, homeStatus, syncStatus)
+			}
+			return nil
+		},
+	}
+	syncCmd.AddCommand(syncStatusCmd)
+
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, reloadCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
