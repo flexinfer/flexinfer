@@ -44,13 +44,13 @@ type InitializeParams struct {
 
 // Capabilities describes client/server capabilities.
 type Capabilities struct {
-	Roots        *RootsCapability        `json:"roots,omitempty"`
-	Sampling     *SamplingCapability     `json:"sampling,omitempty"`
-	Experimental map[string]any          `json:"experimental,omitempty"`
-	Tools        *ToolsCapability        `json:"tools,omitempty"`
-	Resources    *ResourcesCapability    `json:"resources,omitempty"`
-	Prompts      *PromptsCapability      `json:"prompts,omitempty"`
-	Logging      *LoggingCapability      `json:"logging,omitempty"`
+	Roots        *RootsCapability     `json:"roots,omitempty"`
+	Sampling     *SamplingCapability  `json:"sampling,omitempty"`
+	Experimental map[string]any       `json:"experimental,omitempty"`
+	Tools        *ToolsCapability     `json:"tools,omitempty"`
+	Resources    *ResourcesCapability `json:"resources,omitempty"`
+	Prompts      *PromptsCapability   `json:"prompts,omitempty"`
+	Logging      *LoggingCapability   `json:"logging,omitempty"`
 }
 
 // RootsCapability indicates roots support.

@@ -24,14 +24,14 @@ var version = "dev"
 
 // GodotClient handles TCP communication with the Godot debug plugin
 type GodotClient struct {
-	host          string
-	port          int
-	conn          net.Conn
-	mu            sync.Mutex
-	autoConnect   bool
-	reconnectMs   int
-	responseChan  chan json.RawMessage
-	errorChan     chan error
+	host         string
+	port         int
+	conn         net.Conn
+	mu           sync.Mutex
+	autoConnect  bool
+	reconnectMs  int
+	responseChan chan json.RawMessage
+	errorChan    chan error
 }
 
 func NewGodotClient(host string, port int, autoConnect bool, reconnectMs int) *GodotClient {

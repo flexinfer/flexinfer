@@ -40,13 +40,13 @@ func (t Target) String() string {
 
 // Health tracks server health status.
 type Health struct {
-	Healthy       bool
-	LastCheck     time.Time
-	LastSuccess   time.Time
-	LastError     time.Time
-	ErrorMessage  string
-	ConsecFails   int
-	AvgLatencyMs  float64
+	Healthy      bool
+	LastCheck    time.Time
+	LastSuccess  time.Time
+	LastError    time.Time
+	ErrorMessage string
+	ConsecFails  int
+	AvgLatencyMs float64
 }
 
 // Router decides between local and hub routing.

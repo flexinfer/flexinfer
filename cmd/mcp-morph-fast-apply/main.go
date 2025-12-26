@@ -223,11 +223,11 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"success":    true,
-		"path":       absPath,
-		"bytes":      len(newCode),
-		"tokens":     result.Usage.TotalTokens,
-		"model":      model,
-		"message":    fmt.Sprintf("Applied edits to %s", path),
+		"success": true,
+		"path":    absPath,
+		"bytes":   len(newCode),
+		"tokens":  result.Usage.TotalTokens,
+		"model":   model,
+		"message": fmt.Sprintf("Applied edits to %s", path),
 	})
 }

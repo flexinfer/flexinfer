@@ -12,10 +12,10 @@ import (
 
 // Profile defines a focused tool subset for specific use cases.
 type Profile struct {
-	Name        string      `yaml:"name"`
-	Description string      `yaml:"description"`
-	Include     IncludeSpec `yaml:"include"`
-	MaxTools    int         `yaml:"maxTools,omitempty"`
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Include     IncludeSpec    `yaml:"include"`
+	MaxTools    int            `yaml:"maxTools,omitempty"`
 	Priorities  map[string]int `yaml:"priorities,omitempty"`
 }
 

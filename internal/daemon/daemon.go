@@ -9,8 +9,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	gosync "sync"
 	"syscall"
@@ -60,23 +60,23 @@ type ToolCache struct {
 
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg       Config
-	fileCfg   FileConfig // File-based configuration
-	registry  *registry.Registry
-	repoRoot  string // Repository root for ${repo} expansion
-	procMgr   *process.Manager
-	pool      *pool.Pool
-	hubPool   *pool.Pool
-	router    *router.Router
-	hubClient *mcp.HubClient
-	listener  net.Listener
-	logger    *slog.Logger
-	toolCache *ToolCache
-	manifest    *ManifestManager    // Persistent tool cache
-	profiles    *profiles.Manager   // Tool profile manager
-	metadata    *registry.Metadata  // Tool metadata for enhanced descriptions
-	watcher     *sync.Watcher       // File watcher for hot reload
-	syncManager *sync.Manager       // Sync manager for profile operations
+	cfg         Config
+	fileCfg     FileConfig // File-based configuration
+	registry    *registry.Registry
+	repoRoot    string // Repository root for ${repo} expansion
+	procMgr     *process.Manager
+	pool        *pool.Pool
+	hubPool     *pool.Pool
+	router      *router.Router
+	hubClient   *mcp.HubClient
+	listener    net.Listener
+	logger      *slog.Logger
+	toolCache   *ToolCache
+	manifest    *ManifestManager   // Persistent tool cache
+	profiles    *profiles.Manager  // Tool profile manager
+	metadata    *registry.Metadata // Tool metadata for enhanced descriptions
+	watcher     *sync.Watcher      // File watcher for hot reload
+	syncManager *sync.Manager      // Sync manager for profile operations
 	wg          gosync.WaitGroup
 	done        chan struct{}
 }

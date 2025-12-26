@@ -21,25 +21,25 @@ const (
 
 // WatchEvent represents a file system change event.
 type WatchEvent struct {
-	Type     WatchEventType
-	Profile  string // For profile changes
-	Path     string
-	Time     time.Time
+	Type    WatchEventType
+	Profile string // For profile changes
+	Path    string
+	Time    time.Time
 }
 
 // Watcher monitors configuration files for changes.
 type Watcher struct {
-	manager     *Manager
-	fsWatcher   *fsnotify.Watcher
-	debounce    time.Duration
-	onChange    chan WatchEvent
-	logger      *slog.Logger
-	repoRoot    string
+	manager      *Manager
+	fsWatcher    *fsnotify.Watcher
+	debounce     time.Duration
+	onChange     chan WatchEvent
+	logger       *slog.Logger
+	repoRoot     string
 	registryPath string
 
-	mu          sync.Mutex
-	pending     map[string]time.Time // Debounce tracking
-	done        chan struct{}
+	mu      sync.Mutex
+	pending map[string]time.Time // Debounce tracking
+	done    chan struct{}
 }
 
 // WatcherConfig configures the file watcher.

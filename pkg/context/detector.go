@@ -8,16 +8,16 @@ import (
 
 // WorkspaceContext describes the current working environment.
 type WorkspaceContext struct {
-	CWD             string
-	IsGitRepo       bool
-	HasKubeConfig   bool
-	HasDockerfile   bool
-	HasGoMod        bool
-	HasPackageJSON  bool
-	HasPyProject    bool
-	HasCargoToml    bool
-	ProjectType     string   // "go", "python", "node", "rust", "unknown"
-	DetectedTags    []string
+	CWD              string
+	IsGitRepo        bool
+	HasKubeConfig    bool
+	HasDockerfile    bool
+	HasGoMod         bool
+	HasPackageJSON   bool
+	HasPyProject     bool
+	HasCargoToml     bool
+	ProjectType      string // "go", "python", "node", "rust", "unknown"
+	DetectedTags     []string
 	SuggestedProfile string
 }
 

@@ -47,7 +47,7 @@ fmt:
   <<: *go-template
   stage: lint
   script:
-    - test -z "$(gofmt -l .)" || (gofmt -d . && exit 1)
+    - test -z "$(find . -name '*.go' -not -path './.go/*' | xargs gofmt -l)" || (find . -name '*.go' -not -path './.go/*' | xargs gofmt -d && exit 1)
 
 # Test stage
 test:

@@ -37,10 +37,10 @@ func (s DriftStatus) String() string {
 
 // DriftItem represents a specific file that differs.
 type DriftItem struct {
-	File       string
-	RepoHash   string
-	HomeHash   string
-	Status     DriftStatus
+	File     string
+	RepoHash string
+	HomeHash string
+	Status   DriftStatus
 }
 
 // SyncStatus represents the sync state of a profile.

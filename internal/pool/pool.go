@@ -30,15 +30,15 @@ type Stats struct {
 
 // Pool manages a pool of MCP server connections.
 type Pool struct {
-	maxIdle       int
-	maxOpen       int
-	idleTimeout   time.Duration
-	dialFunc      DialFunc
-	mu            sync.Mutex
-	conns         map[string][]*Conn
-	activeCount   map[string]int
-	stats         Stats
-	closed        bool
+	maxIdle     int
+	maxOpen     int
+	idleTimeout time.Duration
+	dialFunc    DialFunc
+	mu          sync.Mutex
+	conns       map[string][]*Conn
+	activeCount map[string]int
+	stats       Stats
+	closed      bool
 }
 
 // DialFunc is a function that creates a new connection to a server.

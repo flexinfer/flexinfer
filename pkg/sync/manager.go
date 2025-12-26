@@ -9,9 +9,9 @@ import (
 // Profile defines the configuration for a specific tool profile.
 type Profile struct {
 	Name            string
-	RepoDir         string   // Relative to repo root
-	HomeDir         string   // Absolute path or relative to home
-	WorkspaceDir    string   // Additional workspace-relative dir to copy to (e.g., ".vscode")
+	RepoDir         string // Relative to repo root
+	HomeDir         string // Absolute path or relative to home
+	WorkspaceDir    string // Additional workspace-relative dir to copy to (e.g., ".vscode")
 	Excludes        []string
 	SecretFiles     []string
 	GeneratorTarget string // Target name for the generator (e.g. "codex")

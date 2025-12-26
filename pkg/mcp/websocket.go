@@ -23,13 +23,13 @@ type WebSocketTransport struct {
 
 // HubClientConfig configures the hub WebSocket client.
 type HubClientConfig struct {
-	URL                   string
-	Profile               string
-	CFAccessClientID      string
-	CFAccessClientSecret  string
-	ConnectTimeout        time.Duration
-	ReadTimeout           time.Duration
-	WriteTimeout          time.Duration
+	URL                  string
+	Profile              string
+	CFAccessClientID     string
+	CFAccessClientSecret string
+	ConnectTimeout       time.Duration
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
 }
 
 // NewWebSocketTransport creates a WebSocket transport to the hub.

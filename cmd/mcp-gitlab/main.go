@@ -643,9 +643,9 @@ func (g *gitlabServer) handleCreateRepository(ctx context.Context, args map[stri
 	}
 
 	payload := map[string]any{
-		"name":                    name,
-		"visibility":              visibility,
-		"initialize_with_readme":  initWithReadme,
+		"name":                   name,
+		"visibility":             visibility,
+		"initialize_with_readme": initWithReadme,
 	}
 	if description != "" {
 		payload["description"] = description

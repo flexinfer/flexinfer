@@ -74,9 +74,9 @@ type Registry struct {
 
 // Server defines an MCP server in the registry.
 type Server struct {
-	Name       string            `yaml:"name"`
-	Categories []string          `yaml:"categories,omitempty"`
-	Common     *TargetSpec       `yaml:"common,omitempty"`
+	Name       string                 `yaml:"name"`
+	Categories []string               `yaml:"categories,omitempty"`
+	Common     *TargetSpec            `yaml:"common,omitempty"`
 	Targets    map[string]*TargetSpec `yaml:"targets,omitempty"`
 }
 
