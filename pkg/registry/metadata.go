@@ -1,11 +1,15 @@
 package registry
 
 import (
+	_ "embed"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed tool_metadata.yaml
+var embeddedMetadata []byte
 
 // ToolMetadata provides enhanced information about a tool.
 type ToolMetadata struct {
@@ -53,6 +57,15 @@ func LoadMetadata(path string) (*Metadata, error) {
 // LoadMetadataFromDir loads metadata from the default location in a directory.
 func LoadMetadataFromDir(dir string) (*Metadata, error) {
 	return LoadMetadata(filepath.Join(dir, "tool_metadata.yaml"))
+}
+
+// LoadEmbeddedMetadata loads the built-in tool metadata.
+func LoadEmbeddedMetadata() (*Metadata, error) {
+	var meta Metadata
+	if err := yaml.Unmarshal(embeddedMetadata, &meta); err != nil {
+		return nil, err
+	}
+	return &meta, nil
 }
 
 // GetToolMetadata returns metadata for a specific tool on a server.

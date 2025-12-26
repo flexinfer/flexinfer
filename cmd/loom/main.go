@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	loomcontext "github.com/crb2nu/loom/pkg/context"
@@ -387,6 +388,103 @@ Example config.toml:
 
 	contextCmd.AddCommand(contextDetectCmd)
 
+	// Tools command
+	toolsCmd := &cobra.Command{
+		Use:   "tools",
+		Short: "List and search aggregated tools",
+	}
+
+	toolsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all available tools from daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := call(socketPath, "loom/tools", nil)
+			if err != nil {
+				return err
+			}
+
+			var tools struct {
+				Tools []struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
+				} `json:"tools"`
+				CachedAt    string `json:"cachedAt"`
+				ServerCount int    `json:"serverCount"`
+			}
+
+			if err := json.Unmarshal(result, &tools); err != nil {
+				return fmt.Errorf("parse tools: %w", err)
+			}
+
+			fmt.Printf("Tools: %d from %d servers\n\n", len(tools.Tools), tools.ServerCount)
+			for _, t := range tools.Tools {
+				desc := t.Description
+				if len(desc) > 60 {
+					desc = desc[:57] + "..."
+				}
+				fmt.Printf("  %-40s %s\n", t.Name, desc)
+			}
+			return nil
+		},
+	}
+
+	toolsSearchCmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search tools by name or description",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := args[0]
+			result, err := call(socketPath, "loom/tools", nil)
+			if err != nil {
+				return err
+			}
+
+			var tools struct {
+				Tools []struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
+				} `json:"tools"`
+			}
+
+			if err := json.Unmarshal(result, &tools); err != nil {
+				return fmt.Errorf("parse tools: %w", err)
+			}
+
+			// Case-insensitive search in name and description
+			var matches []struct {
+				Name        string
+				Description string
+			}
+			queryLower := strings.ToLower(query)
+			for _, t := range tools.Tools {
+				if strings.Contains(strings.ToLower(t.Name), queryLower) ||
+					strings.Contains(strings.ToLower(t.Description), queryLower) {
+					matches = append(matches, struct {
+						Name        string
+						Description string
+					}{t.Name, t.Description})
+				}
+			}
+
+			if len(matches) == 0 {
+				fmt.Printf("No tools found matching '%s'\n", query)
+				return nil
+			}
+
+			fmt.Printf("Found %d tools matching '%s':\n\n", len(matches), query)
+			for _, t := range matches {
+				desc := t.Description
+				if len(desc) > 60 {
+					desc = desc[:57] + "..."
+				}
+				fmt.Printf("  %-40s %s\n", t.Name, desc)
+			}
+			return nil
+		},
+	}
+
+	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd)
+
 	// Reload command
 	reloadCmd := &cobra.Command{
 		Use:   "reload",
@@ -447,7 +545,7 @@ Example config.toml:
 	}
 	syncCmd.AddCommand(syncStatusCmd)
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, reloadCmd)
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

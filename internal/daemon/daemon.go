@@ -72,10 +72,11 @@ type Daemon struct {
 	listener  net.Listener
 	logger    *slog.Logger
 	toolCache *ToolCache
-	manifest    *ManifestManager  // Persistent tool cache
-	profiles    *profiles.Manager // Tool profile manager
-	watcher     *sync.Watcher     // File watcher for hot reload
-	syncManager *sync.Manager     // Sync manager for profile operations
+	manifest    *ManifestManager    // Persistent tool cache
+	profiles    *profiles.Manager   // Tool profile manager
+	metadata    *registry.Metadata  // Tool metadata for enhanced descriptions
+	watcher     *sync.Watcher       // File watcher for hot reload
+	syncManager *sync.Manager       // Sync manager for profile operations
 	wg          gosync.WaitGroup
 	done        chan struct{}
 }
@@ -200,6 +201,14 @@ func New(cfg Config) (*Daemon, error) {
 		}
 	}
 
+	// Load tool metadata for enhanced descriptions
+	toolMetadata, err := registry.LoadEmbeddedMetadata()
+	if err != nil {
+		logger.Warn("failed to load tool metadata", "error", err)
+	} else {
+		logger.Debug("loaded tool metadata", "servers", len(toolMetadata.Servers))
+	}
+
 	// Determine cache TTL from config
 	cacheTTL := fileCfg.Resources.GetManifestTTL()
 
@@ -219,6 +228,7 @@ func New(cfg Config) (*Daemon, error) {
 		},
 		manifest:    manifest,
 		profiles:    profileMgr,
+		metadata:    toolMetadata,
 		syncManager: syncMgr,
 		done:        make(chan struct{}),
 	}, nil
@@ -755,15 +765,22 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		}
 		successCount++
 
-		// Namespace tools with server prefix
+		// Namespace tools with server prefix and enhance descriptions
 		var namespacedTools []mcp.Tool
 		for _, tool := range result.tools {
+			originalToolName := tool.Name
 			// Sanitize the original tool name first
 			safeToolName := sanitize(tool.Name)
 			// Create namespaced name
 			namespacedName := result.name + "__" + safeToolName
 			// Sanitize again just in case server name had issues (though registry should be clean)
 			tool.Name = sanitize(namespacedName)
+
+			// Enhance description with metadata if available
+			if d.metadata != nil && d.fileCfg.Context.EnrichDescriptions {
+				tool.Description = d.metadata.EnhanceDescription(result.name, originalToolName, tool.Description)
+			}
+
 			namespacedTools = append(namespacedTools, tool)
 			allTools = append(allTools, tool)
 		}
