@@ -8,6 +8,7 @@ stages:
   - deploy
 
 variables:
+  AUTO_DEVOPS_ENABLED: "false"
   GO_VERSION: "1.24"
   BINARY_NAME: "loom"
 
