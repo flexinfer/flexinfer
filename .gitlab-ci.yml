@@ -58,10 +58,6 @@ test:
     - go tool cover -func=coverage.out
   coverage: '/total:\s+\(statements\)\s+(\d+.\d+)%/'
   artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: coverage.xml
     paths:
       - coverage.out
     expire_in: 1 week
