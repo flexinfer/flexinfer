@@ -1,0 +1,176 @@
+# Tool Metadata for Enhanced LLM Understanding
+# This file provides usage hints, examples, and related tools
+# to help LLMs better understand when and how to use each tool.
+
+version: 1
+
+servers:
+  mcp-git:
+    description: "Git version control operations"
+    category: "version-control"
+    tools:
+      git_status:
+        usageHint: "Use first to understand repo state before any git operations"
+        example: "Check for uncommitted changes before starting work"
+        relatedTools: ["git_diff", "git_add", "git_commit"]
+        priority: 1
+      git_diff:
+        usageHint: "Review changes before staging or committing"
+        example: "See what has changed in working directory"
+        relatedTools: ["git_status", "git_add"]
+        priority: 2
+      git_add:
+        usageHint: "Stage files for commit after reviewing with git_diff"
+        example: "Stage specific files or all changes"
+        relatedTools: ["git_diff", "git_commit"]
+        priority: 3
+      git_commit:
+        usageHint: "Commit staged changes with descriptive message"
+        example: "Create commit after staging with git_add"
+        relatedTools: ["git_add", "git_push"]
+        priority: 4
+      git_log:
+        usageHint: "View commit history for context or debugging"
+        example: "Find when a change was introduced"
+        relatedTools: ["git_diff", "git_show"]
+        priority: 5
+
+  mcp-github:
+    description: "GitHub API operations"
+    category: "collaboration"
+    tools:
+      create_pull_request:
+        usageHint: "Create PR after pushing branch with changes"
+        example: "Open PR for code review"
+        relatedTools: ["git_push", "list_pull_requests"]
+        priority: 1
+      list_pull_requests:
+        usageHint: "View open PRs to understand current work"
+        example: "Check for existing PRs before creating new one"
+        relatedTools: ["create_pull_request", "get_pull_request"]
+        priority: 2
+      create_issue:
+        usageHint: "Report bugs or request features"
+        example: "Document a problem for team discussion"
+        relatedTools: ["list_issues", "add_comment"]
+        priority: 3
+
+  mcp-filesystem:
+    description: "File system operations"
+    category: "file-operations"
+    tools:
+      read_file:
+        usageHint: "Read file contents before editing or analyzing"
+        example: "Load source code for review"
+        relatedTools: ["write_file", "list_directory"]
+        priority: 1
+      write_file:
+        usageHint: "Write or update file contents"
+        example: "Save code changes or create new files"
+        relatedTools: ["read_file", "list_directory"]
+        priority: 2
+      list_directory:
+        usageHint: "Explore directory structure to find files"
+        example: "Navigate project structure"
+        relatedTools: ["read_file", "search_files"]
+        priority: 3
+      search_files:
+        usageHint: "Find files by name pattern across directories"
+        example: "Locate all test files in project"
+        relatedTools: ["list_directory", "read_file"]
+        priority: 2
+
+  mcp-k8s:
+    description: "Kubernetes cluster operations"
+    category: "kubernetes"
+    tools:
+      get_pods:
+        usageHint: "First step to understand running workloads"
+        example: "Check pod status and health"
+        relatedTools: ["describe_pod", "get_logs"]
+        priority: 1
+      get_logs:
+        usageHint: "Debug application issues by viewing container logs"
+        example: "Investigate errors or unexpected behavior"
+        relatedTools: ["get_pods", "describe_pod"]
+        priority: 2
+      describe_pod:
+        usageHint: "Get detailed pod info including events"
+        example: "Debug scheduling or startup issues"
+        relatedTools: ["get_pods", "get_logs"]
+        priority: 3
+      apply_manifest:
+        usageHint: "Deploy or update Kubernetes resources"
+        example: "Apply configuration changes to cluster"
+        relatedTools: ["get_pods", "get_deployments"]
+        priority: 4
+      get_deployments:
+        usageHint: "View deployment status and replica counts"
+        example: "Check if deployments are healthy"
+        relatedTools: ["get_pods", "scale_deployment"]
+        priority: 2
+
+  mcp-tavily:
+    description: "Web search for real-time information"
+    category: "research"
+    tools:
+      search:
+        usageHint: "Search web for current information beyond training data"
+        example: "Find latest documentation or news"
+        relatedTools: []
+        priority: 1
+
+  mcp-prometheus:
+    description: "Prometheus metrics queries"
+    category: "monitoring"
+    tools:
+      query:
+        usageHint: "Execute PromQL query for metrics"
+        example: "Check error rates or latency"
+        relatedTools: ["query_range"]
+        priority: 1
+      query_range:
+        usageHint: "Query metrics over time range for trends"
+        example: "Analyze performance over last hour"
+        relatedTools: ["query"]
+        priority: 2
+
+  mcp-loki:
+    description: "Loki log queries"
+    category: "monitoring"
+    tools:
+      query_logs:
+        usageHint: "Search logs using LogQL"
+        example: "Find errors in application logs"
+        relatedTools: []
+        priority: 1
+
+# Category definitions for profile-based filtering
+categories:
+  version-control:
+    description: "Git and version control tools"
+    servers: ["mcp-git", "mcp-git-worktree"]
+
+  collaboration:
+    description: "GitHub, GitLab, and code review tools"
+    servers: ["mcp-github", "mcp-gitlab"]
+
+  file-operations:
+    description: "File system and text manipulation"
+    servers: ["mcp-filesystem", "mcp-ripgrep"]
+
+  kubernetes:
+    description: "Kubernetes cluster management"
+    servers: ["mcp-k8s", "mcp-k8s-ops", "mcp-helm"]
+
+  monitoring:
+    description: "Metrics, logs, and observability"
+    servers: ["mcp-prometheus", "mcp-loki", "mcp-grafana"]
+
+  research:
+    description: "Web search and information gathering"
+    servers: ["mcp-tavily", "mcp-youtube", "mcp-context7"]
+
+  infrastructure:
+    description: "Infrastructure and deployment tools"
+    servers: ["mcp-terraform", "mcp-ansible", "mcp-docker"]

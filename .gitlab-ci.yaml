@@ -1,0 +1,177 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  GO_VERSION: "1.22"
+  BINARY_NAME: "loom"
+
+# Cache Go modules
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .go/pkg/mod/
+    - .go-build/
+  policy: pull-push
+
+.go-template: &go-template
+  image: golang:${GO_VERSION}
+  before_script:
+    - export GOPATH="$CI_PROJECT_DIR/.go"
+    - export GOCACHE="$CI_PROJECT_DIR/.go-build"
+    - mkdir -p "$GOPATH" "$GOCACHE"
+    - go mod download
+
+# Lint stage
+lint:
+  <<: *go-template
+  stage: lint
+  script:
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    - golangci-lint run --timeout 5m ./...
+  allow_failure: true
+
+vet:
+  <<: *go-template
+  stage: lint
+  script:
+    - go vet ./...
+
+fmt:
+  <<: *go-template
+  stage: lint
+  script:
+    - test -z "$(gofmt -l .)" || (gofmt -d . && exit 1)
+
+# Test stage
+test:
+  <<: *go-template
+  stage: test
+  script:
+    - go test -race -coverprofile=coverage.out -covermode=atomic ./...
+    - go tool cover -func=coverage.out
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.out
+    expire_in: 1 week
+
+test:integration:
+  <<: *go-template
+  stage: test
+  script:
+    - go test -race -tags=integration ./...
+  when: manual
+
+# Build stage
+build:
+  <<: *go-template
+  stage: build
+  script:
+    - CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME} ./cmd/loom
+  artifacts:
+    paths:
+      - ${BINARY_NAME}
+    expire_in: 1 week
+
+build:linux-amd64:
+  <<: *go-template
+  stage: build
+  script:
+    - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-linux-amd64 ./cmd/loom
+  artifacts:
+    paths:
+      - ${BINARY_NAME}-linux-amd64
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+build:linux-arm64:
+  <<: *go-template
+  stage: build
+  script:
+    - GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-linux-arm64 ./cmd/loom
+  artifacts:
+    paths:
+      - ${BINARY_NAME}-linux-arm64
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+build:darwin-amd64:
+  <<: *go-template
+  stage: build
+  script:
+    - GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-darwin-amd64 ./cmd/loom
+  artifacts:
+    paths:
+      - ${BINARY_NAME}-darwin-amd64
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+build:darwin-arm64:
+  <<: *go-template
+  stage: build
+  script:
+    - GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-darwin-arm64 ./cmd/loom
+  artifacts:
+    paths:
+      - ${BINARY_NAME}-darwin-arm64
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# Deploy stage
+release:
+  stage: deploy
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script:
+    - echo "Creating release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: 'Release $CI_COMMIT_TAG'
+    assets:
+      links:
+        - name: 'loom-linux-amd64'
+          url: '${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/loom-linux-amd64?job=build:linux-amd64'
+        - name: 'loom-linux-arm64'
+          url: '${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/loom-linux-arm64?job=build:linux-arm64'
+        - name: 'loom-darwin-amd64'
+          url: '${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/loom-darwin-amd64?job=build:darwin-amd64'
+        - name: 'loom-darwin-arm64'
+          url: '${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/loom-darwin-arm64?job=build:darwin-arm64'
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# Deploy to homebrew tap (optional)
+deploy:homebrew:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache git curl
+  script:
+    - echo "Homebrew tap update would go here"
+    - echo "Update formula with new version $CI_COMMIT_TAG"
+  rules:
+    - if: $CI_COMMIT_TAG
+  when: manual
+
+# Security scanning
+sast:
+  stage: lint
+  image: golang:${GO_VERSION}
+  script:
+    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    - gosec -fmt json -out gosec-report.json ./... || true
+  artifacts:
+    paths:
+      - gosec-report.json
+    expire_in: 1 week
+  allow_failure: true

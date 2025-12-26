@@ -10,15 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"os/signal"
 	"strings"
-	"sync"
+	gosync "sync"
+	"syscall"
 	"time"
 
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
 	"github.com/crb2nu/loom/pkg/mcp"
+	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/sync"
 )
 
 // Config holds daemon configuration.
@@ -48,7 +52,7 @@ func DefaultConfig() Config {
 
 // ToolCache holds cached aggregated tools from all servers.
 type ToolCache struct {
-	mu        sync.RWMutex
+	mu        gosync.RWMutex
 	tools     []mcp.Tool
 	updatedAt time.Time
 	ttl       time.Duration
@@ -68,9 +72,12 @@ type Daemon struct {
 	listener  net.Listener
 	logger    *slog.Logger
 	toolCache *ToolCache
-	manifest  *ManifestManager // Persistent tool cache
-	wg        sync.WaitGroup
-	done      chan struct{}
+	manifest    *ManifestManager  // Persistent tool cache
+	profiles    *profiles.Manager // Tool profile manager
+	watcher     *sync.Watcher     // File watcher for hot reload
+	syncManager *sync.Manager     // Sync manager for profile operations
+	wg          gosync.WaitGroup
+	done        chan struct{}
 }
 
 // New creates a new daemon instance.
@@ -175,6 +182,24 @@ func New(cfg Config) (*Daemon, error) {
 	// Create manifest manager for persistent tool cache
 	manifest := NewManifestManager()
 
+	// Create profiles manager for tool filtering
+	profileMgr := profiles.NewManager()
+	if fileCfg.Context.CustomProfilePath != "" {
+		if err := profileMgr.LoadFromFile(fileCfg.Context.CustomProfilePath); err != nil {
+			logger.Warn("failed to load custom profiles", "path", fileCfg.Context.CustomProfilePath, "error", err)
+		}
+	}
+
+	// Create sync manager for profile operations
+	var syncMgr *sync.Manager
+	if repoRoot != "" {
+		var err error
+		syncMgr, err = sync.NewManager(repoRoot)
+		if err != nil {
+			logger.Warn("failed to create sync manager", "error", err)
+		}
+	}
+
 	// Determine cache TTL from config
 	cacheTTL := fileCfg.Resources.GetManifestTTL()
 
@@ -192,8 +217,10 @@ func New(cfg Config) (*Daemon, error) {
 		toolCache: &ToolCache{
 			ttl: cacheTTL,
 		},
-		manifest: manifest,
-		done:     make(chan struct{}),
+		manifest:    manifest,
+		profiles:    profileMgr,
+		syncManager: syncMgr,
+		done:        make(chan struct{}),
 	}, nil
 }
 
@@ -257,6 +284,30 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// Start idle server reaper
 	go d.idleReaperLoop()
 
+	// Start file watcher for hot reload
+	if d.syncManager != nil {
+		watcher, err := sync.NewWatcher(sync.WatcherConfig{
+			Manager:      d.syncManager,
+			RepoRoot:     d.repoRoot,
+			RegistryPath: d.cfg.RegistryPath,
+			Logger:       d.logger,
+		})
+		if err != nil {
+			d.logger.Warn("failed to create file watcher", "error", err)
+		} else {
+			d.watcher = watcher
+			if err := watcher.Start(); err != nil {
+				d.logger.Warn("failed to start file watcher", "error", err)
+			} else {
+				d.logger.Info("file watcher started")
+				go d.watcherLoop(ctx)
+			}
+		}
+	}
+
+	// Start SIGHUP handler for manual reload
+	go d.signalLoop(ctx)
+
 	// Accept connections
 	d.wg.Add(1)
 	go d.acceptLoop(ctx)
@@ -284,6 +335,62 @@ func (d *Daemon) idleReaperLoop() {
 	}
 }
 
+// watcherLoop handles file watcher events and triggers reloads.
+func (d *Daemon) watcherLoop(ctx context.Context) {
+	if d.watcher == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ctx.Done():
+			return
+		case event, ok := <-d.watcher.Events():
+			if !ok {
+				return
+			}
+			d.logger.Info("file change detected", "type", event.Type, "path", event.Path, "profile", event.Profile)
+
+			// Trigger reload
+			reloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			if err := d.Reload(reloadCtx); err != nil {
+				d.logger.Error("reload after file change failed", "error", err)
+			} else {
+				d.logger.Info("reload completed after file change")
+			}
+			cancel()
+		}
+	}
+}
+
+// signalLoop handles SIGHUP for manual reload.
+func (d *Daemon) signalLoop(ctx context.Context) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGHUP)
+	defer signal.Stop(sigChan)
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ctx.Done():
+			return
+		case sig := <-sigChan:
+			d.logger.Info("received signal", "signal", sig)
+
+			reloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			if err := d.Reload(reloadCtx); err != nil {
+				d.logger.Error("reload after SIGHUP failed", "error", err)
+			} else {
+				d.logger.Info("reload completed after SIGHUP")
+			}
+			cancel()
+		}
+	}
+}
+
 // Stop stops the daemon.
 func (d *Daemon) Stop() error {
 	close(d.done)
@@ -300,6 +407,13 @@ func (d *Daemon) Stop() error {
 		d.hubClient.Close()
 	}
 	d.procMgr.StopAll()
+
+	// Stop file watcher
+	if d.watcher != nil {
+		if err := d.watcher.Stop(); err != nil {
+			d.logger.Warn("failed to stop watcher", "error", err)
+		}
+	}
 
 	// Save manifest for next startup
 	if err := d.manifest.Save(); err != nil {
@@ -398,6 +512,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleReload(ctx, msg)
 	case "loom/config-hash":
 		return d.handleConfigHash(ctx, msg)
+	case "loom/profile":
+		return d.handleProfile(ctx, msg)
 	default:
 		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
 	}
@@ -592,7 +708,7 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 	}
 
 	results := make(chan serverTools, len(d.registry.Servers))
-	var wg sync.WaitGroup
+	var wg gosync.WaitGroup
 
 	for _, server := range d.registry.Servers {
 		wg.Add(1)
@@ -656,13 +772,26 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		d.manifest.UpdateServerTools(result.name, namespacedTools)
 	}
 
-	// Enforce 100 tool limit (VS Code extension limit)
-	if len(allTools) > 100 {
-		d.logger.Warn("tool count exceeds limit", "count", len(allTools), "limit", 100, "action", "truncating")
-		allTools = allTools[:100]
+	// Apply profile filtering
+	activeProfile := d.fileCfg.Context.ActiveProfile
+	if activeProfile == "" {
+		activeProfile = "full"
 	}
 
-	d.logger.Info("tool cache refreshed", "total_tools", len(allTools), "servers_succeeded", successCount, "servers_total", len(d.registry.Servers))
+	filterResult := d.profiles.Filter(allTools, activeProfile)
+	if filterResult.Truncated {
+		d.logger.Warn("tools truncated by profile",
+			"profile", activeProfile,
+			"before", filterResult.TotalBefore,
+			"after", filterResult.TotalAfter)
+	}
+	allTools = filterResult.Tools
+
+	d.logger.Info("tool cache refreshed",
+		"profile", activeProfile,
+		"total_tools", len(allTools),
+		"servers_succeeded", successCount,
+		"servers_total", len(d.registry.Servers))
 
 	// Update cache
 	d.toolCache.mu.Lock()
@@ -966,6 +1095,60 @@ func (d *Daemon) handleConfigHash(ctx context.Context, msg *mcp.Message) (*mcp.M
 	result := configHashResult{
 		ToolCount:   toolCount,
 		ServerCount: len(d.registry.Servers),
+	}
+
+	return mcp.NewResponse(msg.ID, result)
+}
+
+type profileParams struct {
+	Name string `json:"name,omitempty"`
+}
+
+type profileResult struct {
+	Active    string   `json:"active"`
+	Available []string `json:"available"`
+	ToolCount int      `json:"toolCount"`
+}
+
+// handleProfile gets or sets the active profile.
+func (d *Daemon) handleProfile(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	var params profileParams
+	if msg.Params != nil {
+		json.Unmarshal(msg.Params, &params)
+	}
+
+	// If name is provided, switch profile
+	if params.Name != "" {
+		profile := d.profiles.Get(params.Name)
+		if profile == nil {
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, fmt.Sprintf("unknown profile: %s", params.Name)), nil
+		}
+
+		d.fileCfg.Context.ActiveProfile = params.Name
+		d.logger.Info("switching profile", "profile", params.Name)
+
+		// Refresh tool cache with new profile
+		go func() {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if _, err := d.refreshToolCache(refreshCtx); err != nil {
+				d.logger.Warn("failed to refresh after profile switch", "error", err)
+			}
+		}()
+	}
+
+	d.toolCache.mu.RLock()
+	toolCount := len(d.toolCache.tools)
+	d.toolCache.mu.RUnlock()
+
+	result := profileResult{
+		Active:    d.fileCfg.Context.ActiveProfile,
+		Available: d.profiles.List(),
+		ToolCount: toolCount,
+	}
+
+	if result.Active == "" {
+		result.Active = "full"
 	}
 
 	return mcp.NewResponse(msg.ID, result)
