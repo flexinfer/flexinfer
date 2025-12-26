@@ -1,3 +1,6 @@
+# Disable Auto DevOps for this project
+include: []
+
 stages:
   - lint
   - test
@@ -5,7 +8,7 @@ stages:
   - deploy
 
 variables:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.24"
   BINARY_NAME: "loom"
 
 # Cache Go modules
