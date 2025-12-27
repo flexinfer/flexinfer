@@ -80,6 +80,20 @@ type Server struct {
 	Targets    map[string]*TargetSpec `yaml:"targets,omitempty"`
 }
 
+// ToolSchema defines a tool's schema for static tool advertisement.
+type ToolSchema struct {
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description,omitempty"`
+	InputSchema InputSchema `yaml:"inputSchema,omitempty"`
+}
+
+// InputSchema defines the JSON Schema for tool inputs.
+type InputSchema struct {
+	Type       string         `yaml:"type"`
+	Properties map[string]any `yaml:"properties,omitempty"`
+	Required   []string       `yaml:"required,omitempty"`
+}
+
 // TargetSpec defines a server's configuration for a specific target.
 type TargetSpec struct {
 	Description string            `yaml:"description,omitempty"`
@@ -90,6 +104,7 @@ type TargetSpec struct {
 	Timeout     int               `yaml:"timeout,omitempty"`
 	AlwaysAllow []string          `yaml:"always_allow,omitempty"`
 	Type        string            `yaml:"type,omitempty"`
+	Tools       []ToolSchema      `yaml:"tools,omitempty"` // Static tool schemas for instant availability
 }
 
 // Load reads and parses a registry YAML file.
@@ -209,6 +224,9 @@ func mergeSpec(dst, src *TargetSpec) {
 	if src.Type != "" {
 		dst.Type = src.Type
 	}
+	if len(src.Tools) > 0 {
+		dst.Tools = src.Tools
+	}
 }
 
 // ListServers returns all server names in the registry.
@@ -252,4 +270,45 @@ func (s *Server) IsHubCapable() bool {
 		}
 	}
 	return !s.IsLocalOnly()
+}
+
+// GetStaticTools returns all static tool schemas from the registry for a given target.
+// Tools are namespaced as server__toolname for MCP compatibility.
+// Returns tools with their full schemas ready for tools/list response.
+func (r *Registry) GetStaticTools(target string) []ToolSchema {
+	var tools []ToolSchema
+
+	for _, server := range r.Servers {
+		spec, err := r.GetServerSpec(server.Name, target)
+		if err != nil || spec == nil {
+			continue
+		}
+
+		// Namespace each tool with server name
+		for _, tool := range spec.Tools {
+			namespacedTool := ToolSchema{
+				Name:        server.Name + "__" + tool.Name,
+				Description: tool.Description,
+				InputSchema: tool.InputSchema,
+			}
+			tools = append(tools, namespacedTool)
+		}
+	}
+
+	return tools
+}
+
+// HasStaticTools returns true if any server has static tool schemas defined.
+func (r *Registry) HasStaticTools() bool {
+	for _, server := range r.Servers {
+		if server.Common != nil && len(server.Common.Tools) > 0 {
+			return true
+		}
+		for _, spec := range server.Targets {
+			if spec != nil && len(spec.Tools) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

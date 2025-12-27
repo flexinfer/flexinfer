@@ -120,28 +120,43 @@ func New(cfg Config) (*Daemon, error) {
 	// Load registry
 	var reg *registry.Registry
 	var repoRoot string
-	if cfg.RegistryPath != "" {
+
+	// Use repo_root from config if set
+	if fileCfg.RepoRoot != "" {
+		repoRoot = fileCfg.RepoRoot
+		logger.Debug("using configured repo root", "path", repoRoot)
+	}
+
+	// Determine registry path: explicit > auto-discover
+	registryPath := cfg.RegistryPath
+	if registryPath == "" {
+		if path, found := registry.FindRegistry(); found {
+			registryPath = path
+		}
+	}
+
+	if registryPath != "" {
 		var err error
-		reg, err = registry.Load(cfg.RegistryPath)
+		reg, err = registry.Load(registryPath)
 		if err != nil {
 			return nil, fmt.Errorf("load registry: %w", err)
 		}
-		logger.Info("loaded registry", "path", cfg.RegistryPath, "servers", len(reg.Servers))
+		logger.Info("loaded registry", "path", registryPath, "servers", len(reg.Servers))
 
-		// Use repo_root from config if set, otherwise derive from registry path (legacy behavior)
-		if fileCfg.RepoRoot != "" {
-			repoRoot = fileCfg.RepoRoot
-			logger.Debug("using configured repo root", "path", repoRoot)
-		} else {
+		// If repo_root not set in config, derive from registry path (legacy behavior)
+		if repoRoot == "" {
 			// Derive repo root from registry path (registry is at ${repo}/mcp/context/registry.yaml)
-			absPath, _ := filepath.Abs(cfg.RegistryPath)
+			absPath, _ := filepath.Abs(registryPath)
 			repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(absPath))) // Go up 3 levels
 			logger.Debug("derived repo root", "path", repoRoot)
 		}
 	}
 
-	// Create process manager
+	// Create process manager with variable expansion
 	procMgr := process.NewManager(reg, cfg.Target)
+	procMgr.SetExpandFunc(func(s string) string {
+		return expandVarsStatic(s, repoRoot)
+	})
 
 	// Create connection pool for local servers
 	connPool := pool.New(pool.Config{
@@ -682,7 +697,24 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 		return mcp.NewResponse(msg.ID, result)
 	}
 
-	// No cache at all - must wait for initial refresh (with shorter timeout)
+	// No cache at all - check for static tools in registry first
+	staticTools := d.getStaticToolsFromRegistry()
+	if len(staticTools) > 0 {
+		d.logger.Info("returning static tools from registry", "count", len(staticTools))
+		// Trigger background refresh to get live tools
+		go func() {
+			bgCtx := context.Background()
+			d.refreshToolCache(bgCtx)
+		}()
+		result := toolsResult{
+			Tools:       staticTools,
+			CachedAt:    time.Now(),
+			ServerCount: len(d.registry.Servers),
+		}
+		return mcp.NewResponse(msg.ID, result)
+	}
+
+	// No static tools - must wait for initial refresh (with shorter timeout)
 	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -704,6 +736,28 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 		ServerCount: len(d.registry.Servers),
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+// getStaticToolsFromRegistry converts registry tool schemas to MCP tools.
+func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
+	staticSchemas := d.registry.GetStaticTools(d.cfg.Target)
+	if len(staticSchemas) == 0 {
+		return nil
+	}
+
+	tools := make([]mcp.Tool, len(staticSchemas))
+	for i, schema := range staticSchemas {
+		tools[i] = mcp.Tool{
+			Name:        schema.Name,
+			Description: schema.Description,
+			InputSchema: mcp.InputSchema{
+				Type:       schema.InputSchema.Type,
+				Properties: schema.InputSchema.Properties,
+				Required:   schema.InputSchema.Required,
+			},
+		}
+	}
+	return tools
 }
 
 // refreshToolCache fetches tools from all servers concurrently and updates the cache.
@@ -923,19 +977,19 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 	return toolsList.Tools, nil
 }
 
-// expandVars expands variable patterns in strings:
-// - ${repo}: Repository root (derived from registry path)
+// expandVarsStatic expands variable patterns in strings (standalone version).
+// - ${repo}: Repository root
 // - ${HOME}: User home directory
 // - ${env:VAR}: Environment variable
-func (d *Daemon) expandVars(s string) string {
+func expandVarsStatic(s string, repoRoot string) string {
 	// Expand ${HOME}
 	if home, err := os.UserHomeDir(); err == nil {
 		s = strings.ReplaceAll(s, "${HOME}", home)
 	}
 
-	// Expand ${repo} - use repo root derived from registry path
-	if d.repoRoot != "" {
-		s = strings.ReplaceAll(s, "${repo}", d.repoRoot)
+	// Expand ${repo}
+	if repoRoot != "" {
+		s = strings.ReplaceAll(s, "${repo}", repoRoot)
 	}
 
 	// Expand ${env:VAR} patterns
@@ -955,6 +1009,11 @@ func (d *Daemon) expandVars(s string) string {
 	}
 
 	return s
+}
+
+// expandVars expands variable patterns in strings (uses daemon's repoRoot).
+func (d *Daemon) expandVars(s string) string {
+	return expandVarsStatic(s, d.repoRoot)
 }
 
 type callParams struct {

@@ -25,21 +25,31 @@ type Process struct {
 	stdout       io.ReadCloser
 }
 
+// ExpandFunc is a function that expands variables in a string.
+type ExpandFunc func(string) string
+
 // Manager manages local MCP server processes.
 type Manager struct {
-	registry *registry.Registry
-	target   string
-	mu       sync.Mutex
-	procs    map[string]*Process
+	registry   *registry.Registry
+	target     string
+	expandFunc ExpandFunc
+	mu         sync.Mutex
+	procs      map[string]*Process
 }
 
 // NewManager creates a new process manager.
 func NewManager(reg *registry.Registry, target string) *Manager {
 	return &Manager{
-		registry: reg,
-		target:   target,
-		procs:    make(map[string]*Process),
+		registry:   reg,
+		target:     target,
+		expandFunc: func(s string) string { return s }, // Default: no expansion
+		procs:      make(map[string]*Process),
 	}
+}
+
+// SetExpandFunc sets the function used to expand variables in commands.
+func (m *Manager) SetExpandFunc(fn ExpandFunc) {
+	m.expandFunc = fn
 }
 
 // Start starts a local MCP server process.
@@ -64,18 +74,21 @@ func (m *Manager) Start(ctx context.Context, serverName string) (*Process, error
 		return nil, fmt.Errorf("server %s has no command defined", serverName)
 	}
 
-	// Build command
+	// Expand variables in command
+	command := m.expandFunc(spec.Command)
+
+	// Build command with expanded args
 	args := make([]string, len(spec.Args))
 	for i, arg := range spec.Args {
-		args[i] = fmt.Sprint(arg)
+		args[i] = m.expandFunc(fmt.Sprint(arg))
 	}
 
-	cmd := exec.CommandContext(ctx, spec.Command, args...)
+	cmd := exec.CommandContext(ctx, command, args...)
 
-	// Set environment
+	// Set environment with expanded values
 	cmd.Env = os.Environ()
 	for k, v := range spec.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, m.expandFunc(v)))
 	}
 
 	// Get pipes
