@@ -980,16 +980,11 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 	return toolsList.Tools, nil
 }
 
-// expandVarsStatic expands variable patterns in strings (standalone version).
+// expandVarsWithRegistry expands variable patterns with registry-based env aliases.
 // - ${repo}: Repository root
 // - ${HOME}: User home directory
 // - ${env:VAR}: Environment variable (with fallback alias support)
 // - ${keychain:VAR}: Keychain reference (treated as env var for now)
-func expandVarsStatic(s string, repoRoot string) string {
-	return expandVarsWithRegistry(s, repoRoot, nil)
-}
-
-// expandVarsWithRegistry expands variable patterns with registry-based env aliases.
 func expandVarsWithRegistry(s string, repoRoot string, reg *registry.Registry) string {
 	// Expand ${HOME}
 	if home, err := os.UserHomeDir(); err == nil {

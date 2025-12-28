@@ -10,6 +10,7 @@ func TestNewDetector(t *testing.T) {
 	d := NewDetector("/tmp/test")
 	if d == nil {
 		t.Fatal("NewDetector returned nil")
+		return // unreachable, but satisfies staticcheck
 	}
 	if d.cwd != "/tmp/test" {
 		t.Errorf("expected cwd '/tmp/test', got '%s'", d.cwd)

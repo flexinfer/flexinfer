@@ -12,6 +12,7 @@ func TestLoadEmbeddedMetadata(t *testing.T) {
 
 	if meta == nil {
 		t.Fatal("LoadEmbeddedMetadata returned nil")
+		return // unreachable, but satisfies staticcheck
 	}
 
 	if meta.Version <= 0 {

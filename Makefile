@@ -3,6 +3,9 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 GOPATH := $(shell go env GOPATH)
+GOLANGCI_LINT := $(GOPATH)/bin/golangci-lint
+GOIMPORTS := $(GOPATH)/bin/goimports
+GOSEC := $(GOPATH)/bin/gosec
 
 # MCP server binaries
 MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot
@@ -167,10 +170,10 @@ vet:
 	go vet ./...
 
 lint:
-	golangci-lint run --timeout 5m ./...
+	$(GOLANGCI_LINT) run --timeout 5m ./...
 
 lint-fix:
-	golangci-lint run --fix --timeout 5m ./...
+	$(GOLANGCI_LINT) run --fix --timeout 5m ./...
 
 # Run all checks (CI-like)
 check: fmt-check vet lint test
@@ -178,7 +181,7 @@ check: fmt-check vet lint test
 
 # Quick check (faster for pre-commit)
 check-quick: fmt-check vet
-	golangci-lint run --fast ./...
+	$(GOLANGCI_LINT) run --fast ./...
 	go build ./...
 
 # Setup development environment
@@ -189,7 +192,7 @@ setup: tools hooks
 # Install development tools
 tools:
 	@echo "Installing development tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin latest
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 	@echo "Tools installed to $(GOPATH)/bin"
@@ -217,7 +220,7 @@ pre-commit:
 
 # Security scanning
 security:
-	gosec -fmt json -out gosec-report.json ./... || true
+	$(GOSEC) -fmt json -out gosec-report.json ./... || true
 	@echo "Security report: gosec-report.json"
 
 # Development mode

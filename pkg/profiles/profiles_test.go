@@ -34,6 +34,7 @@ func TestManager_Get(t *testing.T) {
 	dev := mgr.Get("dev")
 	if dev == nil {
 		t.Fatal("dev profile should exist")
+		return // unreachable, but satisfies staticcheck
 	}
 	if dev.Name != "dev" {
 		t.Errorf("expected name 'dev', got '%s'", dev.Name)

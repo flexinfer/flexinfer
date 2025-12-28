@@ -1,11 +1,7 @@
-# golangci-lint configuration
+# golangci-lint configuration (v2)
 # https://golangci-lint.run/usage/configuration/
 
-# This is required for newer versions of golangci-lint
-# The error "unsupported version of the configuration: """ means it expects a version field.
-# Version 2 is the current standard.
-version: 2
-
+version: "2"
 
 linters-settings:
   govet:
@@ -13,8 +9,6 @@ linters-settings:
       - shadow
   gocyclo:
     min-complexity: 15
-  maligned:
-    suggest-new: true
   dupl:
     threshold: 100
   goconst:
@@ -25,7 +19,8 @@ linters-settings:
   lll:
     line-length: 140
   goimports:
-    local-prefixes: github.com/crb2nu/loom
+    local-prefixes:
+      - github.com/crb2nu/loom
   gocritic:
     enabled-tags:
       - diagnostic
@@ -34,7 +29,7 @@ linters-settings:
       - performance
       - style
     disabled-checks:
-      - dupImport # https://github.com/go-critic/go-critic/issues/845
+      - dupImport
       - ifElseChain
       - octalLiteral
       - whyNoLint
@@ -50,6 +45,7 @@ linters:
     - errcheck
 
 issues:
+  exclude-dirs-use-default: true
   exclude-rules:
     - path: _test\.go
       linters:
@@ -64,7 +60,4 @@ issues:
 run:
   timeout: 5m
   tests: true
-  # default is true. Enables skipping of directories:
-  #   vendor$, third_party$, testdata$, examples$, Godeps$, builtin$
-  skip-dirs-use-default: true
   modules-download-mode: readonly

@@ -125,10 +125,6 @@ func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile str
 	}
 }
 
-func generateVSCodeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
-	return generateJSONConfig(reg, outputDir, "vscode", hubMode, hubURL, loomMode, loomBinary, repoRoot)
-}
-
 func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
 	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary, repoRoot)
 }
