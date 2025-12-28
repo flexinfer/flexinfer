@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )

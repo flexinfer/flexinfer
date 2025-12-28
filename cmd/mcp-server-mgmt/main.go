@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/pelletier/go-toml/v2"
 )
 

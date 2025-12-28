@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,11 +17,13 @@ import (
 
 	loomcontext "github.com/crb2nu/loom/pkg/context"
 	"github.com/crb2nu/loom/pkg/generator"
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/sync"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var version = "0.2.0"
@@ -290,8 +293,13 @@ Example config.toml:
 
 	// Validate Command
 	validateCmd := &cobra.Command{
-		Use:   "validate [profile]",
-		Short: "Validate configuration",
+		Use:   "validate",
+		Short: "Validate configurations",
+	}
+
+	validateProfileCmd := &cobra.Command{
+		Use:   "profile [name]",
+		Short: "Validate a profile configuration",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profile := args[0]
@@ -303,6 +311,116 @@ Example config.toml:
 			return mgr.Validate(profile)
 		},
 	}
+
+	validateConfigsCmd := &cobra.Command{
+		Use:   "configs",
+		Short: "Scan generated configs for plaintext secrets",
+		Long: `Scan generated configuration files for plaintext secrets.
+
+This command checks all generated config files (VS Code, Claude, Codex, etc.)
+for patterns that look like API keys, tokens, or other secrets that should
+not be stored in plaintext.
+
+Detected patterns include:
+  - GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
+  - GitLab tokens (glpat-)
+  - API keys (sk-, tvly-, z_, hf_, etc.)
+  - Google API keys (AIzaSy, GOCSPX-)
+
+Example:
+  loom validate configs --dir ./generated/mcp`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, _ := cmd.Flags().GetString("dir")
+
+			if dir == "" {
+				cwd, _ := os.Getwd()
+				dir = filepath.Join(cwd, "generated", "mcp")
+			}
+
+			// Expand ~ in path
+			if strings.HasPrefix(dir, "~") {
+				home, _ := os.UserHomeDir()
+				dir = filepath.Join(home, dir[1:])
+			}
+
+			// Also check home directory config locations
+			home, _ := os.UserHomeDir()
+			checkDirs := []string{dir}
+			additionalDirs := []string{
+				filepath.Join(home, ".vscode"),
+				filepath.Join(home, ".vscode-mcp"),
+				filepath.Join(home, ".codex"),
+				filepath.Join(home, ".gemini"),
+				filepath.Join(home, ".kilocode"),
+				filepath.Join(home, ".antigravity"),
+				filepath.Join(home, ".config", "claude"),
+			}
+
+			allDirs, _ := cmd.Flags().GetBool("all")
+			if allDirs {
+				checkDirs = append(checkDirs, additionalDirs...)
+			}
+
+			var allLeaks []generator.SecretLeak
+			filesScanned := 0
+
+			for _, checkDir := range checkDirs {
+				// Check if directory exists
+				if _, err := os.Stat(checkDir); os.IsNotExist(err) {
+					continue
+				}
+
+				// Walk directory looking for config files
+				filepath.Walk(checkDir, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return nil
+					}
+					if info.IsDir() {
+						return nil
+					}
+
+					// Check JSON, TOML, and YAML files
+					ext := filepath.Ext(path)
+					if ext != ".json" && ext != ".toml" && ext != ".yaml" && ext != ".yml" {
+						return nil
+					}
+
+					content, err := os.ReadFile(path)
+					if err != nil {
+						return nil
+					}
+
+					filesScanned++
+					leaks := generator.ValidateNoPlaintextSecrets(path, string(content))
+					allLeaks = append(allLeaks, leaks...)
+					return nil
+				})
+			}
+
+			if len(allLeaks) == 0 {
+				fmt.Printf("✓ No plaintext secrets found in %d files\n", filesScanned)
+				return nil
+			}
+
+			fmt.Printf("⚠ Found %d potential secret(s) in %d files:\n\n", len(allLeaks), filesScanned)
+			for _, leak := range allLeaks {
+				fmt.Printf("  %s:%d\n", leak.File, leak.Line)
+				fmt.Printf("    Type: %s\n", leak.Type)
+				fmt.Printf("    Context: %s\n\n", leak.Snippet)
+			}
+
+			fmt.Println("Recommendation: Replace plaintext secrets with references:")
+			fmt.Println("  ${env:VAR_NAME}     - Environment variable")
+			fmt.Println("  ${keychain:VAR}     - macOS Keychain")
+			fmt.Println("  ${secret:VAR}       - Loom secret store")
+
+			return fmt.Errorf("found %d potential plaintext secrets", len(allLeaks))
+		},
+	}
+	validateConfigsCmd.Flags().String("dir", "", "Directory to scan (default: ./generated/mcp)")
+	validateConfigsCmd.Flags().Bool("all", false, "Also scan home directory config locations")
+
+	validateCmd.AddCommand(validateProfileCmd, validateConfigsCmd)
 
 	// Profile commands
 	profileCmd := &cobra.Command{
@@ -545,7 +663,265 @@ Example config.toml:
 	}
 	syncCmd.AddCommand(syncStatusCmd)
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd)
+	// Secrets commands
+	secretsCmd := &cobra.Command{
+		Use:   "secrets",
+		Short: "Manage secrets for MCP servers",
+		Long: `Manage secrets used by MCP servers.
+
+Secrets are stored securely and can be referenced in registry.yaml using ${secret:KEY} syntax.
+The secret store supports multiple backends in priority order:
+  1. Environment variables (read-only, allows override)
+  2. macOS Keychain (if available)
+  3. 1Password CLI (if configured)
+  4. Encrypted file store (~/.config/loom/secrets.enc)`,
+	}
+
+	secretsSetCmd := &cobra.Command{
+		Use:   "set KEY [VALUE]",
+		Short: "Set a secret value",
+		Long: `Set a secret value. If VALUE is not provided, prompts for secure input.
+
+Examples:
+  loom secrets set GITHUB_TOKEN ghp_xxxx
+  loom secrets set API_KEY              # prompts for value`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+			var value string
+
+			if len(args) > 1 {
+				value = args[1]
+			} else {
+				// Prompt for value securely
+				fmt.Printf("Enter value for %s: ", key)
+				if term.IsTerminal(int(os.Stdin.Fd())) {
+					byteValue, err := term.ReadPassword(int(os.Stdin.Fd()))
+					if err != nil {
+						return fmt.Errorf("read password: %w", err)
+					}
+					fmt.Println() // newline after password input
+					value = string(byteValue)
+				} else {
+					reader := bufio.NewReader(os.Stdin)
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						return fmt.Errorf("read input: %w", err)
+					}
+					value = strings.TrimSpace(line)
+				}
+			}
+
+			mgr, err := secrets.DefaultManager()
+			if err != nil {
+				return fmt.Errorf("init secrets: %w", err)
+			}
+
+			if err := mgr.Set(key, value); err != nil {
+				return fmt.Errorf("set secret: %w", err)
+			}
+
+			fmt.Printf("Secret '%s' stored in %s\n", key, mgr.PrimaryBackend().Name())
+			return nil
+		},
+	}
+
+	secretsGetCmd := &cobra.Command{
+		Use:   "get KEY",
+		Short: "Get a secret value",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+			showSource, _ := cmd.Flags().GetBool("source")
+
+			mgr, err := secrets.DefaultManager()
+			if err != nil {
+				return fmt.Errorf("init secrets: %w", err)
+			}
+
+			value, source, err := mgr.Get(key)
+			if err != nil {
+				return fmt.Errorf("secret '%s' not found", key)
+			}
+
+			if showSource {
+				fmt.Printf("%s (from %s)\n", value, source)
+			} else {
+				fmt.Println(value)
+			}
+			return nil
+		},
+	}
+	secretsGetCmd.Flags().Bool("source", false, "Show which backend the secret came from")
+
+	secretsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all secret keys",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			showBackends, _ := cmd.Flags().GetBool("backends")
+
+			mgr, err := secrets.DefaultManager()
+			if err != nil {
+				return fmt.Errorf("init secrets: %w", err)
+			}
+
+			if showBackends {
+				fmt.Println("Configured backends:")
+				for i, b := range mgr.Backends() {
+					primary := ""
+					if mgr.PrimaryBackend() == b {
+						primary = " (primary)"
+					}
+					readonly := ""
+					if b.ReadOnly() {
+						readonly = " [read-only]"
+					}
+					fmt.Printf("  %d. %s%s%s\n", i+1, b.Name(), readonly, primary)
+				}
+				fmt.Println()
+			}
+
+			keys, err := mgr.List()
+			if err != nil {
+				return fmt.Errorf("list secrets: %w", err)
+			}
+
+			if len(keys) == 0 {
+				fmt.Println("No secrets found")
+				return nil
+			}
+
+			sort.Strings(keys)
+			fmt.Printf("Secrets (%d):\n", len(keys))
+			for _, k := range keys {
+				fmt.Printf("  %s\n", k)
+			}
+			return nil
+		},
+	}
+	secretsListCmd.Flags().Bool("backends", false, "Show configured backends")
+
+	secretsDeleteCmd := &cobra.Command{
+		Use:   "delete KEY",
+		Short: "Delete a secret",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+
+			mgr, err := secrets.DefaultManager()
+			if err != nil {
+				return fmt.Errorf("init secrets: %w", err)
+			}
+
+			if err := mgr.Delete(key); err != nil {
+				return fmt.Errorf("delete secret: %w", err)
+			}
+
+			fmt.Printf("Secret '%s' deleted\n", key)
+			return nil
+		},
+	}
+
+	secretsImportCmd := &cobra.Command{
+		Use:   "import FILE",
+		Short: "Import secrets from an env file",
+		Long: `Import secrets from a .env file into the secret store.
+
+The file should contain KEY=VALUE pairs, one per line.
+Lines starting with # are ignored.
+Export statements (export KEY=VALUE) are also supported.
+
+Example:
+  loom secrets import ~/.config/secrets/ai.env`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filePath := args[0]
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+			// Expand ~ in path
+			if strings.HasPrefix(filePath, "~") {
+				home, _ := os.UserHomeDir()
+				filePath = filepath.Join(home, filePath[1:])
+			}
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				return fmt.Errorf("open file: %w", err)
+			}
+			defer file.Close()
+
+			var mgr *secrets.Manager
+			if !dryRun {
+				mgr, err = secrets.DefaultManager()
+				if err != nil {
+					return fmt.Errorf("init secrets: %w", err)
+				}
+			}
+
+			scanner := bufio.NewScanner(file)
+			imported := 0
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+
+				// Skip empty lines and comments
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+
+				// Handle export prefix
+				line = strings.TrimPrefix(line, "export ")
+
+				// Parse KEY=VALUE
+				idx := strings.Index(line, "=")
+				if idx == -1 {
+					continue
+				}
+
+				key := strings.TrimSpace(line[:idx])
+				value := strings.TrimSpace(line[idx+1:])
+
+				// Remove quotes from value
+				if len(value) >= 2 {
+					if (value[0] == '"' && value[len(value)-1] == '"') ||
+						(value[0] == '\'' && value[len(value)-1] == '\'') {
+						value = value[1 : len(value)-1]
+					}
+				}
+
+				// Skip variable references like $VAR or ${VAR}
+				if strings.Contains(value, "$") {
+					continue
+				}
+
+				if dryRun {
+					fmt.Printf("Would import: %s\n", key)
+				} else {
+					if err := mgr.Set(key, value); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set %s: %v\n", key, err)
+						continue
+					}
+					fmt.Printf("Imported: %s\n", key)
+				}
+				imported++
+			}
+
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("read file: %w", err)
+			}
+
+			if dryRun {
+				fmt.Printf("\nWould import %d secrets (dry-run)\n", imported)
+			} else {
+				fmt.Printf("\nImported %d secrets to %s\n", imported, mgr.PrimaryBackend().Name())
+			}
+			return nil
+		},
+	}
+	secretsImportCmd.Flags().Bool("dry-run", false, "Show what would be imported without storing")
+
+	secretsCmd.AddCommand(secretsSetCmd, secretsGetCmd, secretsListCmd, secretsDeleteCmd, secretsImportCmd)
+
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

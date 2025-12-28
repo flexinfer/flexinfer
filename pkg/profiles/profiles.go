@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 	"gopkg.in/yaml.v3"
 )
 

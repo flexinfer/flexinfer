@@ -19,9 +19,10 @@ import (
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/sync"
 )
 
@@ -68,7 +69,7 @@ type Daemon struct {
 	pool        *pool.Pool
 	hubPool     *pool.Pool
 	router      *router.Router
-	hubClient   *mcp.HubClient
+	hubClient   *mcp.WebSocketClient
 	listener    net.Listener
 	logger      *slog.Logger
 	toolCache   *ToolCache
@@ -141,6 +142,8 @@ func New(cfg Config) (*Daemon, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load registry: %w", err)
 		}
+		// Merge default env aliases for fallback resolution
+		reg.MergeDefaultAliases()
 		logger.Info("loaded registry", "path", registryPath, "servers", len(reg.Servers))
 
 		// If repo_root not set in config, derive from registry path (legacy behavior)
@@ -152,10 +155,10 @@ func New(cfg Config) (*Daemon, error) {
 		}
 	}
 
-	// Create process manager with variable expansion
+	// Create process manager with variable expansion (using registry for env aliases)
 	procMgr := process.NewManager(reg, cfg.Target)
 	procMgr.SetExpandFunc(func(s string) string {
-		return expandVarsStatic(s, repoRoot)
+		return expandVarsWithRegistry(s, repoRoot, reg)
 	})
 
 	// Create connection pool for local servers
@@ -169,10 +172,10 @@ func New(cfg Config) (*Daemon, error) {
 	})
 
 	// Create hub client if hub fallback is enabled
-	var hubClient *mcp.HubClient
+	var hubClient *mcp.WebSocketClient
 	var hubPool *pool.Pool
 	if cfg.HubFallback && cfg.HubURL != "" {
-		hubClient = mcp.NewHubClient(mcp.HubClientConfig{
+		hubClient = mcp.NewWebSocketClient(mcp.WebSocketConfig{
 			URL:            cfg.HubURL,
 			Profile:        cfg.Target,
 			ConnectTimeout: 10 * time.Second,
@@ -980,8 +983,14 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 // expandVarsStatic expands variable patterns in strings (standalone version).
 // - ${repo}: Repository root
 // - ${HOME}: User home directory
-// - ${env:VAR}: Environment variable
+// - ${env:VAR}: Environment variable (with fallback alias support)
+// - ${keychain:VAR}: Keychain reference (treated as env var for now)
 func expandVarsStatic(s string, repoRoot string) string {
+	return expandVarsWithRegistry(s, repoRoot, nil)
+}
+
+// expandVarsWithRegistry expands variable patterns with registry-based env aliases.
+func expandVarsWithRegistry(s string, repoRoot string, reg *registry.Registry) string {
 	// Expand ${HOME}
 	if home, err := os.UserHomeDir(); err == nil {
 		s = strings.ReplaceAll(s, "${HOME}", home)
@@ -992,7 +1001,15 @@ func expandVarsStatic(s string, repoRoot string) string {
 		s = strings.ReplaceAll(s, "${repo}", repoRoot)
 	}
 
-	// Expand ${env:VAR} patterns
+	// Helper to resolve env var with fallbacks
+	resolveEnv := func(name string) string {
+		if reg != nil {
+			return reg.GetEnvWithFallback(name)
+		}
+		return os.Getenv(name)
+	}
+
+	// Expand ${env:VAR} and ${env:VAR:-default} patterns
 	for {
 		start := strings.Index(s, "${env:")
 		if start == -1 {
@@ -1003,17 +1020,90 @@ func expandVarsStatic(s string, repoRoot string) string {
 			break
 		}
 		end += start
-		varName := s[start+6 : end]
-		value := os.Getenv(varName)
+		varExpr := s[start+6 : end]
+
+		// Check for default value syntax: VAR:-default
+		var varName, defaultVal string
+		if idx := strings.Index(varExpr, ":-"); idx != -1 {
+			varName = varExpr[:idx]
+			defaultVal = varExpr[idx+2:]
+		} else {
+			varName = varExpr
+		}
+
+		value := resolveEnv(varName)
+		if value == "" {
+			value = defaultVal
+		}
+		s = s[:start] + value + s[end+1:]
+	}
+
+	// Expand ${keychain:VAR} patterns using secrets manager
+	for {
+		start := strings.Index(s, "${keychain:")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], "}")
+		if end == -1 {
+			break
+		}
+		end += start
+		varName := s[start+11 : end]
+		// Try keychain via secrets manager, fall back to env
+		value := resolveSecret(varName)
+		if value == "" {
+			value = resolveEnv(varName)
+		}
+		s = s[:start] + value + s[end+1:]
+	}
+
+	// Expand ${secret:VAR} patterns using loom secret store
+	for {
+		start := strings.Index(s, "${secret:")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], "}")
+		if end == -1 {
+			break
+		}
+		end += start
+		varName := s[start+9 : end]
+		value := resolveSecret(varName)
 		s = s[:start] + value + s[end+1:]
 	}
 
 	return s
 }
 
-// expandVars expands variable patterns in strings (uses daemon's repoRoot).
+// secretsManager is a lazily initialized singleton for resolving secrets.
+var (
+	secretsManager     *secrets.Manager
+	secretsManagerOnce gosync.Once
+	secretsManagerErr  error
+)
+
+// getSecretsManager returns the singleton secrets manager.
+func getSecretsManager() (*secrets.Manager, error) {
+	secretsManagerOnce.Do(func() {
+		secretsManager, secretsManagerErr = secrets.DefaultManager()
+	})
+	return secretsManager, secretsManagerErr
+}
+
+// resolveSecret resolves a secret using the loom secret store.
+func resolveSecret(key string) string {
+	mgr, err := getSecretsManager()
+	if err != nil {
+		return ""
+	}
+	return mgr.GetValue(key)
+}
+
+// expandVars expands variable patterns in strings (uses daemon's repoRoot and registry).
 func (d *Daemon) expandVars(s string) string {
-	return expandVarsStatic(s, d.repoRoot)
+	return expandVarsWithRegistry(s, d.repoRoot, d.registry)
 }
 
 type callParams struct {

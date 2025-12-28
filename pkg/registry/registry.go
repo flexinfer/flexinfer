@@ -68,8 +68,16 @@ func GetRepoRoot(registryPath string) string {
 
 // Registry holds the parsed registry configuration.
 type Registry struct {
-	Version int       `yaml:"version"`
-	Servers []*Server `yaml:"servers"`
+	Version    int                `yaml:"version"`
+	EnvAliases map[string]EnvVar  `yaml:"env_aliases,omitempty"`
+	Servers    []*Server          `yaml:"servers"`
+}
+
+// EnvVar defines an environment variable with fallback names.
+type EnvVar struct {
+	// Fallbacks are alternative env var names to try if the primary is empty.
+	// Checked in order until one is found.
+	Fallbacks []string `yaml:"fallbacks,omitempty"`
 }
 
 // Server defines an MCP server in the registry.
@@ -311,4 +319,62 @@ func (r *Registry) HasStaticTools() bool {
 		}
 	}
 	return false
+}
+
+// ResolveEnv looks up an environment variable, checking fallback aliases if defined.
+// Returns the value and whether it was found.
+func (r *Registry) ResolveEnv(name string) (string, bool) {
+	// Try primary name first
+	if val := os.Getenv(name); val != "" {
+		return val, true
+	}
+
+	// Check if we have fallback aliases
+	if r.EnvAliases != nil {
+		if alias, ok := r.EnvAliases[name]; ok {
+			for _, fallback := range alias.Fallbacks {
+				if val := os.Getenv(fallback); val != "" {
+					return val, true
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+// GetEnvWithFallback returns the value for an env var, checking fallbacks.
+// Returns empty string if not found.
+func (r *Registry) GetEnvWithFallback(name string) string {
+	val, _ := r.ResolveEnv(name)
+	return val
+}
+
+// DefaultEnvAliases returns commonly used environment variable aliases.
+// These are used as defaults if no env_aliases section is defined.
+func DefaultEnvAliases() map[string]EnvVar {
+	return map[string]EnvVar{
+		"GITLAB_PERSONAL_ACCESS_TOKEN": {Fallbacks: []string{"GITLAB_PAT", "GITLAB_TOKEN"}},
+		"GRAFANA_API_TOKEN":            {Fallbacks: []string{"GRAFANA_API_KEY", "GRAFANA_TOKEN"}},
+		"MORPH_QDRANT_API_KEY":         {Fallbacks: []string{"MORPH_API_KEY", "QDRANT_API_KEY"}},
+		"QDRANT_API_KEY":               {Fallbacks: []string{"MORPH_API_KEY"}},
+		"GITHUB_TOKEN":                 {Fallbacks: []string{"GITHUB_PERSONAL_ACCESS_TOKEN", "GH_TOKEN"}},
+		"GITHUB_PERSONAL_ACCESS_TOKEN": {Fallbacks: []string{"GITHUB_TOKEN", "GH_TOKEN"}},
+	}
+}
+
+// MergeDefaultAliases merges default aliases into the registry's env_aliases.
+// Registry-defined aliases take precedence over defaults.
+func (r *Registry) MergeDefaultAliases() {
+	defaults := DefaultEnvAliases()
+	if r.EnvAliases == nil {
+		r.EnvAliases = defaults
+		return
+	}
+	// Add defaults that aren't already defined
+	for name, alias := range defaults {
+		if _, exists := r.EnvAliases[name]; !exists {
+			r.EnvAliases[name] = alias
+		}
+	}
 }

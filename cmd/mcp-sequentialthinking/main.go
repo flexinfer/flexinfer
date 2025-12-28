@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/mcp"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var version = "dev"
