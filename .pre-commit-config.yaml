@@ -1,0 +1,70 @@
+# Pre-commit hooks for loom-core
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Go formatting
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-imports
+        args: [-local, github.com/crb2nu/loom]
+      - id: go-vet
+      - id: go-mod-tidy
+
+  # golangci-lint (using local installation for speed)
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run --fix
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-build
+        name: go-build
+        entry: go build ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: go-test (fast)
+        entry: go test -short ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+  # Security scanning
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: go\.sum$
+
+# CI configuration
+ci:
+  autofix_commit_msg: "style: auto-fix from pre-commit hooks"
+  autoupdate_commit_msg: "chore: update pre-commit hooks"
+  skip: [golangci-lint, go-build, go-test]  # These need Go installed

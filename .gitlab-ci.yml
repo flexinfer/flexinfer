@@ -25,6 +25,7 @@ cache:
   before_script:
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
+    - export GOPROXY="https://proxy.golang.org,direct"
     - mkdir -p "$GOPATH" "$GOCACHE"
     - go mod download
 
@@ -33,7 +34,7 @@ lint:
   <<: *go-template
   stage: lint
   script:
-    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.8
     - golangci-lint run --timeout 5m ./...
   allow_failure: true
 
@@ -47,7 +48,14 @@ fmt:
   <<: *go-template
   stage: lint
   script:
-    - test -z "$(find . -name '*.go' -not -path './.go/*' | xargs gofmt -l)" || (find . -name '*.go' -not -path './.go/*' | xargs gofmt -d && exit 1)
+    - |
+      UNFORMATTED=$(gofmt -l ./cmd ./internal ./pkg 2>/dev/null || true)
+      if [ -n "$UNFORMATTED" ]; then
+        echo "The following files need formatting:"
+        echo "$UNFORMATTED"
+        gofmt -d ./cmd ./internal ./pkg
+        exit 1
+      fi
 
 # Test stage
 test:

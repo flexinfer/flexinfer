@@ -1,5 +1,30 @@
+# Build artifacts
 bin/
 *.exe
 *.test
+
+# Test and coverage
 *.out
+coverage.html
+
+# Security reports
+gosec-report.json
+.secrets.baseline
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE/Editor
+.idea/
+*.swp
+*.swo
+*~
+
+# Go
+.go/
+vendor/
+
+# Temporary files
+*.tmp
+*.bak

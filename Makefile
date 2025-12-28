@@ -1,12 +1,45 @@
-.PHONY: all build clean test install servers
+.PHONY: all build clean test install servers lint fmt vet check setup hooks dev help
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+GOPATH := $(shell go env GOPATH)
 
 # MCP server binaries
 MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot
 
+# Default target
 all: build
+
+# Help target
+help:
+	@echo "Loom Core - MCP Server Framework"
+	@echo ""
+	@echo "Development:"
+	@echo "  make setup      - Install dev dependencies and git hooks"
+	@echo "  make hooks      - Install git pre-commit hooks"
+	@echo "  make dev        - Build and run daemon in debug mode"
+	@echo "  make check      - Run all checks (fmt, vet, lint, test)"
+	@echo ""
+	@echo "Building:"
+	@echo "  make build      - Build all binaries"
+	@echo "  make loom       - Build loom CLI"
+	@echo "  make loomd      - Build loom daemon"
+	@echo "  make servers    - Build all MCP servers"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make fmt        - Format code with gofmt"
+	@echo "  make vet        - Run go vet"
+	@echo "  make lint       - Run golangci-lint"
+	@echo "  make lint-fix   - Run golangci-lint with auto-fix"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test       - Run tests"
+	@echo "  make test-cover - Run tests with coverage report"
+	@echo "  make test-race  - Run tests with race detector"
+	@echo ""
+	@echo "Other:"
+	@echo "  make install    - Install binaries to ~/.local/bin"
+	@echo "  make clean      - Remove build artifacts"
 
 build: loomd loom servers
 
@@ -92,37 +125,118 @@ mcp-godot:
 
 clean:
 	rm -rf bin/
+	rm -f coverage.out coverage.html
 
+# Testing targets
 test:
+	go test ./...
+
+test-v:
 	go test -v ./...
 
-test-coverage:
-	go test -v -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+test-cover:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+	@echo "\nTo view HTML report: go tool cover -html=coverage.out"
 
+test-coverage: test-cover
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
+
+test-race:
+	go test -race ./...
+
+test-short:
+	go test -short ./...
+
+# Installation
 install: build
 	mkdir -p $(HOME)/.local/bin
 	cp bin/loomd $(HOME)/.local/bin/
 	cp bin/loom $(HOME)/.local/bin/
 	cp bin/mcp-* $(HOME)/.local/bin/
 
+# Code quality
 fmt:
-	go fmt ./...
+	gofmt -w ./cmd ./internal ./pkg
+
+fmt-check:
+	@test -z "$$(gofmt -l ./cmd ./internal ./pkg)" || (echo "Files need formatting:" && gofmt -l ./cmd ./internal ./pkg && exit 1)
+
+vet:
+	go vet ./...
 
 lint:
-	golangci-lint run
+	golangci-lint run --timeout 5m ./...
 
 lint-fix:
-	golangci-lint run --fix
+	golangci-lint run --fix --timeout 5m ./...
 
-setup:
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	pip install pre-commit
-	pre-commit install
+# Run all checks (CI-like)
+check: fmt-check vet lint test
+	@echo "\nAll checks passed!"
 
+# Quick check (faster for pre-commit)
+check-quick: fmt-check vet
+	golangci-lint run --fast ./...
+	go build ./...
+
+# Setup development environment
+setup: tools hooks
+	@echo "\nDevelopment environment ready!"
+	@echo "Run 'make help' to see available commands"
+
+# Install development tools
+tools:
+	@echo "Installing development tools..."
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	go install golang.org/x/tools/cmd/goimports@latest
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@echo "Tools installed to $(GOPATH)/bin"
+
+# Install git hooks
+hooks:
+	@echo "Installing git hooks..."
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install; \
+		echo "pre-commit hooks installed"; \
+	else \
+		cp scripts/hooks/pre-commit .git/hooks/pre-commit; \
+		chmod +x .git/hooks/pre-commit; \
+		echo "Native pre-commit hook installed"; \
+		echo "Tip: Install pre-commit for more features: pip install pre-commit"; \
+	fi
+
+# Pre-commit (run manually)
 pre-commit:
-	pre-commit run --all-files
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		./scripts/hooks/pre-commit; \
+	fi
 
+# Security scanning
+security:
+	gosec -fmt json -out gosec-report.json ./... || true
+	@echo "Security report: gosec-report.json"
+
+# Development mode
 .PHONY: dev
 dev: build
 	./bin/loomd --debug
+
+# Watch mode (requires entr: brew install entr)
+watch:
+	@echo "Watching for changes... (requires 'entr')"
+	find . -name '*.go' -not -path './.go/*' | entr -r make dev
+
+# Module maintenance
+mod-tidy:
+	go mod tidy
+
+mod-verify:
+	go mod verify
+
+mod-update:
+	go get -u ./...
+	go mod tidy
