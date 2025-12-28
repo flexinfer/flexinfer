@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/google/uuid"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var (

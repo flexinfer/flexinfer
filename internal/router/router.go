@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/crb2nu/loom/pkg/registry"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // RouteDecision describes where to route a request.

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/pelletier/go-toml/v2"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var version = "0.1.0"

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var (

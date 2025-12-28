@@ -68,9 +68,9 @@ func GetRepoRoot(registryPath string) string {
 
 // Registry holds the parsed registry configuration.
 type Registry struct {
-	Version    int                `yaml:"version"`
-	EnvAliases map[string]EnvVar  `yaml:"env_aliases,omitempty"`
-	Servers    []*Server          `yaml:"servers"`
+	Version    int               `yaml:"version"`
+	EnvAliases map[string]EnvVar `yaml:"env_aliases,omitempty"`
+	Servers    []*Server         `yaml:"servers"`
 }
 
 // EnvVar defines an environment variable with fallback names.

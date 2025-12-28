@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/crb2nu/loom/pkg/registry"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // Process represents a running MCP server process.

@@ -19,11 +19,11 @@ import (
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/sync"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // Config holds daemon configuration.

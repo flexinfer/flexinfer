@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"github.com/kkdai/youtube/v2"
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var version = "dev"
