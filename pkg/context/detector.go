@@ -45,9 +45,11 @@ func (d *Detector) Detect() *WorkspaceContext {
 		ctx.DetectedTags = append(ctx.DetectedTags, "git", "version-control")
 	}
 
-	// Check for Kubernetes configuration
-	home, _ := os.UserHomeDir()
-	if d.fileExists(filepath.Join(home, ".kube", "config")) {
+	// Check for Kubernetes configuration (local .kube/config or global ~/.kube/config)
+	if d.exists(filepath.Join(".kube", "config")) {
+		ctx.HasKubeConfig = true
+		ctx.DetectedTags = append(ctx.DetectedTags, "kubernetes", "k8s")
+	} else if home, err := os.UserHomeDir(); err == nil && d.fileExists(filepath.Join(home, ".kube", "config")) {
 		ctx.HasKubeConfig = true
 		ctx.DetectedTags = append(ctx.DetectedTags, "kubernetes", "k8s")
 	}
