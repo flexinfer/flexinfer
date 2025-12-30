@@ -11,6 +11,9 @@ import (
 )
 
 func TestRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
 	clientset := fake.NewSimpleClientset()
 	b := &Benchmarker{
 		kubeClient: clientset,
