@@ -101,14 +101,50 @@ func main() {
 		},
 	}
 
+	// Daemon command group (aliases for VS Code extension compatibility)
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Daemon management commands (alias for start/stop/status)",
+	}
+
+	daemonStartCmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the daemon via launchctl",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reg, _ := cmd.Flags().GetString("registry")
+			return startDaemon(socketPath, reg)
+		},
+	}
+	daemonStartCmd.Flags().String("registry", "", "Path to registry.yaml")
+
+	daemonStopCmd := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the daemon via launchctl",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return stopDaemon(socketPath)
+		},
+	}
+
+	daemonStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show daemon status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return showStatus(socketPath)
+		},
+	}
+
+	daemonCmd.AddCommand(daemonStartCmd, daemonStopCmd, daemonStatusCmd)
+
 	// Servers command
+	var serversJSON bool
 	serversCmd := &cobra.Command{
 		Use:   "servers",
 		Short: "List available MCP servers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return listServers(socketPath)
+			return listServers(socketPath, serversJSON)
 		},
 	}
+	serversCmd.Flags().BoolVar(&serversJSON, "json", false, "Output in JSON format")
 
 	// Doctor command
 	doctorCmd := &cobra.Command{
@@ -921,7 +957,7 @@ Example:
 
 	secretsCmd.AddCommand(secretsSetCmd, secretsGetCmd, secretsListCmd, secretsDeleteCmd, secretsImportCmd)
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd)
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1182,7 +1218,7 @@ func uninstallService() error {
 	return nil
 }
 
-func listServers(socketPath string) error {
+func listServers(socketPath string, outputJSON bool) error {
 	result, err := call(socketPath, "loom/servers", nil)
 	if err != nil {
 		return err
@@ -1199,6 +1235,16 @@ func listServers(socketPath string) error {
 
 	if err := json.Unmarshal(result, &resp); err != nil {
 		return fmt.Errorf("parse servers: %w", err)
+	}
+
+	if outputJSON {
+		// Output JSON format for programmatic consumption
+		out, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal json: %w", err)
+		}
+		fmt.Println(string(out))
+		return nil
 	}
 
 	fmt.Printf("%-20s %-8s %s\n", "NAME", "STATUS", "DESCRIPTION")

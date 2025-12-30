@@ -60,10 +60,13 @@ func (b *KeychainBackend) Set(key, value string) error {
 	// First try to delete any existing entry (ignore errors)
 	_ = b.Delete(key)
 
+	// Use -A to allow access from any application without prompting
+	// This is necessary for loomd (daemon) to access secrets stored by CLI
 	cmd := exec.Command("security", "add-generic-password",
 		"-s", b.service,
 		"-a", key,
 		"-w", value,
+		"-A", // Allow access from any application
 		"-U", // Update if exists
 	)
 

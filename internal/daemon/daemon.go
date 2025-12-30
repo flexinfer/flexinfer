@@ -1054,6 +1054,9 @@ func expandVarsWithRegistry(s string, repoRoot string, reg *registry.Registry) s
 	}
 
 	// Expand ${secret:VAR} patterns using loom secret store
+	if strings.Contains(s, "${secret:") {
+		slog.Debug("expanding secret pattern", "input", s)
+	}
 	for {
 		start := strings.Index(s, "${secret:")
 		if start == -1 {
@@ -1065,6 +1068,7 @@ func expandVarsWithRegistry(s string, repoRoot string, reg *registry.Registry) s
 		}
 		end += start
 		varName := s[start+9 : end]
+		slog.Debug("extracting secret", "varName", varName)
 		value := resolveSecret(varName)
 		s = s[:start] + value + s[end+1:]
 	}
@@ -1091,9 +1095,16 @@ func getSecretsManager() (*secrets.Manager, error) {
 func resolveSecret(key string) string {
 	mgr, err := getSecretsManager()
 	if err != nil {
+		slog.Debug("failed to get secrets manager", "key", key, "error", err)
 		return ""
 	}
-	return mgr.GetValue(key)
+	val := mgr.GetValue(key)
+	if val == "" {
+		slog.Debug("secret not found", "key", key, "backends", len(mgr.Backends()))
+	} else {
+		slog.Debug("secret resolved", "key", key, "length", len(val))
+	}
+	return val
 }
 
 // expandVars expands variable patterns in strings (uses daemon's repoRoot and registry).

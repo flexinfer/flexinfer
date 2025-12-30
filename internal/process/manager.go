@@ -88,7 +88,8 @@ func (m *Manager) Start(ctx context.Context, serverName string) (*Process, error
 	// Set environment with expanded values
 	cmd.Env = os.Environ()
 	for k, v := range spec.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, m.expandFunc(v)))
+		expanded := m.expandFunc(v)
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, expanded))
 	}
 
 	// Get pipes
