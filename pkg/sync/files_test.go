@@ -50,3 +50,98 @@ func TestExists(t *testing.T) {
 		t.Errorf("Exists returned false for existing file")
 	}
 }
+
+func TestCopySymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file and a symlink to it
+	file := filepath.Join(tmpDir, "target.txt")
+	if err := os.WriteFile(file, []byte("content"), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	srcLink := filepath.Join(tmpDir, "link")
+	if err := os.Symlink("target.txt", srcLink); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	dstLink := filepath.Join(tmpDir, "link_copy")
+	if err := CopySymlink(srcLink, dstLink); err != nil {
+		t.Fatalf("CopySymlink failed: %v", err)
+	}
+
+	// Verify symlink was created
+	info, err := os.Lstat(dstLink)
+	if err != nil {
+		t.Fatalf("failed to stat dst symlink: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("dst is not a symlink")
+	}
+
+	// Verify symlink target is correct
+	target, err := os.Readlink(dstLink)
+	if err != nil {
+		t.Fatalf("failed to read symlink: %v", err)
+	}
+	if target != "target.txt" {
+		t.Errorf("symlink target mismatch: got %s, want target.txt", target)
+	}
+}
+
+func TestCopyDirWithSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcDir := filepath.Join(tmpDir, "src")
+	dstDir := filepath.Join(tmpDir, "dst")
+
+	// Create source structure with symlinks
+	if err := os.MkdirAll(filepath.Join(srcDir, "subdir"), 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	// Symlink to file
+	if err := os.Symlink("file.txt", filepath.Join(srcDir, "link_to_file")); err != nil {
+		t.Fatalf("failed to create symlink to file: %v", err)
+	}
+
+	// Symlink to directory
+	if err := os.Symlink("subdir", filepath.Join(srcDir, "link_to_dir")); err != nil {
+		t.Fatalf("failed to create symlink to dir: %v", err)
+	}
+
+	// Copy directory
+	if err := CopyDir(srcDir, dstDir, nil); err != nil {
+		t.Fatalf("CopyDir failed: %v", err)
+	}
+
+	// Verify symlink to file
+	linkToFile := filepath.Join(dstDir, "link_to_file")
+	info, err := os.Lstat(linkToFile)
+	if err != nil {
+		t.Fatalf("failed to stat link_to_file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link_to_file is not a symlink")
+	}
+	target, _ := os.Readlink(linkToFile)
+	if target != "file.txt" {
+		t.Errorf("link_to_file target mismatch: got %s, want file.txt", target)
+	}
+
+	// Verify symlink to directory
+	linkToDir := filepath.Join(dstDir, "link_to_dir")
+	info, err = os.Lstat(linkToDir)
+	if err != nil {
+		t.Fatalf("failed to stat link_to_dir: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link_to_dir is not a symlink")
+	}
+	target, _ = os.Readlink(linkToDir)
+	if target != "subdir" {
+		t.Errorf("link_to_dir target mismatch: got %s, want subdir", target)
+	}
+}
