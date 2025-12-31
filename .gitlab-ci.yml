@@ -1,5 +1,5 @@
 include:
-  - project: root/gitops
+  - project: platform/gitops
     ref: main
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
