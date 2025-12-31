@@ -28,6 +28,11 @@ func CopyDir(src, dst string, excludes []string) error {
 
 		dstPath := filepath.Join(dst, relPath)
 
+		// Handle symlinks - recreate them in destination
+		if info.Mode()&os.ModeSymlink != 0 {
+			return CopySymlink(path, dstPath)
+		}
+
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
@@ -65,6 +70,24 @@ func CopyFile(src, dst string) error {
 		return err
 	}
 	return os.Chmod(dst, info.Mode())
+}
+
+// CopySymlink copies a symlink by recreating it at the destination.
+func CopySymlink(src, dst string) error {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+
+	// Create parent dir if needed
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	// Remove existing symlink/file if present
+	_ = os.Remove(dst)
+
+	return os.Symlink(target, dst)
 }
 
 // shouldExclude checks if a path matches any exclude pattern.
