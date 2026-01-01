@@ -73,3 +73,7 @@ Code Style
 - Run `go test ./...` to verify changes
 - Keep MCP server implementations in `cmd/mcp-*/main.go`
 - Shared MCP utilities in `pkg/mcp/`
+
+## Planning
+- See `ROADMAP.md` for project status and plans.
+
