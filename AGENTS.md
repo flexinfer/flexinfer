@@ -368,3 +368,6 @@ kubectl logs -n kube-system deployment/flexinfer-scheduler
 - **Discord**: #flexinfer channel on Llama.cpp Discord
 
 Happy hacking! 🚀
+
+## Planning
+- See `ROADMAP.md` for project status and plans.

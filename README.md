@@ -1,3 +1,5 @@
+![FlexInfer Banner](assets/banner.png)
+
 # FlexInfer
 
 **Smart GPU scheduling for AI workloads in Kubernetes**
