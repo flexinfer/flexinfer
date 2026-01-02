@@ -1,18 +1,22 @@
-# Disable Auto DevOps for this project
+# Loom CI/CD Pipeline
+# Provides lint, test, build, and deploy stages with comprehensive testing
+
 include: []
 
 stages:
   - lint
-  - test
   - build
+  - test
   - deploy
 
 variables:
   AUTO_DEVOPS_ENABLED: "false"
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.23"
   BINARY_NAME: "loom"
+  # Minimum test coverage threshold (percentage)
+  COVERAGE_THRESHOLD: "20"
 
-# Cache Go modules
+# Cache Go modules and build cache
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
@@ -20,6 +24,7 @@ cache:
     - .go-build/
   policy: pull-push
 
+# Base template for Go jobs
 .go-template: &go-template
   image: golang:${GO_VERSION}
   before_script:
@@ -29,12 +34,15 @@ cache:
     - mkdir -p "$GOPATH" "$GOCACHE"
     - go mod download
 
-# Lint stage
+# =============================================================================
+# LINT STAGE
+# =============================================================================
+
 lint:
   <<: *go-template
   stage: lint
   script:
-    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin latest
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.62.2
     - $(go env GOPATH)/bin/golangci-lint run --timeout 5m ./...
   allow_failure: true
 
@@ -57,40 +65,157 @@ fmt:
         exit 1
       fi
 
-# Test stage
-test:
+sast:
+  <<: *go-template
+  stage: lint
+  script:
+    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    - gosec -fmt json -out gosec-report.json ./... || true
+  artifacts:
+    paths:
+      - gosec-report.json
+    expire_in: 1 week
+    reports:
+      sast: gosec-report.json
+  allow_failure: true
+
+# =============================================================================
+# BUILD STAGE
+# Build binaries before tests to enable integration testing
+# =============================================================================
+
+build:binaries:
+  <<: *go-template
+  stage: build
+  script:
+    - |
+      VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
+      LDFLAGS="-s -w -X main.version=${VERSION}"
+
+      echo "Building all binaries..."
+      mkdir -p bin
+
+      # Build main binaries
+      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
+      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
+
+      # Build MCP servers for integration tests
+      for pkg in $(ls cmd/ | grep '^mcp-'); do
+        echo "Building $pkg..."
+        CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg" || echo "Warning: Failed to build $pkg"
+      done
+
+      echo "Built binaries:"
+      ls -la bin/
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 day
+
+# =============================================================================
+# TEST STAGE
+# =============================================================================
+
+test:unit:
   <<: *go-template
   stage: test
   script:
-    - go test -race -coverprofile=coverage.out -covermode=atomic ./...
-    - go tool cover -func=coverage.out
+    - |
+      echo "Running unit tests with race detector..."
+      go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      echo ""
+      echo "Coverage Summary:"
+      go tool cover -func=coverage.out | tail -20
+
+      # Extract total coverage
+      TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+      echo ""
+      echo "Total Coverage: ${TOTAL}%"
+
+      # Check coverage threshold
+      if [ -n "$COVERAGE_THRESHOLD" ]; then
+        THRESHOLD_INT=$(echo "$COVERAGE_THRESHOLD" | cut -d. -f1)
+        TOTAL_INT=$(echo "$TOTAL" | cut -d. -f1)
+        if [ "$TOTAL_INT" -lt "$THRESHOLD_INT" ]; then
+          echo "ERROR: Coverage ${TOTAL}% is below threshold ${COVERAGE_THRESHOLD}%"
+          exit 1
+        fi
+      fi
   coverage: '/total:\s+\(statements\)\s+(\d+.\d+)%/'
   artifacts:
     paths:
       - coverage.out
     expire_in: 1 week
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.out
 
 test:integration:
   <<: *go-template
   stage: test
+  needs:
+    - build:binaries
   script:
-    - go test -race -tags=integration ./...
-  when: manual
+    - |
+      echo "Setting up integration test environment..."
+      export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
+      export PATH="$CI_PROJECT_DIR/bin:$PATH"
 
-# Build stage
-build:
+      echo "Available MCP servers:"
+      ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"
+
+      echo ""
+      echo "Running integration tests..."
+      go test -v -race ./internal/integration/...
+  artifacts:
+    when: always
+    paths:
+      - bin/
+    expire_in: 1 day
+
+test:race:
   <<: *go-template
-  stage: build
+  stage: test
   script:
-    - CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME} ./cmd/loom
+    - go test -race -short ./...
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Benchmark tests - run on demand
+test:benchmark:
+  <<: *go-template
+  stage: test
+  needs:
+    - build:binaries
+  script:
+    - |
+      export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
+      export PATH="$CI_PROJECT_DIR/bin:$PATH"
+
+      echo "Running benchmarks..."
+      go test -bench=. -benchmem -run=^$ ./internal/... ./pkg/... 2>&1 | tee benchmark.txt
   artifacts:
     paths:
-      - ${BINARY_NAME}
+      - benchmark.txt
     expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
+      allow_failure: true
+
+# =============================================================================
+# RELEASE BUILDS
+# Cross-compile for all target platforms
+# =============================================================================
 
 build:linux-amd64:
   <<: *go-template
-  stage: build
+  stage: test
+  needs:
+    - test:unit
   script:
     - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-linux-amd64 ./cmd/loom
   artifacts:
@@ -102,7 +227,9 @@ build:linux-amd64:
 
 build:linux-arm64:
   <<: *go-template
-  stage: build
+  stage: test
+  needs:
+    - test:unit
   script:
     - GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-linux-arm64 ./cmd/loom
   artifacts:
@@ -114,7 +241,9 @@ build:linux-arm64:
 
 build:darwin-amd64:
   <<: *go-template
-  stage: build
+  stage: test
+  needs:
+    - test:unit
   script:
     - GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-darwin-amd64 ./cmd/loom
   artifacts:
@@ -126,7 +255,9 @@ build:darwin-amd64:
 
 build:darwin-arm64:
   <<: *go-template
-  stage: build
+  stage: test
+  needs:
+    - test:unit
   script:
     - GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}" -o ${BINARY_NAME}-darwin-arm64 ./cmd/loom
   artifacts:
@@ -136,7 +267,10 @@ build:darwin-arm64:
   rules:
     - if: $CI_COMMIT_TAG
 
-# Deploy stage
+# =============================================================================
+# DEPLOY STAGE
+# =============================================================================
+
 release:
   stage: deploy
   image: registry.gitlab.com/gitlab-org/release-cli:latest
@@ -158,7 +292,6 @@ release:
   rules:
     - if: $CI_COMMIT_TAG
 
-# Deploy to homebrew tap (optional)
 deploy:homebrew:
   stage: deploy
   image: alpine:latest
@@ -170,16 +303,3 @@ deploy:homebrew:
   rules:
     - if: $CI_COMMIT_TAG
   when: manual
-
-# Security scanning
-sast:
-  stage: lint
-  image: golang:${GO_VERSION}
-  script:
-    - go install github.com/securego/gosec/v2/cmd/gosec@latest
-    - gosec -fmt json -out gosec-report.json ./... || true
-  artifacts:
-    paths:
-      - gosec-report.json
-    expire_in: 1 week
-  allow_failure: true

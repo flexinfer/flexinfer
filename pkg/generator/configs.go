@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/validator"
 )
 
 // GenerateConfigs generates MCP client configurations.
@@ -46,6 +47,26 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		}
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
+		}
+	}
+
+	// Validate generated configs
+	homeDir, _ := os.UserHomeDir()
+	v := validator.New(repoRoot, homeDir)
+	results, err := v.ValidateGenerated(outputDir, targets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: validation check failed: %v\n", err)
+	} else {
+		for _, result := range results {
+			if result.HasErrors() || result.HasWarnings() {
+				for _, verr := range result.Errors {
+					if verr.Severity == validator.SeverityError {
+						fmt.Fprintf(os.Stderr, "ERROR [%s] %s: %s\n", result.Target, verr.Field, verr.Message)
+					} else {
+						fmt.Fprintf(os.Stderr, "WARN  [%s] %s: %s\n", result.Target, verr.Field, verr.Message)
+					}
+				}
+			}
 		}
 	}
 

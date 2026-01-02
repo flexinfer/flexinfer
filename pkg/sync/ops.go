@@ -9,6 +9,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/validator"
 )
 
 // SyncToHome syncs configuration from repo to home directory.
@@ -34,6 +35,26 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 
 	if !Exists(repoPath) {
 		return fmt.Errorf("repo directory not found: %s", repoPath)
+	}
+
+	// Validate config before sync
+	if p.GeneratorTarget != "" {
+		configPath := filepath.Join(repoPath, p.GeneratedFile)
+		if Exists(configPath) {
+			v := validator.New(m.RepoRoot, m.HomeDir)
+			result, err := v.ValidateFile(p.GeneratorTarget, configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: validation failed for %s: %v\n", configPath, err)
+			} else if result.HasErrors() || result.HasWarnings() {
+				for _, verr := range result.Errors {
+					if verr.Severity == validator.SeverityError {
+						fmt.Fprintf(os.Stderr, "ERROR [%s] %s: %s\n", p.Name, verr.Field, verr.Message)
+					} else {
+						fmt.Fprintf(os.Stderr, "WARN  [%s] %s: %s\n", p.Name, verr.Field, verr.Message)
+					}
+				}
+			}
+		}
 	}
 
 	fmt.Printf("Syncing %s -> %s\n", repoPath, homePath)
@@ -200,7 +221,7 @@ func (m *Manager) Backup(profileName string, source string) error {
 	return CopyDir(srcPath, backupPath, excludes)
 }
 
-// Validate checks if the configuration is valid.
+// Validate checks if the configuration is valid using schema and runtime validation.
 func (m *Manager) Validate(profileName string) error {
 	p, err := m.GetProfile(profileName)
 	if err != nil {
@@ -212,28 +233,64 @@ func (m *Manager) Validate(profileName string) error {
 		return fmt.Errorf("config directory not found: %s", homePath)
 	}
 
-	// Check for config.toml or mcp.json
-	configToml := filepath.Join(homePath, "config.toml")
-	mcpJson := filepath.Join(homePath, "mcp.json")
-	claudeJson := filepath.Join(homePath, "claude_desktop_config.json")
+	// Determine config file based on profile
+	var configFile string
+	var target string
+	switch p.GeneratorTarget {
+	case "codex", "kilocode", "gemini":
+		configFile = filepath.Join(homePath, "config.toml")
+		target = p.GeneratorTarget
+	case "claude_desktop":
+		configFile = filepath.Join(homePath, "claude_desktop_config.json")
+		target = "claude_desktop"
+	case "claude", "vscode", "antigravity":
+		configFile = filepath.Join(homePath, "mcp.json")
+		target = p.GeneratorTarget
+	default:
+		// Fallback: check for known config files
+		if Exists(filepath.Join(homePath, "config.toml")) {
+			configFile = filepath.Join(homePath, "config.toml")
+			target = "codex"
+		} else if Exists(filepath.Join(homePath, "mcp.json")) {
+			configFile = filepath.Join(homePath, "mcp.json")
+			target = "claude"
+		} else if Exists(filepath.Join(homePath, "claude_desktop_config.json")) {
+			configFile = filepath.Join(homePath, "claude_desktop_config.json")
+			target = "claude_desktop"
+		}
+	}
 
-	found := false
-	if Exists(configToml) {
-		fmt.Printf("✓ Found config.toml\n")
-		found = true
-	}
-	if Exists(mcpJson) {
-		fmt.Printf("✓ Found mcp.json\n")
-		found = true
-	}
-	if Exists(claudeJson) {
-		fmt.Printf("✓ Found claude_desktop_config.json\n")
-		found = true
-	}
-
-	if !found {
+	if configFile == "" || !Exists(configFile) {
 		return fmt.Errorf("no configuration file found in %s", homePath)
 	}
 
+	fmt.Printf("Validating %s...\n", configFile)
+
+	// Perform schema and runtime validation
+	v := validator.New(m.RepoRoot, m.HomeDir)
+	result, err := v.ValidateFile(target, configFile)
+	if err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Print validation results
+	if result.Valid && !result.HasWarnings() {
+		fmt.Printf("✓ Configuration is valid\n")
+		return nil
+	}
+
+	for _, verr := range result.Errors {
+		if verr.Severity == validator.SeverityError {
+			fmt.Fprintf(os.Stderr, "ERROR %s: %s\n", verr.Field, verr.Message)
+		} else {
+			fmt.Fprintf(os.Stderr, "WARN  %s: %s\n", verr.Field, verr.Message)
+		}
+	}
+
+	if result.HasErrors() {
+		return fmt.Errorf("configuration has %d error(s)", result.ErrorCount())
+	}
+
+	fmt.Printf("✓ Configuration is valid (with %d warning(s))\n", result.WarningCount())
 	return nil
 }
