@@ -95,7 +95,10 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: modelCache.Namespace}, pvc)
 	if err != nil && errors.IsNotFound(err) {
 		// Create PVC
-		newPVC := r.pvcForModelCache(modelCache)
+		newPVC, err := r.pvcForModelCache(modelCache)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		log.Info("Creating PVC for ModelCache", "PVC", newPVC.Name)
 		if err := r.Create(ctx, newPVC); err != nil {
 			return ctrl.Result{}, err
@@ -112,7 +115,10 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	err = r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
 		// Create Downloader Job
-		newJob := r.jobForDownload(modelCache, pvcName)
+		newJob, err := r.jobForDownload(modelCache, pvcName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		log.Info("Creating Downloader Job", "Job", newJob.Name)
 		if err := r.Create(ctx, newJob); err != nil {
 			return ctrl.Result{}, err
@@ -148,7 +154,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	return ctrl.Result{}, nil
 }
 
-func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) *corev1.PersistentVolumeClaim {
+func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) (*corev1.PersistentVolumeClaim, error) {
 	// Use ReadWriteMany if possible, but fallback to ReadWriteOnce or whatever user configures
 	// For "SharedPVC" strategy we really want RWX.
 	modes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
@@ -168,11 +174,13 @@ func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) *corev
 			StorageClassName: m.Spec.ClusterStorageClassName,
 		},
 	}
-	ctrl.SetControllerReference(m, pvc, r.Scheme)
-	return pvc
+	if err := ctrl.SetControllerReference(m, pvc, r.Scheme); err != nil {
+		return nil, err
+	}
+	return pvc, nil
 }
 
-func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName string) *batchv1.Job {
+func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName string) (*batchv1.Job, error) {
 	// 1. Prepare Environment Variables
 	envVars := []corev1.EnvVar{
 		{
@@ -241,8 +249,10 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName 
 			},
 		},
 	}
-	ctrl.SetControllerReference(m, job, r.Scheme)
-	return job
+	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

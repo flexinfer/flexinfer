@@ -9,6 +9,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -16,10 +17,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func setupTestProxy() *Proxy {
+func setupTestProxy(t *testing.T) *Proxy {
+	t.Helper()
+
 	scheme := runtime.NewScheme()
-	clientgoscheme.AddToScheme(scheme)
-	aiv1alpha1.AddToScheme(scheme)
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
@@ -30,7 +33,7 @@ func setupTestProxy() *Proxy {
 }
 
 func TestHandleRequest_NoModelId(t *testing.T) {
-	p := setupTestProxy()
+	p := setupTestProxy(t)
 
 	req := httptest.NewRequest("GET", "/v1/models", nil)
 	w := httptest.NewRecorder()
@@ -42,7 +45,7 @@ func TestHandleRequest_NoModelId(t *testing.T) {
 }
 
 func TestHandleRequest_ScaleUpTrigger(t *testing.T) {
-	p := setupTestProxy()
+	p := setupTestProxy(t)
 	ctx := context.Background()
 
 	// Create a scaled-to-zero model
@@ -56,7 +59,7 @@ func TestHandleRequest_ScaleUpTrigger(t *testing.T) {
 			Replicas: &zero,
 		},
 	}
-	p.client.Create(ctx, md)
+	require.NoError(t, p.client.Create(ctx, md))
 
 	// Simulate logic that would happen inside ensureActive
 	// We can't easily test the infinite loop wait in unit test without complex mocking,
@@ -65,7 +68,9 @@ func TestHandleRequest_ScaleUpTrigger(t *testing.T) {
 	// Let's manually trigger scale up logic to verify it updates the client
 	err := func() error {
 		md := &aiv1alpha1.ModelDeployment{}
-		p.client.Get(ctx, client.ObjectKey{Name: "test-model", Namespace: "default"}, md)
+		if err := p.client.Get(ctx, client.ObjectKey{Name: "test-model", Namespace: "default"}, md); err != nil {
+			return err
+		}
 
 		if md.Spec.Replicas == nil || *md.Spec.Replicas == 0 {
 			one := int32(1)
@@ -78,7 +83,7 @@ func TestHandleRequest_ScaleUpTrigger(t *testing.T) {
 
 	// Verify Update happened
 	updatedMD := &aiv1alpha1.ModelDeployment{}
-	p.client.Get(ctx, client.ObjectKey{Name: "test-model", Namespace: "default"}, updatedMD)
+	require.NoError(t, p.client.Get(ctx, client.ObjectKey{Name: "test-model", Namespace: "default"}, updatedMD))
 	assert.Equal(t, int32(1), *updatedMD.Spec.Replicas)
 }
 
@@ -100,7 +105,7 @@ func TestIsReady(t *testing.T) {
 }
 
 func TestEnsureActive_AlreadyReady(t *testing.T) {
-	p := setupTestProxy()
+	p := setupTestProxy(t)
 	ctx := context.Background()
 
 	one := int32(1)
@@ -121,7 +126,7 @@ func TestEnsureActive_AlreadyReady(t *testing.T) {
 			},
 		},
 	}
-	p.client.Create(ctx, md)
+	require.NoError(t, p.client.Create(ctx, md))
 
 	// Should return immediately
 	err := p.ensureActive(ctx, "ready-model")
@@ -131,7 +136,7 @@ func TestEnsureActive_AlreadyReady(t *testing.T) {
 }
 
 func TestUpdateLastAccess(t *testing.T) {
-	p := setupTestProxy()
+	p := setupTestProxy(t)
 	ctx := context.Background()
 
 	md := &aiv1alpha1.ModelDeployment{
@@ -140,7 +145,7 @@ func TestUpdateLastAccess(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-	p.client.Create(ctx, md)
+	require.NoError(t, p.client.Create(ctx, md))
 
 	p.updateLastAccess(ctx, "stats-model")
 

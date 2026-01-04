@@ -154,7 +154,11 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		err = r.Get(ctx, types.NamespacedName{Name: r.benchmarkJobName(modelDeployment), Namespace: modelDeployment.Namespace}, benchmarkJob)
 		if err != nil && errors.IsNotFound(err) {
 			// If the Job is not found, create it
-			job := r.jobForBenchmark(modelDeployment)
+			job, buildErr := r.jobForBenchmark(modelDeployment)
+			if buildErr != nil {
+				log.Error(buildErr, "Failed to build Benchmark Job")
+				return ctrl.Result{}, buildErr
+			}
 			log.Info("Creating a new Benchmark Job", "Job.Namespace", job.Namespace, "Job.Name", job.Name)
 			if err = r.Create(ctx, job); err != nil {
 				log.Error(err, "Failed to create new Benchmark Job", "Job.Namespace", job.Namespace, "Job.Name", job.Name)
@@ -207,10 +211,14 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, pvc)
 		if err != nil && errors.IsNotFound(err) {
 			// Define a new pvc
-			pvc := r.pvcForModelDeployment(modelDeployment)
-			log.Info("Creating a new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
-			if err = r.Create(ctx, pvc); err != nil {
-				log.Error(err, "Failed to create new Pvc", "Pvc.Namespace", pvc.Namespace, "Pvc.Name", pvc.Name)
+			newPVC, buildErr := r.pvcForModelDeployment(modelDeployment)
+			if buildErr != nil {
+				log.Error(buildErr, "Failed to build Pvc")
+				return ctrl.Result{}, buildErr
+			}
+			log.Info("Creating a new Pvc", "Pvc.Namespace", newPVC.Namespace, "Pvc.Name", newPVC.Name)
+			if err = r.Create(ctx, newPVC); err != nil {
+				log.Error(err, "Failed to create new Pvc", "Pvc.Namespace", newPVC.Namespace, "Pvc.Name", newPVC.Name)
 				return ctrl.Result{}, err
 			}
 			// Pvc created successfully - return and requeue
@@ -226,7 +234,11 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new deployment
-		dep := r.deploymentForModelDeployment(modelDeployment, volumeName, volumeReadOnly)
+		dep, buildErr := r.deploymentForModelDeployment(modelDeployment, volumeName, volumeReadOnly)
+		if buildErr != nil {
+			log.Error(buildErr, "Failed to build Deployment")
+			return ctrl.Result{}, buildErr
+		}
 		log.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 		if err = r.Create(ctx, dep); err != nil {
 			log.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
@@ -256,7 +268,11 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	err = r.Get(ctx, types.NamespacedName{Name: modelDeployment.Name, Namespace: modelDeployment.Namespace}, service)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new service
-		svc := r.serviceForModelDeployment(modelDeployment)
+		svc, buildErr := r.serviceForModelDeployment(modelDeployment)
+		if buildErr != nil {
+			log.Error(buildErr, "Failed to build Service")
+			return ctrl.Result{}, buildErr
+		}
 		log.Info("Creating a new Service", "Service.Namespace", svc.Namespace, "Service.Name", svc.Name)
 		r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ServiceCreating", "Creating service for ModelDeployment")
 		if err = r.Create(ctx, svc); err != nil {
@@ -352,7 +368,7 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 }
 
 // deploymentForModelDeployment returns a ModelDeployment Deployment object
-func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.ModelDeployment, volumeName string, readOnly bool) *appsv1.Deployment {
+func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.ModelDeployment, volumeName string, readOnly bool) (*appsv1.Deployment, error) {
 	ls := labelsForModelDeployment(m.Name)
 	replicas := m.Spec.Replicas
 
@@ -407,12 +423,14 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 		},
 	}
 	// Set ModelDeployment instance as the owner and controller
-	ctrl.SetControllerReference(m, dep, r.Scheme)
-	return dep
+	if err := ctrl.SetControllerReference(m, dep, r.Scheme); err != nil {
+		return nil, err
+	}
+	return dep, nil
 }
 
 // serviceForModelDeployment returns a ModelDeployment Service object
-func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.ModelDeployment) *corev1.Service {
+func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.ModelDeployment) (*corev1.Service, error) {
 	ls := labelsForModelDeployment(m.Name)
 
 	svc := &corev1.Service{
@@ -430,12 +448,14 @@ func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.Mode
 		},
 	}
 	// Set ModelDeployment instance as the owner and controller
-	ctrl.SetControllerReference(m, svc, r.Scheme)
-	return svc
+	if err := ctrl.SetControllerReference(m, svc, r.Scheme); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // pvcForModelDeployment returns a ModelDeployment Pvc object
-func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDeployment) *corev1.PersistentVolumeClaim {
+func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDeployment) (*corev1.PersistentVolumeClaim, error) {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name,
@@ -453,8 +473,10 @@ func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDep
 		},
 	}
 	// Set ModelDeployment instance as the owner and controller
-	ctrl.SetControllerReference(m, pvc, r.Scheme)
-	return pvc
+	if err := ctrl.SetControllerReference(m, pvc, r.Scheme); err != nil {
+		return nil, err
+	}
+	return pvc, nil
 }
 
 // getBenchmarkerImage returns the benchmarker image from the environment variable or a default.
@@ -466,7 +488,7 @@ func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
 }
 
 // jobForBenchmark returns a benchmark Job object
-func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) *batchv1.Job {
+func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) (*batchv1.Job, error) {
 	// Standardize sidecar configuration
 	// Standardize sidecar configuration
 	backendType := canonicalBackend(m.Spec.Backend)
@@ -573,8 +595,10 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 			},
 		},
 	}
-	ctrl.SetControllerReference(m, job, r.Scheme)
-	return job
+	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 func (r *ModelDeploymentReconciler) benchmarkJobName(m *aiv1alpha1.ModelDeployment) string {

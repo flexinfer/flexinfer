@@ -104,7 +104,9 @@ func main() {
 	http.HandleFunc("/", p.handleRequest)
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("healthz write failed: %v", err)
+		}
 	})
 
 	log.Printf("Starting proxy on :%d in namespace %s", port, namespace)

@@ -295,8 +295,12 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				log.Error(err, "Failed to drain backend readiness response body", "path", checkPath)
+			}
+			if err := resp.Body.Close(); err != nil {
+				log.Error(err, "Failed to close backend readiness response body", "path", checkPath)
+			}
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				log.Info("Backend is ready", "path", checkPath)
 				return nil
@@ -568,6 +572,7 @@ type vllmTimingSnapshot struct {
 }
 
 func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimingSnapshot, bool, error) {
+	logger := log.FromContext(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/metrics", nil)
 	if err != nil {
 		return vllmTimingSnapshot{}, false, err
@@ -578,7 +583,9 @@ func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimi
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			logger.Error(err, "Failed to drain vLLM metrics response body", "status", resp.StatusCode)
+		}
 		return vllmTimingSnapshot{}, false, nil
 	}
 	body, err := io.ReadAll(resp.Body)

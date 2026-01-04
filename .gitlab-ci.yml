@@ -32,10 +32,10 @@ variables:
 # --- Lint Stage ---
 lint:
   stage: lint
-  image: golangci/golangci-lint:v1.59.1
+  <<: *go-cache
   script:
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
     - golangci-lint run -v --timeout=5m ./...
-  allow_failure: true
 
 fmt:
   stage: lint

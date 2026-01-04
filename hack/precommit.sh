@@ -7,9 +7,10 @@ cd "$root"
 warn() { echo "precommit: $*" >&2; }
 
 # Keep Go build cache inside the repo to avoid permission issues and reduce global cache churn.
-mkdir -p .gocache .gotmp
+mkdir -p .gocache .gotmp .golangci-lint-cache
 export GOCACHE="${GOCACHE:-$root/.gocache}"
 export GOTMPDIR="${GOTMPDIR:-$root/.gotmp}"
+export GOLANGCI_LINT_CACHE="${GOLANGCI_LINT_CACHE:-$root/.golangci-lint-cache}"
 
 staged_go_files() {
   git diff --cached --name-only --diff-filter=ACMR | grep -E '\.go$' || true
@@ -57,9 +58,15 @@ run_go_vet() {
 }
 
 run_golangci_lint_if_available() {
-  if command -v golangci-lint >/dev/null 2>&1; then
+  local lint_bin
+  lint_bin="$(command -v golangci-lint 2>/dev/null || true)"
+  if [ -z "${lint_bin}" ]; then
+    lint_bin="$(go env GOPATH)/bin/golangci-lint"
+  fi
+
+  if [ -x "${lint_bin}" ]; then
     warn "running golangci-lint"
-    golangci-lint run ./... || warn "golangci-lint failed (fix or run manually before pushing)"
+    "${lint_bin}" run ./... || warn "golangci-lint failed (fix or run manually before pushing)"
   else
     warn "golangci-lint not installed; skipping"
   fi

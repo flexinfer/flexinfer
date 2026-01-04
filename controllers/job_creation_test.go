@@ -56,11 +56,6 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 			createdJob := &batchv1.Job{}
 
 			Eventually(func() error {
-				// Debugging: Get the ModelDeployment to see status/events
-				var md aiv1alpha1.ModelDeployment
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: ModelName, Namespace: ModelNamespace}, &md); err == nil {
-					// fmt.Fprintf(GinkgoWriter, "ModelDeployment Status: %+v\n", md.Status)
-				}
 				return k8sClient.Get(ctx, jobKey, createdJob)
 			}, time.Minute, time.Second).Should(Succeed())
 
