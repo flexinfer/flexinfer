@@ -57,3 +57,5 @@ spec:
               value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
             - name: BENCHMARKER_IMAGE
               value: "{{ .Values.benchmarker.image.repository }}:{{ .Values.benchmarker.image.tag }}"
+            - name: BENCHMARK_SERVICE_ACCOUNT
+              value: "{{ include \"flexinfer.serviceAccountName\" . }}"

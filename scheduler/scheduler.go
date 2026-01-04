@@ -68,6 +68,17 @@ func envOrDefault(name, def string) string {
 	return def
 }
 
+func canonicalBackend(backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "llama.cpp":
+		return "llamacpp"
+	case "mlc":
+		return "mlc-llm"
+	default:
+		return backend
+	}
+}
+
 func parseWeight(env string, def float64) float64 {
 	if v := os.Getenv(env); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -137,7 +148,7 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 	backend := ""
 	if args.Pod.Annotations != nil {
 		model = args.Pod.Annotations["flexinfer.ai/model"]
-		backend = args.Pod.Annotations["flexinfer.ai/backend"]
+		backend = canonicalBackend(args.Pod.Annotations["flexinfer.ai/backend"])
 	}
 
 	var globalCM *corev1.ConfigMap

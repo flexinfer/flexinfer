@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -39,6 +40,21 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
+func canonicalBackend(backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "llama.cpp":
+		return "llamacpp"
+	case "mlc":
+		return "mlc-llm"
+	default:
+		return backend
+	}
+}
+
+func benchmarkServiceAccountName() string {
+	return strings.TrimSpace(os.Getenv("BENCHMARK_SERVICE_ACCOUNT"))
+}
+
 // ModelDeploymentReconciler reconciles a ModelDeployment object
 type ModelDeploymentReconciler struct {
 	client.Client
@@ -54,6 +70,7 @@ type ModelDeploymentReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -354,7 +371,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					Labels: ls,
 					Annotations: map[string]string{
 						"flexinfer.ai/model":   m.Spec.Model,
-						"flexinfer.ai/backend": m.Spec.Backend,
+						"flexinfer.ai/backend": canonicalBackend(m.Spec.Backend),
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -452,6 +469,7 @@ func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
 func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) *batchv1.Job {
 	// Standardize sidecar configuration
 	// Standardize sidecar configuration
+	backendType := canonicalBackend(m.Spec.Backend)
 	backendImage := r.getBackendImage(m)
 	benchmarkerImage := r.getBenchmarkerImage()
 	backendPort := r.getBackendPort(m)
@@ -483,6 +501,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
+					ServiceAccountName: benchmarkServiceAccountName(),
 					// Ensure the job pod requests a GPU so it lands on a GPU node for accurate benchmarking
 					// Benchmark jobs bypass the custom scheduler to run on any suitable node initially
 					// or we can use the custom scheduler but ensure they don't get filtered out.
@@ -517,7 +536,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 							Args: []string{
 								"--model", m.Spec.Model,
 								"--configmap", r.benchmarkConfigMapName(m),
-								"--backend", m.Spec.Backend,
+								"--backend", backendType,
 								"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
 								"--min-duration", minDuration.String(),
 								"--iterations", fmt.Sprintf("%d", iterations),
@@ -568,8 +587,20 @@ func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDe
 
 // getBackendImage returns the backend image based on spec
 func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeployment) string {
-	if m.Spec.Backend == "vllm" {
+	switch canonicalBackend(m.Spec.Backend) {
+	case "vllm":
 		return "vllm/vllm-openai:latest"
+	case "llamacpp":
+		if image, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_IMAGE"); ok {
+			return image
+		}
+		return "ghcr.io/ggerganov/llama.cpp:server"
+	case "mlc-llm":
+		if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
+			return image
+		}
+		return "ghcr.io/mlc-ai/mlc-llm:latest"
+	default:
 	}
 	// Default to ollama
 	if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE"); ok {
@@ -580,16 +611,34 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 
 // getBackendPort returns the port based on backend
 func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment) int32 {
-	if m.Spec.Backend == "vllm" {
+	switch canonicalBackend(m.Spec.Backend) {
+	case "vllm":
 		return 8000
+	case "mlc-llm":
+		return 8000
+	case "llamacpp":
+		return 8080
+	default:
 	}
 	return 11434
 }
 
 // getBackendArgs returns the arguments based on backend
 func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment) []string {
-	if m.Spec.Backend == "vllm" {
+	switch canonicalBackend(m.Spec.Backend) {
+	case "vllm":
 		return []string{"--model", m.Spec.Model}
+	case "mlc-llm":
+		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
+			return strings.Fields(args)
+		}
+		return []string{"--model", m.Spec.Model}
+	case "llamacpp":
+		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
+			return strings.Fields(args)
+		}
+		return []string{"--model", m.Spec.Model}
+	default:
 	}
 	return nil
 }
@@ -647,12 +696,14 @@ func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDepl
 
 	// Basic validation: ensure backend supports GPU workloads
 	supportedBackends := map[string]bool{
-		"ollama": true,
-		"vllm":   true,
-		"tgi":    true, // Text Generation Inference
+		"ollama":   true,
+		"vllm":     true,
+		"tgi":      true, // Text Generation Inference
+		"llamacpp": true,
+		"mlc-llm":  true,
 	}
 
-	backend := m.Spec.Backend
+	backend := canonicalBackend(m.Spec.Backend)
 	if backend == "" {
 		backend = "ollama"
 	}

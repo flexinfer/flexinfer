@@ -96,6 +96,12 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 	if backendType == "" {
 		backendType = "ollama"
 	}
+	if backendType == "llama.cpp" {
+		backendType = "llamacpp"
+	}
+	if backendType == "mlc" {
+		backendType = "mlc-llm"
+	}
 
 	return &Benchmarker{
 		kubeClient:  clientset,
@@ -277,19 +283,22 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 
 	timeout := time.After(5 * time.Minute)
 
-	checkPath := b.backendReadinessPath()
+	checkPaths := b.backendReadinessPaths()
 
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+checkPath, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := b.httpClient.Do(req)
-		if err == nil {
+		for _, checkPath := range checkPaths {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+checkPath, nil)
+			if err != nil {
+				return err
+			}
+			resp, err := b.httpClient.Do(req)
+			if err != nil {
+				continue
+			}
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				log.Info("Backend is ready")
+				log.Info("Backend is ready", "path", checkPath)
 				return nil
 			}
 		}
@@ -305,20 +314,24 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 	}
 }
 
-func (b *Benchmarker) backendReadinessPath() string {
+func (b *Benchmarker) backendReadinessPaths() []string {
 	switch b.backendType {
 	case "vllm":
-		return "/health"
+		return []string{"/health", "/v1/models"}
+	case "mlc-llm", "mlc":
+		return []string{"/health", "/v1/models"}
+	case "llamacpp", "llama.cpp":
+		return []string{"/health", "/v1/models"}
 	default:
 		// Ollama and most backends return 200 on /api/tags when ready.
-		return "/api/tags"
+		return []string{"/api/tags"}
 	}
 }
 
 // pullModel triggers the model pull on the backend.
 func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
 	// vLLM loads model at startup, no pull needed
-	if b.backendType == "vllm" {
+	if b.backendType == "vllm" || b.backendType == "mlc-llm" || b.backendType == "mlc" || b.backendType == "llamacpp" || b.backendType == "llama.cpp" {
 		return nil
 	}
 
@@ -426,7 +439,7 @@ func (b *Benchmarker) generateOnce(ctx context.Context, model, prompt string, ma
 	defer cancel()
 
 	switch b.backendType {
-	case "vllm":
+	case "vllm", "mlc-llm", "mlc", "llamacpp", "llama.cpp":
 		return b.generateOnceVLLM(ctx, model, prompt, maxTokens)
 	default:
 		return b.generateOnceOllama(ctx, model, prompt)
