@@ -68,8 +68,23 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 	model := "test-model"
 	configMapName := "test-cm"
 
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node1",
+			Labels: map[string]string{
+				"flexinfer.ai/gpu.vendor": "NVIDIA",
+				"flexinfer.ai/gpu.arch":   "sm_89",
+				"flexinfer.ai/gpu.vram":   "24Gi",
+				"flexinfer.ai/gpu.count":  "1",
+				"flexinfer.ai/gpu.int4":   "true",
+			},
+		},
+	}
+	_, err := clientset.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+	require.NoError(t, err)
+
 	// Ensure upsert path is exercised.
-	_, err := clientset.CoreV1().ConfigMaps("default").Create(context.Background(), &corev1.ConfigMap{
+	_, err = clientset.CoreV1().ConfigMaps("default").Create(context.Background(), &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: configMapName, Namespace: "default"},
 		Data:       map[string]string{"tokensPerSecond": "0"},
 	}, metav1.CreateOptions{})
@@ -88,6 +103,8 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 		}.withDefaults(),
 		httpClient: httpClient,
 		now:        clock.Now,
+		nodeName:   "node1",
+		resultsCM:  defaultBenchmarkResultsConfigMap,
 	}
 
 	err = b.Run(context.Background(), model, configMapName)
@@ -104,6 +121,12 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 	assert.Equal(t, "5", cm.Data["samples"])
 	assert.NotEmpty(t, cm.Data["timestamp"])
 	assert.GreaterOrEqual(t, generateCalls, 6, "expected warmup + at least 5 measurement calls")
+
+	global, err := clientset.CoreV1().ConfigMaps("default").Get(context.Background(), defaultBenchmarkResultsConfigMap, metav1.GetOptions{})
+	require.NoError(t, err)
+	deviceClass := deviceClassFromNode(node)
+	key := benchmarkKey("ollama", model, deviceClass)
+	assert.Equal(t, "10", global.Data[key])
 }
 
 func TestRun_VLLM_ComputesTPS(t *testing.T) {

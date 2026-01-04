@@ -2,12 +2,15 @@
 package scheduler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/flexinfer/flexinfer/internal/cache"
 	corev1 "k8s.io/api/core/v1"
@@ -25,12 +28,15 @@ type objectCache interface {
 }
 
 type Scheduler struct {
-	cache       objectCache
-	tpsWeight   float64
-	utilWeight  float64
-	costWeight  float64
-	cacheWeight float64
+	cache                     objectCache
+	benchmarkResultsConfigMap string
+	tpsWeight                 float64
+	utilWeight                float64
+	costWeight                float64
+	cacheWeight               float64
 }
+
+const defaultBenchmarkResultsConfigMap = "flexinfer-benchmark-results"
 
 // NewScheduler creates a new Scheduler.
 func NewScheduler() (*Scheduler, error) {
@@ -47,11 +53,19 @@ func NewScheduler() (*Scheduler, error) {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 	s := &Scheduler{cache: cache.NewCache(clientset)}
+	s.benchmarkResultsConfigMap = envOrDefault("BENCHMARK_RESULTS_CONFIGMAP", defaultBenchmarkResultsConfigMap)
 	s.tpsWeight = parseWeight("SCHED_TPS_WEIGHT", 0.7)
 	s.utilWeight = parseWeight("SCHED_UTIL_WEIGHT", 0.2)
 	s.costWeight = parseWeight("SCHED_COST_WEIGHT", 0.1)
 	s.cacheWeight = parseWeight("SCHED_CACHE_WEIGHT", 0.3)
 	return s, nil
+}
+
+func envOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
 }
 
 func parseWeight(env string, def float64) float64 {
@@ -119,27 +133,30 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("Scoring for Pod", "pod", args.Pod.Name)
 
-	// Get the benchmark results from the cache
-	cmName := fmt.Sprintf("%s-benchmark-results", args.Pod.Labels["modeldeployment_cr"])
-	cm, err := s.cache.GetConfigMap(args.Pod.Namespace, cmName)
-	if err != nil {
-		log.Error(err, "Failed to get benchmark configmap from cache", "configmap", cmName)
-		// If we can't get the benchmark, score all nodes with 0
-		scores := make([]extenderv1.HostPriority, len(*args.NodeNames))
-		for i, nodeName := range *args.NodeNames {
-			scores[i] = extenderv1.HostPriority{
-				Host:  nodeName,
-				Score: 0,
-			}
-		}
-		if err := json.NewEncoder(w).Encode(scores); err != nil {
-			log.Error(err, "Failed to encode response")
-			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		}
-		return
+	model := ""
+	backend := ""
+	if args.Pod.Annotations != nil {
+		model = args.Pod.Annotations["flexinfer.ai/model"]
+		backend = args.Pod.Annotations["flexinfer.ai/backend"]
 	}
 
-	tps, _ := strconv.ParseFloat(cm.Data["tokensPerSecond"], 64)
+	var globalCM *corev1.ConfigMap
+	if model != "" && backend != "" {
+		cm, err := s.cache.GetConfigMap(args.Pod.Namespace, s.benchmarkResultsConfigMap)
+		if err == nil {
+			globalCM = cm
+		}
+	}
+
+	// Backwards-compatible fallback: use per-deployment benchmark results.
+	var fallbackTPS float64
+	if md := args.Pod.Labels["modeldeployment_cr"]; md != "" {
+		cmName := fmt.Sprintf("%s-benchmark-results", md)
+		cm, err := s.cache.GetConfigMap(args.Pod.Namespace, cmName)
+		if err == nil {
+			fallbackTPS, _ = strconv.ParseFloat(cm.Data["tokensPerSecond"], 64)
+		}
+	}
 
 	scores := make([]extenderv1.HostPriority, len(*args.NodeNames))
 	for i, nodeName := range *args.NodeNames {
@@ -155,6 +172,16 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		cost, _ := strconv.ParseFloat(costStr, 64)
 		cacheStr := node.Annotations["flexinfer.ai/kv-cache-usage"]
 		cacheUsage, _ := strconv.ParseFloat(cacheStr, 64)
+
+		tps := fallbackTPS
+		if globalCM != nil {
+			key := benchmarkKey(backend, model, deviceClassFromNode(node))
+			if v, ok := globalCM.Data[key]; ok {
+				if parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					tps = parsed
+				}
+			}
+		}
 
 		// Higher score is better.
 		// We subtract penalties for utilization, cost, and cache usage.
@@ -172,4 +199,21 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		log.Error(err, "Failed to encode response")
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+func deviceClassFromNode(node *corev1.Node) string {
+	labels := node.Labels
+	return fmt.Sprintf(
+		"vendor=%s,arch=%s,vram=%s,count=%s,int4=%s",
+		labels["flexinfer.ai/gpu.vendor"],
+		labels["flexinfer.ai/gpu.arch"],
+		labels["flexinfer.ai/gpu.vram"],
+		labels["flexinfer.ai/gpu.count"],
+		labels["flexinfer.ai/gpu.int4"],
+	)
+}
+
+func benchmarkKey(backend, model, deviceClass string) string {
+	sum := sha256.Sum256([]byte(backend + "|" + model + "|" + deviceClass))
+	return "bench_" + hex.EncodeToString(sum[:16])
 }

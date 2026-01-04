@@ -112,6 +112,94 @@ func TestScore(t *testing.T) {
 	}
 }
 
+func TestScore_UsesGlobalBenchmarkResultsByDeviceClass(t *testing.T) {
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"a100": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "a100",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "NVIDIA",
+						"flexinfer.ai/gpu.arch":   "sm_80",
+						"flexinfer.ai/gpu.vram":   "40Gi",
+						"flexinfer.ai/gpu.count":  "1",
+						"flexinfer.ai/gpu.int4":   "true",
+					},
+				},
+			},
+			"h100": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "h100",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "NVIDIA",
+						"flexinfer.ai/gpu.arch":   "sm_90",
+						"flexinfer.ai/gpu.vram":   "80Gi",
+						"flexinfer.ai/gpu.count":  "1",
+						"flexinfer.ai/gpu.int4":   "true",
+					},
+				},
+			},
+		},
+		configMaps: map[string]*corev1.ConfigMap{
+			"default/" + defaultBenchmarkResultsConfigMap: {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      defaultBenchmarkResultsConfigMap,
+					Namespace: "default",
+				},
+				Data: map[string]string{},
+			},
+		},
+	}
+
+	model := "llama3:8b"
+	backend := "ollama"
+	cache.configMaps["default/"+defaultBenchmarkResultsConfigMap].Data[benchmarkKey(backend, model, deviceClassFromNode(cache.nodes["a100"]))] = "100"
+	cache.configMaps["default/"+defaultBenchmarkResultsConfigMap].Data[benchmarkKey(backend, model, deviceClassFromNode(cache.nodes["h100"]))] = "300"
+
+	sched := &Scheduler{
+		cache:                     cache,
+		benchmarkResultsConfigMap: defaultBenchmarkResultsConfigMap,
+		tpsWeight:                 1.0,
+		utilWeight:                0,
+		costWeight:                0,
+		cacheWeight:               0,
+	}
+
+	args := extenderv1.ExtenderArgs{
+		Pod: &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "p",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"flexinfer.ai/model":   model,
+					"flexinfer.ai/backend": backend,
+				},
+			},
+		},
+		NodeNames: &[]string{"a100", "h100"},
+	}
+
+	body, _ := json.Marshal(args)
+	req := httptest.NewRequest("POST", "/score", bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+	sched.Score(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+
+	var result []extenderv1.HostPriority
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	scoreA100 := getScore(result, "a100")
+	scoreH100 := getScore(result, "h100")
+	if scoreH100 <= scoreA100 {
+		t.Fatalf("expected h100 score (%d) > a100 score (%d)", scoreH100, scoreA100)
+	}
+}
+
 func getScore(res []extenderv1.HostPriority, host string) int64 {
 	for _, r := range res {
 		if r.Host == host {

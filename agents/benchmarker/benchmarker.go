@@ -5,6 +5,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +23,8 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+const defaultBenchmarkResultsConfigMap = "flexinfer-benchmark-results"
 
 type Options struct {
 	WarmupIterations int
@@ -63,6 +67,8 @@ type Benchmarker struct {
 	opts        Options
 	httpClient  *http.Client
 	now         func() time.Time
+	nodeName    string
+	resultsCM   string
 }
 
 // NewBenchmarker creates a new Benchmarker.
@@ -99,7 +105,16 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 		opts:        opts.withDefaults(),
 		httpClient:  &http.Client{},
 		now:         time.Now,
+		nodeName:    os.Getenv("NODE_NAME"),
+		resultsCM:   envOrDefault("BENCHMARK_RESULTS_CONFIGMAP", defaultBenchmarkResultsConfigMap),
 	}, nil
+}
+
+func envOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
 }
 
 // Run executes the benchmark and stores the result in a ConfigMap.
@@ -163,7 +178,93 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		return fmt.Errorf("failed to upsert benchmark result configmap: %w", err)
 	}
 
+	if err := b.upsertGlobalResult(ctx, model, result); err != nil {
+		log.Error(err, "Failed to write global benchmark result")
+	}
+
 	return nil
+}
+
+func (b *Benchmarker) upsertGlobalResult(ctx context.Context, model string, result benchmarkResult) error {
+	if b.nodeName == "" || b.resultsCM == "" {
+		return nil
+	}
+
+	node, err := b.kubeClient.CoreV1().Nodes().Get(ctx, b.nodeName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	deviceClass := deviceClassFromNode(node)
+	key := benchmarkKey(b.backendType, model, deviceClass)
+	metaKey := "meta_" + key
+
+	meta := map[string]interface{}{
+		"backend":          b.backendType,
+		"model":            model,
+		"deviceClass":      deviceClass,
+		"tokensPerSecond":  result.TokensPerSecond,
+		"completionTokens": result.CompletionTokens,
+		"durationSeconds":  result.Duration.Seconds(),
+		"samples":          result.Samples,
+		"timestamp":        b.now().UTC().Format(time.RFC3339),
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	for i := 0; i < 3; i++ {
+		cm, err := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Get(ctx, b.resultsCM, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				cm = &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      b.resultsCM,
+						Namespace: b.namespace,
+					},
+					Data: map[string]string{},
+				}
+				_, createErr := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Create(ctx, cm, metav1.CreateOptions{})
+				if createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				continue
+			}
+			return err
+		}
+
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data[key] = strconv.FormatFloat(result.TokensPerSecond, 'f', -1, 64)
+		cm.Data[metaKey] = string(metaJSON)
+
+		_, err = b.kubeClient.CoreV1().ConfigMaps(b.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+		if err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+
+	return fmt.Errorf("failed to update global benchmark configmap after retries")
+}
+
+func deviceClassFromNode(node *corev1.Node) string {
+	labels := node.Labels
+	return fmt.Sprintf(
+		"vendor=%s,arch=%s,vram=%s,count=%s,int4=%s",
+		labels["flexinfer.ai/gpu.vendor"],
+		labels["flexinfer.ai/gpu.arch"],
+		labels["flexinfer.ai/gpu.vram"],
+		labels["flexinfer.ai/gpu.count"],
+		labels["flexinfer.ai/gpu.int4"],
+	)
+}
+
+func benchmarkKey(backend, model, deviceClass string) string {
+	sum := sha256.Sum256([]byte(backend + "|" + model + "|" + deviceClass))
+	return "bench_" + hex.EncodeToString(sum[:16])
 }
 
 // waitForBackend polls the backend until it is reachable.
