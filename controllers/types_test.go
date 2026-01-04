@@ -46,13 +46,21 @@ var _ = Describe("ModelDeployment Controller", func() {
 			}, time.Minute, time.Second).Should(BeTrue())
 
 			By("Updating the ModelMetrics")
-			createdModelDeployment.Status.Metrics = &aiv1alpha1.ModelMetrics{
+			metrics := &aiv1alpha1.ModelMetrics{
 				TokensPerSecond:  "50.5",
 				AvgModelLoadTime: "2.3",
 				AvgLatencyMs:     "100.0",
 				ErrorRate:        "0.01",
 			}
-			Expect(k8sClient.Status().Update(ctx, createdModelDeployment)).Should(Succeed())
+			// The controller updates status concurrently; retry on conflicts by fetching the latest resourceVersion.
+			Eventually(func() error {
+				latest := &aiv1alpha1.ModelDeployment{}
+				if err := k8sClient.Get(ctx, modelDeploymentLookupKey, latest); err != nil {
+					return err
+				}
+				latest.Status.Metrics = metrics
+				return k8sClient.Status().Update(ctx, latest)
+			}, time.Minute, time.Second).Should(Succeed())
 
 			By("Verifying the ModelMetrics are updated")
 			Eventually(func() string {
