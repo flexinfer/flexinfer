@@ -17,7 +17,9 @@ func main() {
 	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm).")
 	warmupIterations := flag.Int("warmup-iterations", 2, "Number of warmup iterations before measurement.")
 	minDuration := flag.Duration("min-duration", 30*time.Second, "Minimum benchmark duration (wall time).")
-	maxTokens := flag.Int("max-tokens", 128, "Max tokens to generate per iteration.")
+	iterations := flag.Int("iterations", 5, "Number of measurement iterations (minimum; may run longer to satisfy --min-duration).")
+	batchSize := flag.Int("batch-size", 128, "Target tokens to generate per request.")
+	maxTokensAlias := flag.Int("max-tokens", 0, "Alias for --batch-size (deprecated).")
 
 	opts := zap.Options{
 		Development: true,
@@ -35,10 +37,15 @@ func main() {
 
 	setupLog.Info("Starting benchmark", "model", *model, "backend", *backend)
 
+	if *maxTokensAlias > 0 {
+		*batchSize = *maxTokensAlias
+	}
+
 	bm, err := benchmarker.NewBenchmarker(*backend, benchmarker.Options{
 		WarmupIterations: *warmupIterations,
 		MinDuration:      *minDuration,
-		MaxTokens:        *maxTokens,
+		Iterations:       *iterations,
+		BatchSize:        *batchSize,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to create benchmarker")

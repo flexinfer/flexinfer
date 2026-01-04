@@ -119,6 +119,17 @@ type BenchmarkSpec struct {
 	// The benchmark will run for at least this duration or for a minimum number of iterations, whichever comes first.
 	// +optional
 	MinDuration *metav1.Duration `json:"minDuration,omitempty"`
+
+	// BatchSize is the target number of tokens to generate per benchmark request.
+	// +kubebuilder:default=128
+	// +kubebuilder:validation:Minimum=1
+	BatchSize *int32 `json:"batchSize,omitempty"`
+
+	// Iterations is the number of measurement iterations to run (in addition to warmup).
+	// The benchmark may run longer than this if MinDuration has not been satisfied.
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=1
+	Iterations *int32 `json:"iterations,omitempty"`
 }
 
 // ModelDeploymentStatus defines the observed state of ModelDeployment

@@ -59,6 +59,21 @@ spec:
               benchmark:
                 description: Benchmark defines tuning knobs for the benchmarking process.
                 properties:
+                  batchSize:
+                    default: 128
+                    description: BatchSize is the target number of tokens to generate
+                      per benchmark request.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  iterations:
+                    default: 5
+                    description: |-
+                      Iterations is the number of measurement iterations to run (in addition to warmup).
+                      The benchmark may run longer than this if MinDuration has not been satisfied.
+                    format: int32
+                    minimum: 1
+                    type: integer
                   minDuration:
                     description: |-
                       MinDuration is the minimum duration for the benchmark.

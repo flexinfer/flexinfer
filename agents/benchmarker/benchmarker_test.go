@@ -83,7 +83,8 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 		opts: Options{
 			WarmupIterations: 1,
 			MinDuration:      1 * time.Millisecond,
-			MaxTokens:        16,
+			Iterations:       5,
+			BatchSize:        16,
 		}.withDefaults(),
 		httpClient: httpClient,
 		now:        clock.Now,
@@ -98,11 +99,11 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 	assert.Equal(t, model, cm.Data["model"])
 	assert.Equal(t, "ollama", cm.Data["backend"])
 	assert.Equal(t, "10", cm.Data["tokensPerSecond"])
-	assert.Equal(t, "30", cm.Data["completionTokens"])
-	assert.Equal(t, "3", cm.Data["durationSeconds"])
-	assert.Equal(t, "3", cm.Data["samples"])
+	assert.Equal(t, "50", cm.Data["completionTokens"])
+	assert.Equal(t, "5", cm.Data["durationSeconds"])
+	assert.Equal(t, "5", cm.Data["samples"])
 	assert.NotEmpty(t, cm.Data["timestamp"])
-	assert.GreaterOrEqual(t, generateCalls, 4, "expected warmup + at least 3 measurement calls")
+	assert.GreaterOrEqual(t, generateCalls, 6, "expected warmup + at least 5 measurement calls")
 }
 
 func TestRun_VLLM_ComputesTPS(t *testing.T) {
@@ -141,7 +142,8 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 		opts: Options{
 			WarmupIterations: 0, // will default to 2
 			MinDuration:      1 * time.Millisecond,
-			MaxTokens:        16,
+			Iterations:       5,
+			BatchSize:        16,
 		}.withDefaults(),
 		httpClient: httpClient,
 		now:        clock.Now,
@@ -156,4 +158,7 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 	assert.Equal(t, "vllm", cm.Data["backend"])
 	// Fake clock makes each vLLM call 100ms, so 50 tokens / 0.1s = 500 tps (across samples too).
 	assert.Equal(t, "500", cm.Data["tokensPerSecond"])
+	assert.Equal(t, "250", cm.Data["completionTokens"])
+	assert.Equal(t, "0.5", cm.Data["durationSeconds"])
+	assert.Equal(t, "5", cm.Data["samples"])
 }

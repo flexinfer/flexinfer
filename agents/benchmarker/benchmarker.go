@@ -23,7 +23,8 @@ import (
 type Options struct {
 	WarmupIterations int
 	MinDuration      time.Duration
-	MaxTokens        int
+	Iterations       int
+	BatchSize        int
 	Prompt           string
 	RequestTimeout   time.Duration
 }
@@ -35,8 +36,11 @@ func (o Options) withDefaults() Options {
 	if o.MinDuration <= 0 {
 		o.MinDuration = 30 * time.Second
 	}
-	if o.MaxTokens <= 0 {
-		o.MaxTokens = 128
+	if o.Iterations <= 0 {
+		o.Iterations = 5
+	}
+	if o.BatchSize <= 0 {
+		o.BatchSize = 128
 	}
 	if o.Prompt == "" {
 		o.Prompt = "Write a long story about a space adventure to Mars."
@@ -131,6 +135,10 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 			"tokensPerSecond":  strconv.FormatFloat(result.TokensPerSecond, 'f', -1, 64),
 			"model":            model,
 			"backend":          b.backendType,
+			"warmupIterations": strconv.Itoa(b.opts.WarmupIterations),
+			"iterations":       strconv.Itoa(b.opts.Iterations),
+			"batchSize":        strconv.Itoa(b.opts.BatchSize),
+			"minDuration":      b.opts.MinDuration.String(),
 			"completionTokens": strconv.Itoa(result.CompletionTokens),
 			"durationSeconds":  strconv.FormatFloat(result.Duration.Seconds(), 'f', -1, 64),
 			"samples":          strconv.Itoa(result.Samples),
@@ -254,16 +262,19 @@ func (b *Benchmarker) runBenchmark(ctx context.Context, model string) (benchmark
 	if opts.WarmupIterations > 0 {
 		log.Info("Running warmup", "iterations", opts.WarmupIterations)
 		for i := 0; i < opts.WarmupIterations; i++ {
-			_, _, _, err := b.generateOnce(ctx, model, opts.Prompt, opts.MaxTokens)
+			_, _, _, err := b.generateOnce(ctx, model, opts.Prompt, opts.BatchSize)
 			if err != nil {
 				return benchmarkResult{}, fmt.Errorf("warmup iteration %d failed: %w", i+1, err)
 			}
 		}
 	}
 
-	log.Info("Running measurement", "minDuration", opts.MinDuration.String(), "maxTokens", opts.MaxTokens)
+	log.Info("Running measurement", "minDuration", opts.MinDuration.String(), "batchSize", opts.BatchSize, "iterations", opts.Iterations)
 
-	const minSamples = 3
+	minSamples := opts.Iterations
+	if minSamples < 1 {
+		minSamples = 1
+	}
 	start := b.now()
 	var totalTokens int
 	var totalTime time.Duration
@@ -271,7 +282,7 @@ func (b *Benchmarker) runBenchmark(ctx context.Context, model string) (benchmark
 	usedBackendTiming := true
 
 	for {
-		tokens, duration, usedBackend, err := b.generateOnce(ctx, model, opts.Prompt, opts.MaxTokens)
+		tokens, duration, usedBackend, err := b.generateOnce(ctx, model, opts.Prompt, opts.BatchSize)
 		if err != nil {
 			return benchmarkResult{}, err
 		}

@@ -454,12 +454,20 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 
 	warmupIterations := int32(2)
 	var minDuration time.Duration = 30 * time.Second
+	batchSize := int32(128)
+	iterations := int32(5)
 	if m.Spec.Benchmark != nil {
 		if m.Spec.Benchmark.WarmupIterations != nil {
 			warmupIterations = *m.Spec.Benchmark.WarmupIterations
 		}
 		if m.Spec.Benchmark.MinDuration != nil {
 			minDuration = m.Spec.Benchmark.MinDuration.Duration
+		}
+		if m.Spec.Benchmark.BatchSize != nil {
+			batchSize = *m.Spec.Benchmark.BatchSize
+		}
+		if m.Spec.Benchmark.Iterations != nil {
+			iterations = *m.Spec.Benchmark.Iterations
 		}
 	}
 
@@ -500,6 +508,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								"--backend", m.Spec.Backend,
 								"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
 								"--min-duration", minDuration.String(),
+								"--iterations", fmt.Sprintf("%d", iterations),
+								"--batch-size", fmt.Sprintf("%d", batchSize),
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
