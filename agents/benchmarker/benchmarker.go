@@ -340,6 +340,12 @@ type streamSample struct {
 }
 
 func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string, maxTokens int) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	if tokens, duration, ok, err := b.generateOnceVLLMServerTiming(ctx, model, prompt, maxTokens); err != nil {
+		return 0, 0, false, err
+	} else if ok {
+		return tokens, duration, true, nil
+	}
+
 	// Prefer streaming so we can measure first-token latency and decode throughput more accurately.
 	if sample, ok, err := b.generateOnceVLLMStream(ctx, model, prompt, maxTokens); err != nil {
 		return 0, 0, false, err
@@ -388,6 +394,152 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 
 	duration = b.now().Sub(start)
 	return result.Usage.CompletionTokens, duration, false, nil
+}
+
+func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, prompt string, maxTokens int) (tokens int, duration time.Duration, ok bool, err error) {
+	metrics0, ok, err := b.getVLLMServerTimingSnapshot(ctx)
+	if err != nil || !ok {
+		return 0, 0, false, err
+	}
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":      model,
+		"prompt":     prompt,
+		"max_tokens": maxTokens,
+		"stream":     false,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/v1/completions", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return 0, 0, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Usage struct {
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, 0, false, fmt.Errorf("failed to decode vLLM response: %w", err)
+	}
+
+	metrics1, ok, err := b.getVLLMServerTimingSnapshot(ctx)
+	if err != nil || !ok {
+		return 0, 0, false, err
+	}
+
+	dCount := metrics1.count - metrics0.count
+	dSum := metrics1.sumSeconds - metrics0.sumSeconds
+	if dCount <= 0 || dSum <= 0 {
+		return 0, 0, false, nil
+	}
+
+	avgSeconds := dSum / float64(dCount)
+	return result.Usage.CompletionTokens, time.Duration(avgSeconds * float64(time.Second)), true, nil
+}
+
+type vllmTimingSnapshot struct {
+	sumSeconds float64
+	count      int64
+}
+
+func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimingSnapshot, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/metrics", nil)
+	if err != nil {
+		return vllmTimingSnapshot{}, false, err
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return vllmTimingSnapshot{}, false, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return vllmTimingSnapshot{}, false, nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return vllmTimingSnapshot{}, false, err
+	}
+
+	sum, count, ok := extractPromHistogramSumCount(string(body), []string{
+		"vllm:request_generation_latency_seconds",
+		"vllm:request_latency_seconds",
+		"vllm_request_generation_latency_seconds",
+		"vllm_request_latency_seconds",
+	})
+	if !ok {
+		return vllmTimingSnapshot{}, false, nil
+	}
+	return vllmTimingSnapshot{sumSeconds: sum, count: count}, true, nil
+}
+
+func extractPromHistogramSumCount(metrics string, bases []string) (sumSeconds float64, count int64, ok bool) {
+	for _, base := range bases {
+		sumName := base + "_sum"
+		countName := base + "_count"
+		sum, sumOK := sumPromMetric(metrics, sumName)
+		cnt, cntOK := sumPromMetric(metrics, countName)
+		if sumOK && cntOK && cnt > 0 {
+			return sum, int64(cnt), true
+		}
+	}
+	return 0, 0, false
+}
+
+func sumPromMetric(metrics, name string) (float64, bool) {
+	var total float64
+	var found bool
+	for _, line := range strings.Split(metrics, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// <name>{...} <value> OR <name> <value>
+		if !strings.HasPrefix(line, name) {
+			continue
+		}
+		// Ensure exact metric match (next char must start labels or value).
+		if len(line) > len(name) {
+			next := line[len(name)]
+			if next != '{' && next != ' ' && next != '\t' {
+				continue
+			}
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, name))
+		if rest == "" {
+			continue
+		}
+		// Drop labels if present.
+		if strings.HasPrefix(rest, "{") {
+			if idx := strings.Index(rest, "}"); idx >= 0 {
+				rest = strings.TrimSpace(rest[idx+1:])
+			} else {
+				continue
+			}
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		v, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			continue
+		}
+		total += v
+		found = true
+	}
+	return total, found
 }
 
 func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt string, maxTokens int) (streamSample, bool, error) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -160,4 +161,64 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 	assert.Equal(t, "250", cm.Data["completionTokens"])
 	assert.Equal(t, "0.5", cm.Data["durationSeconds"])
 	assert.Equal(t, "5", cm.Data["samples"])
+}
+
+func TestRun_VLLM_ServerTimingViaMetrics(t *testing.T) {
+	t.Parallel()
+	clientset := fake.NewSimpleClientset()
+
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	var metricsCalls int
+	httpClient := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.Path {
+			case "/health":
+				return httpResponse(http.StatusOK, "ok"), nil
+			case "/metrics":
+				metricsCalls++
+				if metricsCalls == 1 {
+					return httpResponse(http.StatusOK, "vllm:request_latency_seconds_sum 5.0\nvllm:request_latency_seconds_count 10\n"), nil
+				}
+				return httpResponse(http.StatusOK, "vllm:request_latency_seconds_sum 5.1\nvllm:request_latency_seconds_count 11\n"), nil
+			case "/v1/completions":
+				resp := httpResponse(http.StatusOK, `{"usage":{"completion_tokens":50}}`)
+				resp.Header.Set("Content-Type", "application/json")
+				return resp, nil
+			default:
+				return httpResponse(http.StatusNotFound, "not found"), nil
+			}
+		}),
+	}
+
+	b := &Benchmarker{
+		kubeClient:  clientset,
+		namespace:   "default",
+		backendURL:  "http://backend",
+		backendType: "vllm",
+		opts: Options{
+			WarmupIterations: 0,
+			MinDuration:      1 * time.Millisecond,
+			Iterations:       1,
+			BatchSize:        16,
+		}.withDefaults(),
+		httpClient: httpClient,
+		now:        clock.Now,
+	}
+
+	err := b.Run(context.Background(), "test-model", "test-cm")
+	require.NoError(t, err)
+
+	cm, err := clientset.CoreV1().ConfigMaps("default").Get(context.Background(), "test-cm", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "vllm", cm.Data["backend"])
+	// 50 tokens / 0.1s server-side latency delta = 500 TPS.
+	tps, err := strconv.ParseFloat(cm.Data["tokensPerSecond"], 64)
+	require.NoError(t, err)
+	assert.InDelta(t, 500.0, tps, 1e-4)
+	assert.Equal(t, "50", cm.Data["completionTokens"])
+	dur, err := strconv.ParseFloat(cm.Data["durationSeconds"], 64)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.1, dur, 1e-6)
+	assert.Equal(t, "1", cm.Data["samples"])
 }
