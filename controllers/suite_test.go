@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,6 +43,9 @@ var ctx context.Context
 var cancel context.CancelFunc
 
 func TestAPIs(t *testing.T) {
+	if testing.Short() || os.Getenv("SKIP_ENVTEST") == "1" {
+		t.Skip("skipping envtest suite")
+	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Controller Suite")
 }

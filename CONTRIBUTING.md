@@ -43,6 +43,9 @@ go test ./...
 # 4. Lint and static analysis
 golangci-lint run
 
+# Optional: install local git hooks (gofmt, vet, fast tests)
+./hack/install-githooks.sh
+
 # 5. Commit (with DCO sign-off)
 git add .
 git commit -s -m "feat: add super-cool scheduler knob"
