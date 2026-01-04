@@ -32,7 +32,7 @@ variables:
 # --- Lint Stage ---
 lint:
   stage: lint
-  image: golangci/golangci-lint:v1.64.0
+  image: golangci/golangci-lint:v1.59.1
   script:
     - golangci-lint run -v --timeout=5m ./...
   allow_failure: true
@@ -41,7 +41,22 @@ fmt:
   stage: lint
   <<: *go-cache
   script:
-    - if [ -n "$(gofmt -l .)" ]; then echo "Go code is not formatted"; exit 1; fi
+    # Avoid scanning cached modules in `.go/pkg/mod` (may contain non-compiling fixtures).
+    - |
+      files="$(find . -name '*.go' \
+        -not -path './.go/*' \
+        -not -path './vendor/*' \
+        -not -path './bin/*')"
+      if [ -z "$files" ]; then
+        echo "No Go files found"
+        exit 0
+      fi
+      unformatted="$(gofmt -l $files)"
+      if [ -n "$unformatted" ]; then
+        echo "Go code is not formatted:"
+        echo "$unformatted"
+        exit 1
+      fi
 
 vet:
   stage: lint
