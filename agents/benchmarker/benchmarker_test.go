@@ -3,7 +3,6 @@ package benchmarker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"testing"
@@ -52,11 +51,11 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 				return httpResponse(http.StatusOK, `{"status":"success"}`), nil
 			case "/api/generate":
 				generateCalls++
-				payload, _ := json.Marshal(map[string]any{
-					"eval_count":    10,
-					"eval_duration": int64(time.Second),
-				})
-				resp := httpResponse(http.StatusOK, string(payload))
+				// Simulate Ollama streaming: two token chunks + final done chunk with eval stats.
+				stream := `{"response":"hello","done":false}` + "\n" +
+					`{"response":"world","done":false}` + "\n" +
+					`{"response":"","done":true,"eval_count":10,"eval_duration":1000000000}` + "\n"
+				resp := httpResponse(http.StatusOK, stream)
 				resp.Header.Set("Content-Type", "application/json")
 				return resp, nil
 			default:
@@ -117,13 +116,13 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 			case "/health":
 				return httpResponse(http.StatusOK, "ok"), nil
 			case "/v1/completions":
-				payload, _ := json.Marshal(map[string]any{
-					"usage": map[string]any{
-						"completion_tokens": 50,
-					},
-				})
-				resp := httpResponse(http.StatusOK, string(payload))
-				resp.Header.Set("Content-Type", "application/json")
+				// Simulate SSE streaming with include_usage in the final chunk.
+				stream := "data: " + `{"choices":[{"text":"hi"}]}` + "\n\n" +
+					"data: " + `{"choices":[{"text":"there"}]}` + "\n\n" +
+					"data: " + `{"usage":{"completion_tokens":50},"choices":[]}` + "\n\n" +
+					"data: [DONE]\n\n"
+				resp := httpResponse(http.StatusOK, stream)
+				resp.Header.Set("Content-Type", "text/event-stream")
 				return resp, nil
 			default:
 				return httpResponse(http.StatusNotFound, "not found"), nil
@@ -140,7 +139,7 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 		backendURL:  "http://backend",
 		backendType: "vllm",
 		opts: Options{
-			WarmupIterations: 0, // will default to 2
+			WarmupIterations: 0,
 			MinDuration:      1 * time.Millisecond,
 			Iterations:       5,
 			BatchSize:        16,
@@ -156,7 +155,7 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "vllm", cm.Data["backend"])
-	// Fake clock makes each vLLM call 100ms, so 50 tokens / 0.1s = 500 tps (across samples too).
+	// Streaming timing uses first->last token window (fake clock advances on each chunk with text).
 	assert.Equal(t, "500", cm.Data["tokensPerSecond"])
 	assert.Equal(t, "250", cm.Data["completionTokens"])
 	assert.Equal(t, "0.5", cm.Data["durationSeconds"])

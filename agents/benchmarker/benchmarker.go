@@ -2,6 +2,7 @@
 package benchmarker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,7 +32,8 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
-	if o.WarmupIterations <= 0 {
+	// Allow explicitly disabling warmup with 0.
+	if o.WarmupIterations < 0 {
 		o.WarmupIterations = 2
 	}
 	if o.MinDuration <= 0 {
@@ -329,7 +332,27 @@ func (b *Benchmarker) generateOnce(ctx context.Context, model, prompt string, ma
 	}
 }
 
+type streamSample struct {
+	tokens          int
+	generationTime  time.Duration
+	firstTokenAfter time.Duration
+	wallTime        time.Duration
+}
+
 func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string, maxTokens int) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	// Prefer streaming so we can measure first-token latency and decode throughput more accurately.
+	if sample, ok, err := b.generateOnceVLLMStream(ctx, model, prompt, maxTokens); err != nil {
+		return 0, 0, false, err
+	} else if ok {
+		if sample.tokens > 0 && sample.generationTime > 0 {
+			return sample.tokens, sample.generationTime, false, nil
+		}
+		// Fall back to wall time if streaming didn't yield usable timings.
+		if sample.tokens > 0 && sample.wallTime > 0 {
+			return sample.tokens, sample.wallTime, false, nil
+		}
+	}
+
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"prompt":     prompt,
@@ -367,7 +390,128 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 	return result.Usage.CompletionTokens, duration, false, nil
 }
 
+func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt string, maxTokens int) (streamSample, bool, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":      model,
+		"prompt":     prompt,
+		"max_tokens": maxTokens,
+		"stream":     true,
+		"stream_options": map[string]interface{}{
+			"include_usage": true,
+		},
+	})
+
+	start := b.now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/v1/completions", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return streamSample{}, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return streamSample{}, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	type chunk struct {
+		Choices []struct {
+			Text string `json:"text"`
+		} `json:"choices"`
+		Usage *struct {
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage,omitempty"`
+	}
+
+	reader := bufio.NewReader(resp.Body)
+
+	var firstTokenAt time.Time
+	var lastTokenAt time.Time
+	var totalTokens int
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return streamSample{}, false, err
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+
+		var c chunk
+		if err := json.Unmarshal([]byte(data), &c); err != nil {
+			// If streaming isn't supported, vLLM may return non-SSE.
+			return streamSample{}, false, nil
+		}
+
+		if c.Usage != nil && c.Usage.CompletionTokens > 0 {
+			totalTokens = c.Usage.CompletionTokens
+		}
+
+		hasText := false
+		for _, choice := range c.Choices {
+			if choice.Text != "" {
+				hasText = true
+				break
+			}
+		}
+		if hasText {
+			now := b.now()
+			if firstTokenAt.IsZero() {
+				firstTokenAt = now
+			}
+			lastTokenAt = now
+		}
+	}
+
+	wall := b.now().Sub(start)
+	if totalTokens <= 0 {
+		return streamSample{wallTime: wall}, true, nil
+	}
+	if firstTokenAt.IsZero() || lastTokenAt.IsZero() || !lastTokenAt.After(firstTokenAt) {
+		return streamSample{tokens: totalTokens, wallTime: wall}, true, nil
+	}
+
+	return streamSample{
+		tokens:          totalTokens,
+		generationTime:  lastTokenAt.Sub(firstTokenAt),
+		firstTokenAfter: firstTokenAt.Sub(start),
+		wallTime:        wall,
+	}, true, nil
+}
+
 func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	// Prefer streaming so we can observe first-token latency while still using server-side eval_duration when available.
+	if sample, ok, err := b.generateOnceOllamaStream(ctx, model, prompt); err != nil {
+		return 0, 0, false, err
+	} else if ok {
+		if sample.tokens > 0 && sample.generationTime > 0 {
+			return sample.tokens, sample.generationTime, true, nil
+		}
+		if sample.tokens > 0 && sample.wallTime > 0 {
+			return sample.tokens, sample.wallTime, false, nil
+		}
+	}
+
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"model":  model,
 		"prompt": prompt,
@@ -406,4 +550,84 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 
 	duration = b.now().Sub(start)
 	return result.EvalCount, duration, false, nil
+}
+
+func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, prompt string) (streamSample, bool, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":  model,
+		"prompt": prompt,
+		"stream": true,
+	})
+
+	start := b.now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/api/generate", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return streamSample{}, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return streamSample{}, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var firstTokenAt time.Time
+	var lastTokenAt time.Time
+	var finalEvalCount int
+	var finalEvalDuration time.Duration
+
+	for {
+		var chunk struct {
+			Response     string `json:"response"`
+			Done         bool   `json:"done"`
+			EvalCount    int    `json:"eval_count"`
+			EvalDuration int64  `json:"eval_duration"`
+		}
+		if err := decoder.Decode(&chunk); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return streamSample{}, false, err
+		}
+		if chunk.Response != "" {
+			now := b.now()
+			if firstTokenAt.IsZero() {
+				firstTokenAt = now
+			}
+			lastTokenAt = now
+		}
+		if chunk.Done {
+			finalEvalCount = chunk.EvalCount
+			if chunk.EvalDuration > 0 {
+				finalEvalDuration = time.Duration(chunk.EvalDuration)
+			}
+		}
+	}
+
+	wall := b.now().Sub(start)
+	if finalEvalCount <= 0 {
+		return streamSample{wallTime: wall}, true, nil
+	}
+
+	s := streamSample{
+		tokens:   finalEvalCount,
+		wallTime: wall,
+	}
+	if finalEvalDuration > 0 {
+		s.generationTime = finalEvalDuration
+	}
+	if !firstTokenAt.IsZero() {
+		s.firstTokenAfter = firstTokenAt.Sub(start)
+	}
+	if !lastTokenAt.IsZero() && !firstTokenAt.IsZero() && lastTokenAt.After(firstTokenAt) {
+		// This is "observed decode window", useful if eval_duration is absent.
+		_ = lastTokenAt
+	}
+	return s, true, nil
 }
