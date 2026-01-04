@@ -24,7 +24,7 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 ### ✅ **Currently Implemented**
 
 - **Hardware Discovery**: Automatic detection of GPU vendor, architecture, VRAM, and capabilities
-- **Model Performance Benchmarking**: Automated measurement of tokens/second for model-device pairs
+- **Model Performance Benchmarking**: Automated measurement of tokens/second via real inference (Ollama, vLLM, MLC-LLM, llama.cpp)
 - **Intelligent Scheduling**: Multi-factor scoring combining performance, utilization, and cost
 - [x] **Model Caching**: Intelligent model artifact management with deduplication and pre-warming
 - [x] **Resource Management**: Complete lifecycle management of AI workload deployments
@@ -37,7 +37,7 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 
 - **Deployment Tooling**: Basic Helm chart structure exists but needs completion
 - **Integration Testing**: Framework exists but needs more comprehensive scenarios
-- **ModelCache Downloader**: Currently a stub (`echo`). Needs real implementation (HuggingFace/OCI).
+- **ModelCache Downloader**: Supports `huggingface-cli` in the controller; OCI-based sources are still TODO.
 - **Scale-to-Zero Proxy**: Basic skeleton exists. Needs robust "Activator" pattern (request buffering, API compatibility).
 - **Smart Routing (L7)**: Current scheduler is L4 (Pods). Missing L7 Router for KV-Cache locality (requests).
 
@@ -92,26 +92,26 @@ kubectl apply -f config/rbac/role.yaml
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
-kind: ModelDeployment
-metadata:
-  name: llama-7b
-spec:
-  model:
-    source: "ollama://llama2:7b"
-    quantization: "Q4_K_M"
-  replicas: 2
-  resources:
-    limits:
-      nvidia.com/gpu: 1
-      memory: "16Gi"
----
-apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
 metadata:
   name: llama-7b-cache
 spec:
-  source: "huggingface://meta-llama/Llama-2-7b-chat-hf"
+  source: huggingface://meta-llama/Llama-2-7b-chat-hf
   storageStrategy: SharedPVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama-7b
+spec:
+  backend: ollama
+  model: llama2:7b
+  replicas: 2
+  modelCacheRef: llama-7b-cache
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 16Gi
 ```
 
 ## Development
@@ -147,7 +147,7 @@ go test ./agents/...
 - [ ] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
 - [ ] **Installation documentation** - Step-by-step deployment guides
 - [ ] **Integration tests** - End-to-end testing scenarios
-- [ ] **Real benchmarking** - Replace mock with actual model inference testing
+- [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
 
 ### Medium Priority (Production Ready)
 

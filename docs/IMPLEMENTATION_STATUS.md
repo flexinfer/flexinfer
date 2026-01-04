@@ -20,7 +20,7 @@ This document provides a comprehensive overview of the current implementation st
 - **Controller Manager (`controllers/`)**: Comprehensive CRD reconciliation
 
   - Complete `ModelDeployment` lifecycle management
-  - **Dynamic Backend Support**: Supports `ollama` and `vllm` backends with automatic sidecar injection.
+  - **Dynamic Backend Support**: Supports `ollama`, `vllm`, `mlc-llm`, and `llama.cpp` with automatic sidecar injection.
   - **Benchmarking Integration**: Automatically injects benchmark jobs with sidecars to measure token generation speed.
   - **Resources**: GPU resource requests automatically injected (`nvidia.com/gpu`).
   - Detailed status tracking and event recording.
@@ -33,7 +33,7 @@ This document provides a comprehensive overview of the current implementation st
 
 - **Benchmarker (`agents/benchmarker/`)**: Performance measurement framework
 
-  - **Real Inference**: Replaced mocks with real HTTP clients for Ollama (`/api/generate`) and vLLM (`/v1/completions`).
+  - **Real Inference**: Replaced mocks with real HTTP clients (Ollama `/api/generate`, OpenAI-style `/v1/completions`, and vLLM `/metrics` timing).
   - **Configurable Images**: Benchmarker and Backend images are configurable via EnvVars.
   - Result storage in ConfigMaps for the Scheduler to consume.
 
