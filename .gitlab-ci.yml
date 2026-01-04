@@ -11,7 +11,7 @@ stages:
   - publish
 
 variables:
-  GO_VERSION: "1.24.4"
+  GO_VERSION: "1.25.5"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
