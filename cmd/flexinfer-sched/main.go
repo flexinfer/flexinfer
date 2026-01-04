@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"flag"
 	"net/http"
 
@@ -10,10 +11,12 @@ import (
 )
 
 func main() {
+	var port int
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
+	flag.IntVar(&port, "port", 8082, "HTTP port to listen on for the scheduler extender.")
 	flag.Parse()
 
 	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -32,8 +35,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	setupLog.Info("Scheduler listening on :8888")
-	if err := http.ListenAndServe(":8888", nil); err != nil {
+	addr := fmt.Sprintf(":%d", port)
+	setupLog.Info("Scheduler listening", "addr", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
 		setupLog.Error(err, "Failed to start HTTP server")
 	}
 }

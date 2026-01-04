@@ -25,3 +25,7 @@ Dockerfile
 # Build output
 bin/
 dist/
+
+# Local Go cache/temp dirs (Codex sandbox)
+.gocache/
+.gotmp/

@@ -452,6 +452,17 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 	benchmarkerImage := r.getBenchmarkerImage()
 	backendPort := r.getBackendPort(m)
 
+	warmupIterations := int32(2)
+	var minDuration time.Duration = 30 * time.Second
+	if m.Spec.Benchmark != nil {
+		if m.Spec.Benchmark.WarmupIterations != nil {
+			warmupIterations = *m.Spec.Benchmark.WarmupIterations
+		}
+		if m.Spec.Benchmark.MinDuration != nil {
+			minDuration = m.Spec.Benchmark.MinDuration.Duration
+		}
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.benchmarkJobName(m),
@@ -487,6 +498,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								"--model", m.Spec.Model,
 								"--configmap", r.benchmarkConfigMapName(m),
 								"--backend", m.Spec.Backend,
+								"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
+								"--min-duration", minDuration.String(),
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{

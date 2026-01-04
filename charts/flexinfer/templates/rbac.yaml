@@ -1,3 +1,4 @@
+{{- if .Values.serviceAccount.create }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -6,6 +7,7 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 ---
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -14,12 +16,18 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["ai.flexinfer"]
-    resources: ["modeldeployments", "modeldeployments/status", "modeldeployments/finalizers"]
+    resources:
+      - modeldeployments
+      - modeldeployments/status
+      - modeldeployments/finalizers
+      - modelcaches
+      - modelcaches/status
+      - modelcaches/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["core"]
+  - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims", "configmaps", "events"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
@@ -88,6 +96,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "delete", "update"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["patch", "update"]
   - apiGroups: [""]
     resources: ["bindings", "pods/binding"]
     verbs: ["create"]

@@ -19,18 +19,50 @@ spec:
         app.kubernetes.io/component: scheduler
     spec:
       serviceAccountName: {{ include "flexinfer.serviceAccountName" . }}
+      initContainers:
+        - name: kubeconfig-init
+          image: "{{ .Values.scheduler.kubeconfigInit.image.repository }}:{{ .Values.scheduler.kubeconfigInit.image.tag }}"
+          imagePullPolicy: {{ .Values.scheduler.kubeconfigInit.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cat > /etc/kubernetes/kubeconfig <<'EOF'
+              apiVersion: v1
+              kind: Config
+              clusters:
+              - name: in-cluster
+                cluster:
+                  server: https://kubernetes.default.svc
+                  certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              users:
+              - name: sa
+                user:
+                  tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+              contexts:
+              - name: default
+                context:
+                  cluster: in-cluster
+                  user: sa
+              current-context: default
+              EOF
+          volumeMounts:
+            - name: scheduler-workdir
+              mountPath: /etc/kubernetes
       containers:
         - name: flexinfer-scheduler
           image: "{{ .Values.scheduler.image.repository }}:{{ .Values.scheduler.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.scheduler.image.pullPolicy }}
+          args:
+            - --port={{ .Values.scheduler.port }}
           ports:
             - name: http
-              containerPort: 8082
+              containerPort: {{ .Values.scheduler.port }}
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8082
+              port: http
             initialDelaySeconds: 15
             periodSeconds: 20
           resources:
@@ -42,16 +74,31 @@ spec:
               value: "{{ .Values.scheduler.weights.util }}"
             - name: SCHED_COST_WEIGHT
               value: "{{ .Values.scheduler.weights.cost }}"
+            - name: SCHED_CACHE_WEIGHT
+              value: "{{ .Values.scheduler.weights.cache }}"
         - name: kube-scheduler
-          image: registry.k8s.io/kube-scheduler:v1.28.0
+          image: "{{ .Values.scheduler.kubeScheduler.image.repository }}:{{ .Values.scheduler.kubeScheduler.image.tag }}"
+          imagePullPolicy: {{ .Values.scheduler.kubeScheduler.image.pullPolicy }}
           command:
             - kube-scheduler
+          args:
             - --config=/etc/kubernetes/scheduler-config.yaml
+            - --kubeconfig=/etc/kubernetes/kubeconfig
+            - --secure-port=0
             - --v=2
           volumeMounts:
-            - name: scheduler-config
+            - name: scheduler-workdir
               mountPath: /etc/kubernetes
+            - name: scheduler-config
+              mountPath: /etc/kubernetes/scheduler-config.yaml
+              subPath: scheduler-config.yaml
+              readOnly: true
       volumes:
+        - name: scheduler-workdir
+          emptyDir: {}
         - name: scheduler-config
           configMap:
             name: {{ include "flexinfer.fullname" . }}-scheduler-config
+            items:
+              - key: scheduler-config.yaml
+                path: scheduler-config.yaml

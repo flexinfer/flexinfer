@@ -11,7 +11,7 @@ spec:
     {{- include "flexinfer.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
   ports:
-    - port: 8082
+    - port: {{ .Values.scheduler.port }}
       targetPort: http
       protocol: TCP
       name: http

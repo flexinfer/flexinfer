@@ -68,10 +68,21 @@ backend:
 
 scheduler:
   replicas: 1
+  port: 8082
   image:
     repository: flexinfer/flexinfer-sched
     pullPolicy: IfNotPresent
     tag: "latest"
+  kubeScheduler:
+    image:
+      repository: registry.k8s.io/kube-scheduler
+      tag: "v1.28.0"
+      pullPolicy: IfNotPresent
+  kubeconfigInit:
+    image:
+      repository: busybox
+      tag: "1.36"
+      pullPolicy: IfNotPresent
   resources:
     limits:
       cpu: 200m
@@ -83,6 +94,7 @@ scheduler:
     tps: 0.7
     util: 0.2
     cost: 0.1
+    cache: 0.3
 
 benchmarker:
   image:

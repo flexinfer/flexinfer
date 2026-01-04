@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"os"
+	"time"
 
 	"github.com/flexinfer/flexinfer/agents/benchmarker"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -14,6 +15,9 @@ func main() {
 	model := flag.String("model", "", "The model to benchmark.")
 	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
 	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm).")
+	warmupIterations := flag.Int("warmup-iterations", 2, "Number of warmup iterations before measurement.")
+	minDuration := flag.Duration("min-duration", 30*time.Second, "Minimum benchmark duration (wall time).")
+	maxTokens := flag.Int("max-tokens", 128, "Max tokens to generate per iteration.")
 
 	opts := zap.Options{
 		Development: true,
@@ -31,7 +35,11 @@ func main() {
 
 	setupLog.Info("Starting benchmark", "model", *model, "backend", *backend)
 
-	bm, err := benchmarker.NewBenchmarker(*backend)
+	bm, err := benchmarker.NewBenchmarker(*backend, benchmarker.Options{
+		WarmupIterations: *warmupIterations,
+		MinDuration:      *minDuration,
+		MaxTokens:        *maxTokens,
+	})
 	if err != nil {
 		setupLog.Error(err, "Failed to create benchmarker")
 		os.Exit(1)
