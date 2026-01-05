@@ -155,23 +155,16 @@ publish:
         dockerfile="$2"
         shift 2
 
-        names=""
         for tag in "$@"; do
-          if [ -z "${names}" ]; then
-            names="${tag}"
-          else
-            # BuildKit export options use commas as separators; escape commas in the name list.
-            names="${names}\\,${tag}"
-          fi
+          echo "Publishing ${name}: ${tag}"
+          buildctl --addr "${BUILDKIT_HOST}" build \
+            --frontend dockerfile.v0 \
+            --local context=. \
+            --local dockerfile=build \
+            --opt filename="${dockerfile}" \
+            --opt platform=linux/amd64 \
+            --output "type=image,name=${tag},push=true"
         done
-
-        buildctl --addr "${BUILDKIT_HOST}" build \
-          --frontend dockerfile.v0 \
-          --local context=. \
-          --local dockerfile=build \
-          --opt filename="${dockerfile}" \
-          --opt platform=linux/amd64 \
-          --output "type=image,name=${names},push=true"
       }
 
       controller_tags="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
