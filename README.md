@@ -78,14 +78,10 @@ See [AGENTS.md](AGENTS.md) for detailed component documentation.
 ### Installation
 
 ```bash
-# Install CRDs
-kubectl apply -f config/crd/ai.flexinfer_modeldeployments.yaml
-
-# Install RBAC
-kubectl apply -f config/rbac/role.yaml
-
-# Deploy components (manual deployment - Helm chart needs completion)
-# See charts/flexinfer/ for Helm template structure
+# Helm (recommended)
+helm upgrade --install flexinfer charts/flexinfer \
+  --namespace flexinfer-system \
+  --create-namespace
 ```
 
 ### Example Usage
