@@ -155,19 +155,23 @@ publish:
         dockerfile="$2"
         shift 2
 
-        outputs=""
+        names=""
         for tag in "$@"; do
-          outputs="$outputs --output type=image,name=${tag},push=true"
+          if [ -z "${names}" ]; then
+            names="${tag}"
+          else
+            # BuildKit export options use commas as separators; escape commas in the name list.
+            names="${names}\\,${tag}"
+          fi
         done
 
-        # shellcheck disable=SC2086
         buildctl --addr "${BUILDKIT_HOST}" build \
           --frontend dockerfile.v0 \
           --local context=. \
           --local dockerfile=build \
           --opt filename="${dockerfile}" \
           --opt platform=linux/amd64 \
-          $outputs
+          --output "type=image,name=${names},push=true"
       }
 
       controller_tags="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
