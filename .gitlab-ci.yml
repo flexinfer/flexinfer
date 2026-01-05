@@ -17,6 +17,10 @@ variables:
   REGISTRY: "registry.harbor.lan/flexinfer"
   GOPROXY: "http://athens.ci.svc.cluster.local:3000,direct"
   BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
+  # Set to "1" to additionally push OCI images to the GitLab Container Registry.
+  PUBLISH_GITLAB_IMAGES: "0"
+  # Optional: OCI repo for Helm chart publishing (example: oci://registry.harbor.lan/flexinfer-charts)
+  HELM_OCI_REPO: ""
 
 .go-cache: &go-cache
   image: golang:${GO_VERSION}
@@ -157,10 +161,91 @@ publish:
           --output "type=image,name=${tags},push=true"
       }
 
-      build_image "flexinfer-controller" "Dockerfile.manager" "${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA},${REGISTRY}/flexinfer-controller:latest"
-      build_image "flexinfer-agent" "Dockerfile.agent" "${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
-      build_image "flexinfer-scheduler" "Dockerfile.sched" "${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
-      build_image "flexinfer-bench" "Dockerfile.bench" "${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
-      build_image "flexinfer-proxy" "Dockerfile.proxy" "${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+      controller_tags="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
+      agent_tags="${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+      scheduler_tags="${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+      bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
+      proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+
+      if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
+        controller_tags="${controller_tags},${REGISTRY}/flexinfer-controller:latest"
+      fi
+
+      if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
+        controller_tags="${controller_tags},${CI_REGISTRY_IMAGE}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
+        agent_tags="${agent_tags},${CI_REGISTRY_IMAGE}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+        scheduler_tags="${scheduler_tags},${CI_REGISTRY_IMAGE}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+        bench_tags="${bench_tags},${CI_REGISTRY_IMAGE}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
+        proxy_tags="${proxy_tags},${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+        if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
+          controller_tags="${controller_tags},${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
+        fi
+      fi
+
+      build_image "flexinfer-controller" "Dockerfile.manager" "${controller_tags}"
+      build_image "flexinfer-agent" "Dockerfile.agent" "${agent_tags}"
+      build_image "flexinfer-scheduler" "Dockerfile.sched" "${scheduler_tags}"
+      build_image "flexinfer-bench" "Dockerfile.bench" "${bench_tags}"
+      build_image "flexinfer-proxy" "Dockerfile.proxy" "${proxy_tags}"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+publish_binaries:
+  stage: publish
+  image: alpine:3.20
+  needs:
+    - job: build_manager
+      artifacts: true
+    - job: build_agent
+      artifacts: true
+    - job: build_scheduler
+      artifacts: true
+    - job: build_benchmarker
+      artifacts: true
+    - job: build_proxy
+      artifacts: true
+  script:
+    - apk add --no-cache curl tar
+    - mkdir -p dist
+    - version="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+    - tar -czf "dist/flexinfer_${version}_linux_amd64.tar.gz" -C bin manager agent scheduler benchmarker proxy
+    - >
+      curl --fail-with-body
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}"
+      --upload-file "dist/flexinfer_${version}_linux_amd64.tar.gz"
+      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/flexinfer/${version}/flexinfer_${version}_linux_amd64.tar.gz"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+publish_helm_chart:
+  stage: publish
+  image: alpine/helm:3.15.4
+  script:
+    - apk add --no-cache curl
+    - mkdir -p dist
+    - |
+      chart_version=""
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        chart_version="${CI_COMMIT_TAG#v}"
+      else
+        chart_version="0.1.0-${CI_COMMIT_SHORT_SHA}"
+      fi
+      helm lint charts/flexinfer
+      helm package charts/flexinfer --destination dist --version "${chart_version}"
+      chart_tgz="$(ls dist/flexinfer-*.tgz | head -n 1)"
+      version="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+      curl --fail-with-body \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "${chart_tgz}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/flexinfer-helm/${version}/$(basename "${chart_tgz}")"
+
+      if [ -n "${HELM_OCI_REPO}" ]; then
+        helm push "${chart_tgz}" "${HELM_OCI_REPO}"
+      else
+        echo "HELM_OCI_REPO not set; skipping OCI push"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
