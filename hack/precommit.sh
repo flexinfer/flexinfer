@@ -72,6 +72,27 @@ run_golangci_lint_if_available() {
   fi
 }
 
+run_helm_lint_if_available() {
+  if [ "${SKIP_HELM:-}" = "1" ]; then
+    warn "SKIP_HELM=1; skipping helm checks"
+    return 0
+  fi
+
+  if [ ! -f "$root/charts/flexinfer/Chart.yaml" ]; then
+    warn "no charts/flexinfer; skipping helm checks"
+    return 0
+  fi
+
+  if ! command -v helm >/dev/null 2>&1; then
+    warn "helm not installed; skipping helm checks"
+    return 0
+  fi
+
+  warn "running helm lint/template"
+  helm lint charts/flexinfer
+  helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
+}
+
 mode="${1:-}"
 case "${mode}" in
   --check)
@@ -79,6 +100,7 @@ case "${mode}" in
     run_go_vet
     run_go_tests_fast
     run_golangci_lint_if_available
+    run_helm_lint_if_available
     ;;
   "")
     run_gofmt_on_staged

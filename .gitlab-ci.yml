@@ -49,6 +49,13 @@ fmt:
         exit 1
       fi
 
+helm:
+  stage: lint
+  image: alpine/helm:3.15.4
+  script:
+    - helm lint charts/flexinfer
+    - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
+
 vet:
   stage: lint
   <<: *go-cache
