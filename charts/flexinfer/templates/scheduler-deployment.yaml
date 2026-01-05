@@ -1,3 +1,4 @@
+{{- if .Values.scheduler.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -102,3 +103,4 @@ spec:
             items:
               - key: scheduler-config.yaml
                 path: scheduler-config.yaml
+{{- end }}

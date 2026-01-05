@@ -1,3 +1,4 @@
+{{- if .Values.proxy.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,3 +34,4 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
+{{- end }}

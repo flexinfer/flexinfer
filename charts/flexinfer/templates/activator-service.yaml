@@ -1,3 +1,4 @@
+{{- if .Values.proxy.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,3 +16,4 @@ spec:
   selector:
     {{- include "flexinfer.selectorLabels" . | nindent 4 }}
     app: flexinfer-proxy
+{{- end }}

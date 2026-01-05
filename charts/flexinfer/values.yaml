@@ -17,9 +17,10 @@ serviceAccount:
 podAnnotations: {}
 
 controller:
+  enabled: true
   replicas: 1
   image:
-    repository: flexinfer/flexinfer-manager
+    repository: ghcr.io/flexinfer/flexinfer-controller
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
     tag: "latest"
@@ -32,8 +33,9 @@ controller:
       memory: 64Mi
 
 agent:
+  enabled: true
   image:
-    repository: flexinfer/flexinfer-agent
+    repository: ghcr.io/flexinfer/flexinfer-agent
     pullPolicy: IfNotPresent
     tag: "latest"
   resources:
@@ -45,6 +47,7 @@ agent:
       memory: 128Mi
 
 proxy:
+  enabled: true
   replicaCount: 1
   image:
     repository: ghcr.io/flexinfer/flexinfer-proxy
@@ -67,10 +70,11 @@ backend:
     tag: "latest"
 
 scheduler:
+  enabled: true
   replicas: 1
   port: 8082
   image:
-    repository: flexinfer/flexinfer-sched
+    repository: ghcr.io/flexinfer/flexinfer-scheduler
     pullPolicy: IfNotPresent
     tag: "latest"
   kubeScheduler:
@@ -97,7 +101,11 @@ scheduler:
     cache: 0.3
 
 benchmarker:
+  enabled: true
   image:
-    repository: flexinfer/flexinfer-bench
+    repository: ghcr.io/flexinfer/flexinfer-bench
     pullPolicy: IfNotPresent
     tag: "latest"
+
+grafanaDashboard:
+  enabled: true
