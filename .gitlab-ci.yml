@@ -151,50 +151,56 @@ publish:
       buildctl --addr "${BUILDKIT_HOST}" debug info
     - |
       build_image() {
-        local name="$1" dockerfile="$2"
+        name="$1"
+        dockerfile="$2"
         shift 2
 
-        local outputs=()
-        local tag
+        outputs=""
         for tag in "$@"; do
-          outputs+=(--output "type=image,name=${tag},push=true")
+          outputs="$outputs --output type=image,name=${tag},push=true"
         done
 
+        # shellcheck disable=SC2086
         buildctl --addr "${BUILDKIT_HOST}" build \
           --frontend dockerfile.v0 \
           --local context=. \
           --local dockerfile=build \
           --opt filename="${dockerfile}" \
           --opt platform=linux/amd64 \
-          "${outputs[@]}"
+          $outputs
       }
 
-      controller_tags=("${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}")
-      agent_tags=("${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}")
-      scheduler_tags=("${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}")
-      bench_tags=("${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}")
-      proxy_tags=("${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}")
+      controller_tags="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
+      agent_tags="${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+      scheduler_tags="${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+      bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
+      proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
 
       if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
-        controller_tags+=("${REGISTRY}/flexinfer-controller:latest")
+        controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
       fi
 
       if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
-        controller_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}")
-        agent_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}")
-        scheduler_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}")
-        bench_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}")
-        proxy_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}")
+        controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
+        agent_tags="${agent_tags} ${CI_REGISTRY_IMAGE}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+        scheduler_tags="${scheduler_tags} ${CI_REGISTRY_IMAGE}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+        bench_tags="${bench_tags} ${CI_REGISTRY_IMAGE}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
+        proxy_tags="${proxy_tags} ${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
         if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
-          controller_tags+=("${CI_REGISTRY_IMAGE}/flexinfer-controller:latest")
+          controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
         fi
       fi
 
-      build_image "flexinfer-controller" "Dockerfile.manager" "${controller_tags[@]}"
-      build_image "flexinfer-agent" "Dockerfile.agent" "${agent_tags[@]}"
-      build_image "flexinfer-scheduler" "Dockerfile.sched" "${scheduler_tags[@]}"
-      build_image "flexinfer-bench" "Dockerfile.bench" "${bench_tags[@]}"
-      build_image "flexinfer-proxy" "Dockerfile.proxy" "${proxy_tags[@]}"
+      # shellcheck disable=SC2086
+      build_image "flexinfer-controller" "Dockerfile.manager" ${controller_tags}
+      # shellcheck disable=SC2086
+      build_image "flexinfer-agent" "Dockerfile.agent" ${agent_tags}
+      # shellcheck disable=SC2086
+      build_image "flexinfer-scheduler" "Dockerfile.sched" ${scheduler_tags}
+      # shellcheck disable=SC2086
+      build_image "flexinfer-bench" "Dockerfile.bench" ${bench_tags}
+      # shellcheck disable=SC2086
+      build_image "flexinfer-proxy" "Dockerfile.proxy" ${proxy_tags}
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
