@@ -152,6 +152,8 @@ publish:
 
       build_image "flexinfer-controller" "Dockerfile.manager" "${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA},${REGISTRY}/flexinfer-controller:latest"
       build_image "flexinfer-agent" "Dockerfile.agent" "${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+      build_image "flexinfer-scheduler" "Dockerfile.sched" "${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+      build_image "flexinfer-bench" "Dockerfile.bench" "${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
       build_image "flexinfer-proxy" "Dockerfile.proxy" "${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
