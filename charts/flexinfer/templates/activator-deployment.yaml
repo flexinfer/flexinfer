@@ -18,7 +18,7 @@ spec:
         {{- include "flexinfer.selectorLabels" . | nindent 8 }}
         app: flexinfer-proxy
     spec:
-      serviceAccountName: {{ include "flexinfer.serviceAccountName" . }}
+      serviceAccountName: {{ include "flexinfer.proxyServiceAccountName" . }}
       containers:
         - name: proxy
           image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"

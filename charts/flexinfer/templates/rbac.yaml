@@ -1,17 +1,96 @@
-{{- if .Values.serviceAccount.create }}
+{{- /*
+ServiceAccounts + RBAC for FlexInfer components.
+Each component runs under its own ServiceAccount to support least-privilege defaults.
+*/ -}}
+
+{{- $ns := .Release.Namespace -}}
+{{- $fullname := include "flexinfer.fullname" . -}}
+
+{{- if and .Values.controller.enabled .Values.serviceAccounts.controller.create }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "flexinfer.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "flexinfer.controllerServiceAccountName" . }}
+  namespace: {{ $ns }}
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+  {{- with .Values.serviceAccounts.controller.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 {{- end }}
+
+{{- if and .Values.agent.enabled .Values.serviceAccounts.agent.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flexinfer.agentServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+  {{- with .Values.serviceAccounts.agent.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and .Values.scheduler.enabled .Values.serviceAccounts.scheduler.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flexinfer.schedulerServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+  {{- with .Values.serviceAccounts.scheduler.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and .Values.proxy.enabled .Values.serviceAccounts.proxy.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flexinfer.proxyServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+  {{- with .Values.serviceAccounts.proxy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and .Values.controller.enabled .Values.serviceAccounts.benchmarker.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flexinfer.benchmarkerServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: benchmarker
+  {{- with .Values.serviceAccounts.benchmarker.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if .Values.controller.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-manager
+  name: {{ $fullname }}-controller
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 rules:
@@ -28,9 +107,6 @@ rules:
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims", "configmaps", "events"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
@@ -43,23 +119,25 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-manager
+  name: {{ $fullname }}-controller
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "flexinfer.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "flexinfer.controllerServiceAccountName" . }}
+    namespace: {{ $ns }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "flexinfer.fullname" . }}-manager
+  name: {{ $fullname }}-controller
 ---
-# Agent RBAC
+{{- end }}
+
+{{- if .Values.agent.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-agent
+  name: {{ $fullname }}-agent
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 rules:
@@ -70,23 +148,25 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-agent
+  name: {{ $fullname }}-agent
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "flexinfer.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "flexinfer.agentServiceAccountName" . }}
+    namespace: {{ $ns }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "flexinfer.fullname" . }}-agent
+  name: {{ $fullname }}-agent
 ---
-# Scheduler RBAC
+{{- end }}
+
+{{- if .Values.scheduler.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-scheduler
+  name: {{ $fullname }}-scheduler
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 rules:
@@ -124,14 +204,82 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "flexinfer.fullname" . }}-scheduler
+  name: {{ $fullname }}-scheduler
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "flexinfer.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "flexinfer.schedulerServiceAccountName" . }}
+    namespace: {{ $ns }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "flexinfer.fullname" . }}-scheduler
+  name: {{ $fullname }}-scheduler
+---
+{{- end }}
+
+{{- if .Values.proxy.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-proxy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["modeldeployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["modeldeployments/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-proxy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flexinfer.proxyServiceAccountName" . }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-proxy
+---
+{{- end }}
+
+{{- if .Values.controller.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-benchmarker
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-benchmarker
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flexinfer.benchmarkerServiceAccountName" . }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-benchmarker
+{{- end }}
+

@@ -19,7 +19,7 @@ spec:
         {{- include "flexinfer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: scheduler
     spec:
-      serviceAccountName: {{ include "flexinfer.serviceAccountName" . }}
+      serviceAccountName: {{ include "flexinfer.schedulerServiceAccountName" . }}
       initContainers:
         - name: kubeconfig-init
           image: "{{ .Values.scheduler.kubeconfigInit.image.repository }}:{{ .Values.scheduler.kubeconfigInit.image.tag }}"

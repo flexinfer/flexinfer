@@ -54,9 +54,45 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Create the name of the service account to use
 */}}
 {{- define "flexinfer.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "flexinfer.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- include "flexinfer.controllerServiceAccountName" . }}
 {{- end }}
-{{- end }}
+
+{{- define "flexinfer.controllerServiceAccountName" -}}
+{{- if .Values.serviceAccounts.controller.create -}}
+{{- default (default (printf "%s-controller" (include "flexinfer.fullname" .)) .Values.serviceAccount.name) .Values.serviceAccounts.controller.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccounts.controller.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flexinfer.agentServiceAccountName" -}}
+{{- if .Values.serviceAccounts.agent.create -}}
+{{- default (printf "%s-agent" (include "flexinfer.fullname" .)) .Values.serviceAccounts.agent.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccounts.agent.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flexinfer.schedulerServiceAccountName" -}}
+{{- if .Values.serviceAccounts.scheduler.create -}}
+{{- default (printf "%s-scheduler" (include "flexinfer.fullname" .)) .Values.serviceAccounts.scheduler.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccounts.scheduler.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flexinfer.proxyServiceAccountName" -}}
+{{- if .Values.serviceAccounts.proxy.create -}}
+{{- default (printf "%s-proxy" (include "flexinfer.fullname" .)) .Values.serviceAccounts.proxy.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccounts.proxy.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flexinfer.benchmarkerServiceAccountName" -}}
+{{- if .Values.serviceAccounts.benchmarker.create -}}
+{{- default (printf "%s-benchmarker" (include "flexinfer.fullname" .)) .Values.serviceAccounts.benchmarker.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccounts.benchmarker.name -}}
+{{- end -}}
+{{- end -}}

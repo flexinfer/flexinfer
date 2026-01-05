@@ -5,14 +5,33 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Legacy: prefer serviceAccounts.* going forward.
 serviceAccount:
-  # Specifies whether a service account should be created
   create: true
-  # Annotations to add to the service account
   annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
   name: ""
+
+serviceAccounts:
+  controller:
+    create: true
+    annotations: {}
+    name: ""
+  agent:
+    create: true
+    annotations: {}
+    name: ""
+  scheduler:
+    create: true
+    annotations: {}
+    name: ""
+  proxy:
+    create: true
+    annotations: {}
+    name: ""
+  benchmarker:
+    create: true
+    annotations: {}
+    name: ""
 
 podAnnotations: {}
 
