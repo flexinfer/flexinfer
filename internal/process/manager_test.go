@@ -46,35 +46,33 @@ func TestNewManager(t *testing.T) {
 	if m == nil {
 		t.Fatal("NewManager returned nil")
 	}
-	if m.registry != reg {
-		t.Error("registry not set correctly")
-	}
-	if m.target != "common" {
-		t.Errorf("target = %q, want %q", m.target, "common")
-	}
-	if m.procs == nil {
-		t.Error("procs map not initialized")
+	if m.Count() != 0 {
+		t.Errorf("initial count = %d, want 0", m.Count())
 	}
 }
 
 func TestManager_SetExpandFunc(t *testing.T) {
-	reg := createTestRegistry("cat", nil, nil)
+	reg := createTestRegistry("CAT_BIN", nil, nil)
 	m := NewManager(reg, "common")
 
-	called := false
 	m.SetExpandFunc(func(s string) string {
-		called = true
-		return s + "-expanded"
+		if s == "CAT_BIN" {
+			return "cat"
+		}
+		return s
 	})
 
-	// The expand function is called during Start, so we test it indirectly
-	result := m.expandFunc("test")
-	if !called {
-		t.Error("expand function was not called")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	proc, err := m.Start(ctx, "test-server")
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
 	}
-	if result != "test-expanded" {
-		t.Errorf("expand result = %q, want %q", result, "test-expanded")
+	if proc == nil || proc.Cmd == nil || proc.Cmd.Process == nil {
+		t.Fatalf("expected running process")
 	}
+	_ = m.Stop("test-server")
 }
 
 func TestManager_Count(t *testing.T) {

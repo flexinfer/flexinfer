@@ -12,6 +12,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
+	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.0.0
 	gitlab.flexinfer.ai/libs/mcp-go v0.1.0
 	golang.org/x/crypto v0.36.0
 	golang.org/x/term v0.30.0
@@ -20,6 +21,8 @@ require (
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
 )
+
+replace gitlab.flexinfer.ai/libs/fi-mcp-kit => ../../libs/fi-mcp-kit
 
 require (
 	github.com/bitly/go-simplejson v0.5.1 // indirect

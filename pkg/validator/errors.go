@@ -75,10 +75,10 @@ func (e ValidationError) Error() string {
 
 // ValidationResult holds all validation outcomes for a single file.
 type ValidationResult struct {
-	Target string             // Target name (claude, codex, etc.)
-	File   string             // Config file path
-	Valid  bool               // True if no errors (warnings allowed)
-	Errors []ValidationError  // All validation issues
+	Target string            // Target name (claude, codex, etc.)
+	File   string            // Config file path
+	Valid  bool              // True if no errors (warnings allowed)
+	Errors []ValidationError // All validation issues
 }
 
 // HasErrors returns true if there are any error-severity issues.

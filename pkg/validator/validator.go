@@ -100,9 +100,9 @@ func (v *Validator) ValidateDirectory(dir string) ([]*ValidationResult, error) {
 
 	// Check for known config patterns
 	patterns := map[string]string{
-		"mcp.json":                     "", // Will detect target from parent dir
-		"config.toml":                  "",
-		"claude_desktop_config.json":   "claude_desktop",
+		"mcp.json":                   "", // Will detect target from parent dir
+		"config.toml":                "",
+		"claude_desktop_config.json": "claude_desktop",
 	}
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
