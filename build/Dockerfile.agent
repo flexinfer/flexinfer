@@ -7,7 +7,7 @@ COPY cmd/ cmd/
 COPY api/ api/
 COPY agents/ agents/
 COPY pkg/ pkg/
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o agent agents/agent/agent.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o agent ./cmd/flexinfer-agent
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
