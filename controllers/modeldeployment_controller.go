@@ -394,6 +394,15 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					// Use our custom scheduler
 					SchedulerName: "flexinfer-scheduler",
 					NodeSelector:  r.getNodeSelector(m),
+					// Tolerate GPU node taints so model pods can run on dedicated GPU nodes
+					Tolerations: []corev1.Toleration{
+						{
+							Key:      "dedicated",
+							Operator: corev1.TolerationOpEqual,
+							Value:    "gpu",
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
+					},
 					Containers: []corev1.Container{{
 						Image: r.getBackendImage(m),
 						Name:  "llm-backend",
@@ -529,6 +538,15 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 					// or we can use the custom scheduler but ensure they don't get filtered out.
 					// For now, let default scheduler handle benchmark jobs to avoid circular dependencies.
 					NodeSelector: r.getNodeSelector(m),
+					// Tolerate GPU node taints so benchmark jobs can run on dedicated GPU nodes
+					Tolerations: []corev1.Toleration{
+						{
+							Key:      "dedicated",
+							Operator: corev1.TolerationOpEqual,
+							Value:    "gpu",
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "flexinfer-bench",
