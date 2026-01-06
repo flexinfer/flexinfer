@@ -175,6 +175,10 @@ publish:
 
       if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
         controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
+        agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:latest"
+        scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:latest"
+        bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:latest"
+        proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:latest"
       fi
 
       if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
