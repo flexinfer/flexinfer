@@ -701,13 +701,48 @@ func (r *ModelDeploymentReconciler) getResourceRequirements(m *aiv1alpha1.ModelD
 		}
 	}
 
-	// CRITICAL FIX: Add GPU resource requests
-	// Ensure all ModelDeployment pods request at least 1 GPU
-	// This prevents pods from being scheduled on non-GPU nodes
-	requirements.Requests["nvidia.com/gpu"] = *resource.NewQuantity(1, resource.DecimalSI)
-	requirements.Limits["nvidia.com/gpu"] = *resource.NewQuantity(1, resource.DecimalSI)
+	// Add GPU resource requests - support multiple vendors
+	// Check if spec already defines GPU resources (AMD, NVIDIA, or Intel)
+	gpuResourceName := r.detectGPUResourceFromSpec(m)
+	requirements.Requests[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
+	requirements.Limits[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
 
 	return requirements
+}
+
+// GPU resource name constants for different vendors
+const (
+	GPUResourceNVIDIA = corev1.ResourceName("nvidia.com/gpu")
+	GPUResourceAMD    = corev1.ResourceName("amd.com/gpu")
+	GPUResourceIntel  = corev1.ResourceName("intel.com/gpu")
+)
+
+// detectGPUResourceFromSpec checks if the ModelDeployment spec already defines
+// a GPU resource type (AMD, NVIDIA, or Intel) and returns it.
+// Defaults to NVIDIA for backwards compatibility.
+func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.ModelDeployment) corev1.ResourceName {
+	gpuResources := []corev1.ResourceName{GPUResourceAMD, GPUResourceNVIDIA, GPUResourceIntel}
+
+	// Check requests first
+	if m.Spec.Resources.Requests != nil {
+		for _, gpuRes := range gpuResources {
+			if qty, exists := m.Spec.Resources.Requests[gpuRes]; exists && !qty.IsZero() {
+				return gpuRes
+			}
+		}
+	}
+
+	// Check limits
+	if m.Spec.Resources.Limits != nil {
+		for _, gpuRes := range gpuResources {
+			if qty, exists := m.Spec.Resources.Limits[gpuRes]; exists && !qty.IsZero() {
+				return gpuRes
+			}
+		}
+	}
+
+	// Default to NVIDIA for backwards compatibility
+	return GPUResourceNVIDIA
 }
 
 // validateGPUResources validates that GPU resources are properly configured

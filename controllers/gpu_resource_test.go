@@ -408,11 +408,11 @@ func TestGPUResourceAllocationIntegration(t *testing.T) {
 	// Test resource requirements
 	requirements := reconciler.getResourceRequirements(modelDeployment)
 
-	// Verify GPU resources are added
-	gpuRequests := requirements.Requests["nvidia.com/gpu"]
+	// Verify GPU resources are added (defaults to NVIDIA when not specified)
+	gpuRequests := requirements.Requests[GPUResourceNVIDIA]
 	assert.Equal(t, "1", gpuRequests.String(), "GPU requests should be 1")
 
-	gpuLimits := requirements.Limits["nvidia.com/gpu"]
+	gpuLimits := requirements.Limits[GPUResourceNVIDIA]
 	assert.Equal(t, "1", gpuLimits.String(), "GPU limits should be 1")
 
 	// Verify original CPU/Memory resources are preserved
@@ -421,4 +421,154 @@ func TestGPUResourceAllocationIntegration(t *testing.T) {
 
 	memoryRequests := requirements.Requests[corev1.ResourceMemory]
 	assert.Equal(t, "4Gi", memoryRequests.String(), "Memory requests should be preserved")
+}
+
+func TestDetectGPUResourceFromSpec(t *testing.T) {
+	tests := []struct {
+		name            string
+		modelDeployment *aiv1alpha1.ModelDeployment
+		expectedGPU     corev1.ResourceName
+	}{
+		{
+			name: "no GPU specified - defaults to NVIDIA",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "ollama",
+					Model:   "llama3:8b",
+				},
+			},
+			expectedGPU: GPUResourceNVIDIA,
+		},
+		{
+			name: "AMD GPU in requests",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "ollama",
+					Model:   "llama3:8b",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							GPUResourceAMD: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			expectedGPU: GPUResourceAMD,
+		},
+		{
+			name: "AMD GPU in limits",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "vllm",
+					Model:   "mistral:7b",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							GPUResourceAMD: resource.MustParse("2"),
+						},
+					},
+				},
+			},
+			expectedGPU: GPUResourceAMD,
+		},
+		{
+			name: "NVIDIA GPU explicitly specified",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "ollama",
+					Model:   "phi:3b",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							GPUResourceNVIDIA: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			expectedGPU: GPUResourceNVIDIA,
+		},
+		{
+			name: "Intel GPU specified",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "ollama",
+					Model:   "gemma:2b",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							GPUResourceIntel: resource.MustParse("1"),
+						},
+					},
+				},
+			},
+			expectedGPU: GPUResourceIntel,
+		},
+		{
+			name: "zero GPU value - ignored, defaults to NVIDIA",
+			modelDeployment: &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "ollama",
+					Model:   "llama3:8b",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							GPUResourceAMD: resource.MustParse("0"),
+						},
+					},
+				},
+			},
+			expectedGPU: GPUResourceNVIDIA,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconciler := &ModelDeploymentReconciler{
+				Scheme: runtime.NewScheme(),
+			}
+
+			gpuResource := reconciler.detectGPUResourceFromSpec(tt.modelDeployment)
+			assert.Equal(t, tt.expectedGPU, gpuResource, "GPU resource type should match expected")
+		})
+	}
+}
+
+func TestGetResourceRequirementsMultiVendor(t *testing.T) {
+	reconciler := &ModelDeploymentReconciler{
+		Scheme: runtime.NewScheme(),
+	}
+
+	// Test AMD GPU deployment
+	amdDeployment := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "amd-test",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "ollama",
+			Model:   "llama3:8b",
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					GPUResourceAMD:        resource.MustParse("1"),
+					corev1.ResourceMemory: resource.MustParse("32Gi"),
+				},
+				Limits: corev1.ResourceList{
+					GPUResourceAMD:        resource.MustParse("1"),
+					corev1.ResourceMemory: resource.MustParse("32Gi"),
+				},
+			},
+		},
+	}
+
+	requirements := reconciler.getResourceRequirements(amdDeployment)
+
+	// Verify AMD GPU is used (not NVIDIA)
+	amdRequests := requirements.Requests[GPUResourceAMD]
+	assert.Equal(t, "1", amdRequests.String(), "AMD GPU requests should be 1")
+
+	amdLimits := requirements.Limits[GPUResourceAMD]
+	assert.Equal(t, "1", amdLimits.String(), "AMD GPU limits should be 1")
+
+	// Verify NVIDIA GPU is NOT present
+	_, hasNvidia := requirements.Requests[GPUResourceNVIDIA]
+	assert.False(t, hasNvidia, "NVIDIA GPU should not be present when AMD is specified")
+
+	// Verify memory is preserved
+	memoryRequests := requirements.Requests[corev1.ResourceMemory]
+	assert.Equal(t, "32Gi", memoryRequests.String(), "Memory requests should be preserved")
 }
