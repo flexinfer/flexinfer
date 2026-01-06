@@ -23,7 +23,14 @@
    ```
 
 3. **Run Tests**:
-   Run unit and integration tests:
+   Use unit tests for fast feedback and integration tests for controller behavior:
+
+   ```bash
+   make test-unit
+   make test-integration
+   ```
+
+   To run everything with code generation and envtest setup:
 
    ```bash
    make test

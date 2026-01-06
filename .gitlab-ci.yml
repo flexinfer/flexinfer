@@ -71,7 +71,7 @@ unit_test:
   stage: test
   <<: *go-cache
   script:
-    - go list ./... | grep -v /controllers | xargs go test -v -short
+    - SKIP_ENVTEST=1 go test -v ./... -short
 
 integration_test:
   stage: test

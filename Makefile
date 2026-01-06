@@ -52,7 +52,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 
 .PHONY: test-unit
 test-unit: ## Run unit tests only (skip integration tests)
-	go test ./controllers -run "^((?!TestAPIs).)*$$" -v
+	SKIP_ENVTEST=1 go test ./... -short
 
 .PHONY: test-integration
 test-integration: envtest ## Run integration tests with proper environment
