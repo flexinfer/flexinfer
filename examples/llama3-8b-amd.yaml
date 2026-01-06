@@ -1,0 +1,22 @@
+# Example ModelDeployment for AMD 7900 XTX (24GB VRAM)
+# This deploys llama3:8b using Ollama backend
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-8b-amd
+  namespace: flexinfer-system
+spec:
+  backend: ollama
+  model: llama3:8b
+  replicas: 1
+  resources:
+    requests:
+      amd.com/gpu: "1"
+      memory: 16Gi
+    limits:
+      amd.com/gpu: "1"
+      memory: 32Gi
+  benchmark:
+    warmupIterations: 2
+    iterations: 5
+    batchSize: 128

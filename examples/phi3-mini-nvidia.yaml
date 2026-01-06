@@ -1,0 +1,22 @@
+# Example ModelDeployment for NVIDIA GTX 980 Ti (6GB VRAM)
+# Uses phi3:mini which fits in limited VRAM
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: phi3-mini-nvidia
+  namespace: flexinfer-system
+spec:
+  backend: ollama
+  model: phi3:mini
+  replicas: 1
+  resources:
+    requests:
+      nvidia.com/gpu: "1"
+      memory: 4Gi
+    limits:
+      nvidia.com/gpu: "1"
+      memory: 8Gi
+  benchmark:
+    warmupIterations: 2
+    iterations: 5
+    batchSize: 64
