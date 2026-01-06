@@ -12,6 +12,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o agent ./cmd/flexinfer-a
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/agent .
-# Agents often need privilege to check hardware, but distroless specific
-# For now run as root if needed or add capabilities in k8s
+USER 65532:65532
+
 ENTRYPOINT ["/agent"]
