@@ -20,10 +20,11 @@ RUN useradd -m -u 1000 mlc && \
     mkdir -p /models && \
     chown -R mlc:mlc /models
 
-# Install MLC-LLM with ROCm support
-# Note: mlc-ai-nightly-rocm62 is the ROCm 6.2 variant
+# Install MLC-LLM with ROCm support from MLC custom wheel index
+# Note: Packages are mlc-llm-nightly-rocm62 and mlc-ai-nightly-rocm62
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir mlc-llm mlc-ai-nightly-rocm62
+    pip3 install --no-cache-dir --pre -f https://mlc.ai/wheels \
+        mlc-llm-nightly-rocm62 mlc-ai-nightly-rocm62
 
 # Switch to non-root user
 USER mlc

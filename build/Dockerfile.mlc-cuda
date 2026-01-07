@@ -20,9 +20,11 @@ RUN useradd -m -u 1000 mlc && \
     mkdir -p /models && \
     chown -R mlc:mlc /models
 
-# Install MLC-LLM
+# Install MLC-LLM from MLC custom wheel index
+# Note: Packages are mlc-llm-nightly-cu124 and mlc-ai-nightly-cu124
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir mlc-llm mlc-ai-nightly-cu124
+    pip3 install --no-cache-dir --pre -f https://mlc.ai/wheels \
+        mlc-llm-nightly-cu124 mlc-ai-nightly-cu124
 
 # Switch to non-root user
 USER mlc
