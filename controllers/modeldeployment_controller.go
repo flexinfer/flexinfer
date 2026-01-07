@@ -855,9 +855,16 @@ func (r *ModelDeploymentReconciler) getBackendCommand(m *aiv1alpha1.ModelDeploym
 
 // getBackendArgs returns the arguments based on backend
 func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment) []string {
+	// Determine model path - use /models when ModelCacheRef is set (cached model mounted at /models)
+	modelPath := m.Spec.Model
+	if m.Spec.ModelCacheRef != nil {
+		// When using ModelCacheRef with SubPath, model files are mounted directly at /models
+		modelPath = "/models"
+	}
+
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
-		return []string{"--model", m.Spec.Model}
+		return []string{"--model", modelPath}
 	case "mlc-llm":
 		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode server
 		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
@@ -865,7 +872,7 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 		}
 		return []string{
 			"serve",
-			m.Spec.Model,
+			modelPath,
 			"--host", "0.0.0.0",
 			"--mode", "server",
 		}
@@ -873,7 +880,7 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
-		return []string{"--model", m.Spec.Model}
+		return []string{"--model", modelPath}
 	default:
 	}
 	return nil
