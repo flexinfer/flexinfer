@@ -496,6 +496,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 							ContainerPort: r.getBackendPort(m),
 							Name:          "http",
 						}},
+						Command:   r.getBackendCommand(m),
 						Args:      r.getBackendArgs(m),
 						Resources: r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{{
@@ -685,7 +686,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								ContainerPort: backendPort,
 								Name:          "http",
 							}},
-							Args: r.getBackendArgs(m),
+							Command: r.getBackendCommand(m),
+							Args:    r.getBackendArgs(m),
 							// IMPORTANT: The backend in the benchmark job MUST request the GPU
 							// to actually be able to run and measure performance.
 							Resources: r.getResourceRequirements(m),
@@ -727,10 +729,22 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 		}
 		return "ghcr.io/ggerganov/llama.cpp:server"
 	case "mlc-llm":
-		if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
-			return image
+		// MLC-LLM supports multiple GPU backends - select based on GPU vendor
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled MLC-LLM image
+			return "ghcr.io/mlc-ai/mlc-llm:rocm"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled MLC-LLM image
+			return "ghcr.io/mlc-ai/mlc-llm:cuda"
 		}
-		return "ghcr.io/mlc-ai/mlc-llm:latest"
 	default:
 	}
 
@@ -776,16 +790,34 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 	return 11434
 }
 
+// getBackendCommand returns the command (entrypoint override) for backends that need it.
+// Returns nil for backends that use their container's default entrypoint.
+func (r *ModelDeploymentReconciler) getBackendCommand(m *aiv1alpha1.ModelDeployment) []string {
+	switch canonicalBackend(m.Spec.Backend) {
+	case "mlc-llm":
+		// MLC-LLM needs explicit mlc_llm command
+		return []string{"mlc_llm"}
+	default:
+		return nil
+	}
+}
+
 // getBackendArgs returns the arguments based on backend
 func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment) []string {
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
 		return []string{"--model", m.Spec.Model}
 	case "mlc-llm":
+		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode server
 		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
-		return []string{"--model", m.Spec.Model}
+		return []string{
+			"serve",
+			m.Spec.Model,
+			"--host", "0.0.0.0",
+			"--mode", "server",
+		}
 	case "llamacpp":
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
 			return strings.Fields(args)

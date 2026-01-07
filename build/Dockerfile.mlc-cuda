@@ -1,0 +1,36 @@
+# MLC-LLM Docker image for NVIDIA GPUs (CUDA)
+# Based on NVIDIA CUDA runtime with Python
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -m -u 1000 mlc && \
+    mkdir -p /models && \
+    chown -R mlc:mlc /models
+
+# Install MLC-LLM
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir mlc-llm mlc-ai-nightly-cu124
+
+# Switch to non-root user
+USER mlc
+WORKDIR /home/mlc
+
+# Expose the default REST API port
+EXPOSE 8000
+
+# Default entrypoint - mlc_llm serve
+ENTRYPOINT ["mlc_llm"]
+CMD ["serve", "--help"]

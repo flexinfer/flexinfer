@@ -1,0 +1,37 @@
+# MLC-LLM Docker image for AMD GPUs (ROCm)
+# Based on AMD ROCm runtime with Python
+FROM rocm/dev-ubuntu-22.04:6.2
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -m -u 1000 mlc && \
+    mkdir -p /models && \
+    chown -R mlc:mlc /models
+
+# Install MLC-LLM with ROCm support
+# Note: mlc-ai-nightly-rocm62 is the ROCm 6.2 variant
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir mlc-llm mlc-ai-nightly-rocm62
+
+# Switch to non-root user
+USER mlc
+WORKDIR /home/mlc
+
+# Expose the default REST API port
+EXPOSE 8000
+
+# Default entrypoint - mlc_llm serve
+ENTRYPOINT ["mlc_llm"]
+CMD ["serve", "--help"]
