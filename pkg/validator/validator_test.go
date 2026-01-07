@@ -3,6 +3,7 @@ package validator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -412,8 +413,9 @@ func TestRuntimeValidator_ValidateEnv_ValidName(t *testing.T) {
 func TestRuntimeValidator_CheckPlaintextSecrets_GitHubToken(t *testing.T) {
 	rv := NewRuntimeValidator("/repo", "/home")
 	result := &ValidationResult{Target: "test", Valid: true}
-
-	rv.checkPlaintextSecrets("field", "ghp_abcdefghijklmnopqrstuvwxyz1234567890", result)
+	// Avoid embedding a token-shaped string literal that looks like a real secret in the repo.
+	githubPAT := "ghp_" + strings.Repeat("a", 36)
+	rv.checkPlaintextSecrets("field", githubPAT, result)
 
 	if !result.HasErrors() {
 		t.Error("expected error for GitHub PAT")
@@ -423,8 +425,9 @@ func TestRuntimeValidator_CheckPlaintextSecrets_GitHubToken(t *testing.T) {
 func TestRuntimeValidator_CheckPlaintextSecrets_GitLabToken(t *testing.T) {
 	rv := NewRuntimeValidator("/repo", "/home")
 	result := &ValidationResult{Target: "test", Valid: true}
-
-	rv.checkPlaintextSecrets("field", "glpat-xxxxxxxxxxxxxxxxxxxx", result)
+	// Avoid embedding a token-shaped string literal that looks like a real secret in the repo.
+	gitlabPAT := "glpat-" + strings.Repeat("a", 20)
+	rv.checkPlaintextSecrets("field", gitlabPAT, result)
 
 	if !result.HasErrors() {
 		t.Error("expected error for GitLab PAT")
@@ -436,7 +439,9 @@ func TestRuntimeValidator_CheckPlaintextSecrets_OpenAIKey(t *testing.T) {
 	result := &ValidationResult{Target: "test", Valid: true}
 
 	// OpenAI keys are sk- followed by 48 alphanumeric characters
-	rv.checkPlaintextSecrets("field", "sk-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", result)
+	// Avoid embedding a token-shaped string literal that looks like a real secret in the repo.
+	openAIKey := "sk-" + strings.Repeat("a", 48)
+	rv.checkPlaintextSecrets("field", openAIKey, result)
 
 	if !result.HasErrors() {
 		t.Error("expected error for OpenAI API key")

@@ -28,3 +28,14 @@ vendor/
 # Temporary files
 *.tmp
 *.bak
+
+# Local AI tool configs (generated/synced)
+.claude/mcp.json
+.claude/settings.local.json
+.codex/config.toml
+.gemini/config.toml
+.kilocode/config.toml
+.vscode-mcp/
+.vscode/mcp.json
+.antigravity/
+claude_desktop_config/
