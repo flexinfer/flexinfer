@@ -310,14 +310,9 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Ensure 'app' label is present on pod template for LiteLLM service discovery
-	if found.Spec.Template.Labels == nil {
-		found.Spec.Template.Labels = make(map[string]string)
-	}
-	if found.Spec.Template.Labels["app"] != modelDeployment.Name {
-		found.Spec.Template.Labels["app"] = modelDeployment.Name
-		needsUpdate = true
-	}
+	// NOTE: We cannot update Pod template labels on existing Deployments because the selector
+	// is immutable. New deployments will have the correct 'app' label set at creation time.
+	// LiteLLM discovery should use the 'modeldeployment_cr' label which is always present.
 
 	if needsUpdate {
 		if err = r.Update(ctx, found); err != nil {
@@ -354,21 +349,16 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Ensure 'app' label is present on the Service for LiteLLM service discovery
+	// Ensure 'app' label is present on the Service metadata for LiteLLM discovery
+	// NOTE: We update metadata labels but NOT the selector, as changing the selector
+	// to 'app=<name>' would break routing to existing Pods that have 'app=modeldeployment'.
+	// New Services created after this change will have the correct selector from the start.
 	svcNeedsUpdate := false
 	if service.Labels == nil {
 		service.Labels = make(map[string]string)
 	}
 	if service.Labels["app"] != modelDeployment.Name {
 		service.Labels["app"] = modelDeployment.Name
-		svcNeedsUpdate = true
-	}
-	// Also ensure selector has 'app' label
-	if service.Spec.Selector == nil {
-		service.Spec.Selector = make(map[string]string)
-	}
-	if service.Spec.Selector["app"] != modelDeployment.Name {
-		service.Spec.Selector["app"] = modelDeployment.Name
 		svcNeedsUpdate = true
 	}
 	if svcNeedsUpdate {
