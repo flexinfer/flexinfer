@@ -13,6 +13,7 @@ spec:
     requests:
       amd.com/gpu: "1"
       memory: 16Gi
+      storage: 20Gi
     limits:
       amd.com/gpu: "1"
       memory: 32Gi

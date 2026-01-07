@@ -13,6 +13,7 @@ spec:
     requests:
       nvidia.com/gpu: "1"
       memory: 4Gi
+      storage: 10Gi
     limits:
       nvidia.com/gpu: "1"
       memory: 8Gi

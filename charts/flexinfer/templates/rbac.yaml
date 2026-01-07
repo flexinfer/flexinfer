@@ -216,6 +216,23 @@ roleRef:
   kind: ClusterRole
   name: {{ $fullname }}-scheduler
 ---
+# The kube-scheduler sidecar needs full scheduler permissions.
+# Bind to system:kube-scheduler for kube-scheduler compatibility.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-scheduler-system
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flexinfer.schedulerServiceAccountName" . }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-scheduler
+---
 {{- end }}
 
 {{- if .Values.proxy.enabled }}

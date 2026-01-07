@@ -627,7 +627,7 @@ func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDe
 	return fmt.Sprintf("%s-benchmark-results", m.Name)
 }
 
-// getBackendImage returns the backend image based on spec
+// getBackendImage returns the backend image based on spec and GPU vendor
 func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeployment) string {
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
@@ -644,11 +644,33 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 		return "ghcr.io/mlc-ai/mlc-llm:latest"
 	default:
 	}
-	// Default to ollama
-	if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE"); ok {
-		return image
+
+	// For ollama backend, select image based on GPU vendor from spec.resources
+	gpuResource := r.detectGPUResourceFromSpec(m)
+	switch gpuResource {
+	case GPUResourceAMD:
+		// AMD GPUs require ROCm-enabled image
+		if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE_AMD"); ok {
+			return image
+		}
+		return "ollama/ollama:rocm"
+	case GPUResourceIntel:
+		// Intel GPUs - use default for now (no dedicated Intel image yet)
+		if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE_INTEL"); ok {
+			return image
+		}
+		return "ollama/ollama:latest"
+	default:
+		// NVIDIA or unknown - use CUDA image
+		if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE_NVIDIA"); ok {
+			return image
+		}
+		// Fall back to legacy env var for backwards compatibility
+		if image, ok := os.LookupEnv("DEFAULT_BACKEND_IMAGE"); ok {
+			return image
+		}
+		return "ollama/ollama:latest"
 	}
-	return "ghcr.io/flexinfer/ollama:latest"
 }
 
 // getBackendPort returns the port based on backend
