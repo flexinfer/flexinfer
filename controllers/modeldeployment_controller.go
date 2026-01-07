@@ -290,8 +290,36 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Ensure the deployment size is the same as the spec
 	size := modelDeployment.Spec.Replicas
+	needsUpdate := false
 	if *found.Spec.Replicas != *size {
 		found.Spec.Replicas = size
+		needsUpdate = true
+	}
+
+	// Ensure LiteLLM annotations are present on the Deployment
+	desiredAnnotations := getLiteLLMAnnotations(modelDeployment)
+	if desiredAnnotations != nil {
+		if found.Annotations == nil {
+			found.Annotations = make(map[string]string)
+		}
+		for k, v := range desiredAnnotations {
+			if found.Annotations[k] != v {
+				found.Annotations[k] = v
+				needsUpdate = true
+			}
+		}
+	}
+
+	// Ensure 'app' label is present on pod template for LiteLLM service discovery
+	if found.Spec.Template.Labels == nil {
+		found.Spec.Template.Labels = make(map[string]string)
+	}
+	if found.Spec.Template.Labels["app"] != modelDeployment.Name {
+		found.Spec.Template.Labels["app"] = modelDeployment.Name
+		needsUpdate = true
+	}
+
+	if needsUpdate {
 		if err = r.Update(ctx, found); err != nil {
 			log.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
 			return ctrl.Result{}, err
@@ -324,6 +352,31 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		log.Error(err, "Failed to get Service")
 		r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, "ServiceGetFailed", fmt.Sprintf("Failed to get service: %v", err))
 		return ctrl.Result{}, err
+	}
+
+	// Ensure 'app' label is present on the Service for LiteLLM service discovery
+	svcNeedsUpdate := false
+	if service.Labels == nil {
+		service.Labels = make(map[string]string)
+	}
+	if service.Labels["app"] != modelDeployment.Name {
+		service.Labels["app"] = modelDeployment.Name
+		svcNeedsUpdate = true
+	}
+	// Also ensure selector has 'app' label
+	if service.Spec.Selector == nil {
+		service.Spec.Selector = make(map[string]string)
+	}
+	if service.Spec.Selector["app"] != modelDeployment.Name {
+		service.Spec.Selector["app"] = modelDeployment.Name
+		svcNeedsUpdate = true
+	}
+	if svcNeedsUpdate {
+		if err = r.Update(ctx, service); err != nil {
+			log.Error(err, "Failed to update Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Update endpoint status now that service exists
