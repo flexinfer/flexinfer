@@ -106,6 +106,33 @@ type ModelDeploymentSpec struct {
 	// If set, the deployment will use the cached model volume instead of creating its own.
 	// +optional
 	ModelCacheRef *string `json:"modelCacheRef,omitempty"`
+
+	// LiteLLM configures integration with the LiteLLM proxy.
+	// When enabled, the controller adds annotations that allow LiteLLM to discover this model.
+	// +optional
+	LiteLLM *LiteLLMSpec `json:"litellm,omitempty"`
+}
+
+// LiteLLMSpec configures LiteLLM proxy integration.
+// +kubebuilder:object:generate=true
+type LiteLLMSpec struct {
+	// Enabled controls whether LiteLLM annotations are added to the deployment.
+	// When true, the controller adds litellm.flexinfer.ai/* annotations.
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// ServedModelName is the model name exposed to LiteLLM clients.
+	// Defaults to the deployment name if not specified.
+	// +optional
+	ServedModelName string `json:"servedModelName,omitempty"`
+
+	// Aliases is a list of additional model aliases that LiteLLM will route to this deployment.
+	// +optional
+	Aliases []string `json:"aliases,omitempty"`
+
+	// CopilotAlias is an alias with drop_params=true for Copilot/IDE compatibility.
+	// +optional
+	CopilotAlias string `json:"copilotAlias,omitempty"`
 }
 
 // BenchmarkSpec defines the tuning knobs for the benchmarking process.

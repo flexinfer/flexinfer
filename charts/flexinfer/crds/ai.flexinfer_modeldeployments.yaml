@@ -93,6 +93,33 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              litellm:
+                description: |-
+                  LiteLLM configures integration with the LiteLLM proxy.
+                  When enabled, the controller adds annotations that allow LiteLLM to discover this model.
+                properties:
+                  aliases:
+                    description: Aliases is a list of additional model aliases that
+                      LiteLLM will route to this deployment.
+                    items:
+                      type: string
+                    type: array
+                  copilotAlias:
+                    description: CopilotAlias is an alias with drop_params=true for
+                      Copilot/IDE compatibility.
+                    type: string
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled controls whether LiteLLM annotations are added to the deployment.
+                      When true, the controller adds litellm.flexinfer.ai/* annotations.
+                    type: boolean
+                  servedModelName:
+                    description: |-
+                      ServedModelName is the model name exposed to LiteLLM clients.
+                      Defaults to the deployment name if not specified.
+                    type: string
+                type: object
               minReplicas:
                 default: 0
                 description: MinReplicas is the minimum number of replicas to scale

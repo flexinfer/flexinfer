@@ -55,6 +55,43 @@ func benchmarkServiceAccountName() string {
 	return strings.TrimSpace(os.Getenv("BENCHMARK_SERVICE_ACCOUNT"))
 }
 
+// LiteLLM annotation constants
+const (
+	liteLLMAnnotationServedModel = "litellm.flexinfer.ai/served-model"
+	liteLLMAnnotationAliases     = "litellm.flexinfer.ai/aliases"
+	liteLLMAnnotationCopilot     = "litellm.flexinfer.ai/copilot-model"
+)
+
+// getLiteLLMAnnotations builds the LiteLLM discovery annotations for a ModelDeployment.
+// Returns nil if LiteLLM integration is disabled.
+func getLiteLLMAnnotations(m *aiv1alpha1.ModelDeployment) map[string]string {
+	// LiteLLM is enabled by default if the field is nil or Enabled is nil/true
+	if m.Spec.LiteLLM != nil && m.Spec.LiteLLM.Enabled != nil && !*m.Spec.LiteLLM.Enabled {
+		return nil
+	}
+
+	annotations := make(map[string]string)
+
+	// Determine the served model name
+	servedModel := m.Name
+	if m.Spec.LiteLLM != nil && m.Spec.LiteLLM.ServedModelName != "" {
+		servedModel = m.Spec.LiteLLM.ServedModelName
+	}
+	annotations[liteLLMAnnotationServedModel] = servedModel
+
+	// Add aliases if specified
+	if m.Spec.LiteLLM != nil && len(m.Spec.LiteLLM.Aliases) > 0 {
+		annotations[liteLLMAnnotationAliases] = strings.Join(m.Spec.LiteLLM.Aliases, ",")
+	}
+
+	// Add copilot alias if specified
+	if m.Spec.LiteLLM != nil && m.Spec.LiteLLM.CopilotAlias != "" {
+		annotations[liteLLMAnnotationCopilot] = m.Spec.LiteLLM.CopilotAlias
+	}
+
+	return annotations
+}
+
 // ModelDeploymentReconciler reconciles a ModelDeployment object
 type ModelDeploymentReconciler struct {
 	client.Client
@@ -370,12 +407,18 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 // deploymentForModelDeployment returns a ModelDeployment Deployment object
 func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.ModelDeployment, volumeName string, readOnly bool) (*appsv1.Deployment, error) {
 	ls := labelsForModelDeployment(m.Name)
+	// Add 'app' label for LiteLLM service discovery
+	ls["app"] = m.Name
 	replicas := m.Spec.Replicas
+
+	// Build LiteLLM annotations for the Deployment
+	depAnnotations := getLiteLLMAnnotations(m)
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name,
-			Namespace: m.Namespace,
+			Name:        m.Name,
+			Namespace:   m.Namespace,
+			Annotations: depAnnotations,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicas,
@@ -441,11 +484,14 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 // serviceForModelDeployment returns a ModelDeployment Service object
 func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.ModelDeployment) (*corev1.Service, error) {
 	ls := labelsForModelDeployment(m.Name)
+	// Add 'app' label for LiteLLM service discovery (must match pod labels)
+	ls["app"] = m.Name
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name,
 			Namespace: m.Namespace,
+			Labels:    map[string]string{"app": m.Name},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: ls,
