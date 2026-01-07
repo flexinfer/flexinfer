@@ -457,6 +457,24 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 	// Build LiteLLM annotations for the Deployment
 	depAnnotations := getLiteLLMAnnotations(m)
 
+	// Parse volumeName which may be in format "pvcName:subPath" from ModelCache
+	pvcName := volumeName
+	subPath := ""
+	if parts := strings.SplitN(volumeName, ":", 2); len(parts) == 2 {
+		pvcName = parts[0]
+		subPath = parts[1]
+	}
+
+	// Build volume mount with optional subPath
+	volumeMount := corev1.VolumeMount{
+		Name:      "model-cache",
+		MountPath: "/models",
+		ReadOnly:  readOnly,
+	}
+	if subPath != "" {
+		volumeMount.SubPath = subPath
+	}
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        m.Name,
@@ -499,17 +517,13 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						Command:   r.getBackendCommand(m),
 						Args:      r.getBackendArgs(m),
 						Resources: r.getResourceRequirements(m),
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "model-cache",
-							MountPath: "/models",
-							ReadOnly:  readOnly,
-						}},
+						VolumeMounts: []corev1.VolumeMount{volumeMount},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "model-cache",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: volumeName,
+								ClaimName: pvcName,
 								ReadOnly:  readOnly,
 							},
 						},
