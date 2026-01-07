@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -741,8 +742,14 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 						},
 					},
 					RestartPolicy: corev1.RestartPolicyNever,
+					// Short termination grace period to quickly release GPU when benchmark completes
+					// The benchmark saves results before signaling shutdown, so 10s is sufficient
+					TerminationGracePeriodSeconds: ptr.To(int64(10)),
 				},
 			},
+			// Hard deadline for benchmark jobs (15 minutes)
+			// This ensures pods are forcibly terminated even if sidecar doesn't exit cleanly
+			ActiveDeadlineSeconds: ptr.To(int64(900)),
 		},
 	}
 

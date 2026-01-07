@@ -167,6 +167,21 @@ func (in *ModelCacheSpec) DeepCopyInto(out *ModelCacheSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.ExistingClaimName != nil {
+		in, out := &in.ExistingClaimName, &out.ExistingClaimName
+		*out = new(string)
+		**out = **in
+	}
+	if in.ModelPath != nil {
+		in, out := &in.ModelPath, &out.ModelPath
+		*out = new(string)
+		**out = **in
+	}
+	if in.StorageSize != nil {
+		in, out := &in.StorageSize, &out.StorageSize
+		*out = new(string)
+		**out = **in
+	}
 	if in.SecretRef != nil {
 		in, out := &in.SecretRef, &out.SecretRef
 		*out = new(string)
