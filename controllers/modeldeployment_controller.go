@@ -632,6 +632,20 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 		}
 	}
 
+	// Build benchmarker args
+	benchArgs := []string{
+		"--model", m.Spec.Model,
+		"--configmap", r.benchmarkConfigMapName(m),
+		"--backend", backendType,
+		"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
+		"--min-duration", minDuration.String(),
+		"--iterations", fmt.Sprintf("%d", iterations),
+		"--batch-size", fmt.Sprintf("%d", batchSize),
+	}
+
+	// Enable shared PID namespace so benchmarker can signal backend to shutdown
+	shareProcessNamespace := true
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.benchmarkJobName(m),
@@ -641,6 +655,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					ServiceAccountName: benchmarkServiceAccountName(),
+					// Share PID namespace to allow benchmarker to signal backend shutdown
+					ShareProcessNamespace: &shareProcessNamespace,
 					// Ensure the job pod requests a GPU so it lands on a GPU node for accurate benchmarking
 					// Benchmark jobs bypass the custom scheduler to run on any suitable node initially
 					// or we can use the custom scheduler but ensure they don't get filtered out.
@@ -681,14 +697,17 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 									},
 								},
 							},
+							// Wrap benchmarker to signal backend shutdown after completion
+							// Uses shared PID namespace to send SIGTERM to backend processes
+							Command: []string{"/bin/sh", "-c"},
 							Args: []string{
-								"--model", m.Spec.Model,
-								"--configmap", r.benchmarkConfigMapName(m),
-								"--backend", backendType,
-								"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
-								"--min-duration", minDuration.String(),
-								"--iterations", fmt.Sprintf("%d", iterations),
-								"--batch-size", fmt.Sprintf("%d", batchSize),
+								fmt.Sprintf(
+									"/flexinfer-bench %s; status=$?; "+
+										"echo 'Benchmark complete, signaling backend shutdown...'; "+
+										"pkill -TERM -f 'mlc_llm|ollama|vllm|llama' || true; "+
+										"sleep 2; exit $status",
+									strings.Join(benchArgs, " "),
+								),
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
