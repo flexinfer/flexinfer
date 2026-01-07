@@ -795,8 +795,9 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 func (r *ModelDeploymentReconciler) getBackendCommand(m *aiv1alpha1.ModelDeployment) []string {
 	switch canonicalBackend(m.Spec.Backend) {
 	case "mlc-llm":
-		// MLC-LLM needs explicit mlc_llm command
-		return []string{"mlc_llm"}
+		// MLC-LLM is invoked as a Python module: python -m mlc_llm
+		// This works regardless of whether mlc_llm is in PATH
+		return []string{"python", "-m", "mlc_llm"}
 	default:
 		return nil
 	}
