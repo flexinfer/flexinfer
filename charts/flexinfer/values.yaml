@@ -83,15 +83,23 @@ proxy:
       cpu: 100m
       memory: 128Mi
 
-# Backend image - controller auto-detects GPU vendor and selects appropriate image:
+# Backend images - controller auto-detects GPU vendor and selects appropriate image
+# Ollama backend (default):
 # - AMD (amd.com/gpu): ollama/ollama:rocm
 # - NVIDIA (nvidia.com/gpu): ollama/ollama:latest
 # - Intel (intel.com/gpu): ollama/ollama:latest
-# This value is the fallback for NVIDIA when no spec.resources GPU is specified
 backend:
   image:
     repository: ollama/ollama
     tag: "latest"
+
+# MLC-LLM backend images (used when spec.backend=mlc-llm)
+# Set these to your custom MLC-LLM images or leave empty to use defaults
+mlcllm:
+  # CUDA image for NVIDIA GPUs (default: ghcr.io/mlc-ai/mlc-llm:cuda)
+  cudaImage: ""
+  # ROCm image for AMD GPUs (default: ghcr.io/mlc-ai/mlc-llm:rocm)
+  rocmImage: ""
 
 scheduler:
   enabled: true

@@ -60,4 +60,12 @@ spec:
               value: "{{ .Values.benchmarker.image.repository }}:{{ .Values.benchmarker.image.tag }}"
             - name: BENCHMARK_SERVICE_ACCOUNT
               value: {{ include "flexinfer.benchmarkerServiceAccountName" . | quote }}
+            {{- if .Values.mlcllm.cudaImage }}
+            - name: DEFAULT_MLC_LLM_IMAGE
+              value: {{ .Values.mlcllm.cudaImage | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.rocmImage }}
+            - name: DEFAULT_MLC_LLM_IMAGE_AMD
+              value: {{ .Values.mlcllm.rocmImage | quote }}
+            {{- end }}
 {{- end }}
