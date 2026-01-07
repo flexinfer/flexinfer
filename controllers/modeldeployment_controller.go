@@ -866,7 +866,8 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 	case "vllm":
 		return []string{"--model", modelPath}
 	case "mlc-llm":
-		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode server
+		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode local
+		// Using "local" mode to reduce GPU memory usage (vs "server" mode which pre-allocates large KVCache)
 		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
@@ -874,7 +875,7 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 			"serve",
 			modelPath,
 			"--host", "0.0.0.0",
-			"--mode", "server",
+			"--mode", "local",
 		}
 	case "llamacpp":
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
