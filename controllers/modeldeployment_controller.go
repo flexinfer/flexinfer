@@ -502,6 +502,8 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 					// Use our custom scheduler
 					SchedulerName: "flexinfer-scheduler",
 					NodeSelector:  r.getNodeSelector(m),
+					// Use NVIDIA runtime for CUDA workloads (provides libcuda.so driver access)
+					RuntimeClassName: r.getRuntimeClassName(m),
 					// Tolerate GPU node taints so model pods can run on dedicated GPU nodes
 					Tolerations: []corev1.Toleration{
 						{
@@ -657,6 +659,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 					ServiceAccountName: benchmarkServiceAccountName(),
 					// Share PID namespace to allow benchmarker to signal backend shutdown
 					ShareProcessNamespace: &shareProcessNamespace,
+					// Use NVIDIA runtime for CUDA workloads (provides libcuda.so driver access)
+					RuntimeClassName: r.getRuntimeClassName(m),
 					// Ensure the job pod requests a GPU so it lands on a GPU node for accurate benchmarking
 					// Benchmark jobs bypass the custom scheduler to run on any suitable node initially
 					// or we can use the custom scheduler but ensure they don't get filtered out.
@@ -982,6 +986,21 @@ func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.Mode
 
 	// Default to NVIDIA for backwards compatibility
 	return GPUResourceNVIDIA
+}
+
+// getRuntimeClassName returns the appropriate RuntimeClassName for the GPU type.
+// NVIDIA GPUs require "nvidia" runtime for driver access (libcuda.so).
+// AMD GPUs don't need a special runtime (uses default containerd).
+func (r *ModelDeploymentReconciler) getRuntimeClassName(m *aiv1alpha1.ModelDeployment) *string {
+	gpuResource := r.detectGPUResourceFromSpec(m)
+	switch gpuResource {
+	case GPUResourceNVIDIA:
+		runtime := "nvidia"
+		return &runtime
+	default:
+		// AMD and Intel use default runtime
+		return nil
+	}
 }
 
 // validateGPUResources validates that GPU resources are properly configured
