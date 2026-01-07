@@ -514,9 +514,9 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 							ContainerPort: r.getBackendPort(m),
 							Name:          "http",
 						}},
-						Command:   r.getBackendCommand(m),
-						Args:      r.getBackendArgs(m),
-						Resources: r.getResourceRequirements(m),
+						Command:      r.getBackendCommand(m),
+						Args:         r.getBackendArgs(m),
+						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{volumeMount},
 					}},
 					Volumes: []corev1.Volume{{
