@@ -248,8 +248,8 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName,
 
 	if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS support
-		// Use a base image with git and git-lfs pre-installed
-		image = "bitnami/git:2.43.0"
+		// Use debian:bookworm-slim as stable base with apt-get support
+		image = "debian:bookworm-slim"
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -261,8 +261,8 @@ if [ -d "$DEST_DIR" ] && [ -f "$DEST_DIR/mlc-chat-config.json" ]; then
     exit 0
 fi
 
-# Install git-lfs
-apt-get update && apt-get install -y git-lfs
+# Install git and git-lfs
+apt-get update && apt-get install -y git git-lfs ca-certificates
 git lfs install
 
 # Create destination directory
