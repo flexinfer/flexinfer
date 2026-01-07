@@ -119,7 +119,10 @@ type ModelDeploymentStatus struct {
 | Name | Default | Description |
 |------|---------|-------------|
 | `MODEL_CACHE_PATH` | `/models` | Shared model storage location |
-| `DEFAULT_BACKEND_IMAGE` | `ghcr.io/flexinfer/ollama:latest` | Default inference backend |
+| `DEFAULT_BACKEND_IMAGE` | `ollama/ollama:latest` | Legacy: Default NVIDIA backend (deprecated) |
+| `DEFAULT_BACKEND_IMAGE_NVIDIA` | `ollama/ollama:latest` | NVIDIA (CUDA) inference backend |
+| `DEFAULT_BACKEND_IMAGE_AMD` | `ollama/ollama:rocm` | AMD (ROCm) inference backend |
+| `DEFAULT_BACKEND_IMAGE_INTEL` | `ollama/ollama:latest` | Intel inference backend |
 | `BENCHMARK_IMAGE` | `flexinfer/benchmarker:latest` | Benchmarker container image |
 | `METRICS_PORT` | `8080` | Controller metrics endpoint |
 

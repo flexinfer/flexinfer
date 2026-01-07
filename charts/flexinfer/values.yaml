@@ -83,9 +83,14 @@ proxy:
       cpu: 100m
       memory: 128Mi
 
+# Backend image - controller auto-detects GPU vendor and selects appropriate image:
+# - AMD (amd.com/gpu): ollama/ollama:rocm
+# - NVIDIA (nvidia.com/gpu): ollama/ollama:latest
+# - Intel (intel.com/gpu): ollama/ollama:latest
+# This value is the fallback for NVIDIA when no spec.resources GPU is specified
 backend:
   image:
-    repository: ghcr.io/flexinfer/ollama
+    repository: ollama/ollama
     tag: "latest"
 
 scheduler:

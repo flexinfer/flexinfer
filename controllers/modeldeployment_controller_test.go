@@ -99,7 +99,7 @@ var _ = Describe("ModelDeployment controller", func() {
 				err := k8sClient.Get(ctx, deploymentLookupKey, createdDeployment)
 				return err == nil
 			}, timeout, interval).Should(BeTrue())
-			Expect(createdDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/flexinfer/ollama:latest"))
+			Expect(createdDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ollama/ollama:latest"))
 
 			serviceLookupKey := types.NamespacedName{Name: ModelDeploymentName, Namespace: ModelDeploymentNamespace}
 			createdService := &corev1.Service{}
