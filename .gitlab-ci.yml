@@ -271,3 +271,60 @@ publish_helm_chart:
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
+
+# --- Optional: MLC-LLM Backend Images ---
+# These are large images (~10GB) and take a long time to build.
+# Trigger manually when needed.
+publish_mlcllm_rocm:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 2h
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building MLC-LLM ROCm image..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.mlc-rocm" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=${REGISTRY}/mlc-llm:rocm,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - when: never
+
+publish_mlcllm_cuda:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 2h
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building MLC-LLM CUDA image..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.mlc-cuda" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=${REGISTRY}/mlc-llm:cuda,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - when: never
