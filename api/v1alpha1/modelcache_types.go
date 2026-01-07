@@ -53,7 +53,11 @@ const (
 // ModelCacheSpec defines the desired state of ModelCache
 // +kubebuilder:object:generate=true
 type ModelCacheSpec struct {
-	// Source is the URI of the model to cache (e.g., huggingface://meta-llama/Llama-2-7b-chat-hf)
+	// Source is the URI of the model to cache.
+	// Formats:
+	//   - huggingface://meta-llama/Llama-2-7b-chat-hf (standard HF models)
+	//   - mlc://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC-compiled models)
+	//   - HF://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC shorthand for HuggingFace)
 	// +kubebuilder:validation:Required
 	Source string `json:"source"`
 
@@ -64,6 +68,23 @@ type ModelCacheSpec struct {
 	// ClusterStorageClassName is the storage class to use for SharedPVC strategy
 	// +optional
 	ClusterStorageClassName *string `json:"clusterStorageClassName,omitempty"`
+
+	// ExistingClaimName references an existing PVC to use instead of creating one.
+	// When set, the controller skips PVC creation and uses the referenced claim.
+	// The model will be downloaded to a subdirectory named after the ModelCache.
+	// +optional
+	ExistingClaimName *string `json:"existingClaimName,omitempty"`
+
+	// ModelPath is the subdirectory within the PVC where the model is stored.
+	// Defaults to the ModelCache name if not specified.
+	// +optional
+	ModelPath *string `json:"modelPath,omitempty"`
+
+	// StorageSize is the requested storage size for newly created PVCs.
+	// Ignored when existingClaimName is set.
+	// +kubebuilder:default="50Gi"
+	// +optional
+	StorageSize *string `json:"storageSize,omitempty"`
 
 	// SecretRef is the name of the secret containing authentication credentials (key: HF_TOKEN)
 	// +optional
