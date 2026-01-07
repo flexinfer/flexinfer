@@ -181,6 +181,30 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Determine Volume Name early - needed for both benchmark and deployment
+	volumeName := modelDeployment.Name
+	volumeReadOnly := false
+	volumePath := "" // For passing to benchmark job (format: "pvcName:subPath")
+
+	if modelDeployment.Spec.ModelCacheRef != nil {
+		// Using ModelCache - check it early before benchmark
+		cacheName := *modelDeployment.Spec.ModelCacheRef
+		modelCache := &aiv1alpha1.ModelCache{}
+		if err := r.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: modelDeployment.Namespace}, modelCache); err != nil {
+			log.Error(err, "Failed to get ModelCache", "ModelCache", cacheName)
+			return ctrl.Result{}, err
+		}
+
+		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+			log.Info("ModelCache not ready", "ModelCache", cacheName, "Phase", modelCache.Status.Phase)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		volumeName = modelCache.Status.Path
+		volumePath = modelCache.Status.Path // Pass to benchmark job
+		volumeReadOnly = true
+	}
+
 	// Check if a benchmark has been run
 	benchmarkCM := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: r.benchmarkConfigMapName(modelDeployment), Namespace: modelDeployment.Namespace}, benchmarkCM)
@@ -190,8 +214,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		benchmarkJob := &batchv1.Job{}
 		err = r.Get(ctx, types.NamespacedName{Name: r.benchmarkJobName(modelDeployment), Namespace: modelDeployment.Namespace}, benchmarkJob)
 		if err != nil && errors.IsNotFound(err) {
-			// If the Job is not found, create it
-			job, buildErr := r.jobForBenchmark(modelDeployment)
+			// If the Job is not found, create it (pass volumePath for cached models)
+			job, buildErr := r.jobForBenchmark(modelDeployment, volumePath)
 			if buildErr != nil {
 				log.Error(buildErr, "Failed to build Benchmark Job")
 				return ctrl.Result{}, buildErr
@@ -220,28 +244,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Determine Volume Name and if we need to provision a PVC
-	volumeName := modelDeployment.Name
-	volumeReadOnly := false
-
-	if modelDeployment.Spec.ModelCacheRef != nil {
-		// Using ModelCache
-		cacheName := *modelDeployment.Spec.ModelCacheRef
-		modelCache := &aiv1alpha1.ModelCache{}
-		if err := r.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: modelDeployment.Namespace}, modelCache); err != nil {
-			log.Error(err, "Failed to get ModelCache", "ModelCache", cacheName)
-			return ctrl.Result{}, err
-		}
-
-		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
-			log.Info("ModelCache not ready", "ModelCache", cacheName, "Phase", modelCache.Status.Phase)
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-		}
-
-		volumeName = modelCache.Status.Path
-		// ENFORCE READ-ONLY to prevent locking issues
-		volumeReadOnly = true
-	} else {
+	// Handle legacy/private PVC if not using ModelCache
+	if modelDeployment.Spec.ModelCacheRef == nil {
 		// Legacy/Private PVC Logic
 		// Check if the pvc already exists, if not create a new one
 		pvc := &corev1.PersistentVolumeClaim{}
@@ -601,8 +605,8 @@ func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
 }
 
 // jobForBenchmark returns a benchmark Job object
-func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment) (*batchv1.Job, error) {
-	// Standardize sidecar configuration
+// volumePath is optional - if provided (format "pvcName:subPath"), mounts the cached model
+func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment, volumePath string) (*batchv1.Job, error) {
 	// Standardize sidecar configuration
 	backendType := canonicalBackend(m.Spec.Backend)
 	backendImage := r.getBackendImage(m)
@@ -717,6 +721,38 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 				},
 			},
 		},
+	}
+
+	// Add model cache volume if volumePath is provided
+	if volumePath != "" {
+		pvcName := volumePath
+		subPath := ""
+		if parts := strings.SplitN(volumePath, ":", 2); len(parts) == 2 {
+			pvcName = parts[0]
+			subPath = parts[1]
+		}
+
+		// Add volume mount to llm-backend container
+		volumeMount := corev1.VolumeMount{
+			Name:      "model-cache",
+			MountPath: "/models",
+			ReadOnly:  true,
+		}
+		if subPath != "" {
+			volumeMount.SubPath = subPath
+		}
+		job.Spec.Template.Spec.Containers[1].VolumeMounts = []corev1.VolumeMount{volumeMount}
+
+		// Add volume to pod spec
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{{
+			Name: "model-cache",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+					ReadOnly:  true,
+				},
+			},
+		}}
 	}
 	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
 		return nil, err
