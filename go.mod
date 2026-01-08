@@ -22,7 +22,10 @@ require (
 	k8s.io/client-go v0.34.2
 )
 
-replace gitlab.flexinfer.ai/libs/fi-mcp-kit => ../../libs/fi-mcp-kit
+replace (
+	gitlab.flexinfer.ai/libs/fi-mcp-kit => ../../libs/fi-mcp-kit
+	gitlab.flexinfer.ai/libs/mcp-go => ../../libs/mcp-go
+)
 
 require (
 	github.com/bitly/go-simplejson v0.5.1 // indirect
