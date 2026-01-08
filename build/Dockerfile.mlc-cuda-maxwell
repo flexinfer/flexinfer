@@ -1,6 +1,6 @@
 # MLC-LLM Docker image for NVIDIA Maxwell GPUs (GTX 980 Ti, etc.)
 # Built from source with CUDA 11.8 and architecture 52
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as builder
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -20,8 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install Python build dependencies
-RUN pip3 install --no-cache-dir numpy pybind11 typing_extensions packaging
+# Install Python build dependencies INCLUDING CYTHON
+# Cython is REQUIRED for tvm-ffi package installation (compiles core.pyx -> core.cpython-*.so)
+# scikit-build-core, ninja, and setuptools-scm are needed for tvm-ffi's pyproject.toml-based build
+RUN pip3 install --no-cache-dir numpy pybind11 typing_extensions packaging cython scikit-build-core cmake setuptools-scm ninja
 
 # Clone MLC-LLM with submodules
 WORKDIR /build
@@ -42,23 +44,60 @@ RUN mkdir -p build && cd build && \
     cmake -G Ninja .. && \
     ninja -j$(nproc)
 
+# Build tvm-ffi shared library (produces libtvm_ffi.so)
+WORKDIR /build/mlc-llm/3rdparty/tvm/3rdparty/tvm-ffi
+RUN mkdir -p build && cd build && \
+    cmake -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        .. && \
+    ninja -j$(nproc)
+
+# Install tvm-ffi Python package BEFORE TVM
+# This triggers Cython compilation of core.pyx -> core.cpython-*.so
+# Must set library path so the Cython extension can find libtvm_ffi.so at import time
+# NOTE: pyproject.toml is in the tvm-ffi root, not in python/ subdirectory
+# --no-build-isolation allows pip to use system cmake/ninja instead of isolated env
+ENV LD_LIBRARY_PATH="/build/mlc-llm/3rdparty/tvm/3rdparty/tvm-ffi/build/lib:${LD_LIBRARY_PATH}"
+WORKDIR /build/mlc-llm/3rdparty/tvm/3rdparty/tvm-ffi
+RUN TVM_FFI=cython pip3 install --no-cache-dir --no-build-isolation .
+
 # Install TVM Python package
+# Set TVM_LIBRARY_PATH so TVM can find libtvm.so during installation
+ENV TVM_LIBRARY_PATH="/build/mlc-llm/3rdparty/tvm/build"
+ENV LD_LIBRARY_PATH="/build/mlc-llm/3rdparty/tvm/build:${LD_LIBRARY_PATH}"
 WORKDIR /build/mlc-llm/3rdparty/tvm/python
 RUN pip3 install --no-cache-dir .
 
+# Verify TVM is installed - if the above pip install fails silently, copy source directly
+RUN python3 -c "import tvm; print('TVM version:', tvm.__version__)" || \
+    (echo "TVM pip install failed, copying source directly..." && \
+     cp -r /build/mlc-llm/3rdparty/tvm/python/tvm /usr/local/lib/python3.10/dist-packages/tvm)
+
 # Build MLC-LLM
+# -DCMAKE_POLICY_VERSION_MINIMUM=3.5 needed for msgpack compatibility with CMake 4.x
 WORKDIR /build/mlc-llm
 RUN mkdir -p build && cd build && \
     cmake -G Ninja \
         -DCMAKE_CUDA_ARCHITECTURES=52 \
         -DUSE_CUDA=ON \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         .. && \
     ninja -j$(nproc)
 
-# Install MLC-LLM Python package
+# Install MLC-LLM Python package WITHOUT dependencies
+# This avoids the flashinfer-python dependency which requires CUDA 12.6+
+# MLC-LLM will fall back to TIR-based KV cache when FlashInfer is unavailable
 WORKDIR /build/mlc-llm/python
-RUN pip3 install --no-cache-dir .
+RUN pip3 install --no-cache-dir --no-deps .
+
+# Install remaining dependencies manually (skip flashinfer-python)
+# These are from mlc-llm's requirements.txt minus flashinfer
+# psutil is required by TVM meta_schedule
+RUN pip3 install --no-cache-dir \
+    datasets fastapi ml_dtypes openai pandas psutil \
+    prompt_toolkit requests safetensors sentencepiece \
+    shortuuid tiktoken torch tqdm transformers uvicorn
 
 # Runtime image
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
@@ -66,17 +105,22 @@ FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# TVM needs to know where its shared libraries are
+ENV TVM_LIBRARY_PATH=/usr/local/lib
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 
+# Install runtime dependencies including LLVM runtime (required by TVM)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip libx11-6 libvulkan1 \
+    python3 python3-pip libx11-6 libvulkan1 libllvm14 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Copy TVM and MLC-LLM shared libraries
+# Copy TVM, tvm-ffi, and MLC-LLM shared libraries
 COPY --from=builder /build/mlc-llm/3rdparty/tvm/build/libtvm*.so* /usr/local/lib/
+COPY --from=builder /build/mlc-llm/3rdparty/tvm/3rdparty/tvm-ffi/build/lib/libtvm_ffi*.so* /usr/local/lib/
 COPY --from=builder /build/mlc-llm/build/libmlc_llm*.so* /usr/local/lib/
 
-# Copy Python packages
+# Copy Python packages (includes compiled Cython extensions like core.cpython-*.so)
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 
 # Update library cache
