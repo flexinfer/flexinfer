@@ -157,10 +157,13 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	// Initialize status if needed
-	if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhasePending, "Initializing ModelDeployment"); err != nil {
-		log.Error(err, "Failed to update initial status")
-		return ctrl.Result{}, err
+	// Initialize status only on first reconcile (when phase is empty)
+	// This prevents resetting phase to Pending on every reconciliation
+	if modelDeployment.Status.Phase == "" {
+		if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhasePending, "Initializing ModelDeployment"); err != nil {
+			log.Error(err, "Failed to update initial status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Record event for reconciliation start
@@ -523,6 +526,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						}},
 						Command:      r.getBackendCommand(m),
 						Args:         r.getBackendArgs(m),
+						Env:          r.getBackendEnv(m),
 						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{volumeMount},
 					}},
@@ -730,15 +734,10 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 							}},
 							Command: r.getBackendCommand(m),
 							Args:    r.getBackendArgs(m),
+							Env:     r.getBackendEnv(m),
 							// IMPORTANT: The backend in the benchmark job MUST request the GPU
 							// to actually be able to run and measure performance.
 							Resources: r.getResourceRequirements(m),
-							Env: []corev1.EnvVar{
-								{
-									Name:  "OLLAMA_HOST",
-									Value: "0.0.0.0",
-								},
-							},
 						},
 					},
 					RestartPolicy: corev1.RestartPolicyNever,
@@ -818,6 +817,20 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 			}
 			// ROCm-enabled MLC-LLM image
 			return "ghcr.io/mlc-ai/mlc-llm:rocm"
+		case GPUResourceNVIDIA:
+			// Check for Maxwell architecture first (requires custom build with CUDA 11.8)
+			if r.isMaxwellGPU(m) {
+				if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE_MAXWELL"); ok {
+					return image
+				}
+				// Maxwell-specific image built with CUDA 11.8 and compute capability 52
+				return "ghcr.io/cblevins/mlc-llm:cuda-maxwell"
+			}
+			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled MLC-LLM image (requires CUDA 12.4+)
+			return "ghcr.io/mlc-ai/mlc-llm:cuda"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
 				return image
@@ -901,11 +914,15 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
+		// Memory optimization: reduce prefill_chunk_size to lower temp buffer requirements
+		// Default 2048 uses ~3.6GB temp buffer; 512 uses ~1GB, enabling larger models
+		// Also limit max_total_seq_length to control KV cache size
 		return []string{
 			"serve",
 			modelPath,
 			"--host", "0.0.0.0",
 			"--mode", "local",
+			"--overrides", "prefill_chunk_size=512;max_total_seq_length=16384",
 		}
 	case "llamacpp":
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
@@ -917,12 +934,44 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 	return nil
 }
 
+// getBackendEnv returns environment variables for the backend container
+func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment) []corev1.EnvVar {
+	switch canonicalBackend(m.Spec.Backend) {
+	case "mlc-llm":
+		// MLC-LLM memory optimization environment variables
+		// MLC_GPU_SIZE_BYTES tells MLC-LLM to limit GPU memory usage
+		// This helps fit larger models by being more aggressive with memory allocation
+		return []corev1.EnvVar{
+			{
+				// Limit GPU memory to 22GB (23068672000 bytes) to leave headroom
+				// on 24GB cards where driver/firmware reserves ~3GB
+				Name:  "MLC_GPU_SIZE_BYTES",
+				Value: "23068672000",
+			},
+		}
+	case "ollama":
+		return []corev1.EnvVar{
+			{
+				Name:  "OLLAMA_HOST",
+				Value: "0.0.0.0",
+			},
+		}
+	default:
+		return nil
+	}
+}
+
 // getNodeSelector returns the node selector for GPU nodes
 func (r *ModelDeploymentReconciler) getNodeSelector(m *aiv1alpha1.ModelDeployment) map[string]string {
-	// Ensure GPU workloads are scheduled only on nodes with GPUs
-	return map[string]string{
+	// Start with default selector ensuring GPU workloads are scheduled only on GPU nodes
+	selector := map[string]string{
 		"flexinfer.ai/gpu-present": "true",
 	}
+	// Merge user-specified nodeSelector from spec (user values override defaults)
+	for k, v := range m.Spec.NodeSelector {
+		selector[k] = v
+	}
+	return selector
 }
 
 // getResourceRequirements returns the resource requirements including GPU resources
@@ -1008,6 +1057,24 @@ func (r *ModelDeploymentReconciler) getRuntimeClassName(m *aiv1alpha1.ModelDeplo
 		// AMD and Intel use default runtime
 		return nil
 	}
+}
+
+// isMaxwellGPU checks if the ModelDeployment targets a Maxwell GPU node
+// via node selector labels. Maxwell GPUs (compute capability 5.x) require
+// special handling because MLC-LLM only provides CUDA 12.4+ wheels.
+func (r *ModelDeploymentReconciler) isMaxwellGPU(m *aiv1alpha1.ModelDeployment) bool {
+	if m.Spec.NodeSelector == nil {
+		return false
+	}
+	// Check for explicit Maxwell label from NVIDIA device plugin
+	if arch, ok := m.Spec.NodeSelector["nvidia.com/gpu.arch"]; ok {
+		return strings.ToLower(arch) == "maxwell"
+	}
+	// Check for compute capability 5.x (Maxwell is 5.0, 5.2, 5.3)
+	if cc, ok := m.Spec.NodeSelector["nvidia.com/gpu.compute.major"]; ok {
+		return cc == "5"
+	}
+	return false
 }
 
 // validateGPUResources validates that GPU resources are properly configured

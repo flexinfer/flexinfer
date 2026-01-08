@@ -111,6 +111,11 @@ type ModelDeploymentSpec struct {
 	// When enabled, the controller adds annotations that allow LiteLLM to discover this model.
 	// +optional
 	LiteLLM *LiteLLMSpec `json:"litellm,omitempty"`
+
+	// NodeSelector is a map of key-value pairs used to select nodes for scheduling.
+	// This maps directly to the pod's nodeSelector field.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.

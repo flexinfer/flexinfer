@@ -136,6 +136,13 @@ spec:
                   ModelCacheRef references a ModelCache object to use for model storage.
                   If set, the deployment will use the cached model volume instead of creating its own.
                 type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector is a map of key-value pairs used to select nodes for scheduling.
+                  This maps directly to the pod's nodeSelector field.
+                type: object
               replicas:
                 default: 1
                 description: Replicas is the number of desired pods.

@@ -1,0 +1,93 @@
+# MLC-LLM Docker image for NVIDIA Maxwell GPUs (GTX 980 Ti, etc.)
+# Built from source with CUDA 11.8 and architecture 52
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev \
+    git cmake ninja-build \
+    curl wget \
+    libx11-6 libvulkan1 \
+    llvm-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Install Rust (required for tokenizers)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install Python build dependencies
+RUN pip3 install --no-cache-dir numpy pybind11 typing_extensions packaging
+
+# Clone MLC-LLM with submodules
+WORKDIR /build
+RUN git clone --recursive https://github.com/mlc-ai/mlc-llm.git
+
+# Build TVM with CUDA 11.8 and Maxwell support (compute capability 52)
+# NOTE: CUTLASS is disabled because Maxwell lacks native FP16 operations (__hfma2)
+# that CUTLASS requires. This will use cuBLAS fallback instead.
+WORKDIR /build/mlc-llm/3rdparty/tvm
+RUN mkdir -p build && cd build && \
+    echo "set(USE_CUDA ON)" >> config.cmake && \
+    echo "set(CMAKE_CUDA_ARCHITECTURES 52)" >> config.cmake && \
+    echo "set(USE_CUBLAS ON)" >> config.cmake && \
+    echo "set(USE_CUTLASS OFF)" >> config.cmake && \
+    echo "set(USE_LLVM ON)" >> config.cmake && \
+    echo "set(USE_GRAPH_EXECUTOR ON)" >> config.cmake && \
+    echo "set(USE_PROFILER ON)" >> config.cmake && \
+    cmake -G Ninja .. && \
+    ninja -j$(nproc)
+
+# Install TVM Python package
+WORKDIR /build/mlc-llm/3rdparty/tvm/python
+RUN pip3 install --no-cache-dir .
+
+# Build MLC-LLM
+WORKDIR /build/mlc-llm
+RUN mkdir -p build && cd build && \
+    cmake -G Ninja \
+        -DCMAKE_CUDA_ARCHITECTURES=52 \
+        -DUSE_CUDA=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        .. && \
+    ninja -j$(nproc)
+
+# Install MLC-LLM Python package
+WORKDIR /build/mlc-llm/python
+RUN pip3 install --no-cache-dir .
+
+# Runtime image
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip libx11-6 libvulkan1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Copy TVM and MLC-LLM shared libraries
+COPY --from=builder /build/mlc-llm/3rdparty/tvm/build/libtvm*.so* /usr/local/lib/
+COPY --from=builder /build/mlc-llm/build/libmlc_llm*.so* /usr/local/lib/
+
+# Copy Python packages
+COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+
+# Update library cache
+RUN ldconfig
+
+# Create non-root user
+RUN useradd -m -u 1000 mlc && mkdir -p /models && chown -R mlc:mlc /models
+
+USER mlc
+WORKDIR /home/mlc
+
+EXPOSE 8000
+ENTRYPOINT ["python3", "-m", "mlc_llm"]
+CMD ["serve", "--help"]
