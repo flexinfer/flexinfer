@@ -1329,20 +1329,48 @@ func runProxy(socketPath string) error {
 	// Create stdio transport for client communication
 	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
 
-	// Connect to daemon
-	daemonConn, err := dial(socketPath)
-	if err != nil {
-		return fmt.Errorf("connect to daemon: %w (is loomd running?)", err)
-	}
-	defer daemonConn.Close()
+	var daemon *mcp.StdioTransport
+	var daemonConn net.Conn
 
-	daemon := mcp.NewStdioTransport(daemonConn, daemonConn)
+	ensureDaemon := func() error {
+		if daemonConn != nil {
+			return nil
+		}
+		conn, err := dial(socketPath)
+		if err != nil {
+			return err
+		}
+		daemonConn = conn
+		daemon = mcp.NewStdioTransport(daemonConn, daemonConn)
+
+		// Must initialize the daemon connection
+		initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
+			ProtocolVersion: mcp.ProtocolVersion,
+			Capabilities:    mcp.Capabilities{},
+			ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
+		})
+		if err := daemon.Send(ctx, initReq); err != nil {
+			return err
+		}
+		if _, err := daemon.Recv(ctx); err != nil {
+			return err
+		}
+		// Send initialized notification
+		daemon.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
+
+		return nil
+	}
 
 	// Main message loop
 	for {
 		msg, err := stdio.Recv(ctx)
 		if err != nil {
 			return nil // Client disconnected
+		}
+
+		if err := ensureDaemon(); err != nil {
+			stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+			continue
 		}
 
 		var resp *mcp.Message
@@ -1379,6 +1407,12 @@ func runProxy(socketPath string) error {
 		}
 
 		if err != nil {
+			// If it was a connection error, clear daemon so we reconnect next time
+			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
+				daemonConn.Close()
+				daemonConn = nil
+				daemon = nil
+			}
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
 		}
 

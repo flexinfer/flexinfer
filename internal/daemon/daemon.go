@@ -146,11 +146,9 @@ func New(cfg Config) (*Daemon, error) {
 		reg.MergeDefaultAliases()
 		logger.Info("loaded registry", "path", registryPath, "servers", len(reg.Servers))
 
-		// If repo_root not set in config, derive from registry path (legacy behavior)
+		// If repo_root not set in config, derive from registry path
 		if repoRoot == "" {
-			// Derive repo root from registry path (registry is at ${repo}/mcp/context/registry.yaml)
-			absPath, _ := filepath.Abs(registryPath)
-			repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(absPath))) // Go up 3 levels
+			repoRoot = registry.GetRepoRoot(registryPath)
 			logger.Debug("derived repo root", "path", repoRoot)
 		}
 	}
