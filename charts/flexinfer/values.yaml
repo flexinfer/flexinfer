@@ -120,8 +120,11 @@ mlcllm:
 
 # vLLM backend configuration (used when spec.backend=vllm)
 vllm:
-  # Custom image (default: vllm/vllm-openai:latest)
-  image: ""
+  # Images - auto-selected based on GPU vendor, or set custom images
+  # CUDA image for NVIDIA GPUs (default: vllm/vllm-openai:latest)
+  cudaImage: ""
+  # ROCm image for AMD GPUs (default: rocm/vllm:latest)
+  rocmImage: ""
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
     # Complete args override. Use for advanced cases only
@@ -129,8 +132,11 @@ vllm:
 
 # llama.cpp backend configuration (used when spec.backend=llamacpp)
 llamacpp:
-  # Custom image (default: ghcr.io/ggerganov/llama.cpp:server)
-  image: ""
+  # Images - auto-selected based on GPU vendor, or set custom images
+  # CUDA image for NVIDIA GPUs (default: ghcr.io/ggerganov/llama.cpp:server-cuda)
+  cudaImage: ""
+  # ROCm image for AMD GPUs (default: ghcr.io/ggerganov/llama.cpp:server-rocm)
+  rocmImage: ""
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
     # Complete args override. Use for advanced cases only

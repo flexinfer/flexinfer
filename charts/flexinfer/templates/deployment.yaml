@@ -92,17 +92,25 @@ spec:
             - name: DEFAULT_MLC_LLM_ARGS
               value: {{ .Values.mlcllm.defaults.args | quote }}
             {{- end }}
-            {{- if .Values.vllm.image }}
+            {{- if .Values.vllm.cudaImage }}
             - name: DEFAULT_VLLM_IMAGE
-              value: {{ .Values.vllm.image | quote }}
+              value: {{ .Values.vllm.cudaImage | quote }}
+            {{- end }}
+            {{- if .Values.vllm.rocmImage }}
+            - name: DEFAULT_VLLM_IMAGE_AMD
+              value: {{ .Values.vllm.rocmImage | quote }}
             {{- end }}
             {{- if .Values.vllm.defaults.args }}
             - name: DEFAULT_VLLM_ARGS
               value: {{ .Values.vllm.defaults.args | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.image }}
+            {{- if .Values.llamacpp.cudaImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE
-              value: {{ .Values.llamacpp.image | quote }}
+              value: {{ .Values.llamacpp.cudaImage | quote }}
+            {{- end }}
+            {{- if .Values.llamacpp.rocmImage }}
+            - name: DEFAULT_LLAMA_CPP_IMAGE_AMD
+              value: {{ .Values.llamacpp.rocmImage | quote }}
             {{- end }}
             {{- if .Values.llamacpp.defaults.args }}
             - name: DEFAULT_LLAMA_CPP_ARGS

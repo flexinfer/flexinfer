@@ -801,12 +801,39 @@ func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDe
 func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeployment) string {
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
-		return "vllm/vllm-openai:latest"
-	case "llamacpp":
-		if image, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_IMAGE"); ok {
-			return image
+		// vLLM supports both NVIDIA (CUDA) and AMD (ROCm) GPUs
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled vLLM image
+			return "rocm/vllm:latest"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled vLLM image (OpenAI-compatible API)
+			return "vllm/vllm-openai:latest"
 		}
-		return "ghcr.io/ggerganov/llama.cpp:server"
+	case "llamacpp":
+		// llama.cpp supports NVIDIA (CUDA), AMD (ROCm/hipBLAS), and CPU
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled llama.cpp server
+			return "ghcr.io/ggerganov/llama.cpp:server-rocm"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled llama.cpp server
+			return "ghcr.io/ggerganov/llama.cpp:server-cuda"
+		}
 	case "mlc-llm":
 		// MLC-LLM supports multiple GPU backends - select based on GPU vendor
 		gpuResource := r.detectGPUResourceFromSpec(m)

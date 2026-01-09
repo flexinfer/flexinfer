@@ -162,6 +162,178 @@ func TestGetBackendImage_MlcLlm_MaxwellEnvOverride(t *testing.T) {
 	}
 }
 
+func TestGetBackendImage_VLLM_NVIDIA(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "vllm/vllm-openai:latest"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_VLLM_AMD(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "rocm/vllm:latest"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_VLLM_EnvOverride(t *testing.T) {
+	os.Setenv("DEFAULT_VLLM_IMAGE", "custom/vllm:cuda-custom")
+	defer os.Unsetenv("DEFAULT_VLLM_IMAGE")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/vllm:cuda-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_VLLM_AMD_EnvOverride(t *testing.T) {
+	os.Setenv("DEFAULT_VLLM_IMAGE_AMD", "custom/vllm:rocm-custom")
+	defer os.Unsetenv("DEFAULT_VLLM_IMAGE_AMD")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/vllm:rocm-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_LlamaCpp_NVIDIA(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "ghcr.io/ggerganov/llama.cpp:server-cuda"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_LlamaCpp_AMD(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "ghcr.io/ggerganov/llama.cpp:server-rocm"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_LlamaCpp_EnvOverride(t *testing.T) {
+	os.Setenv("DEFAULT_LLAMA_CPP_IMAGE", "custom/llamacpp:cuda-custom")
+	defer os.Unsetenv("DEFAULT_LLAMA_CPP_IMAGE")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/llamacpp:cuda-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_LlamaCpp_AMD_EnvOverride(t *testing.T) {
+	os.Setenv("DEFAULT_LLAMA_CPP_IMAGE_AMD", "custom/llamacpp:rocm-custom")
+	defer os.Unsetenv("DEFAULT_LLAMA_CPP_IMAGE_AMD")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/llamacpp:rocm-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
 func TestGetBackendArgs_MlcLlm(t *testing.T) {
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
