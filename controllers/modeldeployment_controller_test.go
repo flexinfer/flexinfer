@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
@@ -58,7 +58,7 @@ var _ = Describe("ModelDeployment controller", func() {
 				Spec: aiv1alpha1.ModelDeploymentSpec{
 					Backend:  "ollama",
 					Model:    "test-model",
-					Replicas: pointer.Int32(1),
+					Replicas: ptr.To(int32(1)),
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceStorage: resource.MustParse("1Gi"),
