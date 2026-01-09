@@ -593,5 +593,160 @@ kubectl get pods -n flexinfer-system -o wide | grep qwen
 
 ---
 
+## Benchmark Results (AMD 7900XTX)
+
+Tested January 2026 on AMD Radeon RX 7900 XTX (24GB VRAM) nodes.
+
+| Model | Quantization | Context | Tokens/sec | VRAM Usage |
+|-------|--------------|---------|------------|------------|
+| Qwen3-8B-Abliterated | q4f32_1 | 32k | **107 tok/s** | ~12GB |
+| Qwen3-32B | q4f16_1 | 32k | **37 tok/s** | ~22GB |
+
+### Benchmark Methodology
+
+Run from within cluster using Python for accurate timing:
+
+```bash
+kubectl run bench --image=python:3.11-alpine --restart=Never -- sleep 600
+kubectl exec bench -- python3 -c '
+import urllib.request, json, time
+
+url = "http://MODEL-SERVICE.flexinfer-system.svc.cluster.local:8000/v1/chat/completions"
+data = json.dumps({
+    "model": "/models",
+    "messages": [{"role": "user", "content": "Your prompt here"}],
+    "max_tokens": 200
+}).encode()
+
+for i in range(5):
+    start = time.time()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read())
+    tokens = result["usage"]["completion_tokens"]
+    elapsed = time.time() - start
+    print(f"Run {i+1}: {tokens} tokens in {elapsed:.2f}s = {tokens/elapsed:.1f} tok/s")
+'
+kubectl delete pod bench
+```
+
+---
+
+## Operational Workflows
+
+### Deploying a New Model
+
+1. **Create ModelCache** (if using shared storage):
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: my-model-mlc
+  namespace: flexinfer-system
+spec:
+  storageStrategy: SharedPVC
+  existingClaimName: mlc-models-nfs
+  modelPath: Model-Name-q4f32_1-MLC
+```
+
+2. **Create ModelDeployment**:
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: my-model
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  model: /models/Model-Name-q4f32_1-MLC
+  modelCacheRef: my-model-mlc
+  mlcllm:
+    mode: server
+    modelLibPath: /models/Model-Name-q4f32_1-MLC/lib_rocm_gfx1100.so
+    jitPolicy: "OFF"
+    overrides:
+      maxNumSequence: 2
+      maxTotalSeqLength: 131072
+      gpuMemoryUtilization: "0.85"
+  resources:
+    limits:
+      amd.com/gpu: "1"
+  nodeSelector:
+    kubernetes.io/hostname: target-node
+```
+
+3. **Verify deployment**:
+```bash
+kubectl get modeldeployment -n flexinfer-system
+kubectl get pods -n flexinfer-system -o wide | grep my-model
+```
+
+### Updating Chart/CRDs
+
+```bash
+# 1. Make changes to types.go, controller, etc.
+# 2. Regenerate CRDs
+make manifests
+
+# 3. Run tests
+make test
+
+# 4. Bump chart version in charts/flexinfer/Chart.yaml
+# 5. Copy updated CRDs to chart
+cp config/crd/*.yaml charts/flexinfer/crds/
+
+# 6. Commit and push
+git add -A && git commit -m "feat: description" && git push
+
+# 7. Wait for CI, then reconcile
+flux reconcile source git flexinfer -n flux-system
+flux reconcile helmrelease flexinfer -n flexinfer-system
+
+# 8. Apply CRD manually (Helm doesn't auto-update CRDs)
+kubectl apply -f charts/flexinfer/crds/
+```
+
+### LiteLLM Integration
+
+FlexInfer models are auto-discovered by LiteLLM via service annotations:
+
+```yaml
+# Add to ModelDeployment
+spec:
+  litellm:
+    enabled: true
+    servedModelName: "my-model-name"
+    aliases:
+      - "model-alias-1"
+      - "model-alias-2"
+```
+
+Access via LiteLLM:
+```bash
+curl http://litellm.ai.svc:8000/v1/chat/completions \
+  -H "Authorization: Bearer sk-litellm-master-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "my-model-name", "messages": [...]}'
+```
+
+---
+
+## Known Issues & Improvements Needed
+
+### Benchmarking
+- [ ] FlexInfer benchmarker (`flexinfer-bench`) needs better CLI tooling
+- [ ] No built-in way to trigger benchmarks from command line
+- [ ] Results not automatically stored in ModelDeployment status
+
+### LiteLLM Discovery
+- [ ] Service annotations not always applied by controller
+- [ ] Need to verify controller is adding `litellm.flexinfer.ai/*` annotations
+
+### Documentation
+- [ ] Need end-to-end deployment guide
+- [ ] MLC-LLM compilation workflow not documented
+
+---
+
 ## Planning
 - See `ROADMAP.md` for project status and plans.

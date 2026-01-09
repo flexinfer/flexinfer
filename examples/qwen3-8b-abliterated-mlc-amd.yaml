@@ -1,0 +1,76 @@
+# Example ModelDeployment for Qwen3-8B-abliterated via MLC-LLM
+# Target: AMD 7900 XTX (24GB VRAM) with ROCm 6.2
+#
+# This deploys the abliterated (uncensored) Qwen3-8B model using MLC-LLM backend.
+# Uses q4f32_1 quantization to avoid TVM compilation bug with q4f16 on ROCm.
+#
+# Prerequisites:
+# 1. Compile the model using scripts/compile-qwen3-abliterated-rocm.sh
+# 2. Model artifacts should be at /models/Qwen3-8B-abliterated-q4f32-MLC
+#
+# Expected performance: ~60-80 t/s on 7900XTX
+# VRAM usage: ~11GB at 32k context (13GB headroom)
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-8b-abliterated
+  namespace: flexinfer-system
+  labels:
+    app: qwen3-abliterated
+    backend: mlc-llm
+    gpu-vendor: amd
+spec:
+  backend: mlc-llm
+  model: /models/Qwen3-8B-abliterated-q4f32-MLC
+  replicas: 1
+
+  # MLC-LLM specific configuration
+  mlcllm:
+    # Mode: local (low memory), server (high throughput), interactive
+    mode: local
+
+    # Pre-compiled model library (required for production)
+    modelLibPath: /models/Qwen3-8B-abliterated-q4f32-MLC/lib.so
+
+    # GPU memory limit (~23GB, leaving 1GB for system)
+    gpuMemoryBytes: 23000000000
+
+    # JIT policy: ON, OFF, REDO, READONLY
+    # Use OFF since we have pre-compiled library
+    jitPolicy: "OFF"
+
+    # Memory optimization overrides
+    overrides:
+      # Reduce prefill chunk size for memory efficiency
+      prefillChunkSize: 512
+      # Max sequence length (context window)
+      maxTotalSeqLength: 32768
+
+  resources:
+    requests:
+      amd.com/gpu: "1"
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      amd.com/gpu: "1"
+      cpu: "8"
+      memory: 24Gi
+
+  # Node selector for AMD GPU nodes
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: amd
+
+  # Benchmark configuration
+  benchmark:
+    warmupIterations: 2
+    iterations: 5
+    batchSize: 128
+    minDuration: 30s
+
+  # Health check - MLC-LLM serves on port 8000
+  healthCheck:
+    initialDelaySeconds: 120  # Compilation/loading takes time
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3

@@ -1,0 +1,68 @@
+# Example ModelDeployment for Llama-3.2-8X3B-MOE-Dark-Champion
+# Target: AMD 7900 XTX (24GB VRAM)
+#
+# This deploys the Dark Champion MOE model via Ollama backend.
+# The MOE architecture (8 experts, 2 active) provides 18.4B quality
+# at 6B-like inference speed with 128k context support.
+#
+# Prerequisites:
+# 1. Download GGUF from HuggingFace:
+#    wget https://huggingface.co/DavidAU/Llama-3.2-8X3B-MOE-Dark-Champion-Instruct-uncensored-abliterated-18.4B-GGUF/resolve/main/Llama-3.2-8X3B-MOE-Dark-Champion-Instruct-uncensored-abliterated-18.4B.Q4_K_M.gguf
+#
+# 2. Create Ollama model:
+#    ollama create dark-champion -f Modelfile
+#
+# Expected performance: ~80-100 t/s on 7900XTX with Q4_K_M
+# VRAM usage: ~17GB at 32k context (7GB headroom)
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: dark-champion-moe
+  namespace: flexinfer-system
+  labels:
+    app: dark-champion
+    model-type: moe
+    gpu-vendor: amd
+spec:
+  backend: ollama
+  model: dark-champion
+  replicas: 1
+
+  # Ollama-specific configuration
+  ollama:
+    # Context window - MOE supports up to 128k, but 32k is practical
+    contextLength: 32768
+    # Offload all layers to GPU
+    numGPU: 99
+    # Enable flash attention for better performance
+    flashAttention: true
+
+  resources:
+    requests:
+      amd.com/gpu: "1"
+      cpu: "4"
+      memory: 16Gi
+      storage: 30Gi
+    limits:
+      amd.com/gpu: "1"
+      cpu: "8"
+      memory: 32Gi
+
+  # Node selector for AMD GPU nodes
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: amd
+
+  # Benchmark configuration
+  benchmark:
+    warmupIterations: 2
+    iterations: 5
+    batchSize: 128
+    minDuration: 30s
+
+  # Health check configuration
+  healthCheck:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
