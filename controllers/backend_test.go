@@ -1772,3 +1772,150 @@ func TestDaemonSetForNodeLocal_WithHFToken(t *testing.T) {
 		t.Error("Expected HF_TOKEN environment variable")
 	}
 }
+
+// ===== ModelDeployment Volume Type Tests =====
+
+func TestDeploymentForModelDeployment_NodeLocalVolume(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelDeploymentReconciler{Scheme: scheme}
+	replicas := int32(1)
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend:  "vllm",
+			Model:    "llama3",
+			Replicas: &replicas,
+		},
+	}
+	m.Name = "llama3-deployment"
+	m.Namespace = "default"
+
+	// NodeLocal path format: absolute path
+	volumeName := "/var/lib/flexinfer/models/llama3-local"
+
+	dep, err := r.deploymentForModelDeployment(m, volumeName, true)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check volume type is hostPath
+	if len(dep.Spec.Template.Spec.Volumes) != 1 {
+		t.Fatalf("Expected 1 volume, got %d", len(dep.Spec.Template.Spec.Volumes))
+	}
+
+	vol := dep.Spec.Template.Spec.Volumes[0]
+	if vol.HostPath == nil {
+		t.Fatal("Expected hostPath volume for NodeLocal storage")
+	}
+	if vol.HostPath.Path != "/var/lib/flexinfer/models/llama3-local" {
+		t.Errorf("Expected hostPath to be /var/lib/flexinfer/models/llama3-local, got %s", vol.HostPath.Path)
+	}
+
+	// Check mount is read-only
+	container := dep.Spec.Template.Spec.Containers[0]
+	if len(container.VolumeMounts) != 1 {
+		t.Fatalf("Expected 1 volume mount, got %d", len(container.VolumeMounts))
+	}
+	if !container.VolumeMounts[0].ReadOnly {
+		t.Error("Expected volume mount to be read-only")
+	}
+	if container.VolumeMounts[0].MountPath != "/models" {
+		t.Errorf("Expected mount path /models, got %s", container.VolumeMounts[0].MountPath)
+	}
+}
+
+func TestDeploymentForModelDeployment_SharedPVCVolume(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelDeploymentReconciler{Scheme: scheme}
+	replicas := int32(1)
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend:  "vllm",
+			Model:    "llama3",
+			Replicas: &replicas,
+		},
+	}
+	m.Name = "llama3-deployment"
+	m.Namespace = "default"
+
+	// SharedPVC path format: "pvcName:subPath"
+	volumeName := "model-cache-pvc:llama3-model"
+
+	dep, err := r.deploymentForModelDeployment(m, volumeName, true)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check volume type is PVC
+	if len(dep.Spec.Template.Spec.Volumes) != 1 {
+		t.Fatalf("Expected 1 volume, got %d", len(dep.Spec.Template.Spec.Volumes))
+	}
+
+	vol := dep.Spec.Template.Spec.Volumes[0]
+	if vol.PersistentVolumeClaim == nil {
+		t.Fatal("Expected PVC volume for SharedPVC storage")
+	}
+	if vol.PersistentVolumeClaim.ClaimName != "model-cache-pvc" {
+		t.Errorf("Expected PVC name model-cache-pvc, got %s", vol.PersistentVolumeClaim.ClaimName)
+	}
+
+	// Check subPath is set
+	container := dep.Spec.Template.Spec.Containers[0]
+	if container.VolumeMounts[0].SubPath != "llama3-model" {
+		t.Errorf("Expected subPath llama3-model, got %s", container.VolumeMounts[0].SubPath)
+	}
+}
+
+func TestDeploymentForModelDeployment_LegacyPVCVolume(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelDeploymentReconciler{Scheme: scheme}
+	replicas := int32(1)
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend:  "ollama",
+			Model:    "mistral",
+			Replicas: &replicas,
+		},
+	}
+	m.Name = "mistral-deployment"
+	m.Namespace = "default"
+
+	// Legacy format: just PVC name (no subPath)
+	volumeName := "mistral-deployment"
+
+	dep, err := r.deploymentForModelDeployment(m, volumeName, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check volume type is PVC without subPath
+	vol := dep.Spec.Template.Spec.Volumes[0]
+	if vol.PersistentVolumeClaim == nil {
+		t.Fatal("Expected PVC volume")
+	}
+	if vol.PersistentVolumeClaim.ClaimName != "mistral-deployment" {
+		t.Errorf("Expected PVC name mistral-deployment, got %s", vol.PersistentVolumeClaim.ClaimName)
+	}
+
+	// Check no subPath
+	container := dep.Spec.Template.Spec.Containers[0]
+	if container.VolumeMounts[0].SubPath != "" {
+		t.Errorf("Expected no subPath for legacy PVC, got %s", container.VolumeMounts[0].SubPath)
+	}
+
+	// Check not read-only for legacy
+	if container.VolumeMounts[0].ReadOnly {
+		t.Error("Expected volume mount to be read-write for legacy PVC")
+	}
+}

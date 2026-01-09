@@ -465,22 +465,47 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 	// Build LiteLLM annotations for the Deployment
 	depAnnotations := getLiteLLMAnnotations(m)
 
-	// Parse volumeName which may be in format "pvcName:subPath" from ModelCache
-	pvcName := volumeName
-	subPath := ""
-	if parts := strings.SplitN(volumeName, ":", 2); len(parts) == 2 {
-		pvcName = parts[0]
-		subPath = parts[1]
-	}
-
-	// Build volume mount with optional subPath
+	// Determine volume type based on path format:
+	// - Absolute paths (starting with /) are NodeLocal hostPath volumes
+	// - Format "pvcName:subPath" are SharedPVC volumes
+	var volume corev1.Volume
 	volumeMount := corev1.VolumeMount{
 		Name:      "model-cache",
 		MountPath: "/models",
 		ReadOnly:  readOnly,
 	}
-	if subPath != "" {
-		volumeMount.SubPath = subPath
+
+	if strings.HasPrefix(volumeName, "/") {
+		// NodeLocal strategy: volumeName is an absolute hostPath
+		volume = corev1.Volume{
+			Name: "model-cache",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: volumeName,
+					Type: hostPathTypePtr(corev1.HostPathDirectory),
+				},
+			},
+		}
+	} else {
+		// SharedPVC strategy: parse "pvcName:subPath" format
+		pvcName := volumeName
+		subPath := ""
+		if parts := strings.SplitN(volumeName, ":", 2); len(parts) == 2 {
+			pvcName = parts[0]
+			subPath = parts[1]
+		}
+		if subPath != "" {
+			volumeMount.SubPath = subPath
+		}
+		volume = corev1.Volume{
+			Name: "model-cache",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+					ReadOnly:  readOnly,
+				},
+			},
+		}
 	}
 
 	dep := &appsv1.Deployment{
@@ -530,15 +555,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{volumeMount},
 					}},
-					Volumes: []corev1.Volume{{
-						Name: "model-cache",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: pvcName,
-								ReadOnly:  readOnly,
-							},
-						},
-					}},
+					Volumes: []corev1.Volume{volume},
 				},
 			},
 		},
