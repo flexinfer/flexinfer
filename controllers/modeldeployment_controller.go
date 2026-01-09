@@ -910,20 +910,29 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 		return []string{"--model", modelPath}
 	case "mlc-llm":
 		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode local
-		// Using "local" mode to reduce GPU memory usage (vs "server" mode which pre-allocates large KVCache)
+		// Complete args override for backwards compatibility
 		if args, ok := os.LookupEnv("DEFAULT_MLC_LLM_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
-		// Memory optimization: reduce prefill_chunk_size to lower temp buffer requirements
-		// Default 2048 uses ~3.6GB temp buffer; 512 uses ~1GB, enabling larger models
-		// Also limit max_total_seq_length to control KV cache size
-		return []string{
-			"serve",
-			modelPath,
-			"--host", "0.0.0.0",
-			"--mode", "local",
-			"--overrides", "prefill_chunk_size=512;max_total_seq_length=16384",
+
+		args := []string{"serve", modelPath, "--host", "0.0.0.0"}
+
+		// Mode: CRD > env > default ("local" for lower memory usage)
+		mode := r.getMLCMode(m)
+		args = append(args, "--mode", mode)
+
+		// Model library path (for pre-compiled libraries, required for Maxwell)
+		if libPath := r.getMLCModelLib(m); libPath != "" {
+			args = append(args, "--model-lib", libPath)
 		}
+
+		// Overrides for memory optimization
+		overrides := r.buildMLCOverrides(m)
+		if overrides != "" {
+			args = append(args, "--overrides", overrides)
+		}
+
+		return args
 	case "llamacpp":
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
 			return strings.Fields(args)
@@ -938,17 +947,24 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment) []corev1.EnvVar {
 	switch canonicalBackend(m.Spec.Backend) {
 	case "mlc-llm":
-		// MLC-LLM memory optimization environment variables
-		// MLC_GPU_SIZE_BYTES tells MLC-LLM to limit GPU memory usage
-		// This helps fit larger models by being more aggressive with memory allocation
-		return []corev1.EnvVar{
-			{
-				// Limit GPU memory to 22GB (23068672000 bytes) to leave headroom
-				// on 24GB cards where driver/firmware reserves ~3GB
-				Name:  "MLC_GPU_SIZE_BYTES",
-				Value: "23068672000",
-			},
+		var env []corev1.EnvVar
+
+		// GPU memory: CRD > env > Maxwell auto-detect > default 23GB
+		gpuMem := r.getMLCGPUMemory(m)
+		env = append(env, corev1.EnvVar{
+			Name:  "MLC_GPU_SIZE_BYTES",
+			Value: gpuMem,
+		})
+
+		// JIT Policy: CRD > env (only set if specified)
+		if jitPolicy := r.getMLCJITPolicy(m); jitPolicy != "" {
+			env = append(env, corev1.EnvVar{
+				Name:  "MLC_JIT_POLICY",
+				Value: jitPolicy,
+			})
 		}
+
+		return env
 	case "ollama":
 		return []corev1.EnvVar{
 			{
@@ -1075,6 +1091,103 @@ func (r *ModelDeploymentReconciler) isMaxwellGPU(m *aiv1alpha1.ModelDeployment) 
 		return cc == "5"
 	}
 	return false
+}
+
+// getMLCMode returns the MLC-LLM serve mode.
+// Precedence: CRD > env > default ("local")
+func (r *ModelDeploymentReconciler) getMLCMode(m *aiv1alpha1.ModelDeployment) string {
+	// CRD takes precedence
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.Mode != "" {
+		return m.Spec.MLCLLM.Mode
+	}
+	// Environment variable
+	if mode, ok := os.LookupEnv("DEFAULT_MLC_LLM_MODE"); ok && mode != "" {
+		return mode
+	}
+	// Default to "local" for lower memory usage
+	return "local"
+}
+
+// getMLCModelLib returns the pre-compiled model library path.
+// Precedence: CRD > env
+func (r *ModelDeploymentReconciler) getMLCModelLib(m *aiv1alpha1.ModelDeployment) string {
+	// CRD takes precedence
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.ModelLibPath != "" {
+		return m.Spec.MLCLLM.ModelLibPath
+	}
+	// Environment variable
+	if libPath, ok := os.LookupEnv("DEFAULT_MLC_LLM_MODEL_LIB"); ok {
+		return libPath
+	}
+	return ""
+}
+
+// getMLCGPUMemory returns the GPU memory limit in bytes.
+// Precedence: CRD > env > Maxwell auto-detect (5GB) > default (23GB)
+func (r *ModelDeploymentReconciler) getMLCGPUMemory(m *aiv1alpha1.ModelDeployment) string {
+	// CRD takes precedence
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.GPUMemoryBytes != nil {
+		return fmt.Sprintf("%d", *m.Spec.MLCLLM.GPUMemoryBytes)
+	}
+	// Environment variable
+	if gpuMem, ok := os.LookupEnv("DEFAULT_MLC_GPU_SIZE_BYTES"); ok && gpuMem != "" {
+		return gpuMem
+	}
+	// Auto-detect Maxwell GPUs (limited to ~5GB usable)
+	if r.isMaxwellGPU(m) {
+		return "5000000000"
+	}
+	// Default: 23GB (leaves headroom on 24GB cards)
+	return "23068672000"
+}
+
+// getMLCJITPolicy returns the JIT compilation policy.
+// Precedence: CRD > env
+func (r *ModelDeploymentReconciler) getMLCJITPolicy(m *aiv1alpha1.ModelDeployment) string {
+	// CRD takes precedence
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.JITPolicy != "" {
+		return m.Spec.MLCLLM.JITPolicy
+	}
+	// Environment variable
+	if jitPolicy, ok := os.LookupEnv("DEFAULT_MLC_JIT_POLICY"); ok {
+		return jitPolicy
+	}
+	return ""
+}
+
+// buildMLCOverrides constructs the --overrides string for MLC-LLM.
+// Format: key1=value1;key2=value2
+func (r *ModelDeploymentReconciler) buildMLCOverrides(m *aiv1alpha1.ModelDeployment) string {
+	var parts []string
+
+	// Default values for memory optimization
+	prefillChunkSize := int32(512)
+	maxTotalSeqLength := int32(16384)
+
+	// Override from CRD if specified
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.Overrides != nil {
+		overrides := m.Spec.MLCLLM.Overrides
+		if overrides.PrefillChunkSize != nil {
+			prefillChunkSize = *overrides.PrefillChunkSize
+		}
+		if overrides.MaxTotalSeqLength != nil {
+			maxTotalSeqLength = *overrides.MaxTotalSeqLength
+		}
+		if overrides.ContextWindowSize != nil {
+			parts = append(parts, fmt.Sprintf("context_window_size=%d", *overrides.ContextWindowSize))
+		}
+	}
+
+	// Always include memory optimization settings
+	parts = append(parts, fmt.Sprintf("prefill_chunk_size=%d", prefillChunkSize))
+	parts = append(parts, fmt.Sprintf("max_total_seq_length=%d", maxTotalSeqLength))
+
+	// Append raw overrides if specified
+	if m.Spec.MLCLLM != nil && m.Spec.MLCLLM.Overrides != nil && m.Spec.MLCLLM.Overrides.Raw != "" {
+		parts = append(parts, m.Spec.MLCLLM.Overrides.Raw)
+	}
+
+	return strings.Join(parts, ";")
 }
 
 // validateGPUResources validates that GPU resources are properly configured

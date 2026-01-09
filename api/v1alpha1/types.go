@@ -116,6 +116,11 @@ type ModelDeploymentSpec struct {
 	// This maps directly to the pod's nodeSelector field.
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// MLCLLM contains MLC-LLM backend-specific configuration.
+	// Only applies when Backend is "mlc-llm" or "mlc".
+	// +optional
+	MLCLLM *MLCLLMSpec `json:"mlcllm,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.
@@ -162,6 +167,117 @@ type BenchmarkSpec struct {
 	// +kubebuilder:default=5
 	// +kubebuilder:validation:Minimum=1
 	Iterations *int32 `json:"iterations,omitempty"`
+}
+
+// MLCLLMSpec configures MLC-LLM backend-specific settings.
+// Only applies when Backend is "mlc-llm" or "mlc".
+// +kubebuilder:object:generate=true
+type MLCLLMSpec struct {
+	// Mode specifies the MLC-LLM serving mode.
+	// - "local": Single-user mode with lower memory footprint (default)
+	// - "server": Multi-user mode with larger KV cache pre-allocation for high throughput
+	// - "interactive": Interactive mode optimized for chat applications
+	// +kubebuilder:validation:Enum=local;server;interactive
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// ModelLibPath is the path to a pre-compiled model library (.so file).
+	// When set, MLC-LLM will use this library instead of JIT compilation.
+	// Required for Maxwell GPUs and recommended for production to skip JIT compilation.
+	// Example: /models/Qwen3-0.6B-q0f32-MLC/maxwell-lib.so
+	// +optional
+	ModelLibPath string `json:"modelLibPath,omitempty"`
+
+	// GPUMemoryBytes specifies the GPU memory limit in bytes for MLC-LLM.
+	// MLC-LLM uses this to calculate KV cache size and memory allocation.
+	// If not set, defaults to 23GB (23068672000) for modern GPUs.
+	// For Maxwell GPUs (GTX 980 Ti), recommend setting to 5000000000 (~5GB).
+	// +optional
+	GPUMemoryBytes *int64 `json:"gpuMemoryBytes,omitempty"`
+
+	// JITPolicy controls Just-In-Time compilation behavior.
+	// - "ON": Enable JIT compilation (default)
+	// - "OFF": Disable JIT, requires pre-compiled model library via ModelLibPath
+	// - "REDO": Force recompilation even if cached
+	// - "READONLY": Use cached compilations only, fail if not found
+	// +kubebuilder:validation:Enum=ON;OFF;REDO;READONLY
+	// +optional
+	JITPolicy string `json:"jitPolicy,omitempty"`
+
+	// Overrides specifies MLC-LLM model parameter overrides.
+	// These are passed via the --overrides flag as semicolon-separated key=value pairs.
+	// +optional
+	Overrides *MLCOverrides `json:"overrides,omitempty"`
+
+	// CompileOptions specifies TVM/CUDA compile options for JIT compilation.
+	// These control which acceleration backends are enabled.
+	// Auto-configured for Maxwell GPUs if not specified.
+	// +optional
+	CompileOptions *MLCCompileOptions `json:"compileOptions,omitempty"`
+}
+
+// MLCOverrides configures MLC-LLM model parameter overrides.
+// These parameters are passed to MLC-LLM via the --overrides flag.
+// +kubebuilder:object:generate=true
+type MLCOverrides struct {
+	// PrefillChunkSize controls the prefill chunk size for attention computation.
+	// Lower values reduce temporary buffer memory usage.
+	// Default: 512 (uses ~1GB temp buffer vs ~3.6GB at 2048)
+	// +kubebuilder:validation:Minimum=64
+	// +kubebuilder:validation:Maximum=8192
+	// +optional
+	PrefillChunkSize *int32 `json:"prefillChunkSize,omitempty"`
+
+	// MaxTotalSeqLength limits the total sequence length (context + generation).
+	// Affects KV cache memory allocation. Higher values use more GPU memory.
+	// Default: 16384
+	// +kubebuilder:validation:Minimum=256
+	// +kubebuilder:validation:Maximum=131072
+	// +optional
+	MaxTotalSeqLength *int32 `json:"maxTotalSeqLength,omitempty"`
+
+	// ContextWindowSize sets the context window size for the model.
+	// Should not exceed MaxTotalSeqLength.
+	// +kubebuilder:validation:Minimum=256
+	// +kubebuilder:validation:Maximum=131072
+	// +optional
+	ContextWindowSize *int32 `json:"contextWindowSize,omitempty"`
+
+	// Raw allows specifying arbitrary override parameters as a semicolon-separated string.
+	// These are appended to the generated overrides.
+	// Example: "temperature=0.7;top_p=0.9"
+	// +optional
+	Raw string `json:"raw,omitempty"`
+}
+
+// MLCCompileOptions configures TVM compile options for MLC-LLM JIT compilation.
+// These options control which GPU acceleration backends are enabled.
+// For Maxwell GPUs, UseCutlass and UseFlashInfer should be disabled.
+// +kubebuilder:object:generate=true
+type MLCCompileOptions struct {
+	// UseCutlass enables CUTLASS kernels for GEMM operations.
+	// Requires FP16 support (sm_53+). Must be disabled for Maxwell GPUs (sm_52).
+	// Default: true for modern GPUs, false for Maxwell
+	// +optional
+	UseCutlass *bool `json:"useCutlass,omitempty"`
+
+	// UseFlashInfer enables FlashInfer attention kernels.
+	// Requires sm_80+ (Ampere or newer). Must be disabled for Maxwell/Pascal GPUs.
+	// Default: true for Ampere+, false for older architectures
+	// +optional
+	UseFlashInfer *bool `json:"useFlashInfer,omitempty"`
+
+	// UseCublasGemm enables cuBLAS fallback for GEMM operations.
+	// Recommended for older GPUs that don't support CUTLASS.
+	// Default: false for modern GPUs, true for Maxwell
+	// +optional
+	UseCublasGemm *bool `json:"useCublasGemm,omitempty"`
+
+	// UseCudaGraph enables CUDA graph capture for kernel fusion.
+	// Can improve performance but may cause issues on older GPUs.
+	// Default: true for modern GPUs, false for Maxwell
+	// +optional
+	UseCudaGraph *bool `json:"useCudaGraph,omitempty"`
 }
 
 // ModelDeploymentStatus defines the observed state of ModelDeployment

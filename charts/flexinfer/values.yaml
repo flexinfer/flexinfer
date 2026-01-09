@@ -93,13 +93,30 @@ backend:
     repository: ollama/ollama
     tag: "latest"
 
-# MLC-LLM backend images (used when spec.backend=mlc-llm)
-# Set these to your custom MLC-LLM images or leave empty to use defaults
+# MLC-LLM backend configuration (used when spec.backend=mlc-llm)
+# Set these to your custom values or leave empty to use defaults
 mlcllm:
+  # Images - set to custom images or leave empty for defaults
   # CUDA image for NVIDIA GPUs (default: ghcr.io/mlc-ai/mlc-llm:cuda)
   cudaImage: ""
   # ROCm image for AMD GPUs (default: ghcr.io/mlc-ai/mlc-llm:rocm)
   rocmImage: ""
+  # Maxwell-specific image for older NVIDIA GPUs (compute 5.x)
+  maxwellImage: ""
+
+  # Operator-level defaults (can be overridden per-deployment via CRD)
+  defaults:
+    # Serve mode: local (low memory), server (high throughput), interactive
+    # Empty = default to "local"
+    mode: ""
+    # GPU memory limit in bytes. Empty = auto-detect (23GB default, 5GB for Maxwell)
+    gpuMemoryBytes: ""
+    # JIT compilation policy: ON, OFF, REDO, READONLY. Empty = MLC-LLM default
+    jitPolicy: ""
+    # Path to pre-compiled model library (.so). Usually set per-deployment
+    modelLibPath: ""
+    # Complete args override (bypasses all other settings). Use for advanced cases only
+    args: ""
 
 scheduler:
   enabled: true

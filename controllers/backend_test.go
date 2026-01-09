@@ -173,7 +173,7 @@ func TestGetBackendArgs_MlcLlm(t *testing.T) {
 
 	args := r.getBackendArgs(m)
 
-	// Verify expected arguments
+	// Verify expected arguments (default mode, no model-lib, default overrides)
 	expectedArgs := []string{
 		"serve",
 		"Qwen3-14B-q4f16_1-MLC",
@@ -183,7 +183,7 @@ func TestGetBackendArgs_MlcLlm(t *testing.T) {
 	}
 
 	if len(args) != len(expectedArgs) {
-		t.Errorf("Expected %d args, got %d", len(expectedArgs), len(args))
+		t.Errorf("Expected %d args, got %d: %v", len(expectedArgs), len(args), args)
 		return
 	}
 
@@ -435,4 +435,437 @@ func TestCanonicalBackend(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetMLCMode(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		mlcllm   *aiv1alpha1.MLCLLMSpec
+		envValue string
+		expected string
+	}{
+		{
+			name:     "default mode",
+			mlcllm:   nil,
+			expected: "local",
+		},
+		{
+			name: "CRD mode takes precedence",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Mode: "server",
+			},
+			expected: "server",
+		},
+		{
+			name:     "env var mode",
+			mlcllm:   nil,
+			envValue: "interactive",
+			expected: "interactive",
+		},
+		{
+			name: "CRD overrides env var",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Mode: "server",
+			},
+			envValue: "interactive",
+			expected: "server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != "" {
+				os.Setenv("DEFAULT_MLC_LLM_MODE", tt.envValue)
+				defer os.Unsetenv("DEFAULT_MLC_LLM_MODE")
+			}
+
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "mlc-llm",
+					MLCLLM:  tt.mlcllm,
+				},
+			}
+
+			result := r.getMLCMode(m)
+			if result != tt.expected {
+				t.Errorf("getMLCMode() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetMLCModelLib(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		mlcllm   *aiv1alpha1.MLCLLMSpec
+		envValue string
+		expected string
+	}{
+		{
+			name:     "no model lib",
+			mlcllm:   nil,
+			expected: "",
+		},
+		{
+			name: "CRD model lib",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				ModelLibPath: "/models/maxwell-lib.so",
+			},
+			expected: "/models/maxwell-lib.so",
+		},
+		{
+			name:     "env var model lib",
+			mlcllm:   nil,
+			envValue: "/default/lib.so",
+			expected: "/default/lib.so",
+		},
+		{
+			name: "CRD overrides env var",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				ModelLibPath: "/models/custom.so",
+			},
+			envValue: "/default/lib.so",
+			expected: "/models/custom.so",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != "" {
+				os.Setenv("DEFAULT_MLC_LLM_MODEL_LIB", tt.envValue)
+				defer os.Unsetenv("DEFAULT_MLC_LLM_MODEL_LIB")
+			}
+
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "mlc-llm",
+					MLCLLM:  tt.mlcllm,
+				},
+			}
+
+			result := r.getMLCModelLib(m)
+			if result != tt.expected {
+				t.Errorf("getMLCModelLib() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetMLCGPUMemory(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name         string
+		mlcllm       *aiv1alpha1.MLCLLMSpec
+		nodeSelector map[string]string
+		envValue     string
+		expected     string
+	}{
+		{
+			name:     "default GPU memory",
+			mlcllm:   nil,
+			expected: "23068672000",
+		},
+		{
+			name: "CRD GPU memory",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				GPUMemoryBytes: ptrTo(int64(10000000000)),
+			},
+			expected: "10000000000",
+		},
+		{
+			name:     "env var GPU memory",
+			mlcllm:   nil,
+			envValue: "8000000000",
+			expected: "8000000000",
+		},
+		{
+			name: "Maxwell auto-detect",
+			mlcllm: nil,
+			nodeSelector: map[string]string{
+				"nvidia.com/gpu.arch": "Maxwell",
+			},
+			expected: "5000000000",
+		},
+		{
+			name: "CRD overrides Maxwell auto-detect",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				GPUMemoryBytes: ptrTo(int64(4000000000)),
+			},
+			nodeSelector: map[string]string{
+				"nvidia.com/gpu.arch": "Maxwell",
+			},
+			expected: "4000000000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != "" {
+				os.Setenv("DEFAULT_MLC_GPU_SIZE_BYTES", tt.envValue)
+				defer os.Unsetenv("DEFAULT_MLC_GPU_SIZE_BYTES")
+			}
+
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend:      "mlc-llm",
+					MLCLLM:       tt.mlcllm,
+					NodeSelector: tt.nodeSelector,
+				},
+			}
+
+			result := r.getMLCGPUMemory(m)
+			if result != tt.expected {
+				t.Errorf("getMLCGPUMemory() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetMLCJITPolicy(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		mlcllm   *aiv1alpha1.MLCLLMSpec
+		envValue string
+		expected string
+	}{
+		{
+			name:     "no JIT policy",
+			mlcllm:   nil,
+			expected: "",
+		},
+		{
+			name: "CRD JIT policy",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				JITPolicy: "OFF",
+			},
+			expected: "OFF",
+		},
+		{
+			name:     "env var JIT policy",
+			mlcllm:   nil,
+			envValue: "READONLY",
+			expected: "READONLY",
+		},
+		{
+			name: "CRD overrides env var",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				JITPolicy: "OFF",
+			},
+			envValue: "READONLY",
+			expected: "OFF",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != "" {
+				os.Setenv("DEFAULT_MLC_JIT_POLICY", tt.envValue)
+				defer os.Unsetenv("DEFAULT_MLC_JIT_POLICY")
+			}
+
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "mlc-llm",
+					MLCLLM:  tt.mlcllm,
+				},
+			}
+
+			result := r.getMLCJITPolicy(m)
+			if result != tt.expected {
+				t.Errorf("getMLCJITPolicy() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildMLCOverrides(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		mlcllm   *aiv1alpha1.MLCLLMSpec
+		expected string
+	}{
+		{
+			name:     "default overrides",
+			mlcllm:   nil,
+			expected: "prefill_chunk_size=512;max_total_seq_length=16384",
+		},
+		{
+			name: "custom prefill chunk size",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					PrefillChunkSize: ptrTo(int32(256)),
+				},
+			},
+			expected: "prefill_chunk_size=256;max_total_seq_length=16384",
+		},
+		{
+			name: "custom max total seq length",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					MaxTotalSeqLength: ptrTo(int32(8192)),
+				},
+			},
+			expected: "prefill_chunk_size=512;max_total_seq_length=8192",
+		},
+		{
+			name: "with context window size",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					ContextWindowSize: ptrTo(int32(4096)),
+				},
+			},
+			expected: "context_window_size=4096;prefill_chunk_size=512;max_total_seq_length=16384",
+		},
+		{
+			name: "with raw overrides",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					Raw: "temperature=0.7",
+				},
+			},
+			expected: "prefill_chunk_size=512;max_total_seq_length=16384;temperature=0.7",
+		},
+		{
+			name: "all options combined",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					PrefillChunkSize:  ptrTo(int32(256)),
+					MaxTotalSeqLength: ptrTo(int32(4096)),
+					ContextWindowSize: ptrTo(int32(2048)),
+					Raw:               "top_p=0.9",
+				},
+			},
+			expected: "context_window_size=2048;prefill_chunk_size=256;max_total_seq_length=4096;top_p=0.9",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "mlc-llm",
+					MLCLLM:  tt.mlcllm,
+				},
+			}
+
+			result := r.buildMLCOverrides(m)
+			if result != tt.expected {
+				t.Errorf("buildMLCOverrides() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetBackendArgs_MlcLlm_WithMLCLLMSpec(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			Model:   "Qwen3-0.6B-q0f32-MLC",
+			MLCLLM: &aiv1alpha1.MLCLLMSpec{
+				Mode:         "server",
+				ModelLibPath: "/models/maxwell-lib.so",
+				Overrides: &aiv1alpha1.MLCOverrides{
+					PrefillChunkSize:  ptrTo(int32(256)),
+					MaxTotalSeqLength: ptrTo(int32(4096)),
+				},
+			},
+		},
+	}
+
+	args := r.getBackendArgs(m)
+
+	// Verify expected arguments
+	expectedArgs := []string{
+		"serve",
+		"Qwen3-0.6B-q0f32-MLC",
+		"--host", "0.0.0.0",
+		"--mode", "server",
+		"--model-lib", "/models/maxwell-lib.so",
+		"--overrides", "prefill_chunk_size=256;max_total_seq_length=4096",
+	}
+
+	if len(args) != len(expectedArgs) {
+		t.Errorf("Expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+		return
+	}
+
+	for i, arg := range args {
+		if arg != expectedArgs[i] {
+			t.Errorf("Arg %d: expected %s, got %s", i, expectedArgs[i], arg)
+		}
+	}
+}
+
+func TestGetBackendEnv_MlcLlm_WithMLCLLMSpec(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	gpuMem := int64(5000000000)
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			MLCLLM: &aiv1alpha1.MLCLLMSpec{
+				GPUMemoryBytes: &gpuMem,
+				JITPolicy:      "OFF",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+
+	// Should have 2 env vars: MLC_GPU_SIZE_BYTES and MLC_JIT_POLICY
+	if len(env) != 2 {
+		t.Errorf("Expected 2 env vars, got %d", len(env))
+		return
+	}
+
+	// Check MLC_GPU_SIZE_BYTES
+	if env[0].Name != "MLC_GPU_SIZE_BYTES" || env[0].Value != "5000000000" {
+		t.Errorf("Expected MLC_GPU_SIZE_BYTES=5000000000, got %s=%s", env[0].Name, env[0].Value)
+	}
+
+	// Check MLC_JIT_POLICY
+	if env[1].Name != "MLC_JIT_POLICY" || env[1].Value != "OFF" {
+		t.Errorf("Expected MLC_JIT_POLICY=OFF, got %s=%s", env[1].Name, env[1].Value)
+	}
+}
+
+func TestGetBackendEnv_MlcLlm_MaxwellAutoDetect(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+
+	// Should have 1 env var with Maxwell auto-detected GPU memory
+	if len(env) != 1 {
+		t.Errorf("Expected 1 env var, got %d", len(env))
+		return
+	}
+
+	if env[0].Name != "MLC_GPU_SIZE_BYTES" || env[0].Value != "5000000000" {
+		t.Errorf("Expected MLC_GPU_SIZE_BYTES=5000000000 for Maxwell, got %s=%s", env[0].Name, env[0].Value)
+	}
+}
+
+// ptrTo is a helper function to create a pointer to a value
+func ptrTo[T any](v T) *T {
+	return &v
 }

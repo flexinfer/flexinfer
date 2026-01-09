@@ -68,4 +68,28 @@ spec:
             - name: DEFAULT_MLC_LLM_IMAGE_AMD
               value: {{ .Values.mlcllm.rocmImage | quote }}
             {{- end }}
+            {{- if .Values.mlcllm.maxwellImage }}
+            - name: DEFAULT_MLC_LLM_IMAGE_MAXWELL
+              value: {{ .Values.mlcllm.maxwellImage | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.defaults.mode }}
+            - name: DEFAULT_MLC_LLM_MODE
+              value: {{ .Values.mlcllm.defaults.mode | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.defaults.gpuMemoryBytes }}
+            - name: DEFAULT_MLC_GPU_SIZE_BYTES
+              value: {{ .Values.mlcllm.defaults.gpuMemoryBytes | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.defaults.jitPolicy }}
+            - name: DEFAULT_MLC_JIT_POLICY
+              value: {{ .Values.mlcllm.defaults.jitPolicy | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.defaults.modelLibPath }}
+            - name: DEFAULT_MLC_LLM_MODEL_LIB
+              value: {{ .Values.mlcllm.defaults.modelLibPath | quote }}
+            {{- end }}
+            {{- if .Values.mlcllm.defaults.args }}
+            - name: DEFAULT_MLC_LLM_ARGS
+              value: {{ .Values.mlcllm.defaults.args | quote }}
+            {{- end }}
 {{- end }}

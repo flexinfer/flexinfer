@@ -127,6 +127,120 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              mlcllm:
+                description: |-
+                  MLCLLM contains MLC-LLM backend-specific configuration.
+                  Only applies when Backend is "mlc-llm" or "mlc".
+                properties:
+                  compileOptions:
+                    description: |-
+                      CompileOptions specifies TVM/CUDA compile options for JIT compilation.
+                      These control which acceleration backends are enabled.
+                      Auto-configured for Maxwell GPUs if not specified.
+                    properties:
+                      useCublasGemm:
+                        description: |-
+                          UseCublasGemm enables cuBLAS fallback for GEMM operations.
+                          Recommended for older GPUs that don't support CUTLASS.
+                          Default: false for modern GPUs, true for Maxwell
+                        type: boolean
+                      useCudaGraph:
+                        description: |-
+                          UseCudaGraph enables CUDA graph capture for kernel fusion.
+                          Can improve performance but may cause issues on older GPUs.
+                          Default: true for modern GPUs, false for Maxwell
+                        type: boolean
+                      useCutlass:
+                        description: |-
+                          UseCutlass enables CUTLASS kernels for GEMM operations.
+                          Requires FP16 support (sm_53+). Must be disabled for Maxwell GPUs (sm_52).
+                          Default: true for modern GPUs, false for Maxwell
+                        type: boolean
+                      useFlashInfer:
+                        description: |-
+                          UseFlashInfer enables FlashInfer attention kernels.
+                          Requires sm_80+ (Ampere or newer). Must be disabled for Maxwell/Pascal GPUs.
+                          Default: true for Ampere+, false for older architectures
+                        type: boolean
+                    type: object
+                  gpuMemoryBytes:
+                    description: |-
+                      GPUMemoryBytes specifies the GPU memory limit in bytes for MLC-LLM.
+                      MLC-LLM uses this to calculate KV cache size and memory allocation.
+                      If not set, defaults to 23GB (23068672000) for modern GPUs.
+                      For Maxwell GPUs (GTX 980 Ti), recommend setting to 5000000000 (~5GB).
+                    format: int64
+                    type: integer
+                  jitPolicy:
+                    description: |-
+                      JITPolicy controls Just-In-Time compilation behavior.
+                      - "ON": Enable JIT compilation (default)
+                      - "OFF": Disable JIT, requires pre-compiled model library via ModelLibPath
+                      - "REDO": Force recompilation even if cached
+                      - "READONLY": Use cached compilations only, fail if not found
+                    enum:
+                    - "ON"
+                    - "OFF"
+                    - REDO
+                    - READONLY
+                    type: string
+                  mode:
+                    description: |-
+                      Mode specifies the MLC-LLM serving mode.
+                      - "local": Single-user mode with lower memory footprint (default)
+                      - "server": Multi-user mode with larger KV cache pre-allocation for high throughput
+                      - "interactive": Interactive mode optimized for chat applications
+                    enum:
+                    - local
+                    - server
+                    - interactive
+                    type: string
+                  modelLibPath:
+                    description: |-
+                      ModelLibPath is the path to a pre-compiled model library (.so file).
+                      When set, MLC-LLM will use this library instead of JIT compilation.
+                      Required for Maxwell GPUs and recommended for production to skip JIT compilation.
+                      Example: /models/Qwen3-0.6B-q0f32-MLC/maxwell-lib.so
+                    type: string
+                  overrides:
+                    description: |-
+                      Overrides specifies MLC-LLM model parameter overrides.
+                      These are passed via the --overrides flag as semicolon-separated key=value pairs.
+                    properties:
+                      contextWindowSize:
+                        description: |-
+                          ContextWindowSize sets the context window size for the model.
+                          Should not exceed MaxTotalSeqLength.
+                        format: int32
+                        maximum: 131072
+                        minimum: 256
+                        type: integer
+                      maxTotalSeqLength:
+                        description: |-
+                          MaxTotalSeqLength limits the total sequence length (context + generation).
+                          Affects KV cache memory allocation. Higher values use more GPU memory.
+                          Default: 16384
+                        format: int32
+                        maximum: 131072
+                        minimum: 256
+                        type: integer
+                      prefillChunkSize:
+                        description: |-
+                          PrefillChunkSize controls the prefill chunk size for attention computation.
+                          Lower values reduce temporary buffer memory usage.
+                          Default: 512 (uses ~1GB temp buffer vs ~3.6GB at 2048)
+                        format: int32
+                        maximum: 8192
+                        minimum: 64
+                        type: integer
+                      raw:
+                        description: |-
+                          Raw allows specifying arbitrary override parameters as a semicolon-separated string.
+                          These are appended to the generated overrides.
+                          Example: "temperature=0.7;top_p=0.9"
+                        type: string
+                    type: object
+                type: object
               model:
                 description: Model is the identifier for the model to be deployed
                   (e.g., llama3:8b).
