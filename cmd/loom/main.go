@@ -1493,7 +1493,7 @@ func handleProxyResourcesList(ctx context.Context, daemon *mcp.StdioTransport, m
 		return nil, err
 	}
 
-	var allResources []mcp.Resource
+	allResources := make([]mcp.Resource, 0)
 	for _, server := range serversResult.Servers {
 		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
 			"server": server.Name,
@@ -1573,7 +1573,7 @@ func handleProxyPromptsList(ctx context.Context, daemon *mcp.StdioTransport, msg
 		return nil, err
 	}
 
-	var allPrompts []mcp.Prompt
+	allPrompts := make([]mcp.Prompt, 0)
 	for _, server := range serversResult.Servers {
 		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
 			"server": server.Name,
