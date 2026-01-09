@@ -1458,11 +1458,21 @@ func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *
 	}
 
 	// Forward to appropriate server via daemon
+	toolCallParams := map[string]any{
+		"name": toolName,
+	}
+	if len(params.Arguments) > 0 {
+		var args map[string]any
+		_ = json.Unmarshal(params.Arguments, &args)
+		toolCallParams["arguments"] = args
+	}
+	paramsJSON, _ := json.Marshal(toolCallParams)
+
 	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
 		"server":    serverName,
 		"tool":      toolName,
 		"method":    "tools/call",
-		"params":    params.Arguments,
+		"params":    paramsJSON,
 		"arguments": params.Arguments,
 	})
 
