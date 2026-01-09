@@ -524,6 +524,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 	switch msg.Method {
 	case "initialize":
 		return d.handleInitialize(ctx, msg)
+	case "notifications/initialized":
+		return nil, nil
 	case "loom/status":
 		return d.handleStatus(ctx, msg)
 	case "loom/servers":
