@@ -9,13 +9,16 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 ### Implemented Features
 
 - ✅ **CLI**: `loom` command for managing context and connections.
+- ✅ **Daemon Mode**: Background process (`loomd`) managing persistent connections and tool aggregation.
+- ✅ **Smart Routing**: Support for prefix-less tool calls and argument-based routing.
+- ✅ **Hub Bridging**: Automatic discovery and transparent access to remote MCP Hub tools.
 - ✅ **MCP Servers**:
   - `mcp-gitlab`: GitLab integration.
   - `mcp-k8s`: Kubernetes resource access.
   - `mcp-grafana`: Dashboard search and querying.
   - `mcp-loki`: Log querying.
   - `mcp-minio`: S3/MinIO file access.
-- ✅ **Shared Utils**: `pkg/mcp` for building standard MCP servers in Go.
+- ✅ **Shared Utils**: Delegation to `fi-mcp-kit` for enterprise orchestration.
 
 ## Upcoming Work
 
@@ -27,9 +30,9 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 
 ### Phase 2: Core Infrastructure
 
-- [ ] **Daemon Mode**: Background process to manage persistent connections.
+- [x] **Concurrency**: Parallel tool execution with configurable backpressure.
 - [ ] **Secure Tunneling**: SSH/WireGuard wrapping for remote server access.
-- [ ] **Context Caching**: Local caching of frequently accessed MCP resources.
+- [x] **Context Caching**: Persistent tool manifest caching for instant startup.
 
 ## References
 

@@ -774,9 +774,11 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		err   error
 	}
 
-	results := make(chan serverTools, len(d.registry.Servers))
+	// Calculate total potential sources (local + hub)
+	results := make(chan serverTools, len(d.registry.Servers)+20) // buffer enough for hub hosts
 	var wg gosync.WaitGroup
 
+	// Local servers
 	for _, server := range d.registry.Servers {
 		wg.Add(1)
 		go func(serverName string) {
@@ -784,6 +786,47 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 			tools, err := d.fetchServerTools(ctx, serverName)
 			results <- serverTools{name: serverName, tools: tools, err: err}
 		}(server.Name)
+	}
+
+	// Hub servers
+	if d.cfg.HubFallback && d.hubClient != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Fetch token from secret store if needed
+			token := resolveSecret("MCP_HUB_TOKEN")
+			if token == "" {
+				token = os.Getenv("MCP_HUB_TOKEN")
+			}
+
+			client := router.NewHubClient(d.cfg.HubURL, token)
+			hostNames, err := client.DiscoverHosts(ctx)
+			if err != nil {
+				d.logger.Warn("failed to discover hub hosts", "error", err)
+				return
+			}
+
+			for _, host := range hostNames {
+				// Avoid shadowing local servers if they have the same name
+				isLocal := false
+				for _, s := range d.registry.Servers {
+					if s.Name == host {
+						isLocal = true
+						break
+					}
+				}
+				if isLocal {
+					continue
+				}
+
+				wg.Add(1)
+				go func(h string) {
+					defer wg.Done()
+					tools, err := client.FetchTools(ctx, h)
+					results <- serverTools{name: h, tools: tools, err: err}
+				}(host)
+			}
+		}()
 	}
 
 	// Wait for all goroutines and close channel
@@ -826,6 +869,10 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		var namespacedTools []mcp.Tool
 		for _, tool := range result.tools {
 			originalToolName := tool.Name
+
+			// Add to router index for smart routing (prefix-less calls)
+			d.router.AddToolToIndex(originalToolName, result.name)
+
 			// Sanitize the original tool name first
 			safeToolName := sanitize(tool.Name)
 			// Create namespaced name
@@ -1113,9 +1160,11 @@ func (d *Daemon) expandVars(s string) string {
 }
 
 type callParams struct {
-	Server string          `json:"server"`
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
+	Server    string          `json:"server,omitempty"`
+	Tool      string          `json:"tool,omitempty"` // For smart routing without prefix
+	Method    string          `json:"method"`
+	Params    json.RawMessage `json:"params,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"` // For smart routing
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -1124,13 +1173,40 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
 	}
 
+	serverName := params.Server
+	toolName := params.Tool
+
+	// If server not provided, try to resolve it from tool name and arguments (Smart Routing)
+	if serverName == "" && toolName != "" {
+		var args map[string]any
+		if len(params.Arguments) > 0 {
+			_ = json.Unmarshal(params.Arguments, &args)
+		} else if len(params.Params) > 0 {
+			// Fallback: params might contain arguments if it's a direct tools/call
+			_ = json.Unmarshal(params.Params, &args)
+		}
+
+		resolved, err := d.router.ResolveServer(d.cfg.Target, toolName, args)
+		if err != nil {
+			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
+		}
+		if resolved == "" {
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, fmt.Sprintf("could not resolve server for tool: %s", toolName)), nil
+		}
+		serverName = resolved
+	}
+
+	if serverName == "" {
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "missing server or tool for call"), nil
+	}
+
 	// Route the request based on health
-	decision, err := d.router.Route(ctx, params.Server)
+	decision, err := d.router.Route(ctx, serverName)
 	if err != nil {
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
-	d.logger.Debug("routing decision", "server", params.Server, "target", decision.Target, "reason", decision.Reason)
+	d.logger.Debug("routing decision", "server", serverName, "target", decision.Target, "reason", decision.Reason)
 
 	var conn *pool.Conn
 	var target router.Target

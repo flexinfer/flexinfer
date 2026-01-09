@@ -190,6 +190,12 @@ Example config.toml:
 			imageRegistry, _ := cmd.Flags().GetString("image-registry")
 			registryPath, _ := cmd.Flags().GetString("registry")
 
+			includeGateway, _ := cmd.Flags().GetBool("gateway")
+			gatewayHost, _ := cmd.Flags().GetString("gateway-host")
+			gatewayClass, _ := cmd.Flags().GetString("gateway-ingress-class")
+			gatewayTLS, _ := cmd.Flags().GetString("gateway-tls-secret")
+			gatewayImage, _ := cmd.Flags().GetString("gateway-image")
+
 			cwd, _ := os.Getwd()
 			if registryPath == "" {
 				registryPath = registry.FindRegistryOrDefault(filepath.Join(cwd, "mcp", "context", "registry.yaml"))
@@ -205,13 +211,28 @@ Example config.toml:
 			}
 
 			fmt.Printf("Generating manifests in %s...\n", outputDir)
-			return generator.GenerateManifests(reg, outputDir, namespace, imageRegistry)
+			return generator.GenerateManifests(reg, outputDir, generator.ManifestsOptions{
+				Namespace:     namespace,
+				ImageRegistry: imageRegistry,
+				Gateway: generator.GatewayManifests{
+					Enabled:          includeGateway,
+					Image:            gatewayImage,
+					IngressHost:      gatewayHost,
+					IngressClassName: gatewayClass,
+					TLSSecretName:    gatewayTLS,
+				},
+			})
 		},
 	}
 	genManifestsCmd.Flags().String("output-dir", "k3s/mcp-hub/servers", "Output directory")
 	genManifestsCmd.Flags().String("namespace", "mcp-hub", "Kubernetes namespace")
 	genManifestsCmd.Flags().String("image-registry", "registry.harbor.lan/mcp", "Container image registry")
 	genManifestsCmd.Flags().String("registry", "", "Path to registry.yaml")
+	genManifestsCmd.Flags().Bool("gateway", true, "Include gateway manifests")
+	genManifestsCmd.Flags().String("gateway-host", "mcp.flexinfer.ai", "Gateway ingress host")
+	genManifestsCmd.Flags().String("gateway-ingress-class", "", "Gateway ingress class")
+	genManifestsCmd.Flags().String("gateway-tls-secret", "", "Gateway TLS secret")
+	genManifestsCmd.Flags().String("gateway-image", "", "Gateway container image")
 
 	// Generate Configs
 	genConfigsCmd := &cobra.Command{
@@ -1427,19 +1448,22 @@ func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *
 
 	// Parse server__toolname format
 	parts := splitToolName(params.Name)
-	if len(parts) != 2 {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "tool name must be in format server__toolname"), nil
+	var serverName, toolName string
+
+	if len(parts) == 2 {
+		serverName, toolName = parts[0], parts[1]
+	} else {
+		// Smart Routing: Let the daemon resolve it
+		toolName = params.Name
 	}
-	serverName, toolName := parts[0], parts[1]
 
 	// Forward to appropriate server via daemon
 	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
-		"server": serverName,
-		"method": "tools/call",
-		"params": map[string]any{
-			"name":      toolName,
-			"arguments": params.Arguments,
-		},
+		"server":    serverName,
+		"tool":      toolName,
+		"method":    "tools/call",
+		"params":    params.Arguments,
+		"arguments": params.Arguments,
 	})
 
 	if err := daemon.Send(ctx, callReq); err != nil {
