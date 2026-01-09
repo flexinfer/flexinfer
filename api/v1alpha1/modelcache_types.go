@@ -96,6 +96,16 @@ type ModelCacheSpec struct {
 	// for authenticating to OCI registries. Used when source begins with oci:// or oras://
 	// +optional
 	OCIRegistrySecretRef *string `json:"ociRegistrySecretRef,omitempty"`
+
+	// NodeSelector restricts which nodes should cache the model.
+	// Used with NodeLocal strategy. Defaults to nodes with nvidia.com/gpu.present=true.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// HostPath is the base directory for NodeLocal storage.
+	// Defaults to /var/lib/flexinfer/models if not specified.
+	// +optional
+	HostPath *string `json:"hostPath,omitempty"`
 }
 
 // ModelCacheStatus defines the observed state of ModelCache
@@ -116,12 +126,22 @@ type ModelCacheStatus struct {
 	// SizeBytes is the size of the cached model
 	// +optional
 	SizeBytes string `json:"sizeBytes,omitempty"`
+
+	// ReadyNodes is the count of nodes where the model is fully cached (NodeLocal strategy)
+	// +optional
+	ReadyNodes int32 `json:"readyNodes,omitempty"`
+
+	// TotalNodes is the count of nodes that should have the model cached (NodeLocal strategy)
+	// +optional
+	TotalNodes int32 `json:"totalNodes,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 //+kubebuilder:printcolumn:name="Strategy",type="string",JSONPath=".spec.storageStrategy"
+//+kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyNodes"
+//+kubebuilder:printcolumn:name="Total",type="integer",JSONPath=".status.totalNodes"
 //+kubebuilder:printcolumn:name="Path",type="string",JSONPath=".status.path"
 
 // ModelCache is the Schema for the modelcaches API

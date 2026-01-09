@@ -21,6 +21,12 @@ spec:
     - jsonPath: .spec.storageStrategy
       name: Strategy
       type: string
+    - jsonPath: .status.readyNodes
+      name: Ready
+      type: integer
+    - jsonPath: .status.totalNodes
+      name: Total
+      type: integer
     - jsonPath: .status.path
       name: Path
       type: string
@@ -59,11 +65,23 @@ spec:
                   When set, the controller skips PVC creation and uses the referenced claim.
                   The model will be downloaded to a subdirectory named after the ModelCache.
                 type: string
+              hostPath:
+                description: |-
+                  HostPath is the base directory for NodeLocal storage.
+                  Defaults to /var/lib/flexinfer/models if not specified.
+                type: string
               modelPath:
                 description: |-
                   ModelPath is the subdirectory within the PVC where the model is stored.
                   Defaults to the ModelCache name if not specified.
                 type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector restricts which nodes should cache the model.
+                  Used with NodeLocal strategy. Defaults to nodes with nvidia.com/gpu.present=true.
+                type: object
               ociRegistrySecretRef:
                 description: |-
                   OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
@@ -164,9 +182,19 @@ spec:
               phase:
                 description: Phase represents the current lifecycle state
                 type: string
+              readyNodes:
+                description: ReadyNodes is the count of nodes where the model is fully
+                  cached (NodeLocal strategy)
+                format: int32
+                type: integer
               sizeBytes:
                 description: SizeBytes is the size of the cached model
                 type: string
+              totalNodes:
+                description: TotalNodes is the count of nodes that should have the
+                  model cached (NodeLocal strategy)
+                format: int32
+                type: integer
             type: object
         type: object
     served: true

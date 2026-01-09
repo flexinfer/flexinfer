@@ -20,8 +20,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -49,6 +52,7 @@ type ModelCacheReconciler struct {
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -83,7 +87,10 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.reconcileSharedPVC(ctx, modelCache)
 	}
 
-	// TODO: Implement NodeLocal
+	if strategy == aiv1alpha1.StorageStrategyNodeLocal {
+		return r.reconcileNodeLocal(ctx, modelCache)
+	}
+
 	log.Info("Strategy not implemented yet", "strategy", strategy)
 	return ctrl.Result{}, nil
 }
@@ -462,6 +469,266 @@ ls -la "$DEST_DIR"
 	return job, nil
 }
 
+// reconcileNodeLocal handles the NodeLocal storage strategy using DaemonSets
+func (r *ModelCacheReconciler) reconcileNodeLocal(ctx context.Context, m *aiv1alpha1.ModelCache) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// 1. Determine host path
+	hostPath := "/var/lib/flexinfer/models"
+	if m.Spec.HostPath != nil && *m.Spec.HostPath != "" {
+		hostPath = *m.Spec.HostPath
+	}
+	modelPath := filepath.Join(hostPath, m.Name)
+
+	// 2. Get or create DaemonSet
+	dsName := m.Name + "-syncer"
+	ds := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: dsName, Namespace: m.Namespace}, ds)
+
+	if err != nil && errors.IsNotFound(err) {
+		// Create DaemonSet
+		newDS, err := r.daemonSetForNodeLocal(m, modelPath, hostPath)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Creating NodeLocal DaemonSet", "DaemonSet", dsName)
+		if err := r.Create(ctx, newDS); err != nil {
+			return ctrl.Result{}, err
+		}
+		m.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		return ctrl.Result{Requeue: true}, r.Status().Update(ctx, m)
+	} else if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 3. Check DaemonSet status
+	readyNodes := ds.Status.NumberReady
+	totalNodes := ds.Status.DesiredNumberScheduled
+
+	m.Status.ReadyNodes = readyNodes
+	m.Status.TotalNodes = totalNodes
+	m.Status.Path = modelPath
+
+	if readyNodes == totalNodes && totalNodes > 0 {
+		if m.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+			m.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+			log.Info("ModelCache is Ready", "readyNodes", readyNodes, "totalNodes", totalNodes, "path", modelPath)
+		}
+	} else if readyNodes < totalNodes {
+		m.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		log.Info("ModelCache provisioning", "readyNodes", readyNodes, "totalNodes", totalNodes)
+	}
+
+	if err := r.Status().Update(ctx, m); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Requeue to monitor DaemonSet status during provisioning
+	if m.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// daemonSetForNodeLocal creates a DaemonSet for syncing models to each node
+func (r *ModelCacheReconciler) daemonSetForNodeLocal(m *aiv1alpha1.ModelCache, modelPath, hostPath string) (*appsv1.DaemonSet, error) {
+	// Determine download method and script based on source type
+	var image, downloadScript string
+
+	if isOCISource(m.Spec.Source) {
+		// OCI registry source - use ORAS
+		image = "ghcr.io/oras-project/oras:v1.2.2"
+		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
+			image = img
+		}
+		registryRef := parseOCISource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_REF="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR"
+    while true; do sleep 3600; done
+fi
+
+mkdir -p "$DEST_DIR"
+echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR..."
+oras pull "$MODEL_REF" -o "$DEST_DIR"
+touch "$MARKER"
+echo "Sync complete, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, registryRef)
+	} else if isMlcModel(m.Spec.Source) {
+		// MLC-LLM models require git clone with LFS
+		image = "debian:bookworm-slim"
+		modelID := parseModelSource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_ID="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR"
+    while true; do sleep 3600; done
+fi
+
+apt-get update && apt-get install -y git git-lfs ca-certificates
+git lfs install
+mkdir -p "$DEST_DIR"
+echo "Cloning $MODEL_ID to $DEST_DIR..."
+GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+touch "$MARKER"
+echo "Sync complete, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, modelID)
+	} else {
+		// Standard HuggingFace models
+		image = "python:3.10-slim"
+		modelID := parseModelSource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_ID="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR"
+    while true; do sleep 3600; done
+fi
+
+pip install --no-cache-dir huggingface_hub
+echo "Downloading $MODEL_ID to $DEST_DIR..."
+mkdir -p "$DEST_DIR"
+huggingface-cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
+touch "$MARKER"
+echo "Sync complete, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, modelID)
+	}
+
+	// Node selector - default to GPU nodes
+	nodeSelector := m.Spec.NodeSelector
+	if nodeSelector == nil {
+		nodeSelector = map[string]string{
+			"nvidia.com/gpu.present": "true",
+		}
+	}
+
+	// Environment variables
+	var envVars []corev1.EnvVar
+	if m.Spec.SecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "HF_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: *m.Spec.SecretRef,
+					},
+					Key: "HF_TOKEN",
+				},
+			},
+		})
+	}
+
+	// Build volumes and mounts
+	volumes := []corev1.Volume{{
+		Name: "model-cache",
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: hostPath,
+				Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+			},
+		},
+	}}
+
+	volumeMounts := []corev1.VolumeMount{{
+		Name:      "model-cache",
+		MountPath: hostPath,
+	}}
+
+	// Mount docker config secret for OCI registry auth
+	if isOCISource(m.Spec.Source) && m.Spec.OCIRegistrySecretRef != nil && *m.Spec.OCIRegistrySecretRef != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "docker-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: *m.Spec.OCIRegistrySecretRef,
+					Items: []corev1.KeyToPath{{
+						Key:  ".dockerconfigjson",
+						Path: "config.json",
+					}},
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "docker-config",
+			MountPath: "/root/.docker",
+			ReadOnly:  true,
+		})
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "modelcache-syncer",
+		"app.kubernetes.io/instance":   m.Name,
+		"app.kubernetes.io/managed-by": "flexinfer",
+	}
+
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-syncer",
+			Namespace: m.Namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":     "modelcache-syncer",
+					"app.kubernetes.io/instance": m.Name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: nodeSelector,
+					Containers: []corev1.Container{{
+						Name:         "syncer",
+						Image:        image,
+						Command:      []string{"/bin/sh", "-c"},
+						Args:         []string{downloadScript},
+						VolumeMounts: volumeMounts,
+						Env:          envVars,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+						},
+					}},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(m, ds, r.Scheme); err != nil {
+		return nil, err
+	}
+	return ds, nil
+}
+
+// hostPathTypePtr returns a pointer to a HostPathType
+func hostPathTypePtr(t corev1.HostPathType) *corev1.HostPathType {
+	return &t
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("modelcache-controller")
@@ -469,5 +736,6 @@ func (r *ModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&aiv1alpha1.ModelCache{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
+		Owns(&appsv1.DaemonSet{}).
 		Complete(r)
 }

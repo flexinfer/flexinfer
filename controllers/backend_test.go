@@ -18,10 +18,12 @@ package controllers
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -757,7 +759,7 @@ func TestGetMLCGPUMemory(t *testing.T) {
 			expected: "8000000000",
 		},
 		{
-			name: "Maxwell auto-detect",
+			name:   "Maxwell auto-detect",
 			mlcllm: nil,
 			nodeSelector: map[string]string{
 				"nvidia.com/gpu.arch": "Maxwell",
@@ -1443,5 +1445,330 @@ func TestJobForOCIDownload_EnvOverride(t *testing.T) {
 	expected := "my-registry/custom-oras:v2.0.0"
 	if container.Image != expected {
 		t.Errorf("Expected image %s from env override, got %s", expected, container.Image)
+	}
+}
+
+// ===== NodeLocal DaemonSet Tests =====
+
+func TestDaemonSetForNodeLocal_HuggingFace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "huggingface://meta-llama/Llama-2-7b-chat-hf",
+		},
+	}
+	m.Name = "llama2-local"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/var/lib/flexinfer/models/llama2-local", "/var/lib/flexinfer/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check DaemonSet name
+	if ds.Name != "llama2-local-syncer" {
+		t.Errorf("Expected DaemonSet name 'llama2-local-syncer', got %s", ds.Name)
+	}
+
+	// Check container image - should use python for HuggingFace
+	container := ds.Spec.Template.Spec.Containers[0]
+	if container.Image != "python:3.10-slim" {
+		t.Errorf("Expected python:3.10-slim for HuggingFace source, got %s", container.Image)
+	}
+
+	// Check download script contains huggingface-cli
+	if len(container.Args) == 0 || !strings.Contains(container.Args[0], "huggingface-cli download") {
+		t.Error("Expected download script to contain 'huggingface-cli download'")
+	}
+
+	// Check default node selector (GPU nodes)
+	if ds.Spec.Template.Spec.NodeSelector == nil {
+		t.Fatal("Expected default node selector to be set")
+	}
+	if ds.Spec.Template.Spec.NodeSelector["nvidia.com/gpu.present"] != "true" {
+		t.Error("Expected default node selector for GPU nodes")
+	}
+
+	// Check hostPath volume
+	foundHostPath := false
+	for _, vol := range ds.Spec.Template.Spec.Volumes {
+		if vol.Name == "model-cache" && vol.HostPath != nil {
+			foundHostPath = true
+			if vol.HostPath.Path != "/var/lib/flexinfer/models" {
+				t.Errorf("Expected hostPath to be /var/lib/flexinfer/models, got %s", vol.HostPath.Path)
+			}
+		}
+	}
+	if !foundHostPath {
+		t.Error("Expected model-cache hostPath volume")
+	}
+
+	// Check labels
+	if ds.Labels["app.kubernetes.io/name"] != "modelcache-syncer" {
+		t.Error("Expected app.kubernetes.io/name label")
+	}
+	if ds.Labels["app.kubernetes.io/instance"] != "llama2-local" {
+		t.Error("Expected app.kubernetes.io/instance label")
+	}
+}
+
+func TestDaemonSetForNodeLocal_MLC(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "mlc://mlc-ai/Qwen3-0.6B-q4f16_1-MLC",
+		},
+	}
+	m.Name = "qwen-mlc"
+	m.Namespace = "ai"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/mnt/nvme/models/qwen-mlc", "/mnt/nvme/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check container image - should use debian for MLC (git clone)
+	container := ds.Spec.Template.Spec.Containers[0]
+	if container.Image != "debian:bookworm-slim" {
+		t.Errorf("Expected debian:bookworm-slim for MLC source, got %s", container.Image)
+	}
+
+	// Check download script contains git clone
+	if len(container.Args) == 0 || !strings.Contains(container.Args[0], "git clone") {
+		t.Error("Expected download script to contain 'git clone'")
+	}
+
+	// Check marker file creation
+	if !strings.Contains(container.Args[0], "touch \"$MARKER\"") {
+		t.Error("Expected download script to create marker file")
+	}
+
+	// Check sleep loop for long-running DaemonSet pod
+	if !strings.Contains(container.Args[0], "while true; do sleep 3600; done") {
+		t.Error("Expected download script to have sleep loop")
+	}
+}
+
+func TestDaemonSetForNodeLocal_OCI(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "oci://ghcr.io/flexinfer/models/llama3:v1",
+		},
+	}
+	m.Name = "llama3-oci"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/var/lib/flexinfer/models/llama3-oci", "/var/lib/flexinfer/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check container image - should use ORAS
+	container := ds.Spec.Template.Spec.Containers[0]
+	if container.Image != "ghcr.io/oras-project/oras:v1.2.2" {
+		t.Errorf("Expected ORAS image for OCI source, got %s", container.Image)
+	}
+
+	// Check download script contains oras pull
+	if len(container.Args) == 0 || !strings.Contains(container.Args[0], "oras pull") {
+		t.Error("Expected download script to contain 'oras pull'")
+	}
+
+	// Check no docker-config volume (no auth secret)
+	for _, vol := range ds.Spec.Template.Spec.Volumes {
+		if vol.Name == "docker-config" {
+			t.Error("Should not have docker-config volume without auth secret")
+		}
+	}
+}
+
+func TestDaemonSetForNodeLocal_OCIWithAuth(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	secretName := "harbor-creds"
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:               "oci://registry.harbor.lan/models/llama3:v1",
+			OCIRegistrySecretRef: &secretName,
+		},
+	}
+	m.Name = "llama3-private"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/var/lib/flexinfer/models/llama3-private", "/var/lib/flexinfer/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check docker-config volume exists
+	foundDockerConfig := false
+	for _, vol := range ds.Spec.Template.Spec.Volumes {
+		if vol.Name == "docker-config" {
+			foundDockerConfig = true
+			if vol.Secret == nil || vol.Secret.SecretName != "harbor-creds" {
+				t.Error("docker-config volume should reference harbor-creds secret")
+			}
+		}
+	}
+	if !foundDockerConfig {
+		t.Error("Expected docker-config volume for OCI with auth")
+	}
+
+	// Check docker-config mount
+	container := ds.Spec.Template.Spec.Containers[0]
+	foundDockerMount := false
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "docker-config" {
+			foundDockerMount = true
+			if mount.MountPath != "/root/.docker" {
+				t.Errorf("docker-config should mount at /root/.docker, got %s", mount.MountPath)
+			}
+		}
+	}
+	if !foundDockerMount {
+		t.Error("Expected docker-config volume mount")
+	}
+}
+
+func TestDaemonSetForNodeLocal_CustomNodeSelector(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "huggingface://meta-llama/Llama-2-7b-chat-hf",
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": "gpu-node-1",
+				"tier":                   "inference",
+			},
+		},
+	}
+	m.Name = "llama2-specific"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/var/lib/flexinfer/models/llama2-specific", "/var/lib/flexinfer/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check custom node selector is used
+	nodeSelector := ds.Spec.Template.Spec.NodeSelector
+	if nodeSelector["kubernetes.io/hostname"] != "gpu-node-1" {
+		t.Error("Expected custom hostname selector")
+	}
+	if nodeSelector["tier"] != "inference" {
+		t.Error("Expected custom tier selector")
+	}
+
+	// Ensure default GPU selector is NOT present when custom is specified
+	if _, exists := nodeSelector["nvidia.com/gpu.present"]; exists {
+		t.Error("Should not have default GPU selector when custom selector is provided")
+	}
+}
+
+func TestDaemonSetForNodeLocal_CustomHostPath(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	customPath := "/mnt/nvme/ai-models"
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:   "huggingface://meta-llama/Llama-2-7b-chat-hf",
+			HostPath: &customPath,
+		},
+	}
+	m.Name = "llama2-nvme"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/mnt/nvme/ai-models/llama2-nvme", "/mnt/nvme/ai-models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check hostPath volume uses custom path
+	foundHostPath := false
+	for _, vol := range ds.Spec.Template.Spec.Volumes {
+		if vol.Name == "model-cache" && vol.HostPath != nil {
+			foundHostPath = true
+			if vol.HostPath.Path != "/mnt/nvme/ai-models" {
+				t.Errorf("Expected hostPath to be /mnt/nvme/ai-models, got %s", vol.HostPath.Path)
+			}
+		}
+	}
+	if !foundHostPath {
+		t.Error("Expected model-cache hostPath volume")
+	}
+
+	// Check download script uses custom path
+	container := ds.Spec.Template.Spec.Containers[0]
+	if !strings.Contains(container.Args[0], "/mnt/nvme/ai-models/llama2-nvme") {
+		t.Error("Expected download script to reference custom path")
+	}
+}
+
+func TestDaemonSetForNodeLocal_WithHFToken(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	secretName := "hf-token"
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:    "huggingface://meta-llama/Llama-2-7b-chat-hf",
+			SecretRef: &secretName,
+		},
+	}
+	m.Name = "llama2-auth"
+	m.Namespace = "default"
+
+	ds, err := r.daemonSetForNodeLocal(m, "/var/lib/flexinfer/models/llama2-auth", "/var/lib/flexinfer/models")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check HF_TOKEN env var
+	container := ds.Spec.Template.Spec.Containers[0]
+	foundHFToken := false
+	for _, env := range container.Env {
+		if env.Name == "HF_TOKEN" {
+			foundHFToken = true
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				t.Error("HF_TOKEN should reference secret")
+			}
+			if env.ValueFrom.SecretKeyRef.Name != "hf-token" {
+				t.Errorf("Expected secret name hf-token, got %s", env.ValueFrom.SecretKeyRef.Name)
+			}
+		}
+	}
+	if !foundHFToken {
+		t.Error("Expected HF_TOKEN environment variable")
 	}
 }
