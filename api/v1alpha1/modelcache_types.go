@@ -58,6 +58,8 @@ type ModelCacheSpec struct {
 	//   - huggingface://meta-llama/Llama-2-7b-chat-hf (standard HF models)
 	//   - mlc://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC-compiled models)
 	//   - HF://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC shorthand for HuggingFace)
+	//   - oci://registry.example.com/models/llama3:v1 (OCI artifact)
+	//   - oras://registry.example.com/models/llama3@sha256:... (OCI with digest)
 	// +kubebuilder:validation:Required
 	Source string `json:"source"`
 
@@ -89,6 +91,11 @@ type ModelCacheSpec struct {
 	// SecretRef is the name of the secret containing authentication credentials (key: HF_TOKEN)
 	// +optional
 	SecretRef *string `json:"secretRef,omitempty"`
+
+	// OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
+	// for authenticating to OCI registries. Used when source begins with oci:// or oras://
+	// +optional
+	OCIRegistrySecretRef *string `json:"ociRegistrySecretRef,omitempty"`
 }
 
 // ModelCacheStatus defines the observed state of ModelCache

@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestGetBackendImage_MlcLlm_AMD(t *testing.T) {
@@ -1269,5 +1270,178 @@ func TestGetBackendArgs_LlamaCpp(t *testing.T) {
 
 	if args[0] != "--model" || args[1] != "llama-2-7b.gguf" {
 		t.Errorf("Expected --model llama-2-7b.gguf, got %s %s", args[0], args[1])
+	}
+}
+
+// --- OCI Source Tests ---
+
+func TestIsOCISource(t *testing.T) {
+	tests := []struct {
+		source   string
+		expected bool
+	}{
+		{"oci://registry.example.com/models/llama3:v1", true},
+		{"oras://harbor.lan/models/model@sha256:abc", true},
+		{"huggingface://meta-llama/Llama-2-7b", false},
+		{"mlc://mlc-ai/Qwen3-0.6B-q4f16_1-MLC", false},
+		{"HF://mlc-ai/model", false},
+		{"oci://ghcr.io/flexinfer/models/qwen:latest", true},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isOCISource(tt.source); got != tt.expected {
+			t.Errorf("isOCISource(%q) = %v, want %v", tt.source, got, tt.expected)
+		}
+	}
+}
+
+func TestParseOCISource(t *testing.T) {
+	tests := []struct {
+		source   string
+		expected string
+	}{
+		{"oci://registry.example.com/models/llama3:v1", "registry.example.com/models/llama3:v1"},
+		{"oras://harbor.lan/models/model@sha256:abc", "harbor.lan/models/model@sha256:abc"},
+		{"oci://ghcr.io/flexinfer/models/qwen:latest", "ghcr.io/flexinfer/models/qwen:latest"},
+	}
+	for _, tt := range tests {
+		if got := parseOCISource(tt.source); got != tt.expected {
+			t.Errorf("parseOCISource(%q) = %q, want %q", tt.source, got, tt.expected)
+		}
+	}
+}
+
+func TestJobForOCIDownload_NoAuth(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "oci://ghcr.io/flexinfer/models/llama3:v1",
+		},
+	}
+	m.Name = "test-cache"
+	m.Namespace = "default"
+
+	job, err := r.jobForOCIDownload(m, "test-pvc", "test-model")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check job name
+	if job.Name != "test-cache-downloader" {
+		t.Errorf("Expected job name 'test-cache-downloader', got %s", job.Name)
+	}
+
+	// Check container image
+	container := job.Spec.Template.Spec.Containers[0]
+	if container.Image != "ghcr.io/oras-project/oras:v1.2.2" {
+		t.Errorf("Expected ORAS image, got %s", container.Image)
+	}
+
+	// Check volume count - should only have model-store, no docker-config
+	if len(job.Spec.Template.Spec.Volumes) != 1 {
+		t.Errorf("Expected 1 volume (model-store), got %d", len(job.Spec.Template.Spec.Volumes))
+	}
+
+	// Check volume mounts - should only have model-store
+	if len(container.VolumeMounts) != 1 {
+		t.Errorf("Expected 1 volume mount, got %d", len(container.VolumeMounts))
+	}
+}
+
+func TestJobForOCIDownload_WithAuth(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	secretName := "harbor-creds"
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:               "oci://registry.harbor.lan/models/llama3:v1",
+			OCIRegistrySecretRef: &secretName,
+		},
+	}
+	m.Name = "test-cache"
+	m.Namespace = "default"
+
+	job, err := r.jobForOCIDownload(m, "test-pvc", "test-model")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check volume count - should have model-store and docker-config
+	if len(job.Spec.Template.Spec.Volumes) != 2 {
+		t.Errorf("Expected 2 volumes (model-store, docker-config), got %d", len(job.Spec.Template.Spec.Volumes))
+	}
+
+	// Check for docker-config volume
+	foundDockerConfig := false
+	for _, vol := range job.Spec.Template.Spec.Volumes {
+		if vol.Name == "docker-config" {
+			foundDockerConfig = true
+			if vol.Secret == nil || vol.Secret.SecretName != "harbor-creds" {
+				t.Error("docker-config volume should reference harbor-creds secret")
+			}
+		}
+	}
+	if !foundDockerConfig {
+		t.Error("Expected docker-config volume to be present")
+	}
+
+	// Check volume mounts
+	container := job.Spec.Template.Spec.Containers[0]
+	if len(container.VolumeMounts) != 2 {
+		t.Errorf("Expected 2 volume mounts, got %d", len(container.VolumeMounts))
+	}
+
+	// Check docker-config mount
+	foundDockerMount := false
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "docker-config" {
+			foundDockerMount = true
+			if mount.MountPath != "/root/.docker" {
+				t.Errorf("docker-config should mount at /root/.docker, got %s", mount.MountPath)
+			}
+			if !mount.ReadOnly {
+				t.Error("docker-config mount should be read-only")
+			}
+		}
+	}
+	if !foundDockerMount {
+		t.Error("Expected docker-config volume mount to be present")
+	}
+}
+
+func TestJobForOCIDownload_EnvOverride(t *testing.T) {
+	// Set custom ORAS image
+	os.Setenv("ORAS_DOWNLOADER_IMAGE", "my-registry/custom-oras:v2.0.0")
+	defer os.Unsetenv("ORAS_DOWNLOADER_IMAGE")
+
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	m := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "oci://ghcr.io/flexinfer/models/llama3:v1",
+		},
+	}
+	m.Name = "test-cache"
+	m.Namespace = "default"
+
+	job, err := r.jobForOCIDownload(m, "test-pvc", "test-model")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	expected := "my-registry/custom-oras:v2.0.0"
+	if container.Image != expected {
+		t.Errorf("Expected image %s from env override, got %s", expected, container.Image)
 	}
 }

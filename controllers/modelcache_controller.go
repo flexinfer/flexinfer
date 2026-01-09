@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -129,12 +130,18 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
-		// Create Downloader Job
-		newJob, err := r.jobForDownload(modelCache, pvcName, modelPath)
-		if err != nil {
-			return ctrl.Result{}, err
+		// Create Downloader Job - use OCI job for OCI sources
+		var newJob *batchv1.Job
+		var jobErr error
+		if isOCISource(modelCache.Spec.Source) {
+			newJob, jobErr = r.jobForOCIDownload(modelCache, pvcName, modelPath)
+		} else {
+			newJob, jobErr = r.jobForDownload(modelCache, pvcName, modelPath)
 		}
-		log.Info("Creating Downloader Job", "Job", newJob.Name, "modelPath", modelPath)
+		if jobErr != nil {
+			return ctrl.Result{}, jobErr
+		}
+		log.Info("Creating Downloader Job", "Job", newJob.Name, "modelPath", modelPath, "isOCI", isOCISource(modelCache.Spec.Source))
 		if err := r.Create(ctx, newJob); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -214,6 +221,19 @@ func parseModelSource(source string) string {
 	source = strings.TrimPrefix(source, "huggingface://")
 	source = strings.TrimPrefix(source, "mlc://")
 	source = strings.TrimPrefix(source, "HF://")
+	return source
+}
+
+// isOCISource returns true if the source is an OCI registry reference
+func isOCISource(source string) bool {
+	return strings.HasPrefix(source, "oci://") ||
+		strings.HasPrefix(source, "oras://")
+}
+
+// parseOCISource extracts the registry reference from OCI source formats
+func parseOCISource(source string) string {
+	source = strings.TrimPrefix(source, "oci://")
+	source = strings.TrimPrefix(source, "oras://")
 	return source
 }
 
@@ -337,6 +357,105 @@ echo "Download complete."
 			},
 		},
 	}
+	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func (r *ModelCacheReconciler) jobForOCIDownload(m *aiv1alpha1.ModelCache, pvcName, modelPath string) (*batchv1.Job, error) {
+	registryRef := parseOCISource(m.Spec.Source)
+
+	// Get ORAS image from environment or use default
+	orasImage := "ghcr.io/oras-project/oras:v1.2.2"
+	if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
+		orasImage = img
+	}
+
+	downloadScript := fmt.Sprintf(`
+set -ex
+MODEL_REF="%s"
+DEST_DIR="/models/%s"
+
+# Skip if already downloaded
+if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
+    echo "Model already cached at $DEST_DIR"
+    exit 0
+fi
+
+mkdir -p "$DEST_DIR"
+echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR..."
+oras pull "$MODEL_REF" -o "$DEST_DIR"
+echo "Download complete."
+ls -la "$DEST_DIR"
+`, registryRef, modelPath)
+
+	volumes := []corev1.Volume{{
+		Name: "model-store",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvcName,
+			},
+		},
+	}}
+
+	volumeMounts := []corev1.VolumeMount{{
+		Name:      "model-store",
+		MountPath: "/models",
+	}}
+
+	// Mount docker config secret for registry auth
+	if m.Spec.OCIRegistrySecretRef != nil && *m.Spec.OCIRegistrySecretRef != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "docker-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: *m.Spec.OCIRegistrySecretRef,
+					Items: []corev1.KeyToPath{{
+						Key:  ".dockerconfigjson",
+						Path: "config.json",
+					}},
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "docker-config",
+			MountPath: "/root/.docker",
+			ReadOnly:  true,
+		})
+	}
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-downloader",
+			Namespace: m.Namespace,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{{
+						Name:         "downloader",
+						Image:        orasImage,
+						Command:      []string{"/bin/sh", "-c"},
+						Args:         []string{downloadScript},
+						VolumeMounts: volumeMounts,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+						},
+					}},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+
 	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
 		return nil, err
 	}

@@ -64,6 +64,11 @@ spec:
                   ModelPath is the subdirectory within the PVC where the model is stored.
                   Defaults to the ModelCache name if not specified.
                 type: string
+              ociRegistrySecretRef:
+                description: |-
+                  OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
+                  for authenticating to OCI registries. Used when source begins with oci:// or oras://
+                type: string
               secretRef:
                 description: 'SecretRef is the name of the secret containing authentication
                   credentials (key: HF_TOKEN)'
@@ -75,6 +80,8 @@ spec:
                     - huggingface://meta-llama/Llama-2-7b-chat-hf (standard HF models)
                     - mlc://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC-compiled models)
                     - HF://mlc-ai/Qwen3-0.6B-q4f16_1-MLC (MLC shorthand for HuggingFace)
+                    - oci://registry.example.com/models/llama3:v1 (OCI artifact)
+                    - oras://registry.example.com/models/llama3@sha256:... (OCI with digest)
                 type: string
               storageSize:
                 default: 50Gi

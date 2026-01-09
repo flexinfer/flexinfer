@@ -142,6 +142,12 @@ llamacpp:
     # Complete args override. Use for advanced cases only
     args: ""
 
+# ORAS configuration for OCI artifact downloads (ModelCache with oci:// or oras:// sources)
+oras:
+  # Image used for downloading OCI artifacts in ModelCache jobs
+  # Uses official ORAS image from GitHub Container Registry
+  image: ghcr.io/oras-project/oras:v1.2.2
+
 scheduler:
   enabled: true
   replicas: 1
