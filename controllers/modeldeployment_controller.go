@@ -1225,6 +1225,14 @@ func (r *ModelDeploymentReconciler) buildMLCOverrides(m *aiv1alpha1.ModelDeploym
 		if overrides.ContextWindowSize != nil {
 			parts = append(parts, fmt.Sprintf("context_window_size=%d", *overrides.ContextWindowSize))
 		}
+		// MaxNumSequence controls concurrent request batch size in server mode
+		if overrides.MaxNumSequence != nil {
+			parts = append(parts, fmt.Sprintf("max_num_sequence=%d", *overrides.MaxNumSequence))
+		}
+		// GPUMemoryUtilization sets fraction of GPU memory to use (0.0-1.0)
+		if overrides.GPUMemoryUtilization != "" {
+			parts = append(parts, fmt.Sprintf("gpu_memory_utilization=%s", overrides.GPUMemoryUtilization))
+		}
 	}
 
 	// Always include memory optimization settings

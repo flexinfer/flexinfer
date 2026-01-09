@@ -269,6 +269,21 @@ spec:
                         maximum: 131072
                         minimum: 256
                         type: integer
+                      gpuMemoryUtilization:
+                        description: |-
+                          GPUMemoryUtilization sets the fraction of GPU memory to use (0.0-1.0).
+                          MLC-LLM uses this to calculate KV cache allocation in server mode.
+                          Example: "0.85" for 85% of GPU memory.
+                        type: string
+                      maxNumSequence:
+                        description: |-
+                          MaxNumSequence controls the maximum number of concurrent sequences (batch size).
+                          In server mode, this limits concurrent requests. Lower values reduce KV cache memory.
+                          Default: 1 for local/interactive, 128 for server mode.
+                        format: int32
+                        maximum: 256
+                        minimum: 1
+                        type: integer
                       maxTotalSeqLength:
                         description: |-
                           MaxTotalSeqLength limits the total sequence length (context + generation).

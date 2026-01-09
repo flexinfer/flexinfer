@@ -921,6 +921,37 @@ func TestBuildMLCOverrides(t *testing.T) {
 			},
 			expected: "context_window_size=2048;prefill_chunk_size=256;max_total_seq_length=4096;top_p=0.9",
 		},
+		{
+			name: "with max_num_sequence",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					MaxNumSequence: ptrTo(int32(2)),
+				},
+			},
+			expected: "max_num_sequence=2;prefill_chunk_size=512;max_total_seq_length=16384",
+		},
+		{
+			name: "with gpu_memory_utilization",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Overrides: &aiv1alpha1.MLCOverrides{
+					GPUMemoryUtilization: "0.85",
+				},
+			},
+			expected: "gpu_memory_utilization=0.85;prefill_chunk_size=512;max_total_seq_length=16384",
+		},
+		{
+			name: "server mode optimized config",
+			mlcllm: &aiv1alpha1.MLCLLMSpec{
+				Mode: "server",
+				Overrides: &aiv1alpha1.MLCOverrides{
+					MaxNumSequence:       ptrTo(int32(2)),
+					MaxTotalSeqLength:    ptrTo(int32(131072)),
+					PrefillChunkSize:     ptrTo(int32(2048)),
+					GPUMemoryUtilization: "0.85",
+				},
+			},
+			expected: "max_num_sequence=2;gpu_memory_utilization=0.85;prefill_chunk_size=2048;max_total_seq_length=131072",
+		},
 	}
 
 	for _, tt := range tests {

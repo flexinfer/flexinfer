@@ -223,6 +223,11 @@ func (in *MLCOverrides) DeepCopyInto(out *MLCOverrides) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.MaxNumSequence != nil {
+		in, out := &in.MaxNumSequence, &out.MaxNumSequence
+		*out = new(int32)
+		**out = **in
+	}
 	if in.ContextWindowSize != nil {
 		in, out := &in.ContextWindowSize, &out.ContextWindowSize
 		*out = new(int32)

@@ -1,0 +1,101 @@
+# Example: Qwen2.5-7B-abliterated with optimized memory settings for AMD 7900XTX
+#
+# This deployment demonstrates the new MLC-LLM memory optimization options:
+# - maxNumSequence: Controls concurrent request batch size (lower = less KV cache memory)
+# - gpuMemoryUtilization: Fraction of GPU memory to use (0.0-1.0)
+#
+# Configuration targets ~85% VRAM usage (20GB of 24GB) with 128k context support
+# and 2 concurrent request handling capability.
+#
+# Usage:
+#   kubectl apply -f qwen25-7b-abliterated-mlc-amd.yaml
+#
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen25-7b-abliterated-mlc
+  namespace: flexinfer-system
+spec:
+  storageStrategy: SharedPVC
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen2.5-7B-abliterated-v2-q4f32_1-MLC
+  storageSize: 8Gi
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen25-7b-abliterated
+  namespace: flexinfer-system
+  labels:
+    app: qwen25-abliterated
+    backend: mlc-llm
+    gpu-vendor: amd
+  annotations:
+    # LiteLLM discovery annotations
+    litellm.flexinfer.ai/served-model: "Qwen2.5-7B-abliterated"
+    litellm.flexinfer.ai/aliases: "qwen25-7b,qwen2.5-7b-abliterated"
+spec:
+  backend: mlc-llm
+  model: /models/Qwen2.5-7B-abliterated-v2-q4f32_1-MLC
+  replicas: 1
+
+  # Reference the ModelCache for model storage
+  modelCacheRef: qwen25-7b-abliterated-mlc
+
+  # LiteLLM proxy integration (enabled by default)
+  litellm:
+    enabled: true
+    servedModelName: "Qwen2.5-7B-abliterated"
+    aliases:
+      - "qwen25-7b"
+      - "qwen2.5-7b-abliterated"
+
+  # MLC-LLM backend configuration with memory optimization
+  mlcllm:
+    # Server mode for multi-user support
+    mode: server
+
+    # Pre-compiled library for ROCm gfx1100 (7900 XTX)
+    modelLibPath: /models/Qwen2.5-7B-abliterated-v2-q4f32_1-MLC/lib_rocm_gfx1100.so
+
+    # Disable JIT compilation (use pre-compiled library)
+    jitPolicy: "OFF"
+
+    # Memory optimization overrides
+    overrides:
+      # Limit to 2 concurrent requests to reduce KV cache memory
+      # Default server mode uses 128, which allocates massive KV cache
+      maxNumSequence: 2
+
+      # Total context across all concurrent sequences (128k)
+      # Memory: ~55 bytes/token for Qwen 7B = ~14.4GB KV cache
+      maxTotalSeqLength: 131072
+
+      # Larger prefill chunks for better throughput
+      prefillChunkSize: 2048
+
+      # Use 85% of GPU memory, leaving headroom for stability
+      # On 24GB 7900XTX: 0.85 * 24GB = ~20GB
+      gpuMemoryUtilization: "0.85"
+
+  # Resource requirements
+  resources:
+    requests:
+      amd.com/gpu: "1"
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      amd.com/gpu: "1"
+      cpu: "8"
+      memory: 24Gi
+
+  # Schedule to 7900XTX node
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+
+  # Benchmark settings (optional)
+  benchmark:
+    warmupIterations: 2
+    batchSize: 128
+    iterations: 3

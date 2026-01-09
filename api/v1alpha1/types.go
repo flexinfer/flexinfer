@@ -246,6 +246,20 @@ type MLCOverrides struct {
 	// +optional
 	MaxTotalSeqLength *int32 `json:"maxTotalSeqLength,omitempty"`
 
+	// MaxNumSequence controls the maximum number of concurrent sequences (batch size).
+	// In server mode, this limits concurrent requests. Lower values reduce KV cache memory.
+	// Default: 1 for local/interactive, 128 for server mode.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=256
+	// +optional
+	MaxNumSequence *int32 `json:"maxNumSequence,omitempty"`
+
+	// GPUMemoryUtilization sets the fraction of GPU memory to use (0.0-1.0).
+	// MLC-LLM uses this to calculate KV cache allocation in server mode.
+	// Example: "0.85" for 85% of GPU memory.
+	// +optional
+	GPUMemoryUtilization string `json:"gpuMemoryUtilization,omitempty"`
+
 	// ContextWindowSize sets the context window size for the model.
 	// Should not exceed MaxTotalSeqLength.
 	// +kubebuilder:validation:Minimum=256
