@@ -1472,7 +1472,7 @@ func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *
 		"server":    serverName,
 		"tool":      toolName,
 		"method":    "tools/call",
-		"params":    paramsJSON,
+		"params":    json.RawMessage(paramsJSON),
 		"arguments": params.Arguments,
 	})
 
