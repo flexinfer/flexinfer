@@ -824,7 +824,7 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 					return image
 				}
 				// Maxwell-specific image built with CUDA 11.8 and compute capability 52
-				return "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v6"
+				return "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"
 			}
 			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE"); ok {
 				return image

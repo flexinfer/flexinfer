@@ -83,7 +83,7 @@ func TestGetBackendImage_MlcLlm_Maxwell(t *testing.T) {
 	}
 
 	image := r.getBackendImage(m)
-	expected := "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v6"
+	expected := "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"
 	if image != expected {
 		t.Errorf("Expected %s, got %s", expected, image)
 	}
@@ -106,7 +106,7 @@ func TestGetBackendImage_MlcLlm_MaxwellArch(t *testing.T) {
 	}
 
 	image := r.getBackendImage(m)
-	expected := "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v6"
+	expected := "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"
 	if image != expected {
 		t.Errorf("Expected %s, got %s", expected, image)
 	}

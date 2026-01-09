@@ -67,6 +67,21 @@ graph TB
 
 See [AGENTS.md](AGENTS.md) for detailed component documentation.
 
+## GPU Compatibility
+
+FlexInfer supports multiple GPU architectures with backend-specific considerations:
+
+| GPU Architecture | Compute Capability | Ollama | vLLM | MLC-LLM | Notes |
+|-----------------|-------------------|--------|------|---------|-------|
+| Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | *FP32 only, see [Maxwell Guide](build/README-maxwell.md) |
+| Pascal (GTX 1080) | 6.x | ✅ | ✅ | ✅ | Full support |
+| Volta+ (RTX 20xx+) | 7.0+ | ✅ | ✅ | ✅ | Full support with Tensor Cores |
+| AMD (RX 7900) | ROCm | ✅ | ✅ | ✅ | ROCm 5.6+ required |
+
+### Special GPU Documentation
+
+- **[Maxwell GPUs (GTX 980 Ti, etc.)](build/README-maxwell.md)** - Running MLC-LLM on older NVIDIA GPUs without FP16 support
+
 ## Quick Start
 
 ### Prerequisites
