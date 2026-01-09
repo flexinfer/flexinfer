@@ -907,7 +907,11 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
-		return []string{"--model", modelPath}
+		// vLLM args: --model is required, other options are optional
+		if args, ok := os.LookupEnv("DEFAULT_VLLM_ARGS"); ok && args != "" {
+			return strings.Fields(args)
+		}
+		return r.buildVLLMArgs(m, modelPath)
 	case "mlc-llm":
 		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode local
 		// Complete args override for backwards compatibility
@@ -934,10 +938,11 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 
 		return args
 	case "llamacpp":
+		// llama.cpp server args
 		if args, ok := os.LookupEnv("DEFAULT_LLAMA_CPP_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
-		return []string{"--model", modelPath}
+		return r.buildLlamaCppArgs(m, modelPath)
 	default:
 	}
 	return nil
@@ -1188,6 +1193,117 @@ func (r *ModelDeploymentReconciler) buildMLCOverrides(m *aiv1alpha1.ModelDeploym
 	}
 
 	return strings.Join(parts, ";")
+}
+
+// buildVLLMArgs constructs command-line arguments for vLLM.
+func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
+	args := []string{"--model", modelPath, "--host", "0.0.0.0"}
+
+	if m.Spec.VLLM == nil {
+		return args
+	}
+
+	v := m.Spec.VLLM
+
+	// Tensor parallel size (multi-GPU)
+	if v.TensorParallelSize != nil && *v.TensorParallelSize > 1 {
+		args = append(args, "--tensor-parallel-size", fmt.Sprintf("%d", *v.TensorParallelSize))
+	}
+
+	// Data type
+	if v.Dtype != "" {
+		args = append(args, "--dtype", v.Dtype)
+	}
+
+	// Quantization
+	if v.Quantization != "" && v.Quantization != "None" {
+		args = append(args, "--quantization", v.Quantization)
+	}
+
+	// Max model length
+	if v.MaxModelLen != nil {
+		args = append(args, "--max-model-len", fmt.Sprintf("%d", *v.MaxModelLen))
+	}
+
+	// GPU memory utilization
+	if v.GPUMemoryUtilization != nil && *v.GPUMemoryUtilization != "" {
+		args = append(args, "--gpu-memory-utilization", *v.GPUMemoryUtilization)
+	}
+
+	// Enforce eager mode (disable CUDA graphs)
+	if v.EnforceEager != nil && *v.EnforceEager {
+		args = append(args, "--enforce-eager")
+	}
+
+	// Max number of sequences
+	if v.MaxNumSeqs != nil {
+		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", *v.MaxNumSeqs))
+	}
+
+	// Swap space
+	if v.SwapSpace != nil {
+		args = append(args, "--swap-space", fmt.Sprintf("%d", *v.SwapSpace))
+	}
+
+	// Trust remote code
+	if v.TrustRemoteCode != nil && *v.TrustRemoteCode {
+		args = append(args, "--trust-remote-code")
+	}
+
+	return args
+}
+
+// buildLlamaCppArgs constructs command-line arguments for llama.cpp server.
+func (r *ModelDeploymentReconciler) buildLlamaCppArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
+	args := []string{"--model", modelPath, "--host", "0.0.0.0"}
+
+	if m.Spec.LlamaCpp == nil {
+		return args
+	}
+
+	l := m.Spec.LlamaCpp
+
+	// Context size
+	if l.ContextSize != nil {
+		args = append(args, "--ctx-size", fmt.Sprintf("%d", *l.ContextSize))
+	}
+
+	// GPU layers
+	if l.NGPULayers != nil {
+		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", *l.NGPULayers))
+	}
+
+	// Batch size
+	if l.BatchSize != nil {
+		args = append(args, "--batch-size", fmt.Sprintf("%d", *l.BatchSize))
+	}
+
+	// Threads
+	if l.Threads != nil {
+		args = append(args, "--threads", fmt.Sprintf("%d", *l.Threads))
+	}
+
+	// Flash attention
+	if l.FlashAttention != nil && *l.FlashAttention {
+		args = append(args, "--flash-attn")
+	}
+
+	// Main GPU
+	if l.MainGPU != nil {
+		args = append(args, "--main-gpu", fmt.Sprintf("%d", *l.MainGPU))
+	}
+
+	// RoPE frequency base
+	if l.RopeFreqBase != "" {
+		args = append(args, "--rope-freq-base", l.RopeFreqBase)
+	}
+
+	// RoPE frequency scale
+	if l.RopeFreqScale != "" {
+		args = append(args, "--rope-freq-scale", l.RopeFreqScale)
+	}
+
+	return args
 }
 
 // validateGPUResources validates that GPU resources are properly configured

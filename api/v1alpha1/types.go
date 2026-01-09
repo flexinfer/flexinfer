@@ -121,6 +121,16 @@ type ModelDeploymentSpec struct {
 	// Only applies when Backend is "mlc-llm" or "mlc".
 	// +optional
 	MLCLLM *MLCLLMSpec `json:"mlcllm,omitempty"`
+
+	// VLLM contains vLLM backend-specific configuration.
+	// Only applies when Backend is "vllm".
+	// +optional
+	VLLM *VLLMSpec `json:"vllm,omitempty"`
+
+	// LlamaCpp contains llama.cpp backend-specific configuration.
+	// Only applies when Backend is "llamacpp" or "llama.cpp".
+	// +optional
+	LlamaCpp *LlamaCppSpec `json:"llamacpp,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.
@@ -278,6 +288,113 @@ type MLCCompileOptions struct {
 	// Default: true for modern GPUs, false for Maxwell
 	// +optional
 	UseCudaGraph *bool `json:"useCudaGraph,omitempty"`
+}
+
+// VLLMSpec configures vLLM backend-specific settings.
+// Only applies when Backend is "vllm".
+// +kubebuilder:object:generate=true
+type VLLMSpec struct {
+	// TensorParallelSize is the number of GPUs to use for tensor parallelism.
+	// Must be a power of 2. Requires multiple GPUs on the same node.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=8
+	// +optional
+	TensorParallelSize *int32 `json:"tensorParallelSize,omitempty"`
+
+	// Dtype specifies the data type for model weights.
+	// Options: auto, float16, bfloat16, float32
+	// Default: auto (vLLM chooses based on model config)
+	// +kubebuilder:validation:Enum=auto;float16;bfloat16;float32
+	// +optional
+	Dtype string `json:"dtype,omitempty"`
+
+	// Quantization specifies the quantization method.
+	// Options: awq, squeezellm, gptq, fp8, None
+	// +kubebuilder:validation:Enum=awq;squeezellm;gptq;fp8;None;""
+	// +optional
+	Quantization string `json:"quantization,omitempty"`
+
+	// MaxModelLen is the maximum sequence length (context + generation).
+	// If not set, vLLM uses the model's max_position_embeddings.
+	// +kubebuilder:validation:Minimum=256
+	// +kubebuilder:validation:Maximum=131072
+	// +optional
+	MaxModelLen *int32 `json:"maxModelLen,omitempty"`
+
+	// GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
+	// Default: 0.9 (90% of available GPU memory)
+	// +optional
+	GPUMemoryUtilization *string `json:"gpuMemoryUtilization,omitempty"`
+
+	// EnforceEager disables CUDA graph and runs in eager mode.
+	// Useful for debugging or when CUDA graphs cause issues.
+	// +optional
+	EnforceEager *bool `json:"enforceEager,omitempty"`
+
+	// MaxNumSeqs is the maximum number of sequences per iteration.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxNumSeqs *int32 `json:"maxNumSeqs,omitempty"`
+
+	// SwapSpace is the CPU swap space size (GiB) per GPU.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SwapSpace *int32 `json:"swapSpace,omitempty"`
+
+	// TrustRemoteCode allows execution of code from HuggingFace repos.
+	// Required for some models with custom architectures.
+	// +optional
+	TrustRemoteCode *bool `json:"trustRemoteCode,omitempty"`
+}
+
+// LlamaCppSpec configures llama.cpp backend-specific settings.
+// Only applies when Backend is "llamacpp" or "llama.cpp".
+// +kubebuilder:object:generate=true
+type LlamaCppSpec struct {
+	// ContextSize is the context size (number of tokens).
+	// Default: 2048
+	// +kubebuilder:validation:Minimum=128
+	// +kubebuilder:validation:Maximum=131072
+	// +optional
+	ContextSize *int32 `json:"contextSize,omitempty"`
+
+	// NGPULayers is the number of layers to offload to GPU.
+	// Set to a high number (e.g., 999) to offload all layers.
+	// Default: 0 (CPU only)
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	NGPULayers *int32 `json:"nGPULayers,omitempty"`
+
+	// BatchSize is the batch size for prompt processing.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BatchSize *int32 `json:"batchSize,omitempty"`
+
+	// Threads is the number of threads to use for generation.
+	// Default: number of CPU cores
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	Threads *int32 `json:"threads,omitempty"`
+
+	// FlashAttention enables Flash Attention for faster inference.
+	// Requires compatible GPU (NVIDIA with CUDA).
+	// +optional
+	FlashAttention *bool `json:"flashAttention,omitempty"`
+
+	// MainGPU specifies the GPU to use for the main model.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MainGPU *int32 `json:"mainGPU,omitempty"`
+
+	// RopeFreqBase overrides the RoPE frequency base.
+	// Specified as a string to avoid floating-point precision issues (e.g., "10000.0").
+	// +optional
+	RopeFreqBase string `json:"ropeFreqBase,omitempty"`
+
+	// RopeFreqScale overrides the RoPE frequency scale.
+	// Specified as a string to avoid floating-point precision issues (e.g., "1.0").
+	// +optional
+	RopeFreqScale string `json:"ropeFreqScale,omitempty"`
 }
 
 // ModelDeploymentStatus defines the observed state of ModelDeployment

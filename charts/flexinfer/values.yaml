@@ -118,6 +118,24 @@ mlcllm:
     # Complete args override (bypasses all other settings). Use for advanced cases only
     args: ""
 
+# vLLM backend configuration (used when spec.backend=vllm)
+vllm:
+  # Custom image (default: vllm/vllm-openai:latest)
+  image: ""
+  # Operator-level defaults (can be overridden per-deployment via CRD)
+  defaults:
+    # Complete args override. Use for advanced cases only
+    args: ""
+
+# llama.cpp backend configuration (used when spec.backend=llamacpp)
+llamacpp:
+  # Custom image (default: ghcr.io/ggerganov/llama.cpp:server)
+  image: ""
+  # Operator-level defaults (can be overridden per-deployment via CRD)
+  defaults:
+    # Complete args override. Use for advanced cases only
+    args: ""
+
 scheduler:
   enabled: true
   replicas: 1

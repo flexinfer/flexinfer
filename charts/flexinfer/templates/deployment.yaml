@@ -92,4 +92,20 @@ spec:
             - name: DEFAULT_MLC_LLM_ARGS
               value: {{ .Values.mlcllm.defaults.args | quote }}
             {{- end }}
+            {{- if .Values.vllm.image }}
+            - name: DEFAULT_VLLM_IMAGE
+              value: {{ .Values.vllm.image | quote }}
+            {{- end }}
+            {{- if .Values.vllm.defaults.args }}
+            - name: DEFAULT_VLLM_ARGS
+              value: {{ .Values.vllm.defaults.args | quote }}
+            {{- end }}
+            {{- if .Values.llamacpp.image }}
+            - name: DEFAULT_LLAMA_CPP_IMAGE
+              value: {{ .Values.llamacpp.image | quote }}
+            {{- end }}
+            {{- if .Values.llamacpp.defaults.args }}
+            - name: DEFAULT_LLAMA_CPP_ARGS
+              value: {{ .Values.llamacpp.defaults.args | quote }}
+            {{- end }}
 {{- end }}

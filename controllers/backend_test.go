@@ -869,3 +869,233 @@ func TestGetBackendEnv_MlcLlm_MaxwellAutoDetect(t *testing.T) {
 func ptrTo[T any](v T) *T {
 	return &v
 }
+
+func TestBuildVLLMArgs(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		vllm     *aiv1alpha1.VLLMSpec
+		expected []string
+	}{
+		{
+			name:     "default args",
+			vllm:     nil,
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0"},
+		},
+		{
+			name: "tensor parallel",
+			vllm: &aiv1alpha1.VLLMSpec{
+				TensorParallelSize: ptrTo(int32(2)),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--tensor-parallel-size", "2"},
+		},
+		{
+			name: "dtype and quantization",
+			vllm: &aiv1alpha1.VLLMSpec{
+				Dtype:        "float16",
+				Quantization: "awq",
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--dtype", "float16", "--quantization", "awq"},
+		},
+		{
+			name: "max model len and memory",
+			vllm: &aiv1alpha1.VLLMSpec{
+				MaxModelLen:          ptrTo(int32(8192)),
+				GPUMemoryUtilization: ptrTo("0.8"),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--max-model-len", "8192", "--gpu-memory-utilization", "0.8"},
+		},
+		{
+			name: "enforce eager and trust remote code",
+			vllm: &aiv1alpha1.VLLMSpec{
+				EnforceEager:    ptrTo(true),
+				TrustRemoteCode: ptrTo(true),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--enforce-eager", "--trust-remote-code"},
+		},
+		{
+			name: "all options",
+			vllm: &aiv1alpha1.VLLMSpec{
+				TensorParallelSize:   ptrTo(int32(4)),
+				Dtype:                "bfloat16",
+				MaxModelLen:          ptrTo(int32(4096)),
+				GPUMemoryUtilization: ptrTo("0.9"),
+				MaxNumSeqs:           ptrTo(int32(256)),
+				SwapSpace:            ptrTo(int32(4)),
+			},
+			expected: []string{
+				"--model", "test-model", "--host", "0.0.0.0",
+				"--tensor-parallel-size", "4",
+				"--dtype", "bfloat16",
+				"--max-model-len", "4096",
+				"--gpu-memory-utilization", "0.9",
+				"--max-num-seqs", "256",
+				"--swap-space", "4",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "vllm",
+					VLLM:    tt.vllm,
+				},
+			}
+
+			result := r.buildVLLMArgs(m, "test-model")
+			if len(result) != len(tt.expected) {
+				t.Errorf("buildVLLMArgs() got %d args, expected %d: %v", len(result), len(tt.expected), result)
+				return
+			}
+			for i, arg := range result {
+				if arg != tt.expected[i] {
+					t.Errorf("Arg %d: expected %s, got %s", i, tt.expected[i], arg)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildLlamaCppArgs(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name     string
+		llamacpp *aiv1alpha1.LlamaCppSpec
+		expected []string
+	}{
+		{
+			name:     "default args",
+			llamacpp: nil,
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0"},
+		},
+		{
+			name: "context size and GPU layers",
+			llamacpp: &aiv1alpha1.LlamaCppSpec{
+				ContextSize: ptrTo(int32(4096)),
+				NGPULayers:  ptrTo(int32(35)),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--ctx-size", "4096", "--n-gpu-layers", "35"},
+		},
+		{
+			name: "batch size and threads",
+			llamacpp: &aiv1alpha1.LlamaCppSpec{
+				BatchSize: ptrTo(int32(512)),
+				Threads:   ptrTo(int32(8)),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--batch-size", "512", "--threads", "8"},
+		},
+		{
+			name: "flash attention",
+			llamacpp: &aiv1alpha1.LlamaCppSpec{
+				FlashAttention: ptrTo(true),
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--flash-attn"},
+		},
+		{
+			name: "main GPU and RoPE settings",
+			llamacpp: &aiv1alpha1.LlamaCppSpec{
+				MainGPU:       ptrTo(int32(0)),
+				RopeFreqBase:  "10000.0",
+				RopeFreqScale: "1.0",
+			},
+			expected: []string{"--model", "test-model", "--host", "0.0.0.0", "--main-gpu", "0", "--rope-freq-base", "10000.0", "--rope-freq-scale", "1.0"},
+		},
+		{
+			name: "full GPU offload",
+			llamacpp: &aiv1alpha1.LlamaCppSpec{
+				ContextSize:    ptrTo(int32(8192)),
+				NGPULayers:     ptrTo(int32(999)),
+				FlashAttention: ptrTo(true),
+				BatchSize:      ptrTo(int32(1024)),
+			},
+			expected: []string{
+				"--model", "test-model", "--host", "0.0.0.0",
+				"--ctx-size", "8192",
+				"--n-gpu-layers", "999",
+				"--batch-size", "1024",
+				"--flash-attn",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend:  "llamacpp",
+					LlamaCpp: tt.llamacpp,
+				},
+			}
+
+			result := r.buildLlamaCppArgs(m, "test-model")
+			if len(result) != len(tt.expected) {
+				t.Errorf("buildLlamaCppArgs() got %d args, expected %d: %v", len(result), len(tt.expected), result)
+				return
+			}
+			for i, arg := range result {
+				if arg != tt.expected[i] {
+					t.Errorf("Arg %d: expected %s, got %s", i, tt.expected[i], arg)
+				}
+			}
+		})
+	}
+}
+
+func TestGetBackendArgs_VLLM(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Model:   "meta-llama/Llama-2-7b-hf",
+			VLLM: &aiv1alpha1.VLLMSpec{
+				Dtype:                "float16",
+				MaxModelLen:          ptrTo(int32(4096)),
+				GPUMemoryUtilization: ptrTo("0.9"),
+			},
+		},
+	}
+
+	args := r.getBackendArgs(m)
+
+	// Should use buildVLLMArgs
+	if len(args) < 4 {
+		t.Errorf("Expected at least 4 args, got %d: %v", len(args), args)
+		return
+	}
+
+	if args[0] != "--model" || args[1] != "meta-llama/Llama-2-7b-hf" {
+		t.Errorf("Expected --model meta-llama/Llama-2-7b-hf, got %s %s", args[0], args[1])
+	}
+}
+
+func TestGetBackendArgs_LlamaCpp(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Model:   "llama-2-7b.gguf",
+			LlamaCpp: &aiv1alpha1.LlamaCppSpec{
+				ContextSize: ptrTo(int32(4096)),
+				NGPULayers:  ptrTo(int32(35)),
+			},
+		},
+	}
+
+	args := r.getBackendArgs(m)
+
+	// Should use buildLlamaCppArgs
+	if len(args) < 4 {
+		t.Errorf("Expected at least 4 args, got %d: %v", len(args), args)
+		return
+	}
+
+	if args[0] != "--model" || args[1] != "llama-2-7b.gguf" {
+		t.Errorf("Expected --model llama-2-7b.gguf, got %s %s", args[0], args[1])
+	}
+}
