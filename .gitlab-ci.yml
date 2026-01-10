@@ -44,6 +44,8 @@ lint:
   before_script:
     - mkdir -p .go
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}
+    - go mod tidy
     - go mod download
   script:
     - golangci-lint run -v --timeout=5m ./...
