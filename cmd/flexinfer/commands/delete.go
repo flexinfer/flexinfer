@@ -65,7 +65,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	if !forceDelete {
 		fmt.Printf("Delete ModelDeployment %s/%s? [y/N]: ", namespace, name)
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
 			fmt.Println("Deletion cancelled")
 			return nil

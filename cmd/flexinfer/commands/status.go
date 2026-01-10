@@ -18,7 +18,6 @@ package commands
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -256,17 +255,6 @@ func formatAge(t time.Time) string {
 	}
 }
 
-// conditionIcon returns an icon for a condition status
-func conditionIcon(status string) string {
-	switch strings.ToLower(status) {
-	case "true":
-		return "✓"
-	case "false":
-		return "✗"
-	default:
-		return "?"
-	}
-}
 
 // formatDurationShort formats a duration in a short human-readable format
 func formatDurationShort(d time.Duration) string {

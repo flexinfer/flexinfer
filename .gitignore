@@ -46,3 +46,5 @@ dist/
 
 # Claude Desktop app config (local)
 claude_desktop_config/
+flexinfer-proxy
+bin/

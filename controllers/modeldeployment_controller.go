@@ -1631,7 +1631,7 @@ func removeString(slice []string, s string) []string {
 // Returns 0.0 if parsing fails.
 func parseTPSFloat(tps string) float64 {
 	var result float64
-	fmt.Sscanf(tps, "%f", &result)
+	_, _ = fmt.Sscanf(tps, "%f", &result)
 	return result
 }
 

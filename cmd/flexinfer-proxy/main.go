@@ -129,11 +129,10 @@ type QueuedRequest struct {
 
 // RequestQueue holds requests for a model during cold start
 type RequestQueue struct {
-	model     string
-	items     chan *QueuedRequest
-	created   time.Time
-	draining  atomic.Bool
-	closeOnce sync.Once
+	model    string
+	items    chan *QueuedRequest
+	created  time.Time
+	draining atomic.Bool
 }
 
 type Proxy struct {
