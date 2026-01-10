@@ -86,6 +86,15 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              coldStartTimeoutSeconds:
+                default: 60
+                description: |-
+                  ColdStartTimeoutSeconds is the maximum time to wait for model activation during cold start.
+                  Requests exceeding this timeout receive 503 Service Unavailable.
+                format: int32
+                maximum: 300
+                minimum: 10
+                type: integer
               idleTimeoutSeconds:
                 default: 300
                 description: IdleTimeoutSeconds is the duration in seconds before

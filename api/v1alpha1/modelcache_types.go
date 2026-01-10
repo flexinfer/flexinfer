@@ -32,6 +32,8 @@ const (
 	StorageStrategySharedPVC StorageStrategy = "SharedPVC"
 	// StorageStrategyEphemeral downloads the model on pod startup (no persistent caching)
 	StorageStrategyEphemeral StorageStrategy = "Ephemeral"
+	// StorageStrategyMemory caches the model in RAM (/dev/shm) on each node for faster loading
+	StorageStrategyMemory StorageStrategy = "Memory"
 )
 
 // ModelCachePhase describes the lifecycle of the cache

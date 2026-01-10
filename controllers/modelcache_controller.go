@@ -91,6 +91,10 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.reconcileNodeLocal(ctx, modelCache)
 	}
 
+	if strategy == aiv1alpha1.StorageStrategyMemory {
+		return r.reconcileMemory(ctx, modelCache)
+	}
+
 	log.Info("Strategy not implemented yet", "strategy", strategy)
 	return ctrl.Result{}, nil
 }
@@ -727,6 +731,258 @@ while true; do sleep 3600; done
 // hostPathTypePtr returns a pointer to a HostPathType
 func hostPathTypePtr(t corev1.HostPathType) *corev1.HostPathType {
 	return &t
+}
+
+// reconcileMemory handles the Memory storage strategy using DaemonSets with /dev/shm
+func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha1.ModelCache) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Memory strategy uses /dev/shm (shared memory tmpfs) for RAM-backed caching
+	shmBasePath := "/dev/shm/flexinfer"
+	modelPath := filepath.Join(shmBasePath, m.Name)
+
+	// Get or create DaemonSet
+	dsName := m.Name + "-ram-syncer"
+	ds := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: dsName, Namespace: m.Namespace}, ds)
+
+	if err != nil && errors.IsNotFound(err) {
+		// Create DaemonSet
+		newDS, err := r.daemonSetForMemory(m, modelPath, shmBasePath)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Creating Memory DaemonSet", "DaemonSet", dsName)
+		if err := r.Create(ctx, newDS); err != nil {
+			return ctrl.Result{}, err
+		}
+		m.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		return ctrl.Result{Requeue: true}, r.Status().Update(ctx, m)
+	} else if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Check DaemonSet status
+	readyNodes := ds.Status.NumberReady
+	totalNodes := ds.Status.DesiredNumberScheduled
+
+	m.Status.ReadyNodes = readyNodes
+	m.Status.TotalNodes = totalNodes
+	m.Status.Path = modelPath
+
+	if readyNodes == totalNodes && totalNodes > 0 {
+		if m.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+			m.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+			log.Info("ModelCache (Memory) is Ready", "readyNodes", readyNodes, "totalNodes", totalNodes, "path", modelPath)
+		}
+	} else if readyNodes < totalNodes {
+		m.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		log.Info("ModelCache (Memory) provisioning", "readyNodes", readyNodes, "totalNodes", totalNodes)
+	}
+
+	if err := r.Status().Update(ctx, m); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Requeue to monitor DaemonSet status during provisioning
+	if m.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// daemonSetForMemory creates a DaemonSet for syncing models to /dev/shm (RAM)
+func (r *ModelCacheReconciler) daemonSetForMemory(m *aiv1alpha1.ModelCache, modelPath, shmBasePath string) (*appsv1.DaemonSet, error) {
+	// Determine download method and script based on source type
+	var image, downloadScript string
+
+	if isOCISource(m.Spec.Source) {
+		// OCI registry source - use ORAS
+		image = "ghcr.io/oras-project/oras:v1.2.2"
+		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
+			image = img
+		}
+		registryRef := parseOCISource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_REF="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR (RAM cache)"
+    while true; do sleep 3600; done
+fi
+
+mkdir -p "$DEST_DIR"
+echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR (RAM cache)..."
+oras pull "$MODEL_REF" -o "$DEST_DIR"
+touch "$MARKER"
+echo "Sync complete to RAM cache, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, registryRef)
+	} else if isMlcModel(m.Spec.Source) {
+		// MLC-LLM models require git clone with LFS
+		image = "debian:bookworm-slim"
+		modelID := parseModelSource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_ID="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR (RAM cache)"
+    while true; do sleep 3600; done
+fi
+
+apt-get update && apt-get install -y git git-lfs ca-certificates
+git lfs install
+mkdir -p "$DEST_DIR"
+echo "Cloning $MODEL_ID to $DEST_DIR (RAM cache)..."
+GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+touch "$MARKER"
+echo "Sync complete to RAM cache, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, modelID)
+	} else {
+		// Standard HuggingFace models
+		image = "python:3.10-slim"
+		modelID := parseModelSource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+DEST_DIR="%s"
+MODEL_ID="%s"
+MARKER="$DEST_DIR/.synced"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR (RAM cache)"
+    while true; do sleep 3600; done
+fi
+
+pip install --no-cache-dir huggingface_hub
+echo "Downloading $MODEL_ID to $DEST_DIR (RAM cache)..."
+mkdir -p "$DEST_DIR"
+huggingface-cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
+touch "$MARKER"
+echo "Sync complete to RAM cache, entering sleep"
+while true; do sleep 3600; done
+`, modelPath, modelID)
+	}
+
+	// Node selector - default to GPU nodes
+	nodeSelector := m.Spec.NodeSelector
+	if nodeSelector == nil {
+		nodeSelector = map[string]string{
+			"nvidia.com/gpu.present": "true",
+		}
+	}
+
+	// Environment variables
+	var envVars []corev1.EnvVar
+	if m.Spec.SecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "HF_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: *m.Spec.SecretRef,
+					},
+					Key: "HF_TOKEN",
+				},
+			},
+		})
+	}
+
+	// Build volumes - mount /dev/shm via hostPath
+	volumes := []corev1.Volume{{
+		Name: "model-ram-cache",
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: shmBasePath,
+				Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+			},
+		},
+	}}
+
+	volumeMounts := []corev1.VolumeMount{{
+		Name:      "model-ram-cache",
+		MountPath: shmBasePath,
+	}}
+
+	// Mount docker config secret for OCI registry auth
+	if isOCISource(m.Spec.Source) && m.Spec.OCIRegistrySecretRef != nil && *m.Spec.OCIRegistrySecretRef != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "docker-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: *m.Spec.OCIRegistrySecretRef,
+					Items: []corev1.KeyToPath{{
+						Key:  ".dockerconfigjson",
+						Path: "config.json",
+					}},
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "docker-config",
+			MountPath: "/root/.docker",
+			ReadOnly:  true,
+		})
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "modelcache-ram-syncer",
+		"app.kubernetes.io/instance":   m.Name,
+		"app.kubernetes.io/managed-by": "flexinfer",
+	}
+
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-ram-syncer",
+			Namespace: m.Namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":     "modelcache-ram-syncer",
+					"app.kubernetes.io/instance": m.Name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: nodeSelector,
+					Containers: []corev1.Container{{
+						Name:         "syncer",
+						Image:        image,
+						Command:      []string{"/bin/sh", "-c"},
+						Args:         []string{downloadScript},
+						VolumeMounts: volumeMounts,
+						Env:          envVars,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+						},
+					}},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(m, ds, r.Scheme); err != nil {
+		return nil, err
+	}
+	return ds, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

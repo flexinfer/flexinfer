@@ -439,11 +439,93 @@ metadata:
   name: qwen3-8b-abliterated-mlc
   namespace: flexinfer-system
 spec:
-  storageStrategy: SharedPVC  # SharedPVC, NodeLocal, OCI
+  storageStrategy: SharedPVC  # SharedPVC, NodeLocal, Memory
   existingClaimName: mlc-models-nfs
   modelPath: Qwen3-8B-abliterated-q4f32_1-MLC
   source: huggingface://huihui-ai/Qwen3-8B-abliterated
   storageSize: 20Gi
+```
+
+#### Storage Strategies
+
+| Strategy | Location | Switch Time | Use Case |
+|----------|----------|-------------|----------|
+| `SharedPVC` | NFS/RWX PVC | ~4-5s | Shared models across nodes |
+| `NodeLocal` | `/var/lib/flexinfer/models` | ~4-5s | Per-node disk cache |
+| `Memory` | `/dev/shm/flexinfer` | **~2-3s** | RAM cache for fast switching |
+
+### RAM-Cached Models (Memory Strategy)
+
+The `Memory` storage strategy uses `/dev/shm` (tmpfs) to cache models in RAM, providing ~40-50% faster cold starts compared to NVMe-based loading.
+
+#### Prerequisites
+
+```bash
+# Check /dev/shm size on GPU node (default: 50% of RAM)
+ssh gpu-node-1 "df -h /dev/shm"
+# Example: tmpfs 32G 0 32G 0% /dev/shm
+
+# Optionally resize if needed
+ssh gpu-node-1 "sudo mount -o remount,size=40G /dev/shm"
+```
+
+#### Example: RAM-Cached Multi-Model Setup
+
+```yaml
+# ModelCache with RAM storage
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-8b-ram
+spec:
+  source: HF://mlc-ai/Qwen3-8B-abliterated-q4f16_1-MLC
+  storageStrategy: Memory
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+---
+# ModelDeployment using RAM cache
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-8b-chat
+spec:
+  backend: mlc-llm
+  model: Qwen3-8B-abliterated-q4f16_1-MLC
+  modelCacheRef: qwen3-8b-ram
+  replicas: 1
+  minReplicas: 0  # Enable scale-to-zero
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+```
+
+#### RAM Cache Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Faster cold start** | ~2-3s from RAM vs ~4-5s from NVMe |
+| **Full VRAM per model** | 100% GPU memory available (no sharing) |
+| **More models cached** | RAM cheaper than VRAM; cache 5+ models |
+| **Serverless ready** | Works with scale-to-zero for on-demand activation |
+
+#### Expected Performance
+
+| Action | Time | Notes |
+|--------|------|-------|
+| First cold start (NFS → RAM) | ~30s | One-time cache population |
+| Subsequent cold start (RAM → VRAM) | ~2-3s | Fast RAM-based loading |
+| Model switch (scale down A, up B) | ~3-4s | Concurrent scale operations |
+| Hot request (already in VRAM) | <100ms | No loading needed |
+
+#### Checking Cache Status
+
+```bash
+# View all model caches and their strategies
+flexinfer cache status
+
+# Example output:
+# NAME           STRATEGY   PATH                             READY  SOURCE
+# qwen3-8b-ram   Memory     /dev/shm/flexinfer/qwen3-8b-ram  Ready  HF://mlc-ai/...
+# qwen3-3b-ram   Memory     /dev/shm/flexinfer/qwen3-3b-ram  Ready  HF://mlc-ai/...
 ```
 
 ### Scheduling to AMD 7900XTX Nodes
@@ -756,6 +838,7 @@ make build-cli
 | `flexinfer logs <name>` | Stream logs from a deployment's pods |
 | `flexinfer delete <name>` | Delete a ModelDeployment |
 | `flexinfer scale <name> <replicas>` | Scale a deployment |
+| `flexinfer cache status` | Show status of all ModelCaches (strategy, path, ready state) |
 
 ### Examples
 
@@ -780,6 +863,12 @@ flexinfer scale qwen3-8b-amd 1
 
 # Delete a deployment
 flexinfer delete qwen3-8b-amd
+
+# View model caches and their storage strategies
+flexinfer cache status
+NAME           STRATEGY   PATH                             READY  SOURCE
+qwen3-8b-ram   Memory     /dev/shm/flexinfer/qwen3-8b-ram  Ready  HF://mlc-ai/...
+qwen3-3b-ram   Memory     /dev/shm/flexinfer/qwen3-3b-ram  Ready  HF://mlc-ai/...
 ```
 
 ### Flags

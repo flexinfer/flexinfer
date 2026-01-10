@@ -94,6 +94,14 @@ type ModelDeploymentSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
 
+	// ColdStartTimeoutSeconds is the maximum time to wait for model activation during cold start.
+	// Requests exceeding this timeout receive 503 Service Unavailable.
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	ColdStartTimeoutSeconds *int32 `json:"coldStartTimeoutSeconds,omitempty"`
+
 	// Resources defines the resources required by the model.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`

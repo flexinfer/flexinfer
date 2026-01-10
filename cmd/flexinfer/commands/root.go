@@ -73,6 +73,7 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(scaleCmd)
+	rootCmd.AddCommand(cacheCmd)
 }
 
 // Execute runs the root command

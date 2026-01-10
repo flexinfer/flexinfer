@@ -1,0 +1,93 @@
+# Example: RAM-Cached Multi-Model Setup for AMD 7900XTX
+#
+# This configuration sets up two models cached in RAM (/dev/shm) for
+# faster cold starts (~2-3s from RAM vs ~4-5s from NVMe).
+#
+# Prerequisites:
+# - Verify /dev/shm size: ssh gpu-node "df -h /dev/shm"
+# - Default size is 50% of RAM (e.g., 32GB on a 64GB node)
+# - Models will be downloaded from HuggingFace to /dev/shm/flexinfer/
+#
+# Usage:
+#   kubectl apply -f ram-cached-models.yaml
+#   flexinfer cache status
+#   flexinfer list
+---
+# ModelCache 1: Qwen3-8B in RAM (/dev/shm)
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-8b-ram
+  namespace: flexinfer-system
+spec:
+  source: HF://mlc-ai/Qwen3-8B-abliterated-q4f16_1-MLC
+  storageStrategy: Memory
+  # Models stored at /dev/shm/flexinfer/qwen3-8b-ram
+  nodeSelector:
+    # Target specific GPU node (adjust hostname as needed)
+    kubernetes.io/hostname: gpu-node-1
+---
+# ModelCache 2: Qwen3-3B in RAM (smaller model for backend tasks)
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-3b-ram
+  namespace: flexinfer-system
+spec:
+  source: HF://mlc-ai/Qwen3-3B-q4f16_1-MLC
+  storageStrategy: Memory
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+---
+# ModelDeployment 1: Primary chat model (can scale to zero)
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-8b-chat
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "qwen3-8b-chat"
+    litellm.ai/aliases: "gpt-4,chat"
+spec:
+  backend: mlc-llm
+  model: Qwen3-8B-abliterated-q4f16_1-MLC
+  modelCacheRef: qwen3-8b-ram
+  replicas: 1
+  minReplicas: 0  # Enable scale-to-zero for serverless
+  mlcllm:
+    mode: server
+    overrides:
+      # Adjust based on expected concurrency
+      maxNumSequence: 2
+      maxTotalSeqLength: 32768
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+  resources:
+    limits:
+      amd.com/gpu: "1"
+---
+# ModelDeployment 2: Backend/coding model (can scale to zero)
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-3b-backend
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "qwen3-3b-backend"
+    litellm.ai/aliases: "gpt-3.5-turbo,code"
+spec:
+  backend: mlc-llm
+  model: Qwen3-3B-q4f16_1-MLC
+  modelCacheRef: qwen3-3b-ram
+  replicas: 1
+  minReplicas: 0  # Enable scale-to-zero for serverless
+  mlcllm:
+    mode: server
+    overrides:
+      maxNumSequence: 4
+      maxTotalSeqLength: 16384
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+  resources:
+    limits:
+      amd.com/gpu: "1"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,8 +28,11 @@ func setupTestProxy(t *testing.T) *Proxy {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	return &Proxy{
-		client:    k8sClient,
-		namespace: "default",
+		client:           k8sClient,
+		namespace:        "default",
+		maxQueueSize:     100,
+		queueTimeout:     60 * time.Second,
+		coldStartTimeout: 60 * time.Second,
 	}
 }
 
@@ -104,7 +108,7 @@ func TestIsReady(t *testing.T) {
 	assert.False(t, isReady(md))
 }
 
-func TestEnsureActive_AlreadyReady(t *testing.T) {
+func TestTriggerScaleUp_AlreadyScaled(t *testing.T) {
 	p := setupTestProxy(t)
 	ctx := context.Background()
 
@@ -128,11 +132,79 @@ func TestEnsureActive_AlreadyReady(t *testing.T) {
 	}
 	require.NoError(t, p.client.Create(ctx, md))
 
-	// Should return immediately
-	err := p.ensureActive(ctx, "ready-model")
+	// Should return immediately without error (already scaled)
+	err := p.triggerScaleUp(ctx, "ready-model")
 	assert.NoError(t, err)
 
-	// LastAccessTime should NOT be updated here, that happens in separate goroutine in main flow
+	// Verify replicas unchanged
+	updatedMD := &aiv1alpha1.ModelDeployment{}
+	require.NoError(t, p.client.Get(ctx, client.ObjectKey{Name: "ready-model", Namespace: "default"}, updatedMD))
+	assert.Equal(t, int32(1), *updatedMD.Spec.Replicas)
+}
+
+func TestTriggerScaleUp_FromZero(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	zero := int32(0)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "scaled-zero-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &zero,
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	// Should scale up from 0 to 1
+	err := p.triggerScaleUp(ctx, "scaled-zero-model")
+	assert.NoError(t, err)
+
+	// Verify replicas changed to 1
+	updatedMD := &aiv1alpha1.ModelDeployment{}
+	require.NoError(t, p.client.Get(ctx, client.ObjectKey{Name: "scaled-zero-model", Namespace: "default"}, updatedMD))
+	assert.Equal(t, int32(1), *updatedMD.Spec.Replicas)
+}
+
+func TestGetColdStartTimeout_Default(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "timeout-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	// Should return proxy default (60s)
+	timeout := p.getColdStartTimeout(ctx, "timeout-model")
+	assert.Equal(t, 60*time.Second, timeout)
+}
+
+func TestGetColdStartTimeout_Custom(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	customTimeout := int32(120)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-timeout-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			ColdStartTimeoutSeconds: &customTimeout,
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	// Should return custom timeout (120s)
+	timeout := p.getColdStartTimeout(ctx, "custom-timeout-model")
+	assert.Equal(t, 120*time.Second, timeout)
 }
 
 func TestUpdateLastAccess(t *testing.T) {
@@ -158,4 +230,138 @@ func TestUpdateLastAccess(t *testing.T) {
 	} else {
 		assert.WithinDuration(t, time.Now(), updatedMD.Status.LastAccessTime.Time, 5*time.Second)
 	}
+}
+
+// Serverless/Queue Tests
+
+func TestGetOrCreateQueue(t *testing.T) {
+	p := setupTestProxy(t)
+
+	// First call should create a new queue
+	queue1 := p.getOrCreateQueue("test-model")
+	assert.NotNil(t, queue1)
+	assert.Equal(t, "test-model", queue1.model)
+	assert.Equal(t, p.maxQueueSize, cap(queue1.items))
+
+	// Second call should return the same queue
+	queue2 := p.getOrCreateQueue("test-model")
+	assert.Equal(t, queue1, queue2)
+
+	// Different model should get a different queue
+	queue3 := p.getOrCreateQueue("other-model")
+	assert.NotEqual(t, queue1, queue3)
+	assert.Equal(t, "other-model", queue3.model)
+}
+
+func TestConnectionTracking(t *testing.T) {
+	p := setupTestProxy(t)
+
+	// Initially no connections
+	assert.Equal(t, int64(0), p.GetActiveConnections("test-model"))
+
+	// Increment connections
+	p.incrementConnections("test-model")
+	assert.Equal(t, int64(1), p.GetActiveConnections("test-model"))
+
+	p.incrementConnections("test-model")
+	assert.Equal(t, int64(2), p.GetActiveConnections("test-model"))
+
+	// Decrement connections
+	p.decrementConnections("test-model")
+	assert.Equal(t, int64(1), p.GetActiveConnections("test-model"))
+
+	p.decrementConnections("test-model")
+	assert.Equal(t, int64(0), p.GetActiveConnections("test-model"))
+
+	// Different models are tracked separately
+	p.incrementConnections("model-a")
+	p.incrementConnections("model-b")
+	p.incrementConnections("model-b")
+	assert.Equal(t, int64(1), p.GetActiveConnections("model-a"))
+	assert.Equal(t, int64(2), p.GetActiveConnections("model-b"))
+}
+
+func TestExtractModelName_Header(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("GET", "/v1/chat/completions", nil)
+	req.Header.Set("X-Model-ID", "my-model")
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "my-model", modelName)
+}
+
+func TestExtractModelName_Path(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("GET", "/model/path-model/v1/chat", nil)
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "path-model", modelName)
+	// Path should be rewritten
+	assert.Equal(t, "/v1/chat", req.URL.Path)
+}
+
+func TestExtractModelName_JSONBody(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := `{"model": "json-model", "messages": []}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "json-model", modelName)
+}
+
+func TestExtractModelName_Missing(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "", modelName)
+}
+
+func TestGetModelDeployment_NotFound(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	_, err := p.getModelDeployment(ctx, "nonexistent-model")
+	assert.Error(t, err)
+}
+
+func TestGetModelDeployment_Found(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	one := int32(1)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "existing-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &one,
+			Backend:  "mlc-llm",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	result, err := p.getModelDeployment(ctx, "existing-model")
+	assert.NoError(t, err)
+	assert.Equal(t, "existing-model", result.Name)
+	assert.Equal(t, "mlc-llm", result.Spec.Backend)
+}
+
+func TestHandleRequest_ModelNotFound(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("GET", "/v1/chat/completions", nil)
+	req.Header.Set("X-Model-ID", "nonexistent-model")
+	w := httptest.NewRecorder()
+
+	p.handleRequest(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }

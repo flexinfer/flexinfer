@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -68,34 +69,43 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	if allNs {
-		fmt.Fprintln(w, "NAMESPACE\tNAME\tBACKEND\tMODEL\tSTATUS\tTPS\tGPU")
+		fmt.Fprintln(w, "NAMESPACE\tNAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
 	} else {
-		fmt.Fprintln(w, "NAME\tBACKEND\tMODEL\tSTATUS\tTPS\tGPU")
+		fmt.Fprintln(w, "NAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
 	}
 
 	for _, md := range mdList.Items {
-		// Extract GPU info
-		gpu := "-"
-		if md.Status.AllocatedGPU != nil {
-			gpuType := md.Status.AllocatedGPU.Type
-			if gpuType == "" {
-				gpuType = "GPU"
-			}
-			arch := md.Status.AllocatedGPU.Architecture
-			vendor := md.Status.AllocatedGPU.Vendor
-			if arch != "" {
-				gpu = fmt.Sprintf("%s (%s)", gpuType, arch)
-			} else if vendor != "" {
-				gpu = fmt.Sprintf("%s (%s)", gpuType, vendor)
-			} else {
-				gpu = gpuType
-			}
-		}
-
-		// Status
+		// Status with serverless indicator
 		status := string(md.Status.Phase)
 		if status == "" {
 			status = "Unknown"
+		}
+
+		// Check if scaled to zero (serverless state)
+		replicas := int32(1)
+		minReplicas := int32(0)
+		if md.Spec.Replicas != nil {
+			replicas = *md.Spec.Replicas
+		}
+		if md.Spec.MinReplicas != nil {
+			minReplicas = *md.Spec.MinReplicas
+		}
+
+		// Build replicas string
+		replicasStr := fmt.Sprintf("%d", replicas)
+		if minReplicas == 0 {
+			// Serverless mode - show current/max
+			replicasStr = fmt.Sprintf("%d (0→1)", replicas)
+			if replicas == 0 {
+				status = "Scaled(0)"
+			}
+		}
+
+		// Calculate idle time
+		idleStr := "-"
+		if md.Status.LastAccessTime != nil {
+			idleTime := time.Since(md.Status.LastAccessTime.Time)
+			idleStr = formatDuration(idleTime)
 		}
 
 		// TPS
@@ -107,19 +117,30 @@ func runList(cmd *cobra.Command, args []string) error {
 			tps = fmt.Sprintf("%s/s", tps)
 		}
 
-		// Model (truncate if too long)
-		model := truncate(md.Spec.Model, 35)
-
 		if allNs {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				md.Namespace, md.Name, md.Spec.Backend, model, status, tps, gpu)
+				md.Namespace, md.Name, md.Spec.Backend, status, replicasStr, idleStr, tps)
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				md.Name, md.Spec.Backend, model, status, tps, gpu)
+				md.Name, md.Spec.Backend, status, replicasStr, idleStr, tps)
 		}
 	}
 
 	return w.Flush()
+}
+
+// formatDuration formats a duration in human-readable format
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
 // truncate shortens a string if it exceeds maxLen

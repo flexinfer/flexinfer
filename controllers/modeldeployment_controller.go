@@ -427,6 +427,15 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ReconcileComplete", "ModelDeployment reconciliation completed successfully")
+
+	// Schedule periodic idle check if serverless is enabled and model is running
+	// This ensures responsive scale-down even without external triggers
+	if r.shouldScheduleIdleCheck(modelDeployment, found) {
+		checkInterval := r.getIdleCheckInterval(modelDeployment)
+		log.V(1).Info("Scheduling idle check", "interval", checkInterval)
+		return ctrl.Result{RequeueAfter: checkInterval}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -478,6 +487,58 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 	}
 
 	return nil
+}
+
+// shouldScheduleIdleCheck returns true if periodic idle checks should be scheduled.
+// This is needed when serverless is enabled and the model is currently running.
+func (r *ModelDeploymentReconciler) shouldScheduleIdleCheck(m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) bool {
+	// Serverless is enabled when MinReplicas is set to 0
+	if m.Spec.MinReplicas == nil || *m.Spec.MinReplicas > 0 {
+		return false
+	}
+
+	// Only schedule if model is currently running (replicas > minReplicas)
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas <= *m.Spec.MinReplicas {
+		return false
+	}
+
+	return true
+}
+
+// getIdleCheckInterval returns the interval at which to check for idle scale-down.
+// Uses half the idle timeout for responsive scale-down.
+func (r *ModelDeploymentReconciler) getIdleCheckInterval(m *aiv1alpha1.ModelDeployment) time.Duration {
+	idleTimeout := 300 * time.Second // Default 5 minutes
+	if m.Spec.IdleTimeoutSeconds != nil {
+		idleTimeout = time.Duration(*m.Spec.IdleTimeoutSeconds) * time.Second
+	}
+
+	// Check at half the timeout to ensure responsive scale-down
+	// Minimum interval of 30 seconds to avoid excessive reconciliation
+	checkInterval := idleTimeout / 2
+	if checkInterval < 30*time.Second {
+		checkInterval = 30 * time.Second
+	}
+
+	return checkInterval
+}
+
+// getTerminationGracePeriod returns the termination grace period for a model deployment.
+// For serverless deployments, uses a longer grace period (60s) to allow in-flight requests
+// to complete during scale-down. For regular deployments, uses the default (30s).
+func (r *ModelDeploymentReconciler) getTerminationGracePeriod(m *aiv1alpha1.ModelDeployment) int64 {
+	// If serverless is enabled (minReplicas=0), use a longer grace period
+	// to ensure in-flight requests complete during scale-down
+	if m.Spec.MinReplicas != nil && *m.Spec.MinReplicas == 0 {
+		// Use cold start timeout if specified, as it represents expected request duration
+		if m.Spec.ColdStartTimeoutSeconds != nil {
+			return int64(*m.Spec.ColdStartTimeoutSeconds)
+		}
+		// Default to 60 seconds for serverless models
+		return 60
+	}
+	// Default Kubernetes termination grace period
+	return 30
 }
 
 // deploymentForModelDeployment returns a ModelDeployment Deployment object
@@ -581,6 +642,9 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						VolumeMounts: []corev1.VolumeMount{volumeMount},
 					}},
 					Volumes: []corev1.Volume{volume},
+					// Graceful shutdown period for draining in-flight requests
+					// LLM inference requests can take 10-30+ seconds for long context windows
+					TerminationGracePeriodSeconds: ptr.To(r.getTerminationGracePeriod(m)),
 				},
 			},
 		},

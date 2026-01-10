@@ -90,6 +90,55 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
+	// Serverless configuration
+	if md.Spec.MinReplicas != nil && *md.Spec.MinReplicas == 0 {
+		fmt.Println("Serverless:")
+		fmt.Printf("  Enabled:        Yes (minReplicas=0)\n")
+
+		// Idle timeout
+		idleTimeout := int32(300)
+		if md.Spec.IdleTimeoutSeconds != nil {
+			idleTimeout = *md.Spec.IdleTimeoutSeconds
+		}
+		fmt.Printf("  Idle Timeout:   %ds\n", idleTimeout)
+
+		// Cold start timeout
+		coldStartTimeout := int32(60)
+		if md.Spec.ColdStartTimeoutSeconds != nil {
+			coldStartTimeout = *md.Spec.ColdStartTimeoutSeconds
+		}
+		fmt.Printf("  Cold Start:     %ds max\n", coldStartTimeout)
+
+		// Current state
+		replicas := int32(1)
+		if md.Spec.Replicas != nil {
+			replicas = *md.Spec.Replicas
+		}
+
+		if replicas == 0 {
+			fmt.Printf("  State:          Scaled to zero (waiting for traffic)\n")
+		} else {
+			fmt.Printf("  State:          Running (%d replica)\n", replicas)
+		}
+
+		// Idle time and scale-down prediction
+		if md.Status.LastAccessTime != nil {
+			idleTime := time.Since(md.Status.LastAccessTime.Time)
+			fmt.Printf("  Last Access:    %s ago\n", formatAge(md.Status.LastAccessTime.Time))
+			fmt.Printf("  Idle For:       %s\n", formatAge(md.Status.LastAccessTime.Time))
+
+			if replicas > 0 {
+				remainingIdle := time.Duration(idleTimeout)*time.Second - idleTime
+				if remainingIdle > 0 {
+					fmt.Printf("  Scale Down In:  ~%s\n", formatDurationShort(remainingIdle))
+				} else {
+					fmt.Printf("  Scale Down In:  imminent\n")
+				}
+			}
+		}
+		fmt.Println()
+	}
+
 	// Print status
 	fmt.Println("Status:")
 	fmt.Printf("  Phase:          %s\n", md.Status.Phase)
@@ -217,4 +266,18 @@ func conditionIcon(status string) string {
 	default:
 		return "?"
 	}
+}
+
+// formatDurationShort formats a duration in a short human-readable format
+func formatDurationShort(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
