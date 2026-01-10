@@ -255,7 +255,6 @@ func formatAge(t time.Time) string {
 	}
 }
 
-
 // formatDurationShort formats a duration in a short human-readable format
 func formatDurationShort(d time.Duration) string {
 	if d < 0 {
