@@ -11,7 +11,7 @@ stages:
 
 variables:
   AUTO_DEVOPS_ENABLED: "false"
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.24"
   BINARY_NAME: "loom"
   # Minimum test coverage threshold (percentage)
   COVERAGE_THRESHOLD: "20"
@@ -28,6 +28,24 @@ cache:
 .go-template: &go-template
   image: golang:${GO_VERSION}
   before_script:
+    - |
+      # Ensure required OS tools exist (golang image may not include them).
+      if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        apt-get update -qq
+        apt-get install -y --no-install-recommends git curl ca-certificates
+        rm -rf /var/lib/apt/lists/*
+      fi
+    - |
+      # This repo uses local `replace` directives to `../../libs/*`.
+      # In CI, ensure those sibling repos exist so `go mod download` and builds work.
+      LIBS_DIR="$(realpath "${CI_PROJECT_DIR}/../../libs")"
+      mkdir -p "${LIBS_DIR}"
+      if [ ! -d "${LIBS_DIR}/mcp-go" ]; then
+        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/mcp-go.git" "${LIBS_DIR}/mcp-go"
+      fi
+      if [ ! -d "${LIBS_DIR}/fi-mcp-kit" ]; then
+        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" "${LIBS_DIR}/fi-mcp-kit"
+      fi
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
     - export GOPROXY="https://proxy.golang.org,direct"
@@ -100,10 +118,18 @@ build:binaries:
       CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
 
       # Build MCP servers for integration tests
+      failures=0
       for pkg in $(ls cmd/ | grep '^mcp-'); do
         echo "Building $pkg..."
-        CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg" || echo "Warning: Failed to build $pkg"
+        if ! CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg"; then
+          echo "ERROR: Failed to build $pkg"
+          failures=$((failures + 1))
+        fi
       done
+      if [ "$failures" -ne 0 ]; then
+        echo "ERROR: $failures MCP server(s) failed to build"
+        exit 1
+      fi
 
       echo "Built binaries:"
       ls -la bin/
@@ -161,6 +187,7 @@ test:integration:
     - |
       echo "Setting up integration test environment..."
       export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
+      export LOOM_RUN_MCP_SMOKE="1"
       export PATH="$CI_PROJECT_DIR/bin:$PATH"
 
       echo "Available MCP servers:"

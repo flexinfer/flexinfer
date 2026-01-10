@@ -166,13 +166,21 @@ single MCP server entry point. Tools from all servers are aggregated
 and presented with namespaced names (server__toolname).
 
 Example config.toml:
-  [mcpServers.loom]
+  [mcp_servers.loom]
   command = "loom"
-  args = ["proxy"]`,
+  args = ["proxy"]
+  always_allow = ["*"]
+
+Example mcp.json:
+  {"mcpServers":{"loom":{"command":"loom","args":["proxy"]}}}`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProxy(socketPath)
 		},
 	}
+	// Backwards compatibility: older generated configs included `--registry` on `loom proxy`.
+	// The proxy itself doesn't need a registry path (the daemon loads it), but accepting the
+	// flag prevents immediate exit with "unknown flag" which breaks MCP initialization.
+	proxyCmd.Flags().String("registry", "", "Path to registry.yaml (accepted for compatibility; ignored)")
 
 	// Generate command
 	generateCmd := &cobra.Command{
@@ -266,8 +274,31 @@ Example config.toml:
 				targets = []string{"all"}
 			}
 
+			if loomMode && loomBinary == "" {
+				if exe, err := os.Executable(); err == nil && exe != "" {
+					loomBinary = exe
+				}
+			}
+
 			fmt.Printf("Generating configs in %s...\n", outputDir)
-			fmt.Printf("Using repo root: %s\n", registry.GetRepoRoot(registryPath))
+			workspaceRoot := registry.GetRepoRoot(registryPath)
+			// Heuristic: if the registry lives under platform/gitops, ${repo} should still
+			// expand to the monorepo root (where services/loom-core lives).
+			if _, err := os.Stat(filepath.Join(workspaceRoot, "services", "loom-core")); err != nil {
+				dir := workspaceRoot
+				for range 6 {
+					parent := filepath.Dir(dir)
+					if parent == dir {
+						break
+					}
+					dir = parent
+					if _, err := os.Stat(filepath.Join(dir, "services", "loom-core")); err == nil {
+						workspaceRoot = dir
+						break
+					}
+				}
+			}
+			fmt.Printf("Using workspace root: %s\n", workspaceRoot)
 			return generator.GenerateConfigsWithPath(reg, registryPath, outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
 		},
 	}
@@ -295,6 +326,12 @@ Example config.toml:
 			hubURL, _ := cmd.Flags().GetString("hub-url")
 			loomMode, _ := cmd.Flags().GetBool("loom-mode")
 			loomBinary, _ := cmd.Flags().GetString("loom-binary")
+
+			if loomMode && loomBinary == "" {
+				if exe, err := os.Executable(); err == nil && exe != "" {
+					loomBinary = exe
+				}
+			}
 
 			cwd, _ := os.Getwd()
 			mgr, err := sync.NewManager(cwd)
@@ -1514,7 +1551,23 @@ func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *
 		return nil, err
 	}
 
-	return daemon.Recv(ctx)
+	resp, err := daemon.Recv(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Guardrail: prevent oversized tool responses from breaking MCP clients.
+	// Some clients impose line/response size limits; large logs can cause parse failures.
+	if resp.Error == nil && len(resp.Result) > 0 {
+		var result mcp.CallToolResult
+		if err := json.Unmarshal(resp.Result, &result); err == nil {
+			if truncateCallToolResult(&result, proxyMaxToolResultBytes()) {
+				return mcp.NewResponse(resp.ID, result)
+			}
+		}
+	}
+
+	return resp, nil
 }
 
 func handleProxyResourcesList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {

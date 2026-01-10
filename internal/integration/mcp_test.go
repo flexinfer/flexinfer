@@ -48,7 +48,19 @@ type MCPClient struct {
 
 // NewMCPClient starts an MCP server process and returns a client.
 func NewMCPClient(ctx context.Context, command string, args ...string) (*MCPClient, error) {
+	return NewMCPClientWithEnv(ctx, nil, command, args...)
+}
+
+// NewMCPClientWithEnv starts an MCP server process with additional environment variables.
+func NewMCPClientWithEnv(ctx context.Context, extraEnv map[string]string, command string, args ...string) (*MCPClient, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
+	if len(extraEnv) > 0 {
+		env := os.Environ()
+		for k, v := range extraEnv {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -84,6 +96,19 @@ func NewMCPClient(ctx context.Context, command string, args ...string) (*MCPClie
 	}, nil
 }
 
+func matchesRequestID(got any, want int) bool {
+	switch v := got.(type) {
+	case int:
+		return v == want
+	case int64:
+		return v == int64(want)
+	case float64:
+		return int(v) == want
+	default:
+		return false
+	}
+}
+
 // Send sends a JSON-RPC message and waits for a response.
 func (c *MCPClient) Send(method string, params any) (*MCPMessage, error) {
 	c.mu.Lock()
@@ -115,18 +140,35 @@ func (c *MCPClient) Send(method string, params any) (*MCPMessage, error) {
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
-	// Read response
-	line, err := c.stdout.ReadBytes('\n')
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+	// Read response (ignore non-JSON and notifications; match by ID).
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for response to %s id=%d", method, id)
+		}
 
-	var resp MCPMessage
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
+		line, err := c.stdout.ReadBytes('\n')
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
 
-	return &resp, nil
+		lineStr := strings.TrimSpace(string(line))
+		if lineStr == "" || !strings.HasPrefix(lineStr, "{") {
+			continue
+		}
+
+		var resp MCPMessage
+		if err := json.Unmarshal([]byte(lineStr), &resp); err != nil {
+			continue
+		}
+		if resp.ID == nil {
+			continue
+		}
+		if !matchesRequestID(resp.ID, id) {
+			continue
+		}
+		return &resp, nil
+	}
 }
 
 // Close terminates the MCP server process.

@@ -18,6 +18,53 @@ func GenerateConfigs(reg *registry.Registry, outputDir string, targets []string,
 	return GenerateConfigsWithPath(reg, "", outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
 }
 
+func inferRegistryRoot(registryPath string) string {
+	if registryPath == "" {
+		return ""
+	}
+	// Typical layout: <root>/mcp/context/registry.yaml
+	// We want <root> as the base for resolving relative paths like scripts/...
+	contextDir := filepath.Dir(registryPath) // .../mcp/context
+	mcpDir := filepath.Dir(contextDir)       // .../mcp
+	if filepath.Base(contextDir) == "context" && filepath.Base(mcpDir) == "mcp" {
+		return filepath.Dir(mcpDir) // .../<root>
+	}
+	return filepath.Dir(registryPath)
+}
+
+func inferWorkspaceRoot(candidate string) string {
+	if candidate == "" {
+		return ""
+	}
+	try := func(dir string) bool {
+		if dir == "" {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, "services", "loom-core")); err != nil {
+			return false
+		}
+		return true
+	}
+	if try(candidate) {
+		return candidate
+	}
+
+	// Walk upwards a few levels to handle cases where the registry lives under
+	// platform/gitops but ${repo} should point at the monorepo root.
+	dir := candidate
+	for range 6 {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+		if try(dir) {
+			return dir
+		}
+	}
+	return candidate
+}
+
 // GenerateConfigsWithPath generates MCP client configurations with an explicit registry path.
 func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, outputDir string, targets []string, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -29,21 +76,22 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	}
 
 	// Resolve repo root from registry path
-	repoRoot := registry.GetRepoRoot(registryPath)
+	workspaceRoot := inferWorkspaceRoot(registry.GetRepoRoot(registryPath))
+	registryRoot := inferRegistryRoot(registryPath)
 
 	for _, target := range targets {
 		var err error
 		switch target {
 		case "vscode", "antigravity":
 			// VSCode and Antigravity (VSCode fork) use mcp.json format
-			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, repoRoot)
+			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot)
 		case "claude":
-			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, repoRoot)
+			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot)
 		case "claude_desktop":
-			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, repoRoot)
+			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot)
 		default:
 			// Codex, Kilocode, Gemini use TOML format
-			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, repoRoot)
+			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot)
 		}
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
@@ -52,7 +100,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 
 	// Validate generated configs
 	homeDir, _ := os.UserHomeDir()
-	v := validator.New(repoRoot, homeDir)
+	v := validator.New(workspaceRoot, homeDir)
 	results, err := v.ValidateGenerated(outputDir, targets)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: validation check failed: %v\n", err)
@@ -73,22 +121,27 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	return nil
 }
 
-func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string, repoRoot string) (map[string]*registry.TargetSpec, error) {
+func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string) (map[string]*registry.TargetSpec, error) {
 	if loomMode {
+		cmd := loomBinary
+		if cmd == "" {
+			cmd = "loom"
+		}
 		return map[string]*registry.TargetSpec{
 			"loom": {
 				Description: "Loom MCP proxy - unified access to all servers",
-				Command:     loomBinary,
+				Command:     cmd,
 				Args:        []any{"proxy"},
 				Hint:        "network",
 				Timeout:     300,
+				AlwaysAllow: []string{"*"},
 				Type:        "stdio",
 			},
 		}, nil
 	}
 
 	resolved := make(map[string]*registry.TargetSpec)
-	repoPath := repoRoot // Use provided repo root instead of cwd
+	repoPath := workspaceRoot // Use provided workspace root instead of cwd
 
 	for _, server := range reg.Servers {
 		spec, err := reg.GetServerSpec(server.Name, target)
@@ -97,8 +150,8 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 		}
 
 		// Resolve tokens
-		spec.Command = ResolveCommand(spec.Command, repoPath, "local")
-		resolvedArgs := ResolveArgs(spec.Args, repoPath, "local")
+		spec.Command = ResolveCommand(spec.Command, repoPath, registryRoot, "local")
+		resolvedArgs := ResolveArgs(spec.Args, repoPath, registryRoot, "local")
 		spec.Args = make([]any, len(resolvedArgs))
 		for i, v := range resolvedArgs {
 			spec.Args[i] = v
@@ -111,7 +164,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 
 		if hubMode && !server.IsLocalOnly() {
 			// Convert to hub mode
-			spec = convertToHubMode(spec, server.Name, hubURL, profile)
+			spec = convertToHubMode(spec, server.Name, hubURL, profile, workspaceRoot, registryRoot)
 		}
 
 		if spec.Command != "" {
@@ -121,15 +174,13 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 	return resolved, nil
 }
 
-func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile string) *registry.TargetSpec {
+func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile string, workspaceRoot string, registryRoot string) *registry.TargetSpec {
 	// Use mcp-hub-wrapper
 	// We assume it's in the PATH or we resolve it. For now, just use "mcp-hub-wrapper"
 	// The Python script had complex resolution logic. We can simplify or assume it's installed.
 
 	wrapper := "mcp-hub-wrapper"
-	// Check if wrapper exists in scripts/mcp/hub_wrapper.sh
-	cwd, _ := os.Getwd()
-	localWrapper := filepath.Join(cwd, "scripts", "mcp", "hub_wrapper.sh")
+	localWrapper := resolvePathLike("scripts/mcp/hub_wrapper.sh", workspaceRoot, registryRoot, "local")
 	if _, err := os.Stat(localWrapper); err == nil {
 		wrapper = localWrapper
 	}
@@ -146,16 +197,16 @@ func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile str
 	}
 }
 
-func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
-	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary, repoRoot)
+func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string) error {
+	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot)
 }
 
 // generateJSONConfig generates mcp.json format configs for vscode and claude targets
 // Uses "mcpServers" as root key per Claude Code CLI specification
-func generateJSONConfig(reg *registry.Registry, outputDir string, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
+func generateJSONConfig(reg *registry.Registry, outputDir string, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string) error {
 	// Use the actual target from registry (claude, vscode, etc.)
 	// The registry.GetServerSpec() will fall back to common config if target not found
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, repoRoot)
+	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, workspaceRoot, registryRoot)
 	if err != nil {
 		return err
 	}
@@ -193,9 +244,9 @@ func generateJSONConfig(reg *registry.Registry, outputDir string, target string,
 	return os.WriteFile(filepath.Join(destDir, "mcp.json"), data, 0644)
 }
 
-func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
+func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string) error {
 	// Claude Desktop uses claude_desktop target, falling back to common config
-	targets, err := buildTargetMap(reg, "claude_desktop", hubMode, hubURL, "claude_desktop", loomMode, loomBinary, repoRoot)
+	targets, err := buildTargetMap(reg, "claude_desktop", hubMode, hubURL, "claude_desktop", loomMode, loomBinary, workspaceRoot, registryRoot)
 	if err != nil {
 		return err
 	}
@@ -232,8 +283,8 @@ func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMo
 	return os.WriteFile(filepath.Join(destDir, "claude_desktop_config.json"), data, 0644)
 }
 
-func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, repoRoot string) error {
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, repoRoot)
+func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string) error {
+	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, workspaceRoot, registryRoot)
 	if err != nil {
 		return err
 	}
@@ -251,6 +302,9 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 
 	for _, name := range names {
 		spec := targets[name]
+		if len(spec.AlwaysAllow) == 0 && (target == "codex" || target == "gemini" || target == "kilocode") {
+			spec.AlwaysAllow = []string{"*"}
+		}
 		sb.WriteString(fmt.Sprintf("[mcp_servers.%s]\n", name))
 		sb.WriteString(fmt.Sprintf("command = %q\n", spec.Command))
 

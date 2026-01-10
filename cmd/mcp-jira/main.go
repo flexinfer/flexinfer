@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/andygrunwald/go-jira"
@@ -14,6 +15,15 @@ import (
 var (
 	version = "0.1.0"
 )
+
+type jiraServer struct {
+	jiraURL  string
+	username string
+	apiToken string
+
+	mu     sync.Mutex
+	client *jira.Client
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -27,30 +37,16 @@ func main() {
 		cancel()
 	}()
 
-	// Initialize Jira client
-	jiraURL := os.Getenv("JIRA_URL")
-	username := os.Getenv("JIRA_USERNAME")
-	apiToken := os.Getenv("JIRA_API_TOKEN")
-
-	if jiraURL == "" || username == "" || apiToken == "" {
-		fmt.Fprintln(os.Stderr, "Error: JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN must be set")
-		os.Exit(1)
-	}
-
-	tp := jira.BasicAuthTransport{
-		Username: username,
-		Password: apiToken,
-	}
-	client, err := jira.NewClient(tp.Client(), jiraURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating Jira client: %v\n", err)
-		os.Exit(1)
+	srv := &jiraServer{
+		jiraURL:  os.Getenv("JIRA_URL"),
+		username: os.Getenv("JIRA_USERNAME"),
+		apiToken: os.Getenv("JIRA_API_TOKEN"),
 	}
 
 	server := mcp.NewServer("mcp-jira", version)
-	server.SetInstructions("Interact with Jira (get issues, search, transition, comment)")
+	server.SetInstructions("Interact with Jira (get issues, search, transition, comment). Requires JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN.")
 
-	registerTools(server, client)
+	registerTools(server, srv)
 
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -58,7 +54,32 @@ func main() {
 	}
 }
 
-func registerTools(server *mcp.Server, client *jira.Client) {
+func (s *jiraServer) getClient() (*jira.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.client != nil {
+		return s.client, nil
+	}
+
+	if s.jiraURL == "" || s.username == "" || s.apiToken == "" {
+		return nil, fmt.Errorf("JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN must be set")
+	}
+
+	tp := jira.BasicAuthTransport{
+		Username: s.username,
+		Password: s.apiToken,
+	}
+	client, err := jira.NewClient(tp.Client(), s.jiraURL)
+	if err != nil {
+		return nil, fmt.Errorf("create jira client: %w", err)
+	}
+
+	s.client = client
+	return s.client, nil
+}
+
+func registerTools(server *mcp.Server, srv *jiraServer) {
 	server.AddTool(mcp.Tool{
 		Name:        "jira_get_issue",
 		Description: "Get details of a Jira issue",
@@ -70,6 +91,11 @@ func registerTools(server *mcp.Server, client *jira.Client) {
 			Required: []string{"issue_key"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		key, _ := args["issue_key"].(string)
 		if key == "" {
 			return mcp.ErrorResult(fmt.Errorf("missing issue_key")), nil
@@ -95,6 +121,11 @@ func registerTools(server *mcp.Server, client *jira.Client) {
 			Required: []string{"jql"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		jql, _ := args["jql"].(string)
 		limit, _ := args["limit"].(float64)
 		if limit == 0 {
@@ -137,6 +168,11 @@ func registerTools(server *mcp.Server, client *jira.Client) {
 			Required: []string{"issue_key", "body"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		key, _ := args["issue_key"].(string)
 		body, _ := args["body"].(string)
 
@@ -163,6 +199,11 @@ func registerTools(server *mcp.Server, client *jira.Client) {
 			Required: []string{"issue_key"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		key, _ := args["issue_key"].(string)
 
 		transitions, _, err := client.Issue.GetTransitions(key)
@@ -185,10 +226,15 @@ func registerTools(server *mcp.Server, client *jira.Client) {
 			Required: []string{"issue_key", "transition_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		key, _ := args["issue_key"].(string)
 		transID, _ := args["transition_id"].(string)
 
-		_, err := client.Issue.DoTransition(key, transID)
+		_, err = client.Issue.DoTransition(key, transID)
 		if err != nil {
 			return mcp.ErrorResult(err), nil
 		}

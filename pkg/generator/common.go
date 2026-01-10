@@ -18,6 +18,54 @@ var (
 	secretPatternRegex = regexp.MustCompile(`\$\{(env|keychain|secret):([^}]+)\}`)
 )
 
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func resolvePathLike(value string, workspaceRoot string, registryRoot string, context string) string {
+	resolved := ResolveTokens(value, workspaceRoot, context)
+	if context != "local" {
+		return resolved
+	}
+	if filepath.IsAbs(resolved) {
+		return resolved
+	}
+
+	// Only rewrite clearly path-like values; leave things like "python3" or "npx" intact.
+	if !(strings.HasPrefix(resolved, "scripts/") || strings.HasPrefix(resolved, "mcp/") || strings.HasPrefix(resolved, "./")) {
+		return resolved
+	}
+
+	roots := []string{
+		registryRoot,
+		workspaceRoot,
+		filepath.Join(workspaceRoot, "platform", "gitops"),
+		filepath.Join(workspaceRoot, "services", "loom-core"),
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		candidate := filepath.Join(root, resolved)
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+
+	// Last resort: still make it absolute to avoid cwd-dependence.
+	if registryRoot != "" {
+		return filepath.Join(registryRoot, resolved)
+	}
+	if workspaceRoot != "" {
+		return filepath.Join(workspaceRoot, resolved)
+	}
+	return resolved
+}
+
 // ResolveTokens replaces path placeholders in strings with actual values.
 // SECURITY: Only resolves ${repo} and ${HOME} - NEVER resolves secret patterns.
 // Secret patterns (${env:VAR}, ${keychain:VAR}, ${secret:VAR}) are preserved
@@ -49,27 +97,19 @@ func ResolveTokens(value string, repoPath string, context string) string {
 }
 
 // ResolveCommand resolves the command path.
-func ResolveCommand(cmd string, repoPath string, context string) string {
+func ResolveCommand(cmd string, workspaceRoot string, registryRoot string, context string) string {
 	if cmd == "" {
 		return ""
 	}
-	resolved := ResolveTokens(cmd, repoPath, context)
-
-	// If local context, ensure absolute path for scripts
-	if context == "local" {
-		if strings.HasPrefix(resolved, "scripts/") || strings.HasPrefix(resolved, "mcp/") || strings.HasPrefix(resolved, "./") {
-			return filepath.Join(repoPath, resolved)
-		}
-	}
-	return resolved
+	return resolvePathLike(cmd, workspaceRoot, registryRoot, context)
 }
 
 // ResolveArgs resolves a list of arguments.
-func ResolveArgs(args []any, repoPath string, context string) []string {
+func ResolveArgs(args []any, workspaceRoot string, registryRoot string, context string) []string {
 	var resolved []string
 	for _, arg := range args {
 		s := fmt.Sprintf("%v", arg)
-		resolved = append(resolved, ResolveTokens(s, repoPath, context))
+		resolved = append(resolved, resolvePathLike(s, workspaceRoot, registryRoot, context))
 	}
 	return resolved
 }

@@ -30,6 +30,7 @@ vendor/
 *.bak
 
 # Local AI tool configs (generated/synced)
+.claude/
 .claude/mcp.json
 .claude/settings.local.json
 .codex/config.toml
