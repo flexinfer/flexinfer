@@ -37,6 +37,14 @@ variables:
 lint:
   stage: lint
   image: golangci/golangci-lint:v1.64.8
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}-lint
+    paths:
+      - .go/pkg/mod/
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - go mod download
   script:
     - golangci-lint run -v --timeout=5m ./...
 
