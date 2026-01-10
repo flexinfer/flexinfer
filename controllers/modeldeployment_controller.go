@@ -179,6 +179,20 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Validate backend + GPU compatibility (e.g., vLLM on Maxwell is not supported)
+	if err := r.validateBackendGPUCompatibility(modelDeployment); err != nil {
+		log.Error(err, "Backend-GPU compatibility validation failed")
+		r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, aiv1alpha1.ReasonValidationFailed, err.Error())
+		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, aiv1alpha1.ReasonValidationFailed, err.Error()); err != nil {
+			log.Error(err, "Failed to update condition")
+		}
+		// Set phase to Failed so it's visible in dashboard
+		if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhaseFailed, err.Error()); err != nil {
+			log.Error(err, "Failed to update status to Failed")
+		}
+		return ctrl.Result{}, nil // Don't requeue - user needs to fix the spec
+	}
+
 	// Update condition for GPU validation success
 	if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeGPUAllocated, metav1.ConditionTrue, aiv1alpha1.ReasonGPUAllocated, "GPU resources validated and will be allocated"); err != nil {
 		log.Error(err, "Failed to update GPU condition")
@@ -237,7 +251,9 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 		// If the job is found, check its status
 		if benchmarkJob.Status.Succeeded > 0 {
-			log.Info("Benchmark job completed successfully")
+			log.Info("Benchmark job completed successfully, requeuing to read results")
+			// Requeue immediately to read the ConfigMap that the job should have created
+			return ctrl.Result{Requeue: true}, nil
 		} else {
 			// If the job is still running, requeue the request.
 			log.Info("Benchmark job is still running")
@@ -246,6 +262,15 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	} else if err != nil {
 		log.Error(err, "Failed to get Benchmark ConfigMap")
 		return ctrl.Result{}, err
+	} else {
+		// Benchmark ConfigMap exists - extract TPS and update status
+		if tps, ok := benchmarkCM.Data["tokensPerSecond"]; ok && tps != "" {
+			if modelDeployment.Status.TokensPerSecond != tps {
+				modelDeployment.Status.TokensPerSecond = tps
+				log.Info("Updated TokensPerSecond from benchmark", "tps", tps)
+				r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "BenchmarkComplete", fmt.Sprintf("Benchmark completed: %.1f tokens/sec", parseTPSFloat(tps)))
+			}
+		}
 	}
 
 	// Handle legacy/private PVC if not using ModelCache
@@ -1142,6 +1167,66 @@ func (r *ModelDeploymentReconciler) isMaxwellGPU(m *aiv1alpha1.ModelDeployment) 
 	return false
 }
 
+// validateBackendGPUCompatibility checks if the backend is compatible with the target GPU.
+// Returns an error if the combination is invalid (e.g., vLLM on Maxwell).
+func (r *ModelDeploymentReconciler) validateBackendGPUCompatibility(m *aiv1alpha1.ModelDeployment) error {
+	backend := canonicalBackend(m.Spec.Backend)
+	isMaxwell := r.isMaxwellGPU(m)
+
+	// vLLM requires sm_70+ (Volta or newer), Maxwell (sm_52) is not supported
+	if backend == "vllm" && isMaxwell {
+		return fmt.Errorf("vLLM backend is not supported on Maxwell GPUs (compute capability 5.x). Use ollama, mlc-llm with pre-compiled library, or llamacpp instead")
+	}
+
+	// MLC-LLM on Maxwell requires pre-compiled model library (no JIT support)
+	if (backend == "mlc-llm" || backend == "mlc") && isMaxwell {
+		if m.Spec.MLCLLM == nil || m.Spec.MLCLLM.ModelLibPath == "" {
+			return fmt.Errorf("MLC-LLM on Maxwell GPUs requires a pre-compiled modelLibPath (JIT compilation not supported on compute capability 5.x)")
+		}
+	}
+
+	return nil
+}
+
+// getGPUArchitecture returns the GPU architecture string from node selector.
+// Returns empty string if not determinable from spec.
+func (r *ModelDeploymentReconciler) getGPUArchitecture(m *aiv1alpha1.ModelDeployment) string {
+	if m.Spec.NodeSelector == nil {
+		return ""
+	}
+	// Check for explicit architecture label
+	if arch, ok := m.Spec.NodeSelector["nvidia.com/gpu.arch"]; ok {
+		return arch
+	}
+	// Check for AMD ROCm architecture
+	if arch, ok := m.Spec.NodeSelector["amd.com/gpu.arch"]; ok {
+		return arch
+	}
+	// Check for compute capability and convert to sm_XX format
+	if major, ok := m.Spec.NodeSelector["nvidia.com/gpu.compute.major"]; ok {
+		minor := m.Spec.NodeSelector["nvidia.com/gpu.compute.minor"]
+		if minor == "" {
+			minor = "0"
+		}
+		return fmt.Sprintf("sm_%s%s", major, minor)
+	}
+	return ""
+}
+
+// getGPUVendor returns the GPU vendor from the spec.
+// Detected from resource requests or node selectors.
+func (r *ModelDeploymentReconciler) getGPUVendor(m *aiv1alpha1.ModelDeployment) string {
+	gpuResource := r.detectGPUResourceFromSpec(m)
+	switch gpuResource {
+	case GPUResourceAMD:
+		return "AMD"
+	case GPUResourceIntel:
+		return "Intel"
+	default:
+		return "NVIDIA"
+	}
+}
+
 // getMLCMode returns the MLC-LLM serve mode.
 // Precedence: CRD > env > default ("local")
 func (r *ModelDeploymentReconciler) getMLCMode(m *aiv1alpha1.ModelDeployment) string {
@@ -1475,6 +1560,14 @@ func removeString(slice []string, s string) []string {
 			result = append(result, item)
 		}
 	}
+	return result
+}
+
+// parseTPSFloat converts a TPS string to float64 for display formatting.
+// Returns 0.0 if parsing fails.
+func parseTPSFloat(tps string) float64 {
+	var result float64
+	fmt.Sscanf(tps, "%f", &result)
 	return result
 }
 

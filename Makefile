@@ -68,6 +68,21 @@ build: manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/flexinfer-manager/main.go
 
+.PHONY: build-cli
+build-cli: ## Build the flexinfer CLI binary.
+	go build -o bin/flexinfer ./cmd/flexinfer
+
+.PHONY: install-cli
+install-cli: build-cli ## Install the flexinfer CLI to /usr/local/bin.
+	cp bin/flexinfer /usr/local/bin/
+
+.PHONY: build-all
+build-all: build build-cli ## Build all binaries (manager + CLI).
+	go build -o bin/flexinfer-agent ./cmd/flexinfer-agent
+	go build -o bin/flexinfer-bench ./cmd/flexinfer-bench
+	go build -o bin/flexinfer-proxy ./cmd/flexinfer-proxy
+	go build -o bin/flexinfer-sched ./cmd/flexinfer-sched
+
 ##@ Deployment
 
 ifndef ignore-not-found

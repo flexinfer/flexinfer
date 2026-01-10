@@ -467,6 +467,10 @@ spec:
                 description: AllocatedGPU contains information about the allocated
                   GPU
                 properties:
+                  architecture:
+                    description: Architecture is the GPU architecture (e.g., sm_52
+                      for Maxwell, gfx1100 for RDNA3)
+                    type: string
                   device:
                     description: Device is the GPU device index
                     type: string
@@ -479,6 +483,9 @@ spec:
                     type: string
                   type:
                     description: Type is the GPU type/model
+                    type: string
+                  vendor:
+                    description: Vendor is the GPU vendor (NVIDIA, AMD, Intel)
                     type: string
                 type: object
               conditions:

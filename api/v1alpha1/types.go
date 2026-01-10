@@ -476,6 +476,14 @@ type GPUAllocation struct {
 	// MemoryMB is the GPU memory in megabytes
 	// +optional
 	MemoryMB int64 `json:"memoryMB,omitempty"`
+
+	// Architecture is the GPU architecture (e.g., sm_52 for Maxwell, gfx1100 for RDNA3)
+	// +optional
+	Architecture string `json:"architecture,omitempty"`
+
+	// Vendor is the GPU vendor (NVIDIA, AMD, Intel)
+	// +optional
+	Vendor string `json:"vendor,omitempty"`
 }
 
 // ModelEndpoints represents the service endpoints

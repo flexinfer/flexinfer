@@ -731,12 +731,121 @@ curl http://litellm.ai.svc:8000/v1/chat/completions \
 
 ---
 
+## FlexInfer CLI
+
+The `flexinfer` CLI provides a convenient way to manage ModelDeployments from the command line.
+
+### Installation
+
+```bash
+# Build and install
+make build-cli
+make install-cli  # Copies to /usr/local/bin
+
+# Or build only
+make build-cli
+./bin/flexinfer --help
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `flexinfer list` | List all ModelDeployments with status, TPS, and GPU info |
+| `flexinfer status <name>` | Detailed status of a deployment (conditions, endpoints, events) |
+| `flexinfer logs <name>` | Stream logs from a deployment's pods |
+| `flexinfer delete <name>` | Delete a ModelDeployment |
+| `flexinfer scale <name> <replicas>` | Scale a deployment |
+
+### Examples
+
+```bash
+# List all deployments
+flexinfer list
+NAME              BACKEND   MODEL                      STATUS    TPS       GPU
+qwen3-8b-amd      mlc-llm   Qwen3-8B-Abliterated       Running   107/s     7900XTX (gfx1100)
+qwen3-32b-amd     mlc-llm   Qwen3-32B                  Running   37/s      7900XTX (gfx1100)
+
+# Get detailed status
+flexinfer status qwen3-8b-amd
+
+# Follow logs
+flexinfer logs qwen3-8b-amd -f
+
+# Scale to zero (serverless)
+flexinfer scale qwen3-8b-amd 0
+
+# Scale back up
+flexinfer scale qwen3-8b-amd 1
+
+# Delete a deployment
+flexinfer delete qwen3-8b-amd
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-n, --namespace` | Kubernetes namespace (default: `flexinfer-system`) |
+| `-A, --all-namespaces` | List across all namespaces |
+| `--kubeconfig` | Path to kubeconfig file |
+
+---
+
+## GPU Compatibility Matrix
+
+| Backend | RDNA3 (7900XTX) | Maxwell (980Ti) | Notes |
+|---------|-----------------|-----------------|-------|
+| Ollama | ✅ Full | ✅ Full | Universal compatibility |
+| vLLM | ✅ Full | ❌ Not supported | Requires sm_70+ |
+| MLC-LLM | ✅ Full | ⚠️ Pre-compiled only | Needs `modelLibPath` |
+| llama.cpp | ✅ Full | ✅ Full | GGUF format |
+
+### Maxwell (GTX 980 Ti) Configuration
+
+Maxwell GPUs (compute capability 5.x) require special handling:
+
+1. **vLLM**: Not supported - use Ollama or llama.cpp instead
+2. **MLC-LLM**: Requires pre-compiled model library
+   ```yaml
+   spec:
+     backend: mlc-llm
+     mlcllm:
+       modelLibPath: /models/Model-q4f32_1-MLC/lib_cuda_maxwell.so
+       gpuMemoryBytes: 5000000000  # 5GB limit for 6GB card
+       jitPolicy: "OFF"
+   ```
+
+### RDNA3 (RX 7900 XTX) Configuration
+
+Full support across all backends:
+
+```yaml
+spec:
+  backend: mlc-llm
+  mlcllm:
+    mode: server
+    modelLibPath: /models/Model-MLC/lib_rocm_gfx1100.so
+    overrides:
+      maxNumSequence: 2
+      maxTotalSeqLength: 131072
+      gpuMemoryUtilization: "0.85"
+  nodeSelector:
+    amd.com/gpu.arch: gfx1100
+```
+
+---
+
 ## Known Issues & Improvements Needed
 
+### Resolved
+- [x] TPS now populated from benchmark results
+- [x] GPU validation prevents vLLM on Maxwell
+- [x] CLI provides easy model management
+
 ### Benchmarking
-- [ ] FlexInfer benchmarker (`flexinfer-bench`) needs better CLI tooling
+- [ ] FlexInfer benchmarker needs direct CLI integration
 - [ ] No built-in way to trigger benchmarks from command line
-- [ ] Results not automatically stored in ModelDeployment status
 
 ### LiteLLM Discovery
 - [ ] Service annotations not always applied by controller

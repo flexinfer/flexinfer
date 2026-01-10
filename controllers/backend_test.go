@@ -1950,3 +1950,232 @@ func TestDeploymentForModelDeployment_LegacyPVCVolume(t *testing.T) {
 		t.Error("Expected volume mount to be read-write for legacy PVC")
 	}
 }
+
+func TestValidateBackendGPUCompatibility_VLLMOnMaxwell(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err == nil {
+		t.Error("Expected error for vLLM on Maxwell, got nil")
+	}
+	if !strings.Contains(err.Error(), "vLLM backend is not supported on Maxwell") {
+		t.Errorf("Expected vLLM Maxwell error message, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_VLLMOnMaxwellArch(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.arch": "Maxwell",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err == nil {
+		t.Error("Expected error for vLLM on Maxwell (via arch label), got nil")
+	}
+}
+
+func TestValidateBackendGPUCompatibility_VLLMOnModernGPU(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "8",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Errorf("Expected no error for vLLM on Ampere, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_MLCOnMaxwellWithoutLib(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err == nil {
+		t.Error("Expected error for MLC-LLM on Maxwell without modelLibPath, got nil")
+	}
+	if !strings.Contains(err.Error(), "requires a pre-compiled modelLibPath") {
+		t.Errorf("Expected modelLibPath error message, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_MLCOnMaxwellWithLib(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+			MLCLLM: &aiv1alpha1.MLCLLMSpec{
+				ModelLibPath: "/models/model-lib.so",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Errorf("Expected no error for MLC-LLM on Maxwell with modelLibPath, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_OllamaOnMaxwell(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "ollama",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Errorf("Expected no error for Ollama on Maxwell, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_LlamaCppOnMaxwell(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Errorf("Expected no error for llama.cpp on Maxwell, got: %v", err)
+	}
+}
+
+func TestGetGPUArchitecture(t *testing.T) {
+	tests := []struct {
+		name         string
+		nodeSelector map[string]string
+		expected     string
+	}{
+		{
+			name:         "NVIDIA compute capability major only",
+			nodeSelector: map[string]string{"nvidia.com/gpu.compute.major": "5"},
+			expected:     "sm_50",
+		},
+		{
+			name:         "NVIDIA compute capability major and minor",
+			nodeSelector: map[string]string{"nvidia.com/gpu.compute.major": "8", "nvidia.com/gpu.compute.minor": "9"},
+			expected:     "sm_89",
+		},
+		{
+			name:         "NVIDIA arch label",
+			nodeSelector: map[string]string{"nvidia.com/gpu.arch": "Maxwell"},
+			expected:     "Maxwell",
+		},
+		{
+			name:         "AMD arch label",
+			nodeSelector: map[string]string{"amd.com/gpu.arch": "gfx1100"},
+			expected:     "gfx1100",
+		},
+		{
+			name:         "no selector",
+			nodeSelector: nil,
+			expected:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &ModelDeploymentReconciler{}
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					NodeSelector: tt.nodeSelector,
+				},
+			}
+
+			arch := r.getGPUArchitecture(m)
+			if arch != tt.expected {
+				t.Errorf("Expected architecture %s, got %s", tt.expected, arch)
+			}
+		})
+	}
+}
+
+func TestGetGPUVendor(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources corev1.ResourceRequirements
+		expected  string
+	}{
+		{
+			name: "AMD GPU",
+			resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")},
+			},
+			expected: "AMD",
+		},
+		{
+			name: "NVIDIA GPU",
+			resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+			},
+			expected: "NVIDIA",
+		},
+		{
+			name: "Intel GPU",
+			resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"intel.com/gpu": resource.MustParse("1")},
+			},
+			expected: "Intel",
+		},
+		{
+			name:      "No GPU (defaults to NVIDIA)",
+			resources: corev1.ResourceRequirements{},
+			expected:  "NVIDIA",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &ModelDeploymentReconciler{}
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Resources: tt.resources,
+				},
+			}
+
+			vendor := r.getGPUVendor(m)
+			if vendor != tt.expected {
+				t.Errorf("Expected vendor %s, got %s", tt.expected, vendor)
+			}
+		})
+	}
+}
