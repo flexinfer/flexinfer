@@ -36,17 +36,12 @@ variables:
 # --- Lint Stage ---
 lint:
   stage: lint
-  image: golangci/golangci-lint:v1.64.8
-  cache:
-    key: ${CI_COMMIT_REF_SLUG}-lint
-    paths:
-      - .go/pkg/mod/
+  <<: *go-cache
   before_script:
     - mkdir -p .go
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}
-    - go mod tidy
-    - go mod download
+    - export PATH=$PATH:$GOPATH/bin
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $GOPATH/bin v1.64.8
   script:
     - golangci-lint run -v --timeout=5m ./...
 
