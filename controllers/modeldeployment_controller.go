@@ -439,7 +439,10 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if desiredReplicas == 0 {
 		// Scaled down - Ready should be False (idle)
-		// This condition is already set by checkIdleScaleDown, skip here
+		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Model is scaled to zero, waiting for traffic"); err != nil {
+			log.Error(err, "Failed to update Ready condition for idle model")
+			return ctrl.Result{}, err
+		}
 	} else if found.Status.ReadyReplicas > 0 {
 		// Running and has ready pods - Ready=True
 		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionTrue, aiv1alpha1.ReasonDeploymentReady, "All resources are ready and healthy"); err != nil {
