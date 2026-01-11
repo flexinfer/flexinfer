@@ -488,4 +488,3 @@ func (r *GPUGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&aiv1alpha1.ModelDeployment{}).
 		Complete(r)
 }
-
