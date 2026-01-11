@@ -321,6 +321,20 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Check for idle scale-down BEFORE syncing deployment replicas.
+	// If the model is idle, we update the ModelDeployment spec first, then the sync
+	// logic below will correctly set the deployment to the new replica count.
+	if scaledDown, err := r.checkIdleScaleDown(ctx, modelDeployment, found); err != nil {
+		log.Error(err, "Failed to check idle scale down")
+		// Continue anyway - don't block normal reconciliation
+	} else if scaledDown {
+		// If we scaled down, re-fetch to get updated spec.replicas before syncing
+		if err := r.Get(ctx, client.ObjectKeyFromObject(modelDeployment), modelDeployment); err != nil {
+			log.Error(err, "Failed to re-fetch ModelDeployment after scale-down")
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Ensure the deployment size is the same as the spec
 	size := modelDeployment.Spec.Replicas
 	needsUpdate := false
@@ -420,11 +434,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Check for Scale-to-Zero (Idler)
-	if err := r.checkIdleScaleDown(ctx, modelDeployment, found); err != nil {
-		log.Error(err, "Failed to check idle scale down")
-		// Don't return error here, just log it, as it's not critical for basic operation
-	}
+	// Note: Scale-to-Zero check is now done earlier in reconciliation (before deployment sync)
+	// This ensures the deployment gets the correct replica count immediately.
 
 	r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ReconcileComplete", "ModelDeployment reconciliation completed successfully")
 
@@ -439,16 +450,17 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-// checkIdleScaleDown checks if the deployment should be scaled to zero
-func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) error {
+// checkIdleScaleDown checks if the deployment should be scaled to zero.
+// Returns (true, nil) if scaled down, (false, nil) if not scaled, (false, err) on error.
+func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) (bool, error) {
 	// If MinReplicas is not set or > 0, we don't scale to zero
 	if m.Spec.MinReplicas == nil || *m.Spec.MinReplicas > 0 {
-		return nil
+		return false, nil
 	}
 
 	// If already at MinReplicas, nothing to do
 	if *deployment.Spec.Replicas <= *m.Spec.MinReplicas {
-		return nil
+		return false, nil
 	}
 
 	// detailed logic:
@@ -461,7 +473,7 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 		// If no last access time is recorded, we assume it's active or just deployed.
 		// However, to start the timer, the Proxy MUST set this.
 		// For safety, if it's missing, we do nothing.
-		return nil
+		return false, nil
 	}
 
 	idleTimeout := int32(300) // Default 5 minutes
@@ -481,22 +493,24 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 		// Re-fetch to get latest version before updating spec
 		fresh := &aiv1alpha1.ModelDeployment{}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
-			return fmt.Errorf("failed to get fresh ModelDeployment: %w", err)
+			return false, fmt.Errorf("failed to get fresh ModelDeployment: %w", err)
 		}
 
 		fresh.Spec.Replicas = &newReplicas
 		if err := r.Update(ctx, fresh); err != nil {
-			return fmt.Errorf("failed to update ModelDeployment replicas: %w", err)
+			return false, fmt.Errorf("failed to update ModelDeployment replicas: %w", err)
 		}
 
 		r.Recorder.Event(m, corev1.EventTypeNormal, "ScaledDown", fmt.Sprintf("Scaled down to %d replicas due to inactivity", newReplicas))
 
 		// Update status to reflect we triggered this
-		err := r.updateCondition(ctx, fresh, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Deployment scaled down to zero due to inactivity")
-		return err
+		if err := r.updateCondition(ctx, fresh, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Deployment scaled down to zero due to inactivity"); err != nil {
+			return true, err // Scaled down but condition update failed
+		}
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 // shouldScheduleIdleCheck returns true if periodic idle checks should be scheduled.
