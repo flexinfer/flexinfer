@@ -470,19 +470,29 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 	}
 
 	if time.Since(lastAccess.Time) > time.Duration(idleTimeout)*time.Second {
-		// Verify we are not already scaling / being scaled by something else (like HPA)
-		// For now, we are the HPA.
+		// Scale down to minReplicas due to inactivity.
+		// We update the ModelDeployment's spec.replicas (not just the deployment)
+		// because the controller's reconciliation loop syncs deployment replicas
+		// to match the ModelDeployment spec. If we only update the deployment,
+		// the next reconciliation will reset it back.
 
 		newReplicas := *m.Spec.MinReplicas
-		deployment.Spec.Replicas = &newReplicas
-		if err := r.Update(ctx, deployment); err != nil {
-			return fmt.Errorf("failed to scale down deployment: %w", err)
+
+		// Re-fetch to get latest version before updating spec
+		fresh := &aiv1alpha1.ModelDeployment{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
+			return fmt.Errorf("failed to get fresh ModelDeployment: %w", err)
+		}
+
+		fresh.Spec.Replicas = &newReplicas
+		if err := r.Update(ctx, fresh); err != nil {
+			return fmt.Errorf("failed to update ModelDeployment replicas: %w", err)
 		}
 
 		r.Recorder.Event(m, corev1.EventTypeNormal, "ScaledDown", fmt.Sprintf("Scaled down to %d replicas due to inactivity", newReplicas))
 
 		// Update status to reflect we triggered this
-		err := r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Deployment scaled down to zero due to inactivity")
+		err := r.updateCondition(ctx, fresh, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Idle", "Deployment scaled down to zero due to inactivity")
 		return err
 	}
 
