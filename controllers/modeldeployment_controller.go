@@ -428,10 +428,32 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Update Ready condition
-	if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionTrue, aiv1alpha1.ReasonDeploymentReady, "All resources are ready and healthy"); err != nil {
-		log.Error(err, "Failed to update Ready condition")
-		return ctrl.Result{}, err
+	// Update Ready condition based on actual deployment readiness.
+	// For serverless (minReplicas=0), we consider "Ready" to mean:
+	// - If spec.replicas=0: Ready=False (scaled down, waiting for traffic)
+	// - If spec.replicas>0: Ready=True only when deployment has available replicas
+	desiredReplicas := int32(1)
+	if modelDeployment.Spec.Replicas != nil {
+		desiredReplicas = *modelDeployment.Spec.Replicas
+	}
+
+	if desiredReplicas == 0 {
+		// Scaled down - Ready should be False (idle)
+		// This condition is already set by checkIdleScaleDown, skip here
+	} else if found.Status.ReadyReplicas > 0 {
+		// Running and has ready pods - Ready=True
+		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionTrue, aiv1alpha1.ReasonDeploymentReady, "All resources are ready and healthy"); err != nil {
+			log.Error(err, "Failed to update Ready condition")
+			return ctrl.Result{}, err
+		}
+	} else {
+		// Running but no ready pods yet - Ready=False (starting up)
+		if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "Pending", fmt.Sprintf("Waiting for pods to become ready (0/%d ready)", desiredReplicas)); err != nil {
+			log.Error(err, "Failed to update Ready condition")
+			return ctrl.Result{}, err
+		}
+		// Requeue to check again soon
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Note: Scale-to-Zero check is now done earlier in reconciliation (before deployment sync)
