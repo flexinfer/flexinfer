@@ -441,6 +441,27 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 	log.Printf("Scaling up model %s from 0 to 1", modelName)
 	scaleUpsTotal.WithLabelValues(modelName).Inc()
 
+	// First, update LastAccessTime to prevent the controller from immediately
+	// scaling back down due to stale idle timeout.
+	// We need to update status first, then spec, to avoid race with controller.
+	now := metav1.Now()
+	md.Status.LastAccessTime = &now
+	if err := p.client.Status().Update(ctx, md); err != nil {
+		log.Printf("Warning: failed to update LastAccessTime before scale-up: %v", err)
+		// Continue anyway - scale-up is more important
+	}
+
+	// Re-fetch to get latest version after status update
+	md, err = p.getModelDeployment(ctx, modelName)
+	if err != nil {
+		return err
+	}
+
+	// Check again in case someone else scaled it up
+	if md.Spec.Replicas != nil && *md.Spec.Replicas > 0 {
+		return nil
+	}
+
 	one := int32(1)
 	md.Spec.Replicas = &one
 	if err := p.client.Update(ctx, md); err != nil {
