@@ -640,6 +640,9 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						Env:          r.getBackendEnv(m),
 						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: []corev1.VolumeMount{volumeMount},
+						// Readiness probe ensures pod is only marked Ready when inference endpoint is serving.
+						// This is critical for serverless scale-to-zero to work correctly.
+						ReadinessProbe: r.getReadinessProbe(m),
 					}},
 					Volumes: []corev1.Volume{volume},
 					// Graceful shutdown period for draining in-flight requests
@@ -1014,6 +1017,35 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 	default:
 	}
 	return 11434
+}
+
+// getReadinessProbe returns the readiness probe configuration for the model container.
+// This ensures the pod is only marked Ready when the inference endpoint is actually serving,
+// which is critical for serverless scale-to-zero to work correctly.
+func (r *ModelDeploymentReconciler) getReadinessProbe(m *aiv1alpha1.ModelDeployment) *corev1.Probe {
+	port := r.getBackendPort(m)
+	path := "/v1/models"
+
+	// Ollama uses a different health endpoint
+	if canonicalBackend(m.Spec.Backend) == "" || canonicalBackend(m.Spec.Backend) == "ollama" {
+		path = "/api/tags"
+	}
+
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: path,
+				Port: intstr.FromInt32(port),
+			},
+		},
+		// Model loading can take 10-60+ seconds depending on model size and GPU
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       5,
+		TimeoutSeconds:      5,
+		// Be patient during cold start - models may take time to load
+		FailureThreshold: 60, // 5 minutes of attempts (60 * 5s)
+		SuccessThreshold: 1,
+	}
 }
 
 // getBackendCommand returns the command (entrypoint override) for backends that need it.
