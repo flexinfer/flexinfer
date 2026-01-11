@@ -95,6 +95,47 @@ spec:
                 maximum: 300
                 minimum: 10
                 type: integer
+              comfyui:
+                description: |-
+                  ComfyUI contains ComfyUI backend-specific configuration.
+                  Only applies when Backend is "comfyui".
+                properties:
+                  customNodesPath:
+                    default: /app/ComfyUI/custom_nodes
+                    description: CustomNodesPath is the path to custom nodes.
+                    type: string
+                  enableCORS:
+                    default: true
+                    description: EnableCORS enables CORS headers for API access.
+                    type: boolean
+                  extraArgs:
+                    description: ExtraArgs is additional command line arguments to
+                      pass to ComfyUI.
+                    items:
+                      type: string
+                    type: array
+                  modelsPath:
+                    default: /app/ComfyUI/models
+                    description: ModelsPath is the path where models are mounted.
+                    type: string
+                  preloadModels:
+                    description: |-
+                      PreloadModels is a list of models to preload on startup.
+                      Format: "category/filename" (e.g., "checkpoints/sdxl.safetensors")
+                    items:
+                      type: string
+                    type: array
+                  workflowsPath:
+                    description: WorkflowsPath is the path to custom workflow JSON
+                      files.
+                    type: string
+                type: object
+              gpuGroupRef:
+                description: |-
+                  GPUGroupRef references a GPUGroup this deployment belongs to.
+                  When set, this deployment participates in shared GPU scheduling.
+                  The GPUGroup controller handles scaling decisions instead of individual idle timeouts.
+                type: string
               idleTimeoutSeconds:
                 default: 300
                 description: IdleTimeoutSeconds is the duration in seconds before
@@ -335,6 +376,15 @@ spec:
                   NodeSelector is a map of key-value pairs used to select nodes for scheduling.
                   This maps directly to the pod's nodeSelector field.
                 type: object
+              priority:
+                default: 100
+                description: |-
+                  Priority within a GPUGroup. Higher values = higher priority for preemption.
+                  Can be overridden by GPUGroup.models[].priority.
+                format: int32
+                maximum: 1000
+                minimum: 0
+                type: integer
               replicas:
                 default: 1
                 description: Replicas is the number of desired pods.
@@ -465,6 +515,51 @@ spec:
                       Required for some models with custom architectures.
                     type: boolean
                 type: object
+              vllmOmni:
+                description: |-
+                  VLLMOmni contains vLLM-Omni backend-specific configuration for image generation.
+                  Only applies when Backend is "vllm-omni".
+                properties:
+                  cacheAcceleration:
+                    default: teacache
+                    description: |-
+                      CacheAcceleration enables cache-based speedup (TeaCache/Cache-DiT).
+                      - "none": No cache acceleration
+                      - "teacache": TeaCache for 1.5-2x speedup (default)
+                      - "cachedit": Cache-DiT for faster inference
+                    enum:
+                    - none
+                    - teacache
+                    - cachedit
+                    type: string
+                  defaultSize:
+                    default: 1024x1024
+                    description: DefaultSize is the default image output size.
+                    type: string
+                  diffusionModel:
+                    description: |-
+                      DiffusionModel is the HuggingFace model ID to use for image generation.
+                      Examples: "Qwen/Qwen-Image", "Tongyi-MAI/Z-Image-Turbo"
+                      If not specified, uses the model field from ModelDeploymentSpec.
+                    type: string
+                  gpuMemoryUtilization:
+                    description: |-
+                      GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
+                      Default: 0.9 (90% of available GPU memory)
+                    type: string
+                  maxNumSeqs:
+                    description: MaxNumSeqs is the maximum number of sequences per
+                      iteration.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              vramEstimateMB:
+                description: |-
+                  VRAMEstimateMB is the estimated VRAM usage for this model in megabytes.
+                  Used by GPUGroup for bin-packing and swap decisions.
+                format: int64
+                type: integer
             required:
             - backend
             - model
@@ -563,6 +658,32 @@ spec:
                     type: string
                   internal:
                     description: Internal is the internal cluster endpoint
+                    type: string
+                type: object
+              gpuGroupState:
+                description: |-
+                  GPUGroupState tracks this deployment's state within its GPUGroup (if any).
+                  Only populated when GPUGroupRef is set.
+                properties:
+                  groupName:
+                    description: GroupName is the GPUGroup this deployment belongs
+                      to.
+                    type: string
+                  preemptedAt:
+                    description: PreemptedAt is when this model was last preempted.
+                    format: date-time
+                    type: string
+                  preemptedBy:
+                    description: PreemptedBy is the model that caused preemption.
+                    type: string
+                  queuedRequests:
+                    description: QueuedRequests is the number of requests waiting
+                      for this model.
+                    format: int32
+                    type: integer
+                  state:
+                    description: 'State is the current state within the group: Active,
+                      Preempted, Queued, Idle.'
                     type: string
                 type: object
               lastAccessTime:

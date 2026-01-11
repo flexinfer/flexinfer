@@ -29,6 +29,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - gpugroups
   - modelcaches
   - modeldeployments
   verbs:
@@ -42,6 +43,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - gpugroups/finalizers
   - modelcaches/finalizers
   - modeldeployments/finalizers
   verbs:
@@ -49,6 +51,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - gpugroups/status
   - modelcaches/status
   - modeldeployments/status
   verbs:

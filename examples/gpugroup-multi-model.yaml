@@ -1,0 +1,350 @@
+# GPUGroup Multi-Model Examples
+#
+# GPUGroup enables multiple models to share a single GPU with:
+#   - Priority-based preemption (higher priority gets the GPU)
+#   - Anti-thrashing protection (prevents rapid model flip-flopping)
+#   - Demand signaling from proxy to controller
+#   - Automatic RAM caching for fast model swaps
+#
+# Use Cases:
+#   - Textgen + Imagegen on same GPU (80/20 usage pattern)
+#   - Multiple LLM variants for different tasks
+#   - Dev/test models with lower priority than production
+#
+# Key Concepts:
+#   - ScalingPolicy.Strategy: Exclusive (one model at a time)
+#   - AntiThrashing: Prevents A->B->A->B oscillation
+#   - Priority: Higher value = higher priority (0-1000)
+#   - Models reference GPUGroup via gpuGroupRef
+#
+---
+###############################################################################
+# Example 1: Textgen + Imagegen on Shared GPU (AMD)
+#
+# Scenario: Homelab with single AMD GPU running both:
+#   - qwen3-8b-chat (priority: 100) - primary text generation
+#   - sdxl-turbo (priority: 50) - image generation when needed
+#
+# Behavior:
+#   1. By default, qwen3-8b-chat is active (highest priority with traffic)
+#   2. When image request arrives, proxy queues it and signals demand
+#   3. GPUGroup controller waits for anti-thrashing conditions:
+#      - qwen3 has run for minimumRunDurationSeconds (30s)
+#      - Request queue threshold met (3 requests)
+#      - Hysteresis window passed (10s of sustained demand)
+#   4. Controller drains qwen3, then scales up sdxl
+#   5. After sdxl goes idle (180s), it scales down
+#   6. Next text request triggers qwen3 scale-up
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: GPUGroup
+metadata:
+  name: homelab-rx7900xt
+  namespace: flexinfer-system
+spec:
+  # Models in this group with their priorities
+  models:
+    - name: qwen3-8b-chat
+      priority: 100       # Text generation gets priority
+      vramEstimateMB: 16000
+    - name: sdxl-turbo
+      priority: 50        # Image generation yields to textgen
+      vramEstimateMB: 12000
+
+  # Pin to specific node with GPU
+  nodeSelector:
+    kubernetes.io/hostname: gpu-workstation
+
+  # Only one model runs at a time
+  scalingPolicy:
+    strategy: Exclusive
+    preemptionPolicy: Graceful  # Wait for in-flight requests
+    drainTimeoutSeconds: 30     # Force kill after 30s
+
+  # Anti-thrashing prevents rapid model swapping
+  antiThrashing:
+    enabled: true
+    minimumRunDurationSeconds: 30      # Model must run 30s before swap
+    cooldownAfterPreemptionSeconds: 60 # Can't swap back for 60s
+    requestQueueThreshold: 3           # Need 3+ queued requests
+    hysteresisWindowSeconds: 10        # Demand must persist 10s
+
+  # Auto-create RAM caches for fast model swaps (~5-10s vs 30-60s)
+  autoCacheModels: true
+
+---
+# Primary Text Generation Model
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-8b-chat
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "qwen3-8b-chat"
+spec:
+  backend: mlc-llm
+  model: Qwen3-8B-q4f16_1-MLC
+
+  # GPUGroup membership
+  gpuGroupRef: homelab-rx7900xt
+  priority: 100           # Highest priority in group
+  vramEstimateMB: 16000   # VRAM estimate for bin-packing (future)
+
+  # Serverless settings
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 300  # Scale down after 5 min idle
+  coldStartTimeoutSeconds: 60
+
+  # MLC-LLM configuration
+  mlcllm:
+    mode: server
+    overrides:
+      maxNumSequence: 4
+      maxTotalSeqLength: 32768
+
+  litellm:
+    enabled: true
+    servedModelName: qwen3-8b-chat
+    aliases:
+      - gpt-4
+      - claude-3-opus
+
+  resources:
+    limits:
+      amd.com/gpu: "1"
+
+---
+# Image Generation Model (ComfyUI)
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: sdxl-turbo
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "sdxl-turbo"
+spec:
+  backend: comfyui
+  model: stabilityai/sdxl-turbo
+
+  # GPUGroup membership - lower priority than textgen
+  gpuGroupRef: homelab-rx7900xt
+  priority: 50            # Yields to text generation
+  vramEstimateMB: 12000
+
+  # Serverless settings - shorter idle timeout for image gen
+  replicas: 0             # Start scaled down
+  minReplicas: 0
+  idleTimeoutSeconds: 180  # Scale down after 3 min idle
+  coldStartTimeoutSeconds: 120  # Image models take longer
+
+  # ComfyUI configuration
+  comfyui:
+    enableCORS: true
+    preloadModels:
+      - checkpoints/sdxl_turbo.safetensors
+    modelsPath: /models
+
+  litellm:
+    enabled: true
+    servedModelName: sdxl-turbo
+
+  resources:
+    limits:
+      amd.com/gpu: "1"
+
+---
+###############################################################################
+# Example 2: Multi-LLM on Shared GPU (Priority-Based)
+#
+# Scenario: Multiple LLMs for different use cases sharing one GPU:
+#   - production-llm (priority: 100) - main production model
+#   - code-assistant (priority: 75) - code generation
+#   - dev-test-llm (priority: 25) - development testing
+#
+# Priority ensures production always gets GPU when needed.
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: GPUGroup
+metadata:
+  name: multi-llm-gpu
+  namespace: flexinfer-system
+spec:
+  models:
+    - name: production-llm
+      priority: 100
+      vramEstimateMB: 16000
+    - name: code-assistant
+      priority: 75
+      vramEstimateMB: 8000
+    - name: dev-test-llm
+      priority: 25
+      vramEstimateMB: 8000
+
+  nodeSelector:
+    node-role.kubernetes.io/gpu: "true"
+
+  scalingPolicy:
+    strategy: Exclusive
+    preemptionPolicy: Graceful
+    drainTimeoutSeconds: 60
+
+  antiThrashing:
+    enabled: true
+    minimumRunDurationSeconds: 60      # Longer minimum for production
+    cooldownAfterPreemptionSeconds: 120
+    requestQueueThreshold: 5
+    hysteresisWindowSeconds: 15
+
+  autoCacheModels: true
+
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: production-llm
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  model: Qwen/Qwen2.5-7B-Instruct
+  gpuGroupRef: multi-llm-gpu
+  priority: 100
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 600  # Keep warm longer
+  coldStartTimeoutSeconds: 90
+  vllm:
+    dtype: auto
+    maxModelLen: 32768
+    gpuMemoryUtilization: "0.85"
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: code-assistant
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  model: /models/codellama-7b-instruct.Q4_K_M.gguf
+  gpuGroupRef: multi-llm-gpu
+  priority: 75
+  replicas: 0             # Start scaled down
+  minReplicas: 0
+  idleTimeoutSeconds: 300
+  coldStartTimeoutSeconds: 45
+  llamacpp:
+    contextSize: 16384
+    nGPULayers: 999
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: dev-test-llm
+  namespace: flexinfer-system
+spec:
+  backend: ollama
+  model: llama3:8b
+  gpuGroupRef: multi-llm-gpu
+  priority: 25            # Lowest priority - yields to all others
+  replicas: 0
+  minReplicas: 0
+  idleTimeoutSeconds: 120  # Short idle timeout
+  coldStartTimeoutSeconds: 60
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+
+---
+###############################################################################
+# Example 3: vLLM-Omni Image Generation Backend
+#
+# vLLM-Omni provides DALL-E compatible API with cache acceleration.
+# Use this instead of ComfyUI if you want OpenAI-compatible image API.
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: GPUGroup
+metadata:
+  name: textgen-imagegen-vllm
+  namespace: flexinfer-system
+spec:
+  models:
+    - name: qwen3-textgen
+      priority: 100
+      vramEstimateMB: 16000
+    - name: flux-schnell-imagegen
+      priority: 50
+      vramEstimateMB: 20000
+
+  nodeSelector:
+    gpu-memory: "24gb"
+
+  scalingPolicy:
+    strategy: Exclusive
+    preemptionPolicy: Graceful
+    drainTimeoutSeconds: 45
+
+  antiThrashing:
+    enabled: true
+    minimumRunDurationSeconds: 30
+    cooldownAfterPreemptionSeconds: 90
+    requestQueueThreshold: 3
+    hysteresisWindowSeconds: 10
+
+  autoCacheModels: true
+
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-textgen
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  model: Qwen3-8B-q4f16_1-MLC
+  gpuGroupRef: textgen-imagegen-vllm
+  priority: 100
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 300
+  coldStartTimeoutSeconds: 60
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: flux-schnell-imagegen
+  namespace: flexinfer-system
+spec:
+  backend: vllm-omni
+  model: black-forest-labs/FLUX.1-schnell
+
+  gpuGroupRef: textgen-imagegen-vllm
+  priority: 50
+
+  replicas: 0
+  minReplicas: 0
+  idleTimeoutSeconds: 180
+  coldStartTimeoutSeconds: 180  # Flux needs longer to load
+
+  # vLLM-Omni configuration
+  vllmOmni:
+    diffusionModel: black-forest-labs/FLUX.1-schnell
+    cacheAcceleration: teacache  # TeaCache for faster generation
+    defaultSize: "1024x1024"
+    gpuMemoryUtilization: "0.9"
+
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+      memory: 32Gi

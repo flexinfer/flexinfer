@@ -47,8 +47,25 @@ func canonicalBackend(backend string) string {
 		return "llamacpp"
 	case "mlc":
 		return "mlc-llm"
+	// Image generation backends
+	case "comfy", "comfyui":
+		return "comfyui"
+	case "vllm-omni", "vllm-diffusion":
+		return "vllm-omni"
+	case "diffusers", "diffusers-api":
+		return "diffusers"
 	default:
 		return backend
+	}
+}
+
+// isImageGenBackend returns true if the backend is for image generation
+func isImageGenBackend(backend string) bool {
+	switch canonicalBackend(backend) {
+	case "comfyui", "vllm-omni", "diffusers":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -480,6 +497,12 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 // Returns (true, nil) if scaled down, (false, nil) if not scaled, (false, err) on error.
 func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) (bool, error) {
 	log := log.FromContext(ctx)
+
+	// If this ModelDeployment belongs to a GPUGroup, the GPUGroup controller handles scaling
+	if m.Spec.GPUGroupRef != nil {
+		log.V(1).Info("Skipping idle scale-down check: managed by GPUGroup", "gpuGroup", *m.Spec.GPUGroupRef)
+		return false, nil
+	}
 
 	// If MinReplicas is not set or > 0, we don't scale to zero
 	if m.Spec.MinReplicas == nil || *m.Spec.MinReplicas > 0 {
@@ -1060,6 +1083,40 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 			// CUDA-enabled MLC-LLM image
 			return "ghcr.io/mlc-ai/mlc-llm:cuda"
 		}
+	case "comfyui":
+		// ComfyUI for image generation - supports ROCm and CUDA
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_COMFYUI_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled ComfyUI image
+			return "registry.harbor.lan/library/comfyui:rocm6.4.3"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_COMFYUI_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled ComfyUI image
+			return "comfyanonymous/comfyui:latest"
+		}
+	case "vllm-omni":
+		// vLLM-Omni for diffusion models with OpenAI-compatible API
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled vLLM-Omni image
+			return "rocm/vllm:latest"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled vLLM-Omni image
+			return "vllm/vllm-openai:latest"
+		}
 	default:
 	}
 
@@ -1100,6 +1157,12 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 		return 8000
 	case "llamacpp":
 		return 8080
+	case "comfyui":
+		// ComfyUI WebSocket/HTTP server
+		return 8188
+	case "vllm-omni":
+		// vLLM-Omni OpenAI-compatible API
+		return 8000
 	default:
 	}
 	return 11434
@@ -1110,11 +1173,48 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 // which is critical for serverless scale-to-zero to work correctly.
 func (r *ModelDeploymentReconciler) getReadinessProbe(m *aiv1alpha1.ModelDeployment) *corev1.Probe {
 	port := r.getBackendPort(m)
+	backend := canonicalBackend(m.Spec.Backend)
+
+	// ComfyUI uses WebSocket - use TCP socket probe instead of HTTP
+	if backend == "comfyui" {
+		return &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt32(port),
+				},
+			},
+			// Image gen models can take longer to load (SDXL, Flux models)
+			InitialDelaySeconds: 10,
+			PeriodSeconds:       10,
+			TimeoutSeconds:      5,
+			// Be very patient - large diffusion models take time
+			FailureThreshold: 90, // 15 minutes of attempts (90 * 10s)
+			SuccessThreshold: 1,
+		}
+	}
+
+	// HTTP-based health checks for other backends
 	path := "/v1/models"
 
-	// Ollama uses a different health endpoint
-	if canonicalBackend(m.Spec.Backend) == "" || canonicalBackend(m.Spec.Backend) == "ollama" {
+	switch backend {
+	case "", "ollama":
+		// Ollama uses a different health endpoint
 		path = "/api/tags"
+	case "vllm-omni":
+		// vLLM-Omni uses standard OpenAI endpoint
+		path = "/v1/models"
+	}
+
+	// Default probe timings
+	initialDelay := int32(5)
+	period := int32(5)
+	failureThreshold := int32(60) // 5 minutes
+
+	// Image generation backends need more time for model loading
+	if isImageGenBackend(backend) {
+		initialDelay = 10
+		period = 10
+		failureThreshold = 90 // 15 minutes
 	}
 
 	return &corev1.Probe{
@@ -1124,13 +1224,11 @@ func (r *ModelDeploymentReconciler) getReadinessProbe(m *aiv1alpha1.ModelDeploym
 				Port: intstr.FromInt32(port),
 			},
 		},
-		// Model loading can take 10-60+ seconds depending on model size and GPU
-		InitialDelaySeconds: 5,
-		PeriodSeconds:       5,
+		InitialDelaySeconds: initialDelay,
+		PeriodSeconds:       period,
 		TimeoutSeconds:      5,
-		// Be patient during cold start - models may take time to load
-		FailureThreshold: 60, // 5 minutes of attempts (60 * 5s)
-		SuccessThreshold: 1,
+		FailureThreshold:    failureThreshold,
+		SuccessThreshold:    1,
 	}
 }
 
@@ -1194,6 +1292,18 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 			return strings.Fields(args)
 		}
 		return r.buildLlamaCppArgs(m, modelPath)
+	case "comfyui":
+		// ComfyUI args
+		if args, ok := os.LookupEnv("DEFAULT_COMFYUI_ARGS"); ok && args != "" {
+			return strings.Fields(args)
+		}
+		return r.buildComfyUIArgs(m)
+	case "vllm-omni":
+		// vLLM-Omni args for diffusion models
+		if args, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_ARGS"); ok && args != "" {
+			return strings.Fields(args)
+		}
+		return r.buildVLLMOmniArgs(m, modelPath)
 	default:
 	}
 	return nil
@@ -1226,6 +1336,28 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 			{
 				Name:  "OLLAMA_HOST",
 				Value: "0.0.0.0",
+			},
+		}
+	case "comfyui":
+		// ComfyUI environment configuration
+		var env []corev1.EnvVar
+		// Ensure ComfyUI outputs are accessible
+		env = append(env, corev1.EnvVar{
+			Name:  "COMFYUI_OUTPUT_DIRECTORY",
+			Value: "/output",
+		})
+		// GPU device ordering for multi-GPU setups
+		env = append(env, corev1.EnvVar{
+			Name:  "CUDA_DEVICE_ORDER",
+			Value: "PCI_BUS_ID",
+		})
+		return env
+	case "vllm-omni":
+		// vLLM-Omni inherits from vLLM
+		return []corev1.EnvVar{
+			{
+				Name:  "CUDA_DEVICE_ORDER",
+				Value: "PCI_BUS_ID",
 			},
 		}
 	default:
@@ -1625,6 +1757,77 @@ func (r *ModelDeploymentReconciler) buildLlamaCppArgs(m *aiv1alpha1.ModelDeploym
 	return args
 }
 
+// buildComfyUIArgs constructs command-line arguments for ComfyUI server.
+func (r *ModelDeploymentReconciler) buildComfyUIArgs(m *aiv1alpha1.ModelDeployment) []string {
+	args := []string{"--listen", "0.0.0.0", "--port", "8188"}
+
+	if m.Spec.ComfyUI == nil {
+		return args
+	}
+
+	c := m.Spec.ComfyUI
+
+	// Models path (checkpoint, lora, etc.)
+	if c.ModelsPath != "" {
+		args = append(args, "--models-dir", c.ModelsPath)
+	}
+
+	// Custom workflows directory
+	if c.WorkflowsPath != "" {
+		args = append(args, "--input-directory", c.WorkflowsPath)
+	}
+
+	// Enable CORS for browser access
+	if c.EnableCORS != nil && *c.EnableCORS {
+		args = append(args, "--enable-cors-header")
+	}
+
+	// Extra arguments (escape hatch for additional options)
+	if len(c.ExtraArgs) > 0 {
+		args = append(args, c.ExtraArgs...)
+	}
+
+	return args
+}
+
+// buildVLLMOmniArgs constructs command-line arguments for vLLM-Omni (diffusion server).
+func (r *ModelDeploymentReconciler) buildVLLMOmniArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
+	args := []string{"--model", modelPath, "--host", "0.0.0.0", "--port", "8000"}
+
+	if m.Spec.VLLMOmni == nil {
+		return args
+	}
+
+	v := m.Spec.VLLMOmni
+
+	// Diffusion model (for multi-modal setups, e.g., FLUX with LLM controller)
+	if v.DiffusionModel != "" {
+		args = append(args, "--diffusion-model", v.DiffusionModel)
+	}
+
+	// Cache acceleration method (teacache, cachedit, etc.)
+	if v.CacheAcceleration != "" {
+		args = append(args, "--cache-acceleration", v.CacheAcceleration)
+	}
+
+	// Default image size
+	if v.DefaultSize != "" {
+		args = append(args, "--default-size", v.DefaultSize)
+	}
+
+	// GPU memory utilization
+	if v.GPUMemoryUtilization != nil {
+		args = append(args, "--gpu-memory-utilization", *v.GPUMemoryUtilization)
+	}
+
+	// Max sequences for batch processing
+	if v.MaxNumSeqs != nil {
+		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", *v.MaxNumSeqs))
+	}
+
+	return args
+}
+
 // validateGPUResources validates that GPU resources are properly configured
 func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDeployment) error {
 	// For now, we ensure that GPU resources will be added by our controller
@@ -1635,11 +1838,14 @@ func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDepl
 
 	// Basic validation: ensure backend supports GPU workloads
 	supportedBackends := map[string]bool{
-		"ollama":   true,
-		"vllm":     true,
-		"tgi":      true, // Text Generation Inference
-		"llamacpp": true,
-		"mlc-llm":  true,
+		"ollama":    true,
+		"vllm":      true,
+		"tgi":       true, // Text Generation Inference
+		"llamacpp":  true,
+		"mlc-llm":   true,
+		"comfyui":   true, // Image generation
+		"vllm-omni": true, // Diffusion models
+		"diffusers": true, // Diffusers API
 	}
 
 	backend := canonicalBackend(m.Spec.Backend)

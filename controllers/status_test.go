@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -129,8 +130,9 @@ func TestUpdateModelDeploymentStatus(t *testing.T) {
 				Build()
 
 			reconciler := &ModelDeploymentReconciler{
-				Client: fakeClient,
-				Scheme: s,
+				Client:    fakeClient,
+				APIReader: fakeClient, // Use same client for APIReader in tests
+				Scheme:    s,
 			}
 
 			ctx := context.Background()
@@ -139,13 +141,18 @@ func TestUpdateModelDeploymentStatus(t *testing.T) {
 			err := reconciler.updateModelDeploymentStatus(ctx, md, tt.newPhase, tt.message)
 			require.NoError(t, err, "Status update should succeed")
 
-			// Verify phase was updated in the passed object
-			assert.Equal(t, tt.expectedPhase, md.Status.Phase, "Phase should be updated")
+			// Re-fetch the object to verify the update (function updates a fresh copy)
+			updatedMd := &aiv1alpha1.ModelDeployment{}
+			err = fakeClient.Get(ctx, client.ObjectKeyFromObject(md), updatedMd)
+			require.NoError(t, err, "Should be able to re-fetch updated object")
+
+			// Verify phase was updated
+			assert.Equal(t, tt.expectedPhase, updatedMd.Status.Phase, "Phase should be updated")
 
 			// Verify condition was added/updated
 			if tt.expectCondition {
 				found := false
-				for _, condition := range md.Status.Conditions {
+				for _, condition := range updatedMd.Status.Conditions {
 					if condition.Type == tt.conditionType {
 						assert.Equal(t, tt.conditionStatus, condition.Status, "Condition status should match")
 						assert.Equal(t, aiv1alpha1.ReasonReconciling, condition.Reason, "Condition reason should be Reconciling")
@@ -303,8 +310,9 @@ func TestUpdateCondition(t *testing.T) {
 				Build()
 
 			reconciler := &ModelDeploymentReconciler{
-				Client: fakeClient,
-				Scheme: s,
+				Client:    fakeClient,
+				APIReader: fakeClient, // Use same client for APIReader in tests
+				Scheme:    s,
 			}
 
 			ctx := context.Background()
@@ -314,16 +322,21 @@ func TestUpdateCondition(t *testing.T) {
 			err := reconciler.updateCondition(ctx, md, tt.conditionType, tt.status, tt.reason, tt.message)
 			require.NoError(t, err, "Condition update should succeed")
 
+			// Re-fetch the object to verify the update (function updates a fresh copy)
+			updatedMd := &aiv1alpha1.ModelDeployment{}
+			err = fakeClient.Get(ctx, client.ObjectKeyFromObject(md), updatedMd)
+			require.NoError(t, err, "Should be able to re-fetch updated object")
+
 			// Verify condition count
 			if tt.expectNewCondition {
-				assert.Equal(t, initialConditionCount+1, len(md.Status.Conditions), "Should add new condition")
+				assert.Equal(t, initialConditionCount+1, len(updatedMd.Status.Conditions), "Should add new condition")
 			} else {
-				assert.Equal(t, initialConditionCount, len(md.Status.Conditions), "Should not add new condition")
+				assert.Equal(t, initialConditionCount, len(updatedMd.Status.Conditions), "Should not add new condition")
 			}
 
 			// Find and verify the condition
 			found := false
-			for _, condition := range md.Status.Conditions {
+			for _, condition := range updatedMd.Status.Conditions {
 				if condition.Type == tt.conditionType {
 					assert.Equal(t, tt.status, condition.Status, "Condition status should match")
 					assert.Equal(t, tt.reason, condition.Reason, "Condition reason should match")
@@ -455,8 +468,9 @@ func TestUpdateEndpointStatus(t *testing.T) {
 				Build()
 
 			reconciler := &ModelDeploymentReconciler{
-				Client: fakeClient,
-				Scheme: s,
+				Client:    fakeClient,
+				APIReader: fakeClient, // Use same client for APIReader in tests
+				Scheme:    s,
 			}
 
 			ctx := context.Background()
@@ -465,17 +479,22 @@ func TestUpdateEndpointStatus(t *testing.T) {
 			err := reconciler.updateEndpointStatus(ctx, tt.modelDeployment, tt.service)
 			require.NoError(t, err, "Endpoint status update should succeed")
 
+			// Re-fetch the object to verify the update (function updates a fresh copy)
+			updatedMd := &aiv1alpha1.ModelDeployment{}
+			err = fakeClient.Get(ctx, client.ObjectKeyFromObject(tt.modelDeployment), updatedMd)
+			require.NoError(t, err, "Should be able to re-fetch updated object")
+
 			// Verify endpoint status
-			require.NotNil(t, tt.modelDeployment.Status.Endpoints, "Endpoints should be set")
-			assert.Equal(t, tt.expectedInternal, tt.modelDeployment.Status.Endpoints.Internal, "Internal endpoint should match")
+			require.NotNil(t, updatedMd.Status.Endpoints, "Endpoints should be set")
+			assert.Equal(t, tt.expectedInternal, updatedMd.Status.Endpoints.Internal, "Internal endpoint should match")
 
 			if tt.expectedExternal != "" {
-				assert.Equal(t, tt.expectedExternal, tt.modelDeployment.Status.Endpoints.External, "External endpoint should match")
+				assert.Equal(t, tt.expectedExternal, updatedMd.Status.Endpoints.External, "External endpoint should match")
 			}
 
 			// Verify EndpointReady condition was set
 			found := false
-			for _, condition := range tt.modelDeployment.Status.Conditions {
+			for _, condition := range updatedMd.Status.Conditions {
 				if condition.Type == aiv1alpha1.ConditionTypeEndpointReady {
 					assert.Equal(t, metav1.ConditionTrue, condition.Status, "EndpointReady should be True")
 					assert.Equal(t, aiv1alpha1.ReasonServiceReady, condition.Reason, "Reason should be ServiceReady")
@@ -530,8 +549,9 @@ func TestStatusManagementIntegration(t *testing.T) {
 		Build()
 
 	reconciler := &ModelDeploymentReconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Client:    fakeClient,
+		APIReader: fakeClient, // Use same client for APIReader in tests
+		Scheme:    s,
 	}
 
 	ctx := context.Background()
@@ -539,7 +559,12 @@ func TestStatusManagementIntegration(t *testing.T) {
 	// Step 1: Initialize to Pending
 	err := reconciler.updateModelDeploymentStatus(ctx, md, aiv1alpha1.ModelDeploymentPhasePending, "Initializing ModelDeployment")
 	require.NoError(t, err, "Initial status update should succeed")
-	assert.Equal(t, aiv1alpha1.ModelDeploymentPhasePending, md.Status.Phase)
+
+	// Re-fetch to verify (function updates a fresh copy)
+	updatedMd := &aiv1alpha1.ModelDeployment{}
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(md), updatedMd)
+	require.NoError(t, err, "Should be able to re-fetch")
+	assert.Equal(t, aiv1alpha1.ModelDeploymentPhasePending, updatedMd.Status.Phase)
 
 	// Step 2: Add GPU allocation condition
 	err = reconciler.updateCondition(ctx, md, aiv1alpha1.ConditionTypeGPUAllocated, metav1.ConditionTrue, aiv1alpha1.ReasonGPUAllocated, "GPU resources allocated")
@@ -561,8 +586,13 @@ func TestStatusManagementIntegration(t *testing.T) {
 	err = reconciler.updateCondition(ctx, md, aiv1alpha1.ConditionTypeReady, metav1.ConditionTrue, aiv1alpha1.ReasonDeploymentReady, "All resources are ready and healthy")
 	require.NoError(t, err, "Ready condition update should succeed")
 
+	// Re-fetch to verify final state (all functions update a fresh copy)
+	finalMd := &aiv1alpha1.ModelDeployment{}
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(md), finalMd)
+	require.NoError(t, err, "Should be able to re-fetch final state")
+
 	// Verify final state
-	assert.Equal(t, aiv1alpha1.ModelDeploymentPhaseRunning, md.Status.Phase, "Final phase should be Running")
+	assert.Equal(t, aiv1alpha1.ModelDeploymentPhaseRunning, finalMd.Status.Phase, "Final phase should be Running")
 
 	// Verify all expected conditions are present
 	expectedConditions := []string{
@@ -575,7 +605,7 @@ func TestStatusManagementIntegration(t *testing.T) {
 
 	for _, conditionType := range expectedConditions {
 		found := false
-		for _, condition := range md.Status.Conditions {
+		for _, condition := range finalMd.Status.Conditions {
 			if condition.Type == conditionType {
 				assert.Equal(t, metav1.ConditionTrue, condition.Status, "Condition %s should be True", conditionType)
 				found = true
@@ -586,8 +616,8 @@ func TestStatusManagementIntegration(t *testing.T) {
 	}
 
 	// Verify endpoint status
-	require.NotNil(t, md.Status.Endpoints, "Endpoints should be set")
-	assert.Equal(t, "integration-test.default.svc.cluster.local:11434", md.Status.Endpoints.Internal, "Internal endpoint should be set")
+	require.NotNil(t, finalMd.Status.Endpoints, "Endpoints should be set")
+	assert.Equal(t, "integration-test.default.svc.cluster.local:11434", finalMd.Status.Endpoints.Internal, "Internal endpoint should be set")
 }
 
 func TestStatusUpdateErrorHandling(t *testing.T) {
@@ -614,8 +644,9 @@ func TestStatusUpdateErrorHandling(t *testing.T) {
 		Build()
 
 	reconciler := &ModelDeploymentReconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Client:    fakeClient,
+		APIReader: fakeClient, // Use same client for APIReader in tests
+		Scheme:    s,
 	}
 
 	ctx := context.Background()

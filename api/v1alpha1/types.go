@@ -139,6 +139,35 @@ type ModelDeploymentSpec struct {
 	// Only applies when Backend is "llamacpp" or "llama.cpp".
 	// +optional
 	LlamaCpp *LlamaCppSpec `json:"llamacpp,omitempty"`
+
+	// ComfyUI contains ComfyUI backend-specific configuration.
+	// Only applies when Backend is "comfyui".
+	// +optional
+	ComfyUI *ComfyUISpec `json:"comfyui,omitempty"`
+
+	// VLLMOmni contains vLLM-Omni backend-specific configuration for image generation.
+	// Only applies when Backend is "vllm-omni".
+	// +optional
+	VLLMOmni *VLLMOmniSpec `json:"vllmOmni,omitempty"`
+
+	// GPUGroupRef references a GPUGroup this deployment belongs to.
+	// When set, this deployment participates in shared GPU scheduling.
+	// The GPUGroup controller handles scaling decisions instead of individual idle timeouts.
+	// +optional
+	GPUGroupRef *string `json:"gpuGroupRef,omitempty"`
+
+	// Priority within a GPUGroup. Higher values = higher priority for preemption.
+	// Can be overridden by GPUGroup.models[].priority.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	// +kubebuilder:default=100
+	// +optional
+	Priority *int32 `json:"priority,omitempty"`
+
+	// VRAMEstimateMB is the estimated VRAM usage for this model in megabytes.
+	// Used by GPUGroup for bin-packing and swap decisions.
+	// +optional
+	VRAMEstimateMB *int64 `json:"vramEstimateMB,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.
@@ -419,6 +448,75 @@ type LlamaCppSpec struct {
 	RopeFreqScale string `json:"ropeFreqScale,omitempty"`
 }
 
+// ComfyUISpec configures ComfyUI backend-specific settings for image generation.
+// Only applies when Backend is "comfyui".
+// +kubebuilder:object:generate=true
+type ComfyUISpec struct {
+	// WorkflowsPath is the path to custom workflow JSON files.
+	// +optional
+	WorkflowsPath string `json:"workflowsPath,omitempty"`
+
+	// ModelsPath is the path where models are mounted.
+	// +kubebuilder:default="/app/ComfyUI/models"
+	// +optional
+	ModelsPath string `json:"modelsPath,omitempty"`
+
+	// CustomNodesPath is the path to custom nodes.
+	// +kubebuilder:default="/app/ComfyUI/custom_nodes"
+	// +optional
+	CustomNodesPath string `json:"customNodesPath,omitempty"`
+
+	// PreloadModels is a list of models to preload on startup.
+	// Format: "category/filename" (e.g., "checkpoints/sdxl.safetensors")
+	// +optional
+	PreloadModels []string `json:"preloadModels,omitempty"`
+
+	// EnableCORS enables CORS headers for API access.
+	// +kubebuilder:default=true
+	// +optional
+	EnableCORS *bool `json:"enableCORS,omitempty"`
+
+	// ExtraArgs is additional command line arguments to pass to ComfyUI.
+	// +optional
+	ExtraArgs []string `json:"extraArgs,omitempty"`
+}
+
+// VLLMOmniSpec configures vLLM-Omni backend-specific settings for image generation.
+// vLLM-Omni provides OpenAI DALL-E compatible API for image generation.
+// Only applies when Backend is "vllm-omni".
+// +kubebuilder:object:generate=true
+type VLLMOmniSpec struct {
+	// DiffusionModel is the HuggingFace model ID to use for image generation.
+	// Examples: "Qwen/Qwen-Image", "Tongyi-MAI/Z-Image-Turbo"
+	// If not specified, uses the model field from ModelDeploymentSpec.
+	// +optional
+	DiffusionModel string `json:"diffusionModel,omitempty"`
+
+	// CacheAcceleration enables cache-based speedup (TeaCache/Cache-DiT).
+	// - "none": No cache acceleration
+	// - "teacache": TeaCache for 1.5-2x speedup (default)
+	// - "cachedit": Cache-DiT for faster inference
+	// +kubebuilder:default="teacache"
+	// +kubebuilder:validation:Enum=none;teacache;cachedit
+	// +optional
+	CacheAcceleration string `json:"cacheAcceleration,omitempty"`
+
+	// DefaultSize is the default image output size.
+	// +kubebuilder:default="1024x1024"
+	// +optional
+	DefaultSize string `json:"defaultSize,omitempty"`
+
+	// GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
+	// Default: 0.9 (90% of available GPU memory)
+	// +optional
+	GPUMemoryUtilization *string `json:"gpuMemoryUtilization,omitempty"`
+
+	// MaxNumSeqs is the maximum number of sequences per iteration.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxNumSeqs *int32 `json:"maxNumSeqs,omitempty"`
+}
+
 // ModelDeploymentStatus defines the observed state of ModelDeployment
 // +kubebuilder:object:generate=true
 type ModelDeploymentStatus struct {
@@ -450,6 +548,33 @@ type ModelDeploymentStatus struct {
 	// Stored as a string to avoid precision issues with floats.
 	// +optional
 	TokensPerSecond string `json:"tokensPerSecond,omitempty"`
+
+	// GPUGroupState tracks this deployment's state within its GPUGroup (if any).
+	// Only populated when GPUGroupRef is set.
+	// +optional
+	GPUGroupState *ModelDeploymentGPUGroupState `json:"gpuGroupState,omitempty"`
+}
+
+// ModelDeploymentGPUGroupState tracks a model's state within a GPUGroup
+// +kubebuilder:object:generate=true
+type ModelDeploymentGPUGroupState struct {
+	// GroupName is the GPUGroup this deployment belongs to.
+	GroupName string `json:"groupName,omitempty"`
+
+	// State is the current state within the group: Active, Preempted, Queued, Idle.
+	State string `json:"state,omitempty"`
+
+	// PreemptedAt is when this model was last preempted.
+	// +optional
+	PreemptedAt *metav1.Time `json:"preemptedAt,omitempty"`
+
+	// PreemptedBy is the model that caused preemption.
+	// +optional
+	PreemptedBy string `json:"preemptedBy,omitempty"`
+
+	// QueuedRequests is the number of requests waiting for this model.
+	// +optional
+	QueuedRequests int32 `json:"queuedRequests,omitempty"`
 }
 
 // ModelDeploymentPhase represents the current phase of a ModelDeployment
@@ -464,6 +589,8 @@ const (
 	ModelDeploymentPhaseFailed ModelDeploymentPhase = "Failed"
 	// ModelDeploymentPhaseTerminating indicates the ModelDeployment is being terminated
 	ModelDeploymentPhaseTerminating ModelDeploymentPhase = "Terminating"
+	// ModelDeploymentPhaseIdle indicates the ModelDeployment is scaled to zero (serverless)
+	ModelDeploymentPhaseIdle ModelDeploymentPhase = "Idle"
 )
 
 // GPUAllocation represents the GPU allocation details

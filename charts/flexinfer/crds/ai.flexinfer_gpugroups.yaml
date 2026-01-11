@@ -1,0 +1,350 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: gpugroups.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: GPUGroup
+    listKind: GPUGroupList
+    plural: gpugroups
+    singular: gpugroup
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.activeModel
+      name: Active
+      type: string
+    - jsonPath: .status.swapCount
+      name: Swaps
+      type: integer
+    - jsonPath: .spec.scalingPolicy.strategy
+      name: Strategy
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GPUGroup is the Schema for the gpugroups API.
+          A GPUGroup represents a set of models that can share a single GPU,
+          with priority-based preemption and anti-thrashing protection.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GPUGroupSpec defines the desired state of GPUGroup
+            properties:
+              antiThrashing:
+                description: AntiThrashing configures protection against rapid model
+                  swapping.
+                properties:
+                  cooldownAfterPreemptionSeconds:
+                    default: 60
+                    description: |-
+                      CooldownAfterPreemptionSeconds is how long to wait before the preempted model
+                      can preempt back. Prevents A→B→A→B oscillation.
+                    format: int32
+                    maximum: 600
+                    minimum: 0
+                    type: integer
+                  enabled:
+                    default: true
+                    description: Enabled turns on anti-thrashing protection.
+                    type: boolean
+                  hysteresisWindowSeconds:
+                    default: 10
+                    description: |-
+                      HysteresisWindowSeconds is the observation window for decision making.
+                      Model swap only triggers if demand persists for this duration.
+                    format: int32
+                    maximum: 60
+                    minimum: 1
+                    type: integer
+                  minimumRunDurationSeconds:
+                    default: 30
+                    description: |-
+                      MinimumRunDurationSeconds is how long a model must run before it can be preempted.
+                      Prevents thrashing when requests alternate rapidly between models.
+                    format: int32
+                    maximum: 300
+                    minimum: 0
+                    type: integer
+                  requestQueueThreshold:
+                    default: 3
+                    description: |-
+                      RequestQueueThreshold is the number of queued requests needed before preemption.
+                      Helps batch requests and reduce unnecessary swaps.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                type: object
+              autoCacheModels:
+                default: false
+                description: |-
+                  AutoCacheModels if true, creates Memory-backed ModelCache for all group models.
+                  Enables fast GPU-to-GPU swapping by keeping models in RAM (/dev/shm).
+                type: boolean
+              models:
+                description: |-
+                  Models is the list of ModelDeployment references in this group.
+                  Each model can run on the GPU based on priority and demand.
+                items:
+                  description: GPUGroupMember references a ModelDeployment with priority
+                  properties:
+                    maxReplicas:
+                      description: MaxReplicas for this model within the group.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    minReplicas:
+                      description: MinReplicas for this model within the group. Overrides
+                        ModelDeployment.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    name:
+                      description: Name is the ModelDeployment name.
+                      type: string
+                    namespace:
+                      description: Namespace of the ModelDeployment. Defaults to the
+                        GPUGroup namespace.
+                      type: string
+                    priority:
+                      default: 100
+                      description: |-
+                        Priority determines preemption order. Higher values = higher priority.
+                        When multiple models have pending requests, the highest priority model wins.
+                      format: int32
+                      maximum: 1000
+                      minimum: 0
+                      type: integer
+                    vramEstimateMB:
+                      description: |-
+                        VRAMEstimateMB is the estimated VRAM usage for this model in megabytes.
+                        Used for bin-packing decisions when multiple models can fit (future).
+                      format: int64
+                      type: integer
+                  required:
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector constrains which GPU node this group can use.
+                  All models in the group will be scheduled to nodes matching this selector.
+                type: object
+              scalingPolicy:
+                description: ScalingPolicy defines how models scale within the group.
+                properties:
+                  drainTimeoutSeconds:
+                    default: 60
+                    description: |-
+                      DrainTimeoutSeconds is the max time to wait for model to drain before force-killing.
+                      Only applies when PreemptionPolicy is Graceful.
+                    format: int32
+                    maximum: 300
+                    minimum: 5
+                    type: integer
+                  preemptionPolicy:
+                    default: Graceful
+                    description: |-
+                      PreemptionPolicy controls when lower priority models are evicted.
+                      - Immediate: Evict immediately when higher priority needs GPU
+                      - Graceful: Wait for in-flight requests to complete (respects terminationGracePeriod)
+                    enum:
+                    - Immediate
+                    - Graceful
+                    type: string
+                  strategy:
+                    default: Exclusive
+                    description: |-
+                      Strategy determines how models compete for GPU time.
+                      - Exclusive: Only one model runs at a time (default, recommended)
+                      - TimeSliced: Models share GPU via NVIDIA MPS/MIG (future)
+                      - MemoryShared: Multiple models if VRAM permits (future)
+                    enum:
+                    - Exclusive
+                    - TimeSliced
+                    - MemoryShared
+                    type: string
+                type: object
+            required:
+            - models
+            type: object
+          status:
+            description: GPUGroupStatus defines the observed state of GPUGroup
+            properties:
+              activeModel:
+                description: |-
+                  ActiveModel is the name of the currently running model (Exclusive strategy).
+                  Empty string means no model is active.
+                type: string
+              allocatedGPU:
+                description: AllocatedGPU contains information about the assigned
+                  GPU.
+                properties:
+                  architecture:
+                    description: Architecture is the GPU architecture (e.g., sm_52
+                      for Maxwell, gfx1100 for RDNA3)
+                    type: string
+                  device:
+                    description: Device is the GPU device index
+                    type: string
+                  memoryMB:
+                    description: MemoryMB is the GPU memory in megabytes
+                    format: int64
+                    type: integer
+                  node:
+                    description: Node is the name of the node where the GPU is allocated
+                    type: string
+                  type:
+                    description: Type is the GPU type/model
+                    type: string
+                  vendor:
+                    description: Vendor is the GPU vendor (NVIDIA, AMD, Intel)
+                    type: string
+                type: object
+              conditions:
+                description: Conditions represent the latest available observations.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastSwapReason:
+                description: LastSwapReason records why the last swap occurred.
+                type: string
+              lastSwapTime:
+                description: LastSwapTime records when the active model last changed.
+                format: date-time
+                type: string
+              modelStatuses:
+                description: ModelStatuses tracks the state of each member model.
+                items:
+                  description: GPUGroupModelStatus tracks individual model state within
+                    the group
+                  properties:
+                    lastActiveTime:
+                      description: LastActiveTime is when this model was last serving
+                        requests.
+                      format: date-time
+                      type: string
+                    name:
+                      description: Name is the ModelDeployment name.
+                      type: string
+                    preemptedAt:
+                      description: |-
+                        PreemptedAt is when this model was last preempted.
+                        Used for cooldown tracking.
+                      format: date-time
+                      type: string
+                    preemptedBy:
+                      description: PreemptedBy is the model that caused preemption.
+                      type: string
+                    queuedRequests:
+                      description: |-
+                        QueuedRequests is the number of requests waiting for this model.
+                        Updated by the proxy via annotations.
+                      format: int32
+                      type: integer
+                    queuedSince:
+                      description: QueuedSince is when requests started queueing (nil
+                        if no queue).
+                      format: date-time
+                      type: string
+                    state:
+                      description: 'State is the current state: Active, Preempted,
+                        Queued, Idle'
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              phase:
+                description: Phase represents the current lifecycle state of the GPUGroup.
+                type: string
+              swapCount:
+                description: SwapCount is the total number of model swaps since creation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,312 @@
+# Serverless (Scale-to-Zero) Examples for All Backends
+#
+# This file demonstrates serverless configuration for each supported backend.
+# Serverless enables automatic scaling:
+#   - Scale down to 0 replicas after idleTimeoutSeconds of inactivity
+#   - Scale up to 1 replica when a request arrives (cold start)
+#
+# Key serverless fields:
+#   minReplicas: 0          # Allow scaling to zero (required for serverless)
+#   idleTimeoutSeconds: 300 # Scale down after 5 minutes of idle (default)
+#   coldStartTimeoutSeconds: 60 # Max time to wait for model activation (default)
+#
+# Prerequisites:
+#   - FlexInfer controller and proxy deployed
+#   - LiteLLM integration for request routing (optional but recommended)
+#
+# Usage:
+#   # Apply individual examples
+#   kubectl apply -f serverless-multi-backend.yaml
+#
+#   # Monitor serverless behavior
+#   kubectl get modeldeployments -w
+#   kubectl logs -f deployment/flexinfer-proxy -n flexinfer-system
+#
+# Cold Start Times (approximate):
+#   - Ollama: 5-15s (model loading from disk)
+#   - vLLM: 10-30s (model loading + CUDA compilation)
+#   - llama.cpp: 3-10s (fastest cold start)
+#   - mlc-llm: 5-20s (model loading, faster with RAM cache)
+#
+---
+###############################################################################
+# Example 1: Ollama Backend - Serverless
+#
+# Ollama is the simplest backend for running quantized models.
+# Good for: Quick setup, CPU fallback support, wide model compatibility
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-8b-ollama-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "llama3-8b-ollama"
+spec:
+  backend: ollama
+  model: llama3:8b
+
+  # Serverless configuration
+  replicas: 1           # Initial/desired replicas
+  minReplicas: 0        # Enable scale-to-zero
+  idleTimeoutSeconds: 300  # Scale down after 5 min idle
+  coldStartTimeoutSeconds: 60  # Wait up to 60s for model to start
+
+  # LiteLLM integration for automatic discovery
+  litellm:
+    enabled: true
+    servedModelName: llama3-8b-serverless
+    aliases:
+      - gpt-3.5-turbo-ollama
+
+  resources:
+    requests:
+      nvidia.com/gpu: "1"
+      memory: 8Gi
+    limits:
+      nvidia.com/gpu: "1"
+      memory: 16Gi
+
+---
+###############################################################################
+# Example 2: vLLM Backend - Serverless
+#
+# vLLM provides high-throughput serving with PagedAttention.
+# Good for: Production workloads, high concurrency, tensor parallelism
+# Note: Longer cold start due to CUDA compilation
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen2-7b-vllm-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "qwen2-7b-vllm"
+spec:
+  backend: vllm
+  model: Qwen/Qwen2.5-7B-Instruct
+
+  # Serverless configuration
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 600  # 10 min idle (longer due to slow cold start)
+  coldStartTimeoutSeconds: 120  # vLLM needs more time for CUDA compilation
+
+  # vLLM-specific configuration
+  vllm:
+    dtype: auto
+    maxModelLen: 32768
+    gpuMemoryUtilization: "0.85"
+    # trustRemoteCode: true  # Enable for custom model architectures
+
+  litellm:
+    enabled: true
+    servedModelName: qwen2-7b-serverless
+    aliases:
+      - gpt-4-vllm
+
+  nodeSelector:
+    # vLLM works best on modern NVIDIA GPUs (Ampere+)
+    gpu-type: nvidia
+
+  resources:
+    requests:
+      nvidia.com/gpu: "1"
+      memory: 24Gi
+    limits:
+      nvidia.com/gpu: "1"
+      memory: 32Gi
+
+---
+###############################################################################
+# Example 3: llama.cpp Backend - Serverless
+#
+# llama.cpp offers fast inference with GGUF models.
+# Good for: Fast cold starts, CPU+GPU hybrid, GGUF quantization
+# Best serverless experience due to quick startup time
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: mistral-7b-llamacpp-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "mistral-7b-llamacpp"
+spec:
+  backend: llamacpp
+  # Path to GGUF model file (via ModelCache or hostPath)
+  model: /models/mistral-7b-instruct-v0.2.Q4_K_M.gguf
+
+  # Serverless configuration - llama.cpp has fastest cold start
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 180  # 3 min idle (fast cold start allows shorter timeout)
+  coldStartTimeoutSeconds: 30  # llama.cpp starts quickly
+
+  # llama.cpp-specific configuration
+  llamacpp:
+    contextSize: 8192
+    nGPULayers: 999  # Offload all layers to GPU
+    batchSize: 512
+    threads: 8
+    flashAttention: true  # Enable if GPU supports it
+
+  litellm:
+    enabled: true
+    servedModelName: mistral-7b-serverless
+    aliases:
+      - gpt-3.5-turbo-fast
+
+  resources:
+    requests:
+      nvidia.com/gpu: "1"
+      memory: 8Gi
+    limits:
+      nvidia.com/gpu: "1"
+      memory: 12Gi
+
+---
+###############################################################################
+# Example 4: MLC-LLM Backend - Serverless (with RAM Cache)
+#
+# MLC-LLM provides optimized inference for NVIDIA and AMD GPUs.
+# Good for: AMD ROCm support, optimized memory usage, RAM caching
+# Note: Best combined with ModelCache for faster cold starts
+###############################################################################
+# First, create a RAM cache for ultra-fast cold starts
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-4b-ram-cache
+  namespace: flexinfer-system
+spec:
+  source: HF://mlc-ai/Qwen3-4B-q4f16_1-MLC
+  storageStrategy: Memory  # Store in /dev/shm for fastest access
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-4b-mlc-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "qwen3-4b-mlc"
+spec:
+  backend: mlc-llm
+  model: Qwen3-4B-q4f16_1-MLC
+  modelCacheRef: qwen3-4b-ram-cache  # Use RAM cache for fast cold starts
+
+  # Serverless configuration
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 300  # 5 min idle
+  coldStartTimeoutSeconds: 60
+
+  # MLC-LLM-specific configuration
+  mlcllm:
+    mode: server  # Multi-user mode for better throughput
+    overrides:
+      maxNumSequence: 4  # Concurrent sequences
+      maxTotalSeqLength: 32768
+      prefillChunkSize: 512
+
+  litellm:
+    enabled: true
+    servedModelName: qwen3-4b-serverless
+    aliases:
+      - gpt-4-mlc
+      - claude-3-mlc
+
+  nodeSelector:
+    kubernetes.io/hostname: gpu-node-1
+
+  resources:
+    limits:
+      amd.com/gpu: "1"  # For AMD GPUs, use amd.com/gpu
+
+---
+###############################################################################
+# Example 5: AMD GPU with llama.cpp - Serverless
+#
+# llama.cpp works well with AMD GPUs via ROCm.
+# Demonstrates serverless on AMD hardware.
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: codellama-13b-amd-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "codellama-13b-amd"
+spec:
+  backend: llamacpp
+  model: /models/codellama-13b-instruct.Q4_K_M.gguf
+
+  # Serverless with shorter timeout for dev workloads
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 120  # 2 min idle for interactive coding sessions
+  coldStartTimeoutSeconds: 45
+
+  llamacpp:
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 512
+    threads: 12
+
+  litellm:
+    enabled: true
+    servedModelName: codellama-serverless
+    copilotAlias: codellama-copilot  # For IDE integration
+
+  nodeSelector:
+    gpu-vendor: amd
+
+  resources:
+    limits:
+      amd.com/gpu: "1"
+      memory: 24Gi
+
+---
+###############################################################################
+# Example 6: Multi-GPU vLLM with Tensor Parallelism - Serverless
+#
+# For larger models that need multiple GPUs.
+# Note: Cold start is longer due to multi-GPU initialization.
+###############################################################################
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-70b-vllm-tp4-serverless
+  namespace: flexinfer-system
+  annotations:
+    litellm.ai/served-model-name: "llama3-70b-vllm"
+spec:
+  backend: vllm
+  model: meta-llama/Llama-3-70b-Instruct
+
+  # Serverless with longer timeouts for large models
+  replicas: 1
+  minReplicas: 0
+  idleTimeoutSeconds: 1800  # 30 min (large model = expensive cold start)
+  coldStartTimeoutSeconds: 300  # 5 min for multi-GPU initialization
+
+  vllm:
+    tensorParallelSize: 4  # Split across 4 GPUs
+    dtype: bfloat16
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.9"
+    swapSpace: 4  # 4 GiB swap space per GPU
+
+  litellm:
+    enabled: true
+    servedModelName: llama3-70b-serverless
+    aliases:
+      - gpt-4o
+      - claude-3-opus
+
+  resources:
+    limits:
+      nvidia.com/gpu: "4"
+      memory: 256Gi
