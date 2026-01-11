@@ -96,8 +96,9 @@ func getLiteLLMAnnotations(m *aiv1alpha1.ModelDeployment) map[string]string {
 // ModelDeploymentReconciler reconciles a ModelDeployment object
 type ModelDeploymentReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	APIReader client.Reader // Uncached reader for critical sections
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modeldeployments,verbs=get;list;watch;create;update;patch;delete
@@ -478,6 +479,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 // checkIdleScaleDown checks if the deployment should be scaled to zero.
 // Returns (true, nil) if scaled down, (false, nil) if not scaled, (false, err) on error.
 func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *aiv1alpha1.ModelDeployment, deployment *appsv1.Deployment) (bool, error) {
+	log := log.FromContext(ctx)
+
 	// If MinReplicas is not set or > 0, we don't scale to zero
 	if m.Spec.MinReplicas == nil || *m.Spec.MinReplicas > 0 {
 		return false, nil
@@ -516,9 +519,43 @@ func (r *ModelDeploymentReconciler) checkIdleScaleDown(ctx context.Context, m *a
 		newReplicas := *m.Spec.MinReplicas
 
 		// Re-fetch to get latest version before updating spec
+		// IMPORTANT: Use APIReader (uncached) to avoid race conditions with proxy updates
 		fresh := &aiv1alpha1.ModelDeployment{}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
+		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
 			return false, fmt.Errorf("failed to get fresh ModelDeployment: %w", err)
+		}
+
+		// Log the comparison values for debugging
+		log.Info("Idle scale-down check",
+			"staleLastAccess", lastAccess.Time,
+			"freshLastAccess", fresh.Status.LastAccessTime,
+			"staleReplicas", m.Spec.Replicas,
+			"freshReplicas", fresh.Spec.Replicas,
+			"resourceVersion.stale", m.ResourceVersion,
+			"resourceVersion.fresh", fresh.ResourceVersion)
+
+		// Re-check idle condition with fresh data - abort if lastAccessTime was updated
+		// This prevents a race where the proxy updates lastAccessTime during our scale-down decision
+		if fresh.Status.LastAccessTime != nil && fresh.Status.LastAccessTime.After(lastAccess.Time) {
+			log.Info("Aborting scale-down: lastAccessTime was updated during reconciliation",
+				"stale", lastAccess.Time, "fresh", fresh.Status.LastAccessTime.Time)
+			return false, nil
+		}
+
+		// Also abort if spec.replicas was changed DURING this reconciliation by the proxy
+		// Compare with the original m.Spec.Replicas, not with minReplicas
+		originalReplicas := int32(0)
+		if m.Spec.Replicas != nil {
+			originalReplicas = *m.Spec.Replicas
+		}
+		freshReplicas := int32(0)
+		if fresh.Spec.Replicas != nil {
+			freshReplicas = *fresh.Spec.Replicas
+		}
+		if freshReplicas > originalReplicas {
+			log.Info("Aborting scale-down: spec.replicas was updated during reconciliation",
+				"original", originalReplicas, "fresh", freshReplicas)
+			return false, nil
 		}
 
 		fresh.Spec.Replicas = &newReplicas
@@ -1718,20 +1755,57 @@ func parseTPSFloat(tps string) float64 {
 
 // updateModelDeploymentStatus updates the overall status of the ModelDeployment
 func (r *ModelDeploymentReconciler) updateModelDeploymentStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, phase aiv1alpha1.ModelDeploymentPhase, message string) error {
-	// Update the original object so tests can verify changes
-	m.Status.Phase = phase
+	// Re-fetch fresh to avoid overwriting proxy's lastAccessTime
+	fresh := &aiv1alpha1.ModelDeployment{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
+		return fmt.Errorf("failed to get fresh ModelDeployment for phase update: %w", err)
+	}
 
-	// Update the progressing condition
-	return r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeProgressing, metav1.ConditionTrue, aiv1alpha1.ReasonReconciling, message)
+	// Update phase on fresh copy
+	fresh.Status.Phase = phase
+
+	// Also update the progressing condition inline (avoid double re-fetch)
+	now := metav1.NewTime(time.Now())
+	conditionType := aiv1alpha1.ConditionTypeProgressing
+	found := false
+	for i := range fresh.Status.Conditions {
+		if fresh.Status.Conditions[i].Type == conditionType {
+			fresh.Status.Conditions[i].Status = metav1.ConditionTrue
+			fresh.Status.Conditions[i].Reason = aiv1alpha1.ReasonReconciling
+			fresh.Status.Conditions[i].Message = message
+			fresh.Status.Conditions[i].LastTransitionTime = now
+			found = true
+			break
+		}
+	}
+	if !found {
+		fresh.Status.Conditions = append(fresh.Status.Conditions, metav1.Condition{
+			Type:               conditionType,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             aiv1alpha1.ReasonReconciling,
+			Message:            message,
+		})
+	}
+
+	return r.Status().Update(ctx, fresh)
 }
 
 // updateCondition updates a specific condition in the ModelDeployment status
 func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1alpha1.ModelDeployment, conditionType string, status metav1.ConditionStatus, reason, message string) error {
-	// Find existing condition
+	// Re-fetch the latest status to avoid overwriting proxy's lastAccessTime updates
+	// This is critical for serverless scale-to-zero: the proxy updates lastAccessTime
+	// and if we use a stale copy, we'll overwrite it and cause immediate scale-down.
+	fresh := &aiv1alpha1.ModelDeployment{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
+		return fmt.Errorf("failed to get fresh ModelDeployment for status update: %w", err)
+	}
+
+	// Find existing condition on the FRESH copy
 	var existingCondition *metav1.Condition
-	for i := range m.Status.Conditions {
-		if m.Status.Conditions[i].Type == conditionType {
-			existingCondition = &m.Status.Conditions[i]
+	for i := range fresh.Status.Conditions {
+		if fresh.Status.Conditions[i].Type == conditionType {
+			existingCondition = &fresh.Status.Conditions[i]
 			break
 		}
 	}
@@ -1755,30 +1829,46 @@ func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1
 			Reason:             reason,
 			Message:            message,
 		}
-		m.Status.Conditions = append(m.Status.Conditions, newCondition)
+		fresh.Status.Conditions = append(fresh.Status.Conditions, newCondition)
 	}
 
-	// Update the status
-	return r.Status().Update(ctx, m)
+	// Update the FRESH object's status (preserves lastAccessTime from server)
+	return r.Status().Update(ctx, fresh)
 }
 
 // updateEndpointStatus updates the endpoint information in the status
 func (r *ModelDeploymentReconciler) updateEndpointStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, service *corev1.Service) error {
-	// Update the original object so tests can verify changes
-	if m.Status.Endpoints == nil {
-		m.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
+	// Re-fetch fresh to avoid overwriting proxy's lastAccessTime
+	fresh := &aiv1alpha1.ModelDeployment{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
+		return fmt.Errorf("failed to get fresh ModelDeployment for endpoint update: %w", err)
 	}
 
-	// Set internal endpoint
-	m.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
+	if fresh.Status.Endpoints == nil {
+		fresh.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
+	}
+
+	// Set internal endpoint on fresh copy
+	fresh.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
 		service.Name, service.Namespace, service.Spec.Ports[0].Port)
 
-	// Update endpoint ready condition
-	if err := r.updateCondition(ctx, m, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
+	// Update endpoint ready condition (updateCondition will re-fetch again, but that's ok)
+	if err := r.updateCondition(ctx, fresh, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
 		return err
 	}
 
-	return r.Status().Update(ctx, m)
+	// Note: updateCondition already saved fresh status, so we don't need another Update
+	// But if we need to save endpoints, we should re-fetch and update
+	// For now, re-fetch and save with endpoints included
+	fresh2 := &aiv1alpha1.ModelDeployment{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh2); err != nil {
+		return fmt.Errorf("failed to get fresh ModelDeployment for endpoint save: %w", err)
+	}
+	if fresh2.Status.Endpoints == nil {
+		fresh2.Status.Endpoints = &aiv1alpha1.ModelEndpoints{}
+	}
+	fresh2.Status.Endpoints.Internal = fresh.Status.Endpoints.Internal
+	return r.Status().Update(ctx, fresh2)
 }
 
 // labelsForModelDeployment returns the labels for selecting the resources
@@ -1791,6 +1881,8 @@ func labelsForModelDeployment(name string) map[string]string {
 func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize the event recorder
 	r.Recorder = mgr.GetEventRecorderFor("modeldeployment-controller")
+	// Initialize the uncached API reader for critical sections
+	r.APIReader = mgr.GetAPIReader()
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha1.ModelDeployment{}).

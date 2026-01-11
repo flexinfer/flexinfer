@@ -445,10 +445,13 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 	// scaling back down due to stale idle timeout.
 	// We need to update status first, then spec, to avoid race with controller.
 	now := metav1.Now()
+	log.Printf("DEBUG: Setting lastAccessTime to %v (resourceVersion=%s)", now.Time, md.ResourceVersion)
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
-		log.Printf("Warning: failed to update LastAccessTime before scale-up: %v", err)
+		log.Printf("ERROR: failed to update LastAccessTime before scale-up: %v", err)
 		// Continue anyway - scale-up is more important
+	} else {
+		log.Printf("DEBUG: Successfully updated lastAccessTime")
 	}
 
 	// Re-fetch to get latest version after status update
