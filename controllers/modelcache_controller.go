@@ -1027,6 +1027,26 @@ while true; do sleep 3600; done
 		"app.kubernetes.io/managed-by": "flexinfer",
 	}
 
+	// GPU node tolerations for RAM cache syncer
+	gpuTolerations := []corev1.Toleration{
+		{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+		{
+			Key:      "nvidia.com/gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+		{
+			Key:      "amd.com/gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+	}
+
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-ram-syncer",
@@ -1046,6 +1066,7 @@ while true; do sleep 3600; done
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
+					Tolerations:  gpuTolerations,
 					Containers: []corev1.Container{{
 						Name:         "syncer",
 						Image:        image,
