@@ -795,8 +795,79 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 func (r *ModelCacheReconciler) daemonSetForMemory(m *aiv1alpha1.ModelCache, modelPath, shmBasePath string) (*appsv1.DaemonSet, error) {
 	// Determine download method and script based on source type
 	var image, downloadScript string
+	var sourcePVC string
+	copyFromPVC := false
 
-	if isOCISource(m.Spec.Source) {
+	// If existingClaimName is set, copy from that PVC instead of downloading
+	// This enables the pattern: NFS ModelCache -> RAM ModelCache (fast local copy)
+	if m.Spec.ExistingClaimName != nil && *m.Spec.ExistingClaimName != "" {
+		sourcePVC = *m.Spec.ExistingClaimName
+		copyFromPVC = true
+		image = "alpine:3.19"
+
+		// Determine source path within the PVC
+		// If modelPath is set, use it; otherwise use the cache name as subdirectory
+		sourcePath := "/source"
+		if m.Spec.ModelPath != nil && *m.Spec.ModelPath != "" {
+			sourcePath = fmt.Sprintf("/source/%s", *m.Spec.ModelPath)
+		}
+
+		downloadScript = fmt.Sprintf(`
+set -ex
+SOURCE_DIR="%s"
+DEST_DIR="%s"
+MARKER="$DEST_DIR/.synced"
+
+# Check if already synced
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR (RAM cache)"
+    # Monitor source for changes
+    while true; do
+        sleep 300
+        if [ "$SOURCE_DIR/.synced" -nt "$MARKER" ] 2>/dev/null; then
+            echo "Source updated, re-syncing..."
+            rm -f "$MARKER"
+        fi
+    done
+fi
+
+# Wait for source to be ready
+echo "Waiting for source model at $SOURCE_DIR..."
+TIMEOUT=600
+WAITED=0
+while [ ! -f "$SOURCE_DIR/.synced" ] && [ $WAITED -lt $TIMEOUT ]; do
+    sleep 5
+    WAITED=$((WAITED + 5))
+    echo "Waiting for source... ($WAITED/$TIMEOUT seconds)"
+done
+
+if [ ! -f "$SOURCE_DIR/.synced" ]; then
+    echo "ERROR: Source model not ready after ${TIMEOUT}s"
+    exit 1
+fi
+
+# Install rsync for efficient copy
+apk add --no-cache rsync
+
+# Copy from NFS to RAM
+echo "Copying model from NFS ($SOURCE_DIR) to RAM ($DEST_DIR)..."
+mkdir -p "$DEST_DIR"
+rsync -av --delete "$SOURCE_DIR/" "$DEST_DIR/"
+touch "$MARKER"
+echo "RAM cache sync complete (copied from NFS)"
+
+# Monitor for source updates
+while true; do
+    sleep 300
+    if [ "$SOURCE_DIR/.synced" -nt "$MARKER" ] 2>/dev/null; then
+        echo "Source updated, re-syncing..."
+        rsync -av --delete "$SOURCE_DIR/" "$DEST_DIR/"
+        touch "$MARKER"
+        echo "Re-sync complete"
+    fi
+done
+`, sourcePath, modelPath)
+	} else if isOCISource(m.Spec.Source) {
 		// OCI registry source - use ORAS
 		image = "ghcr.io/oras-project/oras:v1.2.2"
 		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
@@ -928,6 +999,24 @@ while true; do sleep 3600; done
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "docker-config",
 			MountPath: "/root/.docker",
+			ReadOnly:  true,
+		})
+	}
+
+	// Mount source PVC when copying from NFS to RAM
+	if copyFromPVC && sourcePVC != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "source-pvc",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: sourcePVC,
+					ReadOnly:  true,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "source-pvc",
+			MountPath: "/source",
 			ReadOnly:  true,
 		})
 	}
