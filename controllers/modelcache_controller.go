@@ -861,9 +861,10 @@ if [ -f "$MARKER" ]; then
 fi
 
 pip install --no-cache-dir huggingface_hub
+export PATH="$PATH:/root/.local/bin"
 echo "Downloading $MODEL_ID to $DEST_DIR (RAM cache)..."
 mkdir -p "$DEST_DIR"
-huggingface-cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
+python -m huggingface_hub.commands.huggingface_cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
 touch "$MARKER"
 echo "Sync complete to RAM cache, entering sleep"
 while true; do sleep 3600; done
