@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/singleflight"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -126,6 +127,8 @@ const (
 	AnnotationQueueDepthPrefix = "flexinfer.ai/queue."
 	// AnnotationQueueSincePrefix is when requests started queueing
 	AnnotationQueueSincePrefix = "flexinfer.ai/queue-since."
+	// AnnotationActiveServiceLabels contains comma-separated service labels for an active model
+	AnnotationActiveServiceLabels = "ai.flexinfer/active-services"
 )
 
 func init() {
@@ -173,6 +176,11 @@ type Proxy struct {
 	// Request queues per model during cold start
 	queues   sync.Map // map[string]*RequestQueue
 	queuesMu sync.Mutex
+
+	// Service label to model name cache
+	serviceLabelCache   sync.Map // map[string]string: service label -> model name
+	serviceLabelCacheMu sync.Mutex
+	lastCacheRefresh    time.Time
 
 	// Configuration (can be overridden by env vars)
 	maxQueueSize       int           // Default: 100
@@ -265,7 +273,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// 2. Check if model is scaled to zero
+	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
+	resolvedName := p.resolveServiceLabel(ctx, modelName)
+	if resolvedName != modelName {
+		log.Printf("Resolved service label %q to model %q", modelName, resolvedName)
+		modelName = resolvedName
+	}
+
+	// 3. Fetch the model deployment
 	md, err := p.getModelDeployment(ctx, modelName)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -278,7 +293,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Check if model belongs to a GPUGroup
+	// 4. Check if model belongs to a GPUGroup
 	if md.Spec.GPUGroupRef != nil && *md.Spec.GPUGroupRef != "" {
 		if err := p.handleGPUGroupRequest(ctx, w, r, modelName, md, start); err != nil {
 			log.Printf("GPUGroup request failed for model %s: %v", modelName, err)
@@ -287,13 +302,13 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. If model is ready, serve directly (non-GPUGroup path)
+	// 5. If model is ready, serve directly (non-GPUGroup path)
 	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}
 
-	// 5. Model is scaled to zero or not ready - use queue
+	// 6. Model is scaled to zero or not ready - use queue
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 		log.Printf("Cold start failed for model %s: %v", modelName, err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
@@ -976,4 +991,61 @@ func (p *Proxy) clearGPUGroupDemand(ctx context.Context, gpuGroupName, modelName
 	}
 
 	log.Printf("Cleared demand signal from GPUGroup %s for model %s", gpuGroupName, modelName)
+}
+
+// resolveServiceLabel resolves a service label to an actual model name.
+// Returns the model name if the label was resolved, or the original input if no mapping found.
+func (p *Proxy) resolveServiceLabel(ctx context.Context, labelOrModelName string) string {
+	// First check cache
+	if modelName, ok := p.serviceLabelCache.Load(labelOrModelName); ok {
+		return modelName.(string)
+	}
+
+	// Refresh cache if stale (>5 seconds old) or first time
+	p.refreshServiceLabelCache(ctx)
+
+	// Check cache again after refresh
+	if modelName, ok := p.serviceLabelCache.Load(labelOrModelName); ok {
+		return modelName.(string)
+	}
+
+	// Not a service label, return as-is (it's probably a model name)
+	return labelOrModelName
+}
+
+// refreshServiceLabelCache updates the service label to model name mapping.
+// It scans all Services in the namespace for the AnnotationActiveServiceLabels annotation.
+func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
+	p.serviceLabelCacheMu.Lock()
+	defer p.serviceLabelCacheMu.Unlock()
+
+	// Skip if recently refreshed
+	if time.Since(p.lastCacheRefresh) < 5*time.Second {
+		return
+	}
+
+	// List all Services in the namespace
+	var services corev1.ServiceList
+	if err := p.client.List(ctx, &services, client.InNamespace(p.namespace)); err != nil {
+		log.Printf("Failed to list services for label cache refresh: %v", err)
+		return
+	}
+
+	// Clear the cache
+	p.serviceLabelCache = sync.Map{}
+
+	// Build new cache
+	for _, svc := range services.Items {
+		if labels, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok && labels != "" {
+			for _, label := range strings.Split(labels, ",") {
+				label = strings.TrimSpace(label)
+				if label != "" {
+					p.serviceLabelCache.Store(label, svc.Name)
+					log.Printf("Service label cache: %s -> %s", label, svc.Name)
+				}
+			}
+		}
+	}
+
+	p.lastCacheRefresh = time.Now()
 }

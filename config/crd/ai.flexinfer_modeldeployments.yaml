@@ -444,6 +444,16 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              serviceLabels:
+                description: |-
+                  ServiceLabels are semantic labels that describe the model's capabilities.
+                  When this model becomes active in a GPUGroup, these labels are added as
+                  annotations on the model's Service for dynamic routing by the proxy.
+                  Example: ["textgen", "fast-text", "code"]
+                items:
+                  type: string
+                maxItems: 10
+                type: array
               vllm:
                 description: |-
                   VLLM contains vLLM backend-specific configuration.

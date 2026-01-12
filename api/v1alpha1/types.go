@@ -168,6 +168,14 @@ type ModelDeploymentSpec struct {
 	// Used by GPUGroup for bin-packing and swap decisions.
 	// +optional
 	VRAMEstimateMB *int64 `json:"vramEstimateMB,omitempty"`
+
+	// ServiceLabels are semantic labels that describe the model's capabilities.
+	// When this model becomes active in a GPUGroup, these labels are added as
+	// annotations on the model's Service for dynamic routing by the proxy.
+	// Example: ["textgen", "fast-text", "code"]
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	ServiceLabels []string `json:"serviceLabels,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.

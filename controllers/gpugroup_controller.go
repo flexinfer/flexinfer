@@ -21,10 +21,14 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +51,8 @@ const (
 	AnnotationQueueDepthPrefix = "flexinfer.ai/queue."
 	// AnnotationQueueSince is when requests started queueing
 	AnnotationQueueSincePrefix = "flexinfer.ai/queue-since."
+	// AnnotationActiveServiceLabels contains comma-separated service labels for this active model
+	AnnotationActiveServiceLabels = "ai.flexinfer/active-services"
 )
 
 // +kubebuilder:rbac:groups=ai.flexinfer,resources=gpugroups,verbs=get;list;watch;create;update;patch;delete
@@ -54,6 +60,7 @@ const (
 // +kubebuilder:rbac:groups=ai.flexinfer,resources=gpugroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai.flexinfer,resources=modeldeployments,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;update;patch
 
 func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -401,6 +408,12 @@ func (r *GPUGroupReconciler) performModelSwap(ctx context.Context, gpuGroup *aiv
 
 			r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledDown",
 				"Scaled down model %s for swap to %s", currentActive, newActive)
+
+			// Remove service labels from the scaled-down model's Service
+			if err := r.updateServiceLabels(ctx, md, false); err != nil {
+				log.Error(err, "Failed to remove service labels from scaled-down model", "model", currentActive)
+				// Non-fatal: continue with the swap
+			}
 		}
 	}
 
@@ -429,6 +442,12 @@ func (r *GPUGroupReconciler) performModelSwap(ctx context.Context, gpuGroup *aiv
 
 			r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledUp",
 				"Scaled up model %s (reason: %s)", newActive, reason)
+
+			// Add service labels to the scaled-up model's Service
+			if err := r.updateServiceLabels(ctx, md, true); err != nil {
+				log.Error(err, "Failed to add service labels to scaled-up model", "model", newActive)
+				// Non-fatal: continue with the swap
+			}
 		}
 	}
 
@@ -475,6 +494,57 @@ func (r *GPUGroupReconciler) updateStatus(ctx context.Context, gpuGroup *aiv1alp
 	fresh.Status = gpuGroup.Status
 
 	return r.Status().Update(ctx, fresh)
+}
+
+// updateServiceLabels updates the service annotations for a model.
+// When active is true, it adds the model's serviceLabels to the Service annotations.
+// When active is false, it removes the annotation.
+func (r *GPUGroupReconciler) updateServiceLabels(ctx context.Context, md *aiv1alpha1.ModelDeployment, active bool) error {
+	log := log.FromContext(ctx)
+
+	// Get the model's Service (same name as ModelDeployment)
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: md.Name, Namespace: md.Namespace}, svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Service doesn't exist yet, nothing to update
+			log.V(1).Info("Service not found for model, skipping label update", "model", md.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to get service for %s: %w", md.Name, err)
+	}
+
+	// Initialize annotations map if nil
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+
+	needsUpdate := false
+	if active && len(md.Spec.ServiceLabels) > 0 {
+		// Add service labels annotation
+		newLabels := strings.Join(md.Spec.ServiceLabels, ",")
+		if svc.Annotations[AnnotationActiveServiceLabels] != newLabels {
+			svc.Annotations[AnnotationActiveServiceLabels] = newLabels
+			needsUpdate = true
+			log.Info("Adding service labels to model Service",
+				"model", md.Name,
+				"labels", newLabels)
+		}
+	} else {
+		// Remove service labels annotation
+		if _, exists := svc.Annotations[AnnotationActiveServiceLabels]; exists {
+			delete(svc.Annotations, AnnotationActiveServiceLabels)
+			needsUpdate = true
+			log.Info("Removing service labels from model Service", "model", md.Name)
+		}
+	}
+
+	if needsUpdate {
+		if err := r.Update(ctx, svc); err != nil {
+			return fmt.Errorf("failed to update service labels for %s: %w", md.Name, err)
+		}
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
