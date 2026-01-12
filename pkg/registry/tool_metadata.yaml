@@ -39,21 +39,61 @@ servers:
     description: "GitHub API operations"
     category: "collaboration"
     tools:
-      create_pull_request:
-        usageHint: "Create PR after pushing branch with changes"
-        example: "Open PR for code review"
-        relatedTools: ["git_push", "list_pull_requests"]
+      list_repos:
+        usageHint: "Discover repositories available to the authenticated user/org"
+        example: "List repos under an org"
+        relatedTools: ["get_repo", "search_repos"]
         priority: 1
-      list_pull_requests:
-        usageHint: "View open PRs to understand current work"
-        example: "Check for existing PRs before creating new one"
-        relatedTools: ["create_pull_request", "get_pull_request"]
+      get_repo:
+        usageHint: "Fetch repo metadata (default branch, visibility, etc.)"
+        example: "Get details for services/loom-core"
+        relatedTools: ["list_commits", "get_file_contents"]
         priority: 2
+      list_prs:
+        usageHint: "List pull requests for a repo"
+        example: "List open PRs"
+        relatedTools: ["get_pr", "list_commits"]
+        priority: 2
+      get_pr:
+        usageHint: "Get a single PR with details"
+        example: "Get PR #123"
+        relatedTools: ["list_prs", "list_commits"]
+        priority: 3
+      list_issues:
+        usageHint: "List issues for a repo"
+        example: "List open issues"
+        relatedTools: ["get_issue", "create_issue"]
+        priority: 2
+      get_issue:
+        usageHint: "Get a single issue with details"
+        example: "Get issue #42"
+        relatedTools: ["list_issues", "create_issue"]
+        priority: 3
       create_issue:
         usageHint: "Report bugs or request features"
         example: "Document a problem for team discussion"
-        relatedTools: ["list_issues", "add_comment"]
+        relatedTools: ["list_issues", "get_issue"]
         priority: 3
+      list_commits:
+        usageHint: "Inspect recent commit history for a repo/branch"
+        example: "List last 20 commits on main"
+        relatedTools: ["get_file_contents"]
+        priority: 3
+      search_repos:
+        usageHint: "Search repos by keyword"
+        example: "Find repos matching 'loom'"
+        relatedTools: ["list_repos", "get_repo"]
+        priority: 4
+      search_code:
+        usageHint: "Search code across repos (use precise queries to limit results)"
+        example: "Search for 'k8s_exec' usage"
+        relatedTools: ["get_file_contents"]
+        priority: 4
+      get_file_contents:
+        usageHint: "Fetch a file from a repo at a ref/path"
+        example: "Get README.md from main"
+        relatedTools: ["get_repo", "search_code"]
+        priority: 4
 
   mcp-filesystem:
     description: "File system operations"
@@ -62,13 +102,8 @@ servers:
       read_file:
         usageHint: "Read file contents before editing or analyzing"
         example: "Load source code for review"
-        relatedTools: ["write_file", "list_directory"]
+        relatedTools: ["list_directory", "search_files"]
         priority: 1
-      write_file:
-        usageHint: "Write or update file contents"
-        example: "Save code changes or create new files"
-        relatedTools: ["read_file", "list_directory"]
-        priority: 2
       list_directory:
         usageHint: "Explore directory structure to find files"
         example: "Navigate project structure"
@@ -81,34 +116,139 @@ servers:
         priority: 2
 
   mcp-k8s:
-    description: "Kubernetes cluster operations"
+    description: "Fast Go-native Kubernetes API operations (client-go)"
     category: "kubernetes"
     tools:
-      get_pods:
-        usageHint: "First step to understand running workloads"
-        example: "Check pod status and health"
-        relatedTools: ["describe_pod", "get_logs"]
+      list_pods:
+        usageHint: "Start here to understand what's running in a namespace"
+        example: "List pods in jobsearch namespace"
+        relatedTools: ["get_pod", "get_logs"]
         priority: 1
+      get_pod:
+        usageHint: "Get detailed info for a single pod (including status and container readiness)"
+        example: "Inspect jobsearch-api-... pod details"
+        relatedTools: ["list_pods", "get_logs"]
+        priority: 2
       get_logs:
-        usageHint: "Debug application issues by viewing container logs"
-        example: "Investigate errors or unexpected behavior"
-        relatedTools: ["get_pods", "describe_pod"]
-        priority: 2
-      describe_pod:
-        usageHint: "Get detailed pod info including events"
-        example: "Debug scheduling or startup issues"
-        relatedTools: ["get_pods", "get_logs"]
+        usageHint: "Fetch recent logs; use container name when pod has multiple containers"
+        example: "Get last 200 lines of api container logs"
+        relatedTools: ["list_pods", "get_pod"]
         priority: 3
-      apply_manifest:
-        usageHint: "Deploy or update Kubernetes resources"
-        example: "Apply configuration changes to cluster"
-        relatedTools: ["get_pods", "get_deployments"]
+      list_deployments:
+        usageHint: "Quick health view of deployments and replica counts"
+        example: "List deployments in a namespace"
+        relatedTools: ["scale_deployment", "restart_deployment"]
         priority: 4
-      get_deployments:
-        usageHint: "View deployment status and replica counts"
-        example: "Check if deployments are healthy"
-        relatedTools: ["get_pods", "scale_deployment"]
+      list_services:
+        usageHint: "List services to confirm ports/endpoints are exposed"
+        example: "List services in jobsearch"
+        relatedTools: ["get_resource"]
         priority: 2
+      get_resource:
+        usageHint: "Fetch arbitrary resources by kind/name; useful for configmaps, secrets, ingresses"
+        example: "Get ingress for jobsearch"
+        relatedTools: ["list_namespaces", "list_deployments"]
+        priority: 5
+      list_namespaces:
+        usageHint: "Discover namespaces when you only know the app name"
+        example: "List all namespaces"
+        relatedTools: ["list_pods"]
+        priority: 2
+      scale_deployment:
+        usageHint: "Scale a deployment up/down; verify with list_deployments afterwards"
+        example: "Scale jobsearch-api to 2 replicas"
+        relatedTools: ["list_deployments"]
+        priority: 3
+      restart_deployment:
+        usageHint: "Trigger a rollout restart; use when pods are stuck or after config changes"
+        example: "Restart jobsearch-api deployment"
+        relatedTools: ["list_deployments", "get_logs"]
+        priority: 3
+
+  mcp-k8s-ops:
+    description: "Kubernetes operations via kubectl (useful when you need exec/apply or specific contexts)"
+    category: "kubernetes"
+    tools:
+      k8s_getPods:
+        usageHint: "List pods when you need kubectl-native output formats (wide/yaml/json)"
+        example: "Get pods in jobsearch namespace"
+        relatedTools: ["k8s_describe", "k8s_logs", "k8s_exec"]
+        priority: 1
+      k8s_logs:
+        usageHint: "Fetch logs for pod/name or deploy/name; prefer tail to limit output size"
+        example: "Tail 200 lines of logs for pod/jobsearch-api-..."
+        relatedTools: ["k8s_getPods", "k8s_describe"]
+        priority: 2
+      k8s_exec:
+        usageHint: "Run a command in a container; set timeoutSeconds < client deadline to avoid tool timeouts"
+        example: "Exec python -V in a pod container"
+        relatedTools: ["k8s_getPods", "k8s_logs"]
+        priority: 3
+      k8s_get:
+        usageHint: "Generic get for any kind; use output=json/yaml for machine parsing"
+        example: "Get deploy/jobsearch-api -o yaml"
+        relatedTools: ["k8s_describe", "k8s_apply"]
+        priority: 4
+      k8s_describe:
+        usageHint: "Use when debugging scheduling, image pulls, restarts, or events"
+        example: "Describe pod/jobsearch-api-..."
+        relatedTools: ["k8s_getPods", "k8s_logs"]
+        priority: 4
+      k8s_apply:
+        usageHint: "Apply a manifest file; prefer small, targeted applies"
+        example: "Apply ./manifests/jobsearch.yaml"
+        relatedTools: ["k8s_get"]
+        priority: 5
+      k8s_listNamespaces:
+        usageHint: "Discover namespaces"
+        example: "List namespaces"
+        relatedTools: ["k8s_getPods"]
+        priority: 2
+      k8s_listContexts:
+        usageHint: "List kubeconfig contexts when switching clusters"
+        example: "List available contexts"
+        relatedTools: []
+        priority: 2
+
+  mcp-ops:
+    description: "Operational tools for k3s/Harvester (kubectl + SSH helpers)"
+    category: "kubernetes"
+    tools:
+      k8s_get_nodes:
+        usageHint: "Cluster-level health snapshot; use first during incidents"
+        example: "Get node status and IPs"
+        relatedTools: ["vip_label_node", "stabilize_cluster"]
+        priority: 1
+      k8s_scale_deploy:
+        usageHint: "Scale a deployment; verify with k8s_get_nodes or k8s tools"
+        example: "Scale a deployment to 0/1/2 replicas"
+        relatedTools: ["stabilize_cluster"]
+        priority: 2
+      k8s_delete_pods_by_phase:
+        usageHint: "Bulk-delete pods stuck in bad phases (Failed/Evicted/etc); use labelSelector to narrow"
+        example: "Delete Failed/Evicted pods in a namespace"
+        relatedTools: ["stabilize_cluster"]
+        priority: 3
+      vip_label_node:
+        usageHint: "Adjust kube-vip eligibility when failing over VIP"
+        example: "Mark a node eligible=true"
+        relatedTools: ["k8s_get_nodes"]
+        priority: 3
+      k3s_service_logs:
+        usageHint: "Fetch systemd logs for k3s service on a node"
+        example: "Get last 200 lines of k3s logs"
+        relatedTools: ["k3s_repair_server"]
+        priority: 4
+      k3s_repair_server:
+        usageHint: "Attempt common repairs for a broken k3s node"
+        example: "Repair k3s server via SSH"
+        relatedTools: ["k3s_service_logs"]
+        priority: 4
+      stabilize_cluster:
+        usageHint: "Multi-step stabilization (label nodes, restart deployments, delete bad pods)"
+        example: "Stabilize cluster during control-plane issues"
+        relatedTools: ["k8s_get_nodes", "k8s_delete_pods_by_phase"]
+        priority: 5
 
   mcp-tavily:
     description: "Web search for real-time information"
@@ -161,7 +301,7 @@ categories:
 
   kubernetes:
     description: "Kubernetes cluster management"
-    servers: ["mcp-k8s", "mcp-k8s-ops", "mcp-helm"]
+    servers: ["mcp-k8s", "mcp-k8s-ops", "mcp-ops", "mcp-helm"]
 
   monitoring:
     description: "Metrics, logs, and observability"

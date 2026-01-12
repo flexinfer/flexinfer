@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
@@ -50,6 +53,10 @@ func registerTools(server *mcp.Server) {
 			Type: "object",
 			Properties: map[string]any{
 				"file": map[string]any{"type": "string", "description": "Path to file"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
 			},
 			Required: []string{"file"},
 		},
@@ -64,7 +71,11 @@ func registerTools(server *mcp.Server) {
 				"namespace": map[string]any{"type": "string"},
 				"selector":  map[string]any{"type": "string"},
 				"format":    map[string]any{"type": "string", "enum": []string{"json", "yaml", "wide", "name"}},
-				"context":   map[string]any{"type": "string"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
+				"context": map[string]any{"type": "string"},
 			},
 			Required: []string{"namespace"},
 		},
@@ -81,7 +92,11 @@ func registerTools(server *mcp.Server) {
 				"container": map[string]any{"type": "string"},
 				"tail":      map[string]any{"type": "integer"},
 				"previous":  map[string]any{"type": "boolean"},
-				"context":   map[string]any{"type": "string"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
+				"context": map[string]any{"type": "string"},
 			},
 			Required: []string{"namespace", "target"},
 		},
@@ -100,7 +115,11 @@ func registerTools(server *mcp.Server) {
 				"fieldSelector": map[string]any{"type": "string"},
 				"output":        map[string]any{"type": "string"},
 				"allNamespaces": map[string]any{"type": "boolean"},
-				"context":       map[string]any{"type": "string"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
+				"context": map[string]any{"type": "string"},
 			},
 			Required: []string{"kind"},
 		},
@@ -115,7 +134,11 @@ func registerTools(server *mcp.Server) {
 				"namespace": map[string]any{"type": "string"},
 				"kind":      map[string]any{"type": "string"},
 				"name":      map[string]any{"type": "string"},
-				"context":   map[string]any{"type": "string"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
+				"context": map[string]any{"type": "string"},
 			},
 			Required: []string{"namespace", "kind", "name"},
 		},
@@ -131,7 +154,11 @@ func registerTools(server *mcp.Server) {
 				"pod":       map[string]any{"type": "string"},
 				"container": map[string]any{"type": "string"},
 				"command":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"context":   map[string]any{"type": "string"},
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the exec call (seconds). Defaults to 55.",
+				},
+				"context": map[string]any{"type": "string"},
 			},
 			Required: []string{"namespace", "pod", "command"},
 		},
@@ -143,6 +170,10 @@ func registerTools(server *mcp.Server) {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
 				"context": map[string]any{"type": "string"},
 			},
 		},
@@ -151,21 +182,51 @@ func registerTools(server *mcp.Server) {
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_listContexts",
 		Description: "List available kubeconfig contexts",
-		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"timeoutSeconds": map[string]any{
+					"type":        "integer",
+					"description": "Timeout for the operation (seconds).",
+				},
+			},
+		},
 	}, handleListContexts)
 }
 
 // Kubectl Helper
 
 func getKubeConfig() string {
+	if v := os.Getenv("MCP_K8S_KUBECONFIG"); v != "" {
+		return v
+	}
 	if v := os.Getenv("KUBECONFIG"); v != "" {
 		return v
 	}
+
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		k3s := filepath.Join(home, ".kube", "k3s.yaml")
+		if _, err := os.Stat(k3s); err == nil {
+			return k3s
+		}
+		return filepath.Join(home, ".kube", "config")
+	}
+
 	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, ".kube", "k3s.yaml")
+	return filepath.Join(cwd, ".kube", "config")
 }
 
 func runKubectl(ctx context.Context, contextName string, args ...string) (string, error) {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		timeoutSeconds := envInt("MCP_K8S_OPS_TIMEOUT_SECONDS", 55)
+		if timeoutSeconds > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+			defer cancel()
+		}
+	}
+
 	baseArgs := []string{"--kubeconfig", getKubeConfig()}
 	if contextName != "" {
 		baseArgs = append(baseArgs, "--context", contextName)
@@ -176,10 +237,77 @@ func runKubectl(ctx context.Context, contextName string, args ...string) (string
 	finalArgs := append(baseArgs, args...)
 	cmd := execCommand(ctx, "kubectl", finalArgs...)
 	out, err := cmd.CombinedOutput()
+	outStr := strings.TrimSpace(string(out))
 	if err != nil {
-		return "", fmt.Errorf("kubectl failed: %v, output: %s", err, string(out))
+		if ctx.Err() != nil {
+			if outStr == "" {
+				return "", fmt.Errorf("kubectl timed out: %w", ctx.Err())
+			}
+			return "", fmt.Errorf("kubectl timed out: %w (output: %s)", ctx.Err(), outStr)
+		}
+		if outStr == "" {
+			return "", fmt.Errorf("kubectl failed: %w", err)
+		}
+		return "", fmt.Errorf("kubectl failed: %w (output: %s)", err, outStr)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return outStr, nil
+}
+
+func envInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func withTimeoutSecondsArg(ctx context.Context, args map[string]any) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	timeoutSeconds := timeoutSecondsFromArgs(args, "timeoutSeconds", 0)
+	if timeoutSeconds <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+}
+
+func timeoutSecondsFromArgs(args map[string]any, key string, fallback int) int {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return fallback
+	}
+
+	switch v := raw.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case int32:
+		if v > 0 {
+			return int(v)
+		}
+	case int64:
+		if v > 0 {
+			return int(v)
+		}
+	case float64:
+		iv := int(v)
+		if iv > 0 {
+			return iv
+		}
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &parsed); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+
+	return fallback
 }
 
 // Handlers
@@ -189,6 +317,9 @@ func handleApply(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 	if file == "" {
 		return mcp.ErrorResult(fmt.Errorf("missing 'file'")), nil
 	}
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
+
 	out, err := runKubectl(ctx, "", "apply", "-f", file)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -205,6 +336,9 @@ func handleGetPods(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	if ns == "" {
 		return mcp.ErrorResult(fmt.Errorf("missing 'namespace'")), nil
 	}
+
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
 
 	cmdArgs := []string{"-n", ns, "get", "pods"}
 	if sel != "" {
@@ -234,6 +368,9 @@ func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 	if ns == "" || target == "" {
 		return mcp.ErrorResult(fmt.Errorf("missing 'namespace' or 'target'")), nil
 	}
+
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
 
 	cmdArgs := []string{"-n", ns, "logs", target}
 	if container != "" {
@@ -265,6 +402,9 @@ func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 	if kind == "" {
 		return mcp.ErrorResult(fmt.Errorf("missing 'kind'")), nil
 	}
+
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
 
 	cmdArgs := []string{}
 	if ns != "" && !allNs {
@@ -301,6 +441,9 @@ func handleDescribe(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		return mcp.ErrorResult(fmt.Errorf("missing 'namespace', 'kind', or 'name'")), nil
 	}
 
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
+
 	out, err := runKubectl(ctx, contextName, "-n", ns, "describe", kind, name)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -331,8 +474,15 @@ func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 	cmdArgs = append(cmdArgs, "--")
 	cmdArgs = append(cmdArgs, cmdList...)
 
-	out, err := runKubectl(ctx, contextName, cmdArgs...)
+	timeoutSeconds := timeoutSecondsFromArgs(args, "timeoutSeconds", 55)
+	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	out, err := runKubectl(execCtx, contextName, cmdArgs...)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return mcp.ErrorResult(fmt.Errorf("k8s_exec timed out after %ds: %w", timeoutSeconds, err)), nil
+		}
 		return mcp.ErrorResult(err), nil
 	}
 	return mcp.TextResult(out), nil
@@ -340,6 +490,9 @@ func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 
 func handleListNamespaces(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	contextName, _ := args["context"].(string)
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
+
 	out, err := runKubectl(ctx, contextName, "get", "namespaces", "-o", "name")
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -356,6 +509,9 @@ func handleListNamespaces(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleListContexts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	defer cancel()
+
 	out, err := runKubectl(ctx, "", "config", "get-contexts", "-o", "name")
 	if err != nil {
 		return mcp.ErrorResult(err), nil

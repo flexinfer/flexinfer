@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -249,6 +250,12 @@ func (k *k8sServer) connect() error {
 	config, err := clientcmd.BuildConfigFromFlags("", k.kubeconfig)
 	if err != nil {
 		return err
+	}
+
+	// Ensure requests have an upper bound, since many MCP clients also enforce tool-call deadlines.
+	timeoutSeconds := getEnvInt("MCP_K8S_TIMEOUT_SECONDS", 55)
+	if timeoutSeconds > 0 {
+		config.Timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 
 	k.clientset, err = kubernetes.NewForConfig(config)
@@ -580,6 +587,18 @@ func getStringArg(args map[string]any, key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func getIntArg(args map[string]any, key string, defaultVal int) int {

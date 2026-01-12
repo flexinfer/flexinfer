@@ -10,15 +10,17 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var (
-	version   = "0.1.0"
-	hostAlias = getEnv("ASUS_ROUTER_HOST", "asus-router")
-	hostPort  = getEnvInt("ASUS_ROUTER_PORT", 22)
-	hostUser  = getEnv("ASUS_ROUTER_USER", "admin")
+	version              = "0.1.0"
+	hostAlias            = getEnv("ASUS_ROUTER_HOST", "asus-router")
+	hostPort             = getEnvInt("ASUS_ROUTER_PORT", 22)
+	hostUser             = getEnv("ASUS_ROUTER_USER", "admin")
+	routerTimeoutSeconds = getEnvInt("ASUS_ROUTER_TIMEOUT_SECONDS", 20)
 )
 
 func getEnv(key, fallback string) string {
@@ -133,6 +135,12 @@ func registerTools(server *mcp.Server) {
 // SSH Helper
 
 func runRemote(ctx context.Context, cmd string) (string, error) {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && routerTimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(routerTimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+
 	home, _ := os.UserHomeDir()
 	controlPath := filepath.Join(home, ".ssh", "cm-asus-router-%r@%h:%p")
 	os.MkdirAll(filepath.Dir(controlPath), 0700)
@@ -153,7 +161,17 @@ func runRemote(ctx context.Context, cmd string) (string, error) {
 	c := exec.CommandContext(ctx, "ssh", args...)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("ssh failed: %v, output: %s", err, string(out))
+		outStr := strings.TrimSpace(string(out))
+		if ctx.Err() != nil {
+			if outStr == "" {
+				return "", fmt.Errorf("ssh timed out: %w", ctx.Err())
+			}
+			return "", fmt.Errorf("ssh timed out: %w, output: %s", ctx.Err(), outStr)
+		}
+		if outStr == "" {
+			return "", fmt.Errorf("ssh failed: %w", err)
+		}
+		return "", fmt.Errorf("ssh failed: %w, output: %s", err, outStr)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

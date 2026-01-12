@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +32,29 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func withDefaultTimeout(ctx context.Context, envKey string, fallbackSeconds int) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	timeoutSeconds := getEnvInt(envKey, fallbackSeconds)
+	if timeoutSeconds <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 }
 
 func main() {
@@ -193,6 +218,9 @@ func registerTools(server *mcp.Server) {
 // Helpers
 
 func runKubectl(ctx context.Context, kubeconfig string, args ...string) (string, error) {
+	ctx, cancel := withDefaultTimeout(ctx, "MCP_OPS_KUBECTL_TIMEOUT_SECONDS", 55)
+	defer cancel()
+
 	if kubeconfig == "" {
 		kubeconfig = k3sKubeconfig
 	}
@@ -200,12 +228,25 @@ func runKubectl(ctx context.Context, kubeconfig string, args ...string) (string,
 	cmd := execCommand(ctx, "kubectl", cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("kubectl failed: %w, output: %s", err, string(out))
+		outStr := string(out)
+		if ctx.Err() != nil {
+			if strings.TrimSpace(outStr) == "" {
+				return outStr, fmt.Errorf("kubectl timed out: %w", ctx.Err())
+			}
+			return outStr, fmt.Errorf("kubectl timed out: %w, output: %s", ctx.Err(), outStr)
+		}
+		if strings.TrimSpace(outStr) == "" {
+			return outStr, fmt.Errorf("kubectl failed: %w", err)
+		}
+		return outStr, fmt.Errorf("kubectl failed: %w, output: %s", err, outStr)
 	}
 	return string(out), nil
 }
 
 func runSSH(ctx context.Context, host, command, user string) (string, error) {
+	ctx, cancel := withDefaultTimeout(ctx, "MCP_OPS_SSH_TIMEOUT_SECONDS", 55)
+	defer cancel()
+
 	if user == "" {
 		user = sshUser
 	}
@@ -220,7 +261,17 @@ func runSSH(ctx context.Context, host, command, user string) (string, error) {
 	cmd := execCommand(ctx, "ssh", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("ssh failed: %w, output: %s", err, string(out))
+		outStr := string(out)
+		if ctx.Err() != nil {
+			if strings.TrimSpace(outStr) == "" {
+				return outStr, fmt.Errorf("ssh timed out: %w", ctx.Err())
+			}
+			return outStr, fmt.Errorf("ssh timed out: %w, output: %s", ctx.Err(), outStr)
+		}
+		if strings.TrimSpace(outStr) == "" {
+			return outStr, fmt.Errorf("ssh failed: %w", err)
+		}
+		return outStr, fmt.Errorf("ssh failed: %w, output: %s", err, outStr)
 	}
 	return string(out), nil
 }
@@ -543,8 +594,14 @@ func handleRunRepoScript(ctx context.Context, args map[string]any) (*mcp.CallToo
 
 	switch mode {
 	case "local":
+		ctx, cancel := withDefaultTimeout(ctx, "MCP_OPS_LOCAL_SCRIPT_TIMEOUT_SECONDS", 55)
+		defer cancel()
+
 		cmd := execCommand(ctx, "bash", "-c", cmdStr)
 		out, err := cmd.CombinedOutput()
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return formatResult(string(out), fmt.Errorf("script timed out: %w", err))
+		}
 		return formatResult(string(out), err)
 	case "ssh":
 		if host == "" {

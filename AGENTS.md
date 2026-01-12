@@ -72,8 +72,17 @@ Code Style
 - Run `golangci-lint run` before committing
 - Run `go test ./...` to verify changes
 - Keep MCP server implementations in `cmd/mcp-*/main.go`
-- Shared MCP utilities in `pkg/mcp/`
+- Shared non-server utilities live under `pkg/` (configs, registry, profiles, sync, validation)
+
+Agent Tips
+
+- Tool-call deadlines: many clients time out around ~60s; prefer bounded operations and use `tail` for logs.
+- Kubernetes:
+  - Use `mcp-k8s` for resource reads + logs (client-go, structured JSON outputs).
+  - Use `mcp-k8s-ops` for `kubectl`-exact workflows (notably `k8s_exec` / `k8s_apply`).
+  - `mcp-k8s-ops` supports per-call `timeoutSeconds` on most tools; set it below the client deadline when debugging hangs.
+- Kubeconfig:
+  - Prefer setting `MCP_K8S_KUBECONFIG` (works for both `mcp-k8s` and `mcp-k8s-ops`).
 
 ## Planning
 - See `ROADMAP.md` for project status and plans.
-

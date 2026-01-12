@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Mock helper
@@ -14,7 +15,7 @@ func fakeExecCommand(ctx context.Context, command string, args ...string) *exec.
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
 	cs = append(cs, args...)
 	cmd := exec.CommandContext(ctx, os.Args[0], cs...)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 	return cmd
 }
 
@@ -62,6 +63,17 @@ func handleKubectl(args []string) {
 	if strings.Contains(cmdStr, "logs pod-1") {
 		fmt.Println("Log line 1")
 		fmt.Println("Log line 2")
+		return
+	}
+
+	if strings.Contains(cmdStr, "exec pod-1") {
+		fmt.Println("exec ok")
+		return
+	}
+
+	if strings.Contains(cmdStr, "exec slow") {
+		time.Sleep(2 * time.Second)
+		fmt.Println("exec slow ok")
 		return
 	}
 
@@ -133,5 +145,56 @@ func TestHandleGet(t *testing.T) {
 	content := result.Content[0].Text
 	if !strings.Contains(content, "deploy-1") {
 		t.Errorf("Expected output to contain 'deploy-1', got %s", content)
+	}
+}
+
+func TestHandleExec(t *testing.T) {
+	execCommand = fakeExecCommand
+	defer func() { execCommand = exec.CommandContext }()
+
+	ctx := context.Background()
+	args := map[string]any{
+		"namespace": "default",
+		"pod":       "pod-1",
+		"command":   []any{"echo", "hi"},
+	}
+
+	result, err := handleExec(ctx, args)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("Expected non-error result, got %#v", result)
+	}
+
+	content := result.Content[0].Text
+	if !strings.Contains(content, "exec ok") {
+		t.Errorf("Expected output to contain 'exec ok', got %s", content)
+	}
+}
+
+func TestHandleExecTimeout(t *testing.T) {
+	execCommand = fakeExecCommand
+	defer func() { execCommand = exec.CommandContext }()
+
+	ctx := context.Background()
+	args := map[string]any{
+		"namespace":      "default",
+		"pod":            "slow",
+		"command":        []any{"echo", "hi"},
+		"timeoutSeconds": 1,
+	}
+
+	result, err := handleExec(ctx, args)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("Expected error result, got %#v", result)
+	}
+
+	content := result.Content[0].Text
+	if !strings.Contains(content, "timed out after 1s") {
+		t.Errorf("Expected timeout message, got %s", content)
 	}
 }
