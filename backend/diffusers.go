@@ -1,0 +1,93 @@
+package backend
+
+import (
+	"os"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+// DiffusersBackend implements the Backend interface for the Diffusers API server.
+// Provides OpenAI-compatible image generation endpoints.
+type DiffusersBackend struct {
+	BaseBackend
+}
+
+func init() {
+	Register(&DiffusersBackend{})
+}
+
+func (b *DiffusersBackend) Name() string {
+	return "diffusers"
+}
+
+func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
+	switch gpuVendor {
+	case GPUVendorAMD:
+		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_AMD"); img != "" {
+			return img
+		}
+		return "registry.harbor.lan/library/diffusers-api:rocm6.2.3"
+	default:
+		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE"); img != "" {
+			return img
+		}
+		return "registry.harbor.lan/library/diffusers-api:cuda"
+	}
+}
+
+func (b *DiffusersBackend) Port() int32 {
+	return 8000
+}
+
+func (b *DiffusersBackend) Args(spec *ModelSpec) []string {
+	// Diffusers API server uses environment variables for configuration
+	return nil
+}
+
+func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{
+			Name:  "MODEL_ID",
+			Value: spec.Model,
+		},
+		{
+			Name:  "MODEL",
+			Value: spec.Model,
+		},
+		{
+			Name:  "PORT",
+			Value: "8000",
+		},
+	}
+
+	// Add ROCm environment for AMD GPUs
+	if spec.GPUVendor == GPUVendorAMD {
+		env = append(env, ROCmEnvVars()...)
+	}
+
+	return env
+}
+
+func (b *DiffusersBackend) ReadinessProbe() *corev1.Probe {
+	return HTTPReadinessProbe("/health", 8000, 30, 10, 5)
+}
+
+func (b *DiffusersBackend) StartupTimeout() time.Duration {
+	return 180 * time.Second // Image gen models can take longer to load
+}
+
+// NeedsVolume returns false because diffusers downloads models on-demand.
+func (b *DiffusersBackend) NeedsVolume() bool {
+	return false
+}
+
+// IsImageGeneration returns true for diffusers.
+func (b *DiffusersBackend) IsImageGeneration() bool {
+	return true
+}
+
+// DefaultIdleTimeout returns a longer timeout for image generation.
+func (b *DiffusersBackend) DefaultIdleTimeout() time.Duration {
+	return 10 * time.Minute
+}
