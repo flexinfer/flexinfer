@@ -16,6 +16,8 @@ FlexInfer is **functional and working** with comprehensive implementations of al
 - ✅ **Benchmarker**: Model performance measurement framework
 - ✅ **API Types**: Comprehensive CRD definitions with status tracking
 - ✅ **Test Suite**: Extensive unit tests across all components
+- ✅ **Backend Plugin System**: Centralized backend configuration (ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui)
+- ✅ **Model v1alpha2**: Simplified single-resource API for homelab users
 
 The project is ready for deployment but needs **deployment tooling** (Helm templates, installation guides) to make it accessible to end users.
 
@@ -50,20 +52,33 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 
 ## Architecture
 
-FlexInfer consists of five cooperating components:
+FlexInfer consists of five cooperating components with a pluggable backend system:
 
 ```mermaid
 graph TB
-    Agent[Node Agent<br/>Hardware Detection] --> Controller[Controller Manager<br/>CRD Reconciliation]
-    Benchmarker[Benchmarker<br/>Performance Testing] --> Controller
-    Controller --> Scheduler[Scheduler Extender<br/>Smart Placement]
+    subgraph "Control Plane"
+        Agent[Node Agent<br/>Hardware Detection] --> Controller[Controller Manager<br/>CRD Reconciliation]
+        Benchmarker[Benchmarker<br/>Performance Testing] --> Controller
+        Controller --> Scheduler[Scheduler Extender<br/>Smart Placement]
+    end
+
+    subgraph "Backend Plugins"
+        Controller --> Backend[Backend Registry]
+        Backend --> Ollama[ollama]
+        Backend --> VLLM[vllm]
+        Backend --> MLC[mlc-llm]
+        Backend --> LlamaCpp[llamacpp]
+        Backend --> Diffusers[diffusers]
+        Backend --> ComfyUI[comfyui]
+    end
+
     Scheduler --> K8s[Kubernetes Scheduler]
 
     Agent -.-> Metrics[Prometheus Metrics]
     Controller -.-> Metrics
-    Benchmarker -.-> Metrics
-    Scheduler -.-> Metrics
 ```
+
+The **Backend Plugin System** centralizes all backend-specific configuration (images, ports, args, environment variables, probes) into a single interface, making it easy to add new inference backends.
 
 See [AGENTS.md](AGENTS.md) for detailed component documentation.
 
@@ -99,17 +114,74 @@ helm upgrade --install flexinfer charts/flexinfer \
   --create-namespace
 ```
 
-### Example Usage
+### Example Usage (v1alpha2 - Recommended)
+
+The simplified `Model` CRD replaces the multi-file workflow with a single resource:
 
 ```yaml
-apiVersion: ai.flexinfer/v1alpha1
-kind: ModelCache
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
 metadata:
-  name: llama-7b-cache
+  name: qwen3-8b
 spec:
-  source: huggingface://meta-llama/Llama-2-7b-chat-hf
-  storageStrategy: SharedPVC
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+  gpu:
+    shared: homelab-gpu    # Models with same name share GPU
+    priority: 100          # Higher = more important
+```
+
+That's it! Cache, serverless scaling, and GPU scheduling are all handled automatically.
+
+#### Supported Backends
+
+| Backend | Port | Description |
+|---------|------|-------------|
+| `ollama` | 11434 | Downloads models on-demand |
+| `vllm` | 8000 | OpenAI-compatible, high throughput |
+| `mlc-llm` | 8000 | Pre-compiled models, AMD ROCm support |
+| `llamacpp` | 8080 | GGUF models, CPU/GPU hybrid |
+| `diffusers` | 8000 | Image generation (Stable Diffusion) |
+| `comfyui` | 8188 | Workflow-based image generation |
+| `vllm-omni` | 8000 | Diffusion models with OpenAI API |
+
+#### GPU Sharing
+
+Multiple models can time-share a GPU using the `gpu.shared` field:
+
+```yaml
+# Both models share the same GPU, with qwen3 having higher priority
 ---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+  gpu:
+    shared: my-gpu
+    priority: 100
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: llama3-8b
+spec:
+  backend: vllm
+  source: HF://meta-llama/Meta-Llama-3-8B
+  gpu:
+    shared: my-gpu
+    priority: 50
+```
+
+When a request arrives for the higher-priority model, the lower-priority one is preempted.
+
+### Legacy API (v1alpha1)
+
+The v1alpha1 API with separate `ModelDeployment`, `GPUGroup`, and `ModelCache` resources is still supported but deprecated:
+
+```yaml
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
@@ -117,12 +189,8 @@ metadata:
 spec:
   backend: ollama
   model: llama2:7b
-  replicas: 2
+  replicas: 1
   modelCacheRef: llama-7b-cache
-  resources:
-    limits:
-      nvidia.com/gpu: 1
-      memory: 16Gi
 ```
 
 ## Development
