@@ -1,0 +1,46 @@
+# vLLM Docker image for AMD GPUs (ROCm)
+# Uses official ROCm vLLM base image for gfx1100 (RX 7900 XTX)
+#
+# Build command:
+#   docker build -f build/Dockerfile.vllm-rocm -t vllm-rocm .
+#
+# Based on: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/advanced/advancedryz/linux/llm/build-docker-image.html
+
+# Use the official ROCm vLLM image with navi (RDNA3) support
+FROM rocm/vllm-dev:navi_base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ROCm environment for RX 7900 XTX (gfx1100)
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV PYTORCH_ROCM_ARCH=gfx1100
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+WORKDIR /workspace
+
+# Install additional dependencies for image generation
+RUN pip install --no-cache-dir \
+    diffusers>=0.30.0 \
+    pillow \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+# Create model directory
+RUN mkdir -p /models
+
+# Expose vLLM API port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Default entrypoint for vLLM OpenAI-compatible server
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
+
+# Default arguments (can be overridden)
+CMD ["--host", "0.0.0.0", "--port", "8000"]

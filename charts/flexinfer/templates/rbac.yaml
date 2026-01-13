@@ -102,6 +102,12 @@ rules:
       - modelcaches
       - modelcaches/status
       - modelcaches/finalizers
+      - gpugroups
+      - gpugroups/status
+      - gpugroups/finalizers
+      - models
+      - models/status
+      - models/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]

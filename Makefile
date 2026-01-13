@@ -58,6 +58,20 @@ test-unit: ## Run unit tests only (skip integration tests)
 test-integration: envtest ## Run integration tests with proper environment
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./controllers -v
 
+.PHONY: test-gpugroup
+test-gpugroup: ## Run GPUGroup-specific tests
+	SKIP_ENVTEST=1 go test -v ./controllers/... -run "GPUGroup" -timeout 5m
+
+.PHONY: test-proxy
+test-proxy: ## Run proxy tests
+	go test -v ./cmd/flexinfer-proxy/... -timeout 2m
+
+.PHONY: test-coverage
+test-coverage: ## Run tests with coverage report
+	SKIP_ENVTEST=1 go test ./... -short -coverprofile=coverage.out -covermode=atomic
+	go tool cover -func=coverage.out | tail -1
+	@echo "HTML coverage report: go tool cover -html=coverage.out"
+
 ##@ Build
 
 .PHONY: build

@@ -224,7 +224,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Backends that download models on-the-fly don't need storage volumes
 	backendForVolume := canonicalBackend(modelDeployment.Spec.Backend)
-	if backendForVolume == "diffusers" || backendForVolume == "comfyui" {
+	if backendForVolume == "diffusers" || backendForVolume == "comfyui" || backendForVolume == "tei" {
 		volumeName = "" // No volume needed - models downloaded from HuggingFace/web
 	}
 
@@ -298,11 +298,12 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Handle legacy/private PVC if not using ModelCache
-	// Skip PVC creation for backends that download models on-the-fly (diffusers, comfyui)
+	// Skip PVC creation for backends that download models on-the-fly (diffusers, comfyui, tei)
 	backendType := canonicalBackend(modelDeployment.Spec.Backend)
 	needsPVC := modelDeployment.Spec.ModelCacheRef == nil &&
 		backendType != "diffusers" &&
-		backendType != "comfyui"
+		backendType != "comfyui" &&
+		backendType != "tei"
 
 	if needsPVC {
 		// Legacy/Private PVC Logic
@@ -1530,12 +1531,18 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 	}
 }
 
-// getNodeSelector returns the node selector for GPU nodes
+// getNodeSelector returns the node selector for the deployment.
+// For GPU workloads, adds flexinfer.ai/gpu-present: true.
+// For CPU-only workloads, does not restrict to GPU nodes.
 func (r *ModelDeploymentReconciler) getNodeSelector(m *aiv1alpha1.ModelDeployment) map[string]string {
-	// Start with default selector ensuring GPU workloads are scheduled only on GPU nodes
-	selector := map[string]string{
-		"flexinfer.ai/gpu-present": "true",
+	selector := map[string]string{}
+
+	// Only add GPU node selector if this deployment requires GPU resources
+	gpuResource := r.detectGPUResourceFromSpec(m)
+	if gpuResource != "" {
+		selector["flexinfer.ai/gpu-present"] = "true"
 	}
+
 	// Merge user-specified nodeSelector from spec (user values override defaults)
 	for k, v := range m.Spec.NodeSelector {
 		selector[k] = v
@@ -1571,9 +1578,12 @@ func (r *ModelDeploymentReconciler) getResourceRequirements(m *aiv1alpha1.ModelD
 
 	// Add GPU resource requests - support multiple vendors
 	// Check if spec already defines GPU resources (AMD, NVIDIA, or Intel)
+	// Only add GPU resources if this is not a CPU-only deployment
 	gpuResourceName := r.detectGPUResourceFromSpec(m)
-	requirements.Requests[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
-	requirements.Limits[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
+	if gpuResourceName != "" {
+		requirements.Requests[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
+		requirements.Limits[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
+	}
 
 	return requirements
 }

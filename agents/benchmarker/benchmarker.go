@@ -326,6 +326,15 @@ func (b *Benchmarker) backendReadinessPaths() []string {
 		return []string{"/health", "/v1/models"}
 	case "llamacpp", "llama.cpp":
 		return []string{"/health", "/v1/models"}
+	case "tei":
+		// Text Embeddings Inference uses /health for readiness checks
+		return []string{"/health", "/info"}
+	case "comfyui":
+		// ComfyUI uses /api/system_stats for health checks
+		return []string{"/api/system_stats", "/"}
+	case "diffusers":
+		// Diffusers API server uses /health
+		return []string{"/health", "/v1/models"}
 	default:
 		// Ollama and most backends return 200 on /api/tags when ready.
 		return []string{"/api/tags"}
@@ -334,8 +343,8 @@ func (b *Benchmarker) backendReadinessPaths() []string {
 
 // pullModel triggers the model pull on the backend.
 func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
-	// vLLM loads model at startup, no pull needed
-	if b.backendType == "vllm" || b.backendType == "mlc-llm" || b.backendType == "mlc" || b.backendType == "llamacpp" || b.backendType == "llama.cpp" {
+	// vLLM, MLC-LLM, LlamaCpp, ComfyUI, Diffusers, and TEI load models at startup, no pull needed
+	if b.backendType == "vllm" || b.backendType == "mlc-llm" || b.backendType == "mlc" || b.backendType == "llamacpp" || b.backendType == "llama.cpp" || b.backendType == "comfyui" || b.backendType == "diffusers" || b.backendType == "tei" {
 		return nil
 	}
 
@@ -445,6 +454,12 @@ func (b *Benchmarker) generateOnce(ctx context.Context, model, prompt string, ma
 	switch b.backendType {
 	case "vllm", "mlc-llm", "mlc", "llamacpp", "llama.cpp":
 		return b.generateOnceVLLM(ctx, model, prompt, maxTokens)
+	case "tei":
+		return b.generateOnceTEI(ctx, prompt)
+	case "comfyui":
+		return b.generateOnceComfyUI(ctx, model)
+	case "diffusers":
+		return b.generateOnceDiffusers(ctx, model)
 	default:
 		return b.generateOnceOllama(ctx, model, prompt)
 	}
@@ -903,4 +918,111 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 		_ = lastTokenAt
 	}
 	return s, true, nil
+}
+
+// generateOnceComfyUI performs a simple health check for ComfyUI.
+// Image generation benchmarking has different metrics (images/sec) than LLM (tokens/sec).
+// For now, this just verifies the server is responsive and returns placeholder metrics.
+func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	start := b.now()
+
+	// Check system stats endpoint to verify server is responsive
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/api/system_stats", nil)
+	if err != nil {
+		return 0, 0, false, err
+	}
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, 0, false, fmt.Errorf("ComfyUI health check failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	duration = b.now().Sub(start)
+
+	// Return placeholder metrics - ComfyUI doesn't do token generation
+	// Using 1 "token" to represent one successful health check
+	return 1, duration, false, nil
+}
+
+// generateOnceDiffusers performs a health check for Diffusers API server.
+// Similar to ComfyUI, image generation has different metrics than LLM inference.
+func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	start := b.now()
+
+	// Check health endpoint to verify server is responsive
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/health", nil)
+	if err != nil {
+		return 0, 0, false, err
+	}
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, 0, false, fmt.Errorf("Diffusers health check failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	duration = b.now().Sub(start)
+
+	// Return placeholder metrics - Diffusers doesn't do token generation
+	return 1, duration, false, nil
+}
+
+// generateOnceTEI performs an embedding request to Text Embeddings Inference.
+// For embeddings, we measure the time to generate embeddings for the input text.
+// Returns "tokens" as the number of input tokens processed.
+func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
+	start := b.now()
+
+	// TEI uses POST /embed for embeddings
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"inputs": prompt,
+	})
+	if err != nil {
+		return 0, 0, false, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/embed", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return 0, 0, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, 0, false, fmt.Errorf("TEI embed request failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Read response body to ensure request is complete
+	_, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, 0, false, err
+	}
+
+	duration = b.now().Sub(start)
+
+	// For embeddings, we report "tokens" as a proxy for throughput
+	// Use word count as a rough approximation of tokens processed
+	wordCount := len(strings.Fields(prompt))
+	if wordCount == 0 {
+		wordCount = 1
+	}
+
+	return wordCount, duration, false, nil
 }

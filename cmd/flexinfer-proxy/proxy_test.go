@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,8 +10,10 @@ import (
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -24,6 +27,7 @@ func setupTestProxy(t *testing.T) *Proxy {
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
@@ -364,4 +368,388 @@ func TestHandleRequest_ModelNotFound(t *testing.T) {
 
 	resp := w.Result()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// /v1/models Endpoint Tests
+
+func TestHandleModels_EmptyList(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	w := httptest.NewRecorder()
+
+	p.handleModels(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+
+	var response OpenAIModelsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "list", response.Object)
+	assert.Empty(t, response.Data)
+}
+
+func TestHandleModels_WithModelDeployments(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a ready model
+	one := int32(1)
+	gpuGroup := "test-group"
+	md1 := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model-1",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas:    &one,
+			Backend:     "mlc-llm",
+			GPUGroupRef: &gpuGroup,
+		},
+		Status: aiv1alpha1.ModelDeploymentStatus{
+			Phase: aiv1alpha1.ModelDeploymentPhaseRunning,
+			Conditions: []metav1.Condition{
+				{
+					Type:   aiv1alpha1.ConditionTypeReady,
+					Status: metav1.ConditionTrue,
+				},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md1))
+
+	// Create a scaled-to-zero model
+	zero := int32(0)
+	md2 := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model-2",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &zero,
+			Backend:  "ollama",
+		},
+		Status: aiv1alpha1.ModelDeploymentStatus{
+			Phase: aiv1alpha1.ModelDeploymentPhaseIdle,
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md2))
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	w := httptest.NewRecorder()
+
+	p.handleModels(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response OpenAIModelsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "list", response.Object)
+	assert.Len(t, response.Data, 2)
+
+	// Find models by ID
+	modelMap := make(map[string]OpenAIModel)
+	for _, m := range response.Data {
+		modelMap[m.ID] = m
+	}
+
+	// Verify first model (ready)
+	m1, ok := modelMap["test-model-1"]
+	require.True(t, ok, "test-model-1 not found in response")
+	assert.Equal(t, "model", m1.Object)
+	assert.Equal(t, "flexinfer", m1.OwnedBy)
+	assert.Equal(t, "mlc-llm", m1.Metadata["backend"])
+	assert.Equal(t, true, m1.Metadata["ready"])
+	assert.Equal(t, true, m1.Metadata["scaled"])
+	assert.Equal(t, "Running", m1.Metadata["phase"])
+	assert.Equal(t, "test-group", m1.Metadata["gpu_group"])
+
+	// Verify second model (scaled to zero / idle)
+	m2, ok := modelMap["test-model-2"]
+	require.True(t, ok, "test-model-2 not found in response")
+	assert.Equal(t, "ollama", m2.Metadata["backend"])
+	assert.Equal(t, false, m2.Metadata["ready"])
+	assert.Equal(t, false, m2.Metadata["scaled"])
+	assert.Equal(t, "Idle", m2.Metadata["phase"])
+}
+
+func TestHandleModels_WithServiceLabels(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	one := int32(1)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-with-labels",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas:      &one,
+			Backend:       "vllm",
+			ServiceLabels: []string{"textgen", "chat"},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	w := httptest.NewRecorder()
+
+	p.handleModels(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response OpenAIModelsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+
+	require.Len(t, response.Data, 1)
+	m := response.Data[0]
+	assert.Equal(t, "model-with-labels", m.ID)
+
+	serviceLabels, ok := m.Metadata["service_labels"].([]interface{})
+	require.True(t, ok, "service_labels should be a list")
+	assert.Len(t, serviceLabels, 2)
+	assert.Contains(t, serviceLabels, "textgen")
+	assert.Contains(t, serviceLabels, "chat")
+}
+
+func TestHandleModels_MethodNotAllowed(t *testing.T) {
+	p := setupTestProxy(t)
+
+	req := httptest.NewRequest("POST", "/v1/models", nil)
+	w := httptest.NewRecorder()
+
+	p.handleModels(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+// GPUGroup Demand Signaling Tests
+
+func TestSignalGPUGroupDemand(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a GPUGroup
+	gpuGroup := &aiv1alpha1.GPUGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.GPUGroupSpec{
+			Models: []aiv1alpha1.GPUGroupMember{
+				{Name: "model-a", Priority: 100},
+				{Name: "model-b", Priority: 80},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, gpuGroup))
+
+	// Signal demand
+	p.signalGPUGroupDemand(ctx, "test-group", "model-b", 5)
+
+	// Verify annotations were set
+	updatedGroup := &aiv1alpha1.GPUGroup{}
+	err := p.client.Get(ctx, client.ObjectKey{Name: "test-group", Namespace: "default"}, updatedGroup)
+	require.NoError(t, err)
+
+	queueKey := AnnotationQueueDepthPrefix + "model-b"
+	sinceKey := AnnotationQueueSincePrefix + "model-b"
+
+	assert.Equal(t, "5", updatedGroup.Annotations[queueKey])
+	assert.NotEmpty(t, updatedGroup.Annotations[sinceKey])
+
+	// Verify timestamp is parseable
+	_, err = time.Parse(time.RFC3339, updatedGroup.Annotations[sinceKey])
+	assert.NoError(t, err)
+}
+
+func TestClearGPUGroupDemand(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a GPUGroup with existing demand annotations
+	gpuGroup := &aiv1alpha1.GPUGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationQueueDepthPrefix + "model-b": "5",
+				AnnotationQueueSincePrefix + "model-b": time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: aiv1alpha1.GPUGroupSpec{
+			Models: []aiv1alpha1.GPUGroupMember{
+				{Name: "model-b", Priority: 80},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, gpuGroup))
+
+	// Clear demand
+	p.clearGPUGroupDemand(ctx, "test-group", "model-b")
+
+	// Verify annotations were removed
+	updatedGroup := &aiv1alpha1.GPUGroup{}
+	err := p.client.Get(ctx, client.ObjectKey{Name: "test-group", Namespace: "default"}, updatedGroup)
+	require.NoError(t, err)
+
+	queueKey := AnnotationQueueDepthPrefix + "model-b"
+	sinceKey := AnnotationQueueSincePrefix + "model-b"
+
+	// Annotations should be removed (empty or not present)
+	assert.Empty(t, updatedGroup.Annotations[queueKey])
+	assert.Empty(t, updatedGroup.Annotations[sinceKey])
+}
+
+func TestSignalGPUGroupDemand_UpdatesExisting(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a GPUGroup with existing demand
+	gpuGroup := &aiv1alpha1.GPUGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationQueueDepthPrefix + "model-b": "3",
+				AnnotationQueueSincePrefix + "model-b": time.Now().Add(-5 * time.Second).Format(time.RFC3339),
+			},
+		},
+		Spec: aiv1alpha1.GPUGroupSpec{
+			Models: []aiv1alpha1.GPUGroupMember{
+				{Name: "model-b", Priority: 80},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, gpuGroup))
+
+	// Signal new demand (higher queue depth)
+	p.signalGPUGroupDemand(ctx, "test-group", "model-b", 10)
+
+	// Verify annotations were updated
+	updatedGroup := &aiv1alpha1.GPUGroup{}
+	err := p.client.Get(ctx, client.ObjectKey{Name: "test-group", Namespace: "default"}, updatedGroup)
+	require.NoError(t, err)
+
+	queueKey := AnnotationQueueDepthPrefix + "model-b"
+	assert.Equal(t, "10", updatedGroup.Annotations[queueKey])
+}
+
+// GPUGroup Request Handling Tests
+
+func TestHandleGPUGroupRequest_ActiveModel(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a GPUGroup with model-a active
+	gpuGroup := &aiv1alpha1.GPUGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.GPUGroupSpec{
+			Models: []aiv1alpha1.GPUGroupMember{
+				{Name: "model-a", Priority: 100},
+			},
+		},
+		Status: aiv1alpha1.GPUGroupStatus{
+			ActiveModel: "model-a",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, gpuGroup))
+
+	// Create a ready ModelDeployment with GPUGroupRef
+	one := int32(1)
+	gpuGroupName := "test-group"
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-a",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas:    &one,
+			GPUGroupRef: &gpuGroupName,
+		},
+		Status: aiv1alpha1.ModelDeploymentStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:   aiv1alpha1.ConditionTypeReady,
+					Status: metav1.ConditionTrue,
+				},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	// Make request for active model
+	req := httptest.NewRequest("GET", "/v1/chat/completions", nil)
+	req.Header.Set("X-Model-ID", "model-a")
+	w := httptest.NewRecorder()
+
+	// The handleRequest will try to proxy, which will fail in test.
+	// We just want to ensure it doesn't return an error status immediately.
+	p.handleRequest(w, req)
+
+	// Since there's no backend to proxy to, we won't get 200, but we shouldn't
+	// get 400/404/503 (error responses from the proxy logic itself)
+	resp := w.Result()
+	// The proxy will try to connect and fail, resulting in 502 Bad Gateway
+	// This is expected behavior when there's no actual backend
+	assert.NotEqual(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NotEqual(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestGetGPUGroup_NotFound(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	_, err := p.getGPUGroup(ctx, "nonexistent-group")
+	assert.Error(t, err)
+	assert.True(t, errors.IsNotFound(err))
+}
+
+func TestGetGPUGroup_Found(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	gpuGroup := &aiv1alpha1.GPUGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "existing-group",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.GPUGroupSpec{
+			Models: []aiv1alpha1.GPUGroupMember{
+				{Name: "model-a", Priority: 100},
+			},
+		},
+		Status: aiv1alpha1.GPUGroupStatus{
+			ActiveModel: "model-a",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, gpuGroup))
+
+	result, err := p.getGPUGroup(ctx, "existing-group")
+	require.NoError(t, err)
+	assert.Equal(t, "existing-group", result.Name)
+	assert.Equal(t, "model-a", result.Status.ActiveModel)
+}
+
+// Service Label Resolution Tests
+
+func TestResolveServiceLabel_DirectModelName(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// No services created, should return input as-is
+	result := p.resolveServiceLabel(ctx, "direct-model-name")
+	assert.Equal(t, "direct-model-name", result)
 }

@@ -78,6 +78,18 @@ unit_test:
   script:
     - SKIP_ENVTEST=1 go test -v ./... -short
 
+gpugroup_test:
+  stage: test
+  <<: *go-cache
+  script:
+    - SKIP_ENVTEST=1 go test -v ./controllers/... -run "GPUGroup" -timeout 5m
+
+proxy_test:
+  stage: test
+  <<: *go-cache
+  script:
+    - go test -v ./cmd/flexinfer-proxy/... -timeout 2m
+
 integration_test:
   stage: test
   <<: *go-cache

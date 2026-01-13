@@ -199,7 +199,7 @@ func TestGetBackendImage_VLLM_AMD(t *testing.T) {
 	}
 
 	image := r.getBackendImage(m)
-	expected := "rocm/vllm:latest"
+	expected := "registry.harbor.lan/library/vllm-api:rocm-navi"
 	if image != expected {
 		t.Errorf("Expected %s, got %s", expected, image)
 	}

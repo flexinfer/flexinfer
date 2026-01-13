@@ -107,6 +107,28 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to perform model swap")
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
+	} else if currentActive != "" {
+		// No swap needed, but ensure the current active model is scaled up
+		// This handles the case where the model was marked active but never scaled up
+		// (e.g., after a failed swap attempt, or when proxy is waiting for model to be ready)
+		if md, ok := members[currentActive]; ok {
+			if md.Spec.Replicas == nil || *md.Spec.Replicas == 0 {
+				log.Info("Ensuring active model is scaled up", "model", currentActive)
+				one := int32(1)
+				md.Spec.Replicas = &one
+				if err := r.Update(ctx, md); err != nil {
+					log.Error(err, "Failed to scale up active model", "model", currentActive)
+					return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+				}
+				r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledUp",
+					"Ensured model %s is scaled up", currentActive)
+
+				// Add service labels if not already present
+				if err := r.updateServiceLabels(ctx, md, true); err != nil {
+					log.Error(err, "Failed to add service labels", "model", currentActive)
+				}
+			}
+		}
 	}
 
 	// Update phase based on current state

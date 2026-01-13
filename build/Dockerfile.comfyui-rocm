@@ -1,0 +1,83 @@
+# ComfyUI Docker image for AMD GPUs (ROCm)
+# Optimized for RX 7900 XTX (gfx1100)
+FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create application directory
+WORKDIR /app
+
+# Clone ComfyUI - use a stable version without comfy_kitchen dependency
+# v0.2.7 is the last stable release before comfy_kitchen was introduced
+RUN git clone --depth 1 --branch v0.2.7 https://github.com/comfyanonymous/ComfyUI.git || \
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git
+
+WORKDIR /app/ComfyUI
+
+# Install ComfyUI requirements but skip torch/torchvision (keep ROCm versions from base image)
+# Also skip comfy_kitchen as it has CUDA-specific code incompatible with ROCm
+RUN grep -v "^torch" requirements.txt | grep -v "comfy.kitchen" | grep -v "comfy-kitchen" > requirements-no-torch.txt && \
+    pip install --no-cache-dir -r requirements-no-torch.txt && \
+    pip uninstall -y comfy-kitchen comfy_kitchen 2>/dev/null || true
+
+# Patch ComfyUI to make comfy_kitchen optional (required for ROCm compatibility)
+# Create a stub module instead of patching imports
+RUN mkdir -p /opt/conda/envs/py_3.10/lib/python3.10/site-packages/comfy_kitchen && \
+    echo 'ck = None' > /opt/conda/envs/py_3.10/lib/python3.10/site-packages/comfy_kitchen/__init__.py
+
+# Install additional useful packages for image generation
+# Pin numpy to 1.x for compatibility with ROCm PyTorch
+# NOTE: Do NOT install torchaudio from pip as it pulls CUDA PyTorch
+RUN pip install --no-cache-dir \
+    accelerate \
+    transformers \
+    safetensors \
+    diffusers \
+    opencv-python-headless \
+    'scipy<1.14' \
+    scikit-image \
+    trampoline && \
+    pip install --no-cache-dir --force-reinstall 'numpy<2'
+
+# Install torchsde separately - it requires torch but we have ROCm torch already
+# Use --no-deps to prevent pulling CUDA torch, but install after its deps are ready
+RUN pip install --no-cache-dir --no-deps torchsde && \
+    python -c "import torchsde; print('torchsde installed successfully')"
+
+# Create directories for models and outputs
+RUN mkdir -p /app/ComfyUI/models/checkpoints \
+    /app/ComfyUI/models/loras \
+    /app/ComfyUI/models/vae \
+    /app/ComfyUI/models/controlnet \
+    /app/ComfyUI/models/clip \
+    /app/ComfyUI/models/embeddings \
+    /app/ComfyUI/output \
+    /app/ComfyUI/input \
+    /app/ComfyUI/custom_nodes
+
+# Create a non-root user (optional - some workflows need root for packages)
+# RUN useradd -m -u 1000 comfy && chown -R comfy:comfy /app
+# USER comfy
+
+# Set environment variables for ROCm
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV PYTORCH_ROCM_ARCH=gfx1100
+ENV HIP_VISIBLE_DEVICES=0
+
+# Expose ComfyUI port
+EXPOSE 8188
+
+# Default command - listen on all interfaces
+CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
