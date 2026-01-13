@@ -1,0 +1,9 @@
+# Basic Model Example
+# Deploy a model with minimal configuration - all defaults are sensible
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: llama3-8b
+spec:
+  backend: ollama
+  source: ollama://llama3:8b

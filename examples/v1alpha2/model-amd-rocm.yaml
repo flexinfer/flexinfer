@@ -1,0 +1,35 @@
+# AMD ROCm GPU Example
+# Models configured for AMD GPUs (RX 7900 XTX, etc.)
+# GPU vendor is auto-detected from node labels
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-amd
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+  nodeSelector:
+    gpu.amd.com/gpu-architecture: gfx1100   # Target RDNA3 GPUs
+  gpu:
+    shared: amd-gpu-pool
+    priority: 100
+  config:
+    mode: server
+    maxNumSequence: 4
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: vllm-mistral-amd
+spec:
+  backend: vllm
+  source: HF://mistralai/Mistral-7B-Instruct-v0.2
+  nodeSelector:
+    gpu.amd.com/gpu-architecture: gfx1100
+  gpu:
+    shared: amd-gpu-pool
+    priority: 80
+  config:
+    dtype: float16
+    trustRemoteCode: true

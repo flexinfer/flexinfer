@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -46,6 +47,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(aiv1alpha2.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -99,6 +101,17 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GPUGroup")
+		os.Exit(1)
+	}
+
+	// Model v1alpha2 controller - simplified single-resource API
+	if err = (&controllers.ModelReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("model-controller"),
+		APIReader: mgr.GetAPIReader(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Model")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

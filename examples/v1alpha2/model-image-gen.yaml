@@ -1,0 +1,46 @@
+# Image Generation Examples
+# Different backends for image generation workloads
+---
+# ComfyUI - Workflow-based image generation with web UI
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: comfyui-sdxl
+spec:
+  backend: comfyui
+  source: pvc://model-storage/comfyui/checkpoints
+  gpu:
+    shared: image-gen-gpu
+    priority: 100
+  serverless:
+    idleTimeout: 10m       # Longer timeout for image gen
+  config:
+    enableCORS: true
+    outputDirectory: /output
+---
+# Diffusers - OpenAI-compatible image generation API
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: flux-schnell
+spec:
+  backend: diffusers
+  source: HF://black-forest-labs/FLUX.1-schnell
+  gpu:
+    shared: image-gen-gpu
+    priority: 80
+  serviceLabels:
+    - imagegen
+    - flux
+---
+# vLLM-Omni - Diffusion models with vLLM backend
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sd3-medium
+spec:
+  backend: vllm-omni
+  source: HF://stabilityai/stable-diffusion-3-medium
+  gpu:
+    shared: image-gen-gpu
+    priority: 60

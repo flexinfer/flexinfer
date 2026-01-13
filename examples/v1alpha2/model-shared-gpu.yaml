@@ -1,0 +1,29 @@
+# GPU Sharing Example
+# Two models share the same GPU - higher priority model preempts lower priority
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+  gpu:
+    shared: homelab-gpu    # Models with same value share GPU
+    priority: 100          # Higher priority - preferred for activation
+  config:
+    mode: server
+    maxNumSequence: 4
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: phi3-mini
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Phi-3-mini-4k-instruct-q4f16_1-MLC
+  gpu:
+    shared: homelab-gpu    # Same group as qwen3-8b
+    priority: 50           # Lower priority - gets preempted when qwen3 is needed
+  config:
+    mode: local
