@@ -1587,7 +1587,7 @@ const (
 
 // detectGPUResourceFromSpec checks if the ModelDeployment spec already defines
 // a GPU resource type (AMD, NVIDIA, or Intel) and returns it.
-// Defaults to NVIDIA for backwards compatibility.
+// Returns empty string if no GPU resource is requested (CPU-only deployment).
 func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.ModelDeployment) corev1.ResourceName {
 	gpuResources := []corev1.ResourceName{GPUResourceAMD, GPUResourceNVIDIA, GPUResourceIntel}
 
@@ -1609,8 +1609,8 @@ func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.Mode
 		}
 	}
 
-	// Default to NVIDIA for backwards compatibility
-	return GPUResourceNVIDIA
+	// No GPU resource found - CPU-only deployment
+	return ""
 }
 
 // getRuntimeClassName returns the appropriate RuntimeClassName for the GPU type.
