@@ -222,6 +222,12 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	volumeReadOnly := false
 	volumePath := "" // For passing to benchmark job (format: "pvcName:subPath")
 
+	// Backends that download models on-the-fly don't need storage volumes
+	backendForVolume := canonicalBackend(modelDeployment.Spec.Backend)
+	if backendForVolume == "diffusers" || backendForVolume == "comfyui" {
+		volumeName = "" // No volume needed - models downloaded from HuggingFace/web
+	}
+
 	if modelDeployment.Spec.ModelCacheRef != nil {
 		// Using ModelCache - check it early before benchmark
 		cacheName := *modelDeployment.Spec.ModelCacheRef
@@ -292,7 +298,13 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Handle legacy/private PVC if not using ModelCache
-	if modelDeployment.Spec.ModelCacheRef == nil {
+	// Skip PVC creation for backends that download models on-the-fly (diffusers, comfyui)
+	backendType := canonicalBackend(modelDeployment.Spec.Backend)
+	needsPVC := modelDeployment.Spec.ModelCacheRef == nil &&
+		backendType != "diffusers" &&
+		backendType != "comfyui"
+
+	if needsPVC {
 		// Legacy/Private PVC Logic
 		// Check if the pvc already exists, if not create a new one
 		pvc := &corev1.PersistentVolumeClaim{}
@@ -661,46 +673,54 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 	depAnnotations := getLiteLLMAnnotations(m)
 
 	// Determine volume type based on path format:
+	// - Empty string means no volume needed (e.g., diffusers downloads from HuggingFace)
 	// - Absolute paths (starting with /) are NodeLocal hostPath volumes
 	// - Format "pvcName:subPath" are SharedPVC volumes
-	var volume corev1.Volume
-	volumeMount := corev1.VolumeMount{
-		Name:      "model-cache",
-		MountPath: "/models",
-		ReadOnly:  readOnly,
-	}
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
 
-	if strings.HasPrefix(volumeName, "/") {
-		// NodeLocal strategy: volumeName is an absolute hostPath
-		volume = corev1.Volume{
-			Name: "model-cache",
-			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: volumeName,
-					Type: hostPathTypePtr(corev1.HostPathDirectory),
+	if volumeName != "" {
+		volumeMount := corev1.VolumeMount{
+			Name:      "model-cache",
+			MountPath: "/models",
+			ReadOnly:  readOnly,
+		}
+
+		var volume corev1.Volume
+		if strings.HasPrefix(volumeName, "/") {
+			// NodeLocal strategy: volumeName is an absolute hostPath
+			volume = corev1.Volume{
+				Name: "model-cache",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: volumeName,
+						Type: hostPathTypePtr(corev1.HostPathDirectory),
+					},
 				},
-			},
-		}
-	} else {
-		// SharedPVC strategy: parse "pvcName:subPath" format
-		pvcName := volumeName
-		subPath := ""
-		if parts := strings.SplitN(volumeName, ":", 2); len(parts) == 2 {
-			pvcName = parts[0]
-			subPath = parts[1]
-		}
-		if subPath != "" {
-			volumeMount.SubPath = subPath
-		}
-		volume = corev1.Volume{
-			Name: "model-cache",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: pvcName,
-					ReadOnly:  readOnly,
+			}
+		} else {
+			// SharedPVC strategy: parse "pvcName:subPath" format
+			pvcName := volumeName
+			subPath := ""
+			if parts := strings.SplitN(volumeName, ":", 2); len(parts) == 2 {
+				pvcName = parts[0]
+				subPath = parts[1]
+			}
+			if subPath != "" {
+				volumeMount.SubPath = subPath
+			}
+			volume = corev1.Volume{
+				Name: "model-cache",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvcName,
+						ReadOnly:  readOnly,
+					},
 				},
-			},
+			}
 		}
+		volumes = append(volumes, volume)
+		volumeMounts = append(volumeMounts, volumeMount)
 	}
 
 	dep := &appsv1.Deployment{
@@ -748,12 +768,12 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 						Args:         r.getBackendArgs(m),
 						Env:          r.getBackendEnv(m),
 						Resources:    r.getResourceRequirements(m),
-						VolumeMounts: []corev1.VolumeMount{volumeMount},
+						VolumeMounts: volumeMounts,
 						// Readiness probe ensures pod is only marked Ready when inference endpoint is serving.
 						// This is critical for serverless scale-to-zero to work correctly.
 						ReadinessProbe: r.getReadinessProbe(m),
 					}},
-					Volumes: []corev1.Volume{volume},
+					Volumes: volumes,
 					// Graceful shutdown period for draining in-flight requests
 					// LLM inference requests can take 10-30+ seconds for long context windows
 					TerminationGracePeriodSeconds: ptr.To(r.getTerminationGracePeriod(m)),
@@ -931,7 +951,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								fmt.Sprintf(
 									"/flexinfer-bench %s; status=$?; "+
 										"echo 'Benchmark complete, signaling backend shutdown...'; "+
-										"pkill -TERM -f 'mlc_llm|ollama|vllm|llama' || true; "+
+										"pkill -TERM -f 'mlc_llm|ollama|vllm|llama|uvicorn|/app/server.py|ComfyUI' || true; "+
 										"sleep 2; exit $status",
 									strings.Join(benchArgs, " "),
 								),
@@ -972,33 +992,51 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 
 	// Add model cache volume if volumePath is provided
 	if volumePath != "" {
-		pvcName := volumePath
-		subPath := ""
-		if parts := strings.SplitN(volumePath, ":", 2); len(parts) == 2 {
-			pvcName = parts[0]
-			subPath = parts[1]
-		}
-
 		// Add volume mount to llm-backend container
 		volumeMount := corev1.VolumeMount{
 			Name:      "model-cache",
 			MountPath: "/models",
 			ReadOnly:  true,
 		}
-		if subPath != "" {
-			volumeMount.SubPath = subPath
-		}
 		job.Spec.Template.Spec.Containers[1].VolumeMounts = []corev1.VolumeMount{volumeMount}
 
-		// Add volume to pod spec
-		job.Spec.Template.Spec.Volumes = []corev1.Volume{{
-			Name: "model-cache",
-			VolumeSource: corev1.VolumeSource{
+		// Determine volume type based on path format
+		// Paths starting with "/" are hostPaths (e.g., /dev/shm/flexinfer/... for Memory caches)
+		// Other paths are PVC references (format: "pvcName:subPath")
+		var volumeSource corev1.VolumeSource
+		if strings.HasPrefix(volumePath, "/") {
+			// HostPath volume for Memory-type caches
+			hostPathType := corev1.HostPathDirectory
+			volumeSource = corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: volumePath,
+					Type: &hostPathType,
+				},
+			}
+		} else {
+			// PVC volume for SharedPVC-type caches
+			pvcName := volumePath
+			subPath := ""
+			if parts := strings.SplitN(volumePath, ":", 2); len(parts) == 2 {
+				pvcName = parts[0]
+				subPath = parts[1]
+			}
+			if subPath != "" {
+				volumeMount.SubPath = subPath
+				job.Spec.Template.Spec.Containers[1].VolumeMounts = []corev1.VolumeMount{volumeMount}
+			}
+			volumeSource = corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: pvcName,
 					ReadOnly:  true,
 				},
-			},
+			}
+		}
+
+		// Add volume to pod spec
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{{
+			Name:         "model-cache",
+			VolumeSource: volumeSource,
 		}}
 	}
 	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
@@ -1026,8 +1064,8 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE_AMD"); ok {
 				return image
 			}
-			// ROCm-enabled vLLM image
-			return "rocm/vllm:latest"
+			// ROCm-enabled vLLM image for gfx1100 (RX 7900 XTX)
+			return "registry.harbor.lan/library/vllm-api:rocm-navi"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE"); ok {
 				return image
@@ -1092,7 +1130,7 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 				return image
 			}
 			// ROCm-enabled ComfyUI image
-			return "registry.harbor.lan/library/comfyui:rocm6.4.3"
+			return "registry.harbor.lan/library/comfyui:rocm6.2.3-v8"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_COMFYUI_IMAGE"); ok {
 				return image
@@ -1108,14 +1146,48 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE_AMD"); ok {
 				return image
 			}
-			// ROCm-enabled vLLM-Omni image
-			return "rocm/vllm:latest"
+			// ROCm-enabled vLLM-Omni image for gfx1100 (RX 7900 XTX)
+			return "registry.harbor.lan/library/vllm-api:rocm-navi"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE"); ok {
 				return image
 			}
 			// CUDA-enabled vLLM-Omni image
 			return "vllm/vllm-openai:latest"
+		}
+	case "diffusers":
+		// Diffusers API server with OpenAI-compatible image generation
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceAMD:
+			if image, ok := os.LookupEnv("DEFAULT_DIFFUSERS_IMAGE_AMD"); ok {
+				return image
+			}
+			// ROCm-enabled Diffusers API server
+			return "registry.harbor.lan/library/diffusers-api:rocm6.2.3"
+		default:
+			if image, ok := os.LookupEnv("DEFAULT_DIFFUSERS_IMAGE"); ok {
+				return image
+			}
+			// CUDA-enabled Diffusers API server
+			return "registry.harbor.lan/library/diffusers-api:cuda"
+		}
+	case "tei":
+		// Text Embeddings Inference - supports CPU, CUDA, and Intel
+		gpuResource := r.detectGPUResourceFromSpec(m)
+		switch gpuResource {
+		case GPUResourceNVIDIA:
+			if image, ok := os.LookupEnv("DEFAULT_TEI_IMAGE_CUDA"); ok {
+				return image
+			}
+			// CUDA-enabled TEI image
+			return "ghcr.io/huggingface/text-embeddings-inference:1.8"
+		default:
+			// CPU fallback (also works for unsupported GPUs)
+			if image, ok := os.LookupEnv("DEFAULT_TEI_IMAGE_CPU"); ok {
+				return image
+			}
+			return "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8"
 		}
 	default:
 	}
@@ -1163,6 +1235,12 @@ func (r *ModelDeploymentReconciler) getBackendPort(m *aiv1alpha1.ModelDeployment
 	case "vllm-omni":
 		// vLLM-Omni OpenAI-compatible API
 		return 8000
+	case "diffusers":
+		// Diffusers API server
+		return 8000
+	case "tei":
+		// Text Embeddings Inference
+		return 80
 	default:
 	}
 	return 11434
@@ -1203,6 +1281,12 @@ func (r *ModelDeploymentReconciler) getReadinessProbe(m *aiv1alpha1.ModelDeploym
 	case "vllm-omni":
 		// vLLM-Omni uses standard OpenAI endpoint
 		path = "/v1/models"
+	case "diffusers":
+		// Diffusers API server uses /health
+		path = "/health"
+	case "tei":
+		// Text Embeddings Inference uses /health
+		path = "/health"
 	}
 
 	// Default probe timings
@@ -1240,6 +1324,9 @@ func (r *ModelDeploymentReconciler) getBackendCommand(m *aiv1alpha1.ModelDeploym
 		// MLC-LLM is invoked as a Python module: python -m mlc_llm
 		// This works regardless of whether mlc_llm is in PATH
 		return []string{"python", "-m", "mlc_llm"}
+	case "comfyui":
+		// ComfyUI: python main.py with --listen and other args
+		return []string{"python", "main.py"}
 	default:
 		return nil
 	}
@@ -1304,6 +1391,9 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 			return strings.Fields(args)
 		}
 		return r.buildVLLMOmniArgs(m, modelPath)
+	case "diffusers":
+		// Diffusers API server - no command-line args needed, uses env vars
+		return nil
 	default:
 	}
 	return nil
@@ -1351,6 +1441,24 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 			Name:  "CUDA_DEVICE_ORDER",
 			Value: "PCI_BUS_ID",
 		})
+		// ROCm-specific environment for AMD GPUs
+		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
+			// Override GFX version for RDNA3 (RX 7900 series)
+			env = append(env, corev1.EnvVar{
+				Name:  "HSA_OVERRIDE_GFX_VERSION",
+				Value: "11.0.0",
+			})
+			// Make GPU visible to HIP/ROCm
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_VISIBLE_DEVICES",
+				Value: "0",
+			})
+			// ROCR_VISIBLE_DEVICES for ROCm runtime
+			env = append(env, corev1.EnvVar{
+				Name:  "ROCR_VISIBLE_DEVICES",
+				Value: "0",
+			})
+		}
 		return env
 	case "vllm-omni":
 		// vLLM-Omni inherits from vLLM
@@ -1360,6 +1468,63 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Value: "PCI_BUS_ID",
 			},
 		}
+	case "diffusers":
+		// Diffusers API server environment
+		var env []corev1.EnvVar
+		// Model ID for the diffusion model
+		env = append(env, corev1.EnvVar{
+			Name:  "MODEL_ID",
+			Value: m.Spec.Model,
+		})
+		// Also set MODEL for compatibility
+		env = append(env, corev1.EnvVar{
+			Name:  "MODEL",
+			Value: m.Spec.Model,
+		})
+		// Port configuration
+		env = append(env, corev1.EnvVar{
+			Name:  "PORT",
+			Value: "8000",
+		})
+		// ROCm-specific environment for AMD GPUs
+		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
+			env = append(env, corev1.EnvVar{
+				Name:  "HSA_OVERRIDE_GFX_VERSION",
+				Value: "11.0.0",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_VISIBLE_DEVICES",
+				Value: "0",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "ROCR_VISIBLE_DEVICES",
+				Value: "0",
+			})
+		}
+		return env
+	case "tei":
+		// Text Embeddings Inference environment
+		optionalTrue := true
+		var env []corev1.EnvVar
+		// Model ID for the embedding model (HuggingFace repo or local path)
+		env = append(env, corev1.EnvVar{
+			Name:  "MODEL_ID",
+			Value: m.Spec.Model,
+		})
+		// HuggingFace token for private/gated models
+		env = append(env, corev1.EnvVar{
+			Name: "HUGGINGFACE_HUB_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "hf-token",
+					},
+					Key:      "HF_TOKEN",
+					Optional: &optionalTrue,
+				},
+			},
+		})
+		return env
 	default:
 		return nil
 	}
@@ -1767,10 +1932,9 @@ func (r *ModelDeploymentReconciler) buildComfyUIArgs(m *aiv1alpha1.ModelDeployme
 
 	c := m.Spec.ComfyUI
 
-	// Models path (checkpoint, lora, etc.)
-	if c.ModelsPath != "" {
-		args = append(args, "--models-dir", c.ModelsPath)
-	}
+	// Models path: ComfyUI doesn't have --models-dir; use --extra-model-paths-config
+	// or mount models directly. If modelsPath is set, create a config file path.
+	// For now, we pass it via ExtraArgs if needed (e.g., --extra-model-paths-config /path/to/config.yaml)
 
 	// Custom workflows directory
 	if c.WorkflowsPath != "" {
@@ -1841,6 +2005,7 @@ func (r *ModelDeploymentReconciler) validateGPUResources(m *aiv1alpha1.ModelDepl
 		"ollama":    true,
 		"vllm":      true,
 		"tgi":       true, // Text Generation Inference
+		"tei":       true, // Text Embeddings Inference
 		"llamacpp":  true,
 		"mlc-llm":   true,
 		"comfyui":   true, // Image generation
