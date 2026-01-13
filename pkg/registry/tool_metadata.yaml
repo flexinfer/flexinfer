@@ -95,6 +95,41 @@ servers:
         relatedTools: ["get_repo", "search_code"]
         priority: 4
 
+  mcp-gitlab:
+    description: "GitLab API operations"
+    category: "collaboration"
+    tools:
+      verify_token:
+        usageHint: "Validate that the configured GitLab token is present and can authenticate, and (when available) return token scopes"
+        example: "Confirm Loom secrets/keychain token is correct before debugging API failures"
+        relatedTools: ["list_projects", "get_project"]
+        priority: 1
+      list_projects:
+        usageHint: "List projects accessible to the authenticated user (use to find the correct project path/ID)"
+        example: "List projects you are a member of"
+        relatedTools: ["get_project", "search_repositories"]
+        priority: 2
+      create_pipeline:
+        usageHint: "Trigger a pipeline run for a branch/tag, optionally with variables"
+        example: "Run CI on main with PIPELINE_DEBUG=1"
+        relatedTools: ["list_pipelines", "get_pipeline", "list_pipeline_jobs"]
+        priority: 2
+      list_pipelines:
+        usageHint: "Inspect recent pipeline runs for a project (filter by ref/status)"
+        example: "Find the last failed pipeline on main"
+        relatedTools: ["get_pipeline", "list_pipeline_jobs"]
+        priority: 2
+      list_pipeline_jobs:
+        usageHint: "See all jobs in a pipeline and their current status"
+        example: "Locate the failing job to fetch its trace"
+        relatedTools: ["get_job", "get_job_trace"]
+        priority: 2
+      get_job_trace:
+        usageHint: "Fetch the job trace/log (use tail_lines/max_bytes to keep output small)"
+        example: "Grab the last 200 lines from a failing job"
+        relatedTools: ["get_job", "list_pipeline_jobs"]
+        priority: 3
+
   mcp-filesystem:
     description: "File system operations"
     category: "file-operations"
