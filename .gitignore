@@ -46,5 +46,12 @@ dist/
 
 # Claude Desktop app config (local)
 claude_desktop_config/
+
+# Compiled binaries
 flexinfer-proxy
+flexinfer-manager
+flexinfer-agent
+flexinfer-bench
+flexinfer-scheduler
+seed-issues
 bin/
