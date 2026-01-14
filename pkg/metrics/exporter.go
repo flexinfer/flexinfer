@@ -2,6 +2,7 @@
 package metrics
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,11 +56,15 @@ func NewExporter() *Exporter {
 }
 
 // Run starts an HTTP server to expose the metrics.
+// The server runs in a goroutine and logs errors instead of panicking.
 func (e *Exporter) Run(addr string) {
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			panic(err)
+		if err := http.ListenAndServe(addr, nil); err != nil && err != http.ErrServerClosed {
+			// Log error but don't panic - this is a background goroutine
+			// The main application should continue even if metrics fail
+			// This allows debugging without crashing the entire process
+			log.Printf("metrics server error on %s: %v", addr, err)
 		}
 	}()
 }
