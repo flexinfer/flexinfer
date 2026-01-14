@@ -1018,6 +1018,7 @@ func (p *Proxy) resolveServiceLabel(ctx context.Context, labelOrModelName string
 
 // refreshServiceLabelCache updates the service label to model name mapping.
 // It scans all Services in the namespace for the AnnotationActiveServiceLabels annotation.
+// Detects and warns about conflicts when multiple services claim the same label.
 func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	p.serviceLabelCacheMu.Lock()
 	defer p.serviceLabelCacheMu.Unlock()
@@ -1034,20 +1035,31 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 		return
 	}
 
-	// Clear the cache
-	p.serviceLabelCache = sync.Map{}
-
-	// Build new cache
+	// First pass: collect all label claims to detect conflicts
+	labelClaims := make(map[string][]string) // label -> []serviceName
 	for _, svc := range services.Items {
 		if labels, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok && labels != "" {
 			for _, label := range strings.Split(labels, ",") {
 				label = strings.TrimSpace(label)
 				if label != "" {
-					p.serviceLabelCache.Store(label, svc.Name)
-					log.Printf("Service label cache: %s -> %s", label, svc.Name)
+					labelClaims[label] = append(labelClaims[label], svc.Name)
 				}
 			}
 		}
+	}
+
+	// Clear the cache
+	p.serviceLabelCache = sync.Map{}
+
+	// Second pass: build cache and warn on conflicts
+	for label, claimants := range labelClaims {
+		if len(claimants) > 1 {
+			log.Printf("WARN: serviceLabel %q claimed by multiple services: %v (using first: %s)",
+				label, claimants, claimants[0])
+		}
+		// Use first claimant (deterministic based on k8s list order)
+		p.serviceLabelCache.Store(label, claimants[0])
+		log.Printf("Service label cache: %s -> %s", label, claimants[0])
 	}
 
 	p.lastCacheRefresh = time.Now()
