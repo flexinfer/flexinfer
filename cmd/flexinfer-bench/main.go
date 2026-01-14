@@ -12,14 +12,16 @@ import (
 )
 
 func main() {
-	model := flag.String("model", "", "The model to benchmark.")
+	model := flag.String("model", "", "The model to benchmark (HuggingFace model name).")
+	modelName := flag.String("model-name", "", "The ModelDeployment name for proxy routing.")
 	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
-	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm).")
+	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm, mlc-llm, tei).")
 	warmupIterations := flag.Int("warmup-iterations", 2, "Number of warmup iterations before measurement.")
 	minDuration := flag.Duration("min-duration", 30*time.Second, "Minimum benchmark duration (wall time).")
 	iterations := flag.Int("iterations", 5, "Number of measurement iterations (minimum; may run longer to satisfy --min-duration).")
 	batchSize := flag.Int("batch-size", 128, "Target tokens to generate per request.")
 	maxTokensAlias := flag.Int("max-tokens", 0, "Alias for --batch-size (deprecated).")
+	coldStartTimeout := flag.Duration("cold-start-timeout", 5*time.Minute, "Timeout waiting for model to become ready (cold start).")
 
 	opts := zap.Options{
 		Development: true,
@@ -35,7 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("Starting benchmark", "model", *model, "backend", *backend)
+	// Use model name if not specified (for backwards compatibility)
+	if *modelName == "" {
+		*modelName = *model
+	}
+
+	setupLog.Info("Starting benchmark", "model", *model, "modelName", *modelName, "backend", *backend)
 
 	if *maxTokensAlias > 0 {
 		*batchSize = *maxTokensAlias
@@ -46,6 +53,8 @@ func main() {
 		MinDuration:      *minDuration,
 		Iterations:       *iterations,
 		BatchSize:        *batchSize,
+		ModelName:        *modelName,
+		ColdStartTimeout: *coldStartTimeout,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to create benchmarker")

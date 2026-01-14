@@ -946,5 +946,89 @@ spec:
 
 ---
 
+## Current Deployment Status (January 2026)
+
+### Cluster Layout
+
+#### GPU Nodes
+
+| Node | CPU | GPU | VRAM | Role |
+|------|-----|-----|------|------|
+| `cblevins-5930k` | Intel i7-5930K | AMD RX 7900 XTX | 24GB | Fast models (8B, 4B) |
+| `cblevins-7900xtx` | AMD Zen4 | AMD RX 7900 XTX | 24GB | Quality models (14B, 32B) + ComfyUI |
+
+#### GPUGroups
+
+| GPUGroup | Node | Strategy | Models | Notes |
+|----------|------|----------|--------|-------|
+| **fast-models** | cblevins-5930k | Exclusive | qwen3-8b-fast (100), qwen3-4b-tiny (80) | Quick responses |
+| **quality-models** | cblevins-7900xtx | Exclusive | qwen3-32b-best (100), qwen3-14b-quality (90), deepseek-r1-reasoning (80), sdxl-turbo-fast (50) | High quality |
+
+#### ModelDeployments
+
+| Model | Backend | GPUGroup | Status | TPS | Image |
+|-------|---------|----------|--------|-----|-------|
+| bge-large-embeddings | tei | - | Running | 69.7 | `ghcr.io/huggingface/text-embeddings-inference:cpu-1.8` |
+| qwen3-8b-fast | mlc-llm | fast-models | **Broken** | 106.0 | `ghcr.io/mlc-ai/mlc-llm:rocm` (doesn't exist) |
+| qwen3-4b-tiny | mlc-llm | fast-models | Idle | 144.9 | `registry.harbor.lan/library/mlc-llm:latest` |
+| sdxl-turbo-fast | comfyui | quality-models | Running | 406.9 | `registry.harbor.lan/library/comfyui:rocm6.2.3-v8` |
+| qwen3-32b-best | mlc-llm | quality-models | Idle | - | Needs ROCm 6.4 image |
+| qwen3-14b-quality | mlc-llm | quality-models | Idle | - | Needs ROCm 6.4 image |
+| deepseek-r1-reasoning | mlc-llm | quality-models | Active | - | Needs ROCm 6.4 image |
+
+#### ModelCaches (All Ready)
+
+All MLC model weights are pre-cached on NFS PVC (`mlc-models-nfs`):
+- `qwen3-0.6b-mlc`, `qwen3-4b-mlc`, `qwen3-8b-abliterated-mlc`
+- `qwen3-14b-mlc`, `qwen3-32b-mlc`
+- `deepseek-r1-14b-mlc`
+- `sdxl-turbo-nfs`
+
+### ROCm 6.4 MLC-LLM Build Status
+
+**Current Status: NOT BUILT**
+
+The ROCm 6.4 driver is installed on both 7900XTX nodes, but the MLC-LLM container image for ROCm 6.4 hasn't been built yet.
+
+#### Available Dockerfiles
+
+| Dockerfile | Purpose | Status |
+|------------|---------|--------|
+| `build/Dockerfile.mlc-rocm64-full` | Full build from source with TVM for ROCm 6.4 | Ready to build |
+| `build/Dockerfile.mlc-rocm64-build` | Multi-stage optimized build | Alternative |
+| `build/Dockerfile.mlc-cuda` | CUDA backend | Built |
+| `build/Dockerfile.mlc-cuda-maxwell` | Maxwell GPU support | Built |
+
+#### Target Image
+
+```
+registry.harbor.lan/library/mlc-llm:rocm64-src
+```
+
+This image is referenced in `values.yaml` under `mlcllm.rocmImage` but doesn't exist yet.
+
+#### Build Command
+
+```bash
+cd /Users/cblevins/workspace/services/flexinfer
+docker build -f build/Dockerfile.mlc-rocm64-full -t registry.harbor.lan/library/mlc-llm:rocm64-src .
+docker push registry.harbor.lan/library/mlc-llm:rocm64-src
+```
+
+### Immediate Issues
+
+1. **qwen3-8b-fast stuck**: Using non-existent `ghcr.io/mlc-ai/mlc-llm:rocm` image
+2. **No ROCm 6.4 MLC-LLM image**: Quality models can't run without this
+3. **GPUGroup nodeSelector mismatch**: quality-models configured for wrong node in some places
+
+### Resolution Steps
+
+1. Build and push `registry.harbor.lan/library/mlc-llm:rocm64-src`
+2. Update ModelDeployments to use correct image
+3. Verify GPUGroup nodeSelectors match intended GPU nodes
+4. Re-trigger benchmarks for quality models
+
+---
+
 ## Planning
 - See `ROADMAP.md` for project status and plans.

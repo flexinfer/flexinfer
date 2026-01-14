@@ -33,6 +33,8 @@ type Options struct {
 	BatchSize        int
 	Prompt           string
 	RequestTimeout   time.Duration
+	ModelName        string        // ModelDeployment name for proxy routing
+	ColdStartTimeout time.Duration // Timeout waiting for cold start (model scale-up)
 }
 
 func (o Options) withDefaults() Options {
@@ -55,6 +57,9 @@ func (o Options) withDefaults() Options {
 	if o.RequestTimeout <= 0 {
 		o.RequestTimeout = 3 * time.Minute
 	}
+	if o.ColdStartTimeout <= 0 {
+		o.ColdStartTimeout = 5 * time.Minute
+	}
 	return o
 }
 
@@ -62,7 +67,8 @@ func (o Options) withDefaults() Options {
 type Benchmarker struct {
 	kubeClient  kubernetes.Interface
 	namespace   string
-	backendURL  string
+	proxyURL    string // Base proxy URL (e.g., http://flexinfer-proxy.flexinfer.svc:80)
+	modelName   string // ModelDeployment name for proxy routing
 	backendType string
 	opts        Options
 	httpClient  *http.Client
@@ -87,9 +93,16 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 		return nil, fmt.Errorf("POD_NAMESPACE environment variable not set")
 	}
 
-	backendURL := os.Getenv("BACKEND_URL")
-	if backendURL == "" {
-		backendURL = "http://localhost:11434"
+	// Use proxy URL for routing through the FlexInfer proxy
+	proxyURL := os.Getenv("PROXY_URL")
+	if proxyURL == "" {
+		proxyURL = "http://flexinfer-proxy.flexinfer-system.svc:80"
+	}
+
+	// Model name for proxy routing (falls back to option if env not set)
+	modelName := os.Getenv("MODEL_NAME")
+	if modelName == "" {
+		modelName = opts.ModelName
 	}
 
 	// Default backend to ollama if not specified
@@ -106,7 +119,8 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 	return &Benchmarker{
 		kubeClient:  clientset,
 		namespace:   namespace,
-		backendURL:  backendURL,
+		proxyURL:    proxyURL,
+		modelName:   modelName,
 		backendType: backendType,
 		opts:        opts.withDefaults(),
 		httpClient:  &http.Client{},
@@ -123,18 +137,32 @@ func envOrDefault(name, def string) string {
 	return def
 }
 
+// buildModelURL returns the URL for a specific path routed through the proxy.
+// Format: {proxyURL}/model/{modelName}/{path}
+func (b *Benchmarker) buildModelURL(path string) string {
+	// Strip leading slash from path to avoid double slashes
+	path = strings.TrimPrefix(path, "/")
+	return fmt.Sprintf("%s/model/%s/%s", b.proxyURL, b.modelName, path)
+}
+
 // Run executes the benchmark and stores the result in a ConfigMap.
 func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) error {
 	log := log.FromContext(ctx)
-	log.Info("Running benchmark", "model", model)
+	log.Info("Running benchmark",
+		"model", model,
+		"modelName", b.modelName,
+		"proxyURL", b.proxyURL,
+		"backend", b.backendType)
 
+	// Wait for the model to be ready through the proxy.
+	// This triggers cold start (GPUGroup model swap, scale-up) if needed.
 	if err := b.waitForBackend(ctx); err != nil {
-		return fmt.Errorf("backend failed to become ready: %w", err)
+		return fmt.Errorf("model failed to become ready: %w", err)
 	}
 
-	if err := b.pullModel(ctx, model); err != nil {
-		return fmt.Errorf("failed to pull model: %w", err)
-	}
+	// Note: pullModel is no longer needed since benchmarks now run through
+	// the proxy which routes to actual ModelDeployments. The model is loaded
+	// when the deployment starts.
 
 	result, err := b.runBenchmark(ctx, model)
 	if err != nil {
@@ -273,26 +301,34 @@ func benchmarkKey(backend, model, deviceClass string) string {
 	return "bench_" + hex.EncodeToString(sum[:16])
 }
 
-// waitForBackend polls the backend until it is reachable.
+// waitForBackend polls the backend through the proxy until it is reachable.
+// This may trigger cold start (GPUGroup model swap, scale-up) which can take several minutes.
 func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 	log := log.FromContext(ctx)
-	log.Info("Waiting for backend to be ready...", "url", b.backendURL)
+	log.Info("Waiting for model to be ready through proxy...",
+		"proxyURL", b.proxyURL,
+		"modelName", b.modelName,
+		"coldStartTimeout", b.opts.ColdStartTimeout)
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(5 * time.Minute)
+	// Use cold start timeout (default 5 minutes) since this may trigger scale-up
+	timeout := time.After(b.opts.ColdStartTimeout)
 
 	checkPaths := b.backendReadinessPaths()
 
 	for {
 		for _, checkPath := range checkPaths {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+checkPath, nil)
+			// Build URL through proxy: /model/{modelName}/{path}
+			url := b.buildModelURL(checkPath)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			if err != nil {
 				return err
 			}
 			resp, err := b.httpClient.Do(req)
 			if err != nil {
+				log.V(1).Info("Proxy request failed (model may be starting)", "error", err.Error())
 				continue
 			}
 			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
@@ -302,8 +338,20 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 				log.Error(err, "Failed to close backend readiness response body", "path", checkPath)
 			}
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				log.Info("Backend is ready", "path", checkPath)
+				log.Info("Model is ready through proxy", "path", checkPath)
 				return nil
+			}
+			// 502/503/504 typically mean model is still starting (cold start)
+			if resp.StatusCode == http.StatusBadGateway ||
+				resp.StatusCode == http.StatusServiceUnavailable ||
+				resp.StatusCode == http.StatusGatewayTimeout {
+				log.V(1).Info("Model not ready yet (cold start in progress)", "status", resp.StatusCode)
+				continue
+			}
+			// 404 may mean model doesn't exist
+			if resp.StatusCode == http.StatusNotFound {
+				log.Info("Model not found through proxy, waiting...", "status", resp.StatusCode)
+				continue
 			}
 		}
 
@@ -311,7 +359,7 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timeout:
-			return fmt.Errorf("timed out waiting for backend")
+			return fmt.Errorf("timed out waiting for model to become ready (waited %s)", b.opts.ColdStartTimeout)
 		case <-ticker.C:
 			continue
 		}
@@ -341,37 +389,12 @@ func (b *Benchmarker) backendReadinessPaths() []string {
 	}
 }
 
-// pullModel triggers the model pull on the backend.
+// pullModel is no longer needed since benchmarks now go through the proxy.
+// Model loading is handled by the ModelDeployment pods, not by the benchmark.
+// This function is kept for backwards compatibility but always returns nil.
 func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
-	// vLLM, MLC-LLM, LlamaCpp, ComfyUI, Diffusers, and TEI load models at startup, no pull needed
-	if b.backendType == "vllm" || b.backendType == "mlc-llm" || b.backendType == "mlc" || b.backendType == "llamacpp" || b.backendType == "llama.cpp" || b.backendType == "comfyui" || b.backendType == "diffusers" || b.backendType == "tei" {
-		return nil
-	}
-
-	log := log.FromContext(ctx)
-	log.Info("Pulling model...", "model", model)
-
-	reqBody, _ := json.Marshal(map[string]string{"name": model})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/api/pull", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to pull model: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	// Read stream explicitly to wait for completion
-	// In a real implementation we would parse the JSON stream, for now we just drain it
-	_, err = io.Copy(io.Discard, resp.Body)
-	return err
+	// All model loading is handled by ModelDeployments through the proxy
+	return nil
 }
 
 type benchmarkResult struct {
@@ -500,7 +523,7 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 	})
 
 	start := b.now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/v1/completions", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -541,7 +564,7 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 		"max_tokens": maxTokens,
 		"stream":     false,
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/v1/completions", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -588,7 +611,7 @@ type vllmTimingSnapshot struct {
 
 func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimingSnapshot, bool, error) {
 	logger := log.FromContext(ctx)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/metrics", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.buildModelURL("/metrics"), nil)
 	if err != nil {
 		return vllmTimingSnapshot{}, false, err
 	}
@@ -690,7 +713,7 @@ func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt 
 	})
 
 	start := b.now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/v1/completions", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return streamSample{}, false, err
 	}
@@ -807,7 +830,7 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 	})
 
 	start := b.now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/api/generate", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/api/generate"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -848,7 +871,7 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 	})
 
 	start := b.now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/api/generate", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/api/generate"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return streamSample{}, false, err
 	}
@@ -927,7 +950,7 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 	start := b.now()
 
 	// Check system stats endpoint to verify server is responsive
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/api/system_stats", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.buildModelURL("/api/system_stats"), nil)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -956,7 +979,7 @@ func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (
 	start := b.now()
 
 	// Check health endpoint to verify server is responsive
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.backendURL+"/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.buildModelURL("/health"), nil)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -992,7 +1015,7 @@ func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (token
 		return 0, 0, false, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.backendURL+"/embed", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/embed"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, 0, false, err
 	}

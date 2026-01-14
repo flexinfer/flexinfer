@@ -807,7 +807,7 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 }
 
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName string) {
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:8000", modelName, p.namespace) // Backend services typically expose on port 8000
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:80", modelName, p.namespace) // FlexInfer services expose on port 80
 
 	// Check if we have a proxy for this already
 	var rp *httputil.ReverseProxy
