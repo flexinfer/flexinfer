@@ -45,7 +45,12 @@ import (
 )
 
 func canonicalBackend(backend string) string {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
+	trimmed := strings.TrimSpace(backend)
+	if trimmed == "" {
+		return "ollama"
+	}
+
+	switch strings.ToLower(trimmed) {
 	case "llama.cpp":
 		return "llamacpp"
 	case "mlc":

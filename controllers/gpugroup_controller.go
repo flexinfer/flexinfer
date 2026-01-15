@@ -332,7 +332,7 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 		hysteresisWindow = time.Duration(gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds) * time.Second
 	}
 
-	if !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisWindow && winner.name != currentActive {
+	if currentActive != "" && !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisWindow && winner.name != currentActive {
 		log.Info("Hysteresis window not elapsed",
 			"model", winner.name, "queuedSince", winner.queuedSince, "window", hysteresisWindow)
 		if currentActive != "" {

@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,7 +37,9 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When creating a GPUGroup with models", func() {
 		It("Should initialize with no active model", func() {
 			gpuGroupName := "test-gpugroup-init"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a", "model-b")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			modelBName := fmt.Sprintf("%s-model-b", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName, modelBName)
 
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
@@ -59,17 +62,19 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When signaling demand via annotations", func() {
 		It("Should activate the model with demand", func() {
 			gpuGroupName := "test-gpugroup-demand"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a", "model-b")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			modelBName := fmt.Sprintf("%s-model-b", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName, modelBName)
 
 			// Create GPUGroup
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments for the models
-			mdA := testutil.NewTestModelDeployment("model-a",
+			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(100),
 			)
-			mdB := testutil.NewTestModelDeployment("model-b",
+			mdB := testutil.NewTestModelDeployment(modelBName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(80),
 			)
@@ -78,7 +83,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(k8sClient.Create(ctx, mdB)).Should(Succeed())
 
 			// Signal demand for model-b
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-b", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelBName, 5)).Should(Succeed())
 
 			// Wait for model-b to become active
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
@@ -88,7 +93,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-b"))
+			}, timeout, interval).Should(Equal(modelBName))
 
 			// Clean up
 			Expect(k8sClient.Delete(ctx, mdA)).Should(Succeed())
@@ -100,7 +105,9 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When swapping models", func() {
 		It("Should swap from one model to another on demand", func() {
 			gpuGroupName := "test-gpugroup-swap"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a", "model-b")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			modelBName := fmt.Sprintf("%s-model-b", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName, modelBName)
 
 			// Disable anti-thrashing for faster testing
 			gpuGroup.Spec.AntiThrashing.Enabled = false
@@ -109,11 +116,11 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments
-			mdA := testutil.NewTestModelDeployment("model-a",
+			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(100),
 			)
-			mdB := testutil.NewTestModelDeployment("model-b",
+			mdB := testutil.NewTestModelDeployment(modelBName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(80),
 			)
@@ -124,7 +131,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
 
 			// Signal demand for model-a
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-a", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelAName, 5)).Should(Succeed())
 
 			// Wait for model-a to become active
 			Eventually(func() string {
@@ -133,11 +140,11 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-a"))
+			}, timeout, interval).Should(Equal(modelAName))
 
 			// Clear demand for model-a, signal demand for model-b
-			Expect(testutil.ClearDemand(ctx, k8sClient, gpuGroupName, "model-a")).Should(Succeed())
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-b", 5)).Should(Succeed())
+			Expect(testutil.ClearDemand(ctx, k8sClient, gpuGroupName, modelAName)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelBName, 5)).Should(Succeed())
 
 			// Wait for model-b to become active
 			Eventually(func() string {
@@ -146,10 +153,10 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-b"))
+			}, timeout, interval).Should(Equal(modelBName))
 
 			// Verify model-a was scaled down
-			mdALookupKey := types.NamespacedName{Name: "model-a", Namespace: "default"}
+			mdALookupKey := types.NamespacedName{Name: modelAName, Namespace: "default"}
 			Eventually(func() int32 {
 				updatedMD := &aiv1alpha1.ModelDeployment{}
 				if err := k8sClient.Get(ctx, mdALookupKey, updatedMD); err != nil {
@@ -162,7 +169,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			}, timeout, interval).Should(Equal(int32(0)))
 
 			// Verify model-b was scaled up
-			mdBLookupKey := types.NamespacedName{Name: "model-b", Namespace: "default"}
+			mdBLookupKey := types.NamespacedName{Name: modelBName, Namespace: "default"}
 			Eventually(func() int32 {
 				updatedMD := &aiv1alpha1.ModelDeployment{}
 				if err := k8sClient.Get(ctx, mdBLookupKey, updatedMD); err != nil {
@@ -184,7 +191,9 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When anti-thrashing is enabled", func() {
 		It("Should block rapid swaps during minimum run duration", func() {
 			gpuGroupName := "test-gpugroup-antithrash"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a", "model-b")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			modelBName := fmt.Sprintf("%s-model-b", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName, modelBName)
 
 			// Set very short minimum run duration for testing
 			gpuGroup.Spec.AntiThrashing.Enabled = true
@@ -195,11 +204,11 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments
-			mdA := testutil.NewTestModelDeployment("model-a",
+			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(100),
 			)
-			mdB := testutil.NewTestModelDeployment("model-b",
+			mdB := testutil.NewTestModelDeployment(modelBName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(80),
 			)
@@ -210,7 +219,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
 
 			// Signal demand for model-a to activate it
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-a", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelAName, 5)).Should(Succeed())
 
 			// Wait for model-a to become active
 			Eventually(func() string {
@@ -219,17 +228,17 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-a"))
+			}, timeout, interval).Should(Equal(modelAName))
 
 			// Immediately signal demand for model-b (should be blocked by min run duration)
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-b", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelBName, 5)).Should(Succeed())
 
 			// Short wait - model-a should still be active
 			time.Sleep(1 * time.Second)
 
 			currentGPUGroup := &aiv1alpha1.GPUGroup{}
 			Expect(k8sClient.Get(ctx, gpuGroupLookupKey, currentGPUGroup)).Should(Succeed())
-			Expect(currentGPUGroup.Status.ActiveModel).Should(Equal("model-a"))
+			Expect(currentGPUGroup.Status.ActiveModel).Should(Equal(modelAName))
 
 			// Wait for minimum run duration to elapse, then swap should happen
 			Eventually(func() string {
@@ -238,7 +247,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, time.Second*10, interval).Should(Equal("model-b"))
+			}, time.Second*10, interval).Should(Equal(modelBName))
 
 			// Clean up
 			Expect(k8sClient.Delete(ctx, mdA)).Should(Succeed())
@@ -250,24 +259,26 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When model priority determines selection", func() {
 		It("Should select higher priority model when both have demand", func() {
 			gpuGroupName := "test-gpugroup-priority"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-high", "model-low")
+			modelHighName := fmt.Sprintf("%s-model-high", gpuGroupName)
+			modelLowName := fmt.Sprintf("%s-model-low", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelHighName, modelLowName)
 
 			// Disable anti-thrashing for cleaner test
 			gpuGroup.Spec.AntiThrashing.Enabled = false
 
 			// Set explicit priorities
-			gpuGroup.Spec.Models[0].Priority = 100 // model-high
-			gpuGroup.Spec.Models[1].Priority = 50  // model-low
+			gpuGroup.Spec.Models[0].Priority = 100 // modelHighName
+			gpuGroup.Spec.Models[1].Priority = 50  // modelLowName
 
 			// Create GPUGroup
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments
-			mdHigh := testutil.NewTestModelDeployment("model-high",
+			mdHigh := testutil.NewTestModelDeployment(modelHighName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(100),
 			)
-			mdLow := testutil.NewTestModelDeployment("model-low",
+			mdLow := testutil.NewTestModelDeployment(modelLowName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 				testutil.MDWithPriority(50),
 			)
@@ -276,8 +287,8 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(k8sClient.Create(ctx, mdLow)).Should(Succeed())
 
 			// Signal demand for BOTH models
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-high", 3)).Should(Succeed())
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-low", 10)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelHighName, 3)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelLowName, 10)).Should(Succeed())
 
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
 
@@ -288,7 +299,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-high"))
+			}, timeout, interval).Should(Equal(modelHighName))
 
 			// Clean up
 			Expect(k8sClient.Delete(ctx, mdHigh)).Should(Succeed())
@@ -300,7 +311,8 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("When queue threshold is enforced", func() {
 		It("Should not activate model below queue threshold", func() {
 			gpuGroupName := "test-gpugroup-threshold"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName)
 
 			// Set high queue threshold
 			gpuGroup.Spec.AntiThrashing.Enabled = true
@@ -311,7 +323,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployment
-			mdA := testutil.NewTestModelDeployment("model-a",
+			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 			)
 			Expect(k8sClient.Create(ctx, mdA)).Should(Succeed())
@@ -319,7 +331,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
 
 			// Signal demand BELOW threshold
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-a", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelAName, 5)).Should(Succeed())
 
 			// Wait and verify model is NOT activated
 			time.Sleep(2 * time.Second)
@@ -329,7 +341,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			Expect(currentGPUGroup.Status.ActiveModel).Should(BeEmpty())
 
 			// Signal demand AT threshold
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-a", 10)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelAName, 10)).Should(Succeed())
 
 			// Now model should be activated
 			Eventually(func() string {
@@ -338,7 +350,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-a"))
+			}, timeout, interval).Should(Equal(modelAName))
 
 			// Clean up
 			Expect(k8sClient.Delete(ctx, mdA)).Should(Succeed())
@@ -349,17 +361,19 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 	Context("GPUGroup Status Updates", func() {
 		It("Should update ModelStatuses correctly", func() {
 			gpuGroupName := "test-gpugroup-status"
-			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, "model-a", "model-b")
+			modelAName := fmt.Sprintf("%s-model-a", gpuGroupName)
+			modelBName := fmt.Sprintf("%s-model-b", gpuGroupName)
+			gpuGroup := testutil.NewTestGPUGroup(gpuGroupName, modelAName, modelBName)
 			gpuGroup.Spec.AntiThrashing.Enabled = false
 
 			// Create GPUGroup
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments
-			mdA := testutil.NewTestModelDeployment("model-a",
+			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 			)
-			mdB := testutil.NewTestModelDeployment("model-b",
+			mdB := testutil.NewTestModelDeployment(modelBName,
 				testutil.MDWithGPUGroup(gpuGroupName),
 			)
 
@@ -369,7 +383,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			gpuGroupLookupKey := types.NamespacedName{Name: gpuGroupName, Namespace: "default"}
 
 			// Signal demand for model-a
-			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, "model-a", 5)).Should(Succeed())
+			Expect(testutil.SimulateDemand(ctx, k8sClient, gpuGroupName, modelAName, 5)).Should(Succeed())
 
 			// Wait for model-a to become active
 			Eventually(func() string {
@@ -378,7 +392,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 					return ""
 				}
 				return updatedGPUGroup.Status.ActiveModel
-			}, timeout, interval).Should(Equal("model-a"))
+			}, timeout, interval).Should(Equal(modelAName))
 
 			// Check model statuses
 			Eventually(func() int {
@@ -395,7 +409,7 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 
 			var modelAStatus *aiv1alpha1.GPUGroupModelStatus
 			for i, ms := range currentGPUGroup.Status.ModelStatuses {
-				if ms.Name == "model-a" {
+				if ms.Name == modelAName {
 					modelAStatus = &currentGPUGroup.Status.ModelStatuses[i]
 					break
 				}
