@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,11 +41,19 @@ func main() {
 		promURL = "http://prometheus.monitoring.svc.cluster.local:9090"
 	}
 
+	// Configure HTTP client with optional TLS skip verify
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	if skipVerify := os.Getenv("TLS_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+
 	prom := &promServer{
-		url: promURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		url:        promURL,
+		httpClient: httpClient,
 	}
 
 	server := mcp.NewServer("mcp-prometheus", version)

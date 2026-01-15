@@ -8,7 +8,7 @@ GOIMPORTS := $(GOPATH)/bin/goimports
 GOSEC := $(GOPATH)/bin/gosec
 
 # MCP server binaries
-MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot
+MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm
 
 # Default target
 all: build
@@ -125,6 +125,18 @@ mcp-youtube:
 
 mcp-godot:
 	go build $(LDFLAGS) -o bin/mcp-godot ./cmd/mcp-godot
+
+mcp-alertmanager:
+	go build $(LDFLAGS) -o bin/mcp-alertmanager ./cmd/mcp-alertmanager
+
+mcp-flux:
+	go build $(LDFLAGS) -o bin/mcp-flux ./cmd/mcp-flux
+
+mcp-postgres:
+	go build $(LDFLAGS) -o bin/mcp-postgres ./cmd/mcp-postgres
+
+mcp-helm:
+	go build $(LDFLAGS) -o bin/mcp-helm ./cmd/mcp-helm
 
 clean:
 	rm -rf bin/

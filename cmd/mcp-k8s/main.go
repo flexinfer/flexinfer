@@ -240,6 +240,112 @@ func main() {
 		},
 	}, k8s.handleRestartDeployment)
 
+	// list_events
+	server.AddTool(mcp.Tool{
+		Name:        "list_events",
+		Description: "List Kubernetes events in a namespace (critical for debugging)",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace. Use 'all' for all namespaces. Defaults to 'default'.",
+				},
+				"field_selector": map[string]any{
+					"type":        "string",
+					"description": "Field selector (e.g., 'involvedObject.name=my-pod')",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of events to return. Defaults to 50.",
+				},
+			},
+		},
+	}, k8s.handleListEvents)
+
+	// get_configmap
+	server.AddTool(mcp.Tool{
+		Name:        "get_configmap",
+		Description: "Get ConfigMap contents",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "ConfigMap name",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace. Defaults to 'default'.",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}, k8s.handleGetConfigMap)
+
+	// get_secret
+	server.AddTool(mcp.Tool{
+		Name:        "get_secret",
+		Description: "Get Secret contents (values are base64 decoded)",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Secret name",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace. Defaults to 'default'.",
+				},
+				"decode": map[string]any{
+					"type":        "boolean",
+					"description": "Decode base64 values. Defaults to true.",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}, k8s.handleGetSecret)
+
+	// list_ingresses
+	server.AddTool(mcp.Tool{
+		Name:        "list_ingresses",
+		Description: "List Ingress resources",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace. Use 'all' for all namespaces. Defaults to 'default'.",
+				},
+			},
+		},
+	}, k8s.handleListIngresses)
+
+	// describe_resource
+	server.AddTool(mcp.Tool{
+		Name:        "describe_resource",
+		Description: "Get detailed description of a resource including events",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"kind": map[string]any{
+					"type":        "string",
+					"description": "Resource kind (pod, deployment, service, etc.)",
+				},
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Resource name",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace. Defaults to 'default'.",
+				},
+			},
+			Required: []string{"kind", "name"},
+		},
+	}, k8s.handleDescribeResource)
+
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -688,4 +794,226 @@ func isNamespaced(kind string) bool {
 	default:
 		return true
 	}
+}
+
+// Event handler
+func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := k.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	ns := getStringArg(args, "namespace", "default")
+	fieldSelector := getStringArg(args, "field_selector", "")
+	limit := getIntArg(args, "limit", 50)
+
+	opts := metav1.ListOptions{
+		FieldSelector: fieldSelector,
+		Limit:         int64(limit),
+	}
+
+	var events *corev1.EventList
+	var err error
+
+	if ns == "all" {
+		events, err = k.clientset.CoreV1().Events("").List(ctx, opts)
+	} else {
+		events, err = k.clientset.CoreV1().Events(ns).List(ctx, opts)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]any
+	for _, e := range events.Items {
+		result = append(result, map[string]any{
+			"namespace":       e.Namespace,
+			"name":            e.Name,
+			"type":            e.Type,
+			"reason":          e.Reason,
+			"message":         e.Message,
+			"count":           e.Count,
+			"first_timestamp": e.FirstTimestamp.Format(time.RFC3339),
+			"last_timestamp":  e.LastTimestamp.Format(time.RFC3339),
+			"involved_object": map[string]any{
+				"kind":      e.InvolvedObject.Kind,
+				"name":      e.InvolvedObject.Name,
+				"namespace": e.InvolvedObject.Namespace,
+			},
+			"source": map[string]any{
+				"component": e.Source.Component,
+				"host":      e.Source.Host,
+			},
+		})
+	}
+
+	return mcp.JSONResult(map[string]any{"events": result, "count": len(result)})
+}
+
+// ConfigMap handler
+func (k *k8sServer) handleGetConfigMap(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := k.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	name := getStringArg(args, "name", "")
+	ns := getStringArg(args, "namespace", "default")
+
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	cm, err := k.clientset.CoreV1().ConfigMaps(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"name":       cm.Name,
+		"namespace":  cm.Namespace,
+		"data":       cm.Data,
+		"binaryData": cm.BinaryData,
+		"age":        formatAge(cm.CreationTimestamp.Time),
+	})
+}
+
+// Secret handler
+func (k *k8sServer) handleGetSecret(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := k.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	name := getStringArg(args, "name", "")
+	ns := getStringArg(args, "namespace", "default")
+	decode := getBoolArg(args, "decode", true)
+
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	secret, err := k.clientset.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	data := make(map[string]string)
+	for k, v := range secret.Data {
+		if decode {
+			data[k] = string(v)
+		} else {
+			data[k] = fmt.Sprintf("%x", v)
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"name":      secret.Name,
+		"namespace": secret.Namespace,
+		"type":      string(secret.Type),
+		"data":      data,
+		"age":       formatAge(secret.CreationTimestamp.Time),
+	})
+}
+
+// Ingress handler
+func (k *k8sServer) handleListIngresses(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := k.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	ns := getStringArg(args, "namespace", "default")
+
+	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}
+
+	var ingresses *unstructured.UnstructuredList
+	var err error
+
+	if ns == "all" {
+		ingresses, err = k.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+	} else {
+		ingresses, err = k.dynamicClient.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]any
+	for _, ing := range ingresses.Items {
+		spec, _, _ := unstructured.NestedMap(ing.Object, "spec")
+		rules, _, _ := unstructured.NestedSlice(spec, "rules")
+
+		var hosts []string
+		for _, rule := range rules {
+			if ruleMap, ok := rule.(map[string]any); ok {
+				if host, ok := ruleMap["host"].(string); ok {
+					hosts = append(hosts, host)
+				}
+			}
+		}
+
+		result = append(result, map[string]any{
+			"name":      ing.GetName(),
+			"namespace": ing.GetNamespace(),
+			"hosts":     strings.Join(hosts, ", "),
+			"age":       formatAge(ing.GetCreationTimestamp().Time),
+		})
+	}
+
+	return mcp.JSONResult(map[string]any{"ingresses": result, "count": len(result)})
+}
+
+// Describe resource handler
+func (k *k8sServer) handleDescribeResource(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := k.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	kind := strings.ToLower(getStringArg(args, "kind", ""))
+	name := getStringArg(args, "name", "")
+	ns := getStringArg(args, "namespace", "default")
+
+	if kind == "" || name == "" {
+		return nil, fmt.Errorf("kind and name are required")
+	}
+
+	gvr := kindToGVR(kind)
+	if gvr.Resource == "" {
+		return nil, fmt.Errorf("unknown kind: %s", kind)
+	}
+
+	// Get the resource
+	var obj *unstructured.Unstructured
+	var err error
+
+	if isNamespaced(kind) {
+		obj, err = k.dynamicClient.Resource(gvr).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	} else {
+		obj, err = k.dynamicClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Get related events
+	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=%s", name, strings.Title(kind))
+	events, _ := k.clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{
+		FieldSelector: fieldSelector,
+		Limit:         20,
+	})
+
+	var eventList []map[string]any
+	if events != nil {
+		for _, e := range events.Items {
+			eventList = append(eventList, map[string]any{
+				"type":           e.Type,
+				"reason":         e.Reason,
+				"message":        e.Message,
+				"count":          e.Count,
+				"last_timestamp": e.LastTimestamp.Format(time.RFC3339),
+			})
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"resource": obj.Object,
+		"events":   eventList,
+	})
 }

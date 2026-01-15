@@ -22,7 +22,7 @@ var execCommand = exec.CommandContext
 var (
 	version        = "0.1.0"
 	k3sKubeconfig  = getEnv("K3S_KUBECONFIG", os.ExpandEnv("$HOME/.kube/k3s.yaml"))
-	rke2Kubeconfig = getEnv("RKE2_KUBECONFIG", os.ExpandEnv("$HOME/.kube/rke2.yaml"))
+	rke2Kubeconfig = getEnv("RKE2_KUBECONFIG", os.ExpandEnv("$HOME/.kube/harvester-admin.yaml"))
 	sshKey         = getEnv("SSH_KEY", os.ExpandEnv("$HOME/.ssh/id_ed25519"))
 	sshUser        = getEnv("SSH_USER", "rancher")
 )

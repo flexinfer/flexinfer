@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,17 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
+
+// getHTTPClient returns an HTTP client with optional TLS skip verify
+func getHTTPClient() *http.Client {
+	client := &http.Client{Timeout: 30 * time.Second}
+	if skipVerify := os.Getenv("TLS_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+	return client
+}
 
 var (
 	version        = "0.1.0"
@@ -131,6 +143,59 @@ func main() {
 		},
 	}, handleSeries)
 
+	server.AddTool(mcp.Tool{
+		Name:        "loki_stats",
+		Description: "Get query statistics for a LogQL query",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query": map[string]any{"type": "string", "description": "LogQL query expression"},
+				"start": map[string]any{"type": "string", "description": "Start timestamp"},
+				"end":   map[string]any{"type": "string", "description": "End timestamp (defaults to now)"},
+			},
+			Required: []string{"query", "start"},
+		},
+	}, handleStats)
+
+	server.AddTool(mcp.Tool{
+		Name:        "loki_index_stats",
+		Description: "Get index statistics (storage info) for a query",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query": map[string]any{"type": "string", "description": "LogQL stream selector"},
+				"start": map[string]any{"type": "string", "description": "Start timestamp"},
+				"end":   map[string]any{"type": "string", "description": "End timestamp"},
+			},
+			Required: []string{"query"},
+		},
+	}, handleIndexStats)
+
+	server.AddTool(mcp.Tool{
+		Name:        "loki_detected_fields",
+		Description: "Get auto-detected fields from log lines",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query":      map[string]any{"type": "string", "description": "LogQL query expression"},
+				"start":      map[string]any{"type": "string", "description": "Start timestamp"},
+				"end":        map[string]any{"type": "string", "description": "End timestamp"},
+				"field_limit": map[string]any{"type": "integer", "description": "Max fields to return (default: 100)"},
+				"line_limit":  map[string]any{"type": "integer", "description": "Max lines to analyze (default: 1000)"},
+			},
+			Required: []string{"query"},
+		},
+	}, handleDetectedFields)
+
+	server.AddTool(mcp.Tool{
+		Name:        "loki_ready",
+		Description: "Check if Loki is ready and accepting queries",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, handleReady)
+
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		cleanup()
@@ -208,8 +273,7 @@ func lokiRequest(endpoint string, params map[string]string) (map[string]any, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -386,8 +450,7 @@ func handleSeries(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -410,4 +473,119 @@ func handleSeries(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 		})
 	}
 	return mcp.JSONResult(result)
+}
+
+func handleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	params := make(map[string]string)
+	if v, ok := args["query"].(string); ok {
+		params["query"] = v
+	}
+	if v, ok := args["start"].(string); ok {
+		params["start"] = v
+	}
+	if v, ok := args["end"].(string); ok {
+		params["end"] = v
+	} else {
+		// Default to now
+		params["end"] = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
+	res, err := lokiRequest("index/stats", params)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":    true,
+		"stats": res,
+	})
+}
+
+func handleIndexStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	params := make(map[string]string)
+	if v, ok := args["query"].(string); ok {
+		params["query"] = v
+	}
+	if v, ok := args["start"].(string); ok {
+		params["start"] = v
+	}
+	if v, ok := args["end"].(string); ok {
+		params["end"] = v
+	}
+
+	res, err := lokiRequest("index/stats", params)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":    true,
+		"stats": res,
+	})
+}
+
+func handleDetectedFields(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	params := make(map[string]string)
+	if v, ok := args["query"].(string); ok {
+		params["query"] = v
+	}
+	if v, ok := args["start"].(string); ok {
+		params["start"] = v
+	}
+	if v, ok := args["end"].(string); ok {
+		params["end"] = v
+	}
+	if v, ok := args["field_limit"].(float64); ok {
+		params["field_limit"] = fmt.Sprintf("%d", int(v))
+	}
+	if v, ok := args["line_limit"].(float64); ok {
+		params["line_limit"] = fmt.Sprintf("%d", int(v))
+	}
+
+	res, err := lokiRequest("detected_fields", params)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	if status, ok := res["status"].(string); ok && status == "success" {
+		return mcp.JSONResult(map[string]any{
+			"ok":     true,
+			"fields": res["data"],
+		})
+	}
+	return mcp.JSONResult(res)
+}
+
+func handleReady(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	maybeStartPortForward()
+
+	u, err := url.Parse(lokiURL + "/ready")
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	resp, err := getHTTPClient().Do(req)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	ready := resp.StatusCode == 200
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"ready":    ready,
+		"status":   resp.StatusCode,
+		"response": string(body),
+	})
 }
