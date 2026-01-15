@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/andygrunwald/go-jira v1.17.0
+	github.com/bmatcuk/doublestar/v4 v4.9.2
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/google/uuid v1.6.0
 	github.com/kkdai/youtube/v2 v2.10.5

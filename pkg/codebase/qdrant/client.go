@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -209,24 +210,32 @@ func (c *Client) FindCallers(ctx context.Context, repoID, functionName string, l
 	if limit <= 0 {
 		limit = 256
 	}
-	chunks, err := c.scrollRepo(ctx, repoID, limit)
+
+	target := normalizeCallToken(functionName)
+	if target == "" {
+		return []schema.CallerInfo{}, nil
+	}
+
+	chunks, err := c.scroll(ctx, filterMust(
+		match("repo_id", repoID),
+		match("call_names", target),
+	), limit)
 	if err != nil {
 		return nil, err
 	}
 
 	var callers []schema.CallerInfo
 	for _, ch := range chunks {
-		for _, call := range ch.Calls {
-			if call == functionName || strings.HasSuffix(call, "."+functionName) {
-				callers = append(callers, schema.CallerInfo{
-					FilePath:     ch.FilePath,
-					FunctionName: ch.Name,
-					LineNumber:   ch.StartLine,
-					CallExpr:     call,
-				})
-				break
-			}
+		callExpr := findCallExpr(ch.Calls, functionName)
+		if callExpr == "" {
+			continue
 		}
+		callers = append(callers, schema.CallerInfo{
+			FilePath:     ch.FilePath,
+			FunctionName: ch.Name,
+			LineNumber:   ch.StartLine,
+			CallExpr:     callExpr,
+		})
 	}
 	return callers, nil
 }
@@ -241,24 +250,33 @@ func (c *Client) FindCallersInFile(
 	if limit <= 0 {
 		limit = 256
 	}
-	chunks, err := c.scrollAllForFile(ctx, repoID, filePath, limit)
+
+	target := normalizeCallToken(functionName)
+	if target == "" {
+		return []schema.CallerInfo{}, nil
+	}
+
+	chunks, err := c.scroll(ctx, filterMust(
+		match("repo_id", repoID),
+		match("file_path", filePath),
+		match("call_names", target),
+	), limit)
 	if err != nil {
 		return nil, err
 	}
 
 	var callers []schema.CallerInfo
 	for _, ch := range chunks {
-		for _, call := range ch.Calls {
-			if call == functionName || strings.HasSuffix(call, "."+functionName) {
-				callers = append(callers, schema.CallerInfo{
-					FilePath:     ch.FilePath,
-					FunctionName: ch.Name,
-					LineNumber:   ch.StartLine,
-					CallExpr:     call,
-				})
-				break
-			}
+		callExpr := findCallExpr(ch.Calls, functionName)
+		if callExpr == "" {
+			continue
 		}
+		callers = append(callers, schema.CallerInfo{
+			FilePath:     ch.FilePath,
+			FunctionName: ch.Name,
+			LineNumber:   ch.StartLine,
+			CallExpr:     callExpr,
+		})
 	}
 	return callers, nil
 }
@@ -274,22 +292,25 @@ func (c *Client) FindChunkByName(
 		limit = 512
 	}
 
-	var chunks []schema.Chunk
-	var err error
+	filter := filterMust(
+		match("repo_id", repoID),
+		match("name", symbol),
+	)
 	if filePath != "" {
-		chunks, err = c.scrollAllForFile(ctx, repoID, filePath, limit)
-	} else {
-		chunks, err = c.scrollRepo(ctx, repoID, limit)
+		filter = filterMust(
+			match("repo_id", repoID),
+			match("file_path", filePath),
+			match("name", symbol),
+		)
 	}
+
+	chunks, err := c.scroll(ctx, filter, limit)
 	if err != nil {
 		return nil, err
 	}
 
 	var best *schema.Chunk
 	for _, ch := range chunks {
-		if ch.Name != symbol {
-			continue
-		}
 		// Prefer smallest containing chunk (often method vs larger type decl).
 		if best == nil || (ch.EndLine-ch.StartLine) < (best.EndLine-best.StartLine) {
 			cp := ch
@@ -314,6 +335,7 @@ func ChunkToPayload(ch schema.Chunk, includeContent bool) map[string]any {
 		"parent_type":    ch.ParentType,
 		"imports":        ch.Imports,
 		"calls":          ch.Calls,
+		"call_names":     normalizeCallNames(ch.Calls),
 		"definitions":    ch.Defs,
 		"start_line":     ch.StartLine,
 		"end_line":       ch.EndLine,
@@ -362,10 +384,6 @@ func payloadToChunk(payload map[string]any) (*schema.Chunk, error) {
 
 func (c *Client) scrollAllForFile(ctx context.Context, repoID, filePath string, max int) ([]schema.Chunk, error) {
 	return c.scroll(ctx, buildFilter(repoID, filePath, nil, nil), max)
-}
-
-func (c *Client) scrollRepo(ctx context.Context, repoID string, max int) ([]schema.Chunk, error) {
-	return c.scroll(ctx, buildFilter(repoID, "", nil, nil), max)
 }
 
 func (c *Client) scroll(ctx context.Context, filter map[string]any, max int) ([]schema.Chunk, error) {
@@ -567,4 +585,65 @@ func absInt(n int) int {
 		return -n
 	}
 	return n
+}
+
+var nonNameCharRE = regexp.MustCompile(`[^A-Za-z0-9_]+`)
+
+func findCallExpr(calls []string, functionName string) string {
+	target := normalizeCallToken(functionName)
+	for _, call := range calls {
+		if call == functionName {
+			return call
+		}
+		if strings.HasSuffix(call, "."+functionName) || strings.HasSuffix(call, "::"+functionName) {
+			return call
+		}
+		if target != "" && normalizeCallToken(call) == target {
+			return call
+		}
+	}
+	return ""
+}
+
+func normalizeCallToken(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Drop generic args (best-effort), e.g. "foo::<T>".
+	if idx := strings.Index(s, "<"); idx >= 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimRight(s, ":.")
+	s = strings.TrimSpace(s)
+
+	// Prefer last segment of qualified names.
+	if idx := strings.LastIndex(s, "::"); idx >= 0 {
+		s = s[idx+2:]
+	} else if idx := strings.LastIndex(s, "."); idx >= 0 {
+		s = s[idx+1:]
+	}
+	s = strings.TrimSpace(s)
+	s = nonNameCharRE.ReplaceAllString(s, "")
+	return s
+}
+
+func normalizeCallNames(calls []string) []string {
+	if len(calls) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, c := range calls {
+		tok := normalizeCallToken(c)
+		if tok == "" || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+	}
+	out := make([]string, 0, len(seen))
+	for tok := range seen {
+		out = append(out, tok)
+	}
+	sort.Strings(out)
+	return out
 }

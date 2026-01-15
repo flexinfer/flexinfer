@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/crb2nu/loom/pkg/codebase/index/goindex"
 	"github.com/crb2nu/loom/pkg/codebase/index/pyindex"
 	"github.com/crb2nu/loom/pkg/codebase/index/rsindex"
@@ -147,17 +149,9 @@ func matchesAnyGlob(path string, globs []string) bool {
 	return false
 }
 
-// globMatch is a small wrapper around filepath.Match-like semantics but operating on slash paths.
-// Supports patterns like "dir/**" by prefix matching when "**" appears.
 func globMatch(pattern, path string) bool {
 	p := filepath.ToSlash(pattern)
 	s := filepath.ToSlash(path)
-	if strings.Contains(p, "**") {
-		parts := strings.Split(p, "**")
-		if len(parts) == 2 {
-			return strings.HasPrefix(s, strings.TrimSuffix(parts[0], "/"))
-		}
-	}
-	ok, _ := filepath.Match(p, s)
-	return ok
+	ok, err := doublestar.PathMatch(p, s)
+	return err == nil && ok
 }
