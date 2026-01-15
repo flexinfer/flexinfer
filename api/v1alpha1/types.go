@@ -465,7 +465,8 @@ type ComfyUISpec struct {
 	WorkflowsPath string `json:"workflowsPath,omitempty"`
 
 	// ModelsPath is the path where models are mounted.
-	// +kubebuilder:default="/app/ComfyUI/models"
+	// FlexInfer mounts ModelCache volumes at /models (including RAM caches copied into /dev/shm).
+	// +kubebuilder:default="/models"
 	// +optional
 	ModelsPath string `json:"modelsPath,omitempty"`
 

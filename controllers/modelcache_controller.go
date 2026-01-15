@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -762,6 +763,106 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 		return ctrl.Result{}, err
 	}
 
+	// Keep the DaemonSet spec in sync with the desired state (no kubectl patches needed).
+	desiredDS, err := r.daemonSetForMemory(m, modelPath, shmBasePath)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	dsNeedsUpdate := false
+
+	// Ensure controller ownership so we get DaemonSet events and can reconcile drift.
+	if !metav1.IsControlledBy(ds, m) {
+		if err := ctrl.SetControllerReference(m, ds, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		dsNeedsUpdate = true
+	}
+
+	// Sync labels (merge-only: keep any extra labels set by users/tools).
+	if ds.Labels == nil {
+		ds.Labels = make(map[string]string)
+	}
+	for k, v := range desiredDS.Labels {
+		if ds.Labels[k] != v {
+			ds.Labels[k] = v
+			dsNeedsUpdate = true
+		}
+	}
+	if ds.Spec.Template.Labels == nil {
+		ds.Spec.Template.Labels = make(map[string]string)
+	}
+	for k, v := range desiredDS.Spec.Template.Labels {
+		if ds.Spec.Template.Labels[k] != v {
+			ds.Spec.Template.Labels[k] = v
+			dsNeedsUpdate = true
+		}
+	}
+
+	// Sync the PodSpec fields we own.
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.NodeSelector, desiredDS.Spec.Template.Spec.NodeSelector) {
+		ds.Spec.Template.Spec.NodeSelector = desiredDS.Spec.Template.Spec.NodeSelector
+		dsNeedsUpdate = true
+	}
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.Tolerations, desiredDS.Spec.Template.Spec.Tolerations) {
+		ds.Spec.Template.Spec.Tolerations = desiredDS.Spec.Template.Spec.Tolerations
+		dsNeedsUpdate = true
+	}
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.Volumes, desiredDS.Spec.Template.Spec.Volumes) {
+		ds.Spec.Template.Spec.Volumes = desiredDS.Spec.Template.Spec.Volumes
+		dsNeedsUpdate = true
+	}
+
+	if len(desiredDS.Spec.Template.Spec.Containers) == 0 {
+		return ctrl.Result{}, fmt.Errorf("desired DaemonSet has no containers")
+	}
+	desiredSyncer := desiredDS.Spec.Template.Spec.Containers[0]
+
+	syncerIndex := -1
+	for i := range ds.Spec.Template.Spec.Containers {
+		if ds.Spec.Template.Spec.Containers[i].Name == desiredSyncer.Name {
+			syncerIndex = i
+			break
+		}
+	}
+	if syncerIndex == -1 {
+		ds.Spec.Template.Spec.Containers = desiredDS.Spec.Template.Spec.Containers
+		dsNeedsUpdate = true
+	} else {
+		syncer := &ds.Spec.Template.Spec.Containers[syncerIndex]
+		if syncer.Image != desiredSyncer.Image {
+			syncer.Image = desiredSyncer.Image
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Command, desiredSyncer.Command) {
+			syncer.Command = desiredSyncer.Command
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Args, desiredSyncer.Args) {
+			syncer.Args = desiredSyncer.Args
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Env, desiredSyncer.Env) {
+			syncer.Env = desiredSyncer.Env
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.VolumeMounts, desiredSyncer.VolumeMounts) {
+			syncer.VolumeMounts = desiredSyncer.VolumeMounts
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Resources, desiredSyncer.Resources) {
+			syncer.Resources = desiredSyncer.Resources
+			dsNeedsUpdate = true
+		}
+	}
+
+	if dsNeedsUpdate {
+		log.Info("Updating Memory DaemonSet to match desired spec", "DaemonSet", dsName)
+		if err := r.Update(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Check DaemonSet status
 	readyNodes := ds.Status.NumberReady
 	totalNodes := ds.Status.DesiredNumberScheduled
@@ -782,6 +883,10 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 
 	if err := r.Status().Update(ctx, m); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if dsNeedsUpdate {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Requeue to monitor DaemonSet status during provisioning
@@ -816,54 +921,60 @@ func (r *ModelCacheReconciler) daemonSetForMemory(m *aiv1alpha1.ModelCache, mode
 set -ex
 SOURCE_DIR="%s"
 DEST_DIR="%s"
-MARKER="$DEST_DIR/.synced"
+MARKER="$DEST_DIR/.flexinfer_synced"
 
-# Check if already synced
-if [ -f "$MARKER" ]; then
-    echo "Model already synced at $DEST_DIR (RAM cache)"
-    # Monitor source for changes
-    while true; do
-        sleep 300
-        if [ "$SOURCE_DIR/.synced" -nt "$MARKER" ] 2>/dev/null; then
-            echo "Source updated, re-syncing..."
-            rm -f "$MARKER"
-        fi
+wait_for_source() {
+    echo "Waiting for source model at $SOURCE_DIR..."
+    TIMEOUT=600
+    WAITED=0
+    while [ ! -f "$SOURCE_DIR/.synced" ] && [ $WAITED -lt $TIMEOUT ]; do
+        sleep 5
+        WAITED=$((WAITED + 5))
+        echo "Waiting for source... ($WAITED/$TIMEOUT seconds)"
     done
-fi
+    if [ ! -f "$SOURCE_DIR/.synced" ]; then
+        echo "ERROR: Source model not ready after ${TIMEOUT}s"
+        exit 1
+    fi
+}
+
+sync_from_source() {
+    rm -f "$MARKER"
+
+    # Install rsync for efficient copy
+    apk add --no-cache rsync
+
+    # Copy from NFS/PVC to RAM
+    echo "Copying model from source ($SOURCE_DIR) to RAM ($DEST_DIR)..."
+    mkdir -p "$DEST_DIR"
+    # Do not copy the source .synced marker into the destination marker.
+    rsync -av --delete --exclude '.synced' "$SOURCE_DIR/" "$DEST_DIR/"
+    touch "$MARKER"
+    echo "RAM cache sync complete"
+}
 
 # Wait for source to be ready
-echo "Waiting for source model at $SOURCE_DIR..."
-TIMEOUT=600
-WAITED=0
-while [ ! -f "$SOURCE_DIR/.synced" ] && [ $WAITED -lt $TIMEOUT ]; do
-    sleep 5
-    WAITED=$((WAITED + 5))
-    echo "Waiting for source... ($WAITED/$TIMEOUT seconds)"
-done
+wait_for_source
 
-if [ ! -f "$SOURCE_DIR/.synced" ]; then
-    echo "ERROR: Source model not ready after ${TIMEOUT}s"
-    exit 1
+if [ -f "$MARKER" ]; then
+    echo "Model already synced at $DEST_DIR (RAM cache)"
+else
+    sync_from_source
 fi
-
-# Install rsync for efficient copy
-apk add --no-cache rsync
-
-# Copy from NFS to RAM
-echo "Copying model from NFS ($SOURCE_DIR) to RAM ($DEST_DIR)..."
-mkdir -p "$DEST_DIR"
-rsync -av --delete "$SOURCE_DIR/" "$DEST_DIR/"
-touch "$MARKER"
-echo "RAM cache sync complete (copied from NFS)"
 
 # Monitor for source updates
 while true; do
     sleep 300
-    if [ "$SOURCE_DIR/.synced" -nt "$MARKER" ] 2>/dev/null; then
+    if [ ! -f "$MARKER" ]; then
+        echo "Sync marker missing, re-syncing..."
+        sync_from_source
+        continue
+    fi
+
+    # If any source file is newer than the last successful sync marker, re-sync.
+    if find "$SOURCE_DIR" -type f -newer "$MARKER" -print -quit 2>/dev/null | grep -q .; then
         echo "Source updated, re-syncing..."
-        rsync -av --delete "$SOURCE_DIR/" "$DEST_DIR/"
-        touch "$MARKER"
-        echo "Re-sync complete"
+        sync_from_source
     fi
 done
 `, sourcePath, modelPath)
@@ -1027,6 +1138,13 @@ while true; do sleep 3600; done
 		"app.kubernetes.io/managed-by": "flexinfer",
 	}
 
+	memoryRequest := resource.MustParse("512Mi")
+	memoryLimit := resource.MustParse("2Gi")
+	if copyFromPVC {
+		memoryRequest = resource.MustParse("1Gi")
+		memoryLimit = resource.MustParse("12Gi")
+	}
+
 	// GPU node tolerations for RAM cache syncer
 	gpuTolerations := []corev1.Toleration{
 		{
@@ -1077,10 +1195,10 @@ while true; do sleep 3600; done
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("512Mi"),
+								corev1.ResourceMemory: memoryRequest,
 							},
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("2Gi"),
+								corev1.ResourceMemory: memoryLimit,
 							},
 						},
 					}},

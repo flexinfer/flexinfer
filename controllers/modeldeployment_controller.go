@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -388,9 +389,27 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// NOTE: We cannot update Pod template labels on existing Deployments because the selector
-	// is immutable. New deployments will have the correct 'app' label set at creation time.
-	// LiteLLM discovery should use the 'modeldeployment_cr' label which is always present.
+	desiredDep, buildErr := r.deploymentForModelDeployment(modelDeployment, volumeName, volumeReadOnly)
+	if buildErr != nil {
+		log.Error(buildErr, "Failed to build desired Deployment for sync")
+		return ctrl.Result{}, buildErr
+	}
+
+	// Keep existing selector; only sync mutable fields.
+	if !reflect.DeepEqual(found.Spec.Strategy, desiredDep.Spec.Strategy) {
+		found.Spec.Strategy = desiredDep.Spec.Strategy
+		needsUpdate = true
+	}
+
+	if !reflect.DeepEqual(found.Spec.Template.Spec, desiredDep.Spec.Template.Spec) {
+		found.Spec.Template.Spec = desiredDep.Spec.Template.Spec
+		needsUpdate = true
+	}
+
+	if !reflect.DeepEqual(found.Spec.Template.Annotations, desiredDep.Spec.Template.Annotations) {
+		found.Spec.Template.Annotations = desiredDep.Spec.Template.Annotations
+		needsUpdate = true
+	}
 
 	if needsUpdate {
 		if err = r.Update(ctx, found); err != nil {
@@ -673,12 +692,15 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 	// Build LiteLLM annotations for the Deployment
 	depAnnotations := getLiteLLMAnnotations(m)
 
+	backendImage := r.getBackendImage(m)
+
 	// Determine volume type based on path format:
 	// - Empty string means no volume needed (e.g., diffusers downloads from HuggingFace)
 	// - Absolute paths (starting with /) are NodeLocal hostPath volumes
 	// - Format "pvcName:subPath" are SharedPVC volumes
 	var volumes []corev1.Volume
 	var volumeMounts []corev1.VolumeMount
+	var initContainers []corev1.Container
 
 	if volumeName != "" {
 		volumeMount := corev1.VolumeMount{
@@ -724,6 +746,83 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 		volumeMounts = append(volumeMounts, volumeMount)
 	}
 
+	backend := canonicalBackend(m.Spec.Backend)
+	if backend == "comfyui" && volumeName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "comfyui-checkpoints",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "comfyui-checkpoints",
+			MountPath: "/app/ComfyUI/models/checkpoints",
+		})
+
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "comfyui-checkpoints-linker",
+			Image:           backendImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command:         []string{"/bin/sh", "-lc"},
+			Args: []string{`
+set -euo pipefail
+mkdir -p /checkpoints
+rm -f /checkpoints/* 2>/dev/null || true
+
+if [ -d /models/checkpoints ]; then
+  src="/models/checkpoints"
+else
+  src="/models"
+fi
+
+linked=0
+for f in "$src"/*.safetensors "$src"/*.ckpt; do
+  if [ -e "$f" ]; then
+    ln -sf "$f" "/checkpoints/$(basename "$f")"
+    linked=1
+  fi
+done
+
+if [ "$linked" -eq 0 ]; then
+  echo "No checkpoint files found in $src"
+fi
+ls -la /checkpoints || true
+`},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("256Mi"),
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "model-cache",
+					MountPath: "/models",
+					ReadOnly:  true,
+				},
+				{
+					Name:      "comfyui-checkpoints",
+					MountPath: "/checkpoints",
+				},
+			},
+		})
+	}
+
+	deploymentStrategy := appsv1.DeploymentStrategy{}
+	if r.detectGPUResourceFromSpec(m) != "" {
+		deploymentStrategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       ptr.To(intstr.FromInt32(0)),
+				MaxUnavailable: ptr.To(intstr.FromInt32(1)),
+			},
+		}
+	}
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        m.Name,
@@ -732,6 +831,7 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicas,
+			Strategy: deploymentStrategy,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: ls,
 			},
@@ -758,8 +858,9 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
 					},
+					InitContainers: initContainers,
 					Containers: []corev1.Container{{
-						Image: r.getBackendImage(m),
+						Image: backendImage,
 						Name:  "llm-backend",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: r.getBackendPort(m),
@@ -1865,12 +1966,25 @@ func (r *ModelDeploymentReconciler) buildComfyUIArgs(m *aiv1alpha1.ModelDeployme
 		args = append(args, "--enable-cors-header")
 	}
 
+	if !containsArg(args, "--use-split-cross-attention") && !containsArg(c.ExtraArgs, "--use-split-cross-attention") {
+		args = append(args, "--use-split-cross-attention")
+	}
+
 	// Extra arguments (escape hatch for additional options)
 	if len(c.ExtraArgs) > 0 {
 		args = append(args, c.ExtraArgs...)
 	}
 
 	return args
+}
+
+func containsArg(args []string, target string) bool {
+	for _, a := range args {
+		if a == target {
+			return true
+		}
+	}
+	return false
 }
 
 // buildVLLMOmniArgs constructs command-line arguments for vLLM-Omni (diffusion server).

@@ -115,8 +115,10 @@ spec:
                       type: string
                     type: array
                   modelsPath:
-                    default: /app/ComfyUI/models
-                    description: ModelsPath is the path where models are mounted.
+                    default: /models
+                    description: |-
+                      ModelsPath is the path where models are mounted.
+                      FlexInfer mounts ModelCache volumes at /models (including RAM caches copied into /dev/shm).
                     type: string
                   preloadModels:
                     description: |-
