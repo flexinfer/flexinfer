@@ -352,6 +352,7 @@ publish_diffusers_rocm:
   stage: publish
   image: moby/buildkit:v0.12.5
   timeout: 1h
+  needs: []
   script:
     - |
       echo "Waiting for BuildKit..."
