@@ -148,6 +148,38 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	})
 
 	server.AddTool(mcp.Tool{
+		Name:        "codebase_get_definition",
+		Description: "Jump to a symbol definition (best-effort; matches indexed chunk name).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"symbol": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to narrow search (relative to repo root).",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages to search.",
+				},
+				"limit": map[string]any{"type": "integer"},
+				"include_content": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include full content in the returned chunk (can be large).",
+				},
+			},
+			Required: []string{"symbol"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleGetDefinition(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_context",
 		Description: "Get context for a file/line (chunk + nearby chunks + callers/callees heuristics).",
 		InputSchema: mcp.InputSchema{

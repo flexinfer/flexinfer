@@ -12,6 +12,7 @@ Supports Go, TypeScript, JavaScript, Python, and Rust indexing.
 - `codebase_index_poll`
 - `codebase_index_cancel`
 - `codebase_search`
+- `codebase_get_definition`
 - `codebase_get_context`
 - `codebase_find_callers`
 - `codebase_find_callees`
@@ -53,4 +54,5 @@ HTTP:
 ## Notes
 
 - `codebase_index_start` defaults to indexing all supported languages if `languages` is omitted.
+- Set `full_refresh=false` for incremental indexing (skips unchanged files using the module chunk file hash).
 - `codebase_delete_repo` requires `confirm=true` (and supports `dry_run=true`).

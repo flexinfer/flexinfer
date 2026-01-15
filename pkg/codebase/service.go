@@ -344,6 +344,74 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 	})
 }
 
+func (s *Service) HandleGetDefinition(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	symbol, _ := args["symbol"].(string)
+	if strings.TrimSpace(symbol) == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+
+	filePath, _ := args["file_path"].(string)
+
+	limit := s.cfg.ScrollLimit
+	switch v := args["limit"].(type) {
+	case float64:
+		if int(v) > 0 {
+			limit = int(v)
+		}
+	case int:
+		if v > 0 {
+			limit = v
+		}
+	}
+
+	includeContent := false
+	if v, ok := args["include_content"].(bool); ok {
+		includeContent = v
+	}
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	ch, err := s.qdrant.FindChunkByName(ctx, repoID, symbol, filePath, languages, limit)
+	if err != nil {
+		return nil, err
+	}
+	if ch == nil {
+		return mcp.JSONResult(map[string]any{
+			"found":     false,
+			"repo_id":   repoID,
+			"symbol":    symbol,
+			"file_path": filePath,
+		})
+	}
+
+	if !includeContent {
+		ch.Content = ""
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"found":      true,
+		"repo_id":    repoID,
+		"symbol":     symbol,
+		"file_path":  filePath,
+		"definition": ch,
+	})
+}
+
 func (s *Service) HandleGetContext(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	repoID := s.cfg.RepoIDDefault
 	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
@@ -513,7 +581,7 @@ func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*
 		}
 	}
 
-	ch, err := s.qdrant.FindChunkByName(ctx, repoID, symbol, filePath, limit)
+	ch, err := s.qdrant.FindChunkByName(ctx, repoID, symbol, filePath, nil, limit)
 	if err != nil {
 		return nil, err
 	}

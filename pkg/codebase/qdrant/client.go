@@ -286,23 +286,24 @@ func (c *Client) FindChunkByName(
 	repoID string,
 	symbol string,
 	filePath string,
+	languages []string,
 	limit int,
 ) (*schema.Chunk, error) {
 	if limit <= 0 {
 		limit = 512
 	}
 
-	filter := filterMust(
+	conds := []any{
 		match("repo_id", repoID),
 		match("name", symbol),
-	)
-	if filePath != "" {
-		filter = filterMust(
-			match("repo_id", repoID),
-			match("file_path", filePath),
-			match("name", symbol),
-		)
 	}
+	if filePath != "" {
+		conds = append(conds, match("file_path", filePath))
+	}
+	if len(languages) > 0 {
+		conds = append(conds, filterShould(matches("language", languages)...))
+	}
+	filter := filterMust(conds...)
 
 	chunks, err := c.scroll(ctx, filter, limit)
 	if err != nil {
@@ -310,11 +311,17 @@ func (c *Client) FindChunkByName(
 	}
 
 	var best *schema.Chunk
+	bestScore := 0
 	for _, ch := range chunks {
 		// Prefer smallest containing chunk (often method vs larger type decl).
-		if best == nil || (ch.EndLine-ch.StartLine) < (best.EndLine-best.StartLine) {
+		score := ch.EndLine - ch.StartLine
+		if ch.ChunkType == "module" {
+			score += 1_000_000
+		}
+		if best == nil || score < bestScore {
 			cp := ch
 			best = &cp
+			bestScore = score
 		}
 	}
 	return best, nil
