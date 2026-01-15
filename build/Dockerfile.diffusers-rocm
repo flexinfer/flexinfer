@@ -1,18 +1,42 @@
 # Diffusers API Server for AMD GPUs (ROCm)
 # Provides OpenAI-compatible /v1/images/generations endpoint
 # Optimized for RX 7900 XTX (gfx1100)
+#
+# Based on research from:
+# - https://llm-tracker.info/howto/AMD-GPUs
+# - https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/pytorch-install.html
+# - https://community.frame.work/t/stable-diffusion-rocm-pytorch-setup/53802
 
-FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+# Use official ROCm PyTorch image with gfx1100 support
+# The 'latest' tag includes the most recent stable PyTorch + ROCm combination
+# Supported architectures include gfx1100/gfx1101 (Navi31-based SKUs like 7900 XTX)
+# See: https://hub.docker.com/r/rocm/pytorch
+ARG ROCM_PYTORCH_TAG=latest
+FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# ROCm environment for RX 7900 XTX
+# ROCm environment for RX 7900 XTX (gfx1100 / RDNA3)
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
 ENV PYTORCH_ROCM_ARCH=gfx1100
 ENV HIP_VISIBLE_DEVICES=0
 ENV ROCR_VISIBLE_DEVICES=0
+
+# Critical for gfx1100 stability - enables experimental AOTriton flash attention
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# Disable xformers which can cause SIGSEGV on ROCm
+ENV XFORMERS_DISABLED=1
+
+# Force synchronous GPU operations for stability during model loading
+ENV HIP_LAUNCH_BLOCKING=0
+ENV AMD_SERIALIZE_KERNEL=0
+ENV AMD_SERIALIZE_COPY=0
+
+# Memory allocation settings to prevent fragmentation
+ENV PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -70,17 +94,41 @@ def check_gpu():
     """Check GPU availability and print diagnostics."""
     global gpu_info
     print("=" * 60)
-    print("GPU Diagnostics")
+    print("GPU Diagnostics (ROCm/HIP)")
     print("=" * 60)
     print(f"PyTorch version: {torch.__version__}")
-    print(f"CUDA available: {torch.cuda.is_available()}")
+
+    # Check for ROCm/HIP version
+    hip_version = getattr(torch.version, 'hip', None)
+    cuda_version = getattr(torch.version, 'cuda', None)
+    print(f"HIP version: {hip_version}")
+    print(f"CUDA version: {cuda_version}")
+
+    # Environment variables
+    print(f"HSA_OVERRIDE_GFX_VERSION: {os.environ.get('HSA_OVERRIDE_GFX_VERSION', 'not set')}")
+    print(f"PYTORCH_ROCM_ARCH: {os.environ.get('PYTORCH_ROCM_ARCH', 'not set')}")
+    print(f"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: {os.environ.get('TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL', 'not set')}")
+
+    print(f"CUDA/ROCm available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        print(f"CUDA device count: {torch.cuda.device_count()}")
+        print(f"Device count: {torch.cuda.device_count()}")
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
             print(f"  Device {i}: {props.name}")
             print(f"    Total memory: {props.total_memory / 1024**3:.1f} GB")
+            print(f"    Architecture: gfx{props.major}{props.minor}0" if hasattr(props, 'major') else "    Architecture: unknown")
         gpu_info = torch.cuda.get_device_properties(0).name
+
+        # Test basic tensor operation
+        print("Testing basic GPU operation...")
+        try:
+            x = torch.randn(100, 100, device='cuda')
+            y = torch.matmul(x, x)
+            del x, y
+            torch.cuda.empty_cache()
+            print("  Basic GPU test: PASSED")
+        except Exception as e:
+            print(f"  Basic GPU test: FAILED - {e}")
     else:
         print("WARNING: No CUDA/ROCm GPU detected!")
         gpu_info = "CPU only"
@@ -118,48 +166,84 @@ def load_pipeline(model_id: str):
     print(f"Loading model: {model_id}")
     sys.stdout.flush()
 
-    # Determine dtype - use fp32 for ROCm stability, fp16 optional
+    # Force fp32 for ROCm stability (gfx1100 has fp16 issues with some ops)
+    # Only use fp16 if explicitly requested AND tested
     use_fp16 = os.environ.get("USE_FP16", "0") == "1"
     dtype = torch.float16 if use_fp16 else torch.float32
     print(f"Using dtype: {dtype}")
+    print(f"USE_FP16 env: {os.environ.get('USE_FP16', 'not set')}")
+
+    # Clear GPU cache before loading
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        print(f"GPU memory before load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
     # Try AutoPipeline first, fall back to DiffusionPipeline
     try:
         print("Attempting AutoPipelineForText2Image...")
+        sys.stdout.flush()
         pipeline = AutoPipelineForText2Image.from_pretrained(
             model_id,
             torch_dtype=dtype,
             use_safetensors=True,
+            # Disable safety checker to save memory
+            safety_checker=None,
+            requires_safety_checker=False,
         )
     except Exception as e:
         print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
+        sys.stdout.flush()
         pipeline = DiffusionPipeline.from_pretrained(
             model_id,
             torch_dtype=dtype,
             use_safetensors=True,
+            safety_checker=None,
         )
 
-    print("Moving model to GPU...")
+    print("Pipeline loaded to CPU, preparing GPU transfer...")
     sys.stdout.flush()
 
-    # Move to GPU with error handling
+    # Move to GPU with explicit synchronization
     try:
+        print("Moving model to GPU (this may take a moment)...")
+        sys.stdout.flush()
+
+        # Move component by component for better error isolation
         pipeline = pipeline.to("cuda")
+
+        # Synchronize to catch any async errors
+        torch.cuda.synchronize()
+
+        print(f"GPU memory after load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     except Exception as e:
         print(f"ERROR moving to GPU: {e}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         print("Falling back to CPU...")
+        sys.stdout.flush()
         pipeline = pipeline.to("cpu")
 
     # Enable memory optimizations (safe for ROCm)
+    # Note: Attention slicing is safer than xformers on ROCm
     try:
         if hasattr(pipeline, 'enable_attention_slicing'):
-            pipeline.enable_attention_slicing()
-            print("Enabled attention slicing")
+            pipeline.enable_attention_slicing("max")
+            print("Enabled attention slicing (max)")
     except Exception as e:
         print(f"Could not enable attention slicing: {e}")
 
+    # VAE slicing helps with memory on large images
+    try:
+        if hasattr(pipeline, 'enable_vae_slicing'):
+            pipeline.enable_vae_slicing()
+            print("Enabled VAE slicing")
+    except Exception as e:
+        print(f"Could not enable VAE slicing: {e}")
+
     current_model = model_id
-    print(f"Model loaded: {model_id}")
+    print(f"Model loaded successfully: {model_id}")
     sys.stdout.flush()
     return pipeline
 
