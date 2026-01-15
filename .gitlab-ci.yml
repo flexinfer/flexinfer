@@ -371,6 +371,6 @@ publish_diffusers_rocm:
         --opt platform=linux/amd64 \
         --output "type=image,name=registry.harbor.lan/library/diffusers-api:rocm-latest,push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
