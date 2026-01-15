@@ -1,0 +1,188 @@
+package main
+
+import (
+	"context"
+
+	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/codebase"
+)
+
+func registerTools(server *mcp.Server, svc *codebase.Service) {
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_index_start",
+		Description: "Start indexing a repository (async job).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"root": map[string]any{
+					"type":        "string",
+					"description": "Repository root path to index (absolute or relative). Defaults to current directory.",
+				},
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used for scoping in Qdrant. Defaults to CODEBASE_REPO_ID or derived value.",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Languages to index. v1 supports: go.",
+				},
+				"exclude": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Glob patterns to exclude (relative to root).",
+				},
+				"full_refresh": map[string]any{
+					"type":        "boolean",
+					"description": "If true, delete all existing vectors for repo_id before indexing (recommended).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleIndexStart(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_index_poll",
+		Description: "Poll an indexing job started with codebase_index_start.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"job_id": map[string]any{"type": "string"},
+			},
+			Required: []string{"job_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleIndexPoll(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_index_cancel",
+		Description: "Cancel an indexing job.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"job_id": map[string]any{"type": "string"},
+			},
+			Required: []string{"job_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleIndexCancel(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_search",
+		Description: "Semantic search across an indexed codebase.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"query": map[string]any{"type": "string"},
+				"limit": map[string]any{"type": "integer"},
+				"languages": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"chunk_types": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"include_content": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include full content in results (can be large).",
+				},
+			},
+			Required: []string{"query"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleSearch(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_get_context",
+		Description: "Get context for a file/line (chunk + nearby chunks + callers/callees heuristics).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "File path relative to repo root.",
+				},
+				"line_number": map[string]any{"type": "integer"},
+				"include_callers": map[string]any{
+					"type":        "boolean",
+					"description": "Include callers by scanning indexed chunks (best-effort).",
+				},
+				"include_callees": map[string]any{
+					"type":        "boolean",
+					"description": "Include callees from calls[] (best-effort).",
+				},
+				"related_limit": map[string]any{
+					"type":        "integer",
+					"description": "Max same-file related chunks to include.",
+				},
+				"include_content": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include full content in returned chunks (can be large).",
+				},
+			},
+			Required: []string{"file_path", "line_number"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleGetContext(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_find_callers",
+		Description: "Find callers of a function/symbol (best-effort; uses calls[] scanning).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"symbol": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to narrow search (relative to repo root).",
+				},
+				"limit": map[string]any{"type": "integer"},
+			},
+			Required: []string{"symbol"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFindCallers(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_find_callees",
+		Description: "Find callees of a function/symbol (best-effort; uses calls[]).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"symbol": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to narrow search (relative to repo root).",
+				},
+				"limit": map[string]any{"type": "integer"},
+			},
+			Required: []string{"symbol"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFindCallees(ctx, args)
+	})
+}
