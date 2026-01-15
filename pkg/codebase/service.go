@@ -658,8 +658,27 @@ func (s *Service) runIndexJob(
 			s.incrementJobError(jobID, fmt.Sprintf("rel path: %v", err))
 			continue
 		}
+		relSlash := filepath.ToSlash(rel)
 
-		if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, filepath.ToSlash(rel)); deleteFileErr != nil {
+		if !fullRefresh {
+			b, readErr := os.ReadFile(file)
+			if readErr != nil {
+				s.incrementJobError(jobID, fmt.Sprintf("read file for hash %s: %v", relSlash, readErr))
+				s.incrementFilesDone(jobID, 0)
+				continue
+			}
+			hash := schema.ContentHash(string(b))
+
+			prev, ok, hashErr := s.qdrant.GetModuleContentHash(ctx, repoID, relSlash)
+			if hashErr != nil {
+				s.incrementJobError(jobID, fmt.Sprintf("module hash lookup %s: %v", relSlash, hashErr))
+			} else if ok && prev == hash {
+				s.incrementFilesSkipped(jobID)
+				continue
+			}
+		}
+
+		if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, relSlash); deleteFileErr != nil {
 			// If collection doesn't exist yet, deletion can fail; treat as non-fatal before first ensure.
 			if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
 				// ignore
@@ -736,6 +755,15 @@ func (s *Service) incrementFilesDone(jobID string, chunks int) {
 	if job := s.jobs[jobID]; job != nil {
 		job.stats.FilesDone++
 		job.stats.ChunksTotal += chunks
+	}
+}
+
+func (s *Service) incrementFilesSkipped(jobID string) {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+	if job := s.jobs[jobID]; job != nil {
+		job.stats.FilesDone++
+		job.stats.FilesSkipped++
 	}
 }
 

@@ -320,6 +320,24 @@ func (c *Client) FindChunkByName(
 	return best, nil
 }
 
+func (c *Client) GetModuleContentHash(ctx context.Context, repoID, filePath string) (string, bool, error) {
+	chunks, err := c.scroll(ctx, filterMust(
+		match("repo_id", repoID),
+		match("file_path", filePath),
+		match("chunk_type", "module"),
+	), 8)
+	if err != nil {
+		if errors.Is(err, ErrCollectionNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if len(chunks) == 0 {
+		return "", false, nil
+	}
+	return chunks[0].ContentHash, true, nil
+}
+
 func ChunkToPayload(ch schema.Chunk, includeContent bool) map[string]any {
 	payload := map[string]any{
 		"id":             ch.ID,

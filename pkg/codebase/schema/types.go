@@ -63,6 +63,7 @@ type IndexStats struct {
 	Root        string    `json:"root"`
 	FilesTotal  int       `json:"files_total"`
 	FilesDone   int       `json:"files_done"`
+	FilesSkipped int      `json:"files_skipped"`
 	ChunksTotal int       `json:"chunks_total"`
 	Errors      int       `json:"errors"`
 	StartedAt   time.Time `json:"started_at"`
