@@ -853,11 +853,11 @@ func (r *ModelDeploymentReconciler) getBenchmarkerImage() string {
 // jobForBenchmark returns a benchmark Job object
 // volumePath is optional - if provided (format "pvcName:subPath"), mounts the cached model
 func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeployment, volumePath string) (*batchv1.Job, error) {
-	// Standardize sidecar configuration
+	// Benchmark jobs are now pure clients that call through the proxy.
+	// The proxy signals demand to GPUGroup which scales up the model.
+	// This ensures benchmarks respect the GPUGroup scheduling and test real production paths.
 	backendType := canonicalBackend(m.Spec.Backend)
-	backendImage := r.getBackendImage(m)
 	benchmarkerImage := r.getBenchmarkerImage()
-	backendPort := r.getBackendPort(m)
 
 	warmupIterations := int32(2)
 	var minDuration time.Duration = 30 * time.Second
@@ -878,9 +878,10 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 		}
 	}
 
-	// Build benchmarker args
+	// Build benchmarker args - now includes model name for proxy routing
 	benchArgs := []string{
 		"--model", m.Spec.Model,
+		"--model-name", m.Name, // Used for proxy routing
 		"--configmap", r.benchmarkConfigMapName(m),
 		"--backend", backendType,
 		"--warmup-iterations", fmt.Sprintf("%d", warmupIterations),
@@ -889,8 +890,9 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 		"--batch-size", fmt.Sprintf("%d", batchSize),
 	}
 
-	// Enable shared PID namespace so benchmarker can signal backend to shutdown
-	shareProcessNamespace := true
+	// Proxy URL - benchmark calls through proxy which signals GPUGroup for scale-up
+	// The proxy service is in the flexinfer-system namespace
+	proxyURL := "http://flexinfer-proxy.flexinfer-system.svc:80"
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -901,32 +903,21 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					ServiceAccountName: benchmarkServiceAccountName(),
-					// Share PID namespace to allow benchmarker to signal backend shutdown
-					ShareProcessNamespace: &shareProcessNamespace,
-					// Use NVIDIA runtime for CUDA workloads (provides libcuda.so driver access)
-					RuntimeClassName: r.getRuntimeClassName(m),
-					// Ensure the job pod requests a GPU so it lands on a GPU node for accurate benchmarking
-					// Benchmark jobs bypass the custom scheduler to run on any suitable node initially
-					// or we can use the custom scheduler but ensure they don't get filtered out.
-					// For now, let default scheduler handle benchmark jobs to avoid circular dependencies.
-					NodeSelector: r.getNodeSelector(m),
-					// Tolerate GPU node taints so benchmark jobs can run on dedicated GPU nodes
-					Tolerations: []corev1.Toleration{
-						{
-							Key:      "dedicated",
-							Operator: corev1.TolerationOpEqual,
-							Value:    "gpu",
-							Effect:   corev1.TaintEffectNoSchedule,
-						},
-					},
+					// No GPU-specific node selector needed - benchmark is just a client
+					// Can run on any node that can reach the proxy
+					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
 							Name:  "flexinfer-bench",
 							Image: benchmarkerImage,
 							Env: []corev1.EnvVar{
 								{
-									Name:  "BACKEND_URL",
-									Value: fmt.Sprintf("http://localhost:%d", backendPort),
+									Name:  "PROXY_URL",
+									Value: proxyURL,
+								},
+								{
+									Name:  "MODEL_NAME",
+									Value: m.Name,
 								},
 								{
 									Name: "POD_NAMESPACE",
@@ -936,27 +927,11 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 										},
 									},
 								},
-								{
-									Name: "NODE_NAME",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											FieldPath: "spec.nodeName",
-										},
-									},
-								},
 							},
-							// Wrap benchmarker to signal backend shutdown after completion
-							// Uses shared PID namespace to send SIGTERM to backend processes
-							Command: []string{"/bin/sh", "-c"},
-							Args: []string{
-								fmt.Sprintf(
-									"/flexinfer-bench %s; status=$?; "+
-										"echo 'Benchmark complete, signaling backend shutdown...'; "+
-										"pkill -TERM -f 'mlc_llm|ollama|vllm|llama|uvicorn|/app/server.py|ComfyUI' || true; "+
-										"sleep 2; exit $status",
-									strings.Join(benchArgs, " "),
-								),
-							},
+							// Simple execution - just run the benchmark
+							// Proxy handles model scale-up via GPUGroup
+							Command: []string{"/flexinfer-bench"},
+							Args:    benchArgs,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -964,82 +939,16 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 								},
 							},
 						},
-						{
-							Name:  "llm-backend",
-							Image: backendImage,
-							Ports: []corev1.ContainerPort{{
-								ContainerPort: backendPort,
-								Name:          "http",
-							}},
-							Command: r.getBackendCommand(m),
-							Args:    r.getBackendArgs(m),
-							Env:     r.getBackendEnv(m),
-							// IMPORTANT: The backend in the benchmark job MUST request the GPU
-							// to actually be able to run and measure performance.
-							Resources: r.getResourceRequirements(m),
-						},
 					},
-					RestartPolicy: corev1.RestartPolicyNever,
-					// Short termination grace period to quickly release GPU when benchmark completes
-					// The benchmark saves results before signaling shutdown, so 10s is sufficient
 					TerminationGracePeriodSeconds: ptr.To(int64(10)),
 				},
 			},
-			// Hard deadline for benchmark jobs (15 minutes)
-			// This ensures pods are forcibly terminated even if sidecar doesn't exit cleanly
-			ActiveDeadlineSeconds: ptr.To(int64(900)),
+			// Longer deadline for benchmark jobs (30 minutes)
+			// Cold start can take several minutes for large models
+			ActiveDeadlineSeconds: ptr.To(int64(1800)),
 		},
 	}
 
-	// Add model cache volume if volumePath is provided
-	if volumePath != "" {
-		// Add volume mount to llm-backend container
-		volumeMount := corev1.VolumeMount{
-			Name:      "model-cache",
-			MountPath: "/models",
-			ReadOnly:  true,
-		}
-		job.Spec.Template.Spec.Containers[1].VolumeMounts = []corev1.VolumeMount{volumeMount}
-
-		// Determine volume type based on path format
-		// Paths starting with "/" are hostPaths (e.g., /dev/shm/flexinfer/... for Memory caches)
-		// Other paths are PVC references (format: "pvcName:subPath")
-		var volumeSource corev1.VolumeSource
-		if strings.HasPrefix(volumePath, "/") {
-			// HostPath volume for Memory-type caches
-			hostPathType := corev1.HostPathDirectory
-			volumeSource = corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: volumePath,
-					Type: &hostPathType,
-				},
-			}
-		} else {
-			// PVC volume for SharedPVC-type caches
-			pvcName := volumePath
-			subPath := ""
-			if parts := strings.SplitN(volumePath, ":", 2); len(parts) == 2 {
-				pvcName = parts[0]
-				subPath = parts[1]
-			}
-			if subPath != "" {
-				volumeMount.SubPath = subPath
-				job.Spec.Template.Spec.Containers[1].VolumeMounts = []corev1.VolumeMount{volumeMount}
-			}
-			volumeSource = corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: pvcName,
-					ReadOnly:  true,
-				},
-			}
-		}
-
-		// Add volume to pod spec
-		job.Spec.Template.Spec.Volumes = []corev1.Volume{{
-			Name:         "model-cache",
-			VolumeSource: volumeSource,
-		}}
-	}
 	if err := ctrl.SetControllerReference(m, job, r.Scheme); err != nil {
 		return nil, err
 	}
