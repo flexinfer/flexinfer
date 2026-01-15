@@ -11,7 +11,7 @@ stages:
 
 variables:
   AUTO_DEVOPS_ENABLED: "false"
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25.5"
   BINARY_NAME: "loom"
   # Minimum test coverage threshold (percentage)
   COVERAGE_THRESHOLD: "20"
