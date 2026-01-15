@@ -323,6 +323,7 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 		if currentActive != "" {
 			return currentActive, "queue threshold not met"
 		}
+		return "", "queue threshold not met"
 	}
 
 	// Check hysteresis window
@@ -337,6 +338,7 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 		if currentActive != "" {
 			return currentActive, "hysteresis window"
 		}
+		return "", "hysteresis window"
 	}
 
 	return winner.name, fmt.Sprintf("demand: queue=%d, priority=%d", winner.queueDepth, winner.priority)

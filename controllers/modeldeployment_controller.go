@@ -37,7 +37,9 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
@@ -1629,8 +1631,64 @@ func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.Mode
 		}
 	}
 
-	// No GPU resource found - CPU-only deployment
-	return ""
+	// CPU-first by default unless explicitly requested.
+	if canonicalBackend(m.Spec.Backend) == "tei" {
+		return ""
+	}
+
+	// Infer from node selector hints when possible.
+	if m.Spec.NodeSelector != nil {
+		if vendor, ok := m.Spec.NodeSelector["flexinfer.ai/gpu.vendor"]; ok && vendor != "" {
+			switch strings.ToUpper(vendor) {
+			case "AMD":
+				return GPUResourceAMD
+			case "INTEL":
+				return GPUResourceIntel
+			case "NVIDIA":
+				return GPUResourceNVIDIA
+			}
+		}
+		if v, ok := m.Spec.NodeSelector["amd.com/gpu.present"]; ok && v == "true" {
+			return GPUResourceAMD
+		}
+		if _, ok := m.Spec.NodeSelector["amd.com/gpu.arch"]; ok {
+			return GPUResourceAMD
+		}
+		if v, ok := m.Spec.NodeSelector["nvidia.com/gpu.present"]; ok && v == "true" {
+			return GPUResourceNVIDIA
+		}
+		if _, ok := m.Spec.NodeSelector["nvidia.com/gpu.product"]; ok {
+			return GPUResourceNVIDIA
+		}
+	}
+
+	// If the deployment targets a specific node, attempt to resolve the vendor from the Node labels.
+	if r.Client != nil && m.Spec.NodeSelector != nil {
+		if nodeName, ok := m.Spec.NodeSelector["kubernetes.io/hostname"]; ok && nodeName != "" {
+			node := &corev1.Node{}
+			if err := r.Get(context.Background(), types.NamespacedName{Name: nodeName}, node); err == nil {
+				if vendor, ok := node.Labels["flexinfer.ai/gpu.vendor"]; ok && vendor != "" {
+					switch strings.ToUpper(vendor) {
+					case "AMD":
+						return GPUResourceAMD
+					case "INTEL":
+						return GPUResourceIntel
+					case "NVIDIA":
+						return GPUResourceNVIDIA
+					}
+				}
+				if v, ok := node.Labels["amd.com/gpu.present"]; ok && v == "true" {
+					return GPUResourceAMD
+				}
+				if v, ok := node.Labels["nvidia.com/gpu.present"]; ok && v == "true" {
+					return GPUResourceNVIDIA
+				}
+			}
+		}
+	}
+
+	// Default: assume NVIDIA GPU if unspecified.
+	return GPUResourceNVIDIA
 }
 
 // getRuntimeClassName returns the appropriate RuntimeClassName for the GPU type.
@@ -2294,5 +2352,22 @@ func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
+		// Benchmark results ConfigMaps are created by the benchmark job, not owned by the ModelDeployment.
+		// Watch them so we promptly continue reconciliation when results appear.
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+			cm, ok := obj.(*corev1.ConfigMap)
+			if !ok {
+				return nil
+			}
+			const suffix = "-benchmark-results"
+			if !strings.HasSuffix(cm.Name, suffix) {
+				return nil
+			}
+			name := strings.TrimSuffix(cm.Name, suffix)
+			if name == "" {
+				return nil
+			}
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name, Namespace: cm.Namespace}}}
+		})).
 		Complete(r)
 }

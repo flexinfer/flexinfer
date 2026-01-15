@@ -24,7 +24,7 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 	)
 
 	Context("When creating a ModelDeployment", func() {
-		It("Should create a Benchmark Job with Sidecar", func() {
+		It("Should create a Benchmark Job that calls through the proxy", func() {
 			ctx := context.Background()
 
 			By("Creating a new ModelDeployment")
@@ -59,30 +59,20 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 				return k8sClient.Get(ctx, jobKey, createdJob)
 			}, time.Minute, time.Second).Should(Succeed())
 
-			By("Verifying the Sidecar Architecture")
-			Expect(createdJob.Spec.Template.Spec.Containers).To(HaveLen(2), "Job should have 2 containers (benchmarker + sidecar)")
-
-			var benchContainer, backendContainer corev1.Container
-			for _, c := range createdJob.Spec.Template.Spec.Containers {
-				if c.Name == "flexinfer-bench" {
-					benchContainer = c
-				} else if c.Name == "llm-backend" {
-					backendContainer = c
-				}
-			}
-
+			By("Verifying the job container")
+			Expect(createdJob.Spec.Template.Spec.Containers).To(HaveLen(1), "Benchmark Job should only run the benchmark client")
+			benchContainer := createdJob.Spec.Template.Spec.Containers[0]
 			Expect(benchContainer.Name).To(Equal("flexinfer-bench"))
-			Expect(backendContainer.Name).To(Equal("llm-backend"))
-			Expect(backendContainer.Image).To(ContainSubstring("ollama"), "Backend should be ollama")
 
-			By("Verifying Benchmarker Configuration")
+			By("Verifying benchmark configuration")
 			var backendURL string
 			for _, env := range benchContainer.Env {
-				if env.Name == "BACKEND_URL" {
+				if env.Name == "PROXY_URL" {
 					backendURL = env.Value
 				}
 			}
-			Expect(backendURL).To(Equal("http://localhost:11434"), "Benchmarker should point to localhost sidecar")
+			Expect(backendURL).To(Equal("http://flexinfer-proxy.flexinfer-system.svc:80"), "Benchmarker should call through the proxy")
+			Expect(benchContainer.Args).To(ContainElements("--backend", "ollama"))
 
 		})
 	})
@@ -123,17 +113,11 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 				return k8sClient.Get(ctx, jobKey, createdJob)
 			}, time.Minute, time.Second).Should(Succeed())
 
-			var backendContainer corev1.Container
-			for _, c := range createdJob.Spec.Template.Spec.Containers {
-				if c.Name == "llm-backend" {
-					backendContainer = c
-				}
-			}
-
-			Expect(backendContainer.Image).To(ContainSubstring("vllm-openai"), "Backend should use vllm image")
-			Expect(backendContainer.Ports[0].ContainerPort).To(Equal(int32(8000)))
-			Expect(backendContainer.Args).To(ContainElement("--model"))
-			Expect(backendContainer.Args).To(ContainElement("llama3:8b"))
+			Expect(createdJob.Spec.Template.Spec.Containers).To(HaveLen(1), "Benchmark Job should only run the benchmark client")
+			benchContainer := createdJob.Spec.Template.Spec.Containers[0]
+			Expect(benchContainer.Name).To(Equal("flexinfer-bench"))
+			Expect(benchContainer.Args).To(ContainElements("--backend", "vllm"))
+			Expect(benchContainer.Args).To(ContainElements("--model", "llama3:8b"))
 		})
 	})
 })
