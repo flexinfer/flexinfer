@@ -93,7 +93,8 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 	b := &Benchmarker{
 		kubeClient:  clientset,
 		namespace:   "default",
-		backendURL:  "http://backend",
+		proxyURL:    "http://backend",
+		modelName:   model,
 		backendType: "ollama",
 		opts: Options{
 			WarmupIterations: 1,
@@ -160,7 +161,8 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 	b := &Benchmarker{
 		kubeClient:  clientset,
 		namespace:   "default",
-		backendURL:  "http://backend",
+		proxyURL:    "http://backend",
+		modelName:   model,
 		backendType: "vllm",
 		opts: Options{
 			WarmupIterations: 0,
@@ -216,7 +218,8 @@ func TestRun_VLLM_ServerTimingViaMetrics(t *testing.T) {
 	b := &Benchmarker{
 		kubeClient:  clientset,
 		namespace:   "default",
-		backendURL:  "http://backend",
+		proxyURL:    "http://backend",
+		modelName:   "test-model",
 		backendType: "vllm",
 		opts: Options{
 			WarmupIterations: 0,
@@ -278,7 +281,8 @@ func TestRun_OpenAICompatibleBackends_ComputesTPS(t *testing.T) {
 			b := &Benchmarker{
 				kubeClient:  clientset,
 				namespace:   "default",
-				backendURL:  "http://backend",
+				proxyURL:    "http://backend",
+				modelName:   "test-model",
 				backendType: backendType,
 				opts: Options{
 					WarmupIterations: 0,
