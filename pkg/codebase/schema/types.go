@@ -69,3 +69,22 @@ type IndexStats struct {
 	StartedAt   time.Time `json:"started_at"`
 	FinishedAt  time.Time `json:"finished_at,omitempty"`
 }
+
+type WatchStats struct {
+	RepoID string `json:"repo_id"`
+	Root   string `json:"root"`
+
+	EventsTotal int `json:"events_total"`
+	FilesQueued int `json:"files_queued"`
+
+	FilesIndexed  int `json:"files_indexed"`
+	FilesSkipped  int `json:"files_skipped"`
+	FilesDeleted  int `json:"files_deleted"`
+	ChunksUpserted int `json:"chunks_upserted"`
+
+	Errors int `json:"errors"`
+
+	StartedAt  time.Time `json:"started_at"`
+	StoppedAt  time.Time `json:"stopped_at,omitempty"`
+	LastEventAt time.Time `json:"last_event_at,omitempty"`
+}

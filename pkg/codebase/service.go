@@ -32,6 +32,9 @@ type Service struct {
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*indexJob
+
+	watchMu   sync.RWMutex
+	watchJobs map[string]*watchJob
 }
 
 type indexJob struct {
@@ -58,6 +61,7 @@ func NewServiceFromEnv() (*Service, error) {
 		qdrant: qdrant.NewClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollection, cfg.QdrantDistance),
 		embed:  embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
 		jobs:   make(map[string]*indexJob),
+		watchJobs: make(map[string]*watchJob),
 		indexers: index.NewRegistry(
 			cfg.MaxFileBytes,
 		),

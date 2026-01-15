@@ -89,6 +89,68 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	})
 
 	server.AddTool(mcp.Tool{
+		Name:        "codebase_watch_start",
+		Description: "Start watching a repository for changes and incrementally update the index (async job).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"root": map[string]any{
+					"type":        "string",
+					"description": "Repository root path to watch (absolute or relative). Defaults to current directory.",
+				},
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used for scoping in Qdrant. Defaults to CODEBASE_REPO_ID or derived value.",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Languages to watch. If omitted, watches all supported languages.",
+				},
+				"exclude": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Glob patterns to exclude (relative to root).",
+				},
+				"debounce_ms": map[string]any{
+					"type":        "integer",
+					"description": "Debounce window in milliseconds (default 750ms).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWatchStart(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_watch_poll",
+		Description: "Poll a watch job started with codebase_watch_start.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"watch_id": map[string]any{"type": "string"},
+			},
+			Required: []string{"watch_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWatchPoll(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_watch_stop",
+		Description: "Stop a watch job.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"watch_id": map[string]any{"type": "string"},
+			},
+			Required: []string{"watch_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWatchStop(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
 		Name:        "codebase_index_poll",
 		Description: "Poll an indexing job started with codebase_index_start.",
 		InputSchema: mcp.InputSchema{

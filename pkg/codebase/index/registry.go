@@ -41,6 +41,18 @@ func NewRegistry(maxFileBytes int64) *Registry {
 	return r
 }
 
+func DefaultExcludeGlobs() []string {
+	return []string{
+		".git/**",
+		"node_modules/**",
+		"vendor/**",
+		"dist/**",
+		"build/**",
+		"**/.venv/**",
+		"**/__pycache__/**",
+	}
+}
+
 func (r *Registry) Register(ix Indexer) {
 	r.indexers[ix.Language()] = ix
 }
@@ -54,7 +66,7 @@ func (r *Registry) SupportedLanguages() []string {
 	return langs
 }
 
-func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []string) ([]string, error) {
+func (r *Registry) ExtensionsForLanguages(languages []string) (map[string]bool, error) {
 	wantLang := make(map[string]bool, len(languages))
 	for _, l := range languages {
 		wantLang[strings.ToLower(l)] = true
@@ -71,19 +83,19 @@ func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []st
 		}
 	}
 
-	defaultExcludes := []string{
-		".git/**",
-		"node_modules/**",
-		"vendor/**",
-		"dist/**",
-		"build/**",
-		"**/.venv/**",
-		"**/__pycache__/**",
+	return wantExt, nil
+}
+
+func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []string) ([]string, error) {
+	wantExt, err := r.ExtensionsForLanguages(languages)
+	if err != nil {
+		return nil, err
 	}
-	allExcludes := append(defaultExcludes, exclude...)
+
+	allExcludes := append(DefaultExcludeGlobs(), exclude...)
 
 	var files []string
-	err := filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

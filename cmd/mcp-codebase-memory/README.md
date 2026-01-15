@@ -9,8 +9,11 @@ Supports Go, TypeScript, JavaScript, Python, and Rust indexing.
 - `codebase_stats`
 - `codebase_delete_repo`
 - `codebase_index_start`
+- `codebase_watch_start`
 - `codebase_index_poll`
+- `codebase_watch_poll`
 - `codebase_index_cancel`
+- `codebase_watch_stop`
 - `codebase_search`
 - `codebase_get_definition`
 - `codebase_get_references`
