@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -245,30 +247,35 @@ func MDWithServiceLabels(labels ...string) ModelDeploymentOption {
 
 // SimulateDemand adds queue annotations to GPUGroup to simulate proxy demand signaling
 func SimulateDemand(ctx context.Context, c client.Client, gpuGroupName, modelName string, queueDepth int) error {
-	// Get the GPUGroup
-	group := &aiv1alpha1.GPUGroup{}
-	if err := c.Get(ctx, client.ObjectKey{Name: gpuGroupName, Namespace: "default"}, group); err != nil {
-		return fmt.Errorf("failed to get GPUGroup: %w", err)
-	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get the latest GPUGroup to avoid update conflicts with status updates from the controller.
+		group := &aiv1alpha1.GPUGroup{}
+		if err := c.Get(ctx, client.ObjectKey{Name: gpuGroupName, Namespace: "default"}, group); err != nil {
+			return fmt.Errorf("failed to get GPUGroup: %w", err)
+		}
 
-	// Set annotations
-	if group.Annotations == nil {
-		group.Annotations = make(map[string]string)
-	}
+		// Set annotations
+		if group.Annotations == nil {
+			group.Annotations = make(map[string]string)
+		}
 
-	if queueDepth > 0 {
-		group.Annotations[AnnotationQueueDepthPrefix+modelName] = fmt.Sprintf("%d", queueDepth)
-		group.Annotations[AnnotationQueueSincePrefix+modelName] = time.Now().Format(time.RFC3339)
-	} else {
-		delete(group.Annotations, AnnotationQueueDepthPrefix+modelName)
-		delete(group.Annotations, AnnotationQueueSincePrefix+modelName)
-	}
+		if queueDepth > 0 {
+			group.Annotations[AnnotationQueueDepthPrefix+modelName] = fmt.Sprintf("%d", queueDepth)
+			group.Annotations[AnnotationQueueSincePrefix+modelName] = time.Now().Format(time.RFC3339)
+		} else {
+			delete(group.Annotations, AnnotationQueueDepthPrefix+modelName)
+			delete(group.Annotations, AnnotationQueueSincePrefix+modelName)
+		}
 
-	if err := c.Update(ctx, group); err != nil {
-		return fmt.Errorf("failed to update GPUGroup annotations: %w", err)
-	}
+		if err := c.Update(ctx, group); err != nil {
+			if apierrors.IsConflict(err) {
+				return err
+			}
+			return fmt.Errorf("failed to update GPUGroup annotations: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // ClearDemand removes queue annotations from GPUGroup

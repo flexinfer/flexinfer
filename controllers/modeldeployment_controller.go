@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -2222,85 +2223,91 @@ func parseTPSFloat(tps string) float64 {
 
 // updateModelDeploymentStatus updates the overall status of the ModelDeployment
 func (r *ModelDeploymentReconciler) updateModelDeploymentStatus(ctx context.Context, m *aiv1alpha1.ModelDeployment, phase aiv1alpha1.ModelDeploymentPhase, message string) error {
-	// Re-fetch fresh to avoid overwriting proxy's lastAccessTime
-	fresh := &aiv1alpha1.ModelDeployment{}
-	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
-		return fmt.Errorf("failed to get fresh ModelDeployment for phase update: %w", err)
-	}
-
-	// Update phase on fresh copy
-	fresh.Status.Phase = phase
-
-	// Also update the progressing condition inline (avoid double re-fetch)
-	now := metav1.NewTime(time.Now())
-	conditionType := aiv1alpha1.ConditionTypeProgressing
-	found := false
-	for i := range fresh.Status.Conditions {
-		if fresh.Status.Conditions[i].Type == conditionType {
-			fresh.Status.Conditions[i].Status = metav1.ConditionTrue
-			fresh.Status.Conditions[i].Reason = aiv1alpha1.ReasonReconciling
-			fresh.Status.Conditions[i].Message = message
-			fresh.Status.Conditions[i].LastTransitionTime = now
-			found = true
-			break
+	key := client.ObjectKeyFromObject(m)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch fresh to avoid overwriting proxy's lastAccessTime
+		fresh := &aiv1alpha1.ModelDeployment{}
+		if err := r.APIReader.Get(ctx, key, fresh); err != nil {
+			return fmt.Errorf("failed to get fresh ModelDeployment for phase update: %w", err)
 		}
-	}
-	if !found {
-		fresh.Status.Conditions = append(fresh.Status.Conditions, metav1.Condition{
-			Type:               conditionType,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             aiv1alpha1.ReasonReconciling,
-			Message:            message,
-		})
-	}
 
-	return r.Status().Update(ctx, fresh)
+		// Update phase on fresh copy
+		fresh.Status.Phase = phase
+
+		// Also update the progressing condition inline (avoid double re-fetch)
+		now := metav1.NewTime(time.Now())
+		conditionType := aiv1alpha1.ConditionTypeProgressing
+		found := false
+		for i := range fresh.Status.Conditions {
+			if fresh.Status.Conditions[i].Type == conditionType {
+				fresh.Status.Conditions[i].Status = metav1.ConditionTrue
+				fresh.Status.Conditions[i].Reason = aiv1alpha1.ReasonReconciling
+				fresh.Status.Conditions[i].Message = message
+				fresh.Status.Conditions[i].LastTransitionTime = now
+				found = true
+				break
+			}
+		}
+		if !found {
+			fresh.Status.Conditions = append(fresh.Status.Conditions, metav1.Condition{
+				Type:               conditionType,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             aiv1alpha1.ReasonReconciling,
+				Message:            message,
+			})
+		}
+
+		return r.Status().Update(ctx, fresh)
+	})
 }
 
 // updateCondition updates a specific condition in the ModelDeployment status
 func (r *ModelDeploymentReconciler) updateCondition(ctx context.Context, m *aiv1alpha1.ModelDeployment, conditionType string, status metav1.ConditionStatus, reason, message string) error {
-	// Re-fetch the latest status to avoid overwriting proxy's lastAccessTime updates
-	// This is critical for serverless scale-to-zero: the proxy updates lastAccessTime
-	// and if we use a stale copy, we'll overwrite it and cause immediate scale-down.
-	fresh := &aiv1alpha1.ModelDeployment{}
-	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(m), fresh); err != nil {
-		return fmt.Errorf("failed to get fresh ModelDeployment for status update: %w", err)
-	}
-
-	// Find existing condition on the FRESH copy
-	var existingCondition *metav1.Condition
-	for i := range fresh.Status.Conditions {
-		if fresh.Status.Conditions[i].Type == conditionType {
-			existingCondition = &fresh.Status.Conditions[i]
-			break
+	key := client.ObjectKeyFromObject(m)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest status to avoid overwriting proxy's lastAccessTime updates
+		// This is critical for serverless scale-to-zero: the proxy updates lastAccessTime
+		// and if we use a stale copy, we'll overwrite it and cause immediate scale-down.
+		fresh := &aiv1alpha1.ModelDeployment{}
+		if err := r.APIReader.Get(ctx, key, fresh); err != nil {
+			return fmt.Errorf("failed to get fresh ModelDeployment for status update: %w", err)
 		}
-	}
 
-	now := metav1.NewTime(time.Now())
-
-	if existingCondition != nil {
-		// Update existing condition
-		if existingCondition.Status != status || existingCondition.Reason != reason || existingCondition.Message != message {
-			existingCondition.Status = status
-			existingCondition.Reason = reason
-			existingCondition.Message = message
-			existingCondition.LastTransitionTime = now
+		// Find existing condition on the FRESH copy
+		var existingCondition *metav1.Condition
+		for i := range fresh.Status.Conditions {
+			if fresh.Status.Conditions[i].Type == conditionType {
+				existingCondition = &fresh.Status.Conditions[i]
+				break
+			}
 		}
-	} else {
-		// Add new condition
-		newCondition := metav1.Condition{
-			Type:               conditionType,
-			Status:             status,
-			LastTransitionTime: now,
-			Reason:             reason,
-			Message:            message,
-		}
-		fresh.Status.Conditions = append(fresh.Status.Conditions, newCondition)
-	}
 
-	// Update the FRESH object's status (preserves lastAccessTime from server)
-	return r.Status().Update(ctx, fresh)
+		now := metav1.NewTime(time.Now())
+
+		if existingCondition != nil {
+			// Update existing condition
+			if existingCondition.Status != status || existingCondition.Reason != reason || existingCondition.Message != message {
+				existingCondition.Status = status
+				existingCondition.Reason = reason
+				existingCondition.Message = message
+				existingCondition.LastTransitionTime = now
+			}
+		} else {
+			// Add new condition
+			newCondition := metav1.Condition{
+				Type:               conditionType,
+				Status:             status,
+				LastTransitionTime: now,
+				Reason:             reason,
+				Message:            message,
+			}
+			fresh.Status.Conditions = append(fresh.Status.Conditions, newCondition)
+		}
+
+		// Update the FRESH object's status (preserves lastAccessTime from server)
+		return r.Status().Update(ctx, fresh)
+	})
 }
 
 // updateEndpointStatus updates the endpoint information in the status
