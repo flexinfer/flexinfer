@@ -310,35 +310,37 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 
 	winner := demands[0]
 
-	// Check if queue threshold is met for anti-thrashing
-	threshold := int32(3) // default
-	if gpuGroup.Spec.AntiThrashing.RequestQueueThreshold > 0 {
-		threshold = gpuGroup.Spec.AntiThrashing.RequestQueueThreshold
-	}
-
-	if winner.queueDepth < threshold && winner.name != currentActive {
-		// Not enough queued requests to justify a swap
-		log.Info("Queue threshold not met for swap",
-			"model", winner.name, "queue", winner.queueDepth, "threshold", threshold)
-		if currentActive != "" {
-			return currentActive, "queue threshold not met"
+	if gpuGroup.Spec.AntiThrashing.Enabled {
+		// Check if queue threshold is met for anti-thrashing
+		threshold := int32(3) // default
+		if gpuGroup.Spec.AntiThrashing.RequestQueueThreshold > 0 {
+			threshold = gpuGroup.Spec.AntiThrashing.RequestQueueThreshold
 		}
-		return "", "queue threshold not met"
-	}
 
-	// Check hysteresis window
-	hysteresisWindow := 10 * time.Second // default
-	if gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds > 0 {
-		hysteresisWindow = time.Duration(gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds) * time.Second
-	}
-
-	if currentActive != "" && !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisWindow && winner.name != currentActive {
-		log.Info("Hysteresis window not elapsed",
-			"model", winner.name, "queuedSince", winner.queuedSince, "window", hysteresisWindow)
-		if currentActive != "" {
-			return currentActive, "hysteresis window"
+		if winner.queueDepth < threshold && winner.name != currentActive {
+			// Not enough queued requests to justify a swap
+			log.Info("Queue threshold not met for swap",
+				"model", winner.name, "queue", winner.queueDepth, "threshold", threshold)
+			if currentActive != "" {
+				return currentActive, "queue threshold not met"
+			}
+			return "", "queue threshold not met"
 		}
-		return "", "hysteresis window"
+
+		// Check hysteresis window
+		hysteresisWindow := 10 * time.Second // default
+		if gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds > 0 {
+			hysteresisWindow = time.Duration(gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds) * time.Second
+		}
+
+		if currentActive != "" && !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisWindow && winner.name != currentActive {
+			log.Info("Hysteresis window not elapsed",
+				"model", winner.name, "queuedSince", winner.queuedSince, "window", hysteresisWindow)
+			if currentActive != "" {
+				return currentActive, "hysteresis window"
+			}
+			return "", "hysteresis window"
+		}
 	}
 
 	return winner.name, fmt.Sprintf("demand: queue=%d, priority=%d", winner.queueDepth, winner.priority)

@@ -20,13 +20,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -306,6 +306,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
+	didMutate := false
+
 	// Handle legacy/private PVC if not using ModelCache
 	// Skip PVC creation for backends that download models on-the-fly (diffusers, comfyui, tei)
 	backendType := canonicalBackend(modelDeployment.Spec.Backend)
@@ -331,8 +333,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				log.Error(err, "Failed to create new Pvc", "Pvc.Namespace", newPVC.Namespace, "Pvc.Name", newPVC.Name)
 				return ctrl.Result{}, err
 			}
-			// Pvc created successfully - return and requeue
-			return ctrl.Result{Requeue: true}, nil
+			didMutate = true
 		} else if err != nil {
 			log.Error(err, "Failed to get Pvc")
 			return ctrl.Result{}, err
@@ -354,8 +355,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			log.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 			return ctrl.Result{}, err
 		}
-		// Deployment created successfully - return and requeue
-		return ctrl.Result{Requeue: true}, nil
+		found = dep
+		didMutate = true
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
 		return ctrl.Result{}, err
@@ -375,11 +376,15 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	// Ensure the deployment size is the same as the spec
-	size := modelDeployment.Spec.Replicas
+	// Ensure the deployment size is the same as the spec (default=1)
+	desiredReplicaCount := int32(1)
+	if modelDeployment.Spec.Replicas != nil {
+		desiredReplicaCount = *modelDeployment.Spec.Replicas
+	}
+
 	needsUpdate := false
-	if *found.Spec.Replicas != *size {
-		found.Spec.Replicas = size
+	if found.Spec.Replicas == nil || *found.Spec.Replicas != desiredReplicaCount {
+		found.Spec.Replicas = ptr.To(desiredReplicaCount)
 		needsUpdate = true
 	}
 
@@ -404,17 +409,46 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Keep existing selector; only sync mutable fields.
-	if !reflect.DeepEqual(found.Spec.Strategy, desiredDep.Spec.Strategy) {
+	if !apiequality.Semantic.DeepEqual(found.Spec.Strategy, desiredDep.Spec.Strategy) {
 		found.Spec.Strategy = desiredDep.Spec.Strategy
 		needsUpdate = true
 	}
 
-	if !reflect.DeepEqual(found.Spec.Template.Spec, desiredDep.Spec.Template.Spec) {
-		found.Spec.Template.Spec = desiredDep.Spec.Template.Spec
+	desiredPodSpec := desiredDep.Spec.Template.Spec
+	if found.Spec.Template.Spec.SchedulerName != desiredPodSpec.SchedulerName {
+		found.Spec.Template.Spec.SchedulerName = desiredPodSpec.SchedulerName
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.NodeSelector, desiredPodSpec.NodeSelector) {
+		found.Spec.Template.Spec.NodeSelector = desiredPodSpec.NodeSelector
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.RuntimeClassName, desiredPodSpec.RuntimeClassName) {
+		found.Spec.Template.Spec.RuntimeClassName = desiredPodSpec.RuntimeClassName
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.Tolerations, desiredPodSpec.Tolerations) {
+		found.Spec.Template.Spec.Tolerations = desiredPodSpec.Tolerations
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.InitContainers, desiredPodSpec.InitContainers) {
+		found.Spec.Template.Spec.InitContainers = desiredPodSpec.InitContainers
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.Containers, desiredPodSpec.Containers) {
+		found.Spec.Template.Spec.Containers = desiredPodSpec.Containers
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.Volumes, desiredPodSpec.Volumes) {
+		found.Spec.Template.Spec.Volumes = desiredPodSpec.Volumes
+		needsUpdate = true
+	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.TerminationGracePeriodSeconds, desiredPodSpec.TerminationGracePeriodSeconds) {
+		found.Spec.Template.Spec.TerminationGracePeriodSeconds = desiredPodSpec.TerminationGracePeriodSeconds
 		needsUpdate = true
 	}
 
-	if !reflect.DeepEqual(found.Spec.Template.Annotations, desiredDep.Spec.Template.Annotations) {
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Annotations, desiredDep.Spec.Template.Annotations) {
 		found.Spec.Template.Annotations = desiredDep.Spec.Template.Annotations
 		needsUpdate = true
 	}
@@ -424,8 +458,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			log.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
 			return ctrl.Result{}, err
 		}
-		// Spec updated - return and requeue
-		return ctrl.Result{Requeue: true}, nil
+		didMutate = true
 	}
 
 	// Check if the service already exists, if not create a new one
@@ -446,8 +479,8 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "ServiceCreated", "Service created successfully")
-		// Service created successfully - return and requeue
-		return ctrl.Result{Requeue: true}, nil
+		service = svc
+		didMutate = true
 	} else if err != nil {
 		log.Error(err, "Failed to get Service")
 		r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, "ServiceGetFailed", fmt.Sprintf("Failed to get service: %v", err))
@@ -471,7 +504,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			log.Error(err, "Failed to update Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		didMutate = true
 	}
 
 	// Update endpoint status now that service exists
@@ -515,6 +548,10 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		// Requeue to check again soon
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	if didMutate {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Note: Scale-to-Zero check is now done earlier in reconciliation (before deployment sync)
