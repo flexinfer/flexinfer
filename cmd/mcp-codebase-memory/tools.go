@@ -136,6 +136,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
 				},
+				"rerank": map[string]any{
+					"type":        "string",
+					"description": "Optional reranker: none|hybrid. hybrid combines vector similarity with simple lexical token overlap.",
+				},
+				"lexical_weight": map[string]any{
+					"type":        "number",
+					"description": "For rerank=hybrid: 0..1 weight for lexical overlap (default 0.15).",
+				},
 				"include_content": map[string]any{
 					"type":        "boolean",
 					"description": "If true, include full content in results (can be large).",

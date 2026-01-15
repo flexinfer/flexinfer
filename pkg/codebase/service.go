@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -304,6 +306,24 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 		includeContent = v
 	}
 
+	rerank := "none"
+	if v, ok := args["rerank"].(string); ok && strings.TrimSpace(v) != "" {
+		rerank = strings.ToLower(strings.TrimSpace(v))
+	}
+	lexicalWeight := 0.15
+	switch v := args["lexical_weight"].(type) {
+	case float64:
+		lexicalWeight = v
+	case int:
+		lexicalWeight = float64(v)
+	}
+	if lexicalWeight < 0 {
+		lexicalWeight = 0
+	}
+	if lexicalWeight > 1 {
+		lexicalWeight = 1
+	}
+
 	var languages []string
 	if raw, ok := args["languages"].([]any); ok {
 		for _, v := range raw {
@@ -331,6 +351,36 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 		return nil, err
 	}
 
+	if rerank == "hybrid" && lexicalWeight > 0 {
+		toks := lexicalTokens(query)
+		if len(toks) > 0 {
+			type scored struct {
+				res      schema.SearchResult
+				combined float64
+			}
+			scoredResults := make([]scored, 0, len(results))
+			for _, r := range results {
+				text := strings.ToLower(r.Chunk.Signature + "\n" + r.Chunk.Docstring + "\n" + r.Chunk.Content)
+				hits := 0
+				for _, tok := range toks {
+					if strings.Contains(text, tok) {
+						hits++
+					}
+				}
+				lex := float64(hits) / float64(len(toks))
+				combined := r.Score*(1-lexicalWeight) + lex*lexicalWeight
+				scoredResults = append(scoredResults, scored{res: r, combined: combined})
+			}
+			sort.SliceStable(scoredResults, func(i, j int) bool {
+				return scoredResults[i].combined > scoredResults[j].combined
+			})
+			results = results[:0]
+			for _, sr := range scoredResults {
+				results = append(results, sr.res)
+			}
+		}
+	}
+
 	if !includeContent {
 		for i := range results {
 			results[i].Chunk.Content = ""
@@ -338,9 +388,11 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"repo_id": repoID,
-		"query":   query,
-		"results": results,
+		"repo_id":        repoID,
+		"query":          query,
+		"rerank":         rerank,
+		"lexical_weight": lexicalWeight,
+		"results":        results,
 	})
 }
 
@@ -965,4 +1017,30 @@ func deriveRepoID(root string) (string, error) {
 	}
 
 	return schema.ShortSHA256Hex(gitRoot), nil
+}
+
+func lexicalTokens(q string) []string {
+	q = strings.ToLower(q)
+	var b strings.Builder
+	b.Grow(len(q))
+	for _, r := range q {
+		switch {
+		case unicode.IsLetter(r), unicode.IsNumber(r):
+			b.WriteRune(r)
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	raw := strings.Fields(b.String())
+	seen := map[string]bool{}
+	out := make([]string, 0, len(raw))
+	for _, t := range raw {
+		if len(t) < 3 || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
