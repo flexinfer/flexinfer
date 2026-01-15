@@ -180,6 +180,50 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	})
 
 	server.AddTool(mcp.Tool{
+		Name:        "codebase_get_references",
+		Description: "Find references to a symbol (best-effort: definitions by name + callers by call graph).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"symbol": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to narrow search (relative to repo root).",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages to search.",
+				},
+				"limit": map[string]any{"type": "integer"},
+				"include_definitions": map[string]any{
+					"type":        "boolean",
+					"description": "Include definition candidates (chunks where name matches symbol).",
+				},
+				"include_callers": map[string]any{
+					"type":        "boolean",
+					"description": "Include caller candidates (chunks that call symbol).",
+				},
+				"include_modules": map[string]any{
+					"type":        "boolean",
+					"description": "Include module chunks in definitions (defaults false).",
+				},
+				"include_content": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include full content in returned chunks (can be large).",
+				},
+			},
+			Required: []string{"symbol"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleGetReferences(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_context",
 		Description: "Get context for a file/line (chunk + nearby chunks + callers/callees heuristics).",
 		InputSchema: mcp.InputSchema{

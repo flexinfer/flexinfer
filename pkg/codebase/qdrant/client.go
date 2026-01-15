@@ -327,6 +327,32 @@ func (c *Client) FindChunkByName(
 	return best, nil
 }
 
+func (c *Client) FindChunksByName(
+	ctx context.Context,
+	repoID string,
+	symbol string,
+	filePath string,
+	languages []string,
+	limit int,
+) ([]schema.Chunk, error) {
+	if limit <= 0 {
+		limit = 512
+	}
+
+	conds := []any{
+		match("repo_id", repoID),
+		match("name", symbol),
+	}
+	if filePath != "" {
+		conds = append(conds, match("file_path", filePath))
+	}
+	if len(languages) > 0 {
+		conds = append(conds, filterShould(matches("language", languages)...))
+	}
+
+	return c.scroll(ctx, filterMust(conds...), limit)
+}
+
 func (c *Client) GetModuleContentHash(ctx context.Context, repoID, filePath string) (string, bool, error) {
 	chunks, err := c.scroll(ctx, filterMust(
 		match("repo_id", repoID),

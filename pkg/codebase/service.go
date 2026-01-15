@@ -412,6 +412,104 @@ func (s *Service) HandleGetDefinition(ctx context.Context, args map[string]any) 
 	})
 }
 
+func (s *Service) HandleGetReferences(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	symbol, _ := args["symbol"].(string)
+	if strings.TrimSpace(symbol) == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+
+	filePath, _ := args["file_path"].(string)
+
+	limit := s.cfg.ScrollLimit
+	switch v := args["limit"].(type) {
+	case float64:
+		if int(v) > 0 {
+			limit = int(v)
+		}
+	case int:
+		if v > 0 {
+			limit = v
+		}
+	}
+
+	includeDefinitions := true
+	if v, ok := args["include_definitions"].(bool); ok {
+		includeDefinitions = v
+	}
+	includeCallers := true
+	if v, ok := args["include_callers"].(bool); ok {
+		includeCallers = v
+	}
+	includeModules := false
+	if v, ok := args["include_modules"].(bool); ok {
+		includeModules = v
+	}
+	includeContent := false
+	if v, ok := args["include_content"].(bool); ok {
+		includeContent = v
+	}
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	var (
+		definitions []schema.Chunk
+		callers     []schema.CallerInfo
+	)
+
+	if includeDefinitions {
+		chunks, err := s.qdrant.FindChunksByName(ctx, repoID, symbol, filePath, languages, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, ch := range chunks {
+			if !includeModules && ch.ChunkType == "module" {
+				continue
+			}
+			if !includeContent {
+				ch.Content = ""
+			}
+			definitions = append(definitions, ch)
+		}
+	}
+
+	if includeCallers {
+		var err error
+		if strings.TrimSpace(filePath) != "" {
+			callers, err = s.qdrant.FindCallersInFile(ctx, repoID, filePath, symbol, limit)
+		} else {
+			callers, err = s.qdrant.FindCallers(ctx, repoID, symbol, limit)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"repo_id":      repoID,
+		"symbol":       symbol,
+		"file_path":    filePath,
+		"definitions":  definitions,
+		"callers":      callers,
+		"include_defs": includeDefinitions,
+		"include_calls": includeCallers,
+	})
+}
+
 func (s *Service) HandleGetContext(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	repoID := s.cfg.RepoIDDefault
 	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {

@@ -13,6 +13,7 @@ Supports Go, TypeScript, JavaScript, Python, and Rust indexing.
 - `codebase_index_cancel`
 - `codebase_search`
 - `codebase_get_definition`
+- `codebase_get_references`
 - `codebase_get_context`
 - `codebase_find_callers`
 - `codebase_find_callees`
