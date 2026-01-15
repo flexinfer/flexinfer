@@ -27,7 +27,8 @@ func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_AMD"); img != "" {
 			return img
 		}
-		return "registry.harbor.lan/library/diffusers-api:rocm6.2.3"
+		// Use rocm-latest tag which is built with gfx1100/RDNA3 optimizations
+		return "registry.harbor.lan/library/diffusers-api:rocm-latest"
 	default:
 		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE"); img != "" {
 			return img

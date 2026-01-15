@@ -345,3 +345,32 @@ publish_mlcllm_cuda:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
     - when: never
+
+# --- Diffusers Backend Images ---
+# OpenAI-compatible image generation API for AMD/NVIDIA GPUs
+publish_diffusers_rocm:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 1h
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Diffusers API ROCm image (gfx1100/RDNA3 optimized)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.diffusers-rocm" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=registry.harbor.lan/library/diffusers-api:rocm-latest,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - when: never
