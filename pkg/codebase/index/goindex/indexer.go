@@ -52,6 +52,9 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	imports := collectImports(file)
 
 	var chunks []schema.Chunk
+	if mod, ok := extractModuleChunk(fset, src, repoID, rel, file, imports); ok {
+		chunks = append(chunks, mod)
+	}
 
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
@@ -98,6 +101,69 @@ func collectImports(file *ast.File) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func extractModuleChunk(
+	fset *token.FileSet,
+	src []byte,
+	repoID string,
+	relPath string,
+	file *ast.File,
+	imports []string,
+) (schema.Chunk, bool) {
+	startPos := file.Package
+	doc := ""
+	if file.Doc != nil {
+		startPos = file.Doc.Pos()
+		doc = strings.TrimSpace(file.Doc.Text())
+	}
+
+	endPos := file.Name.End()
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+		if gd.End() > endPos {
+			endPos = gd.End()
+		}
+	}
+
+	start, ok := toOffset(fset, file.Package, startPos)
+	if !ok {
+		return schema.Chunk{}, false
+	}
+	end, ok := toOffset(fset, file.Package, endPos)
+	if !ok || end <= start || end > len(src) {
+		return schema.Chunk{}, false
+	}
+
+	content := strings.TrimSpace(string(src[start:end]))
+	fileHash := schema.ContentHash(string(src))
+
+	ch := schema.Chunk{
+		RepoID:      repoID,
+		FilePath:    relPath,
+		Language:    "go",
+		ChunkType:   "module",
+		StartLine:   fset.Position(startPos).Line,
+		EndLine:     fset.Position(endPos).Line,
+		StartColumn: max0(fset.Position(startPos).Column - 1),
+		EndColumn:   max0(fset.Position(endPos).Column - 1),
+		Name:        file.Name.Name,
+		Signature:   "package " + file.Name.Name,
+		Docstring:   doc,
+		Imports:     imports,
+		Defs:        []string{file.Name.Name},
+		TokenCount:  len(content) / 4,
+		IndexedAt:   time.Now(),
+		SchemaVer:   schema.Version,
+		ContentHash: fileHash,
+		Content:     content,
+	}
+
+	ch.ID = schema.ChunkID(repoID, relPath, ch.StartLine, ch.EndLine, ch.ContentHash)
+	return ch, true
 }
 
 func extractFuncChunk(

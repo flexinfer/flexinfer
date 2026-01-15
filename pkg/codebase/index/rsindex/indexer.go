@@ -52,6 +52,9 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	imports := extractImports(root, src)
 
 	var chunks []schema.Chunk
+	if mod, ok := extractModuleChunk(repoID, rel, imports, root, src); ok {
+		chunks = append(chunks, mod)
+	}
 	// Only consider top-level items; avoid recursively walking the full tree
 	// (prevents impl methods being double-counted as free functions).
 	for i := 0; i < int(root.ChildCount()); i++ {
@@ -65,13 +68,13 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 			if name == "" {
 				continue
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, "function", name, "", "", "", imports, extractCalls(n, src), src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, "function", name, rustSignature(n, src), leadingRustDocComment(n, src), "", imports, extractCalls(n, src), src, n, false))
 		case "struct_item", "enum_item", "trait_item":
 			name := nodeName(n, src)
 			if name == "" {
 				continue
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, "class", name, "", "", "", imports, nil, src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, "class", name, rustSignature(n, src), leadingRustDocComment(n, src), "", imports, nil, src, n, false))
 		case "impl_item":
 			implType := implTargetType(n, src)
 			declList := findChildOfType(n, "declaration_list")
@@ -87,7 +90,7 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 				if name == "" {
 					continue
 				}
-				chunks = append(chunks, makeChunk(repoID, rel, "method", name, "", "", implType, imports, extractCalls(m, src), src, m))
+				chunks = append(chunks, makeChunk(repoID, rel, "method", name, rustSignature(m, src), leadingRustDocComment(m, src), implType, imports, extractCalls(m, src), src, m, false))
 			}
 		}
 	}
@@ -100,6 +103,46 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	})
 
 	return chunks, nil
+}
+
+func extractModuleChunk(repoID, filePath string, imports []string, root *sitter.Node, src []byte) (schema.Chunk, bool) {
+	doc := crateDocstring(root, src)
+
+	var lines []string
+	endLine := 1
+	for i := 0; i < int(root.ChildCount()); i++ {
+		ch := root.Child(i)
+		if ch == nil || ch.Type() != "use_declaration" {
+			continue
+		}
+		txt := strings.TrimSpace(ch.Content(src))
+		if txt != "" {
+			lines = append(lines, txt)
+			endLine = int(ch.EndPoint().Row) + 1
+		}
+	}
+
+	content := strings.TrimSpace(strings.Join(lines, "\n"))
+	fileHash := schema.ContentHash(string(src))
+	ch := schema.Chunk{
+		RepoID:      repoID,
+		FilePath:    filePath,
+		Language:    "rust",
+		ChunkType:   "module",
+		StartLine:   1,
+		EndLine:     endLine,
+		StartColumn: 0,
+		EndColumn:   0,
+		Docstring:   doc,
+		Imports:     imports,
+		TokenCount:  len(content) / 4,
+		IndexedAt:   time.Now(),
+		SchemaVer:   schema.Version,
+		ContentHash: fileHash,
+		Content:     content,
+	}
+	ch.ID = schema.ChunkID(repoID, filePath, ch.StartLine, ch.EndLine, ch.ContentHash)
+	return ch, true
 }
 
 func extractImports(root *sitter.Node, src []byte) []string {
@@ -119,6 +162,36 @@ func extractImports(root *sitter.Node, src []byte) []string {
 	}
 	sort.Strings(imports)
 	return imports
+}
+
+func crateDocstring(root *sitter.Node, src []byte) string {
+	if root == nil {
+		return ""
+	}
+	var lines []string
+	for i := 0; i < int(root.ChildCount()); i++ {
+		n := root.Child(i)
+		if n == nil {
+			continue
+		}
+		switch n.Type() {
+		case "line_comment", "block_comment":
+			txt := strings.TrimSpace(n.Content(src))
+			if strings.HasPrefix(txt, "//!") {
+				lines = append(lines, strings.TrimSpace(strings.TrimPrefix(txt, "//!")))
+				continue
+			}
+			if len(lines) > 0 {
+				return strings.TrimSpace(strings.Join(lines, "\n"))
+			}
+		default:
+			if len(lines) > 0 {
+				return strings.TrimSpace(strings.Join(lines, "\n"))
+			}
+			return ""
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func extractCalls(node *sitter.Node, src []byte) []string {
@@ -155,8 +228,13 @@ func makeChunk(
 	calls []string,
 	src []byte,
 	node *sitter.Node,
+	useFileHash bool,
 ) schema.Chunk {
 	content := strings.TrimSpace(node.Content(src))
+	hash := schema.ContentHash(content)
+	if useFileHash {
+		hash = schema.ContentHash(string(src))
+	}
 	ch := schema.Chunk{
 		RepoID:      repoID,
 		FilePath:    filePath,
@@ -177,11 +255,76 @@ func makeChunk(
 		TokenCount:  len(content) / 4,
 		IndexedAt:   time.Now(),
 		SchemaVer:   schema.Version,
-		ContentHash: schema.ContentHash(content),
+		ContentHash: hash,
 		Content:     content,
 	}
 	ch.ID = schema.ChunkID(repoID, filePath, ch.StartLine, ch.EndLine, ch.ContentHash)
 	return ch
+}
+
+func rustSignature(node *sitter.Node, src []byte) string {
+	if node == nil {
+		return ""
+	}
+	start := int(node.StartByte())
+	end := int(node.EndByte())
+	body := node.ChildByFieldName("body")
+	if body != nil {
+		if b := int(body.StartByte()); b > start {
+			end = b
+		}
+	}
+	if start < 0 || end < 0 || end <= start || end > len(src) {
+		return ""
+	}
+	s := strings.TrimSpace(string(src[start:end]))
+	s = strings.TrimSpace(strings.TrimSuffix(s, "{"))
+	return s
+}
+
+func leadingRustDocComment(node *sitter.Node, src []byte) string {
+	var parts []string
+	for cur := node.PrevSibling(); cur != nil; cur = cur.PrevSibling() {
+		switch cur.Type() {
+		case "line_comment", "block_comment":
+			txt := strings.TrimSpace(cur.Content(src))
+			if strings.HasPrefix(txt, "///") {
+				parts = append(parts, strings.TrimSpace(strings.TrimPrefix(txt, "///")))
+				continue
+			}
+			if strings.HasPrefix(txt, "/**") {
+				parts = append(parts, normalizeBlockDoc(txt))
+				continue
+			}
+			// Non-doc comment breaks the chain.
+			return strings.TrimSpace(strings.Join(reverse(parts), "\n"))
+		default:
+			return strings.TrimSpace(strings.Join(reverse(parts), "\n"))
+		}
+	}
+	return strings.TrimSpace(strings.Join(reverse(parts), "\n"))
+}
+
+func normalizeBlockDoc(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "/**")
+	s = strings.TrimSuffix(s, "*/")
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "*"))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func reverse(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, 0, len(in))
+	for i := len(in) - 1; i >= 0; i-- {
+		out = append(out, in[i])
+	}
+	return out
 }
 
 func implTargetType(node *sitter.Node, src []byte) string {

@@ -11,7 +11,9 @@ func TestIndexer_Python_FunctionAndClass(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	src := `import os
+	src := `"""Test module."""
+
+import os
 from pathlib import Path
 
 def hello(name: str) -> str:
@@ -39,8 +41,15 @@ class Greeter:
 		t.Fatalf("expected >= 3 chunks, got %d", len(chunks))
 	}
 
-	var gotHello, gotGreeter, gotGreet bool
+	var gotModule, gotHello, gotGreeter, gotGreet bool
 	for _, ch := range chunks {
+		if ch.ChunkType == "module" {
+			gotModule = true
+			if ch.Docstring != "Test module." {
+				t.Fatalf("unexpected module docstring: %q", ch.Docstring)
+			}
+			continue
+		}
 		switch ch.Name {
 		case "hello":
 			gotHello = true
@@ -69,7 +78,7 @@ class Greeter:
 		}
 	}
 
-	if !gotHello || !gotGreeter || !gotGreet {
-		t.Fatalf("missing chunks: hello=%v Greeter=%v greet=%v", gotHello, gotGreeter, gotGreet)
+	if !gotModule || !gotHello || !gotGreeter || !gotGreet {
+		t.Fatalf("missing chunks: module=%v hello=%v Greeter=%v greet=%v", gotModule, gotHello, gotGreeter, gotGreet)
 	}
 }

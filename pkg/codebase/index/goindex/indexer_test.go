@@ -41,6 +41,7 @@ func (g *Greeter) Hello() {
 	}
 
 	var (
+		gotModule bool
 		gotType   bool
 		gotAdd    bool
 		gotHello  bool
@@ -61,6 +62,10 @@ func (g *Greeter) Hello() {
 		}
 		if ch.SchemaVer == "" {
 			t.Fatalf("expected schema_version set for chunk %q", ch.Name)
+		}
+
+		if ch.ChunkType == "module" {
+			gotModule = true
 		}
 
 		switch ch.Name {
@@ -101,6 +106,9 @@ func (g *Greeter) Hello() {
 	}
 	if !gotHello {
 		t.Fatal("expected Hello method chunk")
+	}
+	if !gotModule {
+		t.Fatal("expected module chunk")
 	}
 	if !helloCall {
 		t.Fatal("expected Hello to include call fmt.Println")

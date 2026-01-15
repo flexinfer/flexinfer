@@ -52,6 +52,9 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	imports := extractImports(root, src)
 
 	var chunks []schema.Chunk
+	if mod, ok := extractModuleChunk(repoID, rel, imports, root, src); ok {
+		chunks = append(chunks, mod)
+	}
 
 	// Only consider top-level definitions; avoid recursively walking the whole tree
 	// (prevents class methods being double-counted as module-level functions).
@@ -93,6 +96,79 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	})
 
 	return chunks, nil
+}
+
+func extractModuleChunk(repoID, filePath string, imports []string, root *sitter.Node, src []byte) (schema.Chunk, bool) {
+	doc := moduleDocstring(root, src)
+
+	var lines []string
+	endLine := 1
+	for i := 0; i < int(root.ChildCount()); i++ {
+		n := root.Child(i)
+		if n == nil {
+			continue
+		}
+		switch n.Type() {
+		case "import_statement", "import_from_statement":
+			txt := strings.TrimSpace(n.Content(src))
+			if txt != "" {
+				lines = append(lines, txt)
+				endLine = int(n.EndPoint().Row) + 1
+			}
+		}
+	}
+
+	content := strings.TrimSpace(strings.Join(lines, "\n"))
+	fileHash := schema.ContentHash(string(src))
+
+	ch := schema.Chunk{
+		RepoID:      repoID,
+		FilePath:    filePath,
+		Language:    "python",
+		ChunkType:   "module",
+		StartLine:   1,
+		EndLine:     endLine,
+		StartColumn: 0,
+		EndColumn:   0,
+		Docstring:   doc,
+		Imports:     imports,
+		TokenCount:  len(content) / 4,
+		IndexedAt:   time.Now(),
+		SchemaVer:   schema.Version,
+		ContentHash: fileHash,
+		Content:     content,
+	}
+	ch.ID = schema.ChunkID(repoID, filePath, ch.StartLine, ch.EndLine, ch.ContentHash)
+	return ch, true
+}
+
+func moduleDocstring(root *sitter.Node, src []byte) string {
+	if root == nil {
+		return ""
+	}
+	for i := 0; i < int(root.ChildCount()); i++ {
+		stmt := root.Child(i)
+		if stmt == nil {
+			continue
+		}
+		// expression_statement -> string
+		if stmt.Type() != "expression_statement" {
+			if stmt.Type() != "comment" {
+				break
+			}
+			continue
+		}
+		for j := 0; j < int(stmt.ChildCount()); j++ {
+			expr := stmt.Child(j)
+			if expr == nil || expr.Type() != "string" {
+				continue
+			}
+			raw := strings.TrimSpace(expr.Content(src))
+			return trimPythonString(raw)
+		}
+		break
+	}
+	return ""
 }
 
 func extractClass(repoID, filePath string, imports []string, src []byte, node *sitter.Node) schema.Chunk {

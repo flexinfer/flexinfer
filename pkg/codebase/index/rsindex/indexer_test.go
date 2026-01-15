@@ -11,10 +11,13 @@ func TestIndexer_Rust_StructFnImpl(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	src := `use std::fmt;
+	src := `//! Crate docs.
+
+use std::fmt;
 
 struct Greeter;
 
+/// Says hello.
 fn hello() {
     greet();
 }
@@ -41,8 +44,15 @@ impl Greeter {
 		t.Fatalf("expected >= 4 chunks, got %d", len(chunks))
 	}
 
-	var gotGreeter, gotHello, gotGreet, gotSay bool
+	var gotModule, gotGreeter, gotHello, gotGreet, gotSay bool
 	for _, ch := range chunks {
+		if ch.ChunkType == "module" {
+			gotModule = true
+			if ch.Docstring != "Crate docs." {
+				t.Fatalf("unexpected module docstring: %q", ch.Docstring)
+			}
+			continue
+		}
 		switch ch.Name {
 		case "Greeter":
 			gotGreeter = true
@@ -53,6 +63,12 @@ impl Greeter {
 			gotHello = true
 			if ch.ChunkType != "function" {
 				t.Fatalf("expected hello chunk_type function, got %q", ch.ChunkType)
+			}
+			if ch.Docstring != "Says hello." {
+				t.Fatalf("unexpected hello docstring: %q", ch.Docstring)
+			}
+			if ch.Signature == "" {
+				t.Fatal("expected hello signature set")
 			}
 		case "greet":
 			gotGreet = true
@@ -66,7 +82,7 @@ impl Greeter {
 			}
 		}
 	}
-	if !gotGreeter || !gotHello || !gotGreet || !gotSay {
-		t.Fatalf("missing chunks: Greeter=%v hello=%v greet=%v say=%v", gotGreeter, gotHello, gotGreet, gotSay)
+	if !gotModule || !gotGreeter || !gotHello || !gotGreet || !gotSay {
+		t.Fatalf("missing chunks: module=%v Greeter=%v hello=%v greet=%v say=%v", gotModule, gotGreeter, gotHello, gotGreet, gotSay)
 	}
 }

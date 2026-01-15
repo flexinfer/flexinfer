@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,13 +38,20 @@ class Greeter {
 		t.Fatal("expected chunks")
 	}
 
-	var gotHello, gotGreeter, gotGreet bool
+	var gotModule, gotHello, gotGreeter, gotGreet bool
 	for _, ch := range chunks {
+		if ch.ChunkType == "module" {
+			gotModule = true
+			continue
+		}
 		switch ch.Name {
 		case "hello":
 			gotHello = true
 			if ch.ChunkType != "function" {
 				t.Fatalf("expected hello chunk_type function, got %q", ch.ChunkType)
+			}
+			if ch.Signature == "" || !strings.Contains(ch.Signature, "hello") {
+				t.Fatalf("expected hello signature to contain name, got %q", ch.Signature)
 			}
 		case "Greeter":
 			gotGreeter = true
@@ -58,9 +66,12 @@ class Greeter {
 			if ch.ParentName != "Greeter" {
 				t.Fatalf("expected greet parent_name Greeter, got %q", ch.ParentName)
 			}
+			if ch.Signature == "" || !strings.Contains(ch.Signature, "greet") {
+				t.Fatalf("expected greet signature to contain name, got %q", ch.Signature)
+			}
 		}
 	}
-	if !gotHello || !gotGreeter || !gotGreet {
-		t.Fatalf("missing chunks: hello=%v Greeter=%v greet=%v", gotHello, gotGreeter, gotGreet)
+	if !gotModule || !gotHello || !gotGreeter || !gotGreet {
+		t.Fatalf("missing chunks: module=%v hello=%v Greeter=%v greet=%v", gotModule, gotHello, gotGreeter, gotGreet)
 	}
 }

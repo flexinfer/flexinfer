@@ -61,6 +61,9 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	imports := extractImports(root, src)
 
 	var chunks []schema.Chunk
+	if mod, ok := extractModuleChunk(repoID, rel, i.language, root, imports, src); ok {
+		chunks = append(chunks, mod)
+	}
 	walk(root, func(n *sitter.Node) {
 		switch n.Type() {
 		case "function_declaration":
@@ -68,13 +71,13 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 			if name == "" {
 				return
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, i.language, "function", name, "", "", "", imports, extractCalls(n, src), src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, i.language, "function", name, signatureFromHeader(n, src), leadingDocComment(n, src), "", imports, extractCalls(n, src), src, n, false))
 		case "class_declaration":
 			className := nodeName(n, src)
 			if className == "" {
 				return
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, i.language, "class", className, "", "", "", imports, nil, src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, i.language, "class", className, signatureFromHeader(n, src), leadingDocComment(n, src), "", imports, nil, src, n, false))
 			body := n.ChildByFieldName("body")
 			if body == nil {
 				return
@@ -87,22 +90,23 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 				if mname == "" {
 					return
 				}
-				chunks = append(chunks, makeChunk(repoID, rel, i.language, "method", mname, "", "", className, imports, extractCalls(m, src), src, m))
+				chunks = append(chunks, makeChunk(repoID, rel, i.language, "method", mname, signatureFromHeader(m, src), leadingDocComment(m, src), className, imports, extractCalls(m, src), src, m, false))
 			})
 		case "interface_declaration":
 			name := nodeName(n, src)
 			if name == "" {
 				return
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, i.language, "class", name, "", "", "", imports, nil, src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, i.language, "class", name, signatureFromHeader(n, src), leadingDocComment(n, src), "", imports, nil, src, n, false))
 		case "type_alias_declaration":
 			name := nodeName(n, src)
 			if name == "" {
 				return
 			}
-			chunks = append(chunks, makeChunk(repoID, rel, i.language, "variable", name, "", "", "", imports, nil, src, n))
+			chunks = append(chunks, makeChunk(repoID, rel, i.language, "variable", name, signatureFromHeader(n, src), leadingDocComment(n, src), "", imports, nil, src, n, false))
 		case "lexical_declaration":
 			// const foo = () => {} / let foo = () => {}
+			declDoc := leadingDocComment(n, src)
 			walk(n, func(v *sitter.Node) {
 				if v.Type() != "variable_declarator" {
 					return
@@ -115,7 +119,7 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 				if name == "" {
 					return
 				}
-				chunks = append(chunks, makeChunk(repoID, rel, i.language, "function", name, "", "", "", imports, extractCalls(value, src), src, v))
+				chunks = append(chunks, makeChunk(repoID, rel, i.language, "function", name, arrowSignature(name, value, src), declDoc, "", imports, extractCalls(value, src), src, v, false))
 			})
 		}
 	})
@@ -156,8 +160,13 @@ func makeChunk(
 	calls []string,
 	src []byte,
 	node *sitter.Node,
+	useFileHash bool,
 ) schema.Chunk {
 	content := strings.TrimSpace(node.Content(src))
+	hash := schema.ContentHash(content)
+	if useFileHash {
+		hash = schema.ContentHash(string(src))
+	}
 	ch := schema.Chunk{
 		RepoID:      repoID,
 		FilePath:    filePath,
@@ -178,11 +187,43 @@ func makeChunk(
 		TokenCount:  len(content) / 4,
 		IndexedAt:   time.Now(),
 		SchemaVer:   schema.Version,
-		ContentHash: schema.ContentHash(content),
+		ContentHash: hash,
 		Content:     content,
 	}
 	ch.ID = schema.ChunkID(repoID, filePath, ch.StartLine, ch.EndLine, ch.ContentHash)
 	return ch
+}
+
+func extractModuleChunk(repoID, filePath, lang string, root *sitter.Node, imports []string, src []byte) (schema.Chunk, bool) {
+	var lines []string
+	endLine := 1
+	for i := 0; i < int(root.ChildCount()); i++ {
+		ch := root.Child(i)
+		if ch == nil || ch.Type() != "import_statement" {
+			continue
+		}
+		txt := strings.TrimSpace(ch.Content(src))
+		if txt != "" {
+			lines = append(lines, txt)
+			endLine = int(ch.EndPoint().Row) + 1
+		}
+	}
+	content := strings.TrimSpace(strings.Join(lines, "\n"))
+	if content == "" && len(imports) == 0 {
+		// Still emit module chunk so we can use it for file-hash incremental indexing.
+		content = ""
+	}
+
+	n := root
+	ch := makeChunk(repoID, filePath, lang, "module", "", "", "", "", imports, nil, src, n, true)
+	ch.StartLine = 1
+	ch.StartColumn = 0
+	ch.EndLine = endLine
+	ch.EndColumn = 0
+	ch.Content = content
+	ch.TokenCount = len(content) / 4
+	ch.ID = schema.ChunkID(repoID, filePath, ch.StartLine, ch.EndLine, ch.ContentHash)
+	return ch, true
 }
 
 func extractImports(root *sitter.Node, src []byte) []string {
@@ -237,6 +278,76 @@ func nodeName(node *sitter.Node, src []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(nameNode.Content(src))
+}
+
+func signatureFromHeader(node *sitter.Node, src []byte) string {
+	body := node.ChildByFieldName("body")
+	if body == nil {
+		return ""
+	}
+	start := int(node.StartByte())
+	end := int(body.StartByte())
+	if start < 0 || end < 0 || end <= start || end > len(src) {
+		return ""
+	}
+	s := strings.TrimSpace(string(src[start:end]))
+	s = strings.TrimSpace(strings.TrimSuffix(s, "{"))
+	return s
+}
+
+func arrowSignature(name string, arrowFn *sitter.Node, src []byte) string {
+	params := arrowFn.ChildByFieldName("parameters")
+	if params == nil {
+		return name
+	}
+	return name + strings.TrimSpace(params.Content(src))
+}
+
+func leadingDocComment(node *sitter.Node, src []byte) string {
+	var parts []string
+	for cur := node.PrevSibling(); cur != nil; cur = cur.PrevSibling() {
+		if cur.Type() != "comment" {
+			break
+		}
+		txt := strings.TrimSpace(cur.Content(src))
+		if txt == "" {
+			continue
+		}
+		parts = append(parts, txt)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	// Reverse to keep original order.
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	raw := strings.Join(parts, "\n")
+	return normalizeComment(raw)
+}
+
+func normalizeComment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "/*") {
+		s = strings.TrimPrefix(s, "/*")
+		s = strings.TrimSuffix(s, "*/")
+		lines := strings.Split(s, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "*"))
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	if strings.HasPrefix(s, "//") {
+		lines := strings.Split(s, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "//"))
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	return s
 }
 
 func walk(node *sitter.Node, fn func(*sitter.Node)) {
