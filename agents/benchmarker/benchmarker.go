@@ -389,14 +389,6 @@ func (b *Benchmarker) backendReadinessPaths() []string {
 	}
 }
 
-// pullModel is no longer needed since benchmarks now go through the proxy.
-// Model loading is handled by the ModelDeployment pods, not by the benchmark.
-// This function is kept for backwards compatibility but always returns nil.
-func (b *Benchmarker) pullModel(ctx context.Context, model string) error {
-	// All model loading is handled by ModelDeployments through the proxy
-	return nil
-}
-
 type benchmarkResult struct {
 	TokensPerSecond   float64
 	CompletionTokens  int

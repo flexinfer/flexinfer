@@ -787,9 +787,9 @@ func TestGPUGroupReconciler_shouldBlockSwap_AllConditions(t *testing.T) {
 			name:          "block: target model in cooldown",
 			minRunDur:     30,
 			cooldown:      120,
-			swapTimeAgo:   60 * time.Second,  // 60s, meets 30s min run
-			preemptedAgo:  60 * time.Second,  // Preempted 60s ago, cooldown is 120s
-			targetModel:   "model-a",         // Trying to activate preempted model
+			swapTimeAgo:   60 * time.Second, // 60s, meets 30s min run
+			preemptedAgo:  60 * time.Second, // Preempted 60s ago, cooldown is 120s
+			targetModel:   "model-a",        // Trying to activate preempted model
 			currentActive: "model-b",
 			expectedBlock: true,
 		},

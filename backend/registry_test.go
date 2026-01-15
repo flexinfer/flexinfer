@@ -110,13 +110,13 @@ func TestBackendNeedsVolume(t *testing.T) {
 		backend     string
 		needsVolume bool
 	}{
-		{"ollama", false},      // Downloads on-demand
-		{"vllm", true},         // Needs pre-downloaded model
-		{"mlc-llm", true},      // Needs compiled model
-		{"llamacpp", true},     // Needs GGUF model
-		{"diffusers", false},   // Downloads on-demand
-		{"comfyui", true},      // Needs model files
-		{"vllm-omni", true},    // Needs model files
+		{"ollama", false},    // Downloads on-demand
+		{"vllm", true},       // Needs pre-downloaded model
+		{"mlc-llm", true},    // Needs compiled model
+		{"llamacpp", true},   // Needs GGUF model
+		{"diffusers", false}, // Downloads on-demand
+		{"comfyui", true},    // Needs model files
+		{"vllm-omni", true},  // Needs model files
 	}
 
 	for _, tt := range tests {

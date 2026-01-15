@@ -22,7 +22,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/controllers/testutil"
@@ -412,23 +411,3 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 		})
 	})
 })
-
-// Helper to get GPUGroup by name
-func getGPUGroup(name string) *aiv1alpha1.GPUGroup {
-	gpuGroup := &aiv1alpha1.GPUGroup{}
-	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, gpuGroup)
-	if err != nil {
-		return nil
-	}
-	return gpuGroup
-}
-
-// Helper to list all GPUGroups
-func listGPUGroups() *aiv1alpha1.GPUGroupList {
-	gpuGroupList := &aiv1alpha1.GPUGroupList{}
-	err := k8sClient.List(ctx, gpuGroupList, client.InNamespace("default"))
-	if err != nil {
-		return nil
-	}
-	return gpuGroupList
-}
