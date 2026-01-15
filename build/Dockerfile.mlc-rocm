@@ -1,5 +1,7 @@
 # MLC-LLM Docker image for AMD GPUs (ROCm)
 # Based on AMD ROCm runtime with Python
+# Using ROCm 6.2 base to match mlc-llm-nightly-rocm62 package dependencies
+# ROCm 6.2 userspace should be compatible with 6.4 kernel driver
 FROM rocm/dev-ubuntu-22.04:6.2
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,7 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     git \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Create a non-root user
 RUN useradd -m -u 1000 mlc && \
@@ -21,7 +24,7 @@ RUN useradd -m -u 1000 mlc && \
     chown -R mlc:mlc /models
 
 # Install MLC-LLM with ROCm support from MLC custom wheel index
-# Note: Packages are mlc-llm-nightly-rocm62 and mlc-ai-nightly-rocm62
+# Note: MLC only provides rocm62 packages; using with ROCm 6.4 base for driver compat
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir --pre -f https://mlc.ai/wheels \
         mlc-llm-nightly-rocm62 mlc-ai-nightly-rocm62

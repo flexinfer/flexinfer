@@ -1,0 +1,103 @@
+# MLC-LLM Docker image - Built from source for ROCm 6.4
+# Uses MLC-AI's TVM fork (relax) for better integration
+FROM rocm/dev-ubuntu-22.04:6.4
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    git \
+    curl \
+    cmake \
+    ninja-build \
+    llvm-dev \
+    libzstd-dev \
+    build-essential \
+    wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Install Rust/Cargo (required by MLC-LLM tokenizers)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Upgrade pip and install build tools
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel cython numpy
+
+# Clone MLC-AI's TVM fork (relax) which has better MLC integration
+WORKDIR /build
+RUN git clone --recursive https://github.com/mlc-ai/relax.git tvm && \
+    cd tvm && \
+    git submodule update --init --recursive
+
+# Build TVM with ROCm support
+# Note: Disable MIOpen/ROCBlas due to API incompatibilities in relax fork
+# Core HIP support is sufficient for GPU compute
+RUN cd /build/tvm && \
+    mkdir build && cd build && \
+    cp ../cmake/config.cmake . && \
+    echo "set(USE_ROCM ON)" >> config.cmake && \
+    echo "set(USE_LLVM llvm-config)" >> config.cmake && \
+    echo "set(USE_ROCBLAS OFF)" >> config.cmake && \
+    echo "set(USE_MIOPEN OFF)" >> config.cmake && \
+    echo "set(ROCM_PATH /opt/rocm)" >> config.cmake && \
+    cmake -G Ninja \
+        -DROCM_PATH=/opt/rocm \
+        -DHIP_PATH=/opt/rocm/hip \
+        .. && \
+    ninja
+
+# Install TVM Python package
+ENV TVM_HOME=/build/tvm
+ENV PYTHONPATH=/build/tvm/python:${PYTHONPATH}
+RUN cd /build/tvm/python && pip3 install -e .
+
+# Clone MLC-LLM
+RUN git clone --recursive https://github.com/mlc-ai/mlc-llm.git /build/mlc-llm && \
+    cd /build/mlc-llm && \
+    git submodule update --init --recursive
+
+# Install MLC-LLM dependencies
+RUN pip3 install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    transformers \
+    sentencepiece \
+    tiktoken \
+    safetensors \
+    huggingface_hub \
+    openai \
+    httpx \
+    shortuuid \
+    aiohttp \
+    pydantic \
+    typing_extensions \
+    scipy \
+    psutil
+
+# Build MLC-LLM with TVM from source
+WORKDIR /build/mlc-llm
+ENV TVM_SOURCE_DIR=/build/tvm
+ENV TVM_BUILD_PATH=/build/tvm/build
+RUN pip3 install --no-cache-dir .
+
+# Create non-root user
+RUN useradd -m -u 1000 mlc && \
+    mkdir -p /models && \
+    chown -R mlc:mlc /models
+
+USER mlc
+WORKDIR /home/mlc
+
+EXPOSE 8000
+
+ENTRYPOINT ["python", "-m", "mlc_llm"]
+CMD ["serve", "--help"]
