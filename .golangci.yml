@@ -19,8 +19,7 @@ linters-settings:
   lll:
     line-length: 140
   goimports:
-    local-prefixes:
-      - github.com/crb2nu/loom
+    local-prefixes: github.com/crb2nu/loom
   gocritic:
     enabled-tags:
       - diagnostic

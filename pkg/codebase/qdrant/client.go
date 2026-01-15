@@ -438,6 +438,10 @@ func buildFilter(repoID, filePath string, languages []string, chunkTypes []strin
 	return filterMust(conds...)
 }
 
+func Filter(repoID, filePath string, languages []string, chunkTypes []string) map[string]any {
+	return buildFilter(repoID, filePath, languages, chunkTypes)
+}
+
 func match(key, value string) map[string]any {
 	return map[string]any{
 		"key":   key,

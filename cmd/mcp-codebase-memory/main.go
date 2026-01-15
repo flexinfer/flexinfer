@@ -33,7 +33,7 @@ func main() {
 	}
 
 	server := mcp.NewServer("mcp-codebase-memory", version)
-	server.SetInstructions("Semantic codebase index + search. Go indexing now; TS/Python/Rust via tree-sitter later.")
+	server.SetInstructions("Semantic codebase index + search (Go/TS/JS/Python/Rust). Indexing is async (start/poll/cancel).")
 
 	registerTools(server, svc)
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -81,7 +82,7 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 		repoID = derived
 	}
 
-	langs := []string{"go"}
+	langs := s.indexers.SupportedLanguages()
 	if raw, ok := args["languages"].([]any); ok && len(raw) > 0 {
 		var out []string
 		for _, v := range raw {
@@ -132,6 +133,106 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 		"job_id":  jobID,
 		"repo_id": repoID,
 	})
+}
+
+func (s *Service) HandleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+	var chunkTypes []string
+	if raw, ok := args["chunk_types"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				chunkTypes = append(chunkTypes, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	total, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", nil, nil))
+	if err != nil {
+		return nil, err
+	}
+
+	langs := languages
+	if len(langs) == 0 {
+		langs = s.indexers.SupportedLanguages()
+	}
+	ctypes := chunkTypes
+	if len(ctypes) == 0 {
+		ctypes = []string{"function", "method", "class", "module", "import", "variable", "block"}
+	}
+
+	byLang := map[string]int{}
+	for _, l := range langs {
+		n, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", []string{l}, nil))
+		if err != nil {
+			return nil, err
+		}
+		byLang[l] = n
+	}
+
+	byType := map[string]int{}
+	for _, t := range ctypes {
+		n, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", nil, []string{t}))
+		if err != nil {
+			return nil, err
+		}
+		byType[t] = n
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"repo_id":       repoID,
+		"collection":    s.cfg.QdrantCollection,
+		"total_chunks":  total,
+		"by_language":   byLang,
+		"by_chunk_type": byType,
+	})
+}
+
+func (s *Service) HandleDeleteRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID, _ := args["repo_id"].(string)
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required")
+	}
+	confirm, _ := args["confirm"].(bool)
+	if !confirm {
+		return mcp.JSONResult(map[string]any{
+			"ok":      false,
+			"error":   "confirm=true is required",
+			"repo_id": repoID,
+		})
+	}
+	dryRun, _ := args["dry_run"].(bool)
+	if dryRun {
+		count, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", nil, nil))
+		if err != nil {
+			return nil, err
+		}
+		return mcp.JSONResult(map[string]any{
+			"ok":           true,
+			"dry_run":      true,
+			"repo_id":      repoID,
+			"would_delete": count,
+		})
+	}
+
+	if err := s.qdrant.DeleteRepo(ctx, repoID); err != nil {
+		return nil, err
+	}
+	return mcp.JSONResult(map[string]any{"ok": true, "repo_id": repoID})
 }
 
 func (s *Service) HandleIndexPoll(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -462,14 +563,14 @@ func (s *Service) runIndexJob(
 	}
 
 	if fullRefresh {
-		exists, err := s.qdrant.CollectionExists(ctx)
-		if err != nil {
-			s.setJobFailed(jobID, fmt.Sprintf("qdrant collection check: %v", err))
+		exists, existsErr := s.qdrant.CollectionExists(ctx)
+		if existsErr != nil {
+			s.setJobFailed(jobID, fmt.Sprintf("qdrant collection check: %v", existsErr))
 			return
 		}
 		if exists {
-			if err := s.qdrant.DeleteRepo(ctx, repoID); err != nil {
-				s.setJobFailed(jobID, fmt.Sprintf("qdrant delete repo: %v", err))
+			if deleteRepoErr := s.qdrant.DeleteRepo(ctx, repoID); deleteRepoErr != nil {
+				s.setJobFailed(jobID, fmt.Sprintf("qdrant delete repo: %v", deleteRepoErr))
 				return
 			}
 		}
@@ -508,17 +609,17 @@ func (s *Service) runIndexJob(
 		for _, p := range pending {
 			texts = append(texts, p.text)
 		}
-		vectors, err := s.embed.EmbedDocuments(ctx, texts)
-		if err != nil {
-			return err
+		vectors, embedErr := s.embed.EmbedDocuments(ctx, texts)
+		if embedErr != nil {
+			return embedErr
 		}
 		if !ensured {
 			if len(vectors) == 0 || len(vectors[0]) == 0 {
 				return fmt.Errorf("embedding returned empty vector")
 			}
 			vectorSize = len(vectors[0])
-			if err := s.qdrant.EnsureCollection(ctx, vectorSize); err != nil {
-				return err
+			if ensureErr := s.qdrant.EnsureCollection(ctx, vectorSize); ensureErr != nil {
+				return ensureErr
 			}
 			ensured = true
 		}
@@ -536,8 +637,8 @@ func (s *Service) runIndexJob(
 			if end > len(points) {
 				end = len(points)
 			}
-			if err := s.qdrant.Upsert(ctx, points[i:end], true); err != nil {
-				return err
+			if upsertErr := s.qdrant.Upsert(ctx, points[i:end], true); upsertErr != nil {
+				return upsertErr
 			}
 		}
 		pending = pending[:0]
@@ -558,12 +659,12 @@ func (s *Service) runIndexJob(
 			continue
 		}
 
-		if err := s.qdrant.DeleteFile(ctx, repoID, filepath.ToSlash(rel)); err != nil {
+		if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, filepath.ToSlash(rel)); deleteFileErr != nil {
 			// If collection doesn't exist yet, deletion can fail; treat as non-fatal before first ensure.
-			if !ensured && errors.Is(err, qdrant.ErrCollectionNotFound) {
+			if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
 				// ignore
 			} else {
-				s.incrementJobError(jobID, fmt.Sprintf("delete file: %v", err))
+				s.incrementJobError(jobID, fmt.Sprintf("delete file: %v", deleteFileErr))
 			}
 		}
 
@@ -653,5 +754,21 @@ func deriveRepoID(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve root: %w", err)
 	}
-	return schema.ShortSHA256Hex(absRoot), nil
+
+	gitRoot := absRoot
+	if out, err := exec.Command("git", "-C", absRoot, "rev-parse", "--show-toplevel").Output(); err == nil {
+		if s := strings.TrimSpace(string(out)); s != "" {
+			gitRoot = s
+		}
+	}
+
+	if out, err := exec.Command("git", "-C", gitRoot, "config", "--get", "remote.origin.url").Output(); err == nil {
+		remote := strings.TrimSpace(string(out))
+		if remote != "" {
+			remote = strings.TrimSuffix(remote, ".git")
+			return schema.ShortSHA256Hex(remote), nil
+		}
+	}
+
+	return schema.ShortSHA256Hex(gitRoot), nil
 }

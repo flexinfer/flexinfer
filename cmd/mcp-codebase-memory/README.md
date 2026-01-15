@@ -2,10 +2,12 @@
 
 MCP server for semantic codebase indexing + search.
 
-v1 supports Go indexing. TypeScript/Python/Rust indexing will be added later via tree-sitter in Go.
+Supports Go, TypeScript, JavaScript, Python, and Rust indexing.
 
 ## Tools
 
+- `codebase_stats`
+- `codebase_delete_repo`
 - `codebase_index_start`
 - `codebase_index_poll`
 - `codebase_index_cancel`
@@ -48,3 +50,7 @@ HTTP:
 
 `make mcp-codebase-memory`
 
+## Notes
+
+- `codebase_index_start` defaults to indexing all supported languages if `languages` is omitted.
+- `codebase_delete_repo` requires `confirm=true` (and supports `dry_run=true`).

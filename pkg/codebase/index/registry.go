@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/pkg/codebase/index/goindex"
+	"github.com/crb2nu/loom/pkg/codebase/index/pyindex"
+	"github.com/crb2nu/loom/pkg/codebase/index/rsindex"
+	"github.com/crb2nu/loom/pkg/codebase/index/tsindex"
 	"github.com/crb2nu/loom/pkg/codebase/schema"
 )
 
@@ -29,11 +32,24 @@ func NewRegistry(maxFileBytes int64) *Registry {
 		indexers:     make(map[string]Indexer),
 	}
 	r.Register(goindex.New())
+	r.Register(tsindex.NewTypeScript())
+	r.Register(tsindex.NewJavaScript())
+	r.Register(pyindex.New())
+	r.Register(rsindex.New())
 	return r
 }
 
 func (r *Registry) Register(ix Indexer) {
 	r.indexers[ix.Language()] = ix
+}
+
+func (r *Registry) SupportedLanguages() []string {
+	langs := make([]string, 0, len(r.indexers))
+	for k := range r.indexers {
+		langs = append(langs, k)
+	}
+	sort.Strings(langs)
+	return langs
 }
 
 func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []string) ([]string, error) {

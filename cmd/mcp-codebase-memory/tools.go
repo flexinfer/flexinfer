@@ -10,6 +10,51 @@ import (
 
 func registerTools(server *mcp.Server, svc *codebase.Service) {
 	server.AddTool(mcp.Tool{
+		Name:        "codebase_stats",
+		Description: "Get basic stats about an indexed repo (counts by language/chunk_type).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages to count.",
+				},
+				"chunk_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of chunk types to count.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleStats(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_delete_repo",
+		Description: "Delete all indexed vectors for a repo_id (destructive). Requires confirm=true.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id":  map[string]any{"type": "string"},
+				"confirm":  map[string]any{"type": "boolean"},
+				"dry_run":  map[string]any{"type": "boolean"},
+				"reason":   map[string]any{"type": "string"},
+				"comment":  map[string]any{"type": "string"},
+				"operator": map[string]any{"type": "string"},
+			},
+			Required: []string{"repo_id", "confirm"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleDeleteRepo(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
 		Name:        "codebase_index_start",
 		Description: "Start indexing a repository (async job).",
 		InputSchema: mcp.InputSchema{
@@ -26,7 +71,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				"languages": map[string]any{
 					"type":        "array",
 					"items":       map[string]any{"type": "string"},
-					"description": "Languages to index. v1 supports: go.",
+					"description": "Languages to index. If omitted, indexes all supported languages.",
 				},
 				"exclude": map[string]any{
 					"type":        "array",
