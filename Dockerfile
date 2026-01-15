@@ -39,6 +39,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-sequentialthi
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-server-mgmt ./cmd/mcp-server-mgmt
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-youtube ./cmd/mcp-youtube
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-zep ./cmd/mcp-zep
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-docker ./cmd/mcp-docker
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/mcp-jira ./cmd/mcp-jira
 
 # Runtime stage - minimal image

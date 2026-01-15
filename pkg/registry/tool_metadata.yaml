@@ -320,6 +320,46 @@ servers:
         relatedTools: []
         priority: 1
 
+  mcp-docker:
+    description: "Docker CLI operations (containers, images, logs, inspect, exec)"
+    category: "infrastructure"
+    tools:
+      docker_version:
+        usageHint: "Start here to confirm Docker CLI and daemon connectivity"
+        example: "Check client/server versions before debugging failures"
+        relatedTools: ["docker_info"]
+        priority: 1
+      docker_info:
+        usageHint: "Inspect daemon configuration, storage driver, and runtime details"
+        example: "Confirm Docker root dir, cgroup driver, and enabled runtimes"
+        relatedTools: ["docker_version"]
+        priority: 2
+      docker_ps:
+        usageHint: "List containers; use filters to narrow by name/status/label"
+        example: "Find running containers matching a prefix"
+        relatedTools: ["docker_logs", "docker_inspect"]
+        priority: 1
+      docker_images:
+        usageHint: "List images; use filters like dangling=true or reference=repo:*"
+        example: "Check if an image tag exists locally"
+        relatedTools: ["docker_inspect"]
+        priority: 3
+      docker_inspect:
+        usageHint: "Deep inspect of containers/images/volumes/networks"
+        example: "Inspect a container to find mounts, env, and networks"
+        relatedTools: ["docker_ps", "docker_images"]
+        priority: 2
+      docker_logs:
+        usageHint: "Fetch recent container logs; set tail to keep output small"
+        example: "Tail 200 lines for a failing container"
+        relatedTools: ["docker_ps"]
+        priority: 2
+      docker_exec:
+        usageHint: "Run a command inside a container; prefer read-only commands unless you intend changes"
+        example: "Exec 'ls -la' or 'cat /etc/os-release' in a container"
+        relatedTools: ["docker_ps", "docker_inspect"]
+        priority: 4
+
 # Category definitions for profile-based filtering
 categories:
   version-control:
