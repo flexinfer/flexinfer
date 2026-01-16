@@ -452,6 +452,16 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			return nil
 		}
 
+		var fileCache map[string][]float64
+		if embeddings {
+			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, t.relPath, s.cfg.EmbedModel, 4096)
+			if err != nil {
+				s.incrementWatchError(watchID, fmt.Sprintf("embedding cache %s: %v", t.relPath, err))
+			} else {
+				fileCache = cache
+			}
+		}
+
 		if delErr := s.qdrant.DeleteFile(ctx, repoID, t.relPath); delErr != nil && !errors.Is(delErr, qdrant.ErrCollectionNotFound) {
 			return fmt.Errorf("delete before upsert %s: %v", t.relPath, delErr)
 		}
@@ -472,31 +482,66 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 		}
 
 		points := make([]qdrant.Point, 0, len(chunks))
+		embedModel := ""
 		if embeddings {
-			texts := make([]string, 0, len(chunks))
-			for _, ch := range chunks {
+			embedModel = s.cfg.EmbedModel
+		}
+		if embeddings {
+			vectors := make([][]float64, len(chunks))
+			var (
+				texts   []string
+				indices []int
+			)
+			for i, ch := range chunks {
+				if fileCache != nil {
+					if v, ok := fileCache[ch.ContentHash]; ok && len(v) > 0 {
+						vectors[i] = v
+						continue
+					}
+				}
 				text := ch.Content
 				if ch.Docstring != "" {
 					text = ch.Docstring + "\n\n" + text
 				}
 				texts = append(texts, text)
+				indices = append(indices, i)
 			}
-			vectors, err := s.embed.EmbedDocuments(ctx, texts)
-			if err != nil {
-				return fmt.Errorf("embed %s: %v", t.relPath, err)
+
+			if len(texts) > 0 {
+				embedded, err := s.embed.EmbedDocuments(ctx, texts)
+				if err != nil {
+					return fmt.Errorf("embed %s: %v", t.relPath, err)
+				}
+				if len(embedded) != len(texts) {
+					return fmt.Errorf("embed %s: returned %d vectors for %d texts", t.relPath, len(embedded), len(texts))
+				}
+				for j, idx := range indices {
+					vectors[idx] = embedded[j]
+				}
 			}
-			if len(vectors) == 0 || len(vectors[0]) == 0 {
+
+			size := 0
+			for _, v := range vectors {
+				if len(v) > 0 {
+					size = len(v)
+					break
+				}
+			}
+			if size <= 0 {
 				return fmt.Errorf("embed %s: empty vector", t.relPath)
 			}
-			if err := s.qdrant.EnsureCollection(ctx, len(vectors[0])); err != nil {
+			if err := s.qdrant.EnsureCollection(ctx, size); err != nil {
 				return fmt.Errorf("ensure collection: %v", err)
 			}
 
 			for i := range chunks {
+				if len(vectors[i]) == 0 {
+					return fmt.Errorf("embed %s: missing vector", t.relPath)
+				}
 				points = append(points, qdrant.Point{
 					ID:      chunks[i].ID,
 					Vector:  vectors[i],
-					Payload: qdrant.ChunkToPayload(chunks[i], true),
+					Payload: qdrant.ChunkToPayload(chunks[i], true, embedModel),
 				})
 			}
 		} else {
@@ -509,7 +554,7 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 				points = append(points, qdrant.Point{
 					ID:      chunks[i].ID,
 					Vector:  dummy,
-					Payload: qdrant.ChunkToPayload(chunks[i], true),
+					Payload: qdrant.ChunkToPayload(chunks[i], true, embedModel),
 				})
 			}
 		}

@@ -458,7 +458,7 @@ func (c *Client) GetModuleContentHash(ctx context.Context, repoID, filePath stri
 	return chunks[0].ContentHash, true, nil
 }
 
-func ChunkToPayload(ch schema.Chunk, includeContent bool) map[string]any {
+func ChunkToPayload(ch schema.Chunk, includeContent bool, embedModel string) map[string]any {
 	payload := map[string]any{
 		"id":             ch.ID,
 		"schema_version": ch.SchemaVer,
@@ -466,6 +466,7 @@ func ChunkToPayload(ch schema.Chunk, includeContent bool) map[string]any {
 		"file_path":      ch.FilePath,
 		"language":       ch.Language,
 		"chunk_type":     ch.ChunkType,
+		"embed_model":    embedModel,
 		"git_commit":     ch.GitCommit,
 		"git_blame":      ch.GitBlame,
 		"name":           ch.Name,
@@ -522,6 +523,150 @@ func payloadToChunk(payload map[string]any) (*schema.Chunk, error) {
 		Defs:        toStringSlice(payload["definitions"]),
 	}
 	return ch, nil
+}
+
+func (c *Client) GetFileEmbeddingCache(
+	ctx context.Context,
+	repoID string,
+	filePath string,
+	embedModel string,
+	max int,
+) (map[string][]float64, error) {
+	if strings.TrimSpace(embedModel) == "" {
+		return map[string][]float64{}, nil
+	}
+	if max <= 0 {
+		max = 4096
+	}
+
+	filter := filterMust(
+		match("repo_id", repoID),
+		match("file_path", filePath),
+		match("embed_model", embedModel),
+	)
+
+	points, err := c.scrollPointsWithVectors(ctx, filter, max)
+	if err != nil {
+		if errors.Is(err, ErrCollectionNotFound) {
+			return map[string][]float64{}, nil
+		}
+		return nil, err
+	}
+
+	cache := make(map[string][]float64, len(points))
+	for _, p := range points {
+		hash := toString(p.Payload["content_hash"])
+		if hash == "" || len(p.Vector) == 0 {
+			continue
+		}
+		if _, ok := cache[hash]; ok {
+			continue
+		}
+		cache[hash] = p.Vector
+	}
+	return cache, nil
+}
+
+type scrolledPoint struct {
+	Payload map[string]any
+	Vector  []float64
+}
+
+func (c *Client) scrollPointsWithVectors(ctx context.Context, filter map[string]any, max int) ([]scrolledPoint, error) {
+	var out []scrolledPoint
+	var offset any
+
+	for {
+		remaining := max - len(out)
+		if remaining <= 0 {
+			break
+		}
+		limit := remaining
+		if limit > 256 {
+			limit = 256
+		}
+
+		body := map[string]any{
+			"filter":       filter,
+			"limit":        limit,
+			"with_payload": true,
+			"with_vector":  true,
+		}
+		if offset != nil {
+			body["offset"] = offset
+		}
+
+		path := fmt.Sprintf("/collections/%s/points/scroll", c.collection)
+		var resp struct {
+			Result struct {
+				Points []struct {
+					Payload map[string]any `json:"payload"`
+					Vector  any            `json:"vector"`
+				} `json:"points"`
+				NextPageOffset any `json:"next_page_offset"`
+			} `json:"result"`
+		}
+
+		if err := c.doJSON(ctx, http.MethodPost, path, body, &resp); err != nil {
+			return nil, err
+		}
+
+		for _, p := range resp.Result.Points {
+			vec := vectorFromAny(p.Vector)
+			if vec == nil {
+				continue
+			}
+			out = append(out, scrolledPoint{Payload: p.Payload, Vector: vec})
+		}
+
+		if resp.Result.NextPageOffset == nil || len(resp.Result.Points) == 0 {
+			break
+		}
+		offset = resp.Result.NextPageOffset
+	}
+
+	return out, nil
+}
+
+func vectorFromAny(v any) []float64 {
+	switch raw := v.(type) {
+	case []float64:
+		if len(raw) == 0 {
+			return nil
+		}
+		return raw
+	case []any:
+		out := make([]float64, 0, len(raw))
+		for _, it := range raw {
+			switch n := it.(type) {
+			case float64:
+				out = append(out, n)
+			case int:
+				out = append(out, float64(n))
+			case int64:
+				out = append(out, float64(n))
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case map[string]any:
+		// Named vectors: prefer "default" if present; otherwise take the first vector-like value.
+		if def, ok := raw["default"]; ok {
+			if vec := vectorFromAny(def); vec != nil {
+				return vec
+			}
+		}
+		for _, vv := range raw {
+			if vec := vectorFromAny(vv); vec != nil {
+				return vec
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (c *Client) scrollAllForFile(ctx context.Context, repoID, filePath string, max int) ([]schema.Chunk, error) {

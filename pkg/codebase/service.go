@@ -1453,8 +1453,9 @@ func (s *Service) runIndexJob(
 	s.jobsMu.Unlock()
 
 	type pendingChunk struct {
-		chunk schema.Chunk
-		text  string
+		chunk  schema.Chunk
+		text   string
+		vector []float64
 	}
 
 	var (
@@ -1464,6 +1465,11 @@ func (s *Service) runIndexJob(
 		embedBatch  = s.cfg.EmbedBatchSize
 		upsertBatch = s.cfg.UpsertBatchSize
 	)
+
+	embedModel := ""
+	if embeddings {
+		embedModel = s.cfg.EmbedModel
+	}
 
 	if !embeddings {
 		exists, size, err := s.qdrant.GetCollectionVectorSize(ctx)
@@ -1500,40 +1506,62 @@ func (s *Service) runIndexJob(
 		if len(pending) == 0 {
 			return nil
 		}
-		var vectors [][]float64
 		if embeddings {
-			texts := make([]string, 0, len(pending))
-			for _, p := range pending {
+			var (
+				texts   []string
+				indices []int
+			)
+			for i, p := range pending {
+				if len(p.vector) > 0 {
+					continue
+				}
 				texts = append(texts, p.text)
+				indices = append(indices, i)
 			}
-			var embedErr error
-			vectors, embedErr = s.embed.EmbedDocuments(ctx, texts)
-			if embedErr != nil {
-				return embedErr
+
+			if len(texts) > 0 {
+				vectors, embedErr := s.embed.EmbedDocuments(ctx, texts)
+				if embedErr != nil {
+					return embedErr
+				}
+				if len(vectors) != len(texts) {
+					return fmt.Errorf("embedding returned %d vectors for %d texts", len(vectors), len(texts))
+				}
+				for j, idx := range indices {
+					pending[idx].vector = vectors[j]
+				}
 			}
+
 			if !ensured {
-				if len(vectors) == 0 || len(vectors[0]) == 0 {
+				for _, p := range pending {
+					if len(p.vector) > 0 {
+						vectorSize = len(p.vector)
+						break
+					}
+				}
+				if vectorSize <= 0 {
 					return fmt.Errorf("embedding returned empty vector")
 				}
-				vectorSize = len(vectors[0])
 				if ensureErr := s.qdrant.EnsureCollection(ctx, vectorSize); ensureErr != nil {
 					return ensureErr
 				}
 				ensured = true
 			}
 		} else {
-			vectors = make([][]float64, len(pending))
-			for i := range vectors {
-				vectors[i] = dummyVec()
+			for i := range pending {
+				pending[i].vector = dummyVec()
 			}
 		}
 
 		points := make([]qdrant.Point, 0, len(pending))
-		for i, p := range pending {
+		for _, p := range pending {
+			if len(p.vector) == 0 {
+				return fmt.Errorf("missing vector for chunk %s", p.chunk.ID)
+			}
 			points = append(points, qdrant.Point{
 				ID:      p.chunk.ID,
-				Vector:  vectors[i],
-				Payload: qdrant.ChunkToPayload(p.chunk, true),
+				Vector:  p.vector,
+				Payload: qdrant.ChunkToPayload(p.chunk, true, embedModel),
 			})
 		}
 		for i := 0; i < len(points); i += upsertBatch {
@@ -1582,6 +1610,16 @@ func (s *Service) runIndexJob(
 			}
 		}
 
+		var fileCache map[string][]float64
+		if embeddings && !fullRefresh {
+			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.cfg.EmbedModel, 4096)
+			if err != nil {
+				s.incrementJobError(jobID, fmt.Sprintf("embedding cache %s: %v", relSlash, err))
+			} else {
+				fileCache = cache
+			}
+		}
+
 		if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, relSlash); deleteFileErr != nil {
 			// If collection doesn't exist yet, deletion can fail; treat as non-fatal before first ensure.
 			if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
@@ -1609,7 +1647,13 @@ func (s *Service) runIndexJob(
 			if ch.Docstring != "" {
 				text = ch.Docstring + "\n\n" + text
 			}
-			pending = append(pending, pendingChunk{chunk: ch, text: text})
+			var vec []float64
+			if embeddings && fileCache != nil {
+				if v, ok := fileCache[ch.ContentHash]; ok && len(v) > 0 {
+					vec = v
+				}
+			}
+			pending = append(pending, pendingChunk{chunk: ch, text: text, vector: vec})
 		}
 
 		s.incrementFilesDone(jobID, len(chunks))

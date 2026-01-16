@@ -42,7 +42,7 @@ func TestChunkToPayload_IncludesCallNames(t *testing.T) {
 		SchemaVer: schema.Version,
 	}
 
-	payload := ChunkToPayload(ch, false)
+	payload := ChunkToPayload(ch, false, "")
 	raw, ok := payload["call_names"]
 	if !ok {
 		t.Fatalf("expected call_names in payload")
@@ -120,5 +120,38 @@ func TestEnsureCollection_ErrOnVectorSizeMismatch(t *testing.T) {
 	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
 	if err := c.EnsureCollection(context.Background(), 16); err == nil {
 		t.Fatalf("expected error on vector size mismatch")
+	}
+}
+
+func TestGetFileEmbeddingCache(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/collections/test/points/scroll" {
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"result":{"points":[` +
+				`{"payload":{"content_hash":"h1"},"vector":[1,2,3]},` +
+				`{"payload":{"content_hash":"h2"},"vector":{"default":[4,5,6]}},` +
+				`{"payload":{"content_hash":"h3"},"vector":[]}` +
+				`],"next_page_offset":null}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+	cache, err := c.GetFileEmbeddingCache(context.Background(), "repo", "file", "model", 10)
+	if err != nil {
+		t.Fatalf("GetFileEmbeddingCache err=%v", err)
+	}
+	if len(cache) != 2 {
+		t.Fatalf("cache size=%d want 2", len(cache))
+	}
+	if got := cache["h1"]; len(got) != 3 || got[0] != 1 {
+		t.Fatalf("cache[h1]=%v want [1 2 3]", got)
+	}
+	if got := cache["h2"]; len(got) != 3 || got[0] != 4 {
+		t.Fatalf("cache[h2]=%v want [4 5 6]", got)
 	}
 }
