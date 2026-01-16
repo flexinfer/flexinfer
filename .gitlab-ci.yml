@@ -15,6 +15,9 @@ variables:
   BINARY_NAME: "loom"
   # Minimum test coverage threshold (percentage)
   COVERAGE_THRESHOLD: "20"
+  IMAGE_REGISTRY: registry.harbor.lan
+  CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
+  DOCKER_CONFIG: /kaniko/.docker
 
 # Cache Go modules and build cache
 cache:
@@ -330,3 +333,32 @@ deploy:homebrew:
   rules:
     - if: $CI_COMMIT_TAG
   when: manual
+
+build:image:custom-server:
+  stage: deploy
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  script:
+    - mkdir -p "$DOCKER_CONFIG"
+    - >
+      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
+      "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
+    - export IMAGE="$IMAGE_REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server"
+      --destination "$IMAGE:$CI_COMMIT_SHORT_SHA"
+      --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        /kaniko/executor \
+          --context "$CI_PROJECT_DIR" \
+          --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
+          --destination "$IMAGE:latest" \
+          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
