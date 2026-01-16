@@ -33,6 +33,7 @@ type Config struct {
 	Target       string
 	HubURL       string
 	HubFallback  bool
+	HubPrefer    bool
 	WarmOnStart  []string
 	Debug        bool
 }
@@ -46,6 +47,7 @@ func DefaultConfig() Config {
 		Target:       "codex",
 		HubURL:       "wss://mcp.flexinfer.ai/ws",
 		HubFallback:  true,
+		HubPrefer:    false,
 		WarmOnStart:  nil,
 		Debug:        false,
 	}
@@ -98,6 +100,9 @@ func New(cfg Config) (*Daemon, error) {
 		}
 		if !cfg.HubFallback && fileCfg.Hub.Enabled {
 			cfg.HubFallback = fileCfg.Hub.Enabled
+		}
+		if !cfg.HubPrefer && fileCfg.Hub.PreferHub {
+			cfg.HubPrefer = fileCfg.Hub.PreferHub
 		}
 		if cfg.Target == "" || cfg.Target == DefaultConfig().Target {
 			if fileCfg.Hub.Profile != "" {
@@ -195,6 +200,20 @@ func New(cfg Config) (*Daemon, error) {
 		FailureThreshold: 3,
 		RecoveryTime:     30 * time.Second,
 	})
+
+	// If configured, prefer hub routing by marking local backends unhealthy for non-local-only servers.
+	// This keeps the local daemon/proxy UX (single entry point) but sends work to the hub for scalability.
+	if cfg.HubPrefer && cfg.HubFallback && hubClient != nil {
+		for _, srv := range reg.Servers {
+			if srv == nil || srv.IsLocalOnly() {
+				continue
+			}
+			for i := 0; i < 3; i++ { // failureThreshold
+				rtr.RecordFailure(srv.Name, router.TargetLocal, fmt.Errorf("hub preferred"))
+			}
+		}
+		logger.Info("hub prefer enabled (local routing disabled for hub-capable servers)")
+	}
 
 	// Create manifest manager for persistent tool cache
 	manifest := NewManifestManager()

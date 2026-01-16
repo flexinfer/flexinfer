@@ -34,6 +34,7 @@ func main() {
 	flags.StringVar(&cfg.Target, "target", defaultCfg.Target, "Target profile (codex, kilocode, vscode)")
 	flags.StringVar(&cfg.HubURL, "hub-url", defaultCfg.HubURL, "MCP hub WebSocket URL")
 	flags.BoolVar(&cfg.HubFallback, "hub-fallback", defaultCfg.HubFallback, "Fallback to hub when local fails")
+	flags.BoolVar(&cfg.HubPrefer, "hub-prefer", defaultCfg.HubPrefer, "Prefer hub over local servers (hub-capable servers only)")
 	flags.StringSliceVar(&cfg.WarmOnStart, "warm", nil, "Servers to warm up on start")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 

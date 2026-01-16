@@ -64,6 +64,9 @@ type HubConfig struct {
 	// Enabled controls whether hub fallback is enabled
 	Enabled bool `yaml:"enabled"`
 
+	// PreferHub forces routing to prefer hub over local servers when available.
+	PreferHub bool `yaml:"prefer_hub,omitempty"`
+
 	// Profile is the hub profile to use (e.g., "codex", "claude")
 	Profile string `yaml:"profile"`
 
@@ -89,6 +92,7 @@ func DefaultFileConfig() FileConfig {
 		Hub: HubConfig{
 			URL:                      "wss://mcp.flexinfer.ai/ws",
 			Enabled:                  true,
+			PreferHub:                false,
 			Profile:                  "codex",
 			ReconnectIntervalSeconds: 5,
 			PingIntervalSeconds:      30,
