@@ -880,7 +880,10 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 		if wasNotReady {
 			m.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			// Mark as resident and update access time when transitioning to Ready
-			r.markCacheResident(ctx, m)
+			if err := r.markCacheResident(ctx, m); err != nil {
+				log.Error(err, "Failed to mark cache as resident")
+				// Continue anyway, non-fatal
+			}
 			if err := r.updateCacheAccessTime(ctx, m); err != nil {
 				log.Error(err, "Failed to update cache access time")
 				// Continue anyway, non-fatal
