@@ -226,6 +226,57 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	})
 
 	server.AddTool(mcp.Tool{
+		Name:        "codebase_text_search",
+		Description: "Lexical fallback search (no embeddings): scans stored chunk payloads for query tokens.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Substring/token query to match against signature/docstring/content.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to restrict search (relative to repo root).",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages to scan.",
+				},
+				"chunk_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of chunk types to scan.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum results (default 10, max 200).",
+				},
+				"max_scan": map[string]any{
+					"type":        "integer",
+					"description": "Maximum chunks to scan before stopping (default 2000).",
+				},
+				"case_sensitive": map[string]any{
+					"type":        "boolean",
+					"description": "If true, do case-sensitive matches (default false).",
+				},
+				"include_content": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include full content in returned chunks (can be large).",
+				},
+			},
+			Required: []string{"query"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTextSearch(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_definition",
 		Description: "Jump to a symbol definition (best-effort; matches indexed chunk name).",
 		InputSchema: mcp.InputSchema{

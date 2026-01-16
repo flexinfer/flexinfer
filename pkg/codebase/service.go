@@ -772,6 +772,177 @@ func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*
 	})
 }
 
+func (s *Service) HandleTextSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	query, _ := args["query"].(string)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	limit := 10
+	switch v := args["limit"].(type) {
+	case float64:
+		if int(v) > 0 {
+			limit = int(v)
+		}
+	case int:
+		if v > 0 {
+			limit = v
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	maxScan := 2000
+	switch v := args["max_scan"].(type) {
+	case float64:
+		if int(v) > 0 {
+			maxScan = int(v)
+		}
+	case int:
+		if v > 0 {
+			maxScan = v
+		}
+	}
+	if maxScan > 50_000 {
+		maxScan = 50_000
+	}
+
+	caseSensitive := false
+	if v, ok := args["case_sensitive"].(bool); ok {
+		caseSensitive = v
+	}
+
+	includeContent := false
+	if v, ok := args["include_content"].(bool); ok {
+		includeContent = v
+	}
+
+	filePath, _ := args["file_path"].(string)
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	var chunkTypes []string
+	if raw, ok := args["chunk_types"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				chunkTypes = append(chunkTypes, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	filter := qdrant.Filter(repoID, filePath, languages, chunkTypes)
+	chunks, err := s.qdrant.ScrollChunks(ctx, filter, maxScan)
+	if err != nil {
+		return nil, err
+	}
+
+	toks := lexicalTokens(query)
+	// If query is too short for tokenization, fall back to a literal substring match.
+	if len(toks) == 0 {
+		toks = []string{strings.ToLower(query)}
+	}
+
+	type scored struct {
+		chunk schema.Chunk
+		score float64
+		hits  int
+	}
+	scoredChunks := make([]scored, 0, len(chunks))
+
+	var q string
+	if caseSensitive {
+		q = query
+	} else {
+		q = strings.ToLower(query)
+	}
+
+	for _, ch := range chunks {
+		text := ch.Signature + "\n" + ch.Docstring + "\n" + ch.Content
+		if !caseSensitive {
+			text = strings.ToLower(text)
+		}
+
+		// Prefer exact substring match if possible.
+		exact := 0
+		if q != "" && strings.Contains(text, q) {
+			exact = 1
+		}
+
+		hits := 0
+		for _, tok := range toks {
+			if tok != "" && strings.Contains(text, tok) {
+				hits++
+			}
+		}
+		if hits == 0 && exact == 0 {
+			continue
+		}
+
+		score := float64(hits) / float64(len(toks))
+		if exact > 0 {
+			score = minFloat64(1.0, score+0.25)
+		}
+		scoredChunks = append(scoredChunks, scored{chunk: ch, score: score, hits: hits})
+	}
+
+	sort.SliceStable(scoredChunks, func(i, j int) bool {
+		if scoredChunks[i].score == scoredChunks[j].score {
+			if scoredChunks[i].hits == scoredChunks[j].hits {
+				if scoredChunks[i].chunk.FilePath == scoredChunks[j].chunk.FilePath {
+					return scoredChunks[i].chunk.StartLine < scoredChunks[j].chunk.StartLine
+				}
+				return scoredChunks[i].chunk.FilePath < scoredChunks[j].chunk.FilePath
+			}
+			return scoredChunks[i].hits > scoredChunks[j].hits
+		}
+		return scoredChunks[i].score > scoredChunks[j].score
+	})
+
+	results := make([]schema.SearchResult, 0, minInt(limit, len(scoredChunks)))
+	for i := 0; i < len(scoredChunks) && len(results) < limit; i++ {
+		ch := scoredChunks[i].chunk
+		if !includeContent {
+			ch.Content = ""
+		}
+		results = append(results, schema.SearchResult{
+			Score: scoredChunks[i].score,
+			Chunk: ch,
+		})
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"repo_id":         repoID,
+		"query":           query,
+		"file_path":       filePath,
+		"case_sensitive":  caseSensitive,
+		"scanned_chunks":  len(chunks),
+		"matched_chunks":  len(scoredChunks),
+		"max_scan":        maxScan,
+		"limit":           limit,
+		"languages":       languages,
+		"chunk_types":     chunkTypes,
+		"include_content": includeContent,
+		"results":         results,
+	})
+}
+
 type graphNode struct {
 	Symbol     string        `json:"symbol"`
 	External   bool          `json:"external,omitempty"`
@@ -1411,6 +1582,20 @@ func (s *Service) runIndexJob(
 
 	s.setJobDone(jobID)
 	_ = vectorSize
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func minFloat64(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (s *Service) setJobFailed(jobID, msg string) {

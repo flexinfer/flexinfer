@@ -441,6 +441,10 @@ func (c *Client) scrollAllForFile(ctx context.Context, repoID, filePath string, 
 	return c.scroll(ctx, buildFilter(repoID, filePath, nil, nil), max)
 }
 
+func (c *Client) ScrollChunks(ctx context.Context, filter map[string]any, max int) ([]schema.Chunk, error) {
+	return c.scroll(ctx, filter, max)
+}
+
 func (c *Client) scroll(ctx context.Context, filter map[string]any, max int) ([]schema.Chunk, error) {
 	var out []schema.Chunk
 	var offset any
