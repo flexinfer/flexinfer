@@ -18,6 +18,9 @@ variables:
   IMAGE_REGISTRY: registry.harbor.lan
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
   DOCKER_CONFIG: /kaniko/.docker
+  # The CI runner injects a pre-build step that waits for a Docker daemon when DOCKER_HOST is tcp://localhost:2375.
+  # This repo doesn't use DinD for its Go jobs; disable that wait globally to prevent jobs hanging.
+  DOCKER_HOST: ""
 
 # Cache Go modules and build cache
 cache:
