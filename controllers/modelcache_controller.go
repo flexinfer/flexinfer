@@ -880,11 +880,11 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 		if wasNotReady {
 			m.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			// Mark as resident and update access time when transitioning to Ready
-			now := metav1.Now()
-			if m.Status.ResidentSince == nil {
-				m.Status.ResidentSince = &now
+			r.markCacheResident(ctx, m)
+			if err := r.updateCacheAccessTime(ctx, m); err != nil {
+				log.Error(err, "Failed to update cache access time")
+				// Continue anyway, non-fatal
 			}
-			m.Status.LastAccessTime = &now
 			log.Info("ModelCache (Memory) is Ready", "readyNodes", readyNodes, "totalNodes", totalNodes, "path", modelPath)
 		}
 	} else if readyNodes < totalNodes {

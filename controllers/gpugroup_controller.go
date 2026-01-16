@@ -342,6 +342,26 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 			}
 			return "", "hysteresis window"
 		}
+
+		// Check demand trend for the winning model if it's not the current active
+		if winner.name != currentActive {
+			// Find the model status for trend analysis
+			for i := range gpuGroup.Status.ModelStatuses {
+				if gpuGroup.Status.ModelStatuses[i].Name == winner.name {
+					// Minimum stability of 50% required for trend-based decisions
+					if !r.shouldSwapBasedOnTrend(&gpuGroup.Status.ModelStatuses[i], 50) {
+						log.Info("Trend analysis does not support swap",
+							"model", winner.name, "trend", gpuGroup.Status.ModelStatuses[i].TrendDirection,
+							"stability", gpuGroup.Status.ModelStatuses[i].TrendStability)
+						if currentActive != "" {
+							return currentActive, "trend analysis"
+						}
+						return "", "trend analysis"
+					}
+					break
+				}
+			}
+		}
 	}
 
 	return winner.name, fmt.Sprintf("demand: queue=%d, priority=%d", winner.queueDepth, winner.priority)
