@@ -1557,6 +1557,11 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "ROCR_VISIBLE_DEVICES",
 				Value: "0",
 			})
+			// Use fp16 for VRAM efficiency on AMD GPUs
+			env = append(env, corev1.EnvVar{
+				Name:  "USE_FP16",
+				Value: "1",
+			})
 		}
 		return env
 	case "tei":
