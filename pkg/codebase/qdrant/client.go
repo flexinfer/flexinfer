@@ -702,3 +702,7 @@ func normalizeCallNames(calls []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+func NormalizeCallToken(s string) string {
+	return normalizeCallToken(s)
+}

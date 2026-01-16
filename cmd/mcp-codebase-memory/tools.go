@@ -384,4 +384,54 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleFindCallees(ctx, args)
 	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_call_graph",
+		Description: "Build a best-effort call graph around a symbol using stored calls[] + caller queries (BFS).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"symbol": map[string]any{
+					"type":        "string",
+					"description": "Root symbol name.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Optional file path to disambiguate the root definition (relative to repo root).",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages when resolving definitions.",
+				},
+				"direction": map[string]any{
+					"type":        "string",
+					"description": "Graph direction: out (callees), in (callers), or both.",
+				},
+				"depth": map[string]any{
+					"type":        "integer",
+					"description": "BFS depth (default 2, max 10).",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Per-step query limit for caller/definition lookups (default CODEBASE_SCROLL_LIMIT).",
+				},
+				"max_nodes": map[string]any{
+					"type":        "integer",
+					"description": "Maximum nodes to explore (default 200).",
+				},
+				"include_external": map[string]any{
+					"type":        "boolean",
+					"description": "If true, include external/builtin calls as nodes when possible (default true).",
+				},
+			},
+			Required: []string{"symbol"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleCallGraph(ctx, args)
+	})
 }

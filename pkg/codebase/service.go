@@ -771,6 +771,224 @@ func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*
 	})
 }
 
+type graphNode struct {
+	Symbol     string        `json:"symbol"`
+	External   bool          `json:"external,omitempty"`
+	Definition *schema.Chunk `json:"definition,omitempty"`
+}
+
+type graphEdge struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Kind     string `json:"kind"`
+	CallExpr string `json:"call_expr,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
+	Line     int    `json:"line,omitempty"`
+}
+
+func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	symbol, _ := args["symbol"].(string)
+	if strings.TrimSpace(symbol) == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+
+	filePath, _ := args["file_path"].(string)
+
+	direction := "out"
+	if v, ok := args["direction"].(string); ok && strings.TrimSpace(v) != "" {
+		direction = strings.ToLower(strings.TrimSpace(v))
+	}
+	if direction != "out" && direction != "in" && direction != "both" {
+		return nil, fmt.Errorf("direction must be one of: out, in, both")
+	}
+
+	depth := 2
+	switch v := args["depth"].(type) {
+	case float64:
+		if int(v) >= 0 {
+			depth = int(v)
+		}
+	case int:
+		if v >= 0 {
+			depth = v
+		}
+	}
+	if depth > 10 {
+		depth = 10
+	}
+
+	limit := s.cfg.ScrollLimit
+	switch v := args["limit"].(type) {
+	case float64:
+		if int(v) > 0 {
+			limit = int(v)
+		}
+	case int:
+		if v > 0 {
+			limit = v
+		}
+	}
+
+	maxNodes := 200
+	switch v := args["max_nodes"].(type) {
+	case float64:
+		if int(v) > 0 {
+			maxNodes = int(v)
+		}
+	case int:
+		if v > 0 {
+			maxNodes = v
+		}
+	}
+	if maxNodes > 2000 {
+		maxNodes = 2000
+	}
+
+	includeExternal := true
+	if v, ok := args["include_external"].(bool); ok {
+		includeExternal = v
+	}
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	nodes := map[string]*graphNode{}
+	addNode := func(sym string, external bool) {
+		if strings.TrimSpace(sym) == "" {
+			return
+		}
+		if nodes[sym] == nil {
+			nodes[sym] = &graphNode{Symbol: sym, External: external}
+		} else if !external {
+			nodes[sym].External = false
+		}
+	}
+
+	edges := []graphEdge{}
+	addEdge := func(e graphEdge) {
+		if strings.TrimSpace(e.From) == "" || strings.TrimSpace(e.To) == "" {
+			return
+		}
+		edges = append(edges, e)
+	}
+
+	seen := map[string]bool{}
+	frontier := []string{symbol}
+	seen[symbol] = true
+	addNode(symbol, false)
+
+	attachDefinition := func(sym string, fp string) *schema.Chunk {
+		ch, err := s.qdrant.FindChunkByName(ctx, repoID, sym, fp, languages, limit)
+		if err != nil || ch == nil {
+			return nil
+		}
+		ch.Content = ""
+		return ch
+	}
+
+	if def := attachDefinition(symbol, filePath); def != nil {
+		nodes[symbol].Definition = def
+	}
+
+	for level := 0; level < depth; level++ {
+		if len(frontier) == 0 {
+			break
+		}
+
+		next := make([]string, 0, len(frontier)*2)
+		for _, cur := range frontier {
+			if direction == "out" || direction == "both" {
+				def := nodes[cur].Definition
+				if def == nil {
+					def = attachDefinition(cur, "")
+					nodes[cur].Definition = def
+				}
+				if def != nil {
+					for _, call := range def.Calls {
+						tok := qdrant.NormalizeCallToken(call)
+						if tok == "" {
+							continue
+						}
+						if tok == cur {
+							continue
+						}
+						if includeExternal {
+							addNode(tok, strings.Contains(call, ".") || strings.Contains(call, "::"))
+						} else {
+							addNode(tok, false)
+						}
+						addEdge(graphEdge{From: cur, To: tok, Kind: "calls", CallExpr: call})
+						if len(seen) < maxNodes && !seen[tok] {
+							seen[tok] = true
+							next = append(next, tok)
+						}
+					}
+				}
+			}
+
+			if direction == "in" || direction == "both" {
+				callers, err := s.qdrant.FindCallers(ctx, repoID, cur, limit)
+				if err != nil {
+					continue
+				}
+				for _, c := range callers {
+					if strings.TrimSpace(c.FunctionName) == "" {
+						continue
+					}
+					addNode(c.FunctionName, false)
+					addEdge(graphEdge{
+						From:     c.FunctionName,
+						To:       cur,
+						Kind:     "calls",
+						CallExpr: c.CallExpr,
+						FilePath: c.FilePath,
+						Line:     c.LineNumber,
+					})
+					if len(seen) < maxNodes && !seen[c.FunctionName] {
+						seen[c.FunctionName] = true
+						next = append(next, c.FunctionName)
+					}
+				}
+			}
+		}
+
+		frontier = next
+	}
+
+	outNodes := make([]graphNode, 0, len(nodes))
+	for _, n := range nodes {
+		outNodes = append(outNodes, *n)
+	}
+	sort.Slice(outNodes, func(i, j int) bool { return outNodes[i].Symbol < outNodes[j].Symbol })
+
+	return mcp.JSONResult(map[string]any{
+		"repo_id":   repoID,
+		"symbol":    symbol,
+		"file_path": filePath,
+		"direction": direction,
+		"depth":     depth,
+		"max_nodes": maxNodes,
+		"nodes":     outNodes,
+		"edges":     edges,
+		"languages": languages,
+		"truncated": len(seen) >= maxNodes,
+	})
+}
+
 func (s *Service) runIndexJob(
 	ctx context.Context,
 	jobID string,

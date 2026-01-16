@@ -20,6 +20,7 @@ Supports Go, TypeScript, JavaScript, Python, and Rust indexing.
 - `codebase_get_context`
 - `codebase_find_callers`
 - `codebase_find_callees`
+- `codebase_call_graph`
 
 ## Configuration (env vars)
 
