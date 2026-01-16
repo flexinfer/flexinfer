@@ -905,8 +905,9 @@ ls -la /checkpoints || true
 					},
 					InitContainers: initContainers,
 					Containers: []corev1.Container{{
-						Image: backendImage,
-						Name:  "llm-backend",
+						Image:           backendImage,
+						ImagePullPolicy: corev1.PullAlways,
+						Name:            "llm-backend",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: r.getBackendPort(m),
 							Name:          "http",

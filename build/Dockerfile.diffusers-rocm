@@ -119,16 +119,9 @@ def check_gpu():
             print(f"    Architecture: gfx{props.major}{props.minor}0" if hasattr(props, 'major') else "    Architecture: unknown")
         gpu_info = torch.cuda.get_device_properties(0).name
 
-        # Test basic tensor operation
-        print("Testing basic GPU operation...")
-        try:
-            x = torch.randn(100, 100, device='cuda')
-            y = torch.matmul(x, x)
-            del x, y
-            torch.cuda.empty_cache()
-            print("  Basic GPU test: PASSED")
-        except Exception as e:
-            print(f"  Basic GPU test: FAILED - {e}")
+        # Skip basic tensor test - torch.randn on ROCm gfx1100 can cause SIGSEGV
+        # GPU functionality will be verified during model loading
+        print("  GPU detected, will verify during model load")
     else:
         print("WARNING: No CUDA/ROCm GPU detected!")
         gpu_info = "CPU only"
@@ -281,7 +274,9 @@ async def list_models():
 async def generate_images(request: ImageGenerationRequest):
     global pipeline
 
-    model_id = request.model or os.environ.get("MODEL_ID") or os.environ.get("MODEL")
+    # Prioritize environment variable (set by FlexInfer ModelDeployment) over request model
+    # request.model may be an alias like "image-gen" rather than the actual HuggingFace model ID
+    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or request.model
     if not model_id:
         raise HTTPException(status_code=400, detail="No model specified")
 
