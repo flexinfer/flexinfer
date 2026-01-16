@@ -1429,6 +1429,9 @@ func runProxy(socketPath string) error {
 		case "resources/list":
 			resp, err = handleProxyResourcesList(ctx, daemon, msg)
 
+		case "resources/templates/list":
+			resp, err = handleProxyResourceTemplatesList(ctx, daemon, msg)
+
 		case "resources/read":
 			resp, err = handleProxyResourcesRead(ctx, daemon, msg)
 
@@ -1649,6 +1652,14 @@ func handleProxyResourcesRead(ctx context.Context, daemon *mcp.StdioTransport, m
 	}
 
 	return daemon.Recv(ctx)
+}
+
+func handleProxyResourceTemplatesList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+	// Some MCP clients (e.g., Codex CLI) probe for resource templates on startup.
+	// Our underlying MCP servers are primarily tool-oriented and many do not
+	// implement templates. Broadcasting this request to all servers can hang if a
+	// server fails to respond to unknown methods, so we return an empty list.
+	return mcp.NewResponse(msg.ID, map[string]any{"resourceTemplates": []any{}})
 }
 
 func handleProxyPromptsList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {

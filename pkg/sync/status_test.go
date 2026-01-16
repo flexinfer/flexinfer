@@ -86,42 +86,6 @@ func TestHashFile_NonExistent(t *testing.T) {
 }
 
 // =============================================================================
-// expandHome Tests
-// =============================================================================
-
-func TestExpandHome_ExpandsTilde(t *testing.T) {
-	home, _ := os.UserHomeDir()
-
-	result := expandHome("~/test")
-	expected := filepath.Join(home, "test")
-
-	if result != expected {
-		t.Errorf("expandHome(\"~/test\") = %q, want %q", result, expected)
-	}
-}
-
-func TestExpandHome_KeepsAbsolutePath(t *testing.T) {
-	result := expandHome("/absolute/path")
-	if result != "/absolute/path" {
-		t.Errorf("expandHome(\"/absolute/path\") = %q, want unchanged", result)
-	}
-}
-
-func TestExpandHome_KeepsRelativePath(t *testing.T) {
-	result := expandHome("relative/path")
-	if result != "relative/path" {
-		t.Errorf("expandHome(\"relative/path\") = %q, want unchanged", result)
-	}
-}
-
-func TestExpandHome_EmptyString(t *testing.T) {
-	result := expandHome("")
-	if result != "" {
-		t.Errorf("expandHome(\"\") = %q, want empty string", result)
-	}
-}
-
-// =============================================================================
 // shouldExclude Tests
 // =============================================================================
 
@@ -142,12 +106,12 @@ func TestShouldExclude_ExactMatch(t *testing.T) {
 func TestShouldExclude_BaseNameMatch(t *testing.T) {
 	m, _ := NewManager("/tmp/repo")
 	profile := &Profile{
-		Excludes: []string{"auth.json"},
+		SecretFiles: []string{"auth.json"},
 	}
 
 	// Should match even in subdirectory
 	if !m.shouldExclude("subdir/auth.json", profile) {
-		t.Error("should exclude subdir/auth.json by basename")
+		t.Error("should exclude subdir/auth.json by basename (secret file)")
 	}
 }
 
@@ -424,6 +388,51 @@ func TestGetSyncStatus_InSync(t *testing.T) {
 	}
 	if status.Profile != "test" {
 		t.Errorf("expected Profile = test, got %s", status.Profile)
+	}
+}
+
+func TestGetSyncStatus_ResolvesRelativeHomeDir(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Ensure we don't accidentally resolve relative paths against the test CWD.
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+	_ = os.Chdir(t.TempDir())
+
+	// Create matching files
+	repoProfileDir := filepath.Join(repoDir, "test-profile")
+	homeProfileDir := filepath.Join(homeDir, ".test-home")
+	os.MkdirAll(repoProfileDir, 0755)
+	os.MkdirAll(homeProfileDir, 0755)
+	os.WriteFile(filepath.Join(repoProfileDir, "mcp.json"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(homeProfileDir, "mcp.json"), []byte("content"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           ".test-home",
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.HomeExists {
+		t.Fatalf("expected HomeExists = true, got false (homePath=%s)", status.HomePath)
+	}
+	if !status.InSync {
+		t.Fatalf("expected InSync = true, got false (drift=%v)", status.DriftDetails)
+	}
+	if len(status.DriftDetails) != 1 || status.DriftDetails[0].File != "mcp.json" {
+		t.Fatalf("expected single drift item for mcp.json, got %v", status.DriftDetails)
 	}
 }
 

@@ -16,6 +16,10 @@ type Profile struct {
 	SecretFiles     []string
 	GeneratorTarget string // Target name for the generator (e.g. "codex")
 	GeneratedFile   string // Filename generated (e.g. "config.toml")
+	// SyncGeneratedOnly limits sync/backup/status to GeneratedFile only.
+	// This is important for profiles whose HomeDir points at large application
+	// directories (e.g. VS Code/Claude Desktop) where we only manage mcp.json.
+	SyncGeneratedOnly bool
 }
 
 // Manager handles synchronization operations.
@@ -66,23 +70,25 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["claude"] = &Profile{
-		Name:            "claude",
-		RepoDir:         ".claude",
-		HomeDir:         ".claude",
-		Excludes:        []string{"auth.json", "sessions", "backups"},
-		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "claude", // Uses mcp.json format (same as vscode)
-		GeneratedFile:   "mcp.json",
+		Name:              "claude",
+		RepoDir:           ".claude",
+		HomeDir:           ".claude",
+		Excludes:          []string{"auth.json", "sessions", "backups"},
+		SecretFiles:       []string{"auth.json"},
+		GeneratorTarget:   "claude", // Uses mcp.json format (same as vscode)
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["claude_desktop"] = &Profile{
-		Name:            "claude_desktop",
-		RepoDir:         "claude_desktop_config",
-		HomeDir:         "Library/Application Support/Claude",
-		Excludes:        []string{"backups"},
-		SecretFiles:     []string{},
-		GeneratorTarget: "claude_desktop",
-		GeneratedFile:   "claude_desktop_config.json",
+		Name:              "claude_desktop",
+		RepoDir:           "claude_desktop_config",
+		HomeDir:           "Library/Application Support/Claude",
+		Excludes:          []string{"backups"},
+		SecretFiles:       []string{},
+		GeneratorTarget:   "claude_desktop",
+		GeneratedFile:     "claude_desktop_config.json",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["gemini"] = &Profile{
@@ -103,9 +109,10 @@ func (m *Manager) registerProfiles() {
 			"auth.json", "sessions", "backups", "extensions",
 			"antigravity", "argv.json", "logs", "CachedData",
 		},
-		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "antigravity", // Uses mcp.json format (VSCode fork)
-		GeneratedFile:   "mcp.json",
+		SecretFiles:       []string{"auth.json"},
+		GeneratorTarget:   "antigravity", // Uses mcp.json format (VSCode fork)
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["vscode"] = &Profile{
@@ -124,9 +131,10 @@ func (m *Manager) registerProfiles() {
 			"CachedData",
 			"logs",
 		},
-		SecretFiles:     []string{},
-		GeneratorTarget: "vscode",
-		GeneratedFile:   "mcp.json",
+		SecretFiles:       []string{},
+		GeneratorTarget:   "vscode",
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
 	}
 }
 

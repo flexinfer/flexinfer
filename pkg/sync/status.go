@@ -62,8 +62,8 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 		return nil, nil
 	}
 
-	repoPath := filepath.Join(m.RepoRoot, profile.RepoDir)
-	homePath := expandHome(profile.HomeDir)
+	repoPath := m.ResolveRepoPath(profile)
+	homePath := m.ResolveHomePath(profile)
 
 	status := &SyncStatus{
 		Profile:  profileName,
@@ -87,7 +87,11 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 	}
 
 	// Compare files
-	status.DriftDetails = m.compareDirectories(repoPath, homePath, profile)
+	if profile.SyncGeneratedOnly {
+		status.DriftDetails = compareGeneratedFile(repoPath, homePath, profile)
+	} else {
+		status.DriftDetails = m.compareDirectories(repoPath, homePath, profile)
+	}
 	for _, item := range status.DriftDetails {
 		if item.Status != DriftInSync {
 			status.InSync = false
@@ -191,10 +195,8 @@ func (m *Manager) compareDirectories(repoPath, homePath string, profile *Profile
 
 // shouldExclude checks if a file should be excluded from comparison.
 func (m *Manager) shouldExclude(path string, profile *Profile) bool {
-	for _, exc := range profile.Excludes {
-		if path == exc || filepath.Base(path) == exc {
-			return true
-		}
+	if shouldExclude(path, profile.Excludes) {
+		return true
 	}
 	for _, secret := range profile.SecretFiles {
 		if path == secret || filepath.Base(path) == secret {
@@ -220,11 +222,36 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)[:8]), nil
 }
 
-// expandHome expands ~ to home directory.
-func expandHome(path string) string {
-	if len(path) > 0 && path[0] == '~' {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[1:])
+func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftItem {
+	if profile.GeneratedFile == "" {
+		return []DriftItem{{
+			File:   "",
+			Status: DriftOutOfSync,
+		}}
 	}
-	return path
+
+	rel := profile.GeneratedFile
+	repoFile := filepath.Join(repoPath, rel)
+	homeFile := filepath.Join(homePath, rel)
+
+	repoExists := Exists(repoFile)
+	homeExists := Exists(homeFile)
+
+	switch {
+	case !repoExists && !homeExists:
+		return []DriftItem{{File: rel, Status: DriftMissing}}
+	case repoExists && !homeExists:
+		repoHash, _ := hashFile(repoFile)
+		return []DriftItem{{File: rel, RepoHash: repoHash, Status: DriftMissing}}
+	case !repoExists && homeExists:
+		homeHash, _ := hashFile(homeFile)
+		return []DriftItem{{File: rel, HomeHash: homeHash, Status: DriftExtra}}
+	default:
+		repoHash, _ := hashFile(repoFile)
+		homeHash, _ := hashFile(homeFile)
+		if repoHash != homeHash {
+			return []DriftItem{{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync}}
+		}
+		return []DriftItem{{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync}}
+	}
 }

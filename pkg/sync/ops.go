@@ -60,13 +60,32 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	fmt.Printf("Syncing %s -> %s\n", repoPath, homePath)
 
 	if backup && Exists(homePath) {
-		if err := m.Backup(profileName, "home"); err != nil {
-			return fmt.Errorf("backup failed: %w", err)
+		if !p.SyncGeneratedOnly || (p.GeneratedFile != "" && Exists(filepath.Join(homePath, p.GeneratedFile))) {
+			if err := m.Backup(profileName, "home"); err != nil {
+				return fmt.Errorf("backup failed: %w", err)
+			}
 		}
 	}
 
-	if err := CopyDir(repoPath, homePath, p.Excludes); err != nil {
-		return err
+	if p.SyncGeneratedOnly {
+		if p.GeneratedFile == "" {
+			return fmt.Errorf("profile %s has no generated file", p.Name)
+		}
+		srcFile := filepath.Join(repoPath, p.GeneratedFile)
+		if !Exists(srcFile) {
+			return fmt.Errorf("generated file not found: %s", srcFile)
+		}
+		if err := os.MkdirAll(homePath, 0755); err != nil {
+			return fmt.Errorf("create home dir: %w", err)
+		}
+		dstFile := filepath.Join(homePath, p.GeneratedFile)
+		if err := CopyFile(srcFile, dstFile); err != nil {
+			return err
+		}
+	} else {
+		if err := CopyDir(repoPath, homePath, p.Excludes); err != nil {
+			return err
+		}
 	}
 
 	// Also copy to workspace directory if specified (e.g., .vscode/ for local MCP config)
@@ -172,9 +191,26 @@ func (m *Manager) PullFromHome(profileName string, backup bool) error {
 	fmt.Printf("Pulling %s -> %s\n", homePath, repoPath)
 
 	if backup && Exists(repoPath) {
-		if err := m.Backup(profileName, "repo"); err != nil {
-			return fmt.Errorf("backup failed: %w", err)
+		if !p.SyncGeneratedOnly || (p.GeneratedFile != "" && Exists(filepath.Join(repoPath, p.GeneratedFile))) {
+			if err := m.Backup(profileName, "repo"); err != nil {
+				return fmt.Errorf("backup failed: %w", err)
+			}
 		}
+	}
+
+	if p.SyncGeneratedOnly {
+		if p.GeneratedFile == "" {
+			return fmt.Errorf("profile %s has no generated file", p.Name)
+		}
+		srcFile := filepath.Join(homePath, p.GeneratedFile)
+		if !Exists(srcFile) {
+			return fmt.Errorf("generated file not found: %s", srcFile)
+		}
+		if err := os.MkdirAll(repoPath, 0755); err != nil {
+			return fmt.Errorf("create repo dir: %w", err)
+		}
+		dstFile := filepath.Join(repoPath, p.GeneratedFile)
+		return CopyFile(srcFile, dstFile)
 	}
 
 	return CopyDir(homePath, repoPath, p.Excludes)
@@ -204,15 +240,29 @@ func (m *Manager) Backup(profileName string, source string) error {
 	// The bash script used $HOME/.codex/backups.
 
 	backupRoot := filepath.Join(m.ResolveHomePath(p), "backups")
-	if p.Name == "claude_desktop" {
-		// Claude desktop backups might need a different place if home dir is Application Support
-		backupRoot = filepath.Join(m.HomeDir, ".config", "loom", "backups", "claude_desktop")
+	if p.SyncGeneratedOnly {
+		// Avoid writing backups into large application config directories (VS Code, Claude Desktop, etc.)
+		backupRoot = filepath.Join(m.HomeDir, ".config", "loom", "backups", p.Name)
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
 	backupPath := filepath.Join(backupRoot, fmt.Sprintf("%s_%s_%s", p.Name, source, timestamp))
 
 	fmt.Printf("Creating backup at %s\n", backupPath)
+
+	if p.SyncGeneratedOnly {
+		if p.GeneratedFile == "" {
+			return fmt.Errorf("profile %s has no generated file", p.Name)
+		}
+		if err := os.MkdirAll(backupPath, 0755); err != nil {
+			return err
+		}
+		srcFile := filepath.Join(srcPath, p.GeneratedFile)
+		if !Exists(srcFile) {
+			return fmt.Errorf("generated file not found: %s", srcFile)
+		}
+		return CopyFile(srcFile, filepath.Join(backupPath, p.GeneratedFile))
+	}
 
 	// Merge default excludes with profile excludes
 	excludes := []string{"backups", "sessions"}

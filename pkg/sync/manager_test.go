@@ -74,6 +74,9 @@ func TestNewManager_ProfileHasCorrectFields(t *testing.T) {
 	if p.GeneratedFile != "mcp.json" {
 		t.Errorf("GeneratedFile = %q, want %q", p.GeneratedFile, "mcp.json")
 	}
+	if !p.SyncGeneratedOnly {
+		t.Errorf("SyncGeneratedOnly = %v, want %v", p.SyncGeneratedOnly, true)
+	}
 }
 
 func TestGetProfile_ReturnsCorrectProfile(t *testing.T) {

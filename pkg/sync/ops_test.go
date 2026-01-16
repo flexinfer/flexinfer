@@ -506,6 +506,79 @@ func TestSyncToHome_WithWorkspaceDir(t *testing.T) {
 	}
 }
 
+func TestSyncToHome_GeneratedOnly(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	repoProfDir := filepath.Join(repoDir, "test-profile")
+	os.MkdirAll(repoProfDir, 0755)
+	os.WriteFile(filepath.Join(repoProfDir, "mcp.json"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(repoProfDir, "extra.txt"), []byte("extra"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           filepath.Join(homeDir, "dest"),
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+	}
+
+	err := m.SyncToHome("test", false, false, false, false, "", false, "")
+	if err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	if !Exists(filepath.Join(homeDir, "dest", "mcp.json")) {
+		t.Error("expected mcp.json to be synced")
+	}
+	if Exists(filepath.Join(homeDir, "dest", "extra.txt")) {
+		t.Error("did not expect extra.txt to be synced for generated-only profile")
+	}
+}
+
+func TestBackup_GeneratedOnly(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	homeProfDir := filepath.Join(homeDir, "app-dir")
+	os.MkdirAll(homeProfDir, 0755)
+	os.WriteFile(filepath.Join(homeProfDir, "mcp.json"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(homeProfDir, "extra.txt"), []byte("extra"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           homeProfDir,
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+	}
+
+	if err := m.Backup("test", "home"); err != nil {
+		t.Fatalf("Backup failed: %v", err)
+	}
+
+	backupRoot := filepath.Join(homeDir, ".config", "loom", "backups", "test")
+	entries, err := os.ReadDir(backupRoot)
+	if err != nil {
+		t.Fatalf("failed to read backup dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected backup directory to be created")
+	}
+
+	backupDir := filepath.Join(backupRoot, entries[0].Name())
+	if !Exists(filepath.Join(backupDir, "mcp.json")) {
+		t.Error("expected mcp.json to be in backup")
+	}
+	if Exists(filepath.Join(backupDir, "extra.txt")) {
+		t.Error("did not expect extra.txt to be backed up for generated-only profile")
+	}
+}
+
 // =============================================================================
 // SyncAll Tests
 // =============================================================================
