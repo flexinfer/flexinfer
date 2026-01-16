@@ -59,6 +59,10 @@ func TestMCP_AllServers_InitializeAndToolsList(t *testing.T) {
 	ran := false
 	for _, serverName := range servers {
 		t.Run(serverName, func(t *testing.T) {
+			if serverName == "mcp-postgres" && os.Getenv("POSTGRES_URL") == "" {
+				t.Skip("POSTGRES_URL not set; skipping postgres smoke test")
+			}
+
 			binary, err := findBinary(serverName)
 			if err != nil {
 				t.Skipf("%s not found: %v", serverName, err)

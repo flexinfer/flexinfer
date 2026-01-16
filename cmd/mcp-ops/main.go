@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -226,21 +227,33 @@ func runKubectl(ctx context.Context, kubeconfig string, args ...string) (string,
 	}
 	cmdArgs := append([]string{"--kubeconfig", kubeconfig}, args...)
 	cmd := execCommand(ctx, "kubectl", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
 	if err != nil {
-		outStr := string(out)
 		if ctx.Err() != nil {
-			if strings.TrimSpace(outStr) == "" {
+			if strings.TrimSpace(outStr) == "" && strings.TrimSpace(errStr) == "" {
 				return outStr, fmt.Errorf("kubectl timed out: %w", ctx.Err())
 			}
-			return outStr, fmt.Errorf("kubectl timed out: %w, output: %s", ctx.Err(), outStr)
+			return outStr, fmt.Errorf("kubectl timed out: %w, output: %s%s", ctx.Err(), outStr, errStr)
 		}
-		if strings.TrimSpace(outStr) == "" {
+		if strings.TrimSpace(outStr) == "" && strings.TrimSpace(errStr) == "" {
 			return outStr, fmt.Errorf("kubectl failed: %w", err)
 		}
-		return outStr, fmt.Errorf("kubectl failed: %w, output: %s", err, outStr)
+		return outStr, fmt.Errorf("kubectl failed: %w, output: %s%s", err, outStr, errStr)
 	}
-	return string(out), nil
+	if strings.TrimSpace(errStr) != "" {
+		// Keep kubectl warnings visible without breaking JSON parsing paths that consume stdout.
+		return outStr + errStr, nil
+	}
+	return outStr, nil
 }
 
 func runSSH(ctx context.Context, host, command, user string) (string, error) {
