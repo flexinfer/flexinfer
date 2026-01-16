@@ -923,6 +923,22 @@ spec:
     amd.com/gpu.arch: gfx1100
 ```
 
+### ROCm gfx1100 Stability Requirements
+
+PyTorch-based backends (diffusers, vLLM) on gfx1100 (RX 7900 XTX) require specific environment variables to prevent SIGSEGV crashes:
+
+| Environment Variable | Value | Purpose |
+|---------------------|-------|---------|
+| `HSA_OVERRIDE_GFX_VERSION` | `11.0.0` | Enables RDNA3 GPU support |
+| `PYTORCH_ROCM_ARCH` | `gfx1100` | Target architecture for PyTorch |
+| `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL` | `1` | **Critical**: Enables experimental AOTriton flash attention |
+| `HIP_VISIBLE_DEVICES` | `0` | GPU device selection |
+| `ROCR_VISIBLE_DEVICES` | `0` | ROCm runtime device selection |
+
+**Note**: The `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` setting is essential for stability on gfx1100. Without it, PyTorch operations like attention can trigger SIGSEGV crashes.
+
+These variables are automatically injected by the `ROCmEnvVars()` helper in `backend/interface.go` and are baked into all ROCm Dockerfiles.
+
 ---
 
 ## Known Issues & Improvements Needed
@@ -931,6 +947,8 @@ spec:
 - [x] TPS now populated from benchmark results
 - [x] GPU validation prevents vLLM on Maxwell
 - [x] CLI provides easy model management
+- [x] ROCm gfx1100 SIGSEGV crashes fixed via `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+- [x] Diffusers backend working for image generation on AMD GPUs
 
 ### Benchmarking
 - [ ] FlexInfer benchmarker needs direct CLI integration
@@ -969,9 +987,9 @@ spec:
 | Model | Backend | GPUGroup | Status | TPS | Image |
 |-------|---------|----------|--------|-----|-------|
 | bge-large-embeddings | tei | - | Running | 69.7 | `ghcr.io/huggingface/text-embeddings-inference:cpu-1.8` |
-| qwen3-8b-fast | mlc-llm | fast-models | **Broken** | 106.0 | `ghcr.io/mlc-ai/mlc-llm:rocm` (doesn't exist) |
+| qwen3-8b-fast | mlc-llm | fast-models | Running | 106.0 | `registry.harbor.lan/library/mlc-llm:latest` |
 | qwen3-4b-tiny | mlc-llm | fast-models | Idle | 144.9 | `registry.harbor.lan/library/mlc-llm:latest` |
-| sdxl-turbo-fast | comfyui | quality-models | Running | 406.9 | `registry.harbor.lan/library/comfyui:rocm6.2.3-v8` |
+| sdxl-turbo-fast | **diffusers** | quality-models | Running | - | `registry.harbor.lan/library/diffusers-api:rocm-latest` |
 | qwen3-32b-best | mlc-llm | quality-models | Idle | - | Needs ROCm 6.4 image |
 | qwen3-14b-quality | mlc-llm | quality-models | Idle | - | Needs ROCm 6.4 image |
 | deepseek-r1-reasoning | mlc-llm | quality-models | Active | - | Needs ROCm 6.4 image |
@@ -1017,9 +1035,8 @@ docker push registry.harbor.lan/library/mlc-llm:rocm64-src
 
 ### Immediate Issues
 
-1. **qwen3-8b-fast stuck**: Using non-existent `ghcr.io/mlc-ai/mlc-llm:rocm` image
-2. **No ROCm 6.4 MLC-LLM image**: Quality models can't run without this
-3. **GPUGroup nodeSelector mismatch**: quality-models configured for wrong node in some places
+1. **No ROCm 6.4 MLC-LLM image**: Quality models (32B, 14B) can't run without this
+2. **GPUGroup nodeSelector mismatch**: quality-models configured for wrong node in some places
 
 ### Resolution Steps
 

@@ -32,6 +32,7 @@ rules:
   - gpugroups
   - modelcaches
   - modeldeployments
+  - models
   verbs:
   - create
   - delete
@@ -46,6 +47,7 @@ rules:
   - gpugroups/finalizers
   - modelcaches/finalizers
   - modeldeployments/finalizers
+  - models/finalizers
   verbs:
   - update
 - apiGroups:
@@ -54,6 +56,7 @@ rules:
   - gpugroups/status
   - modelcaches/status
   - modeldeployments/status
+  - models/status
   verbs:
   - get
   - patch

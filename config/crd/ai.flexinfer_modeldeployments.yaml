@@ -461,6 +461,46 @@ spec:
                   VLLM contains vLLM backend-specific configuration.
                   Only applies when Backend is "vllm".
                 properties:
+                  attentionBackend:
+                    description: |-
+                      AttentionBackend specifies the attention computation backend.
+                      Options: FLASH_ATTN, XFORMERS, ROCM_FLASH, FLASHINFER, TORCH_SDPA
+                      For AMD ROCm GPUs (gfx1100), TORCH_SDPA is recommended for stability.
+                      When unset on AMD GPUs, defaults to TORCH_SDPA automatically.
+                      FLASH_ATTN may cause SIGSEGV on ROCm - use with caution.
+                    enum:
+                    - FLASH_ATTN
+                    - XFORMERS
+                    - ROCM_FLASH
+                    - FLASHINFER
+                    - TORCH_SDPA
+                    - flash_attn
+                    - xformers
+                    - rocm_flash
+                    - flashinfer
+                    - torch_sdpa
+                    type: string
+                  blockSize:
+                    description: |-
+                      BlockSize specifies the token block size for KV cache management.
+                      Smaller values may reduce memory fragmentation but increase overhead.
+                      Options: 8, 16, 32 (default: 16)
+                    enum:
+                    - 8
+                    - 16
+                    - 32
+                    format: int32
+                    type: integer
+                  cpuOffloadGB:
+                    description: |-
+                      CPUOffloadGB specifies the amount of CPU RAM (in GB) to use for
+                      offloading model weights or KV cache when GPU memory is insufficient.
+                      Useful for AMD GPUs with 24GB VRAM to cache more models.
+                      Note: Not compatible with tensor parallelism.
+                    format: int32
+                    maximum: 512
+                    minimum: 0
+                    type: integer
                   dtype:
                     description: |-
                       Dtype specifies the data type for model weights.
@@ -472,6 +512,18 @@ spec:
                     - bfloat16
                     - float32
                     type: string
+                  enableChunkedPrefill:
+                    description: |-
+                      EnableChunkedPrefill enables chunked prefill for better memory efficiency
+                      during prompt processing. Can reduce peak memory usage and improve
+                      throughput for long prompts.
+                    type: boolean
+                  enablePrefixCaching:
+                    description: |-
+                      EnablePrefixCaching enables automatic prefix caching for improved
+                      performance on repeated prompt prefixes. Reduces KV cache memory by
+                      reusing cached prefixes across requests.
+                    type: boolean
                   enforceEager:
                     description: |-
                       EnforceEager disables CUDA graph and runs in eager mode.
@@ -481,6 +533,19 @@ spec:
                     description: |-
                       GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
                       Default: 0.9 (90% of available GPU memory)
+                    type: string
+                  kvCacheDtype:
+                    description: |-
+                      KVCacheDtype specifies the data type for the KV cache.
+                      Options: auto, fp8, fp8_e5m2, fp8_e4m3, int8
+                      int8 is recommended for AMD GPUs to reduce memory usage (~50% savings).
+                      Default: auto (vLLM chooses based on model config)
+                    enum:
+                    - auto
+                    - fp8
+                    - fp8_e5m2
+                    - fp8_e4m3
+                    - int8
                     type: string
                   maxModelLen:
                     description: |-
@@ -508,6 +573,33 @@ spec:
                     - None
                     - ""
                     type: string
+                  ropeScaling:
+                    description: |-
+                      RopeScaling configures RoPE (Rotary Position Embedding) scaling
+                      for extended context length support beyond the model's training length.
+                    properties:
+                      factor:
+                        description: |-
+                          Factor specifies the scaling factor for context extension.
+                          For linear scaling, this is the context extension multiplier.
+                          Example: "2.0" doubles the context length.
+                          Specified as a string to avoid floating-point precision issues.
+                        type: string
+                      type:
+                        description: |-
+                          Type specifies the RoPE scaling method.
+                          Options: linear, dynamic, yarn, longrope
+                          - linear: Simple linear interpolation
+                          - dynamic: Dynamic NTK-aware scaling
+                          - yarn: YaRN (Yet another RoPE extensioN)
+                          - longrope: LongRoPE for very long contexts
+                        enum:
+                        - linear
+                        - dynamic
+                        - yarn
+                        - longrope
+                        type: string
+                    type: object
                   swapSpace:
                     description: SwapSpace is the CPU swap space size (GiB) per GPU.
                     format: int32

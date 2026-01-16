@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -426,10 +427,29 @@ func (r *GPUGroupReconciler) performModelSwap(ctx context.Context, gpuGroup *aiv
 					drainTimeout = time.Duration(gpuGroup.Spec.ScalingPolicy.DrainTimeoutSeconds) * time.Second
 				}
 
-				// Check if deployment has terminated
-				// In a real implementation, we'd watch for the deployment to have 0 ready replicas
-				// For now, we'll proceed and let the next reconciliation verify
-				_ = drainTimeout
+				// Poll for deployment to have 0 ready replicas
+				preemptResult, err := r.waitForPodTermination(ctx, md, drainTimeout)
+				if err != nil {
+					log.Error(err, "Error waiting for pod termination", "model", currentActive)
+					// Record the error but continue - we don't want to block indefinitely
+					preemptResult.Error = err.Error()
+				}
+
+				// Record preemption result in model status
+				for i := range gpuGroup.Status.ModelStatuses {
+					if gpuGroup.Status.ModelStatuses[i].Name == currentActive {
+						gpuGroup.Status.ModelStatuses[i].LastPreemptionResult = preemptResult
+						break
+					}
+				}
+
+				if preemptResult.TimedOut {
+					r.Recorder.Eventf(gpuGroup, corev1.EventTypeWarning, "PreemptionTimeout",
+						"Preemption of %s timed out after %v, proceeding anyway", currentActive, drainTimeout)
+				} else if preemptResult.Success {
+					r.Recorder.Eventf(gpuGroup, corev1.EventTypeNormal, "PreemptionComplete",
+						"Model %s preempted successfully in %ds", currentActive, preemptResult.DrainDurationSeconds)
+				}
 			}
 
 			r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledDown",
@@ -571,6 +591,192 @@ func (r *GPUGroupReconciler) updateServiceLabels(ctx context.Context, md *aiv1al
 	}
 
 	return nil
+}
+
+// === Preemption Verification ===
+
+// waitForPodTermination polls until the deployment has 0 ready replicas or timeout.
+func (r *GPUGroupReconciler) waitForPodTermination(ctx context.Context, md *aiv1alpha1.ModelDeployment, timeout time.Duration) (*aiv1alpha1.PreemptionResult, error) {
+	log := log.FromContext(ctx)
+
+	result := &aiv1alpha1.PreemptionResult{
+		StartTime: metav1.Now(),
+		Success:   false,
+	}
+
+	// Get the deployment name for this ModelDeployment
+	deploymentName := md.Name
+	deploymentNamespace := md.Namespace
+
+	// Create a context with timeout
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	initialReplicas := int32(0)
+	drainComplete := false
+
+	for !drainComplete {
+		select {
+		case <-pollCtx.Done():
+			// Timeout reached
+			result.TimedOut = true
+			now := metav1.Now()
+			result.EndTime = &now
+			result.DrainDurationSeconds = int32(time.Since(result.StartTime.Time).Seconds())
+			log.Info("Preemption timed out", "model", md.Name, "timeout", timeout)
+			return result, nil
+
+		case <-ticker.C:
+			// Poll the deployment status using the uncached APIReader
+			deployment := &appsv1.Deployment{}
+			err := r.APIReader.Get(ctx, types.NamespacedName{
+				Name:      deploymentName,
+				Namespace: deploymentNamespace,
+			}, deployment)
+
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					// Deployment doesn't exist, consider drain complete
+					drainComplete = true
+					break
+				}
+				// Non-fatal error, continue polling
+				log.V(1).Info("Error checking deployment status", "error", err)
+				continue
+			}
+
+			// Track initial replicas for metrics
+			if initialReplicas == 0 && deployment.Status.ReadyReplicas > 0 {
+				initialReplicas = deployment.Status.ReadyReplicas
+			}
+
+			// Check if all replicas are terminated
+			if deployment.Status.ReadyReplicas == 0 && deployment.Status.Replicas == 0 {
+				drainComplete = true
+				result.PodsTerminated = initialReplicas
+				log.Info("All pods terminated", "model", md.Name, "podsTerminated", initialReplicas)
+			} else {
+				log.V(1).Info("Waiting for pods to terminate",
+					"model", md.Name,
+					"readyReplicas", deployment.Status.ReadyReplicas,
+					"replicas", deployment.Status.Replicas)
+			}
+		}
+	}
+
+	// Success
+	result.Success = true
+	now := metav1.Now()
+	result.EndTime = &now
+	result.DrainDurationSeconds = int32(time.Since(result.StartTime.Time).Seconds())
+
+	return result, nil
+}
+
+// === Demand Trend Analysis ===
+
+const (
+	// MaxQueueHistorySize limits how many queue samples to retain
+	MaxQueueHistorySize = 20
+	// TrendWindowDuration is how far back to analyze for trends
+	TrendWindowDuration = 5 * time.Minute
+)
+
+// recordQueueSample adds a queue depth sample to the model's history
+func (r *GPUGroupReconciler) recordQueueSample(modelStatus *aiv1alpha1.GPUGroupModelStatus) {
+	sample := aiv1alpha1.QueueSample{
+		Timestamp: metav1.Now(),
+		Depth:     modelStatus.QueuedRequests,
+	}
+
+	// Append sample
+	modelStatus.QueueHistory = append(modelStatus.QueueHistory, sample)
+
+	// Trim old samples
+	cutoff := time.Now().Add(-TrendWindowDuration)
+	var trimmed []aiv1alpha1.QueueSample
+	for _, s := range modelStatus.QueueHistory {
+		if s.Timestamp.Time.After(cutoff) {
+			trimmed = append(trimmed, s)
+		}
+	}
+	modelStatus.QueueHistory = trimmed
+
+	// Also enforce max size
+	if len(modelStatus.QueueHistory) > MaxQueueHistorySize {
+		modelStatus.QueueHistory = modelStatus.QueueHistory[len(modelStatus.QueueHistory)-MaxQueueHistorySize:]
+	}
+}
+
+// calculateTrend analyzes queue history and updates trend fields
+func (r *GPUGroupReconciler) calculateTrend(modelStatus *aiv1alpha1.GPUGroupModelStatus) {
+	history := modelStatus.QueueHistory
+	if len(history) < 3 {
+		modelStatus.TrendDirection = "stable"
+		modelStatus.TrendStability = 0
+		return
+	}
+
+	// Calculate simple linear trend using differences
+	var increases, decreases, stable int
+	for i := 1; i < len(history); i++ {
+		diff := history[i].Depth - history[i-1].Depth
+		if diff > 0 {
+			increases++
+		} else if diff < 0 {
+			decreases++
+		} else {
+			stable++
+		}
+	}
+
+	total := increases + decreases + stable
+	if total == 0 {
+		modelStatus.TrendDirection = "stable"
+		modelStatus.TrendStability = 100
+		return
+	}
+
+	// Determine direction based on majority
+	if increases > decreases && increases > stable {
+		modelStatus.TrendDirection = "increasing"
+		modelStatus.TrendStability = int32((increases * 100) / total)
+	} else if decreases > increases && decreases > stable {
+		modelStatus.TrendDirection = "decreasing"
+		modelStatus.TrendStability = int32((decreases * 100) / total)
+	} else {
+		modelStatus.TrendDirection = "stable"
+		modelStatus.TrendStability = int32((stable * 100) / total)
+	}
+}
+
+// shouldSwapBasedOnTrend checks if trend analysis supports a swap decision
+func (r *GPUGroupReconciler) shouldSwapBasedOnTrend(modelStatus *aiv1alpha1.GPUGroupModelStatus, minStability int32) bool {
+	// Record current sample and recalculate trend
+	r.recordQueueSample(modelStatus)
+	r.calculateTrend(modelStatus)
+
+	// For swap-in decisions, we want increasing or stable high demand
+	if modelStatus.TrendDirection == "decreasing" && modelStatus.TrendStability > minStability {
+		// Demand is clearly dropping, don't swap for this model
+		return false
+	}
+
+	// For sustained demand, allow swap
+	if modelStatus.TrendDirection == "increasing" && modelStatus.TrendStability > minStability {
+		return true
+	}
+
+	// Stable with queued requests - allow swap
+	if modelStatus.TrendDirection == "stable" && modelStatus.QueuedRequests > 0 {
+		return true
+	}
+
+	// Low stability means unstable demand - be conservative
+	return modelStatus.TrendStability < minStability
 }
 
 // SetupWithManager sets up the controller with the Manager.

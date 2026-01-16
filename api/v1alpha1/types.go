@@ -404,6 +404,79 @@ type VLLMSpec struct {
 	// Required for some models with custom architectures.
 	// +optional
 	TrustRemoteCode *bool `json:"trustRemoteCode,omitempty"`
+
+	// === AMD GFX1100 (RDNA3) Optimizations ===
+
+	// EnablePrefixCaching enables automatic prefix caching for improved
+	// performance on repeated prompt prefixes. Reduces KV cache memory by
+	// reusing cached prefixes across requests.
+	// +optional
+	EnablePrefixCaching *bool `json:"enablePrefixCaching,omitempty"`
+
+	// KVCacheDtype specifies the data type for the KV cache.
+	// Options: auto, fp8, fp8_e5m2, fp8_e4m3, int8
+	// int8 is recommended for AMD GPUs to reduce memory usage (~50% savings).
+	// Default: auto (vLLM chooses based on model config)
+	// +kubebuilder:validation:Enum=auto;fp8;fp8_e5m2;fp8_e4m3;int8
+	// +optional
+	KVCacheDtype string `json:"kvCacheDtype,omitempty"`
+
+	// AttentionBackend specifies the attention computation backend.
+	// Options: FLASH_ATTN, XFORMERS, ROCM_FLASH, FLASHINFER, TORCH_SDPA
+	// For AMD ROCm GPUs (gfx1100), TORCH_SDPA is recommended for stability.
+	// When unset on AMD GPUs, defaults to TORCH_SDPA automatically.
+	// FLASH_ATTN may cause SIGSEGV on ROCm - use with caution.
+	// +kubebuilder:validation:Enum=FLASH_ATTN;XFORMERS;ROCM_FLASH;FLASHINFER;TORCH_SDPA;flash_attn;xformers;rocm_flash;flashinfer;torch_sdpa
+	// +optional
+	AttentionBackend string `json:"attentionBackend,omitempty"`
+
+	// CPUOffloadGB specifies the amount of CPU RAM (in GB) to use for
+	// offloading model weights or KV cache when GPU memory is insufficient.
+	// Useful for AMD GPUs with 24GB VRAM to cache more models.
+	// Note: Not compatible with tensor parallelism.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=512
+	// +optional
+	CPUOffloadGB *int32 `json:"cpuOffloadGB,omitempty"`
+
+	// EnableChunkedPrefill enables chunked prefill for better memory efficiency
+	// during prompt processing. Can reduce peak memory usage and improve
+	// throughput for long prompts.
+	// +optional
+	EnableChunkedPrefill *bool `json:"enableChunkedPrefill,omitempty"`
+
+	// BlockSize specifies the token block size for KV cache management.
+	// Smaller values may reduce memory fragmentation but increase overhead.
+	// Options: 8, 16, 32 (default: 16)
+	// +kubebuilder:validation:Enum=8;16;32
+	// +optional
+	BlockSize *int32 `json:"blockSize,omitempty"`
+
+	// RopeScaling configures RoPE (Rotary Position Embedding) scaling
+	// for extended context length support beyond the model's training length.
+	// +optional
+	RopeScaling *VLLMRopeScaling `json:"ropeScaling,omitempty"`
+}
+
+// VLLMRopeScaling configures RoPE scaling parameters for extended context.
+// +kubebuilder:object:generate=true
+type VLLMRopeScaling struct {
+	// Type specifies the RoPE scaling method.
+	// Options: linear, dynamic, yarn, longrope
+	// - linear: Simple linear interpolation
+	// - dynamic: Dynamic NTK-aware scaling
+	// - yarn: YaRN (Yet another RoPE extensioN)
+	// - longrope: LongRoPE for very long contexts
+	// +kubebuilder:validation:Enum=linear;dynamic;yarn;longrope
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// Factor specifies the scaling factor for context extension.
+	// For linear scaling, this is the context extension multiplier.
+	// Example: "2.0" doubles the context length.
+	// Specified as a string to avoid floating-point precision issues.
+	// +optional
+	Factor string `json:"factor,omitempty"`
 }
 
 // LlamaCppSpec configures llama.cpp backend-specific settings.

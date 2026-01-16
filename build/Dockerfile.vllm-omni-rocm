@@ -26,6 +26,9 @@ ENV ROCR_VISIBLE_DEVICES=0
 ENV VLLM_TARGET_DEVICE=rocm
 ENV MAX_JOBS=${MAX_JOBS}
 
+# Critical for gfx1100 stability - enables experimental AOTriton flash attention
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \

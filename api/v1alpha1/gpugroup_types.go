@@ -274,6 +274,67 @@ type GPUGroupModelStatus struct {
 	// PreemptedBy is the model that caused preemption.
 	// +optional
 	PreemptedBy string `json:"preemptedBy,omitempty"`
+
+	// === Preemption Verification ===
+
+	// LastPreemptionResult tracks the outcome of the most recent preemption.
+	// +optional
+	LastPreemptionResult *PreemptionResult `json:"lastPreemptionResult,omitempty"`
+
+	// === Demand Trend Analysis ===
+
+	// QueueHistory tracks recent queue depth samples for trend analysis.
+	// +optional
+	QueueHistory []QueueSample `json:"queueHistory,omitempty"`
+
+	// TrendDirection indicates queue depth trend: increasing, decreasing, stable.
+	// +optional
+	TrendDirection string `json:"trendDirection,omitempty"`
+
+	// TrendStability indicates how stable the trend is (0-100).
+	// Higher values mean more consistent trend direction.
+	// +optional
+	TrendStability int32 `json:"trendStability,omitempty"`
+}
+
+// PreemptionResult tracks the outcome of a preemption operation
+// +kubebuilder:object:generate=true
+type PreemptionResult struct {
+	// StartTime is when the preemption started.
+	StartTime metav1.Time `json:"startTime"`
+
+	// EndTime is when the preemption completed (pods terminated).
+	// +optional
+	EndTime *metav1.Time `json:"endTime,omitempty"`
+
+	// Success indicates whether the preemption completed successfully.
+	Success bool `json:"success"`
+
+	// DrainDurationSeconds is how long it took for pods to terminate.
+	// +optional
+	DrainDurationSeconds int32 `json:"drainDurationSeconds,omitempty"`
+
+	// TimedOut indicates whether the drain timed out.
+	// +optional
+	TimedOut bool `json:"timedOut,omitempty"`
+
+	// PodsTerminated is the number of pods that were terminated.
+	// +optional
+	PodsTerminated int32 `json:"podsTerminated,omitempty"`
+
+	// Error message if preemption failed.
+	// +optional
+	Error string `json:"error,omitempty"`
+}
+
+// QueueSample records queue depth at a point in time for trend analysis
+// +kubebuilder:object:generate=true
+type QueueSample struct {
+	// Timestamp when this sample was taken.
+	Timestamp metav1.Time `json:"timestamp"`
+
+	// Depth is the queue depth at this time.
+	Depth int32 `json:"depth"`
 }
 
 // +kubebuilder:object:root=true

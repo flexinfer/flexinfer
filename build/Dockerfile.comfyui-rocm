@@ -75,6 +75,10 @@ RUN mkdir -p /app/ComfyUI/models/checkpoints \
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
 ENV PYTORCH_ROCM_ARCH=gfx1100
 ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+# Critical for gfx1100 stability - enables experimental AOTriton flash attention
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 
 # Expose ComfyUI port
 EXPOSE 8188

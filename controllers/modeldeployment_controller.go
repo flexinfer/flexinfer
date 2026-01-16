@@ -220,6 +220,22 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil // Don't requeue - user needs to fix the spec
 	}
 
+	// Validate vLLM-specific configuration compatibility (when backend is vllm)
+	if canonicalBackend(modelDeployment.Spec.Backend) == "vllm" {
+		if err := r.validateVLLMSpecCompatibility(modelDeployment); err != nil {
+			log.Error(err, "vLLM configuration validation failed")
+			r.Recorder.Event(modelDeployment, corev1.EventTypeWarning, aiv1alpha1.ReasonValidationFailed,
+				fmt.Sprintf("vLLM configuration validation failed: %v", err))
+			if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeReady, metav1.ConditionFalse, aiv1alpha1.ReasonValidationFailed, err.Error()); err != nil {
+				log.Error(err, "Failed to update condition")
+			}
+			if err := r.updateModelDeploymentStatus(ctx, modelDeployment, aiv1alpha1.ModelDeploymentPhaseFailed, err.Error()); err != nil {
+				log.Error(err, "Failed to update status to Failed")
+			}
+			return ctrl.Result{}, nil // Don't requeue - user needs to fix the spec
+		}
+	}
+
 	// Update condition for GPU validation success
 	if err := r.updateCondition(ctx, modelDeployment, aiv1alpha1.ConditionTypeGPUAllocated, metav1.ConditionTrue, aiv1alpha1.ReasonGPUAllocated, "GPU resources validated and will be allocated"); err != nil {
 		log.Error(err, "Failed to update GPU condition")
@@ -1794,6 +1810,55 @@ func (r *ModelDeploymentReconciler) validateBackendGPUCompatibility(m *aiv1alpha
 	return nil
 }
 
+// validateVLLMSpecCompatibility checks for incompatible vLLM configuration combinations.
+// Returns an error if validation fails.
+func (r *ModelDeploymentReconciler) validateVLLMSpecCompatibility(m *aiv1alpha1.ModelDeployment) error {
+	if m.Spec.VLLM == nil {
+		return nil
+	}
+
+	v := m.Spec.VLLM
+	isAMD := r.detectGPUResourceFromSpec(m) == GPUResourceAMD
+	log := ctrl.Log.WithName("validateVLLMSpec")
+
+	// Validate attention backend for AMD GPUs - warn about potentially unstable backends
+	if isAMD && v.AttentionBackend != "" {
+		backend := strings.ToUpper(v.AttentionBackend)
+		if backend == "FLASH_ATTN" || backend == "FLASHINFER" {
+			// Log warning but don't fail - user may know what they're doing
+			log.Info("Warning: flash attention backends may be unstable on AMD ROCm GPUs",
+				"backend", v.AttentionBackend,
+				"recommendation", "TORCH_SDPA",
+				"deployment", m.Name)
+		}
+	}
+
+	// Validate RoPE scaling - factor required when type is specified (and vice versa)
+	if v.RopeScaling != nil {
+		if v.RopeScaling.Type != "" && v.RopeScaling.Factor == "" {
+			return fmt.Errorf("vllm.ropeScaling.factor is required when vllm.ropeScaling.type is specified")
+		}
+		if v.RopeScaling.Factor != "" && v.RopeScaling.Type == "" {
+			return fmt.Errorf("vllm.ropeScaling.type is required when vllm.ropeScaling.factor is specified")
+		}
+	}
+
+	// Validate CPU offload with tensor parallelism - not compatible
+	if v.CPUOffloadGB != nil && *v.CPUOffloadGB > 0 &&
+		v.TensorParallelSize != nil && *v.TensorParallelSize > 1 {
+		return fmt.Errorf("vllm.cpuOffloadGB is not compatible with tensor parallelism (vllm.tensorParallelSize > 1)")
+	}
+
+	// Log info when using prefix caching with chunked prefill (supported in modern vLLM)
+	if v.EnableChunkedPrefill != nil && *v.EnableChunkedPrefill &&
+		v.EnablePrefixCaching != nil && *v.EnablePrefixCaching {
+		log.Info("Note: chunked prefill with prefix caching enabled (requires vLLM 0.6+)",
+			"deployment", m.Name)
+	}
+
+	return nil
+}
+
 // getGPUArchitecture returns the GPU architecture string from node selector.
 // Returns empty string if not determinable from spec.
 func (r *ModelDeploymentReconciler) getGPUArchitecture(m *aiv1alpha1.ModelDeployment) string {
@@ -1942,7 +2007,15 @@ func (r *ModelDeploymentReconciler) buildMLCOverrides(m *aiv1alpha1.ModelDeploym
 func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
 	args := []string{"--model", modelPath, "--host", "0.0.0.0"}
 
+	// Detect if this is an AMD GPU deployment
+	isAMD := r.detectGPUResourceFromSpec(m) == GPUResourceAMD
+
 	if m.Spec.VLLM == nil {
+		// Apply AMD defaults even when VLLM spec is nil
+		if isAMD {
+			// Default to torch_sdpa for AMD GPUs (flash_attn can cause SIGSEGV on ROCm)
+			args = append(args, "--attention-backend", "TORCH_SDPA")
+		}
 		return args
 	}
 
@@ -1991,6 +2064,51 @@ func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment,
 	// Trust remote code
 	if v.TrustRemoteCode != nil && *v.TrustRemoteCode {
 		args = append(args, "--trust-remote-code")
+	}
+
+	// === AMD GFX1100 (RDNA3) Optimizations ===
+
+	// Prefix caching for improved performance on repeated prompt prefixes
+	if v.EnablePrefixCaching != nil && *v.EnablePrefixCaching {
+		args = append(args, "--enable-prefix-caching")
+	}
+
+	// KV cache data type - int8 recommended for AMD to reduce memory usage
+	if v.KVCacheDtype != "" {
+		args = append(args, "--kv-cache-dtype", v.KVCacheDtype)
+	}
+
+	// Attention backend selection
+	// For AMD GPUs, default to torch_sdpa if not explicitly specified (flash_attn can cause SIGSEGV on ROCm)
+	if v.AttentionBackend != "" {
+		args = append(args, "--attention-backend", strings.ToUpper(v.AttentionBackend))
+	} else if isAMD {
+		args = append(args, "--attention-backend", "TORCH_SDPA")
+	}
+
+	// CPU offload for extending effective cache on memory-constrained GPUs
+	if v.CPUOffloadGB != nil && *v.CPUOffloadGB > 0 {
+		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", *v.CPUOffloadGB))
+	}
+
+	// Chunked prefill for better memory efficiency during prompt processing
+	if v.EnableChunkedPrefill != nil && *v.EnableChunkedPrefill {
+		args = append(args, "--enable-chunked-prefill")
+	}
+
+	// Block size for KV cache management
+	if v.BlockSize != nil {
+		args = append(args, "--block-size", fmt.Sprintf("%d", *v.BlockSize))
+	}
+
+	// RoPE scaling for extended context length
+	if v.RopeScaling != nil {
+		if v.RopeScaling.Type != "" {
+			args = append(args, "--rope-scaling-type", v.RopeScaling.Type)
+		}
+		if v.RopeScaling.Factor != "" {
+			args = append(args, "--rope-scaling-factor", v.RopeScaling.Factor)
+		}
 	}
 
 	return args

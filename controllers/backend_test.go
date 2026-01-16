@@ -1165,6 +1165,262 @@ func TestBuildVLLMArgs(t *testing.T) {
 	}
 }
 
+func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name        string
+		vllm        *aiv1alpha1.VLLMSpec
+		gpuResource corev1.ResourceName
+		expected    []string
+	}{
+		{
+			name:        "AMD GPU default attention backend (nil spec)",
+			vllm:        nil,
+			gpuResource: GPUResourceAMD,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--attention-backend", "TORCH_SDPA"},
+		},
+		{
+			name:        "AMD GPU default attention backend (empty spec)",
+			vllm:        &aiv1alpha1.VLLMSpec{},
+			gpuResource: GPUResourceAMD,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--attention-backend", "TORCH_SDPA"},
+		},
+		{
+			name:        "NVIDIA GPU no default attention backend",
+			vllm:        nil,
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0"},
+		},
+		{
+			name: "prefix caching enabled",
+			vllm: &aiv1alpha1.VLLMSpec{
+				EnablePrefixCaching: ptrTo(true),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--enable-prefix-caching"},
+		},
+		{
+			name: "KV cache dtype int8",
+			vllm: &aiv1alpha1.VLLMSpec{
+				KVCacheDtype: "int8",
+			},
+			gpuResource: GPUResourceAMD,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "int8", "--attention-backend", "TORCH_SDPA"},
+		},
+		{
+			name: "explicit attention backend overrides AMD default",
+			vllm: &aiv1alpha1.VLLMSpec{
+				AttentionBackend: "ROCM_FLASH",
+			},
+			gpuResource: GPUResourceAMD,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--attention-backend", "ROCM_FLASH"},
+		},
+		{
+			name: "CPU offload",
+			vllm: &aiv1alpha1.VLLMSpec{
+				CPUOffloadGB: ptrTo(int32(8)),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--cpu-offload-gb", "8"},
+		},
+		{
+			name: "chunked prefill enabled",
+			vllm: &aiv1alpha1.VLLMSpec{
+				EnableChunkedPrefill: ptrTo(true),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--enable-chunked-prefill"},
+		},
+		{
+			name: "block size tuning",
+			vllm: &aiv1alpha1.VLLMSpec{
+				BlockSize: ptrTo(int32(8)),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--block-size", "8"},
+		},
+		{
+			name: "RoPE scaling linear",
+			vllm: &aiv1alpha1.VLLMSpec{
+				RopeScaling: &aiv1alpha1.VLLMRopeScaling{
+					Type:   "linear",
+					Factor: "2.0",
+				},
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--rope-scaling-type", "linear", "--rope-scaling-factor", "2.0"},
+		},
+		{
+			name: "full AMD optimization stack",
+			vllm: &aiv1alpha1.VLLMSpec{
+				EnablePrefixCaching:  ptrTo(true),
+				KVCacheDtype:         "int8",
+				EnableChunkedPrefill: ptrTo(true),
+				BlockSize:            ptrTo(int32(16)),
+				GPUMemoryUtilization: ptrTo("0.85"),
+			},
+			gpuResource: GPUResourceAMD,
+			expected: []string{
+				"--model", "test-model", "--host", "0.0.0.0",
+				"--gpu-memory-utilization", "0.85",
+				"--enable-prefix-caching",
+				"--kv-cache-dtype", "int8",
+				"--attention-backend", "TORCH_SDPA",
+				"--enable-chunked-prefill",
+				"--block-size", "16",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "vllm",
+					VLLM:    tt.vllm,
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							tt.gpuResource: resource.MustParse("1"),
+						},
+					},
+				},
+			}
+
+			result := r.buildVLLMArgs(m, "test-model")
+			if len(result) != len(tt.expected) {
+				t.Errorf("buildVLLMArgs() got %d args, expected %d\ngot: %v\nexpected: %v",
+					len(result), len(tt.expected), result, tt.expected)
+				return
+			}
+			for i, arg := range result {
+				if arg != tt.expected[i] {
+					t.Errorf("Arg %d: expected %s, got %s", i, tt.expected[i], arg)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateVLLMSpecCompatibility(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+
+	tests := []struct {
+		name        string
+		vllm        *aiv1alpha1.VLLMSpec
+		gpuResource corev1.ResourceName
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "nil spec is valid",
+			vllm:        nil,
+			gpuResource: GPUResourceNVIDIA,
+			expectError: false,
+		},
+		{
+			name:        "empty spec is valid",
+			vllm:        &aiv1alpha1.VLLMSpec{},
+			gpuResource: GPUResourceAMD,
+			expectError: false,
+		},
+		{
+			name: "RoPE type without factor fails",
+			vllm: &aiv1alpha1.VLLMSpec{
+				RopeScaling: &aiv1alpha1.VLLMRopeScaling{
+					Type: "linear",
+				},
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expectError: true,
+			errorMsg:    "vllm.ropeScaling.factor is required",
+		},
+		{
+			name: "RoPE factor without type fails",
+			vllm: &aiv1alpha1.VLLMSpec{
+				RopeScaling: &aiv1alpha1.VLLMRopeScaling{
+					Factor: "2.0",
+				},
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expectError: true,
+			errorMsg:    "vllm.ropeScaling.type is required",
+		},
+		{
+			name: "RoPE with both type and factor is valid",
+			vllm: &aiv1alpha1.VLLMSpec{
+				RopeScaling: &aiv1alpha1.VLLMRopeScaling{
+					Type:   "linear",
+					Factor: "2.0",
+				},
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expectError: false,
+		},
+		{
+			name: "CPU offload with tensor parallelism fails",
+			vllm: &aiv1alpha1.VLLMSpec{
+				CPUOffloadGB:       ptrTo(int32(8)),
+				TensorParallelSize: ptrTo(int32(2)),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expectError: true,
+			errorMsg:    "vllm.cpuOffloadGB is not compatible with tensor parallelism",
+		},
+		{
+			name: "CPU offload without tensor parallelism is valid",
+			vllm: &aiv1alpha1.VLLMSpec{
+				CPUOffloadGB: ptrTo(int32(8)),
+			},
+			gpuResource: GPUResourceNVIDIA,
+			expectError: false,
+		},
+		{
+			name: "full AMD config is valid",
+			vllm: &aiv1alpha1.VLLMSpec{
+				EnablePrefixCaching:  ptrTo(true),
+				KVCacheDtype:         "int8",
+				EnableChunkedPrefill: ptrTo(true),
+				RopeScaling: &aiv1alpha1.VLLMRopeScaling{
+					Type:   "linear",
+					Factor: "2.0",
+				},
+			},
+			gpuResource: GPUResourceAMD,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &aiv1alpha1.ModelDeployment{
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Backend: "vllm",
+					VLLM:    tt.vllm,
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							tt.gpuResource: resource.MustParse("1"),
+						},
+					},
+				},
+			}
+
+			err := r.validateVLLMSpecCompatibility(m)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tt.errorMsg)
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error containing '%s', got '%s'", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got '%s'", err.Error())
+				}
+			}
+		})
+	}
+}
+
 func TestBuildLlamaCppArgs(t *testing.T) {
 	r := &ModelDeploymentReconciler{}
 

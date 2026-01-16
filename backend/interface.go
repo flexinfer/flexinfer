@@ -211,6 +211,7 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 
 // ROCmEnvVars returns common environment variables for AMD ROCm GPUs.
 // Use this helper in backend Env() implementations for AMD GPU support.
+// Optimized for gfx1100 (RX 7900 XTX) and RDNA3 architecture.
 func ROCmEnvVars() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{
@@ -224,6 +225,16 @@ func ROCmEnvVars() []corev1.EnvVar {
 		{
 			Name:  "ROCR_VISIBLE_DEVICES",
 			Value: "0",
+		},
+		{
+			// Critical for gfx1100 stability - enables experimental AOTriton
+			// flash attention which prevents SIGSEGV crashes on RDNA3.
+			Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+			Value: "1",
+		},
+		{
+			Name:  "PYTORCH_ROCM_ARCH",
+			Value: "gfx1100",
 		},
 	}
 }

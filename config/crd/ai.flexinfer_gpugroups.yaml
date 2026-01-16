@@ -304,6 +304,44 @@ spec:
                         requests.
                       format: date-time
                       type: string
+                    lastPreemptionResult:
+                      description: LastPreemptionResult tracks the outcome of the
+                        most recent preemption.
+                      properties:
+                        drainDurationSeconds:
+                          description: DrainDurationSeconds is how long it took for
+                            pods to terminate.
+                          format: int32
+                          type: integer
+                        endTime:
+                          description: EndTime is when the preemption completed (pods
+                            terminated).
+                          format: date-time
+                          type: string
+                        error:
+                          description: Error message if preemption failed.
+                          type: string
+                        podsTerminated:
+                          description: PodsTerminated is the number of pods that were
+                            terminated.
+                          format: int32
+                          type: integer
+                        startTime:
+                          description: StartTime is when the preemption started.
+                          format: date-time
+                          type: string
+                        success:
+                          description: Success indicates whether the preemption completed
+                            successfully.
+                          type: boolean
+                        timedOut:
+                          description: TimedOut indicates whether the drain timed
+                            out.
+                          type: boolean
+                      required:
+                      - startTime
+                      - success
+                      type: object
                     name:
                       description: Name is the ModelDeployment name.
                       type: string
@@ -316,6 +354,26 @@ spec:
                     preemptedBy:
                       description: PreemptedBy is the model that caused preemption.
                       type: string
+                    queueHistory:
+                      description: QueueHistory tracks recent queue depth samples
+                        for trend analysis.
+                      items:
+                        description: QueueSample records queue depth at a point in
+                          time for trend analysis
+                        properties:
+                          depth:
+                            description: Depth is the queue depth at this time.
+                            format: int32
+                            type: integer
+                          timestamp:
+                            description: Timestamp when this sample was taken.
+                            format: date-time
+                            type: string
+                        required:
+                        - depth
+                        - timestamp
+                        type: object
+                      type: array
                     queuedRequests:
                       description: |-
                         QueuedRequests is the number of requests waiting for this model.
@@ -331,6 +389,16 @@ spec:
                       description: 'State is the current state: Active, Preempted,
                         Queued, Idle'
                       type: string
+                    trendDirection:
+                      description: 'TrendDirection indicates queue depth trend: increasing,
+                        decreasing, stable.'
+                      type: string
+                    trendStability:
+                      description: |-
+                        TrendStability indicates how stable the trend is (0-100).
+                        Higher values mean more consistent trend direction.
+                      format: int32
+                      type: integer
                   required:
                   - name
                   type: object
