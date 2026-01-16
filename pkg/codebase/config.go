@@ -40,12 +40,15 @@ func LoadConfigFromEnv() (Config, error) {
 		QdrantCollection: firstNonEmptyEnv([]string{"CODEBASE_QDRANT_COLLECTION"}, "codebase_memory_v1"),
 		QdrantDistance:   firstNonEmptyEnv([]string{"CODEBASE_QDRANT_DISTANCE"}, "Cosine"),
 
-		EmbedAPIKey: firstNonEmptyEnv([]string{"CODEBASE_EMBED_API_KEY", "MORPH_API_KEY"}, ""),
+		EmbedAPIKey: firstNonEmptyEnv([]string{"CODEBASE_EMBED_API_KEY", "MORPH_API_KEY", "OPENAI_API_KEY"}, ""),
 		EmbedBaseURL: strings.TrimRight(firstNonEmptyEnv(
-			[]string{"CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL"},
+			[]string{"CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"},
 			"https://api.morphllm.com/v1",
 		), "/"),
-		EmbedModel: firstNonEmptyEnv([]string{"CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL"}, "morph-embedding-v3"),
+		EmbedModel: firstNonEmptyEnv(
+			[]string{"CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL", "OPENAI_EMBED_MODEL", "OPENAI_EMBEDDING_MODEL"},
+			"morph-embedding-v3",
+		),
 
 		EmbedBatchSize:   intEnv("CODEBASE_EMBED_BATCH_SIZE", 64),
 		UpsertBatchSize:  intEnv("CODEBASE_UPSERT_BATCH_SIZE", 64),

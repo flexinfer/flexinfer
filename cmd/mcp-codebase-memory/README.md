@@ -32,11 +32,11 @@ Qdrant:
 - `CODEBASE_QDRANT_COLLECTION` (default: `codebase_memory_v1`)
 - `CODEBASE_QDRANT_DISTANCE` (default: `Cosine`)
 
-Embeddings (Morph):
+Embeddings (OpenAI-compatible; defaults to Morph):
 
-- `CODEBASE_EMBED_API_KEY` (fallback: `MORPH_API_KEY`) (required for search/index)
-- `CODEBASE_EMBED_BASE_URL` (fallback: `MORPH_BASE_URL`, default: `https://api.morphllm.com/v1`)
-- `CODEBASE_EMBED_MODEL` (fallback: `MORPH_EMBED_MODEL`, default: `morph-embedding-v3`)
+- `CODEBASE_EMBED_API_KEY` (fallback: `MORPH_API_KEY`, `OPENAI_API_KEY`) (required for search/index)
+- `CODEBASE_EMBED_BASE_URL` (fallback: `MORPH_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, default: `https://api.morphllm.com/v1`)
+- `CODEBASE_EMBED_MODEL` (fallback: `MORPH_EMBED_MODEL`, `OPENAI_EMBED_MODEL`, `OPENAI_EMBEDDING_MODEL`, default: `morph-embedding-v3`)
 
 Indexing:
 

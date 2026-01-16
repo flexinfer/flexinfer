@@ -44,7 +44,7 @@ func (c *MorphClient) EmbedDocuments(ctx context.Context, texts []string) ([][]f
 		return [][]float64{}, nil
 	}
 	if strings.TrimSpace(c.apiKey) == "" {
-		return nil, fmt.Errorf("MORPH_API_KEY (or CODEBASE_EMBED_API_KEY) is not set")
+		return nil, fmt.Errorf("CODEBASE_EMBED_API_KEY (or MORPH_API_KEY / OPENAI_API_KEY) is not set")
 	}
 
 	payload := map[string]any{
