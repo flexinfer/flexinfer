@@ -57,10 +57,10 @@ func NewServiceFromEnv() (*Service, error) {
 	hc := httpclient.NewDefault()
 
 	svc := &Service{
-		cfg:    cfg,
-		qdrant: qdrant.NewClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollection, cfg.QdrantDistance),
-		embed:  embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
-		jobs:   make(map[string]*indexJob),
+		cfg:       cfg,
+		qdrant:    qdrant.NewClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollection, cfg.QdrantDistance),
+		embed:     embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
+		jobs:      make(map[string]*indexJob),
 		watchJobs: make(map[string]*watchJob),
 		indexers: index.NewRegistry(
 			cfg.MaxFileBytes,
@@ -556,12 +556,12 @@ func (s *Service) HandleGetReferences(ctx context.Context, args map[string]any) 
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"repo_id":      repoID,
-		"symbol":       symbol,
-		"file_path":    filePath,
-		"definitions":  definitions,
-		"callers":      callers,
-		"include_defs": includeDefinitions,
+		"repo_id":       repoID,
+		"symbol":        symbol,
+		"file_path":     filePath,
+		"definitions":   definitions,
+		"callers":       callers,
+		"include_defs":  includeDefinitions,
 		"include_calls": includeCallers,
 	})
 }

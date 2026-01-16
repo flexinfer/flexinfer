@@ -801,11 +801,9 @@ func (g *gitlabServer) requestRaw(ctx context.Context, method, path string, head
 	}
 
 	req.Header.Set("Accept", "*/*")
-	if headers != nil {
-		for k, v := range headers {
-			if k != "" {
-				req.Header.Set(k, v)
-			}
+	for k, v := range headers {
+		if k != "" {
+			req.Header.Set(k, v)
 		}
 	}
 	if g.token != "" {

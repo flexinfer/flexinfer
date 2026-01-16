@@ -74,4 +74,3 @@ func (s *Service) incrementWatchError(watchID, msg string) {
 		job.err = msg
 	}
 }
-

@@ -126,9 +126,9 @@ func Validation(errors map[string]string) *Error {
 
 // Result wraps a successful result or error for JSON responses.
 type Result struct {
-	OK      bool   `json:"ok"`
-	Data    any    `json:"data,omitempty"`
-	Error   *Error `json:"error,omitempty"`
+	OK    bool   `json:"ok"`
+	Data  any    `json:"data,omitempty"`
+	Error *Error `json:"error,omitempty"`
 }
 
 // Success creates a successful result.

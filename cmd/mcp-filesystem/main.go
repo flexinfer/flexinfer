@@ -15,20 +15,6 @@ import (
 
 var version = "1.0.0"
 
-// Request parameters
-type listDirParams struct {
-	Path string `json:"path"`
-}
-
-type readFileParams struct {
-	Path string `json:"path"`
-}
-
-type searchFilesParams struct {
-	Root    string `json:"root"`
-	Pattern string `json:"pattern"`
-}
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

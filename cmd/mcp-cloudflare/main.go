@@ -162,12 +162,12 @@ func main() {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"zone_id":     map[string]any{"type": "string", "description": "Zone ID"},
-				"purge_all":   map[string]any{"type": "boolean", "description": "Purge everything (use with caution)"},
-				"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Specific URLs to purge"},
-				"tags":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Cache tags to purge"},
-				"hosts":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Hostnames to purge"},
-				"prefixes":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "URL prefixes to purge"},
+				"zone_id":   map[string]any{"type": "string", "description": "Zone ID"},
+				"purge_all": map[string]any{"type": "boolean", "description": "Purge everything (use with caution)"},
+				"files":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Specific URLs to purge"},
+				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Cache tags to purge"},
+				"hosts":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Hostnames to purge"},
+				"prefixes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "URL prefixes to purge"},
 			},
 			Required: []string{"zone_id"},
 		},

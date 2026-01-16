@@ -83,4 +83,3 @@ func TestCollectFiles_RespectsCustomExclude(t *testing.T) {
 		t.Fatalf("expected no files, got %d", len(files))
 	}
 }
-

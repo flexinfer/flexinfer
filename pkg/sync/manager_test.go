@@ -111,7 +111,7 @@ func TestGet_ReturnsProfile(t *testing.T) {
 
 	p := m.Get("vscode")
 	if p == nil {
-		t.Error("Get should return vscode profile")
+		t.Fatal("Get should return vscode profile")
 	}
 	if p.Name != "vscode" {
 		t.Errorf("got %q, want %q", p.Name, "vscode")

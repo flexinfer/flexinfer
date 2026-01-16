@@ -177,9 +177,9 @@ func main() {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"query":      map[string]any{"type": "string", "description": "LogQL query expression"},
-				"start":      map[string]any{"type": "string", "description": "Start timestamp"},
-				"end":        map[string]any{"type": "string", "description": "End timestamp"},
+				"query":       map[string]any{"type": "string", "description": "LogQL query expression"},
+				"start":       map[string]any{"type": "string", "description": "Start timestamp"},
+				"end":         map[string]any{"type": "string", "description": "End timestamp"},
 				"field_limit": map[string]any{"type": "integer", "description": "Max fields to return (default: 100)"},
 				"line_limit":  map[string]any{"type": "integer", "description": "Max lines to analyze (default: 1000)"},
 			},

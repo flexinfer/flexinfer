@@ -59,15 +59,15 @@ type ContextInfo struct {
 }
 
 type IndexStats struct {
-	RepoID      string    `json:"repo_id"`
-	Root        string    `json:"root"`
-	FilesTotal  int       `json:"files_total"`
-	FilesDone   int       `json:"files_done"`
-	FilesSkipped int      `json:"files_skipped"`
-	ChunksTotal int       `json:"chunks_total"`
-	Errors      int       `json:"errors"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at,omitempty"`
+	RepoID       string    `json:"repo_id"`
+	Root         string    `json:"root"`
+	FilesTotal   int       `json:"files_total"`
+	FilesDone    int       `json:"files_done"`
+	FilesSkipped int       `json:"files_skipped"`
+	ChunksTotal  int       `json:"chunks_total"`
+	Errors       int       `json:"errors"`
+	StartedAt    time.Time `json:"started_at"`
+	FinishedAt   time.Time `json:"finished_at,omitempty"`
 }
 
 type WatchStats struct {
@@ -77,14 +77,14 @@ type WatchStats struct {
 	EventsTotal int `json:"events_total"`
 	FilesQueued int `json:"files_queued"`
 
-	FilesIndexed  int `json:"files_indexed"`
-	FilesSkipped  int `json:"files_skipped"`
-	FilesDeleted  int `json:"files_deleted"`
+	FilesIndexed   int `json:"files_indexed"`
+	FilesSkipped   int `json:"files_skipped"`
+	FilesDeleted   int `json:"files_deleted"`
 	ChunksUpserted int `json:"chunks_upserted"`
 
 	Errors int `json:"errors"`
 
-	StartedAt  time.Time `json:"started_at"`
-	StoppedAt  time.Time `json:"stopped_at,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	StoppedAt   time.Time `json:"stopped_at,omitempty"`
 	LastEventAt time.Time `json:"last_event_at,omitempty"`
 }

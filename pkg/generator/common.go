@@ -36,33 +36,32 @@ func resolvePathLike(value string, workspaceRoot string, registryRoot string, co
 	}
 
 	// Only rewrite clearly path-like values; leave things like "python3" or "npx" intact.
-	if !(strings.HasPrefix(resolved, "scripts/") || strings.HasPrefix(resolved, "mcp/") || strings.HasPrefix(resolved, "./")) {
-		return resolved
+	if strings.HasPrefix(resolved, "scripts/") || strings.HasPrefix(resolved, "mcp/") || strings.HasPrefix(resolved, "./") {
+		roots := []string{
+			registryRoot,
+			workspaceRoot,
+			filepath.Join(workspaceRoot, "platform", "gitops"),
+			filepath.Join(workspaceRoot, "services", "loom-core"),
+		}
+		for _, root := range roots {
+			if root == "" {
+				continue
+			}
+			candidate := filepath.Join(root, resolved)
+			if fileExists(candidate) {
+				return candidate
+			}
+		}
+
+		// Last resort: still make it absolute to avoid cwd-dependence.
+		if registryRoot != "" {
+			return filepath.Join(registryRoot, resolved)
+		}
+		if workspaceRoot != "" {
+			return filepath.Join(workspaceRoot, resolved)
+		}
 	}
 
-	roots := []string{
-		registryRoot,
-		workspaceRoot,
-		filepath.Join(workspaceRoot, "platform", "gitops"),
-		filepath.Join(workspaceRoot, "services", "loom-core"),
-	}
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		candidate := filepath.Join(root, resolved)
-		if fileExists(candidate) {
-			return candidate
-		}
-	}
-
-	// Last resort: still make it absolute to avoid cwd-dependence.
-	if registryRoot != "" {
-		return filepath.Join(registryRoot, resolved)
-	}
-	if workspaceRoot != "" {
-		return filepath.Join(workspaceRoot, resolved)
-	}
 	return resolved
 }
 

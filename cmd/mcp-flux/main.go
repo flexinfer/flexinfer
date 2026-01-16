@@ -290,31 +290,6 @@ func (f *fluxServer) runFlux(ctx context.Context, args ...string) (string, error
 	return stdout.String(), nil
 }
 
-// runKubectl executes a kubectl command
-func (f *fluxServer) runKubectl(ctx context.Context, args ...string) (string, error) {
-	cmdArgs := args
-	if f.kubeconfig != "" {
-		cmdArgs = append([]string{"--kubeconfig", f.kubeconfig}, cmdArgs...)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, f.timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return "", fmt.Errorf("%s: %s", err, stderr.String())
-		}
-		return "", err
-	}
-
-	return stdout.String(), nil
-}
-
 func (f *fluxServer) handleGetSources(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	kind := v.Enum("kind", "all", "git", "helm", "oci", "bucket", "all")

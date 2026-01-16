@@ -796,6 +796,42 @@ func isNamespaced(kind string) bool {
 	}
 }
 
+func canonicalKindForEvents(kind string) string {
+	switch strings.ToLower(kind) {
+	case "pod", "pods":
+		return "Pod"
+	case "deployment", "deployments", "deploy":
+		return "Deployment"
+	case "statefulset", "statefulsets", "sts":
+		return "StatefulSet"
+	case "daemonset", "daemonsets", "ds":
+		return "DaemonSet"
+	case "service", "services", "svc":
+		return "Service"
+	case "configmap", "configmaps", "cm":
+		return "ConfigMap"
+	case "secret", "secrets":
+		return "Secret"
+	case "namespace", "namespaces", "ns":
+		return "Namespace"
+	case "node", "nodes":
+		return "Node"
+	case "pvc", "persistentvolumeclaim", "persistentvolumeclaims":
+		return "PersistentVolumeClaim"
+	case "pv", "persistentvolume", "persistentvolumes":
+		return "PersistentVolume"
+	case "job", "jobs":
+		return "Job"
+	case "cronjob", "cronjobs", "cj":
+		return "CronJob"
+	default:
+		if kind == "" {
+			return ""
+		}
+		return strings.ToUpper(kind[:1]) + kind[1:]
+	}
+}
+
 // Event handler
 func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
@@ -993,7 +1029,7 @@ func (k *k8sServer) handleDescribeResource(ctx context.Context, args map[string]
 	}
 
 	// Get related events
-	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=%s", name, strings.Title(kind))
+	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=%s", name, canonicalKindForEvents(kind))
 	events, _ := k.clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{
 		FieldSelector: fieldSelector,
 		Limit:         20,

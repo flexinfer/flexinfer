@@ -177,9 +177,9 @@ func (c *Client) Post(ctx context.Context, url string, contentType string, body 
 func (c *Client) SetHeader(key, value string) {
 	// For consistent headers, wrap the transport
 	c.http.Transport = &headerTransport{
-		base:   c.http.Transport,
-		key:    key,
-		value:  value,
+		base:  c.http.Transport,
+		key:   key,
+		value: value,
 	}
 }
 
