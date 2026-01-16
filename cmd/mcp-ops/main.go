@@ -219,6 +219,14 @@ func registerTools(server *mcp.Server) {
 // Helpers
 
 func runKubectl(ctx context.Context, kubeconfig string, args ...string) (string, error) {
+	return runKubectlWithStderr(ctx, kubeconfig, true, args...)
+}
+
+func runKubectlStdoutOnly(ctx context.Context, kubeconfig string, args ...string) (string, error) {
+	return runKubectlWithStderr(ctx, kubeconfig, false, args...)
+}
+
+func runKubectlWithStderr(ctx context.Context, kubeconfig string, includeStderrOnSuccess bool, args ...string) (string, error) {
 	ctx, cancel := withDefaultTimeout(ctx, "MCP_OPS_KUBECTL_TIMEOUT_SECONDS", 55)
 	defer cancel()
 
@@ -249,9 +257,8 @@ func runKubectl(ctx context.Context, kubeconfig string, args ...string) (string,
 		}
 		return outStr, fmt.Errorf("kubectl failed: %w, output: %s%s", err, outStr, errStr)
 	}
-	if strings.TrimSpace(errStr) != "" {
-		// Keep kubectl warnings visible without breaking JSON parsing paths that consume stdout.
-		return outStr + errStr, nil
+	if includeStderrOnSuccess && strings.TrimSpace(errStr) != "" {
+		return outStr + "\n" + errStr, nil
 	}
 	return outStr, nil
 }
@@ -337,7 +344,7 @@ func handleDeletePodsByPhase(ctx context.Context, args map[string]any) (*mcp.Cal
 		getArgs = append(getArgs, "--selector", selector)
 	}
 
-	out, err := runKubectl(ctx, kc, getArgs...)
+	out, err := runKubectlStdoutOnly(ctx, kc, getArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}

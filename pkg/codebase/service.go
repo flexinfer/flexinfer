@@ -1493,7 +1493,7 @@ func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*
 		}
 	}
 
-	edges := make([]moduleGraphEdge, 0, 0)
+	edges := make([]moduleGraphEdge, 0)
 
 	for _, m := range modules {
 		from := m.FilePath
