@@ -61,3 +61,4 @@ HTTP:
 - Set `full_refresh=false` for incremental indexing (skips unchanged files using the module chunk file hash).
 - `codebase_search` supports `rerank=hybrid` and `lexical_weight` for lightweight hybrid reranking.
 - `codebase_delete_repo` requires `confirm=true` (and supports `dry_run=true`).
+- See `cmd/mcp-codebase-memory/ROADMAP.md` for planned phases.
