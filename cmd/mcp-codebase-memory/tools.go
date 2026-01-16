@@ -86,6 +86,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 					"type":        "boolean",
 					"description": "If true, annotate chunks with git blame metadata (can be slow). Defaults to CODEBASE_GIT_METADATA.",
 				},
+				"embeddings": map[string]any{
+					"type":        "boolean",
+					"description": "If false, store chunks with dummy vectors (enables non-embedding tools like text search/definition/context; semantic search will not be useful). Defaults to !CODEBASE_DISABLE_EMBEDDINGS.",
+				},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -123,6 +127,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				"git_metadata": map[string]any{
 					"type":        "boolean",
 					"description": "If true, annotate chunks with git blame metadata (can be slow). Defaults to CODEBASE_GIT_METADATA.",
+				},
+				"embeddings": map[string]any{
+					"type":        "boolean",
+					"description": "If false, store chunks with dummy vectors (enables non-embedding tools like text search/definition/context; semantic search will not be useful). Defaults to !CODEBASE_DISABLE_EMBEDDINGS.",
 				},
 			},
 		},

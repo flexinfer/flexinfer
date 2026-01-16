@@ -7,8 +7,9 @@ import (
 )
 
 type Config struct {
-	RepoIDDefault      string
-	GitMetadataDefault bool
+	RepoIDDefault            string
+	GitMetadataDefault       bool
+	DisableEmbeddingsDefault bool
 
 	QdrantURL        string
 	QdrantAPIKey     string
@@ -29,8 +30,9 @@ type Config struct {
 
 func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
-		RepoIDDefault:      os.Getenv("CODEBASE_REPO_ID"),
-		GitMetadataDefault: boolEnv("CODEBASE_GIT_METADATA", false),
+		RepoIDDefault:            os.Getenv("CODEBASE_REPO_ID"),
+		GitMetadataDefault:       boolEnv("CODEBASE_GIT_METADATA", false),
+		DisableEmbeddingsDefault: boolEnv("CODEBASE_DISABLE_EMBEDDINGS", false),
 
 		QdrantURL: strings.TrimRight(firstNonEmptyEnv(
 			[]string{"CODEBASE_QDRANT_URL", "QDRANT_URL"},

@@ -121,6 +121,11 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 		gitMetadata = v
 	}
 
+	embeddings := !s.cfg.DisableEmbeddingsDefault
+	if v, ok := args["embeddings"].(bool); ok {
+		embeddings = v
+	}
+
 	jobID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
 
@@ -139,12 +144,13 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 	s.jobs[jobID] = job
 	s.jobsMu.Unlock()
 
-	go s.runIndexJob(jobCtx, jobID, repoID, root, langs, exclude, fullRefresh, gitMetadata)
+	go s.runIndexJob(jobCtx, jobID, repoID, root, langs, exclude, fullRefresh, gitMetadata, embeddings)
 
 	return mcp.JSONResult(map[string]any{
 		"job_id":       jobID,
 		"repo_id":      repoID,
 		"git_metadata": gitMetadata,
+		"embeddings":   embeddings,
 	})
 }
 
@@ -1399,6 +1405,7 @@ func (s *Service) runIndexJob(
 	exclude []string,
 	fullRefresh bool,
 	gitMetadata bool,
+	embeddings bool,
 ) {
 	defer func() {
 		// keep job state for debugging; future: add TTL cleanup
@@ -1458,27 +1465,67 @@ func (s *Service) runIndexJob(
 		upsertBatch = s.cfg.UpsertBatchSize
 	)
 
+	if !embeddings {
+		exists, size, err := s.qdrant.GetCollectionVectorSize(ctx)
+		if err != nil {
+			s.setJobFailed(jobID, fmt.Sprintf("qdrant collection info: %v", err))
+			return
+		}
+		if exists {
+			if size <= 0 {
+				s.setJobFailed(jobID, "qdrant collection vector size unknown")
+				return
+			}
+			vectorSize = size
+			ensured = true
+		} else {
+			vectorSize = 1
+			if err := s.qdrant.EnsureCollection(ctx, vectorSize); err != nil {
+				s.setJobFailed(jobID, fmt.Sprintf("qdrant ensure collection: %v", err))
+				return
+			}
+			ensured = true
+		}
+	}
+
+	dummyVec := func() []float64 {
+		v := make([]float64, vectorSize)
+		if len(v) > 0 {
+			v[0] = 1
+		}
+		return v
+	}
+
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
 		}
-		texts := make([]string, 0, len(pending))
-		for _, p := range pending {
-			texts = append(texts, p.text)
-		}
-		vectors, embedErr := s.embed.EmbedDocuments(ctx, texts)
-		if embedErr != nil {
-			return embedErr
-		}
-		if !ensured {
-			if len(vectors) == 0 || len(vectors[0]) == 0 {
-				return fmt.Errorf("embedding returned empty vector")
+		var vectors [][]float64
+		if embeddings {
+			texts := make([]string, 0, len(pending))
+			for _, p := range pending {
+				texts = append(texts, p.text)
 			}
-			vectorSize = len(vectors[0])
-			if ensureErr := s.qdrant.EnsureCollection(ctx, vectorSize); ensureErr != nil {
-				return ensureErr
+			var embedErr error
+			vectors, embedErr = s.embed.EmbedDocuments(ctx, texts)
+			if embedErr != nil {
+				return embedErr
 			}
-			ensured = true
+			if !ensured {
+				if len(vectors) == 0 || len(vectors[0]) == 0 {
+					return fmt.Errorf("embedding returned empty vector")
+				}
+				vectorSize = len(vectors[0])
+				if ensureErr := s.qdrant.EnsureCollection(ctx, vectorSize); ensureErr != nil {
+					return ensureErr
+				}
+				ensured = true
+			}
+		} else {
+			vectors = make([][]float64, len(pending))
+			for i := range vectors {
+				vectors[i] = dummyVec()
+			}
 		}
 
 		points := make([]qdrant.Point, 0, len(pending))
@@ -1569,14 +1616,14 @@ func (s *Service) runIndexJob(
 
 		if len(pending) >= embedBatch {
 			if err := flush(); err != nil {
-				s.setJobFailed(jobID, fmt.Sprintf("flush embeddings: %v", err))
+				s.setJobFailed(jobID, fmt.Sprintf("flush chunks: %v", err))
 				return
 			}
 		}
 	}
 
 	if err := flush(); err != nil {
-		s.setJobFailed(jobID, fmt.Sprintf("final flush embeddings: %v", err))
+		s.setJobFailed(jobID, fmt.Sprintf("final flush chunks: %v", err))
 		return
 	}
 

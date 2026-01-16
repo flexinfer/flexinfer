@@ -46,6 +46,7 @@ Goal: support more environments than “Morph API only”.
 - Pluggable embedder interface:
   - Morph embeddings (current)
   - Optional local embeddings (e.g., sentence-transformers via a sidecar service, or another MCP server)
+- Optional “no-embeddings” indexing mode (dummy vectors) so non-embedding tools (definition/context/text search/graphs) work without an embeddings API key.
 - Cache embeddings per `(content_hash, model)` to avoid recompute on re-index.
 
 ### Phase F — Better chunking & retrieval
@@ -62,4 +63,3 @@ Goal: remove CGO build friction while keeping multi-language parsing.
 
 - Evaluate non-CGO tree-sitter options or pure-Go parsers per language.
 - If not feasible, standardize “CGO build for release images” + “fallback for CI/dev” policy.
-

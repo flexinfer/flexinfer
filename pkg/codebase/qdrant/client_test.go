@@ -1,10 +1,14 @@
 package qdrant
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	"github.com/crb2nu/loom/pkg/codebase/schema"
+	"github.com/crb2nu/loom/pkg/httpclient"
 )
 
 func TestNormalizeCallToken(t *testing.T) {
@@ -51,5 +55,70 @@ func TestChunkToPayload_IncludesCallNames(t *testing.T) {
 	want := []string{"baz", "foo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("call_names=%v want %v", got, want)
+	}
+}
+
+func TestGetCollectionVectorSize_DefaultVectors(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/collections/test" {
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+	exists, size, err := c.GetCollectionVectorSize(context.Background())
+	if err != nil {
+		t.Fatalf("GetCollectionVectorSize err=%v", err)
+	}
+	if !exists || size != 4 {
+		t.Fatalf("exists=%v size=%d want exists=true size=4", exists, size)
+	}
+}
+
+func TestGetCollectionVectorSize_NamedVectors(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/collections/test" {
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"default":{"size":8,"distance":"Cosine"}}}}}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+	exists, size, err := c.GetCollectionVectorSize(context.Background())
+	if err != nil {
+		t.Fatalf("GetCollectionVectorSize err=%v", err)
+	}
+	if !exists || size != 8 {
+		t.Fatalf("exists=%v size=%d want exists=true size=8", exists, size)
+	}
+}
+
+func TestEnsureCollection_ErrOnVectorSizeMismatch(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/collections/test" {
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+	if err := c.EnsureCollection(context.Background(), 16); err == nil {
+		t.Fatalf("expected error on vector size mismatch")
 	}
 }

@@ -96,6 +96,11 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 		gitMetadata = v
 	}
 
+	embeddings := !s.cfg.DisableEmbeddingsDefault
+	if v, ok := args["embeddings"].(bool); ok {
+		embeddings = v
+	}
+
 	watchID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
 
@@ -114,12 +119,13 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 	s.watchJobs[watchID] = job
 	s.watchMu.Unlock()
 
-	go s.runWatchJob(jobCtx, watchID, repoID, root, langs, exclude, debounce, gitMetadata)
+	go s.runWatchJob(jobCtx, watchID, repoID, root, langs, exclude, debounce, gitMetadata, embeddings)
 
 	return mcp.JSONResult(map[string]any{
 		"watch_id":     watchID,
 		"repo_id":      repoID,
 		"git_metadata": gitMetadata,
+		"embeddings":   embeddings,
 	})
 }
 
@@ -174,6 +180,7 @@ func (s *Service) runWatchJob(
 	exclude []string,
 	debounce time.Duration,
 	gitMetadata bool,
+	embeddings bool,
 ) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -187,6 +194,28 @@ func (s *Service) runWatchJob(
 			gitRoot = gr
 		} else {
 			gitMetadata = false
+		}
+	}
+
+	vectorSize := 0
+	if !embeddings {
+		exists, size, err := s.qdrant.GetCollectionVectorSize(ctx)
+		if err != nil {
+			s.setWatchFailed(watchID, fmt.Sprintf("qdrant collection info: %v", err))
+			return
+		}
+		if exists {
+			if size <= 0 {
+				s.setWatchFailed(watchID, "qdrant collection vector size unknown")
+				return
+			}
+			vectorSize = size
+		} else {
+			vectorSize = 1
+			if err := s.qdrant.EnsureCollection(ctx, vectorSize); err != nil {
+				s.setWatchFailed(watchID, fmt.Sprintf("qdrant ensure collection: %v", err))
+				return
+			}
 		}
 	}
 
@@ -260,7 +289,7 @@ func (s *Service) runWatchJob(
 					if !ok {
 						return
 					}
-					if err := s.applyWatchTask(ctx, watchID, repoID, absRoot, gitRoot, gitMetadata, t); err != nil {
+					if err := s.applyWatchTask(ctx, watchID, repoID, absRoot, gitRoot, gitMetadata, embeddings, vectorSize, t); err != nil {
 						s.incrementWatchError(watchID, err.Error())
 					}
 				}
@@ -391,7 +420,7 @@ func (s *Service) runWatchJob(
 	}
 }
 
-func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, gitRoot string, gitMetadata bool, t watchTask) error {
+func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, gitRoot string, gitMetadata bool, embeddings bool, vectorSize int, t watchTask) error {
 	switch t.op {
 	case "delete":
 		if err := s.qdrant.DeleteFile(ctx, repoID, t.relPath); err != nil && !errors.Is(err, qdrant.ErrCollectionNotFound) {
@@ -442,32 +471,47 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			}
 		}
 
-		texts := make([]string, 0, len(chunks))
-		for _, ch := range chunks {
-			text := ch.Content
-			if ch.Docstring != "" {
-				text = ch.Docstring + "\n\n" + text
-			}
-			texts = append(texts, text)
-		}
-		vectors, err := s.embed.EmbedDocuments(ctx, texts)
-		if err != nil {
-			return fmt.Errorf("embed %s: %v", t.relPath, err)
-		}
-		if len(vectors) == 0 || len(vectors[0]) == 0 {
-			return fmt.Errorf("embed %s: empty vector", t.relPath)
-		}
-		if err := s.qdrant.EnsureCollection(ctx, len(vectors[0])); err != nil {
-			return fmt.Errorf("ensure collection: %v", err)
-		}
-
 		points := make([]qdrant.Point, 0, len(chunks))
-		for i := range chunks {
-			points = append(points, qdrant.Point{
-				ID:      chunks[i].ID,
-				Vector:  vectors[i],
-				Payload: qdrant.ChunkToPayload(chunks[i], true),
-			})
+		if embeddings {
+			texts := make([]string, 0, len(chunks))
+			for _, ch := range chunks {
+				text := ch.Content
+				if ch.Docstring != "" {
+					text = ch.Docstring + "\n\n" + text
+				}
+				texts = append(texts, text)
+			}
+			vectors, err := s.embed.EmbedDocuments(ctx, texts)
+			if err != nil {
+				return fmt.Errorf("embed %s: %v", t.relPath, err)
+			}
+			if len(vectors) == 0 || len(vectors[0]) == 0 {
+				return fmt.Errorf("embed %s: empty vector", t.relPath)
+			}
+			if err := s.qdrant.EnsureCollection(ctx, len(vectors[0])); err != nil {
+				return fmt.Errorf("ensure collection: %v", err)
+			}
+
+			for i := range chunks {
+				points = append(points, qdrant.Point{
+					ID:      chunks[i].ID,
+					Vector:  vectors[i],
+					Payload: qdrant.ChunkToPayload(chunks[i], true),
+				})
+			}
+		} else {
+			if vectorSize <= 0 {
+				return fmt.Errorf("no-embeddings mode requires known qdrant vector size")
+			}
+			dummy := make([]float64, vectorSize)
+			dummy[0] = 1
+			for i := range chunks {
+				points = append(points, qdrant.Point{
+					ID:      chunks[i].ID,
+					Vector:  dummy,
+					Payload: qdrant.ChunkToPayload(chunks[i], true),
+				})
+			}
 		}
 		for i := 0; i < len(points); i += s.cfg.UpsertBatchSize {
 			end := i + s.cfg.UpsertBatchSize

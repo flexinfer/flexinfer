@@ -35,13 +35,14 @@ Qdrant:
 
 Embeddings (OpenAI-compatible; defaults to Morph):
 
-- `CODEBASE_EMBED_API_KEY` (fallback: `MORPH_API_KEY`, `OPENAI_API_KEY`) (required for search/index)
+- `CODEBASE_EMBED_API_KEY` (fallback: `MORPH_API_KEY`, `OPENAI_API_KEY`) (required for semantic search and embedding-enabled indexing)
 - `CODEBASE_EMBED_BASE_URL` (fallback: `MORPH_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, default: `https://api.morphllm.com/v1`)
 - `CODEBASE_EMBED_MODEL` (fallback: `MORPH_EMBED_MODEL`, `OPENAI_EMBED_MODEL`, `OPENAI_EMBEDDING_MODEL`, default: `morph-embedding-v3`)
 
 Indexing:
 
 - `CODEBASE_REPO_ID` (optional default `repo_id` if not provided per-call)
+- `CODEBASE_DISABLE_EMBEDDINGS` (default: `false`) (if true, defaults `codebase_index_start`/`codebase_watch_start` to store chunks with dummy vectors)
 - `CODEBASE_EMBED_BATCH_SIZE` (default: `64`)
 - `CODEBASE_UPSERT_BATCH_SIZE` (default: `64`)
 - `CODEBASE_INDEX_CONCURRENCY` (default: `4`) (reserved for future parallel indexing)
@@ -62,6 +63,7 @@ HTTP:
 ## Notes
 
 - `codebase_index_start` defaults to indexing all supported languages if `languages` is omitted.
+- Use `embeddings=false` on `codebase_index_start` / `codebase_watch_start` to index without an embeddings API key (semantic search will not be useful).
 - Set `full_refresh=false` for incremental indexing (skips unchanged files using the module chunk file hash).
 - `codebase_search` supports `rerank=hybrid` and `lexical_weight` for lightweight hybrid reranking.
 - `codebase_delete_repo` requires `confirm=true` (and supports `dry_run=true`).
