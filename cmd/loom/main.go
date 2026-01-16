@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	stdsync "sync"
 	"time"
 
 	loomcontext "github.com/crb2nu/loom/pkg/context"
@@ -1369,13 +1370,41 @@ func runProxy(socketPath string) error {
 	var daemon *mcp.StdioTransport
 	var daemonConn net.Conn
 
+	var autostartOnce stdsync.Once
+	autostart := func() {
+		autostartOnce.Do(func() {
+			// Never write to stdout in proxy mode (it would corrupt the MCP stream).
+			if err := startDaemonInBackground(socketPath); err != nil {
+				fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed: %v\n", err)
+			}
+		})
+	}
+
+	dialWithTimeout := func(timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout("unix", socketPath, timeout)
+	}
+
 	ensureDaemon := func() error {
 		if daemonConn != nil {
 			return nil
 		}
-		conn, err := dial(socketPath)
+		// Keep proxy responsive during MCP startup: try a fast connect first,
+		// then attempt an autostart and retry briefly.
+		conn, err := dialWithTimeout(250 * time.Millisecond)
 		if err != nil {
-			return err
+			autostart()
+			deadline := time.Now().Add(3 * time.Second)
+			var lastErr error
+			for time.Now().Before(deadline) {
+				conn, lastErr = dialWithTimeout(250 * time.Millisecond)
+				if lastErr == nil {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if lastErr != nil {
+				return lastErr
+			}
 		}
 		daemonConn = conn
 		daemon = mcp.NewStdioTransport(daemonConn, daemonConn)
@@ -1396,54 +1425,61 @@ func runProxy(socketPath string) error {
 		daemon.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
 
 		return nil
-	}
+		}
 
-	// Main message loop
+		// Main message loop
 	for {
 		msg, err := stdio.Recv(ctx)
 		if err != nil {
 			return nil // Client disconnected
 		}
 
-		if err := ensureDaemon(); err != nil {
-			stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
-			continue
-		}
-
 		var resp *mcp.Message
 
 		switch msg.Method {
 		case "initialize":
+			// Some clients treat an initialize failure as a hard crash. Respond even if the daemon
+			// is temporarily unavailable; we can connect (or autostart) lazily on the first call.
+			autostart()
 			resp = handleProxyInitialize(msg)
 
 		case "notifications/initialized":
 			// No response needed for notifications
+			autostart()
 			continue
 
-		case "tools/list":
-			resp, err = handleProxyToolsList(ctx, daemon, msg)
-
-		case "tools/call":
-			resp, err = handleProxyToolsCall(ctx, daemon, msg)
-
-		case "resources/list":
-			resp, err = handleProxyResourcesList(ctx, daemon, msg)
-
-		case "resources/templates/list":
-			resp, err = handleProxyResourceTemplatesList(ctx, daemon, msg)
-
-		case "resources/read":
-			resp, err = handleProxyResourcesRead(ctx, daemon, msg)
-
-		case "prompts/list":
-			resp, err = handleProxyPromptsList(ctx, daemon, msg)
-
-		case "prompts/get":
-			resp, err = handleProxyPromptsGet(ctx, daemon, msg)
-
 		default:
-			// Forward unknown methods to daemon
-			resp, err = forwardToDaemon(ctx, daemon, msg)
+			if err := ensureDaemon(); err != nil {
+				stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+				continue
+			}
+
+			switch msg.Method {
+			case "tools/list":
+				resp, err = handleProxyToolsList(ctx, daemon, msg)
+
+			case "tools/call":
+				resp, err = handleProxyToolsCall(ctx, daemon, msg)
+
+			case "resources/list":
+				resp, err = handleProxyResourcesList(ctx, daemon, msg)
+
+			case "resources/templates/list":
+				resp, err = handleProxyResourceTemplatesList(ctx, daemon, msg)
+
+			case "resources/read":
+				resp, err = handleProxyResourcesRead(ctx, daemon, msg)
+
+			case "prompts/list":
+				resp, err = handleProxyPromptsList(ctx, daemon, msg)
+
+			case "prompts/get":
+				resp, err = handleProxyPromptsGet(ctx, daemon, msg)
+
+			default:
+				// Forward unknown methods to daemon
+				resp, err = forwardToDaemon(ctx, daemon, msg)
+			}
 		}
 
 		if err != nil {
@@ -1462,6 +1498,61 @@ func runProxy(socketPath string) error {
 			}
 		}
 	}
+}
+
+func startDaemonInBackground(socketPath string) error {
+	// Prefer an existing launchctl-managed daemon; if one isn't installed or isn't running,
+	// start a best-effort loomd process with stdout/stderr redirected away from the MCP stream.
+	if conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond); err == nil {
+		_ = conn.Close()
+		return nil
+	}
+
+	loomdPath := ""
+	if p, err := exec.LookPath("loomd"); err == nil {
+		loomdPath = p
+	} else if exe, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(exe), "loomd")
+		if _, statErr := os.Stat(sibling); statErr == nil {
+			loomdPath = sibling
+		}
+	}
+	if loomdPath == "" {
+		return fmt.Errorf("loomd not found in PATH (or alongside loom)")
+	}
+
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".config", "loom", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "loomd-proxy.out"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		// If we can't open a log file, don't start the daemon (it would inherit stdout).
+		return fmt.Errorf("open daemon log file: %w", err)
+	}
+
+	args := []string{"--socket", socketPath}
+	if regPath, found := registry.FindRegistry(); found {
+		args = append(args, "--registry", regPath)
+	}
+
+	cmd := exec.Command(loomdPath, args...)
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return fmt.Errorf("start loomd: %w", err)
+	}
+
+	// Detach so we don't have to Wait() (proxy is long-lived and should not leak zombies).
+	if err := cmd.Process.Release(); err != nil {
+		_ = logFile.Close()
+		return fmt.Errorf("release loomd process: %w", err)
+	}
+
+	_ = logFile.Close()
+	return nil
 }
 
 func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
