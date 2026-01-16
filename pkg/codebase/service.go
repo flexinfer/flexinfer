@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -986,6 +987,235 @@ func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mc
 		"edges":     edges,
 		"languages": languages,
 		"truncated": len(seen) >= maxNodes,
+	})
+}
+
+type moduleGraphNode struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"` // file|import
+	FilePath string `json:"file_path,omitempty"`
+	Import   string `json:"import,omitempty"`
+}
+
+type moduleGraphEdge struct {
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"` // imports
+	ImportRaw  string `json:"import_raw,omitempty"`
+	ResolvedTo string `json:"resolved_to,omitempty"` // file_path when resolved
+}
+
+func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	repoID := s.cfg.RepoIDDefault
+	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
+		repoID = v
+	}
+	if strings.TrimSpace(repoID) == "" {
+		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
+	}
+
+	maxFiles := 512
+	switch v := args["max_files"].(type) {
+	case float64:
+		if int(v) > 0 {
+			maxFiles = int(v)
+		}
+	case int:
+		if v > 0 {
+			maxFiles = v
+		}
+	}
+	if maxFiles > 10_000 {
+		maxFiles = 10_000
+	}
+
+	maxEdges := 4000
+	switch v := args["max_edges"].(type) {
+	case float64:
+		if int(v) > 0 {
+			maxEdges = int(v)
+		}
+	case int:
+		if v > 0 {
+			maxEdges = v
+		}
+	}
+	if maxEdges > 100_000 {
+		maxEdges = 100_000
+	}
+
+	includeExternal := true
+	if v, ok := args["include_external"].(bool); ok {
+		includeExternal = v
+	}
+
+	var languages []string
+	if raw, ok := args["languages"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
+			}
+		}
+	}
+
+	modules, err := s.qdrant.ListModules(ctx, repoID, maxFiles)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(languages) > 0 {
+		want := map[string]bool{}
+		for _, l := range languages {
+			want[l] = true
+		}
+		filtered := modules[:0]
+		for _, m := range modules {
+			if want[strings.ToLower(m.Language)] {
+				filtered = append(filtered, m)
+			}
+		}
+		modules = filtered
+	}
+
+	fileSet := map[string]bool{}
+	for _, m := range modules {
+		if strings.TrimSpace(m.FilePath) != "" {
+			fileSet[m.FilePath] = true
+		}
+	}
+
+	resolveRelativeJSImport := func(fromFile string, raw string) (string, bool) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || !strings.HasPrefix(raw, ".") {
+			return "", false
+		}
+		dir := path.Dir(fromFile)
+		if dir == "." {
+			dir = ""
+		}
+		base := path.Clean(path.Join(dir, raw))
+		cands := []string{
+			base,
+			base + ".ts",
+			base + ".tsx",
+			base + ".js",
+			base + ".jsx",
+			path.Join(base, "index.ts"),
+			path.Join(base, "index.tsx"),
+			path.Join(base, "index.js"),
+			path.Join(base, "index.jsx"),
+		}
+		for _, c := range cands {
+			if fileSet[c] {
+				return c, true
+			}
+		}
+		return "", false
+	}
+
+	resolvePythonImport := func(raw string) (string, bool) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return "", false
+		}
+		if strings.ContainsAny(raw, "/\\") {
+			return "", false
+		}
+		base := strings.ReplaceAll(raw, ".", "/")
+		cands := []string{
+			base + ".py",
+			base + ".pyi",
+			path.Join(base, "__init__.py"),
+			path.Join(base, "__init__.pyi"),
+		}
+		for _, c := range cands {
+			if fileSet[c] {
+				return c, true
+			}
+		}
+		return "", false
+	}
+
+	nodes := map[string]moduleGraphNode{}
+	addNode := func(n moduleGraphNode) {
+		if n.ID == "" {
+			return
+		}
+		if _, ok := nodes[n.ID]; !ok {
+			nodes[n.ID] = n
+		}
+	}
+
+	edges := make([]moduleGraphEdge, 0, 0)
+
+	for _, m := range modules {
+		from := m.FilePath
+		if strings.TrimSpace(from) == "" {
+			continue
+		}
+		addNode(moduleGraphNode{ID: "file:" + from, Kind: "file", FilePath: from})
+
+		for _, imp := range m.Imports {
+			if strings.TrimSpace(imp) == "" {
+				continue
+			}
+			toID := "import:" + imp
+			resolved := ""
+
+			switch strings.ToLower(m.Language) {
+			case "typescript", "javascript":
+				if r, ok := resolveRelativeJSImport(from, imp); ok {
+					resolved = r
+					toID = "file:" + r
+					addNode(moduleGraphNode{ID: toID, Kind: "file", FilePath: r})
+				}
+			case "python":
+				if r, ok := resolvePythonImport(imp); ok {
+					resolved = r
+					toID = "file:" + r
+					addNode(moduleGraphNode{ID: toID, Kind: "file", FilePath: r})
+				}
+			}
+
+			if resolved == "" {
+				if !includeExternal {
+					continue
+				}
+				addNode(moduleGraphNode{ID: toID, Kind: "import", Import: imp})
+			}
+
+			edges = append(edges, moduleGraphEdge{
+				From:       "file:" + from,
+				To:         toID,
+				Kind:       "imports",
+				ImportRaw:  imp,
+				ResolvedTo: resolved,
+			})
+			if len(edges) >= maxEdges {
+				break
+			}
+		}
+		if len(edges) >= maxEdges {
+			break
+		}
+	}
+
+	outNodes := make([]moduleGraphNode, 0, len(nodes))
+	for _, n := range nodes {
+		outNodes = append(outNodes, n)
+	}
+	sort.Slice(outNodes, func(i, j int) bool { return outNodes[i].ID < outNodes[j].ID })
+
+	return mcp.JSONResult(map[string]any{
+		"repo_id":            repoID,
+		"max_files":          maxFiles,
+		"max_edges":          maxEdges,
+		"include_external":   includeExternal,
+		"languages":          languages,
+		"nodes":              outNodes,
+		"edges":              edges,
+		"truncated_by_files": len(modules) >= maxFiles,
+		"truncated_by_edges": len(edges) >= maxEdges,
 	})
 }
 

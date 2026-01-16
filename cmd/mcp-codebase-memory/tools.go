@@ -434,4 +434,37 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleCallGraph(ctx, args)
 	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "codebase_module_graph",
+		Description: "Build a best-effort module dependency graph from indexed module chunks (imports edges).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repo identifier used during indexing.",
+				},
+				"languages": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional subset of languages (filters module chunks by language).",
+				},
+				"max_files": map[string]any{
+					"type":        "integer",
+					"description": "Maximum module chunks/files to consider (default 512).",
+				},
+				"max_edges": map[string]any{
+					"type":        "integer",
+					"description": "Maximum edges to return (default 4000).",
+				},
+				"include_external": map[string]any{
+					"type":        "boolean",
+					"description": "If false, only include resolved internal edges where possible (default true).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleModuleGraph(ctx, args)
+	})
 }
