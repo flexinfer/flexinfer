@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,11 +30,15 @@ func getHTTPClient() *http.Client {
 	return client
 }
 
+var httpClientFactory = getHTTPClient
+
 var (
 	version        = "0.1.0"
 	lokiURL        = getEnv("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
 	portForward    = getEnvBool("LOKI_PORT_FORWARD", true)
 	portForwardCmd *exec.Cmd
+	pfMu           sync.Mutex
+	pfStderr       *limitedBuffer
 )
 
 func getEnv(key, fallback string) string {
@@ -205,8 +210,13 @@ func main() {
 }
 
 func cleanup() {
-	if portForwardCmd != nil && portForwardCmd.Process != nil {
-		portForwardCmd.Process.Kill()
+	pfMu.Lock()
+	cmd := portForwardCmd
+	portForwardCmd = nil
+	pfMu.Unlock()
+
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 }
 
@@ -223,57 +233,72 @@ func maybeStartPortForward() {
 	}
 
 	host := u.Hostname()
-	needsPF := strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc") || strings.HasPrefix(host, "loki")
+	needsPF := needsPortForward(host)
 
 	if !needsPF {
 		return
 	}
 
-	if portForwardCmd != nil {
-		// Check if running
-		if portForwardCmd.ProcessState == nil {
-			return // Still running
-		}
+	pfMu.Lock()
+	if isPortForwardRunningLocked() {
+		pfMu.Unlock()
+		return
 	}
 
-	// Start port-forward
-	// kubectl -n logging port-forward svc/loki 3100:3100
+	// Start port-forward: kubectl -n logging port-forward svc/loki 3100:3100
 	cmd := exec.Command("kubectl", "-n", "logging", "port-forward", "svc/loki", "3100:3100")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err == nil {
-		portForwardCmd = cmd
-		lokiURL = "http://127.0.0.1:3100"
-		// Give it a moment to start
-		time.Sleep(500 * time.Millisecond)
+	cmd.Stdout = io.Discard
+	pfStderr = &limitedBuffer{MaxBytes: 8 * 1024}
+	cmd.Stderr = pfStderr
+	if err := cmd.Start(); err != nil {
+		pfMu.Unlock()
+		return
+	}
+
+	portForwardCmd = cmd
+	pfMu.Unlock()
+
+	go func(cmd *exec.Cmd) {
+		_ = cmd.Wait()
+		pfMu.Lock()
+		if portForwardCmd == cmd {
+			portForwardCmd = nil
+		}
+		pfMu.Unlock()
+	}(cmd)
+
+	if err := waitForLocalLokiReady(3 * time.Second); err != nil {
+		pfMu.Lock()
+		if portForwardCmd == cmd && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			portForwardCmd = nil
+		}
+		pfMu.Unlock()
 	}
 }
 
 // Loki Client
 
-func lokiRequest(endpoint string, params map[string]string) (map[string]any, error) {
+func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[string]any, error) {
 	maybeStartPortForward()
 
-	u, err := url.Parse(lokiURL + "/loki/api/v1/" + endpoint)
+	baseURL := effectiveLokiBaseURL()
+	reqURL, err := lokiAPIURL(baseURL, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(params) > 0 {
-		q := u.Query()
-		for k, v := range params {
-			q.Set(k, v)
-		}
-		u.RawQuery = q.Encode()
+		reqURL += "?" + params.Encode()
 	}
 
-	req, err := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
-	resp, err := getHTTPClient().Do(req)
+	resp, err := httpClientFactory().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -284,9 +309,19 @@ func lokiRequest(endpoint string, params map[string]string) (map[string]any, err
 		return nil, err
 	}
 
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("loki API error %d (%s): %s", resp.StatusCode, reqURL, bodySnippet(body))
+	}
+
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf(
+			"loki response was not JSON (status %d, content-type %q, url %s): %s",
+			resp.StatusCode,
+			resp.Header.Get("Content-Type"),
+			reqURL,
+			bodySnippet(body),
+		)
 	}
 
 	return result, nil
@@ -295,21 +330,21 @@ func lokiRequest(endpoint string, params map[string]string) (map[string]any, err
 // Handlers
 
 func handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["query"].(string); ok {
-		params["query"] = v
+		params.Set("query", v)
 	}
 	if v, ok := args["time"].(string); ok {
-		params["time"] = v
+		params.Set("time", v)
 	}
 	if v, ok := args["limit"].(float64); ok {
-		params["limit"] = fmt.Sprintf("%d", int(v))
+		params.Set("limit", fmt.Sprintf("%d", int(v)))
 	}
 	if v, ok := args["direction"].(string); ok {
-		params["direction"] = v
+		params.Set("direction", v)
 	}
 
-	res, err := lokiRequest("query", params)
+	res, err := lokiRequest(ctx, "query", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -324,29 +359,29 @@ func handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleQueryRange(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
-	params["step"] = "15s" // default
+	params := url.Values{}
+	params.Set("step", "15s") // default
 
 	if v, ok := args["query"].(string); ok {
-		params["query"] = v
+		params.Set("query", v)
 	}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	}
 	if v, ok := args["step"].(string); ok {
-		params["step"] = v
+		params.Set("step", v)
 	}
 	if v, ok := args["limit"].(float64); ok {
-		params["limit"] = fmt.Sprintf("%d", int(v))
+		params.Set("limit", fmt.Sprintf("%d", int(v)))
 	}
 	if v, ok := args["direction"].(string); ok {
-		params["direction"] = v
+		params.Set("direction", v)
 	}
 
-	res, err := lokiRequest("query_range", params)
+	res, err := lokiRequest(ctx, "query_range", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -361,15 +396,15 @@ func handleQueryRange(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleLabels(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	}
 
-	res, err := lokiRequest("labels", params)
+	res, err := lokiRequest(ctx, "labels", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -385,17 +420,17 @@ func handleLabels(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 
 func handleLabelValues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	name, _ := args["name"].(string)
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	}
 
 	// URL encode label name in path
 	endpoint := fmt.Sprintf("label/%s/values", url.PathEscape(name))
-	res, err := lokiRequest(endpoint, params)
+	res, err := lokiRequest(ctx, endpoint, params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -410,60 +445,28 @@ func handleLabelValues(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleSeries(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	// series endpoint uses match[]=... which is tricky with map[string]string
-	// We need to construct query manually or handle it specially in lokiRequest
-	// For now, let's just support single match or hack it into the URL in lokiRequest if we passed a url.Values
-
-	// Actually, let's just modify lokiRequest to take url.Values or handle it here
-
-	maybeStartPortForward()
-
-	u, err := url.Parse(lokiURL + "/loki/api/v1/series")
-	if err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	q := u.Query()
+	params := url.Values{}
 
 	if match, ok := args["match"].([]any); ok {
 		for _, m := range match {
 			if s, ok := m.(string); ok {
-				q.Add("match[]", s)
+				params.Add("match[]", s)
 			}
 		}
 	} else if match, ok := args["match"].(string); ok {
-		q.Add("match[]", match)
+		params.Add("match[]", match)
 	}
 
 	if v, ok := args["start"].(string); ok {
-		q.Set("start", v)
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		q.Set("end", v)
+		params.Set("end", v)
 	}
 
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequest("GET", u.String(), nil)
+	result, err := lokiRequest(ctx, "series", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := getHTTPClient().Do(req)
-	if err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
-		return mcp.ErrorResult(fmt.Errorf("unmarshal response: %w", err)), nil
 	}
 
 	if status, ok := result["status"].(string); ok && status == "success" {
@@ -476,21 +479,21 @@ func handleSeries(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["query"].(string); ok {
-		params["query"] = v
+		params.Set("query", v)
 	}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	} else {
 		// Default to now
-		params["end"] = fmt.Sprintf("%d", time.Now().UnixNano())
+		params.Set("end", fmt.Sprintf("%d", time.Now().UnixNano()))
 	}
 
-	res, err := lokiRequest("index/stats", params)
+	res, err := lokiRequest(ctx, "index/stats", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -502,18 +505,18 @@ func handleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleIndexStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["query"].(string); ok {
-		params["query"] = v
+		params.Set("query", v)
 	}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	}
 
-	res, err := lokiRequest("index/stats", params)
+	res, err := lokiRequest(ctx, "index/stats", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -525,24 +528,24 @@ func handleIndexStats(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleDetectedFields(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	params := make(map[string]string)
+	params := url.Values{}
 	if v, ok := args["query"].(string); ok {
-		params["query"] = v
+		params.Set("query", v)
 	}
 	if v, ok := args["start"].(string); ok {
-		params["start"] = v
+		params.Set("start", v)
 	}
 	if v, ok := args["end"].(string); ok {
-		params["end"] = v
+		params.Set("end", v)
 	}
 	if v, ok := args["field_limit"].(float64); ok {
-		params["field_limit"] = fmt.Sprintf("%d", int(v))
+		params.Set("field_limit", fmt.Sprintf("%d", int(v)))
 	}
 	if v, ok := args["line_limit"].(float64); ok {
-		params["line_limit"] = fmt.Sprintf("%d", int(v))
+		params.Set("line_limit", fmt.Sprintf("%d", int(v)))
 	}
 
-	res, err := lokiRequest("detected_fields", params)
+	res, err := lokiRequest(ctx, "detected_fields", params)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -559,17 +562,18 @@ func handleDetectedFields(ctx context.Context, args map[string]any) (*mcp.CallTo
 func handleReady(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	maybeStartPortForward()
 
-	u, err := url.Parse(lokiURL + "/ready")
+	u, err := url.Parse(effectiveLokiBaseURL())
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/ready"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	resp, err := getHTTPClient().Do(req)
+	resp, err := httpClientFactory().Do(req)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -588,4 +592,133 @@ func handleReady(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 		"status":   resp.StatusCode,
 		"response": string(body),
 	})
+}
+
+func effectiveLokiBaseURL() string {
+	pfMu.Lock()
+	defer pfMu.Unlock()
+	if portForwardCmd == nil || portForwardCmd.Process == nil {
+		return lokiURL
+	}
+	if err := portForwardCmd.Process.Signal(syscall.Signal(0)); err != nil {
+		return lokiURL
+	}
+	return "http://127.0.0.1:3100"
+}
+
+func isPortForwardRunningLocked() bool {
+	if portForwardCmd == nil || portForwardCmd.Process == nil {
+		return false
+	}
+	return portForwardCmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+func needsPortForward(host string) bool {
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return false
+	}
+	if strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".cluster.local") {
+		return true
+	}
+	// Heuristic: a single-label host (no dots) is likely an in-cluster DNS name.
+	return !strings.Contains(host, ".")
+}
+
+func waitForLocalLokiReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := httpClientFactory()
+
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		req, err := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:3100/ready", nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+		resp, err := client.Do(req)
+		cancel()
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return nil
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	pfMu.Lock()
+	defer pfMu.Unlock()
+	if pfStderr != nil && strings.TrimSpace(pfStderr.String()) != "" {
+		return fmt.Errorf("port-forward did not become ready: %s", strings.TrimSpace(pfStderr.String()))
+	}
+	return fmt.Errorf("port-forward did not become ready")
+}
+
+func lokiAPIURL(baseURL, endpoint string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+
+	p := strings.TrimRight(base.Path, "/")
+	switch {
+	case strings.HasSuffix(p, "/loki/api/v1"):
+		// already includes the API prefix
+	case strings.HasSuffix(p, "/loki"):
+		p = p + "/api/v1"
+	case p == "":
+		p = "/loki/api/v1"
+	default:
+		p = p + "/loki/api/v1"
+	}
+
+	base.Path = p + "/" + strings.TrimLeft(endpoint, "/")
+	return base.String(), nil
+}
+
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+type limitedBuffer struct {
+	MaxBytes int
+	mu       sync.Mutex
+	buf      []byte
+}
+
+func (l *limitedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.MaxBytes <= 0 {
+		l.MaxBytes = 1024
+	}
+
+	l.buf = append(l.buf, p...)
+	if len(l.buf) > l.MaxBytes {
+		l.buf = l.buf[len(l.buf)-l.MaxBytes:]
+	}
+	return len(p), nil
+}
+
+func (l *limitedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return string(l.buf)
 }
