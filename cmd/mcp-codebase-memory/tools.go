@@ -487,6 +487,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 					"type":        "boolean",
 					"description": "If true, include external/builtin calls as nodes when possible (default true).",
 				},
+				"render": map[string]any{
+					"type":        "string",
+					"description": "Optional renderer: none|mermaid|dot (default none).",
+				},
 			},
 			Required: []string{"symbol"},
 		},
@@ -520,6 +524,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				"include_external": map[string]any{
 					"type":        "boolean",
 					"description": "If false, only include resolved internal edges where possible (default true).",
+				},
+				"render": map[string]any{
+					"type":        "string",
+					"description": "Optional renderer: none|mermaid|dot (default none).",
 				},
 			},
 		},

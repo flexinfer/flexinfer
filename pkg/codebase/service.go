@@ -964,6 +964,90 @@ type graphEdge struct {
 	Line     int    `json:"line,omitempty"`
 }
 
+func normalizeRenderFormat(v any) (string, error) {
+	render := "none"
+	if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+		render = strings.ToLower(strings.TrimSpace(s))
+	}
+	switch render {
+	case "none", "mermaid", "dot":
+		return render, nil
+	default:
+		return "", fmt.Errorf("render must be one of: none, mermaid, dot")
+	}
+}
+
+func escapeMermaidLabel(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return s
+}
+
+func escapeDotLabel(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
+
+func renderCallGraph(render string, nodes []graphNode, edges []graphEdge) string {
+	idBySymbol := make(map[string]string, len(nodes))
+	for i := range nodes {
+		idBySymbol[nodes[i].Symbol] = fmt.Sprintf("n%d", i)
+	}
+
+	var b strings.Builder
+	switch render {
+	case "mermaid":
+		b.WriteString("graph TD\n")
+		for i := range nodes {
+			id := idBySymbol[nodes[i].Symbol]
+			b.WriteString("  ")
+			b.WriteString(id)
+			b.WriteString("[\"")
+			b.WriteString(escapeMermaidLabel(nodes[i].Symbol))
+			b.WriteString("\"]\n")
+		}
+		for _, e := range edges {
+			from := idBySymbol[e.From]
+			to := idBySymbol[e.To]
+			if from == "" || to == "" {
+				continue
+			}
+			b.WriteString("  ")
+			b.WriteString(from)
+			b.WriteString(" --> ")
+			b.WriteString(to)
+			b.WriteByte('\n')
+		}
+	case "dot":
+		b.WriteString("digraph G {\n")
+		for i := range nodes {
+			id := idBySymbol[nodes[i].Symbol]
+			b.WriteString("  ")
+			b.WriteString(id)
+			b.WriteString(" [label=\"")
+			b.WriteString(escapeDotLabel(nodes[i].Symbol))
+			b.WriteString("\"];\n")
+		}
+		for _, e := range edges {
+			from := idBySymbol[e.From]
+			to := idBySymbol[e.To]
+			if from == "" || to == "" {
+				continue
+			}
+			b.WriteString("  ")
+			b.WriteString(from)
+			b.WriteString(" -> ")
+			b.WriteString(to)
+			b.WriteString(";\n")
+		}
+		b.WriteString("}\n")
+	}
+	return b.String()
+}
+
 func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	repoID := s.cfg.RepoIDDefault
 	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
@@ -1033,6 +1117,11 @@ func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mc
 	includeExternal := true
 	if v, ok := args["include_external"].(bool); ok {
 		includeExternal = v
+	}
+
+	render, err := normalizeRenderFormat(args["render"])
+	if err != nil {
+		return nil, err
 	}
 
 	var languages []string
@@ -1153,6 +1242,11 @@ func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mc
 	}
 	sort.Slice(outNodes, func(i, j int) bool { return outNodes[i].Symbol < outNodes[j].Symbol })
 
+	rendered := ""
+	if render != "none" {
+		rendered = renderCallGraph(render, outNodes, edges)
+	}
+
 	return mcp.JSONResult(map[string]any{
 		"repo_id":   repoID,
 		"symbol":    symbol,
@@ -1163,6 +1257,8 @@ func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mc
 		"nodes":     outNodes,
 		"edges":     edges,
 		"languages": languages,
+		"render":    render,
+		"rendered":  rendered,
 		"truncated": len(seen) >= maxNodes,
 	})
 }
@@ -1180,6 +1276,75 @@ type moduleGraphEdge struct {
 	Kind       string `json:"kind"` // imports
 	ImportRaw  string `json:"import_raw,omitempty"`
 	ResolvedTo string `json:"resolved_to,omitempty"` // file_path when resolved
+}
+
+func renderModuleGraph(render string, nodes []moduleGraphNode, edges []moduleGraphEdge) string {
+	idByNode := make(map[string]string, len(nodes))
+	labelByNode := make(map[string]string, len(nodes))
+	for i := range nodes {
+		id := fmt.Sprintf("n%d", i)
+		idByNode[nodes[i].ID] = id
+		switch nodes[i].Kind {
+		case "file":
+			labelByNode[nodes[i].ID] = nodes[i].FilePath
+		case "import":
+			labelByNode[nodes[i].ID] = nodes[i].Import
+		default:
+			labelByNode[nodes[i].ID] = nodes[i].ID
+		}
+	}
+
+	var b strings.Builder
+	switch render {
+	case "mermaid":
+		b.WriteString("graph TD\n")
+		for i := range nodes {
+			nid := nodes[i].ID
+			id := idByNode[nid]
+			b.WriteString("  ")
+			b.WriteString(id)
+			b.WriteString("[\"")
+			b.WriteString(escapeMermaidLabel(labelByNode[nid]))
+			b.WriteString("\"]\n")
+		}
+		for _, e := range edges {
+			from := idByNode[e.From]
+			to := idByNode[e.To]
+			if from == "" || to == "" {
+				continue
+			}
+			b.WriteString("  ")
+			b.WriteString(from)
+			b.WriteString(" --> ")
+			b.WriteString(to)
+			b.WriteByte('\n')
+		}
+	case "dot":
+		b.WriteString("digraph G {\n")
+		for i := range nodes {
+			nid := nodes[i].ID
+			id := idByNode[nid]
+			b.WriteString("  ")
+			b.WriteString(id)
+			b.WriteString(" [label=\"")
+			b.WriteString(escapeDotLabel(labelByNode[nid]))
+			b.WriteString("\"];\n")
+		}
+		for _, e := range edges {
+			from := idByNode[e.From]
+			to := idByNode[e.To]
+			if from == "" || to == "" {
+				continue
+			}
+			b.WriteString("  ")
+			b.WriteString(from)
+			b.WriteString(" -> ")
+			b.WriteString(to)
+			b.WriteString(";\n")
+		}
+		b.WriteString("}\n")
+	}
+	return b.String()
 }
 
 func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1224,6 +1389,11 @@ func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*
 	includeExternal := true
 	if v, ok := args["include_external"].(bool); ok {
 		includeExternal = v
+	}
+
+	render, err := normalizeRenderFormat(args["render"])
+	if err != nil {
+		return nil, err
 	}
 
 	var languages []string
@@ -1383,6 +1553,11 @@ func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*
 	}
 	sort.Slice(outNodes, func(i, j int) bool { return outNodes[i].ID < outNodes[j].ID })
 
+	rendered := ""
+	if render != "none" {
+		rendered = renderModuleGraph(render, outNodes, edges)
+	}
+
 	return mcp.JSONResult(map[string]any{
 		"repo_id":            repoID,
 		"max_files":          maxFiles,
@@ -1391,6 +1566,8 @@ func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*
 		"languages":          languages,
 		"nodes":              outNodes,
 		"edges":              edges,
+		"render":             render,
+		"rendered":           rendered,
 		"truncated_by_files": len(modules) >= maxFiles,
 		"truncated_by_edges": len(edges) >= maxEdges,
 	})
