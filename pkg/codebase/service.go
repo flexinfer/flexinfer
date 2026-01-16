@@ -115,6 +115,11 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 		fullRefresh = v
 	}
 
+	gitMetadata := s.cfg.GitMetadataDefault
+	if v, ok := args["git_metadata"].(bool); ok {
+		gitMetadata = v
+	}
+
 	jobID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
 
@@ -133,11 +138,12 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 	s.jobs[jobID] = job
 	s.jobsMu.Unlock()
 
-	go s.runIndexJob(jobCtx, jobID, repoID, root, langs, exclude, fullRefresh)
+	go s.runIndexJob(jobCtx, jobID, repoID, root, langs, exclude, fullRefresh, gitMetadata)
 
 	return mcp.JSONResult(map[string]any{
-		"job_id":  jobID,
-		"repo_id": repoID,
+		"job_id":       jobID,
+		"repo_id":      repoID,
+		"git_metadata": gitMetadata,
 	})
 }
 
@@ -773,6 +779,7 @@ func (s *Service) runIndexJob(
 	languages []string,
 	exclude []string,
 	fullRefresh bool,
+	gitMetadata bool,
 ) {
 	defer func() {
 		// keep job state for debugging; future: add TTL cleanup
@@ -782,6 +789,15 @@ func (s *Service) runIndexJob(
 	if err != nil {
 		s.setJobFailed(jobID, fmt.Sprintf("resolve root: %v", err))
 		return
+	}
+
+	gitRoot := ""
+	if gitMetadata {
+		if gr, ok := detectGitRoot(ctx, absRoot); ok {
+			gitRoot = gr
+		} else {
+			gitMetadata = false
+		}
 	}
 
 	if fullRefresh {
@@ -914,6 +930,12 @@ func (s *Service) runIndexJob(
 			s.incrementJobError(jobID, fmt.Sprintf("index %s: %v", rel, err))
 			s.incrementFilesDone(jobID, 0)
 			continue
+		}
+
+		if gitMetadata {
+			if err := annotateChunksWithGitMetadata(ctx, gitRoot, file, chunks); err != nil {
+				s.incrementJobError(jobID, fmt.Sprintf("git metadata %s: %v", relSlash, err))
+			}
 		}
 
 		for _, ch := range chunks {

@@ -44,6 +44,7 @@ Indexing:
 - `CODEBASE_INDEX_CONCURRENCY` (default: `4`) (reserved for future parallel indexing)
 - `CODEBASE_SCROLL_LIMIT` (default: `256`)
 - `CODEBASE_MAX_FILE_BYTES` (default: `2097152`)
+- `CODEBASE_GIT_METADATA` (default: `false`) (if true, attempts `git blame` to attach author/commit metadata)
 
 HTTP:
 

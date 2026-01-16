@@ -12,6 +12,9 @@ type Chunk struct {
 	Language  string `json:"language"`
 	ChunkType string `json:"chunk_type"`
 
+	GitCommit string `json:"git_commit,omitempty"`
+	GitBlame  string `json:"git_blame,omitempty"`
+
 	StartLine   int `json:"start_line"`
 	EndLine     int `json:"end_line"`
 	StartColumn int `json:"start_column"`

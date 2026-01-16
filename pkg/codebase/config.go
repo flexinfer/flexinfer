@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	RepoIDDefault string
+	RepoIDDefault      string
+	GitMetadataDefault bool
 
 	QdrantURL        string
 	QdrantAPIKey     string
@@ -28,7 +29,8 @@ type Config struct {
 
 func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
-		RepoIDDefault: os.Getenv("CODEBASE_REPO_ID"),
+		RepoIDDefault:      os.Getenv("CODEBASE_REPO_ID"),
+		GitMetadataDefault: boolEnv("CODEBASE_GIT_METADATA", false),
 
 		QdrantURL: strings.TrimRight(firstNonEmptyEnv(
 			[]string{"CODEBASE_QDRANT_URL", "QDRANT_URL"},
@@ -94,6 +96,20 @@ func int64Env(key string, def int64) int64 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func boolEnv(key string, def bool) bool {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "t", "yes", "y", "on":
+			return true
+		case "0", "false", "f", "no", "n", "off":
+			return false
+		default:
+			return def
 		}
 	}
 	return def

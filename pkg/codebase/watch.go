@@ -91,6 +91,11 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 		debounce = 100 * time.Millisecond
 	}
 
+	gitMetadata := s.cfg.GitMetadataDefault
+	if v, ok := args["git_metadata"].(bool); ok {
+		gitMetadata = v
+	}
+
 	watchID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
 
@@ -109,11 +114,12 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 	s.watchJobs[watchID] = job
 	s.watchMu.Unlock()
 
-	go s.runWatchJob(jobCtx, watchID, repoID, root, langs, exclude, debounce)
+	go s.runWatchJob(jobCtx, watchID, repoID, root, langs, exclude, debounce, gitMetadata)
 
 	return mcp.JSONResult(map[string]any{
-		"watch_id": watchID,
-		"repo_id":  repoID,
+		"watch_id":     watchID,
+		"repo_id":      repoID,
+		"git_metadata": gitMetadata,
 	})
 }
 
@@ -167,11 +173,21 @@ func (s *Service) runWatchJob(
 	languages []string,
 	exclude []string,
 	debounce time.Duration,
+	gitMetadata bool,
 ) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		s.setWatchFailed(watchID, fmt.Sprintf("resolve root: %v", err))
 		return
+	}
+
+	gitRoot := ""
+	if gitMetadata {
+		if gr, ok := detectGitRoot(ctx, absRoot); ok {
+			gitRoot = gr
+		} else {
+			gitMetadata = false
+		}
 	}
 
 	wantExt, err := s.indexers.ExtensionsForLanguages(languages)
@@ -244,7 +260,7 @@ func (s *Service) runWatchJob(
 					if !ok {
 						return
 					}
-					if err := s.applyWatchTask(ctx, watchID, repoID, absRoot, t); err != nil {
+					if err := s.applyWatchTask(ctx, watchID, repoID, absRoot, gitRoot, gitMetadata, t); err != nil {
 						s.incrementWatchError(watchID, err.Error())
 					}
 				}
@@ -375,7 +391,7 @@ func (s *Service) runWatchJob(
 	}
 }
 
-func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot string, t watchTask) error {
+func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, gitRoot string, gitMetadata bool, t watchTask) error {
 	switch t.op {
 	case "delete":
 		if err := s.qdrant.DeleteFile(ctx, repoID, t.relPath); err != nil && !errors.Is(err, qdrant.ErrCollectionNotFound) {
@@ -417,6 +433,13 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot s
 		}
 		if len(chunks) == 0 {
 			return nil
+		}
+
+		if gitMetadata {
+			if err := annotateChunksWithGitMetadata(ctx, gitRoot, t.absPath, chunks); err != nil {
+				// Non-fatal; index results remain useful without git info.
+				s.incrementWatchError(watchID, fmt.Sprintf("git metadata %s: %v", t.relPath, err))
+			}
 		}
 
 		texts := make([]string, 0, len(chunks))

@@ -82,6 +82,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 					"type":        "boolean",
 					"description": "If true, delete all existing vectors for repo_id before indexing (recommended).",
 				},
+				"git_metadata": map[string]any{
+					"type":        "boolean",
+					"description": "If true, annotate chunks with git blame metadata (can be slow). Defaults to CODEBASE_GIT_METADATA.",
+				},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -115,6 +119,10 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				"debounce_ms": map[string]any{
 					"type":        "integer",
 					"description": "Debounce window in milliseconds (default 750ms).",
+				},
+				"git_metadata": map[string]any{
+					"type":        "boolean",
+					"description": "If true, annotate chunks with git blame metadata (can be slow). Defaults to CODEBASE_GIT_METADATA.",
 				},
 			},
 		},
