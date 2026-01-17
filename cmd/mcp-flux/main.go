@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,6 +15,15 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -24,6 +34,7 @@ type fluxServer struct {
 	kubeconfig string
 	namespace  string
 	timeout    time.Duration
+	fluxBin    string
 }
 
 func main() {
@@ -58,10 +69,11 @@ func main() {
 		kubeconfig: kubeconfig,
 		namespace:  namespace,
 		timeout:    timeout,
+		fluxBin:    detectFluxBin(),
 	}
 
 	server := mcp.NewServer("mcp-flux", version)
-	server.SetInstructions("Flux CD GitOps MCP server. Manage sources, kustomizations, and helm releases.")
+	server.SetInstructions("Flux CD GitOps MCP server. Manage sources, kustomizations, and helm releases. Uses the flux CLI when available, otherwise falls back to Kubernetes API for core operations.")
 
 	// get_sources
 	server.AddTool(mcp.Tool{
@@ -265,8 +277,22 @@ func main() {
 	}
 }
 
-// runFlux executes a flux CLI command
-func (f *fluxServer) runFlux(ctx context.Context, args ...string) (string, error) {
+func detectFluxBin() string {
+	if p := strings.TrimSpace(os.Getenv("FLUX_BIN")); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("flux"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// runFluxCLI executes a flux CLI command.
+func (f *fluxServer) runFluxCLI(ctx context.Context, args ...string) (string, error) {
+	if f.fluxBin == "" {
+		return "", fmt.Errorf("flux CLI not found in $PATH (install it, e.g. `brew install fluxcd/tap/flux`, or set FLUX_BIN)")
+	}
+
 	cmdArgs := args
 	if f.kubeconfig != "" {
 		cmdArgs = append([]string{"--kubeconfig", f.kubeconfig}, cmdArgs...)
@@ -275,7 +301,7 @@ func (f *fluxServer) runFlux(ctx context.Context, args ...string) (string, error
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "flux", cmdArgs...)
+	cmd := exec.CommandContext(ctx, f.fluxBin, cmdArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -290,40 +316,199 @@ func (f *fluxServer) runFlux(ctx context.Context, args ...string) (string, error
 	return stdout.String(), nil
 }
 
+func (f *fluxServer) kubeDynamicClient() (dynamic.Interface, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if f.kubeconfig != "" {
+		loadingRules.ExplicitPath = f.kubeconfig
+	}
+
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load kubeconfig: %w", err)
+	}
+
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create dynamic client: %w", err)
+	}
+	return client, nil
+}
+
+func (f *fluxServer) kubeClientset() (*kubernetes.Clientset, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if f.kubeconfig != "" {
+		loadingRules.ExplicitPath = f.kubeconfig
+	}
+
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load kubeconfig: %w", err)
+	}
+
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create clientset: %w", err)
+	}
+	return cs, nil
+}
+
+func (f *fluxServer) listUnstructuredWithFallback(ctx context.Context, gvrs []schema.GroupVersionResource, namespace string, allNamespaces bool) (*unstructured.UnstructuredList, schema.GroupVersionResource, error) {
+	client, err := f.kubeDynamicClient()
+	if err != nil {
+		return nil, schema.GroupVersionResource{}, err
+	}
+
+	ns := namespace
+	if allNamespaces {
+		ns = metav1.NamespaceAll
+	} else if ns == "" {
+		ns = f.namespace
+	}
+
+	var lastErr error
+	for _, gvr := range gvrs {
+		var list *unstructured.UnstructuredList
+		if ns == metav1.NamespaceAll {
+			list, lastErr = client.Resource(gvr).List(ctx, metav1.ListOptions{})
+		} else {
+			list, lastErr = client.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+		}
+		if lastErr == nil {
+			return list, gvr, nil
+		}
+		if apierrors.IsNotFound(lastErr) {
+			continue
+		}
+		if se := lastErr.Error(); strings.Contains(se, "the server could not find the requested resource") || strings.Contains(se, "could not find the requested resource") {
+			continue
+		}
+	}
+	return nil, schema.GroupVersionResource{}, lastErr
+}
+
+func (f *fluxServer) patchUnstructured(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, patch any) error {
+	client, err := f.kubeDynamicClient()
+	if err != nil {
+		return err
+	}
+
+	ns := namespace
+	if ns == "" {
+		ns = f.namespace
+	}
+
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal patch: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+	defer cancel()
+
+	if _, err := client.Resource(gvr).Namespace(ns).Patch(ctx, name, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ptrInt64(v int64) *int64 { return &v }
+
 func (f *fluxServer) handleGetSources(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	kind := v.Enum("kind", "all", "git", "helm", "oci", "bucket", "all")
 	namespace := v.String("namespace", f.namespace)
 	allNs := v.Bool("all_namespaces", false)
 
-	cmdArgs := []string{"get", "sources"}
-	if kind != "all" {
-		cmdArgs = append(cmdArgs, kind)
-	}
-	if allNs {
-		cmdArgs = append(cmdArgs, "-A")
-	} else {
-		cmdArgs = append(cmdArgs, "-n", namespace)
-	}
-	cmdArgs = append(cmdArgs, "-o", "json")
+	if f.fluxBin != "" {
+		cmdArgs := []string{"get", "sources"}
+		if kind != "all" {
+			cmdArgs = append(cmdArgs, kind)
+		}
+		if allNs {
+			cmdArgs = append(cmdArgs, "-A")
+		} else {
+			cmdArgs = append(cmdArgs, "-n", namespace)
+		}
+		cmdArgs = append(cmdArgs, "-o", "json")
 
-	output, err := f.runFlux(ctx, cmdArgs...)
-	if err != nil {
-		return mcp.ErrorResult(err), nil
-	}
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 
-	var result any
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		// If JSON parsing fails, return raw output
+		var result any
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			// If JSON parsing fails, return raw output
+			return mcp.JSONResult(map[string]any{
+				"ok":     true,
+				"output": output,
+			})
+		}
+
 		return mcp.JSONResult(map[string]any{
-			"ok":     true,
-			"output": output,
+			"ok":      true,
+			"sources": result,
 		})
 	}
 
+	type sourceKind struct {
+		name string
+		gvrs []schema.GroupVersionResource
+	}
+
+	all := []sourceKind{
+		{name: "git", gvrs: []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta1", Resource: "gitrepositories"},
+		}},
+		{name: "helm", gvrs: []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta1", Resource: "helmrepositories"},
+		}},
+		{name: "oci", gvrs: []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta1", Resource: "ocirepositories"},
+		}},
+		{name: "bucket", gvrs: []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "buckets"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "buckets"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta1", Resource: "buckets"},
+		}},
+	}
+
+	items := make([]any, 0)
+	for _, sk := range all {
+		if kind != "all" && sk.name != kind {
+			continue
+		}
+		list, _, err := f.listUnstructuredWithFallback(ctx, sk.gvrs, namespace, allNs)
+		if err != nil {
+			// If the CRD isn't installed, skip; surface other errors.
+			if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "the server could not find the requested resource") {
+				continue
+			}
+			return mcp.ErrorResult(fmt.Errorf("list %s sources: %w", sk.name, err)), nil
+		}
+	for _, it := range list.Items {
+			items = append(items, it.Object)
+		}
+	}
+
 	return mcp.JSONResult(map[string]any{
-		"ok":      true,
-		"sources": result,
+		"ok":     true,
+		"mode":   "kubernetes-api",
+		"sources": map[string]any{
+			"items": items,
+		},
 	})
 }
 
@@ -332,30 +517,47 @@ func (f *fluxServer) handleGetKustomizations(ctx context.Context, args map[strin
 	namespace := v.String("namespace", f.namespace)
 	allNs := v.Bool("all_namespaces", false)
 
-	cmdArgs := []string{"get", "kustomizations"}
-	if allNs {
-		cmdArgs = append(cmdArgs, "-A")
-	} else {
-		cmdArgs = append(cmdArgs, "-n", namespace)
-	}
-	cmdArgs = append(cmdArgs, "-o", "json")
+	if f.fluxBin != "" {
+		cmdArgs := []string{"get", "kustomizations"}
+		if allNs {
+			cmdArgs = append(cmdArgs, "-A")
+		} else {
+			cmdArgs = append(cmdArgs, "-n", namespace)
+		}
+		cmdArgs = append(cmdArgs, "-o", "json")
 
-	output, err := f.runFlux(ctx, cmdArgs...)
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		var result any
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			return mcp.JSONResult(map[string]any{
+				"ok":     true,
+				"output": output,
+			})
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":             true,
+			"kustomizations": result,
+		})
+	}
+
+	list, _, err := f.listUnstructuredWithFallback(ctx, []schema.GroupVersionResource{
+		{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"},
+		{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta2", Resource: "kustomizations"},
+		{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta1", Resource: "kustomizations"},
+	}, namespace, allNs)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	var result any
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		return mcp.JSONResult(map[string]any{
-			"ok":     true,
-			"output": output,
-		})
-	}
-
 	return mcp.JSONResult(map[string]any{
 		"ok":             true,
-		"kustomizations": result,
+		"mode":           "kubernetes-api",
+		"kustomizations": map[string]any{"items": list.Items},
 	})
 }
 
@@ -364,30 +566,48 @@ func (f *fluxServer) handleGetHelmReleases(ctx context.Context, args map[string]
 	namespace := v.String("namespace", "")
 	allNs := v.Bool("all_namespaces", true)
 
-	cmdArgs := []string{"get", "helmreleases"}
-	if allNs || namespace == "" {
-		cmdArgs = append(cmdArgs, "-A")
-	} else {
-		cmdArgs = append(cmdArgs, "-n", namespace)
-	}
-	cmdArgs = append(cmdArgs, "-o", "json")
+	if f.fluxBin != "" {
+		cmdArgs := []string{"get", "helmreleases"}
+		if allNs || namespace == "" {
+			cmdArgs = append(cmdArgs, "-A")
+		} else {
+			cmdArgs = append(cmdArgs, "-n", namespace)
+		}
+		cmdArgs = append(cmdArgs, "-o", "json")
 
-	output, err := f.runFlux(ctx, cmdArgs...)
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		var result any
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			return mcp.JSONResult(map[string]any{
+				"ok":     true,
+				"output": output,
+			})
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":           true,
+			"helmreleases": result,
+		})
+	}
+
+	list, _, err := f.listUnstructuredWithFallback(ctx, []schema.GroupVersionResource{
+		{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"},
+		{Group: "helm.toolkit.fluxcd.io", Version: "v2beta2", Resource: "helmreleases"},
+		{Group: "helm.toolkit.fluxcd.io", Version: "v2beta1", Resource: "helmreleases"},
+		{Group: "helm.toolkit.fluxcd.io", Version: "v2beta0", Resource: "helmreleases"},
+	}, namespace, allNs || namespace == "")
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	var result any
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		return mcp.JSONResult(map[string]any{
-			"ok":     true,
-			"output": output,
-		})
-	}
-
 	return mcp.JSONResult(map[string]any{
 		"ok":           true,
-		"helmreleases": result,
+		"mode":         "kubernetes-api",
+		"helmreleases": map[string]any{"items": list.Items},
 	})
 }
 
@@ -410,14 +630,156 @@ func (f *fluxServer) handleReconcile(ctx context.Context, args map[string]any) (
 		kind = "helmrelease"
 	}
 
-	cmdArgs := []string{"reconcile", kind, name, "-n", namespace}
-	if withSource {
-		cmdArgs = append(cmdArgs, "--with-source")
+	if f.fluxBin != "" {
+		cmdArgs := []string{"reconcile", kind, name, "-n", namespace}
+		if withSource {
+			cmdArgs = append(cmdArgs, "--with-source")
+		}
+
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":      true,
+			"message": "reconciliation triggered",
+			"kind":    kind,
+			"name":    name,
+			"output":  strings.TrimSpace(output),
+		})
 	}
 
-	output, err := f.runFlux(ctx, cmdArgs...)
-	if err != nil {
+	requestedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	annotPatch := map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]string{
+				"reconcile.fluxcd.io/requestedAt": requestedAt,
+			},
+		},
+	}
+
+	type patchedResource struct {
+		Kind      string `json:"kind"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	}
+	patched := make([]patchedResource, 0, 2)
+
+	// Determine primary GVR and apply patch.
+	var primaryGVRs []schema.GroupVersionResource
+	switch kind {
+	case "kustomization":
+		primaryGVRs = []schema.GroupVersionResource{
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta2", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta1", Resource: "kustomizations"},
+		}
+	case "helmrelease":
+		primaryGVRs = []schema.GroupVersionResource{
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta1", Resource: "helmreleases"},
+		}
+	case "source":
+		primaryGVRs = []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "buckets"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "buckets"},
+		}
+	default:
+		return mcp.ErrorResult(fmt.Errorf("unsupported kind without flux CLI: %s", kind)), nil
+	}
+
+	// Find the first GVR that exists by listing in the namespace (cheap probe), then patch.
+	var primaryGVR schema.GroupVersionResource
+	{
+		list, gvr, err := f.listUnstructuredWithFallback(ctx, primaryGVRs, namespace, false)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+		_ = list // probe succeeded
+		primaryGVR = gvr
+	}
+	if err := f.patchUnstructured(ctx, primaryGVR, namespace, name, annotPatch); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	patched = append(patched, patchedResource{Kind: kind, Name: name, Namespace: namespace})
+
+	// Best-effort: if requested, also annotate the referenced source for ks/hr.
+	if withSource && kind != "source" {
+		client, err := f.kubeDynamicClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+		ns := namespace
+		if ns == "" {
+			ns = f.namespace
+		}
+		obj, err := client.Resource(primaryGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+		if err == nil {
+			var srcKind, srcName, srcNs string
+			switch kind {
+			case "kustomization":
+				srcKind, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "kind")
+				srcName, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "name")
+				srcNs, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "namespace")
+			case "helmrelease":
+				srcKind, _, _ = unstructured.NestedString(obj.Object, "spec", "chart", "spec", "sourceRef", "kind")
+				srcName, _, _ = unstructured.NestedString(obj.Object, "spec", "chart", "spec", "sourceRef", "name")
+				srcNs, _, _ = unstructured.NestedString(obj.Object, "spec", "chart", "spec", "sourceRef", "namespace")
+			}
+			if srcName != "" {
+				if srcNs == "" {
+					srcNs = ns
+				}
+				srcRes := ""
+				switch strings.ToLower(srcKind) {
+				case "gitrepository":
+					srcRes = "gitrepositories"
+				case "helmrepository":
+					srcRes = "helmrepositories"
+				case "ocirepository":
+					srcRes = "ocirepositories"
+				case "bucket":
+					srcRes = "buckets"
+				}
+				candidates := []schema.GroupVersionResource{
+					{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "helmrepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "helmrepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "buckets"},
+					{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "buckets"},
+				}
+				// If we can infer the exact resource from kind, prioritize it.
+				if srcRes != "" {
+					prior := make([]schema.GroupVersionResource, 0, len(candidates))
+					for _, gvr := range candidates {
+						if gvr.Resource == srcRes {
+							prior = append(prior, gvr)
+						}
+					}
+					if len(prior) > 0 {
+						candidates = append(prior, candidates...)
+					}
+				}
+
+				list, gvr, err := f.listUnstructuredWithFallback(ctx, candidates, srcNs, false)
+				if err == nil && list != nil {
+					if err := f.patchUnstructured(ctx, gvr, srcNs, srcName, annotPatch); err == nil {
+						patched = append(patched, patchedResource{Kind: "source", Name: srcName, Namespace: srcNs})
+					}
+				}
+			}
+		}
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -425,7 +787,8 @@ func (f *fluxServer) handleReconcile(ctx context.Context, args map[string]any) (
 		"message": "reconciliation triggered",
 		"kind":    kind,
 		"name":    name,
-		"output":  strings.TrimSpace(output),
+		"mode":    "kubernetes-api",
+		"patched": patched,
 	})
 }
 
@@ -447,9 +810,56 @@ func (f *fluxServer) handleSuspend(ctx context.Context, args map[string]any) (*m
 		kind = "helmrelease"
 	}
 
-	cmdArgs := []string{"suspend", kind, name, "-n", namespace}
-	output, err := f.runFlux(ctx, cmdArgs...)
+	if f.fluxBin != "" {
+		cmdArgs := []string{"suspend", kind, name, "-n", namespace}
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":      true,
+			"message": "resource suspended",
+			"kind":    kind,
+			"name":    name,
+			"output":  strings.TrimSpace(output),
+		})
+	}
+
+	var gvrs []schema.GroupVersionResource
+	switch kind {
+	case "kustomization":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta2", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta1", Resource: "kustomizations"},
+		}
+	case "helmrelease":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta1", Resource: "helmreleases"},
+		}
+	case "source":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "buckets"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "buckets"},
+		}
+	default:
+		return mcp.ErrorResult(fmt.Errorf("unsupported kind without flux CLI: %s", kind)), nil
+	}
+
+	_, gvr, err := f.listUnstructuredWithFallback(ctx, gvrs, namespace, false)
 	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	if err := f.patchUnstructured(ctx, gvr, namespace, name, map[string]any{"spec": map[string]any{"suspend": true}}); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
@@ -458,7 +868,7 @@ func (f *fluxServer) handleSuspend(ctx context.Context, args map[string]any) (*m
 		"message": "resource suspended",
 		"kind":    kind,
 		"name":    name,
-		"output":  strings.TrimSpace(output),
+		"mode":    "kubernetes-api",
 	})
 }
 
@@ -480,9 +890,56 @@ func (f *fluxServer) handleResume(ctx context.Context, args map[string]any) (*mc
 		kind = "helmrelease"
 	}
 
-	cmdArgs := []string{"resume", kind, name, "-n", namespace}
-	output, err := f.runFlux(ctx, cmdArgs...)
+	if f.fluxBin != "" {
+		cmdArgs := []string{"resume", kind, name, "-n", namespace}
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":      true,
+			"message": "resource resumed",
+			"kind":    kind,
+			"name":    name,
+			"output":  strings.TrimSpace(output),
+		})
+	}
+
+	var gvrs []schema.GroupVersionResource
+	switch kind {
+	case "kustomization":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta2", Resource: "kustomizations"},
+			{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta1", Resource: "kustomizations"},
+		}
+	case "helmrelease":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta2", Resource: "helmreleases"},
+			{Group: "helm.toolkit.fluxcd.io", Version: "v2beta1", Resource: "helmreleases"},
+		}
+	case "source":
+		gvrs = []schema.GroupVersionResource{
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "helmrepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "buckets"},
+			{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "buckets"},
+		}
+	default:
+		return mcp.ErrorResult(fmt.Errorf("unsupported kind without flux CLI: %s", kind)), nil
+	}
+
+	_, gvr, err := f.listUnstructuredWithFallback(ctx, gvrs, namespace, false)
 	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	if err := f.patchUnstructured(ctx, gvr, namespace, name, map[string]any{"spec": map[string]any{"suspend": false}}); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
@@ -491,7 +948,7 @@ func (f *fluxServer) handleResume(ctx context.Context, args map[string]any) (*mc
 		"message": "resource resumed",
 		"kind":    kind,
 		"name":    name,
-		"output":  strings.TrimSpace(output),
+		"mode":    "kubernetes-api",
 	})
 }
 
@@ -503,31 +960,113 @@ func (f *fluxServer) handleLogs(ctx context.Context, args map[string]any) (*mcp.
 	since := v.String("since", "5m")
 	level := v.Enum("level", "", "error", "info", "debug", "")
 
-	cmdArgs := []string{"logs", "--since", since}
-	if kind != "" {
-		cmdArgs = append(cmdArgs, "--kind", kind)
-	}
-	if name != "" {
-		cmdArgs = append(cmdArgs, "--name", name)
-	}
-	if namespace != "" {
-		cmdArgs = append(cmdArgs, "--namespace", namespace)
-	}
-	if level != "" {
-		cmdArgs = append(cmdArgs, "--level", level)
+	if f.fluxBin != "" {
+		cmdArgs := []string{"logs", "--since", since}
+		if kind != "" {
+			cmdArgs = append(cmdArgs, "--kind", kind)
+		}
+		if name != "" {
+			cmdArgs = append(cmdArgs, "--name", name)
+		}
+		if namespace != "" {
+			cmdArgs = append(cmdArgs, "--namespace", namespace)
+		}
+		if level != "" {
+			cmdArgs = append(cmdArgs, "--level", level)
+		}
+
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		// Parse log lines
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+
+		return mcp.JSONResult(map[string]any{
+			"ok":    true,
+			"count": len(lines),
+			"logs":  lines,
+		})
 	}
 
-	output, err := f.runFlux(ctx, cmdArgs...)
+	cs, err := f.kubeClientset()
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	// Parse log lines
-	lines := strings.Split(strings.TrimSpace(output), "\n")
+	ns := namespace
+	if ns == "" {
+		ns = f.namespace
+	}
+
+	controllers := []string{"source-controller", "kustomize-controller", "helm-controller", "notification-controller"}
+	kindLower := strings.ToLower(kind)
+	switch {
+	case strings.Contains(kindLower, "kustomization"):
+		controllers = []string{"kustomize-controller"}
+	case strings.Contains(kindLower, "helmrelease") || strings.Contains(kindLower, "helm"):
+		controllers = []string{"helm-controller"}
+	case strings.Contains(kindLower, "gitrepository") || strings.Contains(kindLower, "ocirepository") || strings.Contains(kindLower, "helmrepository") || strings.Contains(kindLower, "source"):
+		controllers = []string{"source-controller"}
+	}
+
+	var sinceSeconds *int64
+	if d, err := time.ParseDuration(since); err == nil {
+		secs := int64(d.Seconds())
+		if secs > 0 {
+			sinceSeconds = &secs
+		}
+	}
+
+	lines := make([]string, 0)
+	for _, c := range controllers {
+		pods, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=" + c})
+		if err != nil || len(pods.Items) == 0 {
+			pods, err = cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + c})
+		}
+		if err != nil || len(pods.Items) == 0 {
+			continue
+		}
+
+		pod := pods.Items[0]
+		req := cs.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{
+			TailLines:    ptrInt64(500),
+			SinceSeconds: sinceSeconds,
+		})
+
+		readCtx, cancel := context.WithTimeout(ctx, f.timeout)
+		rc, rerr := req.Stream(readCtx)
+		if rerr != nil {
+			cancel()
+			continue
+		}
+		b, rerr := io.ReadAll(rc)
+		_ = rc.Close()
+		cancel()
+		if rerr != nil {
+			continue
+		}
+
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if line == "" {
+				continue
+			}
+			if level != "" && !strings.Contains(line, "level="+level) && !strings.Contains(line, "\"level\":\""+level+"\"") {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("[%s/%s] %s", c, pod.Name, line))
+		}
+	}
+
+	if len(lines) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("flux CLI not found and no controller logs found in namespace %q (set FLUX_BIN or install flux CLI)", ns)), nil
+	}
 
 	return mcp.JSONResult(map[string]any{
 		"ok":    true,
 		"count": len(lines),
+		"mode":  "kubernetes-api",
 		"logs":  lines,
 	})
 }
@@ -538,32 +1077,81 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 	allNs := v.Bool("all_namespaces", false)
 	forResource := v.String("for", "")
 
-	cmdArgs := []string{"events"}
-	if allNs {
-		cmdArgs = append(cmdArgs, "-A")
-	} else {
-		cmdArgs = append(cmdArgs, "-n", namespace)
-	}
-	if forResource != "" {
-		cmdArgs = append(cmdArgs, "--for", forResource)
-	}
-	cmdArgs = append(cmdArgs, "-o", "json")
+	if f.fluxBin != "" {
+		cmdArgs := []string{"events"}
+		if allNs {
+			cmdArgs = append(cmdArgs, "-A")
+		} else {
+			cmdArgs = append(cmdArgs, "-n", namespace)
+		}
+		if forResource != "" {
+			cmdArgs = append(cmdArgs, "--for", forResource)
+		}
+		cmdArgs = append(cmdArgs, "-o", "json")
 
-	output, err := f.runFlux(ctx, cmdArgs...)
+		output, err := f.runFluxCLI(ctx, cmdArgs...)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		var result any
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			return mcp.JSONResult(map[string]any{
+				"ok":     true,
+				"output": output,
+			})
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":     true,
+			"events": result,
+		})
+	}
+
+	cs, err := f.kubeClientset()
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	var result any
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		return mcp.JSONResult(map[string]any{
-			"ok":     true,
-			"output": output,
-		})
+	ns := namespace
+	if allNs {
+		ns = metav1.NamespaceAll
+	} else if ns == "" {
+		ns = f.namespace
+	}
+
+	var kindFilter, nameFilter string
+	if forResource != "" {
+		parts := strings.SplitN(forResource, "/", 2)
+		if len(parts) == 2 {
+			kindFilter = parts[0]
+			nameFilter = parts[1]
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+	defer cancel()
+
+	evs, err := cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{Limit: 500})
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	filtered := make([]corev1.Event, 0, len(evs.Items))
+	for _, e := range evs.Items {
+		if kindFilter != "" && e.InvolvedObject.Kind != kindFilter {
+			continue
+		}
+		if nameFilter != "" && e.InvolvedObject.Name != nameFilter {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
 
 	return mcp.JSONResult(map[string]any{
 		"ok":     true,
-		"events": result,
+		"mode":   "kubernetes-api",
+		"count":  len(filtered),
+		"events": filtered,
 	})
 }
