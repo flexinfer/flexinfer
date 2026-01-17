@@ -807,6 +807,27 @@ func (r *ModelDeploymentReconciler) deploymentForModelDeployment(m *aiv1alpha1.M
 		volumeMounts = append(volumeMounts, volumeMount)
 	}
 
+	// Add ROCm library mounts for AMD GPU workloads
+	// This mounts /opt/rocm/lib from the host to provide HIP/ROCm libraries
+	// that some images (like mlc-llm:rocm64-v2) expect but don't bundle
+	gpuResource := r.detectGPUResourceFromSpec(m)
+	if gpuResource == "amd.com/gpu" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "rocm-libs",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/opt/rocm/lib",
+					Type: hostPathTypePtr(corev1.HostPathDirectory),
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "rocm-libs",
+			MountPath: "/opt/rocm/lib",
+			ReadOnly:  true,
+		})
+	}
+
 	backend := canonicalBackend(m.Spec.Backend)
 	if backend == "comfyui" && volumeName != "" {
 		volumes = append(volumes, corev1.Volume{

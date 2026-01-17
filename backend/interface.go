@@ -231,6 +231,12 @@ func ROCmEnvVars() []corev1.EnvVar {
 			Name:  "PYTORCH_ROCM_ARCH",
 			Value: "gfx1100",
 		},
+		{
+			// Include host-mounted ROCm libraries in library path
+			// Required for images that don't bundle ROCm libs (e.g., mlc-llm)
+			Name:  "LD_LIBRARY_PATH",
+			Value: "/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
+		},
 	}
 }
 
