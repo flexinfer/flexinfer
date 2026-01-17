@@ -212,19 +212,14 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 // ROCmEnvVars returns common environment variables for AMD ROCm GPUs.
 // Use this helper in backend Env() implementations for AMD GPU support.
 // Optimized for gfx1100 (RX 7900 XTX) and RDNA3 architecture.
+//
+// Note: HIP_VISIBLE_DEVICES and ROCR_VISIBLE_DEVICES are set automatically
+// by the AMD GPU device plugin based on GPU allocation. Do not hardcode them.
 func ROCmEnvVars() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{
 			Name:  "HSA_OVERRIDE_GFX_VERSION",
 			Value: "11.0.0", // RDNA3 (RX 7900 series)
-		},
-		{
-			Name:  "HIP_VISIBLE_DEVICES",
-			Value: "0",
-		},
-		{
-			Name:  "ROCR_VISIBLE_DEVICES",
-			Value: "0",
 		},
 		{
 			// Critical for gfx1100 stability - enables experimental AOTriton

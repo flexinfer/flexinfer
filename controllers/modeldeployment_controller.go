@@ -1521,16 +1521,9 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "HSA_OVERRIDE_GFX_VERSION",
 				Value: "11.0.0",
 			})
-			// Make GPU visible to HIP/ROCm
-			env = append(env, corev1.EnvVar{
-				Name:  "HIP_VISIBLE_DEVICES",
-				Value: "0",
-			})
-			// ROCR_VISIBLE_DEVICES for ROCm runtime
-			env = append(env, corev1.EnvVar{
-				Name:  "ROCR_VISIBLE_DEVICES",
-				Value: "0",
-			})
+			// Note: Don't set HIP_VISIBLE_DEVICES - the device plugin allocates
+			// specific GPUs to the container, and within the container, the
+			// allocated GPU is always at index 0.
 		}
 		return env
 	case "vllm-omni":
@@ -1565,22 +1558,15 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "HSA_OVERRIDE_GFX_VERSION",
 				Value: "11.0.0",
 			})
-			env = append(env, corev1.EnvVar{
-				Name:  "HIP_VISIBLE_DEVICES",
-				Value: "0",
-			})
-			env = append(env, corev1.EnvVar{
-				Name:  "ROCR_VISIBLE_DEVICES",
-				Value: "0",
-			})
+			// Note: Don't set HIP_VISIBLE_DEVICES - the device plugin allocates
+			// specific GPUs to the container, and within the container, the
+			// allocated GPU is always at index 0.
 			// Critical for gfx1100 stability - enables experimental AOTriton
 			// flash attention which prevents SIGSEGV crashes on RDNA3.
 			env = append(env, corev1.EnvVar{
 				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
 				Value: "1",
 			})
-			// Note: USE_FP16 removed - fp16 causes memory access faults on gfx1100
-			// with diffusers. The Dockerfile defaults to fp32 for stability.
 		}
 		return env
 	case "tei":
