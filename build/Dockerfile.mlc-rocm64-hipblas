@@ -1,0 +1,41 @@
+# MLC-LLM with hipblas - Ubuntu 24.04 layer on top of existing image
+# This adds hipblas without rebuilding TVM/MLC-LLM from scratch
+#
+# Strategy: Use Ubuntu 24.04 ROCm 6.4 image to get glibc 2.39 + hipblas,
+# then copy just the libstdc++ and hipblas libraries we need.
+# ROCm 6.4 on Ubuntu 24.04 matches host system perfectly.
+
+FROM rocm/dev-ubuntu-24.04:6.4 AS rocm-libs
+
+# Install hipblas/rocblas
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    hipblas \
+    rocblas \
+    && rm -rf /var/lib/apt/lists/*
+
+# Main image - start from our existing mlc-llm
+FROM registry.harbor.lan/library/mlc-llm:rocm64-v2
+
+USER root
+
+# Copy hipblas and rocblas libraries from ROCm 7.1 image
+# These are ABI-compatible with ROCm 6.4 for basic BLAS operations
+COPY --from=rocm-libs /opt/rocm/lib/libhipblas* /opt/rocm/lib/
+COPY --from=rocm-libs /opt/rocm/lib/librocblas* /opt/rocm/lib/
+COPY --from=rocm-libs /opt/rocm/lib/librocsolver* /opt/rocm/lib/
+COPY --from=rocm-libs /opt/rocm/lib/librocsparse* /opt/rocm/lib/
+
+# Copy libstdc++ with GLIBCXX_3.4.32 from Ubuntu 24.04
+# This is needed because hipblas was built with newer GCC
+COPY --from=rocm-libs /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /opt/rocm/lib/
+
+# Set library path to find our copied libs first
+ENV LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}
+
+USER mlc
+WORKDIR /home/mlc
+
+EXPOSE 8000
+
+ENTRYPOINT ["python", "-m", "mlc_llm"]
+CMD ["serve", "--help"]

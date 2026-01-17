@@ -215,6 +215,9 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 //
 // Note: HIP_VISIBLE_DEVICES and ROCR_VISIBLE_DEVICES are set automatically
 // by the AMD GPU device plugin based on GPU allocation. Do not hardcode them.
+//
+// Note: LD_LIBRARY_PATH and LD_PRELOAD are no longer needed as mlc-llm:rocm64-v4+
+// images bundle all required libraries with matching glibc version (Ubuntu 24.04).
 func ROCmEnvVars() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{
@@ -230,18 +233,6 @@ func ROCmEnvVars() []corev1.EnvVar {
 		{
 			Name:  "PYTORCH_ROCM_ARCH",
 			Value: "gfx1100",
-		},
-		{
-			// Include host-mounted ROCm libraries in library path
-			// Required for images that don't bundle ROCm libs (e.g., mlc-llm)
-			Name:  "LD_LIBRARY_PATH",
-			Value: "/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
-		},
-		{
-			// Preload host's libstdc++ with GLIBCXX_3.4.32 required by ROCm 6.4+ on Ubuntu 24.04
-			// Using LD_PRELOAD instead of LD_LIBRARY_PATH avoids loading incompatible host libc.so.6
-			Name:  "LD_PRELOAD",
-			Value: "/host-glibc/libstdc++.so.6",
 		},
 	}
 }

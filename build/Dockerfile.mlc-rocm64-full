@@ -1,6 +1,7 @@
-# MLC-LLM Docker image - Built from source for ROCm 6.4
+# MLC-LLM Docker image - Built from source for ROCm 6.4 on Ubuntu 24.04
 # Uses MLC-AI's TVM fork (relax) for better integration
-FROM rocm/dev-ubuntu-22.04:6.4
+# Ubuntu 24.04 provides glibc 2.39 with GLIBCXX_3.4.32 required by ROCm 6.4+ host libs
+FROM rocm/dev-ubuntu-24.04:6.4
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -8,7 +9,8 @@ ENV PYTHONUNBUFFERED=1
 ENV ROCM_PATH=/opt/rocm
 ENV HIP_PATH=/opt/rocm/hip
 
-# Install build dependencies
+# Install build dependencies and ROCm math libraries
+# hipblas is required for MLC-LLM GPU operations
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -22,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzstd-dev \
     build-essential \
     wget \
+    hipblas \
+    rocblas \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
