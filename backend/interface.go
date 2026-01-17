@@ -232,10 +232,12 @@ func ROCmEnvVars() []corev1.EnvVar {
 			Value: "gfx1100",
 		},
 		{
-			// Include host-mounted ROCm libraries in library path
+			// Include host-mounted libraries in library path:
+			// - /host-glibc: Host's libstdc++ with GLIBCXX_3.4.32 (ROCm 6.4+ on Ubuntu 24.04)
+			// - /opt/rocm/lib: ROCm HIP/HIPBlas libraries
 			// Required for images that don't bundle ROCm libs (e.g., mlc-llm)
 			Name:  "LD_LIBRARY_PATH",
-			Value: "/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
+			Value: "/host-glibc:/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
 		},
 	}
 }
