@@ -225,6 +225,199 @@ version: 0.1.1  # was 0.1.0
 
 ---
 
+### 11. SDXL VAE fp16 NaN on ROCm gfx1100 (AMD RDNA3)
+
+**Symptoms**: SDXL image generation causes GPU memory access fault and driver timeout:
+```
+amdgpu: GPU reset begin!
+amdgpu 0000:03:00.0: amdgpu: GPU memory access fault detected
+```
+Images return as solid black or completely corrupted.
+
+**Root Cause**: The standard SDXL VAE (AutoencoderKL) produces NaN values when running in fp16 on AMD RDNA3 GPUs (gfx1100). This is a known issue with the VAE's numerical stability in half precision on certain GPU architectures.
+
+**Solution**: Use the `madebyollin/sdxl-vae-fp16-fix` VAE, which has been finetuned to work correctly in fp16:
+
+1. Create a ModelCache for the fixed VAE:
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: sdxl-vae-fp16-fix
+spec:
+  source:
+    huggingface:
+      repoId: madebyollin/sdxl-vae-fp16-fix
+```
+
+2. Create a bundle cache that mounts both at the huggingface level:
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: sdxl-bundle
+spec:
+  source:
+    bundle:
+      caches:
+        - name: sdxl-turbo-hf
+          subPath: stabilityai/sdxl-turbo
+        - name: sdxl-vae-fp16-fix
+          subPath: madebyollin/sdxl-vae-fp16-fix
+  mountPath: /models/huggingface
+```
+
+3. Update the ModelDeployment to use the bundle:
+```yaml
+spec:
+  modelCacheRef: sdxl-bundle
+```
+
+4. Update the diffusers container to load VAE from environment:
+```python
+# In diffusers API code
+vae_path = os.getenv("VAE_PATH")
+if vae_path and os.path.exists(vae_path):
+    vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float16)
+    pipe = StableDiffusionXLPipeline.from_pretrained(
+        model_path, vae=vae, torch_dtype=torch.float16
+    )
+```
+
+**Lesson**: Numerical stability varies across GPU architectures. Always test fp16 workloads on target hardware and have fallback options (fixed models or fp32).
+
+---
+
+### 12. Benchmark Deadlock - Controller Waits for Results
+
+**Symptoms**: ModelDeployments stuck in "Pending" phase with message "Benchmark job is still running" but benchmark jobs also stuck or nonexistent.
+
+```bash
+$ kubectl get modeldeployments -n flexinfer-system
+NAME                  PHASE     REPLICAS   READY
+qwen3-14b-quality     Pending   0          0
+sdxl-turbo-fast       Pending   0          0
+```
+
+**Root Cause**: The controller reconciliation loop waits for benchmark results (stored in a ConfigMap named `{model-name}-benchmark-results`) before creating Deployments. This creates a deadlock:
+- Controller waits for benchmark ConfigMap
+- Benchmark job needs a running Deployment to test
+- Deployment won't be created until benchmark completes
+
+**Workaround**: Create benchmark results ConfigMaps manually to break the deadlock:
+```bash
+kubectl create configmap sdxl-turbo-fast-benchmark-results \
+  --from-literal=tokensPerSecond=3696.29 \
+  --from-literal=backend=diffusers \
+  --from-literal=model=stabilityai/sdxl-turbo \
+  -n flexinfer-system
+```
+
+**Proper Solution**: Store benchmark results as GitOps-managed ConfigMaps in `k3s/ai/flexinfer/benchmark-results/`:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sdxl-turbo-fast-benchmark-results
+  namespace: flexinfer-system
+data:
+  tokensPerSecond: "3696.29"
+  backend: diffusers
+  model: stabilityai/sdxl-turbo
+```
+
+**Lesson**: Benchmark results should be pre-populated for known models rather than requiring real-time benchmarking, especially in GitOps environments where the controller shouldn't create resources that aren't tracked in Git.
+
+---
+
+### 13. GPUGroup Exclusive Scaling
+
+**Symptoms**: Only one model in a GPUGroup has replicas > 0, others show 0 replicas even though their status is "Running".
+
+**Explanation**: This is expected behavior for GPUGroup exclusive scaling. The GPUGroup controller manages which model gets GPU access:
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: GPUGroup
+metadata:
+  name: quality-models
+spec:
+  models:
+    - name: qwen3-14b-quality
+      priority: 90
+    - name: sdxl-turbo-fast
+      priority: 50
+  scalingPolicy:
+    strategy: Exclusive  # Only one model runs at a time
+    preemptionPolicy: Graceful
+    drainTimeoutSeconds: 120
+  antiThrashing:
+    enabled: true
+    minimumRunDurationSeconds: 60
+    cooldownAfterPreemptionSeconds: 120
+    requestQueueThreshold: 3
+```
+
+**How it works**:
+1. When a request arrives for a model, the GPUGroup scales it up
+2. Lower-priority models are gracefully drained
+3. Anti-thrashing prevents rapid switching between models
+4. `requestQueueThreshold` allows queued requests before triggering preemption
+
+**Verification**:
+```bash
+# Check which model is currently active
+kubectl get modeldeployments -n flexinfer-system -o custom-columns=\
+'NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas,PHASE:.status.phase'
+```
+
+**Lesson**: GPUGroup exclusive scaling is designed for GPU-constrained homelabs. Don't expect all models to have replicas simultaneously.
+
+---
+
+### 14. LiteLLM Integration Not Working
+
+**Symptoms**: Model not appearing in LiteLLM proxy, or requests to aliases (e.g., `dall-e-3`) fail.
+
+**Root Cause**: Missing or incorrect LiteLLM annotations on the ModelDeployment.
+
+**Solution**: Add `litellm` section to ModelDeployment spec:
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: sdxl-turbo-fast
+spec:
+  backend: diffusers
+  model: stabilityai/sdxl-turbo
+  litellm:
+    enabled: true
+    servedModelName: sdxl-turbo-fast
+    aliases:
+      - image-gen
+      - dall-e-3
+```
+
+The controller creates annotations on the Service:
+```yaml
+annotations:
+  litellm.flexinfer.ai/served-model: sdxl-turbo-fast
+  litellm.flexinfer.ai/aliases: image-gen,dall-e-3
+```
+
+**Verification**:
+```bash
+# Check service annotations
+kubectl get svc sdxl-turbo-fast -n flexinfer-system -o yaml | grep litellm
+
+# Check proxy model list
+curl http://litellm-proxy.flexinfer-system:4000/v1/models | jq '.data[].id'
+```
+
+**Lesson**: LiteLLM integration requires explicit opt-in via the `litellm` spec section. The proxy discovers models via service annotations.
+
+---
+
 ## Verification Commands
 
 ### Check Component Health
@@ -265,11 +458,16 @@ kubectl describe node <gpu-node> | grep -A5 "Allocated resources"
 
 ## Performance Results
 
-### AMD 7900 XTX (24GB VRAM)
-- Model: llama3:8b (4.6GB Q4_0)
-- Benchmark TPS: 126.24 tokens/second
-- Inference latency: ~7ms/token
-- Model load time: 4.2s
+### AMD 7900 XTX (24GB VRAM) - ROCm gfx1100
+
+| Model | Backend | TPS | VRAM | Notes |
+|-------|---------|-----|------|-------|
+| Qwen3-8B-abliterated-q4f32_1-MLC | mlc-llm | 106.01 | 8Gi | Fast chat |
+| Qwen3-14B-q4f16_1-MLC | mlc-llm | 82.39 | 16Gi | Quality chat |
+| stabilityai/sdxl-turbo | diffusers | 3696.29* | 10Gi | Image gen, requires VAE fix |
+| BAAI/bge-large-en-v1.5 | tei | 203.25 | 2Gi | Embeddings (CPU) |
+
+*SDXL metric is images/minute converted to equivalent tokens
 
 ### NVIDIA GTX 980 Ti (6GB VRAM)
 - Model: phi3:mini (2.2GB Q4_0)
@@ -290,9 +488,20 @@ kubectl describe node <gpu-node> | grep -A5 "Allocated resources"
 
 ## Future Improvements
 
+### Completed
+- [x] Add LiteLLM service discovery annotations (via `litellm` spec section)
+- [x] SDXL VAE fp16 fix for ROCm gfx1100 (madebyollin/sdxl-vae-fp16-fix)
+- [x] GitOps-managed benchmark results ConfigMaps
+
+### In Progress
 - [ ] Fix agent GPU detection (add rocm-smi/nvidia-smi or query K8s resources)
 - [ ] Implement benchmark job sidecar termination
 - [ ] Add configurable tolerations to CRD spec
 - [ ] Create proper scheduler ClusterRole (instead of binding to system:kube-scheduler)
-- [ ] Add LiteLLM service discovery annotations
 - [ ] Implement model pre-loading during deployment
+
+### Planned
+- [ ] Automatic benchmark result generation during CI/CD
+- [ ] GPUGroup metrics and Grafana dashboard
+- [ ] Multi-tenant support with namespace isolation
+- [ ] Spot instance preemption handling

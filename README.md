@@ -86,16 +86,19 @@ See [AGENTS.md](AGENTS.md) for detailed component documentation.
 
 FlexInfer supports multiple GPU architectures with backend-specific considerations:
 
-| GPU Architecture | Compute Capability | Ollama | vLLM | MLC-LLM | Notes |
-|-----------------|-------------------|--------|------|---------|-------|
-| Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | *FP32 only, see [Maxwell Guide](build/README-maxwell.md) |
-| Pascal (GTX 1080) | 6.x | ✅ | ✅ | ✅ | Full support |
-| Volta+ (RTX 20xx+) | 7.0+ | ✅ | ✅ | ✅ | Full support with Tensor Cores |
-| AMD (RX 7900) | ROCm | ✅ | ✅ | ✅ | ROCm 5.6+ required |
+| GPU Architecture | Compute Capability | Ollama | vLLM | MLC-LLM | Diffusers | Notes |
+|-----------------|-------------------|--------|------|---------|-----------|-------|
+| Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | ❌ | *FP32 only, see [Maxwell Guide](build/README-maxwell.md) |
+| Pascal (GTX 1080) | 6.x | ✅ | ✅ | ✅ | ✅ | Full support |
+| Volta+ (RTX 20xx+) | 7.0+ | ✅ | ✅ | ✅ | ✅ | Full support with Tensor Cores |
+| AMD RDNA3 (RX 7900) | ROCm gfx1100 | ✅ | ✅ | ✅ | ✅** | ROCm 6.0+ required |
 
 ### Special GPU Documentation
 
 - **[Maxwell GPUs (GTX 980 Ti, etc.)](build/README-maxwell.md)** - Running MLC-LLM on older NVIDIA GPUs without FP16 support
+- **[Deployment Runbook](docs/DEPLOYMENT_RUNBOOK.md#11-sdxl-vae-fp16-nan-on-rocm-gfx1100-amd-rdna3)** - SDXL VAE fp16 fix for AMD RDNA3 GPUs
+
+**\*\*SDXL on AMD RDNA3**: Requires `madebyollin/sdxl-vae-fp16-fix` VAE due to NaN issues in standard VAE on gfx1100
 
 ## Quick Start
 
