@@ -1528,6 +1528,11 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 			})
 		}
 
+		// ROCm environment variables for AMD GPUs
+		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
+			env = append(env, r.rocmEnvVars()...)
+		}
+
 		return env
 	case "ollama":
 		return []corev1.EnvVar{
@@ -1822,6 +1827,35 @@ func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.Mode
 
 	// Default: assume NVIDIA GPU if unspecified.
 	return GPUResourceNVIDIA
+}
+
+// rocmEnvVars returns common environment variables for AMD ROCm GPUs.
+// These are required for containers that need host-mounted ROCm libraries.
+func (r *ModelDeploymentReconciler) rocmEnvVars() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{
+			Name:  "HSA_OVERRIDE_GFX_VERSION",
+			Value: "11.0.0", // RDNA3 (RX 7900 series)
+		},
+		{
+			// Critical for gfx1100 stability - enables experimental AOTriton
+			// flash attention which prevents SIGSEGV crashes on RDNA3.
+			Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+			Value: "1",
+		},
+		{
+			Name:  "PYTORCH_ROCM_ARCH",
+			Value: "gfx1100",
+		},
+		{
+			// Include host-mounted libraries in library path:
+			// - /host-glibc: Host's libstdc++ with GLIBCXX_3.4.32 (ROCm 6.4+ on Ubuntu 24.04)
+			// - /opt/rocm/lib: ROCm HIP/HIPBlas libraries
+			// Required for images that don't bundle ROCm libs (e.g., mlc-llm)
+			Name:  "LD_LIBRARY_PATH",
+			Value: "/host-glibc:/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
+		},
+	}
 }
 
 // getRuntimeClassName returns the appropriate RuntimeClassName for the GPU type.
