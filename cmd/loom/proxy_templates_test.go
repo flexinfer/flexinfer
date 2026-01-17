@@ -8,7 +8,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
-func TestProxy_ResourceTemplatesList_ReturnsEmptyList(t *testing.T) {
+func TestProxy_ResourceTemplatesList_ReturnsProxyTemplates(t *testing.T) {
 	msg, err := mcp.NewRequest(1, "resources/templates/list", map[string]any{})
 	if err != nil {
 		t.Fatalf("NewRequest failed: %v", err)
@@ -34,7 +34,11 @@ func TestProxy_ResourceTemplatesList_ReturnsEmptyList(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected result.resourceTemplates key, got: %v", decoded)
 	}
-	if _, ok := v.([]any); !ok {
+	arr, ok := v.([]any)
+	if !ok {
 		t.Fatalf("expected resourceTemplates to be array, got %T", v)
+	}
+	if len(arr) == 0 {
+		t.Fatalf("expected resourceTemplates to be non-empty")
 	}
 }

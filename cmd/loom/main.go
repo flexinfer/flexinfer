@@ -1573,7 +1573,7 @@ func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
 	return resp
 }
 
-func handleProxyToolsList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Use the daemon's cached tool aggregation endpoint
 	toolsReq, _ := mcp.NewRequest(1, "loom/tools", nil)
 	if err := daemon.Send(ctx, toolsReq); err != nil {
@@ -1602,7 +1602,7 @@ func handleProxyToolsList(ctx context.Context, daemon *mcp.StdioTransport, msg *
 	return mcp.NewResponse(msg.ID, result)
 }
 
-func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -1664,7 +1664,7 @@ func handleProxyToolsCall(ctx context.Context, daemon *mcp.StdioTransport, msg *
 	return resp, nil
 }
 
-func handleProxyResourcesList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Similar to tools/list - aggregate resources from all servers
 	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
 	if err := daemon.Send(ctx, serversReq); err != nil {
@@ -1684,7 +1684,14 @@ func handleProxyResourcesList(ctx context.Context, daemon *mcp.StdioTransport, m
 		return nil, err
 	}
 
-	allResources := make([]mcp.Resource, 0)
+	allResources := []mcp.Resource{
+		{
+			URI:         "loom://servers",
+			Name:        "Loom servers",
+			Description: "List MCP servers managed by the loom daemon",
+			MimeType:    "application/json",
+		},
+	}
 	for _, server := range serversResult.Servers {
 		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
 			"server": server.Name,
@@ -1718,12 +1725,42 @@ func handleProxyResourcesList(ctx context.Context, daemon *mcp.StdioTransport, m
 	return mcp.NewResponse(msg.ID, result)
 }
 
-func handleProxyResourcesRead(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	var params struct {
 		URI string `json:"uri"`
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
+	}
+
+	if params.URI == "loom://servers" {
+		serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
+		if err := daemon.Send(ctx, serversReq); err != nil {
+			return nil, err
+		}
+		serversResp, err := daemon.Recv(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if serversResp.Error != nil {
+			return serversResp, nil
+		}
+
+		pretty := serversResp.Result
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, serversResp.Result, "", "  "); err == nil {
+			pretty = buf.Bytes()
+		}
+
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"contents": []any{
+				map[string]any{
+					"uri":      params.URI,
+					"mimeType": "application/json",
+					"text":     string(pretty),
+				},
+			},
+		})
 	}
 
 	parts := splitToolName(params.URI)
@@ -1745,15 +1782,26 @@ func handleProxyResourcesRead(ctx context.Context, daemon *mcp.StdioTransport, m
 	return daemon.Recv(ctx)
 }
 
-func handleProxyResourceTemplatesList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Some MCP clients (e.g., Codex CLI) probe for resource templates on startup.
 	// Our underlying MCP servers are primarily tool-oriented and many do not
 	// implement templates. Broadcasting this request to all servers can hang if a
-	// server fails to respond to unknown methods, so we return an empty list.
-	return mcp.NewResponse(msg.ID, map[string]any{"resourceTemplates": []any{}})
+	// server fails to respond to unknown methods.
+	//
+	// Instead, return proxy-native templates that don't require downstream calls.
+	return mcp.NewResponse(msg.ID, map[string]any{
+		"resourceTemplates": []any{
+			map[string]any{
+				"name":        "loom_servers",
+				"description": "List MCP servers managed by the loom daemon",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://servers",
+			},
+		},
+	})
 }
 
-func handleProxyPromptsList(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyPromptsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
 	if err := daemon.Send(ctx, serversReq); err != nil {
 		return nil, err
@@ -1806,7 +1854,7 @@ func handleProxyPromptsList(ctx context.Context, daemon *mcp.StdioTransport, msg
 	return mcp.NewResponse(msg.ID, result)
 }
 
-func handleProxyPromptsGet(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func handleProxyPromptsGet(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -1837,7 +1885,7 @@ func handleProxyPromptsGet(ctx context.Context, daemon *mcp.StdioTransport, msg 
 	return daemon.Recv(ctx)
 }
 
-func forwardToDaemon(ctx context.Context, daemon *mcp.StdioTransport, msg *mcp.Message) (*mcp.Message, error) {
+func forwardToDaemon(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	if err := daemon.Send(ctx, msg); err != nil {
 		return nil, err
 	}
