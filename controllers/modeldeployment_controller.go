@@ -1552,20 +1552,64 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 			Name:  "PORT",
 			Value: "8000",
 		})
-		// ROCm-specific environment for AMD GPUs
+
+		// When using ModelCacheRef with broader mount (e.g., huggingface level),
+		// compute paths to model and VAE subdirectories
+		if m.Spec.ModelCacheRef != nil {
+			// Model path: convert HF repo format (org/model) to filesystem path
+			// e.g., "stabilityai/sdxl-turbo" -> "/models/stabilityai/sdxl-turbo"
+			modelPath := "/models/" + m.Spec.Model
+			env = append(env, corev1.EnvVar{
+				Name:  "LOCAL_MODEL_PATH",
+				Value: modelPath,
+			})
+
+			// VAE path for SDXL models: use madebyollin/sdxl-vae-fp16-fix
+			// This fixes fp16 NaN issues that crash ROCm gfx1100 GPUs
+			// See: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix
+			if strings.Contains(strings.ToLower(m.Spec.Model), "sdxl") {
+				env = append(env, corev1.EnvVar{
+					Name:  "VAE_PATH",
+					Value: "/models/madebyollin/sdxl-vae-fp16-fix",
+				})
+			}
+		}
+
+		// ROCm-specific environment for AMD GPUs (gfx1100 / RX 7900 XTX)
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
 			env = append(env, corev1.EnvVar{
 				Name:  "HSA_OVERRIDE_GFX_VERSION",
 				Value: "11.0.0",
 			})
-			// Note: Don't set HIP_VISIBLE_DEVICES - the device plugin allocates
-			// specific GPUs to the container, and within the container, the
-			// allocated GPU is always at index 0.
-			// Critical for gfx1100 stability - enables experimental AOTriton
-			// flash attention which prevents SIGSEGV crashes on RDNA3.
+			// Force ROCm/HIP to only use the first visible GPU device.
+			// Even with device plugin isolation, KFD sees all system GPUs.
+			// Set both ROCR and HIP environment variables for complete isolation.
+			env = append(env, corev1.EnvVar{
+				Name:  "ROCR_VISIBLE_DEVICES",
+				Value: "0",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_VISIBLE_DEVICES",
+				Value: "0",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "GPU_DEVICE_ORDINAL",
+				Value: "0",
+			})
+			// Use fp16 for SDXL with fixed VAE - reduces memory and is now stable
+			env = append(env, corev1.EnvVar{
+				Name:  "USE_FP16",
+				Value: "1",
+			})
+			// Force synchronous GPU operations for stability during model loading
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_LAUNCH_BLOCKING",
+				Value: "1",
+			})
+			// Disable AOTriton experimental features - they can cause SIGSEGV
 			env = append(env, corev1.EnvVar{
 				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-				Value: "1",
+				Value: "0",
 			})
 		}
 		return env

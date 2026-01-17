@@ -6,6 +6,8 @@
 # - https://llm-tracker.info/howto/AMD-GPUs
 # - https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/pytorch-install.html
 # - https://community.frame.work/t/stable-diffusion-rocm-pytorch-setup/53802
+# - https://github.com/ROCm/ROCm/issues/4729 (VAE decode crashes)
+# - https://huggingface.co/madebyollin/sdxl-vae-fp16-fix (fixed VAE)
 
 # Use official ROCm PyTorch image with gfx1100 support
 # The 'latest' tag includes the most recent stable PyTorch + ROCm combination
@@ -17,6 +19,11 @@ FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+
+# Force offline mode - don't try to reach HuggingFace when loading local models
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
 
 # ROCm environment for RX 7900 XTX (gfx1100 / RDNA3)
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
@@ -92,7 +99,7 @@ from PIL import Image
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from diffusers import AutoPipelineForText2Image, DiffusionPipeline
+from diffusers import AutoPipelineForText2Image, DiffusionPipeline, AutoencoderKL
 
 # Global pipeline cache
 pipeline = None
@@ -165,30 +172,64 @@ def load_pipeline(model_id: str):
     if pipeline is not None and current_model == model_id:
         return pipeline
 
+    # Check for local model path first (e.g., /models mounted from PVC)
+    local_model_path = os.environ.get("LOCAL_MODEL_PATH", "/models")
+    if os.path.isdir(local_model_path) and os.listdir(local_model_path):
+        print(f"Found local model at: {local_model_path}")
+        model_id = local_model_path
+
     print(f"Loading model: {model_id}")
     sys.stdout.flush()
 
-    # Force fp32 for ROCm stability (gfx1100 has fp16 issues with some ops)
-    # Only use fp16 if explicitly requested AND tested
-    use_fp16 = os.environ.get("USE_FP16", "0") == "1"
+    # With the fixed VAE (madebyollin/sdxl-vae-fp16-fix), fp16 is safe on gfx1100
+    # The fixed VAE was finetuned to avoid NaN outputs that crash ROCm drivers
+    use_fp16 = os.environ.get("USE_FP16", "1") == "1"  # Default to fp16 now
     dtype = torch.float16 if use_fp16 else torch.float32
     print(f"Using dtype: {dtype}")
     print(f"USE_FP16 env: {os.environ.get('USE_FP16', 'not set')}")
 
-    # Clear GPU cache before loading
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        print(f"GPU memory before load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+    # Load fixed VAE if path provided (madebyollin/sdxl-vae-fp16-fix)
+    # This VAE was finetuned to work correctly in fp16 without generating NaNs
+    # See: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix
+    vae = None
+    vae_path = os.environ.get("VAE_PATH")
+    if vae_path:
+        if os.path.isdir(vae_path):
+            print(f"Loading fixed VAE from: {vae_path}")
+            sys.stdout.flush()
+            try:
+                vae = AutoencoderKL.from_pretrained(
+                    vae_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+                print("Fixed VAE loaded successfully")
+            except Exception as e:
+                print(f"WARNING: Failed to load fixed VAE: {e}")
+                print("Falling back to model's default VAE (may crash in fp16)")
+        else:
+            print(f"WARNING: VAE_PATH set but directory not found: {vae_path}")
+
+    # CRITICAL: On ROCm gfx1100, do NOT call any torch.cuda operations before
+    # the model is fully loaded on CPU. Early GPU context initialization causes
+    # SIGSEGV crashes during model loading.
+    print(f"GPU available: {torch.cuda.is_available()}")
+    sys.stdout.flush()
 
     # Try AutoPipeline first, fall back to DiffusionPipeline
+    # Pipelines load to CPU by default - do NOT use device_map (not supported)
+    # Use local_files_only=True to prevent network requests when loading local models
     try:
-        print("Attempting AutoPipelineForText2Image...")
+        print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
+        if vae:
+            print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
         sys.stdout.flush()
         pipeline = AutoPipelineForText2Image.from_pretrained(
             model_id,
+            vae=vae,  # Use fixed VAE if provided
             torch_dtype=dtype,
             use_safetensors=True,
+            local_files_only=True,
             # Disable safety checker to save memory
             safety_checker=None,
             requires_safety_checker=False,
@@ -198,34 +239,65 @@ def load_pipeline(model_id: str):
         sys.stdout.flush()
         pipeline = DiffusionPipeline.from_pretrained(
             model_id,
+            vae=vae,  # Use fixed VAE if provided
             torch_dtype=dtype,
             use_safetensors=True,
+            local_files_only=True,
             safety_checker=None,
         )
 
     print("Pipeline loaded to CPU, preparing GPU transfer...")
     sys.stdout.flush()
 
-    # Move to GPU with explicit synchronization
-    try:
-        print("Moving model to GPU (this may take a moment)...")
-        sys.stdout.flush()
-
-        # Move component by component for better error isolation
-        pipeline = pipeline.to("cuda")
-
-        # Synchronize to catch any async errors
+    # Now that model is safely on CPU, we can initialize GPU context
+    if torch.cuda.is_available():
+        print(f"Initializing GPU context...")
+        torch.cuda.empty_cache()
         torch.cuda.synchronize()
-
-        print(f"GPU memory after load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-    except Exception as e:
-        print(f"ERROR moving to GPU: {e}")
-        print(f"Exception type: {type(e).__name__}")
-        import traceback
-        traceback.print_exc()
-        print("Falling back to CPU...")
+        print(f"GPU memory after cache clear: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
         sys.stdout.flush()
-        pipeline = pipeline.to("cpu")
+
+    # Use CPU offloading to avoid memory access faults on gfx1100
+    # This keeps the model on CPU and only moves components to GPU as needed
+    use_cpu_offload = os.environ.get("USE_CPU_OFFLOAD", "1") == "1"
+
+    if use_cpu_offload and torch.cuda.is_available():
+        try:
+            print("Enabling model CPU offload (safer for gfx1100)...")
+            sys.stdout.flush()
+            pipeline.enable_model_cpu_offload()
+            print("CPU offload enabled successfully")
+            print(f"GPU memory after offload setup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        except Exception as e:
+            print(f"CPU offload failed: {e}, trying sequential offload...")
+            try:
+                pipeline.enable_sequential_cpu_offload()
+                print("Sequential CPU offload enabled")
+            except Exception as e2:
+                print(f"Sequential offload also failed: {e2}, falling back to full GPU transfer")
+                try:
+                    pipeline = pipeline.to("cuda")
+                    torch.cuda.synchronize()
+                    print(f"GPU memory after load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+                except Exception as e3:
+                    print(f"GPU transfer failed: {e3}, using CPU only")
+                    pipeline = pipeline.to("cpu")
+    else:
+        # Move to GPU with explicit synchronization
+        try:
+            print("Moving model to GPU (this may take a moment)...")
+            sys.stdout.flush()
+            pipeline = pipeline.to("cuda")
+            torch.cuda.synchronize()
+            print(f"GPU memory after load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        except Exception as e:
+            print(f"ERROR moving to GPU: {e}")
+            print(f"Exception type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+            print("Falling back to CPU...")
+            sys.stdout.flush()
+            pipeline = pipeline.to("cpu")
 
     # Enable memory optimizations (safe for ROCm)
     # Note: Attention slicing is safer than xformers on ROCm
