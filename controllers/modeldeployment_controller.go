@@ -1849,11 +1849,12 @@ func (r *ModelDeploymentReconciler) rocmEnvVars() []corev1.EnvVar {
 		},
 		{
 			// Include host-mounted libraries in library path:
-			// - /host-glibc: Host's libstdc++ with GLIBCXX_3.4.32 (ROCm 6.4+ on Ubuntu 24.04)
-			// - /opt/rocm/lib: ROCm HIP/HIPBlas libraries
+			// - /opt/rocm/lib: ROCm HIP/HIPBlas libraries (primary)
+			// - /host-glibc: Host's libstdc++ with GLIBCXX_3.4.32 (fallback for ROCm 6.4+ on Ubuntu 24.04)
+			// IMPORTANT: /host-glibc must be LAST - putting it first causes libc.so.6 symbol conflicts
 			// Required for images that don't bundle ROCm libs (e.g., mlc-llm)
 			Name:  "LD_LIBRARY_PATH",
-			Value: "/host-glibc:/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}",
+			Value: "/opt/rocm/lib:/opt/rocm/hip/lib:${LD_LIBRARY_PATH}:/host-glibc",
 		},
 	}
 }
