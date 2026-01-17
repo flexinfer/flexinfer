@@ -13,6 +13,9 @@ import (
 const (
 	loomProxyMaxToolResultBytesEnv = "LOOM_PROXY_MAX_TOOL_RESULT_BYTES"
 	defaultMaxToolResultBytes      = 48_000
+
+	loomProxyMaxResourceBytesEnv = "LOOM_PROXY_MAX_RESOURCE_BYTES"
+	defaultMaxResourceBytes      = 64_000
 )
 
 func proxyMaxToolResultBytes() int {
@@ -29,6 +32,38 @@ func proxyMaxToolResultBytes() int {
 		return 1024
 	}
 	return n
+}
+
+func proxyMaxResourceBytes() int {
+	v := strings.TrimSpace(os.Getenv(loomProxyMaxResourceBytesEnv))
+	if v == "" {
+		return defaultMaxResourceBytes
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return defaultMaxResourceBytes
+	}
+	// Keep a sane lower bound to avoid zero-length results.
+	if n < 1024 {
+		return 1024
+	}
+	return n
+}
+
+func truncateResourceText(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	suffix := fmt.Sprintf("\n\n[loom] resource truncated to %d bytes (set %s to increase)\n", maxBytes, loomProxyMaxResourceBytesEnv)
+	allowed := maxBytes - len(suffix)
+	if allowed < 0 {
+		allowed = 0
+		suffix = ""
+	}
+	return truncateUTF8Bytes(text, allowed) + suffix
 }
 
 func truncateCallToolResult(result *mcp.CallToolResult, maxBytes int) bool {

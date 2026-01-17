@@ -35,6 +35,9 @@ type fluxServer struct {
 	namespace  string
 	timeout    time.Duration
 	fluxBin    string
+
+	dynamicClient dynamic.Interface
+	kubeClient    kubernetes.Interface
 }
 
 func main() {
@@ -271,6 +274,21 @@ func main() {
 		},
 	}, f.handleEvents)
 
+	// probe
+	server.AddTool(mcp.Tool{
+		Name:        "flux_probe",
+		Description: "Probe Flux/cluster capabilities (flux CLI, kubeconfig, CRDs, controllers) and return actionable guidance",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Flux namespace to probe (default: flux-system)",
+				},
+			},
+		},
+	}, f.handleProbe)
+
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -279,7 +297,18 @@ func main() {
 
 func detectFluxBin() string {
 	if p := strings.TrimSpace(os.Getenv("FLUX_BIN")); p != "" {
-		return p
+		// Allow FLUX_BIN to be either an absolute/relative path or a binary name.
+		// If it's a name, resolve through PATH; if it's a path, ensure it exists.
+		if strings.ContainsRune(p, os.PathSeparator) {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
+			return ""
+		}
+		if resolved, err := exec.LookPath(p); err == nil {
+			return resolved
+		}
+		return ""
 	}
 	if p, err := exec.LookPath("flux"); err == nil {
 		return p
@@ -317,6 +346,10 @@ func (f *fluxServer) runFluxCLI(ctx context.Context, args ...string) (string, er
 }
 
 func (f *fluxServer) kubeDynamicClient() (dynamic.Interface, error) {
+	if f.dynamicClient != nil {
+		return f.dynamicClient, nil
+	}
+
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if f.kubeconfig != "" {
 		loadingRules.ExplicitPath = f.kubeconfig
@@ -337,7 +370,11 @@ func (f *fluxServer) kubeDynamicClient() (dynamic.Interface, error) {
 	return client, nil
 }
 
-func (f *fluxServer) kubeClientset() (*kubernetes.Clientset, error) {
+func (f *fluxServer) kubeClientset() (kubernetes.Interface, error) {
+	if f.kubeClient != nil {
+		return f.kubeClient, nil
+	}
+
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if f.kubeconfig != "" {
 		loadingRules.ExplicitPath = f.kubeconfig
@@ -419,6 +456,166 @@ func (f *fluxServer) patchUnstructured(ctx context.Context, gvr schema.GroupVers
 
 func ptrInt64(v int64) *int64 { return &v }
 
+func listControllerPods(ctx context.Context, cs kubernetes.Interface, namespace, controller string) ([]string, error) {
+	selectors := []string{
+		fmt.Sprintf("app.kubernetes.io/part-of=flux,app.kubernetes.io/name=%s", controller),
+		fmt.Sprintf("app.kubernetes.io/name=%s", controller),
+		fmt.Sprintf("app=%s", controller),
+	}
+
+	var lastErr error
+	for _, sel := range selectors {
+		pods, err := cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: sel})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(pods.Items) == 0 {
+			continue
+		}
+
+		out := make([]string, 0, len(pods.Items))
+		for _, p := range pods.Items {
+			out = append(out, p.Name)
+		}
+		return out, nil
+	}
+
+	return nil, lastErr
+}
+
+func (f *fluxServer) handleProbe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	namespace := v.String("namespace", f.namespace)
+
+	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+	defer cancel()
+
+	report := map[string]any{
+		"ok":        true,
+		"namespace": namespace,
+	}
+
+	fluxInfo := map[string]any{
+		"present": f.fluxBin != "",
+		"path":    f.fluxBin,
+	}
+	if f.fluxBin != "" {
+		verCtx, verCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer verCancel()
+		out, err := f.runFluxCLI(verCtx, "--version")
+		if err == nil {
+			fluxInfo["version"] = strings.TrimSpace(out)
+		} else {
+			fluxInfo["version_error"] = err.Error()
+		}
+	}
+	report["flux_cli"] = fluxInfo
+
+	kubeconfig := f.kubeconfig
+	if kubeconfig == "" {
+		kubeconfig = os.Getenv("KUBECONFIG")
+	}
+	kubeInfo := map[string]any{"path": kubeconfig}
+	if _, err := f.kubeDynamicClient(); err != nil {
+		kubeInfo["ok"] = false
+		kubeInfo["error"] = err.Error()
+	} else {
+		kubeInfo["ok"] = true
+	}
+	report["kubeconfig"] = kubeInfo
+
+	type crdProbe struct {
+		Name string
+		GVRs []schema.GroupVersionResource
+	}
+	probes := []crdProbe{
+		{
+			Name: "gitrepositories",
+			GVRs: []schema.GroupVersionResource{
+				{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"},
+				{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "gitrepositories"},
+				{Group: "source.toolkit.fluxcd.io", Version: "v1beta1", Resource: "gitrepositories"},
+			},
+		},
+		{
+			Name: "kustomizations",
+			GVRs: []schema.GroupVersionResource{
+				{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"},
+				{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta2", Resource: "kustomizations"},
+				{Group: "kustomize.toolkit.fluxcd.io", Version: "v1beta1", Resource: "kustomizations"},
+			},
+		},
+		{
+			Name: "helmreleases",
+			GVRs: []schema.GroupVersionResource{
+				{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"},
+				{Group: "helm.toolkit.fluxcd.io", Version: "v2beta2", Resource: "helmreleases"},
+				{Group: "helm.toolkit.fluxcd.io", Version: "v2beta1", Resource: "helmreleases"},
+			},
+		},
+	}
+
+	crdDetected := make([]any, 0)
+	crdMissing := make([]string, 0)
+	for _, p := range probes {
+		list, gvr, err := f.listUnstructuredWithFallback(ctx, p.GVRs, namespace, false)
+		if err != nil {
+			crdMissing = append(crdMissing, p.Name)
+			continue
+		}
+		crdDetected = append(crdDetected, map[string]any{
+			"name":  p.Name,
+			"gvr":   gvr.String(),
+			"count": len(list.Items),
+		})
+	}
+	report["crds"] = map[string]any{
+		"detected": crdDetected,
+		"missing":  crdMissing,
+	}
+
+	controllers := []string{"source-controller", "kustomize-controller", "helm-controller", "notification-controller"}
+	ctrlCounts := make(map[string]any)
+	if cs, err := f.kubeClientset(); err == nil {
+		for _, c := range controllers {
+			pods, _ := listControllerPods(ctx, cs, namespace, c)
+			entry := map[string]any{"count": len(pods)}
+			if len(pods) > 0 {
+				limit := 3
+				if len(pods) < limit {
+					limit = len(pods)
+				}
+				entry["examples"] = pods[:limit]
+			}
+			ctrlCounts[c] = entry
+		}
+	} else {
+		report["controllers_error"] = err.Error()
+	}
+	report["controllers"] = ctrlCounts
+
+	mode := "kubernetes-api"
+	if f.fluxBin != "" {
+		mode = "flux-cli"
+	}
+	report["mode"] = mode
+
+	guidance := make([]string, 0)
+	if f.fluxBin == "" {
+		guidance = append(guidance, "Install flux CLI (macOS): brew install fluxcd/tap/flux")
+	}
+	if ok, _ := kubeInfo["ok"].(bool); !ok {
+		guidance = append(guidance, "Set KUBECONFIG or FLUX_KUBECONFIG to a valid kubeconfig path")
+	}
+	if len(crdDetected) == 0 {
+		guidance = append(guidance, "Flux CRDs not detected; verify installation and namespace (default flux-system)")
+	}
+	report["guidance"] = guidance
+
+	return mcp.JSONResult(report)
+}
+
 func (f *fluxServer) handleGetSources(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	kind := v.Enum("kind", "all", "git", "helm", "oci", "bucket", "all")
@@ -498,14 +695,14 @@ func (f *fluxServer) handleGetSources(ctx context.Context, args map[string]any) 
 			}
 			return mcp.ErrorResult(fmt.Errorf("list %s sources: %w", sk.name, err)), nil
 		}
-	for _, it := range list.Items {
+		for _, it := range list.Items {
 			items = append(items, it.Object)
 		}
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"ok":     true,
-		"mode":   "kubernetes-api",
+		"ok":   true,
+		"mode": "kubernetes-api",
 		"sources": map[string]any{
 			"items": items,
 		},
@@ -1021,16 +1218,13 @@ func (f *fluxServer) handleLogs(ctx context.Context, args map[string]any) (*mcp.
 
 	lines := make([]string, 0)
 	for _, c := range controllers {
-		pods, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=" + c})
-		if err != nil || len(pods.Items) == 0 {
-			pods, err = cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + c})
-		}
-		if err != nil || len(pods.Items) == 0 {
+		podNames, err := listControllerPods(ctx, cs, ns, c)
+		if err != nil || len(podNames) == 0 {
 			continue
 		}
 
-		pod := pods.Items[0]
-		req := cs.CoreV1().Pods(ns).GetLogs(pod.Name, &corev1.PodLogOptions{
+		podName := podNames[0]
+		req := cs.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{
 			TailLines:    ptrInt64(500),
 			SinceSeconds: sinceSeconds,
 		})
@@ -1055,7 +1249,7 @@ func (f *fluxServer) handleLogs(ctx context.Context, args map[string]any) (*mcp.
 			if level != "" && !strings.Contains(line, "level="+level) && !strings.Contains(line, "\"level\":\""+level+"\"") {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("[%s/%s] %s", c, pod.Name, line))
+			lines = append(lines, fmt.Sprintf("[%s/%s] %s", c, podName, line))
 		}
 	}
 

@@ -156,6 +156,10 @@ clean:
 test:
 	go test ./...
 
+test-sandbox:
+	mkdir -p /tmp/go-build-cache
+	GOCACHE=/tmp/go-build-cache go test ./...
+
 test-v:
 	go test -v ./...
 

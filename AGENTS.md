@@ -71,6 +71,7 @@ Code Style
 
 - Run `golangci-lint run` before committing
 - Run `go test ./...` to verify changes
+- In restricted/sandboxed environments, prefer `make test-sandbox` to force `GOCACHE`/`GOMODCACHE` into `/tmp`.
 - Keep MCP server implementations in `cmd/mcp-*/main.go`
 - Shared non-server utilities live under `pkg/` (configs, registry, profiles, sync, validation)
 

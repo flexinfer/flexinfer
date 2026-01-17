@@ -152,9 +152,21 @@ func main() {
 		Use:   "doctor",
 		Short: "Diagnose issues",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(socketPath)
+			// Backwards-compatible alias for `loom check`.
+			return runCheck(socketPath, false)
 		},
 	}
+
+	// Check command
+	var checkJSON bool
+	checkCmd := &cobra.Command{
+		Use:   "check",
+		Short: "Check Loom configuration and dependencies",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheck(socketPath, checkJSON)
+		},
+	}
+	checkCmd.Flags().BoolVar(&checkJSON, "json", false, "Output in JSON format")
 
 	// Proxy command - bridges stdio to daemon for Claude Code/Codex/etc
 	proxyCmd := &cobra.Command{
@@ -1016,7 +1028,7 @@ Example:
 
 	secretsCmd.AddCommand(secretsSetCmd, secretsGetCmd, secretsListCmd, secretsDeleteCmd, secretsImportCmd)
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd)
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1324,40 +1336,235 @@ func listServers(socketPath string, outputJSON bool) error {
 	return nil
 }
 
-func runDoctor(socketPath string) error {
-	fmt.Println("Loom Doctor")
-	fmt.Println("===========")
-	fmt.Println()
+type checkResult struct {
+	Name     string `json:"name"`
+	OK       bool   `json:"ok"`
+	Severity string `json:"severity,omitempty"` // "error" or "warn"
+	Message  string `json:"message,omitempty"`
+	Fix      string `json:"fix,omitempty"`
+}
 
-	// Check daemon
-	fmt.Print("Daemon status: ")
+type checkReport struct {
+	OK     bool          `json:"ok"`
+	Checks []checkResult `json:"checks"`
+}
+
+func findWorkspaceRootForChecks() string {
+	cwd, _ := os.Getwd()
+	try := func(dir string) bool {
+		if dir == "" {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, "platform", "gitops", "mcp", "context", "registry.yaml")); err == nil {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".codex", "config.toml")); err == nil {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "services", "loom-core")); err == nil {
+			return true
+		}
+		return false
+	}
+	if try(cwd) {
+		return cwd
+	}
+	dir := cwd
+	for range 10 {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+		if try(dir) {
+			return dir
+		}
+	}
+	return ""
+}
+
+func runCheck(socketPath string, outputJSON bool) error {
+	checks := make([]checkResult, 0)
+
+	// Daemon connectivity
 	if conn, err := dial(socketPath); err == nil {
-		conn.Close()
-		fmt.Println("OK (running)")
+		_ = conn.Close()
+		checks = append(checks, checkResult{
+			Name:    "daemon",
+			OK:      true,
+			Message: "daemon reachable",
+		})
 	} else {
-		fmt.Println("WARN (not running)")
+		checks = append(checks, checkResult{
+			Name:     "daemon",
+			OK:       false,
+			Severity: "error",
+			Message:  "cannot connect to daemon socket: " + err.Error(),
+			Fix:      "Run: loom start (or: loom install && loom start)",
+		})
 	}
 
-	// Check socket path
-	fmt.Printf("Socket path: %s\n", socketPath)
-
-	// Check config directory
-	configDir := filepath.Dir(socketPath)
-	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
-		fmt.Printf("Config directory: OK (%s)\n", configDir)
+	// Registry discovery + parse
+	regPath, found := registry.FindRegistry()
+	if !found {
+		if root := findWorkspaceRootForChecks(); root != "" {
+			candidate := filepath.Join(root, "platform", "gitops", "mcp", "context", "registry.yaml")
+			if _, err := os.Stat(candidate); err == nil {
+				regPath = candidate
+				found = true
+			}
+		}
+	}
+	if !found {
+		checks = append(checks, checkResult{
+			Name:     "registry",
+			OK:       false,
+			Severity: "error",
+			Message:  "registry.yaml not found",
+			Fix:      "Set up registry at ~/.config/loom/registry.yaml or run from a repo with platform/gitops/mcp/context/registry.yaml",
+		})
 	} else {
-		fmt.Printf("Config directory: MISSING (%s)\n", configDir)
+		if _, err := registry.Load(regPath); err != nil {
+			checks = append(checks, checkResult{
+				Name:     "registry",
+				OK:       false,
+				Severity: "error",
+				Message:  "failed to parse registry: " + err.Error(),
+				Fix:      "Fix YAML at: " + regPath,
+			})
+		} else {
+			checks = append(checks, checkResult{
+				Name:    "registry",
+				OK:      true,
+				Message: "registry OK: " + regPath,
+			})
+		}
 	}
 
-	// Check for registry
-	fmt.Print("Registry: ")
-	if regPath, found := registry.FindRegistry(); found {
-		fmt.Printf("OK (%s)\n", regPath)
-	} else {
-		fmt.Println("NOT FOUND (expected at ~/.config/loom/registry.yaml or ./mcp/context/registry.yaml)")
+	// Codex config sanity (best-effort, workspace-only)
+	if root := findWorkspaceRootForChecks(); root != "" {
+		codexCfg := filepath.Join(root, ".codex", "config.toml")
+		if b, err := os.ReadFile(codexCfg); err == nil {
+			if strings.Contains(string(b), "${keychain:") || strings.Contains(string(b), "${secret:") || strings.Contains(string(b), "${env:") {
+				checks = append(checks, checkResult{
+					Name:     "codex_config_placeholders",
+					OK:       false,
+					Severity: "warn",
+					Message:  "codex config contains unexpanded template tokens (may be fine if your client expands them, but Codex typically expects concrete values)",
+					Fix:      "Regenerate configs with: loom generate configs --target codex (and sync if needed: loom sync codex --regen)",
+				})
+			}
+			checks = append(checks, checkResult{
+				Name:    "codex_config",
+				OK:      true,
+				Message: "found: " + codexCfg,
+			})
+		} else {
+			checks = append(checks, checkResult{
+				Name:     "codex_config",
+				OK:       false,
+				Severity: "warn",
+				Message:  "missing: " + codexCfg,
+				Fix:      "Generate configs with: loom generate configs --target codex (then sync: loom sync codex --regen)",
+			})
+		}
 	}
 
+	// Flux CLI presence (optional; mcp-flux can fall back, but CLI is still useful)
+	if p, err := exec.LookPath("flux"); err == nil {
+		checks = append(checks, checkResult{
+			Name:    "flux_cli",
+			OK:      true,
+			Message: "flux CLI found: " + p,
+		})
+	} else {
+		checks = append(checks, checkResult{
+			Name:     "flux_cli",
+			OK:       false,
+			Severity: "warn",
+			Message:  "flux CLI not found in PATH (mcp-flux falls back to Kubernetes API for many operations)",
+			Fix:      "Install flux CLI (macOS): brew install fluxcd/tap/flux",
+		})
+	}
+
+	// Kubeconfig presence (optional)
+	kubeconfig := os.Getenv("FLUX_KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = os.Getenv("KUBECONFIG")
+	}
+	if kubeconfig != "" {
+		if _, err := os.Stat(kubeconfig); err == nil {
+			checks = append(checks, checkResult{
+				Name:    "kubeconfig",
+				OK:      true,
+				Message: "kubeconfig: " + kubeconfig,
+			})
+		} else {
+			checks = append(checks, checkResult{
+				Name:     "kubeconfig",
+				OK:       false,
+				Severity: "warn",
+				Message:  "kubeconfig path is set but not readable: " + kubeconfig,
+				Fix:      "Fix FLUX_KUBECONFIG/KUBECONFIG to point at a readable kubeconfig file",
+			})
+		}
+	} else {
+		checks = append(checks, checkResult{
+			Name:     "kubeconfig",
+			OK:       false,
+			Severity: "warn",
+			Message:  "FLUX_KUBECONFIG/KUBECONFIG not set (required for mcp-flux/k8s tools unless using in-cluster config)",
+			Fix:      "Export KUBECONFIG=/path/to/kubeconfig (or FLUX_KUBECONFIG for mcp-flux specifically)",
+		})
+	}
+
+	// Summarize
+	ok := true
+	for _, c := range checks {
+		if !c.OK && c.Severity == "error" {
+			ok = false
+		}
+	}
+
+	report := checkReport{OK: ok, Checks: checks}
+	if outputJSON {
+		out, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal json: %w", err)
+		}
+		fmt.Println(string(out))
+		if !ok {
+			return fmt.Errorf("checks failed")
+		}
+		return nil
+	}
+
+	fmt.Println("Loom Check")
+	fmt.Println("=========")
+	fmt.Printf("Socket: %s\n\n", socketPath)
+	for _, c := range checks {
+		status := "OK"
+		if !c.OK {
+			if c.Severity == "" {
+				c.Severity = "warn"
+			}
+			status = strings.ToUpper(c.Severity)
+		}
+		fmt.Printf("[%s] %s: %s\n", status, c.Name, c.Message)
+		if !c.OK && c.Fix != "" {
+			fmt.Printf("      Fix: %s\n", c.Fix)
+		}
+	}
+
+	if !ok {
+		return fmt.Errorf("one or more checks failed")
+	}
 	return nil
+}
+
+func runDoctor(socketPath string) error {
+	// Retained for compatibility: `loom doctor` is an alias for `loom check`.
+	return runCheck(socketPath, false)
 }
 
 // runProxy runs loom as an MCP server, bridging stdio to the daemon
@@ -1425,9 +1632,9 @@ func runProxy(socketPath string) error {
 		daemon.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
 
 		return nil
-		}
+	}
 
-		// Main message loop
+	// Main message loop
 	for {
 		msg, err := stdio.Recv(ctx)
 		if err != nil {
@@ -1691,6 +1898,24 @@ func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mc
 			Description: "List MCP servers managed by the loom daemon",
 			MimeType:    "application/json",
 		},
+		{
+			URI:         "loom://tools",
+			Name:        "Loom tools",
+			Description: "Cached aggregated tools from loom daemon",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://health",
+			Name:        "Loom health",
+			Description: "Health summary for all servers (local/hub) managed by loom",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://config",
+			Name:        "Loom config",
+			Description: "Active profile and daemon configuration summary",
+			MimeType:    "application/json",
+		},
 	}
 	for _, server := range serversResult.Servers {
 		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
@@ -1733,23 +1958,93 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
 	}
 
-	if params.URI == "loom://servers" {
-		serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
-		if err := daemon.Send(ctx, serversReq); err != nil {
-			return nil, err
-		}
-		serversResp, err := daemon.Recv(ctx)
+	nextID := 1
+	callDaemon := func(method string, callParams any) (*mcp.Message, error) {
+		req, err := mcp.NewRequest(nextID, method, callParams)
 		if err != nil {
 			return nil, err
 		}
-		if serversResp.Error != nil {
-			return serversResp, nil
+		nextID++
+		if err := daemon.Send(ctx, req); err != nil {
+			return nil, err
+		}
+		return daemon.Recv(ctx)
+	}
+
+	renderJSON := func(v any) (string, error) {
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return truncateResourceText(string(b), proxyMaxResourceBytes()), nil
+	}
+
+	if strings.HasPrefix(params.URI, "loom://") {
+		var payload any
+		switch params.URI {
+		case "loom://servers":
+			resp, err := callDaemon("loom/servers", nil)
+			if err != nil {
+				return nil, err
+			}
+			if resp.Error != nil {
+				return resp, nil
+			}
+			if err := json.Unmarshal(resp.Result, &payload); err != nil {
+				payload = map[string]any{"ok": false, "error": "unmarshal loom/servers response: " + err.Error()}
+			}
+
+		case "loom://tools":
+			resp, err := callDaemon("loom/tools", nil)
+			if err != nil {
+				return nil, err
+			}
+			if resp.Error != nil {
+				return resp, nil
+			}
+			if err := json.Unmarshal(resp.Result, &payload); err != nil {
+				payload = map[string]any{"ok": false, "error": "unmarshal loom/tools response: " + err.Error()}
+			}
+
+		case "loom://health":
+			resp, err := callDaemon("loom/health", nil)
+			if err != nil {
+				return nil, err
+			}
+			if resp.Error != nil {
+				return resp, nil
+			}
+			if err := json.Unmarshal(resp.Result, &payload); err != nil {
+				payload = map[string]any{"ok": false, "error": "unmarshal loom/health response: " + err.Error()}
+			}
+
+		case "loom://config":
+			payload = make(map[string]any)
+			for _, m := range []string{"loom/status", "loom/profile", "loom/config-hash"} {
+				resp, err := callDaemon(m, nil)
+				if err != nil {
+					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": err.Error()}
+					continue
+				}
+				if resp.Error != nil {
+					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": resp.Error.Message}
+					continue
+				}
+				var v any
+				if err := json.Unmarshal(resp.Result, &v); err != nil {
+					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": "unmarshal response: " + err.Error()}
+					continue
+				}
+				payload.(map[string]any)[m] = v
+			}
+
+		default:
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "unknown loom resource URI"), nil
 		}
 
-		pretty := serversResp.Result
-		var buf bytes.Buffer
-		if err := json.Indent(&buf, serversResp.Result, "", "  "); err == nil {
-			pretty = buf.Bytes()
+		text, err := renderJSON(payload)
+		if err != nil {
+			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 		}
 
 		return mcp.NewResponse(msg.ID, map[string]any{
@@ -1757,7 +2052,7 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 				map[string]any{
 					"uri":      params.URI,
 					"mimeType": "application/json",
-					"text":     string(pretty),
+					"text":     text,
 				},
 			},
 		})
@@ -1796,6 +2091,24 @@ func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport,
 				"description": "List MCP servers managed by the loom daemon",
 				"mimeType":    "application/json",
 				"uriTemplate": "loom://servers",
+			},
+			map[string]any{
+				"name":        "loom_tools",
+				"description": "Cached aggregated tools from loom daemon",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://tools",
+			},
+			map[string]any{
+				"name":        "loom_health",
+				"description": "Health summary for all servers (local/hub) managed by loom",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://health",
+			},
+			map[string]any{
+				"name":        "loom_config",
+				"description": "Active profile and daemon configuration summary",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://config",
 			},
 		},
 	})

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 )
 
 var version = "0.1.0"
+var hostsConfigPath string
 
 // Host represents a server configuration
 type Host struct {
@@ -116,27 +118,11 @@ func main() {
 }
 
 func loadHosts() error {
-	// Find servers.toml relative to executable or repo root
-	// Assuming running from repo root or binary location
-	// Try a few paths
-	paths := []string{
-		"scripts/mcp/servers.toml",
-		"../../scripts/mcp/servers.toml", // relative to cmd/mcp-server-mgmt
-		"servers.toml",
-	}
+	hosts = make(map[string]Host)
+	hostsConfigPath = ""
 
-	var configPath string
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			configPath = p
-			break
-		}
-	}
-
+	configPath := findHostsConfigPath()
 	if configPath == "" {
-		// Fallback to empty config if not found, or error?
-		// Python script defaults to empty.
-		hosts = make(map[string]Host)
 		return nil
 	}
 
@@ -150,7 +136,6 @@ func loadHosts() error {
 		return err
 	}
 
-	hosts = make(map[string]Host)
 	for name, h := range cfg.Hosts {
 		h.Name = name
 		if h.Host == "" {
@@ -158,7 +143,64 @@ func loadHosts() error {
 		}
 		hosts[name] = h
 	}
+	hostsConfigPath = configPath
 	return nil
+}
+
+func findHostsConfigPath() string {
+	if p := strings.TrimSpace(os.Getenv("LOOM_SERVER_MGMT_HOSTS_TOML")); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	relCandidates := []string{
+		filepath.Join("platform", "gitops", "scripts", "mcp", "servers.toml"),
+		filepath.Join("scripts", "mcp", "servers.toml"),
+		"servers.toml",
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		if p := findUpwards(cwd, relCandidates); p != "" {
+			return p
+		}
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		if p := findUpwards(filepath.Dir(exe), relCandidates); p != "" {
+			return p
+		}
+	}
+
+	// Backwards-compat relative paths (best effort)
+	fallbackRel := []string{
+		filepath.Join("..", "..", "platform", "gitops", "scripts", "mcp", "servers.toml"),
+		filepath.Join("..", "..", "scripts", "mcp", "servers.toml"),
+	}
+	for _, p := range fallbackRel {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	return ""
+}
+
+func findUpwards(startDir string, relCandidates []string) string {
+	dir := startDir
+	for {
+		for _, rel := range relCandidates {
+			p := filepath.Join(dir, rel)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 func getHost(name string) (Host, error) {

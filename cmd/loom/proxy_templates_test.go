@@ -41,4 +41,24 @@ func TestProxy_ResourceTemplatesList_ReturnsProxyTemplates(t *testing.T) {
 	if len(arr) == 0 {
 		t.Fatalf("expected resourceTemplates to be non-empty")
 	}
+
+	want := map[string]bool{
+		"loom_servers": true,
+		"loom_tools":   true,
+		"loom_health":  true,
+		"loom_config":  true,
+	}
+	for _, raw := range arr {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		if name != "" {
+			delete(want, name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected templates: %v", want)
+	}
 }
