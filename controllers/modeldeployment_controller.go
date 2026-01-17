@@ -1573,11 +1573,14 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "ROCR_VISIBLE_DEVICES",
 				Value: "0",
 			})
-			// Use fp16 for VRAM efficiency on AMD GPUs
+			// Critical for gfx1100 stability - enables experimental AOTriton
+			// flash attention which prevents SIGSEGV crashes on RDNA3.
 			env = append(env, corev1.EnvVar{
-				Name:  "USE_FP16",
+				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
 				Value: "1",
 			})
+			// Note: USE_FP16 removed - fp16 causes memory access faults on gfx1100
+			// with diffusers. The Dockerfile defaults to fp32 for stability.
 		}
 		return env
 	case "tei":
