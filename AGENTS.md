@@ -1047,5 +1047,126 @@ docker push registry.harbor.lan/library/mlc-llm:rocm64-src
 
 ---
 
+## Resource Cleanup Procedures
+
+### CRITICAL: Before Deploying to a Node
+
+Before scheduling ANY workload to a GPU node, verify these resources are NOT running:
+
+```bash
+# 1. Check for RAM ModelCaches targeting the node
+kubectl get modelcache -n flexinfer-system -o custom-columns='NAME:.metadata.name,STRATEGY:.spec.storageStrategy,SELECTOR:.spec.nodeSelector'
+
+# 2. Check for active DaemonSets (RAM syncers)
+kubectl get daemonsets -n flexinfer-system
+
+# 3. Check for pending/crashing pods on the node
+kubectl get pods -n flexinfer-system -o wide | grep NODE_NAME
+```
+
+### Understanding Resource Hierarchy
+
+**IMPORTANT**: Resources are created in a hierarchy. Deleting child resources is useless if parent still exists!
+
+```
+ModelDeployment (parent)
+├── Deployment
+├── Service
+├── Benchmark Job
+└── references → ModelCache
+
+ModelCache (parent)
+├── PVC (for SharedPVC strategy)
+├── Job (for download)
+└── DaemonSet (for Memory/NodeLocal strategy) ← "ram-syncer"
+```
+
+### How to PROPERLY Clean Up
+
+1. **To stop a model deployment**: Delete or scale the **ModelDeployment** (not the Deployment)
+   ```bash
+   # Scale to 0
+   kubectl patch modeldeployment NAME -n flexinfer-system --type=merge -p='{"spec":{"replicas":0}}'
+
+   # Or delete entirely
+   kubectl delete modeldeployment NAME -n flexinfer-system
+   ```
+
+2. **To stop RAM syncers**: Delete the **ModelCache** with `storageStrategy: Memory`
+   ```bash
+   # Find Memory-strategy caches
+   kubectl get modelcache -n flexinfer-system -o custom-columns='NAME:.metadata.name,STRATEGY:.spec.storageStrategy'
+
+   # Delete the RAM cache (this removes the DaemonSet)
+   kubectl delete modelcache NAME-ram -n flexinfer-system
+   ```
+
+3. **To clean up benchmark pods**: Delete the **Job** (pods are owned by Job)
+   ```bash
+   kubectl delete job NAME-benchmark -n flexinfer-system
+   ```
+
+### Common Cleanup Mistakes (DON'T DO THIS)
+
+❌ **Wrong**: `kubectl delete daemonset X-ram-syncer` → Controller will recreate it
+✅ **Right**: `kubectl delete modelcache X-ram` → DaemonSet gets garbage collected
+
+❌ **Wrong**: `kubectl delete pod X-benchmark-abc` → Job will recreate pod
+✅ **Right**: `kubectl delete job X-benchmark` → Pods get garbage collected
+
+❌ **Wrong**: `kubectl scale deployment X --replicas=0` → Controller will reset it
+✅ **Right**: `kubectl patch modeldeployment X --type=merge -p='{"spec":{"replicas":0}}'`
+
+### Emergency Node Recovery
+
+If a GPU node crashes due to memory pressure or GPU segfaults:
+
+1. **From your workstation** (before rebooting node):
+   ```bash
+   # 1. Delete all RAM ModelCaches targeting that node
+   kubectl get modelcache -n flexinfer-system -o json | \
+     jq -r '.items[] | select(.spec.storageStrategy=="Memory") | select(.spec.nodeSelector["kubernetes.io/hostname"]=="NODE_NAME") | .metadata.name' | \
+     xargs -I{} kubectl delete modelcache {} -n flexinfer-system
+
+   # 2. Scale down all ModelDeployments targeting that node
+   kubectl get modeldeployment -n flexinfer-system -o json | \
+     jq -r '.items[] | select(.spec.nodeSelector["kubernetes.io/hostname"]=="NODE_NAME") | .metadata.name' | \
+     xargs -I{} kubectl patch modeldeployment {} -n flexinfer-system --type=merge -p='{"spec":{"replicas":0}}'
+
+   # 3. Force delete any stuck pods
+   kubectl delete pods -n flexinfer-system --field-selector spec.nodeName=NODE_NAME --force --grace-period=0
+   ```
+
+2. **Reboot the node** (physically or via IPMI/SSH if accessible)
+
+3. **After node recovers**, wait for it to rejoin:
+   ```bash
+   kubectl get nodes -w
+   ```
+
+### GPU Memory Segfault Prevention
+
+When testing new GPU configurations:
+
+1. **Start with minimal resources** - Don't deploy multiple models simultaneously
+2. **Use `local` mode for MLC-LLM** - Lower memory footprint than `server` mode
+3. **Monitor with `kubectl logs -f`** - Watch for early crash signs
+4. **Have cleanup commands ready** - Don't let crashes cascade
+
+### Quick Reference: Targeting Nodes
+
+| Node | Hostname Selector |
+|------|-------------------|
+| cblevins-5930k | `kubernetes.io/hostname: cblevins-5930k` |
+| cblevins-7900xtx | `kubernetes.io/hostname: cblevins-7900xtx` |
+
+```bash
+# Find resources targeting a specific node
+kubectl get modelcache -n flexinfer-system -o json | jq '.items[] | select(.spec.nodeSelector["kubernetes.io/hostname"]=="cblevins-7900xtx") | .metadata.name'
+kubectl get modeldeployment -n flexinfer-system -o json | jq '.items[] | select(.spec.nodeSelector["kubernetes.io/hostname"]=="cblevins-7900xtx") | .metadata.name'
+```
+
+---
+
 ## Planning
 - See `ROADMAP.md` for project status and plans.
