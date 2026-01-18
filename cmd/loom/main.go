@@ -1650,6 +1650,19 @@ func runProxy(socketPath string) error {
 			autostart()
 			continue
 
+		case "resources/templates/list":
+			// No daemon needed - returns static proxy-native templates
+			resp, err = handleProxyResourceTemplatesList(ctx, nil, msg)
+
+		case "resources/list":
+			// Try daemon first for full resource list, fallback to built-in only
+			if err := ensureDaemon(); err != nil {
+				// Fallback: return built-in loom:// resources only
+				resp = handleProxyResourcesListBuiltinOnly(msg)
+			} else {
+				resp, err = handleProxyResourcesList(ctx, daemon, msg)
+			}
+
 		default:
 			if err := ensureDaemon(); err != nil {
 				stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
@@ -1662,12 +1675,6 @@ func runProxy(socketPath string) error {
 
 			case "tools/call":
 				resp, err = handleProxyToolsCall(ctx, daemon, msg)
-
-			case "resources/list":
-				resp, err = handleProxyResourcesList(ctx, daemon, msg)
-
-			case "resources/templates/list":
-				resp, err = handleProxyResourceTemplatesList(ctx, daemon, msg)
 
 			case "resources/read":
 				resp, err = handleProxyResourcesRead(ctx, daemon, msg)
@@ -1943,6 +1950,44 @@ func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mc
 	}{Resources: allResources}
 
 	return mcp.NewResponse(msg.ID, result)
+}
+
+// handleProxyResourcesListBuiltinOnly returns only the built-in loom:// resources
+// without requiring a daemon connection. Used as fallback when daemon is unavailable.
+func handleProxyResourcesListBuiltinOnly(msg *mcp.Message) *mcp.Message {
+	allResources := []mcp.Resource{
+		{
+			URI:         "loom://servers",
+			Name:        "Loom servers",
+			Description: "List MCP servers managed by the loom daemon",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://tools",
+			Name:        "Loom tools",
+			Description: "Cached aggregated tools from loom daemon",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://health",
+			Name:        "Loom health",
+			Description: "Health summary for all servers (local/hub) managed by loom",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://config",
+			Name:        "Loom config",
+			Description: "Active profile and daemon configuration summary",
+			MimeType:    "application/json",
+		},
+	}
+
+	result := struct {
+		Resources []mcp.Resource `json:"resources"`
+	}{Resources: allResources}
+
+	resp, _ := mcp.NewResponse(msg.ID, result)
+	return resp
 }
 
 func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
