@@ -270,6 +270,11 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		volumeName = modelCache.Status.Path
 		volumePath = modelCache.Status.Path // Pass to benchmark job
 		volumeReadOnly = true
+		// vLLM with HuggingFace caching needs writable volume for model download
+		// When HF_HOME points to the cache, vLLM must be able to write downloaded models
+		if canonicalBackend(modelDeployment.Spec.Backend) == "vllm" {
+			volumeReadOnly = false
+		}
 	}
 
 	// Check if a benchmark has been run
@@ -1858,6 +1863,26 @@ func (r *ModelDeploymentReconciler) rocmEnvVars() []corev1.EnvVar {
 		{
 			Name:  "PYTORCH_ROCM_ARCH",
 			Value: "gfx1100",
+		},
+		{
+			// Use CK flash attention instead of Triton for better gfx1100 stability
+			// Triton flash attention can cause GPU hangs on RDNA3.
+			Name:  "VLLM_USE_TRITON_FLASH_ATTN",
+			Value: "0",
+		},
+		{
+			// Disable AITER (AI Tensor Engine for ROCm) on consumer RDNA3 GPUs.
+			// AITER is optimized for MI300X/CDNA3 architecture, not gfx1100.
+			// Enabling AITER on gfx1100 causes GPU hangs during attention ops.
+			Name:  "VLLM_ROCM_USE_AITER",
+			Value: "0",
+		},
+		{
+			// Force vLLM V0 engine on RDNA3 GPUs.
+			// V1 engine only supports Triton-based attention which causes GPU hangs on gfx1100.
+			// V0 engine supports CK flash attention via VLLM_USE_TRITON_FLASH_ATTN=0.
+			Name:  "VLLM_USE_V1",
+			Value: "0",
 		},
 	}
 }
