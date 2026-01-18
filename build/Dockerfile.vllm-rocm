@@ -24,8 +24,10 @@ ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 
 WORKDIR /workspace
 
-# Install additional dependencies for image generation
+# Install vLLM and additional dependencies
+# The navi_base image has PyTorch with ROCm but NOT vLLM - we must install it
 RUN pip install --no-cache-dir \
+    vllm \
     diffusers>=0.30.0 \
     pillow \
     sentencepiece \
