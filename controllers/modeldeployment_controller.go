@@ -2076,11 +2076,8 @@ func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment,
 	isAMD := r.detectGPUResourceFromSpec(m) == GPUResourceAMD
 
 	if m.Spec.VLLM == nil {
-		// Apply AMD defaults even when VLLM spec is nil
-		if isAMD {
-			// Default to torch_sdpa for AMD GPUs (flash_attn can cause SIGSEGV on ROCm)
-			args = append(args, "--attention-backend", "TORCH_SDPA")
-		}
+		// No AMD-specific defaults needed when VLLM spec is nil
+		// Note: --attention-backend removed - not all vLLM ROCm builds support it
 		return args
 	}
 
@@ -2144,11 +2141,10 @@ func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment,
 	}
 
 	// Attention backend selection
-	// For AMD GPUs, default to torch_sdpa if not explicitly specified (flash_attn can cause SIGSEGV on ROCm)
+	// Only add if explicitly specified - not all vLLM ROCm builds support --attention-backend
+	// Users can set attentionBackend: "TORCH_SDPA" or "ROCM_FLASH" explicitly if needed
 	if v.AttentionBackend != "" {
 		args = append(args, "--attention-backend", strings.ToUpper(v.AttentionBackend))
-	} else if isAMD {
-		args = append(args, "--attention-backend", "TORCH_SDPA")
 	}
 
 	// CPU offload for extending effective cache on memory-constrained GPUs
