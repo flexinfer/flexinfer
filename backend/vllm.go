@@ -90,6 +90,36 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars()...)
+
+		// vLLM-specific ROCm tuning for gfx1100 (RX 7900 XTX)
+		// These settings prevent SIGSEGV crashes on RDNA3 architecture
+		env = append(env,
+			corev1.EnvVar{
+				// Force V0 engine - V1 engine has compatibility issues with gfx1100
+				Name:  "VLLM_USE_V1",
+				Value: "0",
+			},
+			corev1.EnvVar{
+				// Disable Triton flash attention - use CK (Composable Kernel) instead
+				Name:  "VLLM_USE_TRITON_FLASH_ATTN",
+				Value: "0",
+			},
+			corev1.EnvVar{
+				// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100
+				Name:  "VLLM_ROCM_USE_AITER",
+				Value: "0",
+			},
+		)
+
+		// HIP_VISIBLE_DEVICES allows selecting specific GPUs on multi-GPU systems.
+		// On systems with both iGPU and discrete GPU, set to "1" to use discrete.
+		// Device indices: 0=first GPU (often iGPU), 1=second GPU (discrete), etc.
+		if hipDevices := spec.ConfigString("hipVisibleDevices", ""); hipDevices != "" {
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_VISIBLE_DEVICES",
+				Value: hipDevices,
+			})
+		}
 	}
 
 	return env
