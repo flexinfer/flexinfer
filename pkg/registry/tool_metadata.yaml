@@ -415,6 +415,61 @@ servers:
         relatedTools: ["redis_info", "redis_keys"]
         priority: 3
 
+  mcp-neo4j:
+    description: "Neo4j graph database queries and schema inspection"
+    category: "data-stores"
+    tools:
+      neo4j_query:
+        usageHint: "Execute Cypher queries; read-only by default, set write=true for mutations"
+        example: "MATCH (n:Person) RETURN n.name LIMIT 10"
+        relatedTools: ["neo4j_schema", "neo4j_labels"]
+        priority: 1
+      neo4j_schema:
+        usageHint: "Get full schema overview (labels, relationship types, property keys)"
+        example: "Understand graph structure before writing queries"
+        relatedTools: ["neo4j_labels", "neo4j_relationship_types"]
+        priority: 1
+      neo4j_labels:
+        usageHint: "List all node labels in the database"
+        example: "Discover what types of nodes exist"
+        relatedTools: ["neo4j_schema", "neo4j_count_nodes"]
+        priority: 2
+      neo4j_relationship_types:
+        usageHint: "List all relationship types in the database"
+        example: "Discover how nodes are connected"
+        relatedTools: ["neo4j_schema", "neo4j_count_relationships"]
+        priority: 2
+      neo4j_indexes:
+        usageHint: "List database indexes for query optimization"
+        example: "Check which properties are indexed"
+        relatedTools: ["neo4j_constraints", "neo4j_schema"]
+        priority: 3
+      neo4j_constraints:
+        usageHint: "List database constraints (uniqueness, existence)"
+        example: "Check data integrity rules"
+        relatedTools: ["neo4j_indexes", "neo4j_schema"]
+        priority: 3
+      neo4j_count_nodes:
+        usageHint: "Count nodes, optionally filtered by label"
+        example: "Count all Person nodes"
+        relatedTools: ["neo4j_labels", "neo4j_count_relationships"]
+        priority: 2
+      neo4j_count_relationships:
+        usageHint: "Count relationships, optionally filtered by type"
+        example: "Count all KNOWS relationships"
+        relatedTools: ["neo4j_relationship_types", "neo4j_count_nodes"]
+        priority: 2
+      neo4j_node_properties:
+        usageHint: "Discover property keys used by nodes with a specific label"
+        example: "Find what properties Person nodes have"
+        relatedTools: ["neo4j_labels", "neo4j_schema"]
+        priority: 3
+      neo4j_databases:
+        usageHint: "List databases (Enterprise Edition only)"
+        example: "See available databases in multi-tenant setup"
+        relatedTools: ["neo4j_schema"]
+        priority: 4
+
 # Category definitions for profile-based filtering
 categories:
   version-control:
@@ -447,4 +502,4 @@ categories:
 
   data-stores:
     description: "Database and cache inspection tools"
-    servers: ["mcp-postgres", "mcp-redis", "mcp-qdrant"]
+    servers: ["mcp-postgres", "mcp-redis", "mcp-neo4j", "mcp-qdrant"]

@@ -11,6 +11,7 @@ require (
 	github.com/kkdai/youtube/v2 v2.10.5
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.97
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
