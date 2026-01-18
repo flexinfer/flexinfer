@@ -1562,11 +1562,6 @@ func runCheck(socketPath string, outputJSON bool) error {
 	return nil
 }
 
-func runDoctor(socketPath string) error {
-	// Retained for compatibility: `loom doctor` is an alias for `loom check`.
-	return runCheck(socketPath, false)
-}
-
 // runProxy runs loom as an MCP server, bridging stdio to the daemon
 func runProxy(socketPath string) error {
 	ctx := context.Background()

@@ -1929,15 +1929,15 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 		for _, task := range tasks {
 			// Convert task to context entry for unified return type
 			entry := ContextEntry{
-				ID:        task.ID,
-				AgentID:   task.AgentID,
-				SessionID: task.SessionID,
-				EntryType: EntryTypeTask,
-				Title:     fmt.Sprintf("[%s] %s", task.Priority, task.Title),
-				Content:   task.Context,
-				FilePath:  task.FilePath,
-				Timestamp: task.CreatedAt,
-				Tags:      task.Tags,
+				ID:         task.ID,
+				AgentID:    task.AgentID,
+				SessionID:  task.SessionID,
+				EntryType:  EntryTypeTask,
+				Title:      fmt.Sprintf("[%s] %s", task.Priority, task.Title),
+				Content:    task.Context,
+				FilePath:   task.FilePath,
+				Timestamp:  task.CreatedAt,
+				Tags:       task.Tags,
 				TokenCount: task.TokenCount,
 				Metadata: map[string]any{
 					"task_status":   string(task.Status),
@@ -2050,17 +2050,17 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 		annotations, _ := s.getAnnotationsForFile(ctx, opts.AgentID, opts.FileContext, 5)
 		for _, ann := range annotations {
 			entry := ContextEntry{
-				ID:             ann.ID,
-				AgentID:        ann.AgentID,
-				SessionID:      ann.SessionID,
-				EntryType:      EntryTypeAnnotation,
-				Title:          fmt.Sprintf("[%s] %s:%d", ann.AnnotationType, ann.FilePath, ann.LineStart),
-				Content:        ann.Content,
-				FilePath:       ann.FilePath,
-				LineStart:      ann.LineStart,
-				LineEnd:        ann.LineEnd,
-				Timestamp:      ann.CreatedAt,
-				TokenCount:     ann.TokenCount,
+				ID:         ann.ID,
+				AgentID:    ann.AgentID,
+				SessionID:  ann.SessionID,
+				EntryType:  EntryTypeAnnotation,
+				Title:      fmt.Sprintf("[%s] %s:%d", ann.AnnotationType, ann.FilePath, ann.LineStart),
+				Content:    ann.Content,
+				FilePath:   ann.FilePath,
+				LineStart:  ann.LineStart,
+				LineEnd:    ann.LineEnd,
+				Timestamp:  ann.CreatedAt,
+				TokenCount: ann.TokenCount,
 			}
 			if remainingBudget >= entry.TokenCount && !seen[entry.ID] {
 				results = append(results, entry)
