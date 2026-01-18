@@ -360,6 +360,61 @@ servers:
         relatedTools: ["docker_ps", "docker_inspect"]
         priority: 4
 
+  mcp-redis:
+    description: "Redis cache inspection and monitoring"
+    category: "data-stores"
+    tools:
+      redis_info:
+        usageHint: "Get server stats and configuration; use section param to limit output"
+        example: "Get memory stats with section=memory"
+        relatedTools: ["redis_dbsize", "redis_memory"]
+        priority: 1
+      redis_keys:
+        usageHint: "Scan keys by pattern; uses SCAN (safe for production). Limit count to avoid large outputs"
+        example: "Find session keys with pattern='session:*'"
+        relatedTools: ["redis_get", "redis_ttl"]
+        priority: 2
+      redis_get:
+        usageHint: "Get value for any key type (string, list, set, zset, hash, stream)"
+        example: "Inspect a cached value or session data"
+        relatedTools: ["redis_keys", "redis_ttl", "redis_memory"]
+        priority: 2
+      redis_ttl:
+        usageHint: "Check when a key expires; useful for debugging cache behavior"
+        example: "Check if a session key is about to expire"
+        relatedTools: ["redis_get", "redis_keys"]
+        priority: 3
+      redis_memory:
+        usageHint: "Check memory usage for a key or server-wide stats"
+        example: "Find large keys consuming memory"
+        relatedTools: ["redis_info", "redis_get"]
+        priority: 3
+      redis_slowlog:
+        usageHint: "Find slow queries for performance debugging"
+        example: "Get last 10 slow commands"
+        relatedTools: ["redis_info", "redis_client_list"]
+        priority: 4
+      redis_client_list:
+        usageHint: "List connected clients; useful for debugging connection issues"
+        example: "Find which apps are connected to Redis"
+        relatedTools: ["redis_info", "redis_pubsub_channels"]
+        priority: 4
+      redis_pubsub_channels:
+        usageHint: "List active pub/sub channels and subscriber counts"
+        example: "See which channels have active subscribers"
+        relatedTools: ["redis_client_list"]
+        priority: 5
+      redis_config_get:
+        usageHint: "Get Redis configuration parameters"
+        example: "Check maxmemory settings"
+        relatedTools: ["redis_info"]
+        priority: 5
+      redis_dbsize:
+        usageHint: "Quick count of keys in current database"
+        example: "Check if cache is populated"
+        relatedTools: ["redis_info", "redis_keys"]
+        priority: 3
+
 # Category definitions for profile-based filtering
 categories:
   version-control:
@@ -389,3 +444,7 @@ categories:
   infrastructure:
     description: "Infrastructure and deployment tools"
     servers: ["mcp-terraform", "mcp-ansible", "mcp-docker"]
+
+  data-stores:
+    description: "Database and cache inspection tools"
+    servers: ["mcp-postgres", "mcp-redis", "mcp-qdrant"]

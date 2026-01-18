@@ -12,6 +12,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.97
 	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/redis/go-redis/v9 v9.17.2
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
@@ -32,7 +33,9 @@ replace (
 
 require (
 	github.com/bitly/go-simplejson v0.5.1 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dop251/goja v0.0.0-20250125213203-5ef83b82af17 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
