@@ -1,0 +1,119 @@
+# vLLM Docker image for AMD gfx1100 (RX 7900 series)
+# Built from source with BUILD_FA=0 to disable flash attention
+# Flash attention causes GPU hangs on consumer RDNA3 GPUs
+#
+# Build command:
+#   docker build -f build/Dockerfile.vllm-rocm-gfx1100 -t vllm-rocm-gfx1100 .
+#
+# Based on: https://github.com/vllm-project/vllm/pull/2768
+# "support Radeon 7900 series (gfx1100) without using flash-attention"
+
+ARG ROCM_VERSION=6.4.1
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
+
+ARG PYTHON_VERSION=3.12
+ARG PYTORCH_ROCM_ARCH=gfx1100
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ROCm environment for gfx1100
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+# Force vLLM to use V0 engine (V1 only supports Triton attention which hangs on gfx1100)
+ENV VLLM_USE_V1=0
+# Disable Triton flash attention in favor of CK flash attention
+ENV VLLM_USE_TRITON_FLASH_ATTN=0
+# Disable AITER (optimized for MI300X, not RDNA3)
+ENV VLLM_ROCM_USE_AITER=0
+# Enable experimental AOTriton
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    git \
+    curl \
+    cmake \
+    ninja-build \
+    build-essential \
+    wget \
+    hipblas \
+    rocblas \
+    rocsparse \
+    hipsparse \
+    rocthrust \
+    rocprim \
+    hipcub \
+    rccl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Create virtual environment (PEP 668 compliance on Ubuntu 24.04)
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV VIRTUAL_ENV=/opt/venv
+
+# Install Python build dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install PyTorch for ROCm
+RUN pip install --no-cache-dir \
+    torch==2.5.1 \
+    --index-url https://download.pytorch.org/whl/rocm6.2
+
+# Clone vLLM
+WORKDIR /build
+RUN git clone --depth 1 --branch v0.7.3 https://github.com/vllm-project/vllm.git
+
+# Build vLLM with flash attention DISABLED for gfx1100
+# BUILD_FA=0 is critical - flash attention kernels cause GPU hangs on RDNA3
+WORKDIR /build/vllm
+ENV MAX_JOBS=8
+ENV CMAKE_BUILD_PARALLEL_LEVEL=8
+ENV VLLM_TARGET_DEVICE=rocm
+ENV BUILD_FA=0
+
+RUN pip install --no-cache-dir -r requirements-rocm.txt
+
+# Build and install vLLM
+RUN pip install --no-cache-dir . \
+    --config-settings=cmake.args="-DVLLM_TARGET_DEVICE=rocm" \
+    --config-settings=cmake.args="-DCMAKE_BUILD_TYPE=Release"
+
+# Install additional dependencies
+RUN pip install --no-cache-dir \
+    diffusers>=0.30.0 \
+    pillow \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+# Cleanup build files to reduce image size
+RUN rm -rf /build
+
+# Create model directory
+WORKDIR /workspace
+RUN mkdir -p /models
+
+# Expose vLLM API port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Default entrypoint for vLLM OpenAI-compatible server
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
+
+# Default arguments (can be overridden)
+CMD ["--host", "0.0.0.0", "--port", "8000"]

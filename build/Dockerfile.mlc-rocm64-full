@@ -11,6 +11,8 @@ ENV HIP_PATH=/opt/rocm/hip
 
 # Install build dependencies and ROCm math libraries
 # hipblas is required for MLC-LLM GPU operations
+# NOTE: Do NOT install system llvm-dev - use ROCm's LLVM 19 at /opt/rocm/llvm
+# System llvm-dev provides LLVM 18 which causes ABI mismatch with ROCm 6.4's LLVM 19
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -20,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     cmake \
     ninja-build \
-    llvm-dev \
     libzstd-dev \
     build-essential \
     wget \
@@ -28,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rocblas \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Set up ROCm's LLVM 19 (required for TVM to match ROCm bitcode)
+ENV LLVM_CONFIG=/opt/rocm/llvm/bin/llvm-config
+ENV PATH="/opt/rocm/llvm/bin:${PATH}"
 
 # Install Rust/Cargo (required by MLC-LLM tokenizers)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -48,19 +53,22 @@ RUN git clone --recursive https://github.com/mlc-ai/relax.git tvm && \
     git submodule update --init --recursive
 
 # Build TVM with ROCm support
+# CRITICAL: Use ROCm's LLVM 19 (/opt/rocm/llvm/bin/llvm-config) NOT system LLVM
+# ROCm 6.4 bitcode is compiled with LLVM 19 - mismatched LLVM versions cause:
+#   "Invalid attribute group entry (Producer: 'LLVM19.0.0git' Reader: 'LLVM 18.1.3')"
 # Note: Disable MIOpen/ROCBlas due to API incompatibilities in relax fork
-# Core HIP support is sufficient for GPU compute
 RUN cd /build/tvm && \
     mkdir build && cd build && \
     cp ../cmake/config.cmake . && \
     echo "set(USE_ROCM ON)" >> config.cmake && \
-    echo "set(USE_LLVM llvm-config)" >> config.cmake && \
+    echo "set(USE_LLVM /opt/rocm/llvm/bin/llvm-config)" >> config.cmake && \
     echo "set(USE_ROCBLAS OFF)" >> config.cmake && \
     echo "set(USE_MIOPEN OFF)" >> config.cmake && \
     echo "set(ROCM_PATH /opt/rocm)" >> config.cmake && \
     cmake -G Ninja \
         -DROCM_PATH=/opt/rocm \
         -DHIP_PATH=/opt/rocm/hip \
+        -DUSE_LLVM=/opt/rocm/llvm/bin/llvm-config \
         .. && \
     ninja
 

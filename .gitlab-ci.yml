@@ -433,3 +433,34 @@ publish_vllm_rocm:
   rules:
     - when: manual
       allow_failure: true
+
+# vLLM built from source with BUILD_FA=0 for gfx1100 (RX 7900 series)
+# Flash attention causes GPU hangs on consumer RDNA3 GPUs
+# See: https://github.com/vllm-project/vllm/pull/2768
+publish_vllm_rocm_gfx1100:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 2h  # Longer timeout - builds vLLM from source
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building vLLM ROCm image for gfx1100 (BUILD_FA=0)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-gfx1100" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=registry.harbor.lan/library/vllm-api:rocm-gfx1100,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
