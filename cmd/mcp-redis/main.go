@@ -485,8 +485,8 @@ func (s *redisServer) handleMemory(ctx context.Context, args map[string]any) (*m
 		}
 
 		return mcp.JSONResult(map[string]any{
-			"ok":          true,
-			"key":         key,
+			"ok":           true,
+			"key":          key,
 			"memory_bytes": usage,
 			"memory_human": formatBytes(usage),
 		})
@@ -524,8 +524,8 @@ func (s *redisServer) handleDBSize(ctx context.Context, args map[string]any) (*m
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"ok":    true,
-		"keys":  size,
+		"ok":   true,
+		"keys": size,
 	})
 }
 
@@ -541,13 +541,13 @@ func (s *redisServer) handleSlowLog(ctx context.Context, args map[string]any) (*
 	entries := make([]map[string]any, len(logs))
 	for i, log := range logs {
 		entries[i] = map[string]any{
-			"id":            log.ID,
-			"time":          log.Time.Format(time.RFC3339),
-			"duration_us":   log.Duration,
-			"duration_ms":   float64(log.Duration) / 1000,
-			"command":       strings.Join(log.Args, " "),
-			"client_addr":   log.ClientAddr,
-			"client_name":   log.ClientName,
+			"id":          log.ID,
+			"time":        log.Time.Format(time.RFC3339),
+			"duration_us": log.Duration,
+			"duration_ms": float64(log.Duration) / 1000,
+			"command":     strings.Join(log.Args, " "),
+			"client_addr": log.ClientAddr,
+			"client_name": log.ClientName,
 		}
 	}
 
