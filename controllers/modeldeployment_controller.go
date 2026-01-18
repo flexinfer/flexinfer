@@ -1424,7 +1424,10 @@ func (r *ModelDeploymentReconciler) getBackendArgs(m *aiv1alpha1.ModelDeployment
 		if args, ok := os.LookupEnv("DEFAULT_VLLM_ARGS"); ok && args != "" {
 			return strings.Fields(args)
 		}
-		return r.buildVLLMArgs(m, modelPath)
+		// For vLLM, always use the model ID (HuggingFace repo format)
+		// When ModelCacheRef is set, HF_HOME env var points to the cache mount
+		// This allows vLLM to find cached models via standard HuggingFace resolution
+		return r.buildVLLMArgs(m, m.Spec.Model)
 	case "mlc-llm":
 		// MLC-LLM serve command format: mlc_llm serve MODEL --host 0.0.0.0 --mode local
 		// Complete args override for backwards compatibility
@@ -1534,6 +1537,44 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 			// specific GPUs to the container, and within the container, the
 			// allocated GPU is always at index 0.
 		}
+		return env
+	case "vllm":
+		// vLLM environment configuration
+		optionalTrue := true
+		var env []corev1.EnvVar
+
+		// When using ModelCacheRef, set HF_HOME so vLLM uses the cached models
+		// This allows passing the model ID to --model while using local cache
+		if m.Spec.ModelCacheRef != nil {
+			env = append(env, corev1.EnvVar{
+				Name:  "HF_HOME",
+				Value: "/models",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "TRANSFORMERS_CACHE",
+				Value: "/models",
+			})
+		}
+
+		// HuggingFace token for private/gated models (optional)
+		env = append(env, corev1.EnvVar{
+			Name: "HUGGINGFACE_HUB_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "hf-token",
+					},
+					Key:      "HF_TOKEN",
+					Optional: &optionalTrue,
+				},
+			},
+		})
+
+		// ROCm-specific environment for AMD GPUs
+		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
+			env = append(env, r.rocmEnvVars()...)
+		}
+
 		return env
 	case "vllm-omni":
 		// vLLM-Omni inherits from vLLM
