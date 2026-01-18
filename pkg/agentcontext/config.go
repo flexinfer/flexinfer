@@ -37,12 +37,12 @@ type Config struct {
 	SummarizeMinuteThreshold int
 
 	// Handoff configuration
-	HandoffMaxTokens        int
-	HandoffExpirationHours  int
+	HandoffMaxTokens       int
+	HandoffExpirationHours int
 
 	// Recall enhancements
-	DefaultRecencyWeight    float64
-	TaskPriorityBoost       float64
+	DefaultRecencyWeight float64
+	TaskPriorityBoost    float64
 
 	// Task/Annotation collections
 	TasksCollection       string
@@ -89,11 +89,11 @@ func LoadConfigFromEnv() (Config, error) {
 		SummarizeTokenThreshold:  intEnv("AGENT_CONTEXT_SUMMARIZE_TOKEN_THRESHOLD", 20000),
 		SummarizeMinuteThreshold: intEnv("AGENT_CONTEXT_SUMMARIZE_MINUTE_THRESHOLD", 30),
 
-		HandoffMaxTokens:        intEnv("AGENT_CONTEXT_HANDOFF_MAX_TOKENS", 8000),
-		HandoffExpirationHours:  intEnv("AGENT_CONTEXT_HANDOFF_EXPIRATION_HOURS", 24),
+		HandoffMaxTokens:       intEnv("AGENT_CONTEXT_HANDOFF_MAX_TOKENS", 8000),
+		HandoffExpirationHours: intEnv("AGENT_CONTEXT_HANDOFF_EXPIRATION_HOURS", 24),
 
-		DefaultRecencyWeight:    floatEnv("AGENT_CONTEXT_DEFAULT_RECENCY_WEIGHT", 0.2),
-		TaskPriorityBoost:       floatEnv("AGENT_CONTEXT_TASK_PRIORITY_BOOST", 0.3),
+		DefaultRecencyWeight: floatEnv("AGENT_CONTEXT_DEFAULT_RECENCY_WEIGHT", 0.2),
+		TaskPriorityBoost:    floatEnv("AGENT_CONTEXT_TASK_PRIORITY_BOOST", 0.3),
 
 		TasksCollection:       firstNonEmptyEnv([]string{"AGENT_CONTEXT_TASKS_COLLECTION"}, "agent_tasks_v1"),
 		AnnotationsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_ANNOTATIONS_COLLECTION"}, "agent_annotations_v1"),

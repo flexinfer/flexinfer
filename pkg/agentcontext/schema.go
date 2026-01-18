@@ -39,9 +39,9 @@ const (
 type TaskPriority string
 
 const (
-	TaskPriorityLow    TaskPriority = "low"
-	TaskPriorityMedium TaskPriority = "medium"
-	TaskPriorityHigh   TaskPriority = "high"
+	TaskPriorityLow      TaskPriority = "low"
+	TaskPriorityMedium   TaskPriority = "medium"
+	TaskPriorityHigh     TaskPriority = "high"
 	TaskPriorityCritical TaskPriority = "critical"
 )
 
@@ -243,11 +243,11 @@ type Task struct {
 	Namespace string `json:"namespace,omitempty"`
 
 	// Task details
-	Title       string       `json:"title"`
-	Context     string       `json:"context,omitempty"`
-	Priority    TaskPriority `json:"priority"`
-	Status      TaskStatus   `json:"status"`
-	Resolution  string       `json:"resolution,omitempty"`
+	Title      string       `json:"title"`
+	Context    string       `json:"context,omitempty"`
+	Priority   TaskPriority `json:"priority"`
+	Status     TaskStatus   `json:"status"`
+	Resolution string       `json:"resolution,omitempty"`
 
 	// Code context
 	FilePath   string `json:"file_path,omitempty"`
