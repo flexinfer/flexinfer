@@ -345,7 +345,7 @@ publish_mlcllm_rocm64:
         --opt platform=linux/amd64 \
         --output "type=image,name=registry.harbor.lan/library/mlc-llm:rocm64-src,push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
 
