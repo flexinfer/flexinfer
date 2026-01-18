@@ -1,0 +1,29 @@
+<svg width="400" height="150" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad_loom-core" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#A855F7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#111827;stop-opacity:1" />
+    </linearGradient>
+    <style>
+      .text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: white; }
+      .icon { font-weight: 800; font-size: 48px; fill: #A855F7; }
+      .title { font-weight: 700; font-size: 24px; }
+      .desc { font-weight: 400; font-size: 14px; fill: #9CA3AF; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="400" height="150" rx="10" fill="#1F2937" />
+  <rect width="400" height="150" rx="10" fill="url(#grad_loom-core)" opacity="0.10" />
+
+  <!-- Icon Circle -->
+  <circle cx="50" cy="50" r="30" fill="#A855F7" opacity="0.20" />
+  <text x="50" y="65" text-anchor="middle" class="text icon">LC</text>
+
+  <!-- Title & Desc -->
+  <text x="100" y="55" class="text title">Loom Core</text>
+  <text x="100" y="85" class="text desc">Context Engine</text>
+
+  <!-- Bottom Stripe -->
+  <rect x="0" y="145" width="400" height="5" fill="#A855F7" />
+</svg>
