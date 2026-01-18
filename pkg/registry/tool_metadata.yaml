@@ -470,6 +470,61 @@ servers:
         relatedTools: ["neo4j_schema"]
         priority: 4
 
+  mcp-confluence:
+    description: "Atlassian Confluence wiki access"
+    category: "collaboration"
+    tools:
+      confluence_search:
+        usageHint: "Search content using CQL; use 'text ~ \"keyword\"' for full-text search"
+        example: "text ~ \"kubernetes\" AND space = DEV"
+        relatedTools: ["confluence_get_page", "confluence_list_spaces"]
+        priority: 1
+      confluence_get_page:
+        usageHint: "Get page by ID; expand body.storage for content"
+        example: "Fetch page 123456 with full content"
+        relatedTools: ["confluence_search", "confluence_get_page_by_title"]
+        priority: 1
+      confluence_get_page_by_title:
+        usageHint: "Get page by space key and exact title"
+        example: "Get 'Getting Started' in DEV space"
+        relatedTools: ["confluence_get_page", "confluence_search"]
+        priority: 2
+      confluence_list_spaces:
+        usageHint: "List all spaces to discover available content areas"
+        example: "Find which spaces exist"
+        relatedTools: ["confluence_get_space", "confluence_list_pages"]
+        priority: 2
+      confluence_get_space:
+        usageHint: "Get space details including homepage"
+        example: "Get details of DEV space"
+        relatedTools: ["confluence_list_spaces", "confluence_list_pages"]
+        priority: 3
+      confluence_list_pages:
+        usageHint: "List pages in a space; use for browsing content"
+        example: "List pages in DOCS space"
+        relatedTools: ["confluence_get_page", "confluence_search"]
+        priority: 2
+      confluence_get_children:
+        usageHint: "Get child pages of a parent page"
+        example: "Navigate page hierarchy"
+        relatedTools: ["confluence_get_ancestors", "confluence_get_page"]
+        priority: 3
+      confluence_get_ancestors:
+        usageHint: "Get parent page hierarchy"
+        example: "Find where a page lives in the tree"
+        relatedTools: ["confluence_get_children", "confluence_get_page"]
+        priority: 3
+      confluence_create_page:
+        usageHint: "Create new page; use Confluence storage format for rich content"
+        example: "Create a new documentation page"
+        relatedTools: ["confluence_update_page", "confluence_get_page"]
+        priority: 4
+      confluence_update_page:
+        usageHint: "Update existing page; version is auto-incremented"
+        example: "Update page content"
+        relatedTools: ["confluence_create_page", "confluence_get_page"]
+        priority: 4
+
 # Category definitions for profile-based filtering
 categories:
   version-control:
@@ -477,8 +532,8 @@ categories:
     servers: ["mcp-git", "mcp-git-worktree"]
 
   collaboration:
-    description: "GitHub, GitLab, and code review tools"
-    servers: ["mcp-github", "mcp-gitlab"]
+    description: "GitHub, GitLab, Confluence, and code review tools"
+    servers: ["mcp-github", "mcp-gitlab", "mcp-confluence"]
 
   file-operations:
     description: "File system and text manipulation"
