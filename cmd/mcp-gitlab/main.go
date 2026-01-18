@@ -1846,7 +1846,7 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 
 func (g *gitlabServer) summarizeJobs(jobs []any, includeFailedLogs bool, ctx context.Context, project string) map[string]any {
 	summary := map[string]any{
-		"total":   len(jobs),
+		"total":     len(jobs),
 		"by_status": map[string]int{},
 	}
 
@@ -1970,10 +1970,10 @@ func (g *gitlabServer) fetchTestReport(ctx context.Context, project string, pipe
 
 			status, _ := tcMap["status"].(string)
 			testCase := map[string]any{
-				"suite":       suiteName,
-				"name":        tcMap["name"],
-				"classname":   tcMap["classname"],
-				"status":      status,
+				"suite":          suiteName,
+				"name":           tcMap["name"],
+				"classname":      tcMap["classname"],
+				"status":         status,
 				"execution_time": tcMap["execution_time"],
 			}
 
