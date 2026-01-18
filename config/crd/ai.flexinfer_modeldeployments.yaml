@@ -534,6 +534,14 @@ spec:
                       GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
                       Default: 0.9 (90% of available GPU memory)
                     type: string
+                  hipVisibleDevices:
+                    description: |-
+                      HIPVisibleDevices specifies which AMD GPUs to use via HIP_VISIBLE_DEVICES.
+                      On systems with both iGPU and discrete GPU, the device plugin's besteffort
+                      policy always picks the iGPU (lower PCI address). Set to "1" to use the
+                      discrete GPU instead of the iGPU.
+                      Format: comma-separated device indices (e.g., "0", "1", "0,1")
+                    type: string
                   kvCacheDtype:
                     description: |-
                       KVCacheDtype specifies the data type for the KV cache.

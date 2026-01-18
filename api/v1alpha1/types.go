@@ -407,6 +407,14 @@ type VLLMSpec struct {
 
 	// === AMD GFX1100 (RDNA3) Optimizations ===
 
+	// HIPVisibleDevices specifies which AMD GPUs to use via HIP_VISIBLE_DEVICES.
+	// On systems with both iGPU and discrete GPU, the device plugin's besteffort
+	// policy always picks the iGPU (lower PCI address). Set to "1" to use the
+	// discrete GPU instead of the iGPU.
+	// Format: comma-separated device indices (e.g., "0", "1", "0,1")
+	// +optional
+	HIPVisibleDevices string `json:"hipVisibleDevices,omitempty"`
+
 	// EnablePrefixCaching enables automatic prefix caching for improved
 	// performance on repeated prompt prefixes. Reduces KV cache memory by
 	// reusing cached prefixes across requests.
