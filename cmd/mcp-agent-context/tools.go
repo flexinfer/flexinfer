@@ -453,4 +453,399 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleContextStats(ctx, args)
 	})
+
+	// =========================================================================
+	// Task Tracking Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_task_add",
+		Description: "Add tasks/todos discovered during agent sessions. Tasks are prioritized in context recall.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID to add tasks to.",
+				},
+				"tasks": map[string]any{
+					"type":        "array",
+					"description": "Array of tasks to add.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"title": map[string]any{
+								"type":        "string",
+								"description": "Short task title.",
+							},
+							"context": map[string]any{
+								"type":        "string",
+								"description": "Additional context about the task.",
+							},
+							"priority": map[string]any{
+								"type":        "string",
+								"enum":        []string{"low", "medium", "high", "critical"},
+								"description": "Task priority (default: medium).",
+							},
+							"file_path": map[string]any{
+								"type":        "string",
+								"description": "Related file path.",
+							},
+							"line_number": map[string]any{
+								"type":        "integer",
+								"description": "Related line number.",
+							},
+							"tags": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Tags for categorization.",
+							},
+							"blocked_by": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "IDs of tasks blocking this one.",
+							},
+						},
+						"required": []string{"title"},
+					},
+				},
+			},
+			Required: []string{"session_id", "tasks"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTaskAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_task_update",
+		Description: "Update task status or resolution.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"task_id": map[string]any{
+					"type":        "string",
+					"description": "Task ID to update.",
+				},
+				"status": map[string]any{
+					"type":        "string",
+					"enum":        []string{"pending", "in_progress", "completed", "blocked"},
+					"description": "New task status.",
+				},
+				"resolution": map[string]any{
+					"type":        "string",
+					"description": "Resolution description (for completed tasks).",
+				},
+			},
+			Required: []string{"task_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTaskUpdate(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_task_list",
+		Description: "List tasks with filtering options.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by session ID.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"status": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by status(es).",
+				},
+				"include_completed": map[string]any{
+					"type":        "boolean",
+					"description": "Include completed tasks (default: false).",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum tasks to return (default: 50).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTaskList(ctx, args)
+	})
+
+	// =========================================================================
+	// Code Annotation Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_code_annotate",
+		Description: "Create a code annotation attached to a specific file location.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "File path to annotate.",
+				},
+				"line_start": map[string]any{
+					"type":        "integer",
+					"description": "Starting line number.",
+				},
+				"line_end": map[string]any{
+					"type":        "integer",
+					"description": "Ending line number (optional).",
+				},
+				"annotation_type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"todo", "fixme", "note", "question", "important", "bug", "perf"},
+					"description": "Type of annotation (default: note).",
+				},
+				"content": map[string]any{
+					"type":        "string",
+					"description": "Annotation content.",
+				},
+				"symbol": map[string]any{
+					"type":        "string",
+					"description": "Related symbol name.",
+				},
+				"repo_id": map[string]any{
+					"type":        "string",
+					"description": "Repository ID for codebase-memory integration.",
+				},
+			},
+			Required: []string{"session_id", "file_path", "line_start", "content"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleAnnotationAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_code_annotations_get",
+		Description: "Get code annotations for a file or range.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "File path to get annotations for.",
+				},
+				"line_start": map[string]any{
+					"type":        "integer",
+					"description": "Filter by line range start.",
+				},
+				"line_end": map[string]any{
+					"type":        "integer",
+					"description": "Filter by line range end.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"annotation_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by annotation types.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum annotations to return (default: 50).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleAnnotationsGet(ctx, args)
+	})
+
+	// =========================================================================
+	// Agent Handoff Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_handoff_create",
+		Description: "Create a handoff package for another agent. Packages session context with instructions.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Source session ID.",
+				},
+				"target_agent_id": map[string]any{
+					"type":        "string",
+					"description": "Target agent to hand off to.",
+				},
+				"handoff_type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"full", "selective", "summary_only"},
+					"description": "Type of handoff (default: summary_only).",
+				},
+				"entry_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Entry IDs for selective handoff.",
+				},
+				"instructions": map[string]any{
+					"type":        "string",
+					"description": "Instructions for the target agent.",
+				},
+				"token_budget": map[string]any{
+					"type":        "integer",
+					"description": "Maximum tokens in handoff (default: 8000).",
+				},
+			},
+			Required: []string{"session_id", "target_agent_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleHandoffCreate(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_handoff_accept",
+		Description: "Accept and import a handoff from another agent.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"handoff_id": map[string]any{
+					"type":        "string",
+					"description": "Handoff ID to accept.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Your session ID.",
+				},
+				"import_entries": map[string]any{
+					"type":        "boolean",
+					"description": "Import full entries (default: false, summary only).",
+				},
+			},
+			Required: []string{"handoff_id", "session_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleHandoffAccept(ctx, args)
+	})
+
+	// =========================================================================
+	// Session Template Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_template_create",
+		Description: "Create a reusable session template.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Template name.",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Template description.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace for the template.",
+				},
+				"from_session_id": map[string]any{
+					"type":        "string",
+					"description": "Copy from existing session.",
+				},
+				"entry_types_to_include": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Entry types to include when copying.",
+				},
+				"created_by": map[string]any{
+					"type":        "string",
+					"description": "Creator agent ID.",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTemplateCreate(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_template_list",
+		Description: "List available session templates.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum templates to return (default: 50).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTemplateList(ctx, args)
+	})
+
+	// =========================================================================
+	// Enhanced Recall Tool
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_context_recall_enhanced",
+		Description: "Enhanced recall with task priority, symbol context, recency weighting, and code annotations.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "What are you trying to do? (used for relevance).",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter to specific agent.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter to specific session.",
+				},
+				"token_budget": map[string]any{
+					"type":        "integer",
+					"description": "Maximum tokens to return (default: 4000).",
+				},
+				"include_summaries": map[string]any{
+					"type":        "boolean",
+					"description": "Include session summaries (default: true).",
+				},
+				"include_decisions": map[string]any{
+					"type":        "boolean",
+					"description": "Prioritize decisions (default: true).",
+				},
+				"file_context": map[string]any{
+					"type":        "string",
+					"description": "Current file being worked on (for relevance boost).",
+				},
+				"symbol_context": map[string]any{
+					"type":        "string",
+					"description": "Current symbol for relevance boost.",
+				},
+				"recency_weight": map[string]any{
+					"type":        "number",
+					"description": "Weight for recency (0.0-1.0, default: 0.2).",
+				},
+				"include_tasks": map[string]any{
+					"type":        "boolean",
+					"description": "Include active tasks (default: true).",
+				},
+			},
+			Required: []string{"query"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEnhancedRecall(ctx, args)
+	})
 }

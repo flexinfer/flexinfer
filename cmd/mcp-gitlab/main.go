@@ -698,6 +698,122 @@ func main() {
 		},
 	}, gl.handleCancelJob)
 
+	// pipeline_summary - comprehensive view in single call
+	server.AddTool(mcp.Tool{
+		Name:        "pipeline_summary",
+		Description: "Get comprehensive pipeline summary including jobs, status counts, and optionally test report. Fetches pipeline + jobs concurrently.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"pipeline_id": map[string]any{
+					"type":        "integer",
+					"description": "Pipeline ID",
+				},
+				"include_test_report": map[string]any{
+					"type":        "boolean",
+					"description": "Include test report summary (default: true)",
+				},
+				"include_failed_job_logs": map[string]any{
+					"type":        "boolean",
+					"description": "Include last 50 lines of failed job logs (default: false)",
+				},
+			},
+			Required: []string{"project", "pipeline_id"},
+		},
+	}, gl.handlePipelineSummary)
+
+	// get_test_report - parse JUnit test report from pipeline
+	server.AddTool(mcp.Tool{
+		Name:        "get_test_report",
+		Description: "Get JUnit test report from a pipeline. Returns summary and failed test details.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"pipeline_id": map[string]any{
+					"type":        "integer",
+					"description": "Pipeline ID",
+				},
+				"include_passed": map[string]any{
+					"type":        "boolean",
+					"description": "Include passed tests in response (default: false)",
+				},
+				"max_failures": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of failed tests to return (default: 50)",
+				},
+			},
+			Required: []string{"project", "pipeline_id"},
+		},
+	}, gl.handleGetTestReport)
+
+	// get_artifacts - download job artifacts or specific files
+	server.AddTool(mcp.Tool{
+		Name:        "get_artifacts",
+		Description: "Download job artifacts or a specific file within artifacts. Returns content inline (text) or base64 (binary).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"job_id": map[string]any{
+					"type":        "integer",
+					"description": "Job ID",
+				},
+				"artifact_path": map[string]any{
+					"type":        "string",
+					"description": "Specific file within artifacts (optional). If not provided, returns artifact metadata.",
+				},
+				"max_size_bytes": map[string]any{
+					"type":        "integer",
+					"description": "Maximum size to return inline (default: 1MB, max: 10MB). Larger artifacts return metadata with download URL.",
+				},
+			},
+			Required: []string{"project", "job_id"},
+		},
+	}, gl.handleGetArtifacts)
+
+	// poll_pipeline - poll pipeline until terminal state
+	server.AddTool(mcp.Tool{
+		Name:        "poll_pipeline",
+		Description: "Poll pipeline until it reaches a terminal state (success, failed, canceled, skipped, manual). Blocks for up to timeout_seconds.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"pipeline_id": map[string]any{
+					"type":        "integer",
+					"description": "Pipeline ID",
+				},
+				"timeout_seconds": map[string]any{
+					"type":        "integer",
+					"description": "Maximum time to wait (default: 300, max: 600)",
+				},
+				"poll_interval_seconds": map[string]any{
+					"type":        "integer",
+					"description": "Interval between polls (default: 5, min: 2). Adapts to 10s when pending.",
+				},
+				"include_job_logs": map[string]any{
+					"type":        "boolean",
+					"description": "Include last 50 lines of failed job logs in result (default: false)",
+				},
+			},
+			Required: []string{"project", "pipeline_id"},
+		},
+	}, gl.handlePollPipeline)
+
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -1464,4 +1580,579 @@ func (g *gitlabServer) handleCancelJob(ctx context.Context, args map[string]any)
 		return nil, err
 	}
 	return mcp.JSONResult(job)
+}
+
+// Pipeline polling & summary handlers
+
+func (g *gitlabServer) handlePipelineSummary(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	project := getStringArg(args, "project", "")
+	pipelineID := getIntArg(args, "pipeline_id", 0)
+	includeTestReport := getBoolArg(args, "include_test_report", true)
+	includeFailedJobLogs := getBoolArg(args, "include_failed_job_logs", false)
+
+	if project == "" || pipelineID <= 0 {
+		return nil, fmt.Errorf("project and pipeline_id are required")
+	}
+
+	// Fetch pipeline and jobs concurrently
+	type pipelineResult struct {
+		data map[string]any
+		err  error
+	}
+	type jobsResult struct {
+		data []any
+		err  error
+	}
+
+	pipelineCh := make(chan pipelineResult, 1)
+	jobsCh := make(chan jobsResult, 1)
+
+	go func() {
+		path := fmt.Sprintf("/projects/%s/pipelines/%d", encodeProject(project), pipelineID)
+		result, err := g.request(ctx, "GET", path, nil)
+		pipelineCh <- pipelineResult{data: result, err: err}
+	}()
+
+	go func() {
+		path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs?per_page=100", encodeProject(project), pipelineID)
+		result, err := g.requestList(ctx, path)
+		jobsCh <- jobsResult{data: result, err: err}
+	}()
+
+	pipelineRes := <-pipelineCh
+	jobsRes := <-jobsCh
+
+	if pipelineRes.err != nil {
+		return nil, pipelineRes.err
+	}
+	if jobsRes.err != nil {
+		return nil, jobsRes.err
+	}
+
+	// Build job summary
+	jobSummary := g.summarizeJobs(jobsRes.data, includeFailedJobLogs, ctx, project)
+
+	result := map[string]any{
+		"ok":       true,
+		"pipeline": pipelineRes.data,
+		"jobs":     jobSummary,
+	}
+
+	// Optionally fetch test report
+	if includeTestReport {
+		testReport, err := g.fetchTestReport(ctx, project, pipelineID, false, 20)
+		if err == nil && testReport != nil {
+			result["test_report"] = testReport
+		}
+	}
+
+	return mcp.JSONResult(result)
+}
+
+func (g *gitlabServer) handleGetTestReport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	project := getStringArg(args, "project", "")
+	pipelineID := getIntArg(args, "pipeline_id", 0)
+	includePassed := getBoolArg(args, "include_passed", false)
+	maxFailures := getIntArg(args, "max_failures", 50)
+
+	if project == "" || pipelineID <= 0 {
+		return nil, fmt.Errorf("project and pipeline_id are required")
+	}
+
+	if maxFailures <= 0 {
+		maxFailures = 50
+	}
+
+	testReport, err := g.fetchTestReport(ctx, project, pipelineID, includePassed, maxFailures)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"project":     project,
+		"pipeline_id": pipelineID,
+		"test_report": testReport,
+	})
+}
+
+func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	project := getStringArg(args, "project", "")
+	jobID := getIntArg(args, "job_id", 0)
+	artifactPath := getStringArg(args, "artifact_path", "")
+	maxSizeBytes := getIntArg(args, "max_size_bytes", 1024*1024) // 1MB default
+
+	if project == "" || jobID <= 0 {
+		return nil, fmt.Errorf("project and job_id are required")
+	}
+
+	// Cap at 10MB
+	if maxSizeBytes <= 0 {
+		maxSizeBytes = 1024 * 1024
+	}
+	if maxSizeBytes > 10*1024*1024 {
+		maxSizeBytes = 10 * 1024 * 1024
+	}
+
+	// If specific file requested, fetch that file
+	if artifactPath != "" {
+		path := fmt.Sprintf("/projects/%s/jobs/%d/artifacts/%s", encodeProject(project), jobID, artifactPath)
+		data, resp, err := g.requestRaw(ctx, "GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		result := map[string]any{
+			"ok":            true,
+			"project":       project,
+			"job_id":        jobID,
+			"artifact_path": artifactPath,
+			"size_bytes":    len(data),
+		}
+
+		contentType := ""
+		if resp != nil {
+			contentType = resp.Header.Get("Content-Type")
+		}
+		result["content_type"] = contentType
+
+		if len(data) > maxSizeBytes {
+			result["truncated"] = true
+			result["download_url"] = fmt.Sprintf("%s/projects/%s/jobs/%d/artifacts/%s", g.apiURL, encodeProject(project), jobID, artifactPath)
+		} else {
+			// Check if text or binary
+			if isTextContent(contentType, data) {
+				result["content"] = string(data)
+				result["encoding"] = "text"
+			} else {
+				result["content"] = encodeBase64(data)
+				result["encoding"] = "base64"
+			}
+		}
+
+		return mcp.JSONResult(result)
+	}
+
+	// No specific file - return artifact metadata
+	path := fmt.Sprintf("/projects/%s/jobs/%d", encodeProject(project), jobID)
+	job, err := g.request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[string]any{
+		"ok":           true,
+		"project":      project,
+		"job_id":       jobID,
+		"download_url": fmt.Sprintf("%s/projects/%s/jobs/%d/artifacts", g.apiURL, encodeProject(project), jobID),
+	}
+
+	// Extract artifact info from job
+	if artifacts, ok := job["artifacts"].([]any); ok {
+		result["artifacts"] = artifacts
+	}
+	if artifactFile, ok := job["artifacts_file"].(map[string]any); ok {
+		result["artifacts_file"] = artifactFile
+	}
+	if size, ok := job["artifacts_size"].(float64); ok {
+		result["total_size_bytes"] = int(size)
+	}
+
+	return mcp.JSONResult(result)
+}
+
+func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	project := getStringArg(args, "project", "")
+	pipelineID := getIntArg(args, "pipeline_id", 0)
+	timeoutSeconds := getIntArg(args, "timeout_seconds", 300)
+	pollIntervalSeconds := getIntArg(args, "poll_interval_seconds", 5)
+	includeJobLogs := getBoolArg(args, "include_job_logs", false)
+
+	if project == "" || pipelineID <= 0 {
+		return nil, fmt.Errorf("project and pipeline_id are required")
+	}
+
+	// Validate and cap values
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 300
+	}
+	if timeoutSeconds > 600 {
+		timeoutSeconds = 600
+	}
+	if pollIntervalSeconds < 2 {
+		pollIntervalSeconds = 2
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+	pollCount := 0
+
+	var lastStatus string
+	var lastPipeline map[string]any
+
+	for {
+		pollCount++
+
+		// Check timeout
+		if time.Now().After(deadline) {
+			// Return current state with timed_out flag
+			result := g.buildPipelineResult(project, pipelineID, lastPipeline, lastStatus, pollCount, true)
+			if includeJobLogs && (lastStatus == "failed" || lastStatus == "canceled") {
+				result["failed_job_logs"] = g.getFailedJobLogs(ctx, project, pipelineID, 50)
+			}
+			return mcp.JSONResult(result)
+		}
+
+		// Fetch pipeline status
+		path := fmt.Sprintf("/projects/%s/pipelines/%d", encodeProject(project), pipelineID)
+		pipeline, err := g.request(ctx, "GET", path, nil)
+		if err != nil {
+			// Transient error - retry
+			if isTransientError(err) && time.Now().Before(deadline) {
+				time.Sleep(time.Duration(pollIntervalSeconds) * time.Second)
+				continue
+			}
+			return nil, err
+		}
+
+		lastPipeline = pipeline
+		status, _ := pipeline["status"].(string)
+		lastStatus = status
+
+		// Check for terminal state
+		if isTerminalPipelineStatus(status) {
+			result := g.buildPipelineResult(project, pipelineID, pipeline, status, pollCount, false)
+			if includeJobLogs && (status == "failed" || status == "canceled") {
+				result["failed_job_logs"] = g.getFailedJobLogs(ctx, project, pipelineID, 50)
+			}
+			return mcp.JSONResult(result)
+		}
+
+		// Adaptive interval - longer for pending
+		interval := pollIntervalSeconds
+		if status == "pending" || status == "waiting_for_resource" {
+			interval = 10
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(interval) * time.Second):
+			// Continue polling
+		}
+	}
+}
+
+// Helper functions for pipeline polling
+
+func (g *gitlabServer) summarizeJobs(jobs []any, includeFailedLogs bool, ctx context.Context, project string) map[string]any {
+	summary := map[string]any{
+		"total":   len(jobs),
+		"by_status": map[string]int{},
+	}
+
+	statusCounts := make(map[string]int)
+	var failedJobs []map[string]any
+	var runningJobs []map[string]any
+
+	for _, job := range jobs {
+		jobMap, ok := job.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		status, _ := jobMap["status"].(string)
+		statusCounts[status]++
+
+		// Capture failed jobs
+		if status == "failed" {
+			failedJob := map[string]any{
+				"id":         jobMap["id"],
+				"name":       jobMap["name"],
+				"stage":      jobMap["stage"],
+				"status":     status,
+				"web_url":    jobMap["web_url"],
+				"started_at": jobMap["started_at"],
+			}
+			if fr, ok := jobMap["failure_reason"].(string); ok {
+				failedJob["failure_reason"] = fr
+			}
+			failedJobs = append(failedJobs, failedJob)
+		}
+
+		// Capture running jobs
+		if status == "running" {
+			runningJobs = append(runningJobs, map[string]any{
+				"id":         jobMap["id"],
+				"name":       jobMap["name"],
+				"stage":      jobMap["stage"],
+				"started_at": jobMap["started_at"],
+			})
+		}
+	}
+
+	summary["by_status"] = statusCounts
+	if len(failedJobs) > 0 {
+		summary["failed_jobs"] = failedJobs
+	}
+	if len(runningJobs) > 0 {
+		summary["running_jobs"] = runningJobs
+	}
+
+	// Fetch failed job logs if requested
+	if includeFailedLogs && len(failedJobs) > 0 {
+		var logsForJobs []map[string]any
+		for _, fj := range failedJobs {
+			jobID, ok := fj["id"].(float64)
+			if !ok {
+				continue
+			}
+			logPath := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), int(jobID))
+			logData, _, err := g.requestRaw(ctx, "GET", logPath, map[string]string{"Accept": "text/plain"})
+			if err == nil {
+				lines := strings.Split(string(logData), "\n")
+				if len(lines) > 50 {
+					lines = lines[len(lines)-50:]
+				}
+				logsForJobs = append(logsForJobs, map[string]any{
+					"job_id":     int(jobID),
+					"job_name":   fj["name"],
+					"tail_lines": strings.Join(lines, "\n"),
+				})
+			}
+		}
+		if len(logsForJobs) > 0 {
+			summary["failed_job_logs"] = logsForJobs
+		}
+	}
+
+	return summary
+}
+
+func (g *gitlabServer) fetchTestReport(ctx context.Context, project string, pipelineID int, includePassed bool, maxFailures int) (map[string]any, error) {
+	path := fmt.Sprintf("/projects/%s/pipelines/%d/test_report", encodeProject(project), pipelineID)
+	report, err := g.request(ctx, "GET", path, nil)
+	if err != nil {
+		// Test report may not exist
+		if ae, ok := err.(*apiError); ok && ae.StatusCode == 404 {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	result := map[string]any{
+		"total_time":    report["total_time"],
+		"total_count":   report["total_count"],
+		"success_count": report["success_count"],
+		"failed_count":  report["failed_count"],
+		"skipped_count": report["skipped_count"],
+		"error_count":   report["error_count"],
+	}
+
+	// Parse test suites
+	testSuites, _ := report["test_suites"].([]any)
+	var failedTests []map[string]any
+	var passedTests []map[string]any
+
+	for _, suite := range testSuites {
+		suiteMap, ok := suite.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		suiteName, _ := suiteMap["name"].(string)
+		testCases, _ := suiteMap["test_cases"].([]any)
+
+		for _, tc := range testCases {
+			tcMap, ok := tc.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			status, _ := tcMap["status"].(string)
+			testCase := map[string]any{
+				"suite":       suiteName,
+				"name":        tcMap["name"],
+				"classname":   tcMap["classname"],
+				"status":      status,
+				"execution_time": tcMap["execution_time"],
+			}
+
+			if status == "failed" || status == "error" {
+				if stackTrace, ok := tcMap["stack_trace"].(string); ok {
+					// Truncate stack trace if too long
+					if len(stackTrace) > 2000 {
+						stackTrace = stackTrace[:2000] + "\n... (truncated)"
+					}
+					testCase["stack_trace"] = stackTrace
+				}
+				if sysOut, ok := tcMap["system_output"].(string); ok {
+					if len(sysOut) > 1000 {
+						sysOut = sysOut[:1000] + "\n... (truncated)"
+					}
+					testCase["system_output"] = sysOut
+				}
+				failedTests = append(failedTests, testCase)
+			} else if status == "success" && includePassed {
+				passedTests = append(passedTests, testCase)
+			}
+		}
+	}
+
+	// Limit failed tests
+	if len(failedTests) > maxFailures {
+		result["failed_tests_truncated"] = true
+		failedTests = failedTests[:maxFailures]
+	}
+	if len(failedTests) > 0 {
+		result["failed_tests"] = failedTests
+	}
+	if includePassed && len(passedTests) > 0 {
+		result["passed_tests"] = passedTests
+	}
+
+	return result, nil
+}
+
+func (g *gitlabServer) buildPipelineResult(project string, pipelineID int, pipeline map[string]any, status string, pollCount int, timedOut bool) map[string]any {
+	result := map[string]any{
+		"ok":          !timedOut,
+		"project":     project,
+		"pipeline_id": pipelineID,
+		"status":      status,
+		"poll_count":  pollCount,
+		"timed_out":   timedOut,
+	}
+
+	if pipeline != nil {
+		result["pipeline"] = pipeline
+	}
+
+	return result
+}
+
+func (g *gitlabServer) getFailedJobLogs(ctx context.Context, project string, pipelineID int, tailLines int) []map[string]any {
+	// Get failed jobs
+	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs?scope=failed&per_page=10", encodeProject(project), pipelineID)
+	jobs, err := g.requestList(ctx, path)
+	if err != nil || len(jobs) == 0 {
+		return nil
+	}
+
+	var logs []map[string]any
+	for _, job := range jobs {
+		jobMap, ok := job.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		jobID, ok := jobMap["id"].(float64)
+		if !ok {
+			continue
+		}
+
+		logPath := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), int(jobID))
+		logData, _, err := g.requestRaw(ctx, "GET", logPath, map[string]string{"Accept": "text/plain"})
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(string(logData), "\n")
+		if len(lines) > tailLines {
+			lines = lines[len(lines)-tailLines:]
+		}
+
+		logs = append(logs, map[string]any{
+			"job_id":         int(jobID),
+			"job_name":       jobMap["name"],
+			"stage":          jobMap["stage"],
+			"failure_reason": jobMap["failure_reason"],
+			"tail_lines":     strings.Join(lines, "\n"),
+		})
+	}
+
+	return logs
+}
+
+func isTerminalPipelineStatus(status string) bool {
+	switch status {
+	case "success", "failed", "canceled", "skipped", "manual":
+		return true
+	}
+	return false
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if ae, ok := err.(*apiError); ok {
+		// 5xx errors are transient
+		return ae.StatusCode >= 500 && ae.StatusCode < 600
+	}
+	// Network errors could be transient
+	errStr := err.Error()
+	return strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "temporary failure")
+}
+
+func isTextContent(contentType string, data []byte) bool {
+	if strings.HasPrefix(contentType, "text/") {
+		return true
+	}
+	if strings.Contains(contentType, "json") ||
+		strings.Contains(contentType, "xml") ||
+		strings.Contains(contentType, "yaml") {
+		return true
+	}
+	// Check first 512 bytes for text
+	checkLen := len(data)
+	if checkLen > 512 {
+		checkLen = 512
+	}
+	for i := 0; i < checkLen; i++ {
+		b := data[i]
+		// Allow printable ASCII, tabs, newlines, carriage returns
+		if b < 32 && b != '\t' && b != '\n' && b != '\r' {
+			return false
+		}
+		if b > 126 && b < 160 {
+			return false
+		}
+	}
+	return true
+}
+
+func encodeBase64(data []byte) string {
+	const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	var result strings.Builder
+	result.Grow((len(data)*4 + 2) / 3)
+
+	for i := 0; i < len(data); i += 3 {
+		var n uint32
+		remaining := len(data) - i
+
+		n = uint32(data[i]) << 16
+		if remaining > 1 {
+			n |= uint32(data[i+1]) << 8
+		}
+		if remaining > 2 {
+			n |= uint32(data[i+2])
+		}
+
+		result.WriteByte(base64Chars[(n>>18)&0x3f])
+		result.WriteByte(base64Chars[(n>>12)&0x3f])
+		if remaining > 1 {
+			result.WriteByte(base64Chars[(n>>6)&0x3f])
+		} else {
+			result.WriteByte('=')
+		}
+		if remaining > 2 {
+			result.WriteByte(base64Chars[n&0x3f])
+		} else {
+			result.WriteByte('=')
+		}
+	}
+
+	return result.String()
 }

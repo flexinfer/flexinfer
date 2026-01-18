@@ -19,9 +19,13 @@ const sessionsVectorSize = 4
 type Service struct {
 	cfg Config
 
-	contextQdrant  *QdrantClient
-	sessionsQdrant *QdrantClient
-	embed          *embed.MorphClient
+	contextQdrant     *QdrantClient
+	sessionsQdrant    *QdrantClient
+	tasksQdrant       *QdrantClient
+	annotationsQdrant *QdrantClient
+	handoffsQdrant    *QdrantClient
+	templatesQdrant   *QdrantClient
+	embed             *embed.MorphClient
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*Session
@@ -38,11 +42,15 @@ func NewServiceFromEnv() (*Service, error) {
 	hc := httpclient.NewDefault()
 
 	svc := &Service{
-		cfg:            cfg,
-		contextQdrant:  NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.ContextCollection, cfg.QdrantDistance),
-		sessionsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.SessionsCollection, cfg.QdrantDistance),
-		embed:          embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
-		sessions:       make(map[string]*Session),
+		cfg:               cfg,
+		contextQdrant:     NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.ContextCollection, cfg.QdrantDistance),
+		sessionsQdrant:    NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.SessionsCollection, cfg.QdrantDistance),
+		tasksQdrant:       NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TasksCollection, cfg.QdrantDistance),
+		annotationsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.AnnotationsCollection, cfg.QdrantDistance),
+		handoffsQdrant:    NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.HandoffsCollection, cfg.QdrantDistance),
+		templatesQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TemplatesCollection, cfg.QdrantDistance),
+		embed:             embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
+		sessions:          make(map[string]*Session),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
@@ -1142,4 +1150,1249 @@ func uniqueStrings(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ============================================================================
+// Task Handlers
+// ============================================================================
+
+func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	if sessionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	}
+
+	session, err := s.getSession(ctx, sessionID)
+	if err != nil || session == nil {
+		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
+	}
+
+	tasksRaw, ok := args["tasks"].([]any)
+	if !ok || len(tasksRaw) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("tasks array is required")), nil
+	}
+
+	var tasks []Task
+	var embedTexts []string
+	now := time.Now()
+
+	for _, raw := range tasksRaw {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		title := toString(m["title"])
+		if title == "" {
+			continue
+		}
+
+		priority := TaskPriority(toString(m["priority"]))
+		if priority == "" {
+			priority = TaskPriorityMedium
+		}
+
+		task := Task{
+			ID:         GenerateID(session.AgentID, sessionID, title, now),
+			SessionID:  sessionID,
+			AgentID:    session.AgentID,
+			Namespace:  session.Namespace,
+			Title:      title,
+			Context:    toString(m["context"]),
+			Priority:   priority,
+			Status:     TaskStatusPending,
+			FilePath:   toString(m["file_path"]),
+			LineNumber: toInt(m["line_number"]),
+			Tags:       toStringSlice(m["tags"]),
+			BlockedBy:  toStringSlice(m["blocked_by"]),
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			TokenCount: EstimateTokens(title + " " + toString(m["context"])),
+		}
+
+		tasks = append(tasks, task)
+		embedTexts = append(embedTexts, task.Title+" "+task.Context)
+	}
+
+	if len(tasks) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("no valid tasks provided")), nil
+	}
+
+	// Generate embeddings
+	vectors, err := s.embed.EmbedDocuments(ctx, embedTexts)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("embedding tasks: %w", err)), nil
+	}
+	if len(vectors) != len(tasks) {
+		return mcp.ErrorResult(fmt.Errorf("embedding count mismatch")), nil
+	}
+
+	for _, v := range vectors {
+		if len(v) > 0 {
+			s.vectorSize = len(v)
+			break
+		}
+	}
+	if s.vectorSize <= 0 {
+		return mcp.ErrorResult(fmt.Errorf("unknown vector size")), nil
+	}
+
+	if err := s.tasksQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
+	}
+
+	// Build points
+	points := make([]Point, 0, len(tasks))
+	for i, task := range tasks {
+		vector := vectors[i]
+		if len(vector) == 0 {
+			vector = make([]float64, s.vectorSize)
+		}
+		points = append(points, Point{
+			ID:      task.ID,
+			Vector:  vector,
+			Payload: taskToPayload(task),
+		})
+	}
+
+	if err := s.upsertPointsBatched(ctx, s.tasksQdrant, points); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("upsert tasks: %w", err)), nil
+	}
+
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"count":    len(tasks),
+		"task_ids": ids,
+	})
+}
+
+func (s *Service) HandleTaskUpdate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	taskID := toString(args["task_id"])
+	if taskID == "" {
+		return mcp.ErrorResult(fmt.Errorf("task_id is required")), nil
+	}
+
+	status := TaskStatus(toString(args["status"]))
+	resolution := toString(args["resolution"])
+
+	// Get existing task
+	p, err := s.tasksQdrant.GetPoint(ctx, taskID, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("task %s not found: %w", taskID, err)), nil
+	}
+
+	task, err := payloadToTask(p.Payload)
+	if err != nil || task == nil {
+		return mcp.ErrorResult(fmt.Errorf("invalid task payload")), nil
+	}
+
+	// Update fields
+	if status != "" {
+		task.Status = status
+	}
+	if resolution != "" {
+		task.Resolution = resolution
+	}
+	task.UpdatedAt = time.Now()
+
+	if status == TaskStatusCompleted {
+		now := time.Now()
+		task.CompletedAt = &now
+	}
+
+	// Update payload
+	payload := taskToPayload(*task)
+	if err := s.tasksQdrant.SetPayload(ctx, []string{taskID}, payload, true); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("update task: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":   true,
+		"task": task,
+	})
+}
+
+func (s *Service) HandleTaskList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	statusesRaw := toStringSlice(args["status"])
+	includeCompleted := getBool(args["include_completed"], false)
+	limit := toInt(args["limit"])
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Build filter
+	var conds []any
+	if sessionID != "" {
+		conds = append(conds, Match("session_id", sessionID))
+	}
+	if agentID != "" {
+		conds = append(conds, Match("agent_id", agentID))
+	}
+
+	// Status filter
+	if len(statusesRaw) > 0 {
+		conds = append(conds, FilterShould(Matches("status", statusesRaw)...))
+	} else if !includeCompleted {
+		// Exclude completed by default
+		conds = append(conds, FilterShould(
+			Match("status", string(TaskStatusPending)),
+			Match("status", string(TaskStatusInProgress)),
+			Match("status", string(TaskStatusBlocked)),
+		))
+	}
+
+	var filter map[string]any
+	if len(conds) > 0 {
+		filter = FilterMust(conds...)
+	}
+
+	points, err := s.tasksQdrant.ScrollPoints(ctx, filter, limit, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("list tasks: %w", err)), nil
+	}
+
+	tasks := make([]Task, 0, len(points))
+	for _, p := range points {
+		task, err := payloadToTask(p.Payload)
+		if err != nil || task == nil {
+			continue
+		}
+		tasks = append(tasks, *task)
+	}
+
+	// Sort by priority (critical > high > medium > low), then by created_at
+	sort.Slice(tasks, func(i, j int) bool {
+		pi, pj := priorityRank(tasks[i].Priority), priorityRank(tasks[j].Priority)
+		if pi != pj {
+			return pi > pj
+		}
+		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	})
+
+	return mcp.JSONResult(map[string]any{
+		"ok":    true,
+		"tasks": tasks,
+		"count": len(tasks),
+	})
+}
+
+// ============================================================================
+// Annotation Handlers
+// ============================================================================
+
+func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	if sessionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	}
+
+	session, err := s.getSession(ctx, sessionID)
+	if err != nil || session == nil {
+		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
+	}
+
+	filePath := toString(args["file_path"])
+	if filePath == "" {
+		return mcp.ErrorResult(fmt.Errorf("file_path is required")), nil
+	}
+
+	lineStart := toInt(args["line_start"])
+	if lineStart <= 0 {
+		return mcp.ErrorResult(fmt.Errorf("line_start is required")), nil
+	}
+
+	content := toString(args["content"])
+	if content == "" {
+		return mcp.ErrorResult(fmt.Errorf("content is required")), nil
+	}
+
+	annotationType := AnnotationType(toString(args["annotation_type"]))
+	if annotationType == "" {
+		annotationType = AnnotationTypeNote
+	}
+
+	now := time.Now()
+	annotation := CodeAnnotation{
+		ID:             GenerateID(session.AgentID, sessionID, filePath+content, now),
+		SessionID:      sessionID,
+		AgentID:        session.AgentID,
+		Namespace:      session.Namespace,
+		FilePath:       filePath,
+		LineStart:      lineStart,
+		LineEnd:        toInt(args["line_end"]),
+		Symbol:         toString(args["symbol"]),
+		RepoID:         toString(args["repo_id"]),
+		AnnotationType: annotationType,
+		Content:        content,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		TokenCount:     EstimateTokens(content),
+	}
+
+	// Generate embedding
+	vector, err := s.embed.EmbedQuery(ctx, annotation.Content)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("embedding: %w", err)), nil
+	}
+	if len(vector) > 0 {
+		s.vectorSize = len(vector)
+	}
+	if s.vectorSize <= 0 {
+		return mcp.ErrorResult(fmt.Errorf("unknown vector size")), nil
+	}
+
+	if err := s.annotationsQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
+	}
+
+	point := Point{
+		ID:      annotation.ID,
+		Vector:  vector,
+		Payload: annotationToPayload(annotation),
+	}
+
+	if err := s.annotationsQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("upsert annotation: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":            true,
+		"annotation_id": annotation.ID,
+	})
+}
+
+func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	filePath := toString(args["file_path"])
+	agentID := toString(args["agent_id"])
+	lineStart := toInt(args["line_start"])
+	lineEnd := toInt(args["line_end"])
+	annotationTypes := toStringSlice(args["annotation_types"])
+	limit := toInt(args["limit"])
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Build filter
+	var conds []any
+	if filePath != "" {
+		conds = append(conds, Match("file_path", filePath))
+	}
+	if agentID != "" {
+		conds = append(conds, Match("agent_id", agentID))
+	}
+	if len(annotationTypes) > 0 {
+		conds = append(conds, FilterShould(Matches("annotation_type", annotationTypes)...))
+	}
+
+	var filter map[string]any
+	if len(conds) > 0 {
+		filter = FilterMust(conds...)
+	}
+
+	points, err := s.annotationsQdrant.ScrollPoints(ctx, filter, limit, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("get annotations: %w", err)), nil
+	}
+
+	annotations := make([]CodeAnnotation, 0, len(points))
+	for _, p := range points {
+		ann, err := payloadToAnnotation(p.Payload)
+		if err != nil || ann == nil {
+			continue
+		}
+		// Filter by line range if specified
+		if lineStart > 0 && ann.LineStart < lineStart {
+			continue
+		}
+		if lineEnd > 0 && ann.LineStart > lineEnd {
+			continue
+		}
+		annotations = append(annotations, *ann)
+	}
+
+	// Sort by line number
+	sort.Slice(annotations, func(i, j int) bool {
+		return annotations[i].LineStart < annotations[j].LineStart
+	})
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"annotations": annotations,
+		"count":       len(annotations),
+	})
+}
+
+// ============================================================================
+// Handoff Handlers
+// ============================================================================
+
+func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	if sessionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	}
+
+	session, err := s.getSession(ctx, sessionID)
+	if err != nil || session == nil {
+		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
+	}
+
+	targetAgentID := toString(args["target_agent_id"])
+	if targetAgentID == "" {
+		return mcp.ErrorResult(fmt.Errorf("target_agent_id is required")), nil
+	}
+
+	handoffType := HandoffType(toString(args["handoff_type"]))
+	if handoffType == "" {
+		handoffType = HandoffTypeSummaryOnly
+	}
+
+	instructions := toString(args["instructions"])
+	entryIDs := toStringSlice(args["entry_ids"])
+	tokenBudget := toInt(args["token_budget"])
+	if tokenBudget <= 0 {
+		tokenBudget = s.cfg.HandoffMaxTokens
+	}
+
+	now := time.Now()
+	handoff := Handoff{
+		ID:            GenerateID(session.AgentID, targetAgentID, sessionID, now),
+		SourceAgentID: session.AgentID,
+		SourceSession: sessionID,
+		TargetAgentID: targetAgentID,
+		HandoffType:   handoffType,
+		Status:        HandoffStatusPending,
+		Instructions:  instructions,
+		CreatedAt:     now,
+	}
+
+	// Set expiration
+	if s.cfg.HandoffExpirationHours > 0 {
+		expires := now.Add(time.Duration(s.cfg.HandoffExpirationHours) * time.Hour)
+		handoff.ExpiresAt = &expires
+	}
+
+	// Build handoff content based on type
+	var summary strings.Builder
+	totalTokens := 0
+
+	switch handoffType {
+	case HandoffTypeFull:
+		// Get all entries for the session
+		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(Match("session_id", sessionID)), 500)
+		for _, e := range entries {
+			if totalTokens+e.TokenCount > tokenBudget {
+				break
+			}
+			handoff.EntryIDs = append(handoff.EntryIDs, e.ID)
+			totalTokens += e.TokenCount
+			summary.WriteString(fmt.Sprintf("- [%s] %s\n", e.EntryType, e.Title))
+		}
+
+	case HandoffTypeSelective:
+		// Use provided entry IDs
+		for _, id := range entryIDs {
+			p, err := s.contextQdrant.GetPoint(ctx, id, false)
+			if err != nil {
+				continue
+			}
+			entry, _ := PayloadToEntry(p.Payload)
+			if entry == nil {
+				continue
+			}
+			if totalTokens+entry.TokenCount > tokenBudget {
+				break
+			}
+			handoff.EntryIDs = append(handoff.EntryIDs, id)
+			totalTokens += entry.TokenCount
+			summary.WriteString(fmt.Sprintf("- [%s] %s\n", entry.EntryType, entry.Title))
+		}
+
+	case HandoffTypeSummaryOnly:
+		// Get session summaries and decisions only
+		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(
+			Match("session_id", sessionID),
+			FilterShould(
+				Match("entry_type", string(EntryTypeSummary)),
+				Match("entry_type", string(EntryTypeDecision)),
+			),
+		), 20)
+		for _, e := range entries {
+			if totalTokens+e.TokenCount > tokenBudget {
+				break
+			}
+			handoff.EntryIDs = append(handoff.EntryIDs, e.ID)
+			totalTokens += e.TokenCount
+			summary.WriteString(fmt.Sprintf("- [%s] %s\n", e.EntryType, e.Title))
+		}
+	}
+
+	handoff.Summary = summary.String()
+	handoff.TokenCount = totalTokens
+
+	// Store handoff (use dummy vector since not searching by content)
+	dummyVector := make([]float64, sessionsVectorSize)
+	if err := s.handoffsQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
+	}
+
+	point := Point{
+		ID:      handoff.ID,
+		Vector:  dummyVector,
+		Payload: handoffToPayload(handoff),
+	}
+
+	if err := s.handoffsQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("create handoff: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"handoff_id":  handoff.ID,
+		"token_count": handoff.TokenCount,
+		"entry_count": len(handoff.EntryIDs),
+		"summary":     handoff.Summary,
+	})
+}
+
+func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	handoffID := toString(args["handoff_id"])
+	if handoffID == "" {
+		return mcp.ErrorResult(fmt.Errorf("handoff_id is required")), nil
+	}
+
+	sessionID := toString(args["session_id"])
+	if sessionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	}
+
+	session, err := s.getSession(ctx, sessionID)
+	if err != nil || session == nil {
+		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
+	}
+
+	importEntries := getBool(args["import_entries"], false)
+
+	// Get handoff
+	p, err := s.handoffsQdrant.GetPoint(ctx, handoffID, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("handoff %s not found", handoffID)), nil
+	}
+
+	handoff, err := payloadToHandoff(p.Payload)
+	if err != nil || handoff == nil {
+		return mcp.ErrorResult(fmt.Errorf("invalid handoff")), nil
+	}
+
+	// Verify target agent
+	if handoff.TargetAgentID != session.AgentID {
+		return mcp.ErrorResult(fmt.Errorf("handoff is not for this agent")), nil
+	}
+
+	// Check expiration
+	if handoff.ExpiresAt != nil && time.Now().After(*handoff.ExpiresAt) {
+		handoff.Status = HandoffStatusExpired
+		s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{"status": string(HandoffStatusExpired)}, true)
+		return mcp.ErrorResult(fmt.Errorf("handoff has expired")), nil
+	}
+
+	// Check status
+	if handoff.Status != HandoffStatusPending {
+		return mcp.ErrorResult(fmt.Errorf("handoff already %s", handoff.Status)), nil
+	}
+
+	result := map[string]any{
+		"ok":           true,
+		"handoff_id":   handoffID,
+		"source_agent": handoff.SourceAgentID,
+		"instructions": handoff.Instructions,
+		"summary":      handoff.Summary,
+		"token_count":  handoff.TokenCount,
+	}
+
+	// Import entries if requested
+	if importEntries && len(handoff.EntryIDs) > 0 {
+		var importedEntries []ContextEntry
+		for _, id := range handoff.EntryIDs {
+			ep, err := s.contextQdrant.GetPoint(ctx, id, true)
+			if err != nil {
+				continue
+			}
+			entry, _ := PayloadToEntry(ep.Payload)
+			if entry == nil {
+				continue
+			}
+			importedEntries = append(importedEntries, *entry)
+		}
+		result["imported_entries"] = importedEntries
+		result["imported_count"] = len(importedEntries)
+	}
+
+	// Mark accepted
+	now := time.Now()
+	handoff.Status = HandoffStatusAccepted
+	handoff.AcceptedAt = &now
+	s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
+		"status":      string(HandoffStatusAccepted),
+		"accepted_at": now.Format(time.RFC3339Nano),
+	}, true)
+
+	return mcp.JSONResult(result)
+}
+
+// ============================================================================
+// Template Handlers
+// ============================================================================
+
+func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	name := toString(args["name"])
+	if name == "" {
+		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	}
+
+	description := toString(args["description"])
+	namespace := toString(args["namespace"])
+	fromSessionID := toString(args["from_session_id"])
+
+	// Determine creator
+	createdBy := toString(args["created_by"])
+	if createdBy == "" {
+		createdBy = s.cfg.DefaultAgentID
+	}
+
+	now := time.Now()
+	template := SessionTemplate{
+		ID:          GenerateID(createdBy, name, namespace, now),
+		Name:        name,
+		Description: description,
+		Namespace:   namespace,
+		CreatedBy:   createdBy,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// Parse entry types to include
+	if types := toStringSlice(args["entry_types_to_include"]); len(types) > 0 {
+		for _, t := range types {
+			template.EntryTypesToInclude = append(template.EntryTypesToInclude, EntryType(t))
+		}
+	}
+
+	// Copy from existing session if specified
+	if fromSessionID != "" {
+		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(Match("session_id", fromSessionID)), 100)
+		for _, e := range entries {
+			// Filter by entry types if specified
+			if len(template.EntryTypesToInclude) > 0 {
+				found := false
+				for _, t := range template.EntryTypesToInclude {
+					if e.EntryType == t {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+			template.InitialEntries = append(template.InitialEntries, e)
+		}
+	}
+
+	// Store template (use dummy vector since not searching by content)
+	dummyVector := make([]float64, sessionsVectorSize)
+	if err := s.templatesQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
+	}
+
+	point := Point{
+		ID:      template.ID,
+		Vector:  dummyVector,
+		Payload: templateToPayload(template),
+	}
+
+	if err := s.templatesQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("create template: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"template_id": template.ID,
+		"name":        template.Name,
+		"entry_count": len(template.InitialEntries),
+	})
+}
+
+func (s *Service) HandleTemplateList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	namespace := toString(args["namespace"])
+	limit := toInt(args["limit"])
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var filter map[string]any
+	if namespace != "" {
+		filter = FilterMust(Match("namespace", namespace))
+	}
+
+	points, err := s.templatesQdrant.ScrollPoints(ctx, filter, limit, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("list templates: %w", err)), nil
+	}
+
+	templates := make([]map[string]any, 0, len(points))
+	for _, p := range points {
+		templates = append(templates, map[string]any{
+			"id":          p.Payload["id"],
+			"name":        p.Payload["name"],
+			"description": p.Payload["description"],
+			"namespace":   p.Payload["namespace"],
+			"created_by":  p.Payload["created_by"],
+			"created_at":  p.Payload["created_at"],
+		})
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":        true,
+		"templates": templates,
+		"count":     len(templates),
+	})
+}
+
+// ============================================================================
+// Enhanced Recall Handler
+// ============================================================================
+
+func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	query := toString(args["query"])
+	if query == "" {
+		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
+	}
+
+	opts := EnhancedRecallOptions{
+		RecallOptions: RecallOptions{
+			Query:            query,
+			AgentID:          toString(args["agent_id"]),
+			SessionID:        toString(args["session_id"]),
+			Namespace:        toString(args["namespace"]),
+			TokenBudget:      toInt(args["token_budget"]),
+			IncludeSummaries: getBool(args["include_summaries"], true),
+			IncludeDecisions: getBool(args["include_decisions"], true),
+			FileContext:      toString(args["file_context"]),
+		},
+		SymbolContext: toString(args["symbol_context"]),
+		RecencyWeight: toFloat(args["recency_weight"]),
+		IncludeTasks:  getBool(args["include_tasks"], true),
+	}
+
+	if opts.TokenBudget <= 0 {
+		opts.TokenBudget = s.cfg.DefaultTokenBudget
+	}
+	if opts.RecencyWeight <= 0 {
+		opts.RecencyWeight = s.cfg.DefaultRecencyWeight
+	}
+
+	entries, err := s.enhancedRecallContext(ctx, opts)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("recall: %w", err)), nil
+	}
+
+	totalTokens := 0
+	for _, e := range entries {
+		totalTokens += e.TokenCount
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":           true,
+		"entries":      entries,
+		"count":        len(entries),
+		"total_tokens": totalTokens,
+		"token_budget": opts.TokenBudget,
+	})
+}
+
+func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecallOptions) ([]ContextEntry, error) {
+	var results []ContextEntry
+	seen := make(map[string]bool)
+	remainingBudget := opts.TokenBudget
+
+	// Phase 1 (NEW): Active tasks - highest priority
+	if opts.IncludeTasks && remainingBudget > 0 {
+		tasks, _ := s.getActiveTasks(ctx, opts.AgentID, opts.SessionID, 5)
+		for _, task := range tasks {
+			// Convert task to context entry for unified return type
+			entry := ContextEntry{
+				ID:        task.ID,
+				AgentID:   task.AgentID,
+				SessionID: task.SessionID,
+				EntryType: EntryTypeTask,
+				Title:     fmt.Sprintf("[%s] %s", task.Priority, task.Title),
+				Content:   task.Context,
+				FilePath:  task.FilePath,
+				Timestamp: task.CreatedAt,
+				Tags:      task.Tags,
+				TokenCount: task.TokenCount,
+				Metadata: map[string]any{
+					"task_status":   string(task.Status),
+					"task_priority": string(task.Priority),
+					"blocked_by":    task.BlockedBy,
+				},
+			}
+			if remainingBudget >= entry.TokenCount && !seen[entry.ID] {
+				results = append(results, entry)
+				seen[entry.ID] = true
+				remainingBudget -= entry.TokenCount
+			}
+		}
+	}
+
+	// Phase 2: Recent decisions
+	if opts.IncludeDecisions && remainingBudget > 0 {
+		decisions, _ := s.getRecentByType(ctx, opts.AgentID, opts.SessionID, EntryTypeDecision, 5)
+		for _, d := range decisions {
+			if remainingBudget >= d.TokenCount && !seen[d.ID] {
+				results = append(results, d)
+				seen[d.ID] = true
+				remainingBudget -= d.TokenCount
+			}
+		}
+	}
+
+	// Phase 3: Session summaries
+	if opts.IncludeSummaries && remainingBudget > 0 {
+		summaries, _ := s.getRecentByType(ctx, opts.AgentID, opts.SessionID, EntryTypeSummary, 3)
+		for _, sum := range summaries {
+			if remainingBudget >= sum.TokenCount && !seen[sum.ID] {
+				results = append(results, sum)
+				seen[sum.ID] = true
+				remainingBudget -= sum.TokenCount
+			}
+		}
+	}
+
+	// Phase 4 (NEW): Symbol-context boosting
+	if opts.SymbolContext != "" && remainingBudget > 500 {
+		symbolEntries, _ := s.getEntriesForSymbol(ctx, opts.AgentID, opts.SymbolContext, 5)
+		for _, se := range symbolEntries {
+			if remainingBudget >= se.TokenCount && !seen[se.ID] {
+				results = append(results, se)
+				seen[se.ID] = true
+				remainingBudget -= se.TokenCount
+			}
+		}
+	}
+
+	// Phase 5 (ENHANCED): Semantic search with recency weighting
+	if remainingBudget > 500 && opts.Query != "" {
+		vector, err := s.embed.EmbedQuery(ctx, opts.Query)
+		if err == nil {
+			var conds []any
+			if opts.AgentID != "" {
+				conds = append(conds, Match("agent_id", opts.AgentID))
+			}
+			if opts.SessionID != "" {
+				conds = append(conds, Match("session_id", opts.SessionID))
+			}
+
+			var filter map[string]any
+			if len(conds) > 0 {
+				filter = FilterMust(conds...)
+			}
+
+			searchResults, _ := s.contextQdrant.Search(ctx, vector, filter, 30, true)
+
+			// Apply recency weighting
+			now := time.Now()
+			for i := range searchResults {
+				age := now.Sub(searchResults[i].Entry.Timestamp)
+				ageHours := age.Hours()
+				// Decay factor: recent entries get boosted
+				recencyBoost := 1.0 / (1.0 + (ageHours / 24.0 * opts.RecencyWeight))
+				searchResults[i].Score *= (1.0 + recencyBoost*opts.RecencyWeight)
+			}
+
+			// Re-sort by adjusted score
+			sort.Slice(searchResults, func(i, j int) bool {
+				return searchResults[i].Score > searchResults[j].Score
+			})
+
+			for _, sr := range searchResults {
+				if remainingBudget >= sr.Entry.TokenCount && !seen[sr.Entry.ID] {
+					results = append(results, sr.Entry)
+					seen[sr.Entry.ID] = true
+					remainingBudget -= sr.Entry.TokenCount
+				}
+			}
+		}
+	}
+
+	// Phase 6: File-context boosting
+	if opts.FileContext != "" && remainingBudget > 200 {
+		fileEntries, _ := s.getEntriesForFile(ctx, opts.AgentID, opts.FileContext, 5)
+		for _, fe := range fileEntries {
+			if remainingBudget >= fe.TokenCount && !seen[fe.ID] {
+				results = append(results, fe)
+				seen[fe.ID] = true
+				remainingBudget -= fe.TokenCount
+			}
+		}
+	}
+
+	// Phase 7 (NEW): Code annotations for current file
+	if opts.FileContext != "" && remainingBudget > 100 {
+		annotations, _ := s.getAnnotationsForFile(ctx, opts.AgentID, opts.FileContext, 5)
+		for _, ann := range annotations {
+			entry := ContextEntry{
+				ID:             ann.ID,
+				AgentID:        ann.AgentID,
+				SessionID:      ann.SessionID,
+				EntryType:      EntryTypeAnnotation,
+				Title:          fmt.Sprintf("[%s] %s:%d", ann.AnnotationType, ann.FilePath, ann.LineStart),
+				Content:        ann.Content,
+				FilePath:       ann.FilePath,
+				LineStart:      ann.LineStart,
+				LineEnd:        ann.LineEnd,
+				Timestamp:      ann.CreatedAt,
+				TokenCount:     ann.TokenCount,
+			}
+			if remainingBudget >= entry.TokenCount && !seen[entry.ID] {
+				results = append(results, entry)
+				seen[entry.ID] = true
+				remainingBudget -= entry.TokenCount
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func (s *Service) getActiveTasks(ctx context.Context, agentID, sessionID string, limit int) ([]Task, error) {
+	var conds []any
+	conds = append(conds, FilterShould(
+		Match("status", string(TaskStatusPending)),
+		Match("status", string(TaskStatusInProgress)),
+		Match("status", string(TaskStatusBlocked)),
+	))
+	if agentID != "" {
+		conds = append(conds, Match("agent_id", agentID))
+	}
+	if sessionID != "" {
+		conds = append(conds, Match("session_id", sessionID))
+	}
+
+	points, err := s.tasksQdrant.ScrollPoints(ctx, FilterMust(conds...), limit*2, false)
+	if err != nil {
+		return nil, err
+	}
+
+	tasks := make([]Task, 0, len(points))
+	for _, p := range points {
+		task, err := payloadToTask(p.Payload)
+		if err != nil || task == nil {
+			continue
+		}
+		tasks = append(tasks, *task)
+	}
+
+	// Sort by priority
+	sort.Slice(tasks, func(i, j int) bool {
+		return priorityRank(tasks[i].Priority) > priorityRank(tasks[j].Priority)
+	})
+
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	return tasks, nil
+}
+
+func (s *Service) getEntriesForSymbol(ctx context.Context, agentID, symbol string, limit int) ([]ContextEntry, error) {
+	// Search for entries mentioning the symbol
+	vector, err := s.embed.EmbedQuery(ctx, symbol)
+	if err != nil {
+		return nil, err
+	}
+
+	var filter map[string]any
+	if agentID != "" {
+		filter = FilterMust(Match("agent_id", agentID))
+	}
+
+	results, err := s.contextQdrant.Search(ctx, vector, filter, limit, true)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]ContextEntry, 0, len(results))
+	for _, r := range results {
+		entries = append(entries, r.Entry)
+	}
+	return entries, nil
+}
+
+func (s *Service) getAnnotationsForFile(ctx context.Context, agentID, filePath string, limit int) ([]CodeAnnotation, error) {
+	var conds []any
+	conds = append(conds, Match("file_path", filePath))
+	if agentID != "" {
+		conds = append(conds, Match("agent_id", agentID))
+	}
+
+	points, err := s.annotationsQdrant.ScrollPoints(ctx, FilterMust(conds...), limit, false)
+	if err != nil {
+		return nil, err
+	}
+
+	annotations := make([]CodeAnnotation, 0, len(points))
+	for _, p := range points {
+		ann, err := payloadToAnnotation(p.Payload)
+		if err != nil || ann == nil {
+			continue
+		}
+		annotations = append(annotations, *ann)
+	}
+
+	return annotations, nil
+}
+
+// ============================================================================
+// Payload Conversion Helpers
+// ============================================================================
+
+func taskToPayload(t Task) map[string]any {
+	return map[string]any{
+		"id":          t.ID,
+		"session_id":  t.SessionID,
+		"agent_id":    t.AgentID,
+		"namespace":   t.Namespace,
+		"title":       t.Title,
+		"context":     t.Context,
+		"priority":    string(t.Priority),
+		"status":      string(t.Status),
+		"resolution":  t.Resolution,
+		"file_path":   t.FilePath,
+		"line_number": t.LineNumber,
+		"symbol":      t.Symbol,
+		"tags":        t.Tags,
+		"blocked_by":  t.BlockedBy,
+		"parent_id":   t.ParentID,
+		"created_at":  t.CreatedAt.Format(time.RFC3339Nano),
+		"updated_at":  t.UpdatedAt.Format(time.RFC3339Nano),
+		"token_count": t.TokenCount,
+	}
+}
+
+func payloadToTask(payload map[string]any) (*Task, error) {
+	if payload == nil {
+		return nil, fmt.Errorf("nil payload")
+	}
+
+	task := &Task{
+		ID:         toString(payload["id"]),
+		SessionID:  toString(payload["session_id"]),
+		AgentID:    toString(payload["agent_id"]),
+		Namespace:  toString(payload["namespace"]),
+		Title:      toString(payload["title"]),
+		Context:    toString(payload["context"]),
+		Priority:   TaskPriority(toString(payload["priority"])),
+		Status:     TaskStatus(toString(payload["status"])),
+		Resolution: toString(payload["resolution"]),
+		FilePath:   toString(payload["file_path"]),
+		LineNumber: toInt(payload["line_number"]),
+		Symbol:     toString(payload["symbol"]),
+		Tags:       toStringSlice(payload["tags"]),
+		BlockedBy:  toStringSlice(payload["blocked_by"]),
+		ParentID:   toString(payload["parent_id"]),
+		TokenCount: toInt(payload["token_count"]),
+	}
+
+	if ts := toString(payload["created_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			task.CreatedAt = t
+		}
+	}
+	if ts := toString(payload["updated_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			task.UpdatedAt = t
+		}
+	}
+	if ts := toString(payload["completed_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			task.CompletedAt = &t
+		}
+	}
+
+	return task, nil
+}
+
+func annotationToPayload(a CodeAnnotation) map[string]any {
+	return map[string]any{
+		"id":              a.ID,
+		"session_id":      a.SessionID,
+		"agent_id":        a.AgentID,
+		"namespace":       a.Namespace,
+		"file_path":       a.FilePath,
+		"line_start":      a.LineStart,
+		"line_end":        a.LineEnd,
+		"symbol":          a.Symbol,
+		"repo_id":         a.RepoID,
+		"annotation_type": string(a.AnnotationType),
+		"content":         a.Content,
+		"created_at":      a.CreatedAt.Format(time.RFC3339Nano),
+		"updated_at":      a.UpdatedAt.Format(time.RFC3339Nano),
+		"token_count":     a.TokenCount,
+	}
+}
+
+func payloadToAnnotation(payload map[string]any) (*CodeAnnotation, error) {
+	if payload == nil {
+		return nil, fmt.Errorf("nil payload")
+	}
+
+	ann := &CodeAnnotation{
+		ID:             toString(payload["id"]),
+		SessionID:      toString(payload["session_id"]),
+		AgentID:        toString(payload["agent_id"]),
+		Namespace:      toString(payload["namespace"]),
+		FilePath:       toString(payload["file_path"]),
+		LineStart:      toInt(payload["line_start"]),
+		LineEnd:        toInt(payload["line_end"]),
+		Symbol:         toString(payload["symbol"]),
+		RepoID:         toString(payload["repo_id"]),
+		AnnotationType: AnnotationType(toString(payload["annotation_type"])),
+		Content:        toString(payload["content"]),
+		TokenCount:     toInt(payload["token_count"]),
+	}
+
+	if ts := toString(payload["created_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			ann.CreatedAt = t
+		}
+	}
+	if ts := toString(payload["updated_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			ann.UpdatedAt = t
+		}
+	}
+
+	return ann, nil
+}
+
+func handoffToPayload(h Handoff) map[string]any {
+	payload := map[string]any{
+		"id":              h.ID,
+		"source_agent_id": h.SourceAgentID,
+		"source_session":  h.SourceSession,
+		"target_agent_id": h.TargetAgentID,
+		"handoff_type":    string(h.HandoffType),
+		"status":          string(h.Status),
+		"instructions":    h.Instructions,
+		"summary":         h.Summary,
+		"entry_ids":       h.EntryIDs,
+		"token_count":     h.TokenCount,
+		"created_at":      h.CreatedAt.Format(time.RFC3339Nano),
+	}
+	if h.AcceptedAt != nil {
+		payload["accepted_at"] = h.AcceptedAt.Format(time.RFC3339Nano)
+	}
+	if h.ExpiresAt != nil {
+		payload["expires_at"] = h.ExpiresAt.Format(time.RFC3339Nano)
+	}
+	return payload
+}
+
+func payloadToHandoff(payload map[string]any) (*Handoff, error) {
+	if payload == nil {
+		return nil, fmt.Errorf("nil payload")
+	}
+
+	h := &Handoff{
+		ID:            toString(payload["id"]),
+		SourceAgentID: toString(payload["source_agent_id"]),
+		SourceSession: toString(payload["source_session"]),
+		TargetAgentID: toString(payload["target_agent_id"]),
+		HandoffType:   HandoffType(toString(payload["handoff_type"])),
+		Status:        HandoffStatus(toString(payload["status"])),
+		Instructions:  toString(payload["instructions"]),
+		Summary:       toString(payload["summary"]),
+		EntryIDs:      toStringSlice(payload["entry_ids"]),
+		TokenCount:    toInt(payload["token_count"]),
+	}
+
+	if ts := toString(payload["created_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			h.CreatedAt = t
+		}
+	}
+	if ts := toString(payload["accepted_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			h.AcceptedAt = &t
+		}
+	}
+	if ts := toString(payload["expires_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			h.ExpiresAt = &t
+		}
+	}
+
+	return h, nil
+}
+
+func templateToPayload(t SessionTemplate) map[string]any {
+	entryTypes := make([]string, len(t.EntryTypesToInclude))
+	for i, et := range t.EntryTypesToInclude {
+		entryTypes[i] = string(et)
+	}
+
+	return map[string]any{
+		"id":                     t.ID,
+		"name":                   t.Name,
+		"description":            t.Description,
+		"namespace":              t.Namespace,
+		"created_by":             t.CreatedBy,
+		"entry_types_to_include": entryTypes,
+		"initial_entries_count":  len(t.InitialEntries),
+		"created_at":             t.CreatedAt.Format(time.RFC3339Nano),
+		"updated_at":             t.UpdatedAt.Format(time.RFC3339Nano),
+	}
+}
+
+// Helper functions
+
+func getBool(v any, def bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return def
+}
+
+func toFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	}
+	return 0
+}
+
+func priorityRank(p TaskPriority) int {
+	switch p {
+	case TaskPriorityCritical:
+		return 4
+	case TaskPriorityHigh:
+		return 3
+	case TaskPriorityMedium:
+		return 2
+	case TaskPriorityLow:
+		return 1
+	}
+	return 0
 }

@@ -20,6 +20,60 @@ const (
 	EntryTypeCodeContext EntryType = "code_context"
 	EntryTypeNote        EntryType = "note"
 	EntryTypeError       EntryType = "error"
+	EntryTypeTask        EntryType = "task"
+	EntryTypeHandoff     EntryType = "handoff"
+	EntryTypeAnnotation  EntryType = "annotation"
+)
+
+// TaskStatus defines the status of a task
+type TaskStatus string
+
+const (
+	TaskStatusPending    TaskStatus = "pending"
+	TaskStatusInProgress TaskStatus = "in_progress"
+	TaskStatusCompleted  TaskStatus = "completed"
+	TaskStatusBlocked    TaskStatus = "blocked"
+)
+
+// TaskPriority defines task priority levels
+type TaskPriority string
+
+const (
+	TaskPriorityLow    TaskPriority = "low"
+	TaskPriorityMedium TaskPriority = "medium"
+	TaskPriorityHigh   TaskPriority = "high"
+	TaskPriorityCritical TaskPriority = "critical"
+)
+
+// AnnotationType defines code annotation types
+type AnnotationType string
+
+const (
+	AnnotationTypeTodo      AnnotationType = "todo"
+	AnnotationTypeFixme     AnnotationType = "fixme"
+	AnnotationTypeNote      AnnotationType = "note"
+	AnnotationTypeQuestion  AnnotationType = "question"
+	AnnotationTypeImportant AnnotationType = "important"
+	AnnotationTypeBug       AnnotationType = "bug"
+	AnnotationTypePerf      AnnotationType = "perf"
+)
+
+// HandoffType defines handoff package types
+type HandoffType string
+
+const (
+	HandoffTypeFull        HandoffType = "full"
+	HandoffTypeSelective   HandoffType = "selective"
+	HandoffTypeSummaryOnly HandoffType = "summary_only"
+)
+
+// HandoffStatus defines handoff states
+type HandoffStatus string
+
+const (
+	HandoffStatusPending  HandoffStatus = "pending"
+	HandoffStatusAccepted HandoffStatus = "accepted"
+	HandoffStatusExpired  HandoffStatus = "expired"
 )
 
 // Visibility defines who can access a context entry
@@ -179,4 +233,111 @@ func ContentHashFunc(content string) string {
 // EstimateTokens provides a rough token count estimate (4 chars per token)
 func EstimateTokens(text string) int {
 	return (len(text) + 3) / 4
+}
+
+// Task represents a task/todo discovered during agent sessions
+type Task struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Namespace string `json:"namespace,omitempty"`
+
+	// Task details
+	Title       string       `json:"title"`
+	Context     string       `json:"context,omitempty"`
+	Priority    TaskPriority `json:"priority"`
+	Status      TaskStatus   `json:"status"`
+	Resolution  string       `json:"resolution,omitempty"`
+
+	// Code context
+	FilePath   string `json:"file_path,omitempty"`
+	LineNumber int    `json:"line_number,omitempty"`
+	Symbol     string `json:"symbol,omitempty"`
+
+	// Relationships
+	Tags      []string `json:"tags,omitempty"`
+	BlockedBy []string `json:"blocked_by,omitempty"`
+	ParentID  string   `json:"parent_id,omitempty"`
+
+	// Timestamps
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+
+	TokenCount int `json:"token_count"`
+}
+
+// CodeAnnotation represents an annotation attached to code
+type CodeAnnotation struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Namespace string `json:"namespace,omitempty"`
+
+	// Code location
+	FilePath  string `json:"file_path"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end,omitempty"`
+	Symbol    string `json:"symbol,omitempty"`
+	RepoID    string `json:"repo_id,omitempty"`
+
+	// Annotation
+	AnnotationType AnnotationType `json:"annotation_type"`
+	Content        string         `json:"content"`
+
+	// Timestamps
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	TokenCount int `json:"token_count"`
+}
+
+// Handoff represents a context handoff between agents
+type Handoff struct {
+	ID            string `json:"id"`
+	SourceAgentID string `json:"source_agent_id"`
+	SourceSession string `json:"source_session"`
+	TargetAgentID string `json:"target_agent_id"`
+
+	// Handoff configuration
+	HandoffType  HandoffType   `json:"handoff_type"`
+	Status       HandoffStatus `json:"status"`
+	Instructions string        `json:"instructions,omitempty"`
+
+	// Content
+	Summary    string   `json:"summary,omitempty"`
+	EntryIDs   []string `json:"entry_ids,omitempty"`
+	TokenCount int      `json:"token_count"`
+
+	// Timestamps
+	CreatedAt  time.Time  `json:"created_at"`
+	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+// SessionTemplate is a reusable template for starting sessions
+type SessionTemplate struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+	CreatedBy   string `json:"created_by"`
+
+	// Template content
+	EntryTypesToInclude []EntryType    `json:"entry_types_to_include,omitempty"`
+	InitialEntries      []ContextEntry `json:"initial_entries,omitempty"`
+
+	// Timestamps
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// EnhancedRecallOptions extends RecallOptions with new capabilities
+type EnhancedRecallOptions struct {
+	RecallOptions
+
+	// New options
+	SymbolContext string  `json:"symbol_context,omitempty"`
+	RecencyWeight float64 `json:"recency_weight,omitempty"` // 0.0-1.0, default 0.2
+	IncludeTasks  bool    `json:"include_tasks"`
 }

@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
-var version = "1.0.0"
+var version = "1.1.0"
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -27,7 +29,7 @@ func main() {
 	}()
 
 	server := mcp.NewServer("mcp-time", version)
-	server.SetInstructions("Fast Go-native time server. Tools: get_current_time, convert_timezone, add_duration")
+	server.SetInstructions("Fast Go-native time server. Tools: get_current_time, convert_timezone, add_duration, list_timezones, wait")
 
 	// get_current_time - Get current time in a timezone
 	server.AddTool(mcp.Tool{
@@ -102,10 +104,45 @@ func main() {
 		},
 	}, handleListTimezones)
 
+	// wait - Sleep for a duration
+	server.AddTool(mcp.Tool{
+		Name:        "wait",
+		Description: "Wait (sleep) for a duration",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"duration": map[string]any{
+					"type":        "string",
+					"description": "How long to wait (e.g., '250ms', '10s', '2m', '1h', '7d').",
+				},
+			},
+			Required: []string{"duration"},
+		},
+	}, handleWait)
+
 	if err := server.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func parseDurationWithDays(durationStr string) (time.Duration, error) {
+	if durationStr == "" {
+		return 0, fmt.Errorf("duration is required")
+	}
+	if strings.HasSuffix(durationStr, "d") {
+		raw := strings.TrimSuffix(durationStr, "d")
+		days, err := strconv.Atoi(raw)
+		if err != nil {
+			return 0, fmt.Errorf("invalid day duration %q: expected integer days like '7d'", durationStr)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", durationStr, err)
+	}
+	return d, nil
 }
 
 func handleGetCurrentTime(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -183,28 +220,14 @@ func handleAddDuration(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	timeStr, _ := args["time"].(string)
 	tzName, _ := args["timezone"].(string)
 
-	if durationStr == "" {
-		return nil, fmt.Errorf("duration is required")
-	}
-
-	// Parse duration (support 'd' for days)
-	var d time.Duration
-	if len(durationStr) > 0 && durationStr[len(durationStr)-1] == 'd' {
-		days := 0
-		fmt.Sscanf(durationStr, "%dd", &days)
-		d = time.Duration(days) * 24 * time.Hour
-	} else {
-		var err error
-		d, err = time.ParseDuration(durationStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid duration %q: %w", durationStr, err)
-		}
+	d, err := parseDurationWithDays(durationStr)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse base time or use now
 	var t time.Time
 	if timeStr != "" {
-		var err error
 		t, err = time.Parse(time.RFC3339, timeStr)
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse time %q: use RFC3339 format", timeStr)
@@ -268,5 +291,41 @@ func handleListTimezones(ctx context.Context, args map[string]any) (*mcp.CallToo
 	return mcp.JSONResult(map[string]any{
 		"timezones": timezones,
 		"note":      "Use IANA timezone names. See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones",
+	})
+}
+
+func handleWait(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	durationStr, _ := args["duration"].(string)
+	d, err := parseDurationWithDays(durationStr)
+	if err != nil {
+		return nil, err
+	}
+	if d < 0 {
+		return nil, fmt.Errorf("duration must be non-negative")
+	}
+
+	start := time.Now()
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline) - 100*time.Millisecond
+		if d > remaining {
+			return nil, fmt.Errorf("requested duration %s exceeds time remaining %s; increase the server timeout or use a shorter wait", d, remaining)
+		}
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+	}
+
+	end := time.Now()
+	return mcp.JSONResult(map[string]any{
+		"requested_duration": durationStr,
+		"waited_duration_ms": end.Sub(start).Milliseconds(),
+		"started_at":         start.UTC().Format(time.RFC3339Nano),
+		"ended_at":           end.UTC().Format(time.RFC3339Nano),
 	})
 }

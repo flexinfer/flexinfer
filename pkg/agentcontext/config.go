@@ -35,6 +35,20 @@ type Config struct {
 	SummarizeEntryThreshold  int
 	SummarizeTokenThreshold  int
 	SummarizeMinuteThreshold int
+
+	// Handoff configuration
+	HandoffMaxTokens        int
+	HandoffExpirationHours  int
+
+	// Recall enhancements
+	DefaultRecencyWeight    float64
+	TaskPriorityBoost       float64
+
+	// Task/Annotation collections
+	TasksCollection       string
+	AnnotationsCollection string
+	HandoffsCollection    string
+	TemplatesCollection   string
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -74,6 +88,17 @@ func LoadConfigFromEnv() (Config, error) {
 		SummarizeEntryThreshold:  intEnv("AGENT_CONTEXT_SUMMARIZE_ENTRY_THRESHOLD", 50),
 		SummarizeTokenThreshold:  intEnv("AGENT_CONTEXT_SUMMARIZE_TOKEN_THRESHOLD", 20000),
 		SummarizeMinuteThreshold: intEnv("AGENT_CONTEXT_SUMMARIZE_MINUTE_THRESHOLD", 30),
+
+		HandoffMaxTokens:        intEnv("AGENT_CONTEXT_HANDOFF_MAX_TOKENS", 8000),
+		HandoffExpirationHours:  intEnv("AGENT_CONTEXT_HANDOFF_EXPIRATION_HOURS", 24),
+
+		DefaultRecencyWeight:    floatEnv("AGENT_CONTEXT_DEFAULT_RECENCY_WEIGHT", 0.2),
+		TaskPriorityBoost:       floatEnv("AGENT_CONTEXT_TASK_PRIORITY_BOOST", 0.3),
+
+		TasksCollection:       firstNonEmptyEnv([]string{"AGENT_CONTEXT_TASKS_COLLECTION"}, "agent_tasks_v1"),
+		AnnotationsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_ANNOTATIONS_COLLECTION"}, "agent_annotations_v1"),
+		HandoffsCollection:    firstNonEmptyEnv([]string{"AGENT_CONTEXT_HANDOFFS_COLLECTION"}, "agent_handoffs_v1"),
+		TemplatesCollection:   firstNonEmptyEnv([]string{"AGENT_CONTEXT_TEMPLATES_COLLECTION"}, "agent_templates_v1"),
 	}
 
 	// Validate visibility
@@ -128,6 +153,15 @@ func boolEnv(key string, def bool) bool {
 			return false
 		default:
 			return def
+		}
+	}
+	return def
+}
+
+func floatEnv(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def
