@@ -319,6 +319,36 @@ publish_mlcllm_rocm:
       when: manual
     - when: never
 
+# ROCm 6.4 MLC-LLM image (builds TVM from source)
+# Required for quality models (32B, 14B) on gfx1100 nodes
+publish_mlcllm_rocm64:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 3h  # Longer timeout - builds TVM from source
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building MLC-LLM ROCm 6.4 image (from source)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.mlc-rocm64-full" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=registry.harbor.lan/library/mlc-llm:rocm64-src,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - when: never
+
 publish_mlcllm_cuda:
   stage: publish
   image: moby/buildkit:v0.12.5

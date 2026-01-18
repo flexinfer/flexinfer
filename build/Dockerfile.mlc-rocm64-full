@@ -33,6 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Create virtual environment for Python packages (PEP 668 compliance on Ubuntu 24.04)
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV VIRTUAL_ENV=/opt/venv
+
 # Upgrade pip and install build tools
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel cython numpy
 
@@ -93,8 +98,8 @@ ENV TVM_SOURCE_DIR=/build/tvm
 ENV TVM_BUILD_PATH=/build/tvm/build
 RUN pip3 install --no-cache-dir .
 
-# Create non-root user
-RUN useradd -m -u 1000 mlc && \
+# Create non-root user (use UID 10000 to avoid conflicts with base image users)
+RUN useradd -m -u 10000 mlc && \
     mkdir -p /models && \
     chown -R mlc:mlc /models
 
