@@ -1175,16 +1175,16 @@ func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
 		expected    []string
 	}{
 		{
-			name:        "AMD GPU default attention backend (nil spec)",
+			name:        "AMD GPU no default attention backend (nil spec)",
 			vllm:        nil,
 			gpuResource: GPUResourceAMD,
-			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--attention-backend", "TORCH_SDPA"},
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0"},
 		},
 		{
-			name:        "AMD GPU default attention backend (empty spec)",
+			name:        "AMD GPU no default attention backend (empty spec)",
 			vllm:        &aiv1alpha1.VLLMSpec{},
 			gpuResource: GPUResourceAMD,
-			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--attention-backend", "TORCH_SDPA"},
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0"},
 		},
 		{
 			name:        "NVIDIA GPU no default attention backend",
@@ -1206,10 +1206,10 @@ func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
 				KVCacheDtype: "int8",
 			},
 			gpuResource: GPUResourceAMD,
-			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "int8", "--attention-backend", "TORCH_SDPA"},
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "int8"},
 		},
 		{
-			name: "explicit attention backend overrides AMD default",
+			name: "explicit attention backend for AMD GPU",
 			vllm: &aiv1alpha1.VLLMSpec{
 				AttentionBackend: "ROCM_FLASH",
 			},
@@ -1266,7 +1266,6 @@ func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
 				"--gpu-memory-utilization", "0.85",
 				"--enable-prefix-caching",
 				"--kv-cache-dtype", "int8",
-				"--attention-backend", "TORCH_SDPA",
 				"--enable-chunked-prefill",
 				"--block-size", "16",
 			},

@@ -2072,9 +2072,6 @@ func (r *ModelDeploymentReconciler) buildMLCOverrides(m *aiv1alpha1.ModelDeploym
 func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
 	args := []string{"--model", modelPath, "--host", "0.0.0.0"}
 
-	// Detect if this is an AMD GPU deployment
-	isAMD := r.detectGPUResourceFromSpec(m) == GPUResourceAMD
-
 	if m.Spec.VLLM == nil {
 		// No AMD-specific defaults needed when VLLM spec is nil
 		// Note: --attention-backend removed - not all vLLM ROCm builds support it
