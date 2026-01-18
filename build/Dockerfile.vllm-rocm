@@ -1,19 +1,21 @@
 # vLLM Docker image for AMD GPUs (ROCm)
-# Uses official ROCm vLLM base image for gfx1100 (RX 7900 XTX)
+# Uses official ROCm vLLM image with gfx1100 (RX 7900 XTX) support via HSA_OVERRIDE
 #
 # Build command:
 #   docker build -f build/Dockerfile.vllm-rocm -t vllm-rocm .
 #
-# Based on: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/advanced/advancedryz/linux/llm/build-docker-image.html
+# Note: Official rocm/vllm images are built for MI300, but work on gfx1100 with
+# HSA_OVERRIDE_GFX_VERSION=11.0.0 environment variable
 
-# Use the official ROCm vLLM image with navi (RDNA3) support
-FROM rocm/vllm-dev:navi_base
+# Use official ROCm vLLM image with ROCm 6.4.1 (matches our host ROCm version)
+FROM rocm/vllm:rocm6.4.1_vllm_0.10.1_20250909
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # ROCm environment for RX 7900 XTX (gfx1100)
+# HSA_OVERRIDE_GFX_VERSION tricks ROCm into treating gfx1100 as supported
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
 ENV PYTORCH_ROCM_ARCH=gfx1100
 ENV HIP_VISIBLE_DEVICES=0
@@ -24,10 +26,8 @@ ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 
 WORKDIR /workspace
 
-# Install vLLM and additional dependencies
-# The navi_base image has PyTorch with ROCm but NOT vLLM - we must install it
+# vLLM is pre-installed in the base image, just add extra dependencies
 RUN pip install --no-cache-dir \
-    vllm \
     diffusers>=0.30.0 \
     pillow \
     sentencepiece \
