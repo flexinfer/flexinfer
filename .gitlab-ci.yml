@@ -337,6 +337,37 @@ deploy:homebrew:
     - if: $CI_COMMIT_TAG
   when: manual
 
+build:image:loom-core:
+  stage: deploy
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  script:
+    - mkdir -p "$DOCKER_CONFIG"
+    - >
+      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
+      "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
+    - export IMAGE="$IMAGE_REGISTRY/services/loom-core"
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$IMAGE:$CI_COMMIT_SHORT_SHA"
+      --build-arg "VERSION=$CI_COMMIT_SHORT_SHA"
+      --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        /kaniko/executor \
+          --context "$CI_PROJECT_DIR" \
+          --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+          --destination "$IMAGE:latest" \
+          --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
+          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
 build:image:custom-server:
   stage: deploy
   image:

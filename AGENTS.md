@@ -65,7 +65,108 @@ MCP Servers Included
 - `mcp-prometheus` - Prometheus queries
 - `mcp-grafana` - Grafana dashboards
 - `mcp-loki` - Log queries
+- `mcp-agent-context` - Persistent memory, task tracking, code annotations
 - And more in `cmd/mcp-*/`
+
+## Agent Context System
+
+The `mcp-agent-context` server provides persistent memory for AI agents across sessions. Use it for:
+- Recording decisions, findings, and file reads for later recall
+- Tracking tasks discovered during sessions
+- Annotating code locations with notes
+- Handing off context between agents
+
+### Prerequisites
+
+| Variable | Fallback | Description |
+|----------|----------|-------------|
+| `AGENT_CONTEXT_EMBED_API_KEY` | `MORPH_API_KEY`, `OPENAI_API_KEY` | Embedding API key |
+| `AGENT_CONTEXT_QDRANT_URL` | `QDRANT_URL`, `http://localhost:6333` | Qdrant vector DB URL |
+| `AGENT_CONTEXT_DEFAULT_AGENT_ID` | - | Default agent ID (optional) |
+| `AGENT_CONTEXT_DEFAULT_NAMESPACE` | - | Default namespace (optional) |
+
+### Quick Start Workflow
+
+```
+1. agent_session_start(namespace="project/feature-x")
+2. agent_context_recall_enhanced(query="previous work on this feature")
+3. agent_context_add(entries=[{entry_type: "decision", title: "...", content: "..."}])
+4. agent_task_add(tasks=[{title: "Add tests", priority: "medium"}])
+5. agent_session_end(summarize=true)
+```
+
+### Tool Categories
+
+#### Session Management
+| Tool | Description |
+|------|-------------|
+| `agent_session_start` | Start or resume a session. Returns session_id. |
+| `agent_session_end` | End session, optionally summarize context. |
+| `agent_session_list` | List sessions by agent/namespace/status. |
+
+#### Context Storage
+| Tool | Description |
+|------|-------------|
+| `agent_context_add` | Add entries (file_read, decision, finding, etc.). |
+| `agent_context_get` | Retrieve entries by ID. |
+| `agent_context_delete` | Delete entries (requires confirm=true). |
+| `agent_context_summarize` | Generate summary of session context. |
+| `agent_context_link_codebase` | Link to codebase-memory entries. |
+| `agent_context_stats` | Get storage statistics. |
+
+#### Context Retrieval
+| Tool | Description |
+|------|-------------|
+| `agent_context_search` | Semantic search across entries. |
+| `agent_context_recall` | Token-efficient retrieval (prioritizes decisions/summaries). |
+| `agent_context_recall_enhanced` | Enhanced recall with tasks, recency weighting, symbol context. |
+
+#### Task Tracking
+| Tool | Description |
+|------|-------------|
+| `agent_task_add` | Add tasks with priority, file_path, blocked_by. |
+| `agent_task_update` | Update status (pending/in_progress/completed/blocked). |
+| `agent_task_list` | List tasks, filter by status. |
+
+#### Code Annotations
+| Tool | Description |
+|------|-------------|
+| `agent_code_annotate` | Create annotation at file:line (todo, fixme, bug, etc.). |
+| `agent_code_annotations_get` | Get annotations for file/range. |
+
+#### Cross-Agent Coordination
+| Tool | Description |
+|------|-------------|
+| `agent_context_share` | Share entries with other agents. |
+| `agent_context_query_shared` | Query context shared by others. |
+| `agent_handoff_create` | Create handoff package (full, selective, summary_only). |
+| `agent_handoff_accept` | Accept handoff, optionally import entries. |
+
+#### Templates
+| Tool | Description |
+|------|-------------|
+| `agent_template_create` | Create reusable session template. |
+| `agent_template_list` | List available templates. |
+
+### Entry Types
+
+| Type | Use For |
+|------|---------|
+| `file_read` | Recording files read with line ranges |
+| `decision` | Architectural choices, implementation decisions |
+| `finding` | Discoveries during exploration |
+| `question` | Open questions to revisit |
+| `note` | General observations |
+| `error` | Errors encountered and resolution |
+| `code_context` | Links to codebase-memory symbols |
+
+### Best Practices
+
+1. **Start sessions with recall**: Always check for previous context before starting work
+2. **Record decisions immediately**: Don't wait until end of session
+3. **Use namespaces**: Group related work (e.g., `project/feature-x`)
+4. **Add tasks as you discover them**: Track TODOs/FIXMEs in the task system
+5. **End sessions with summary**: Generates compressed context for future recall
 
 Code Style
 
