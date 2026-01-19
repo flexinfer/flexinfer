@@ -4,6 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/flexinfer/flexinfer/agents/agent"
@@ -39,13 +42,31 @@ func main() {
 		setupLog.Error(err, "Failed to create agent")
 	}
 
-	ctx := context.Background()
+	// Create context that cancels on SIGINT/SIGTERM for graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+
+	// Run immediately on startup
+	if err := nodeAgent.ProbeAndLabel(ctx); err != nil {
+		setupLog.Error(err, "Error probing and labeling node")
+	}
+	// Placeholder for emitting metrics
+	metrics.GPUTemperature.WithLabelValues("0", "test-node").Set(65.5)
+
 	for {
-		if err := nodeAgent.ProbeAndLabel(ctx); err != nil {
-			setupLog.Error(err, "Error probing and labeling node")
+		select {
+		case <-ctx.Done():
+			setupLog.Info("Received shutdown signal, exiting")
+			return
+		case <-ticker.C:
+			if err := nodeAgent.ProbeAndLabel(ctx); err != nil {
+				setupLog.Error(err, "Error probing and labeling node")
+			}
+			// Placeholder for emitting metrics
+			metrics.GPUTemperature.WithLabelValues("0", "test-node").Set(65.5)
 		}
-		// Placeholder for emitting metrics
-		metrics.GPUTemperature.WithLabelValues("0", "test-node").Set(65.5)
-		time.Sleep(*interval)
 	}
 }

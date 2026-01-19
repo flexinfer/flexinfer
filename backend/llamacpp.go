@@ -15,7 +15,7 @@ type LlamaCppBackend struct {
 }
 
 func init() {
-	Register(&LlamaCppBackend{})
+	MustRegister(&LlamaCppBackend{})
 }
 
 func (b *LlamaCppBackend) Name() string {

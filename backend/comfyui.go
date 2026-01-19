@@ -14,7 +14,7 @@ type ComfyUIBackend struct {
 }
 
 func init() {
-	Register(&ComfyUIBackend{})
+	MustRegister(&ComfyUIBackend{})
 }
 
 func (b *ComfyUIBackend) Name() string {

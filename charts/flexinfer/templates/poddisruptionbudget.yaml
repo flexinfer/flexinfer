@@ -1,0 +1,74 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- if .Values.controller.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  {{- if .Values.podDisruptionBudget.controller.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.controller.minAvailable }}
+  {{- else if .Values.podDisruptionBudget.controller.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.controller.maxUnavailable }}
+  {{- else }}
+  maxUnavailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+{{- end }}
+---
+{{- if .Values.proxy.enabled }}
+{{- if gt (int .Values.proxy.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  {{- if .Values.podDisruptionBudget.proxy.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.proxy.minAvailable }}
+  {{- else if .Values.podDisruptionBudget.proxy.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.proxy.maxUnavailable }}
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: proxy
+{{- end }}
+{{- end }}
+---
+{{- if .Values.scheduler.enabled }}
+{{- if gt (int .Values.scheduler.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-scheduler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  {{- if .Values.podDisruptionBudget.scheduler.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.scheduler.minAvailable }}
+  {{- else if .Values.podDisruptionBudget.scheduler.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.scheduler.maxUnavailable }}
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+{{- end }}
+{{- end }}
+{{- end }}

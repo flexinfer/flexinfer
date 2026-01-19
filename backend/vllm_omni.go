@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -14,7 +15,7 @@ type VLLMOmniBackend struct {
 }
 
 func init() {
-	Register(&VLLMOmniBackend{})
+	MustRegister(&VLLMOmniBackend{})
 }
 
 func (b *VLLMOmniBackend) Name() string {
@@ -48,7 +49,7 @@ func (b *VLLMOmniBackend) Port() int32 {
 func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 	args := []string{
 		"--host", "0.0.0.0",
-		"--port", "8000",
+		"--port", fmt.Sprintf("%d", b.Port()),
 	}
 
 	// Model path

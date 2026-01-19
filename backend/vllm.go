@@ -15,7 +15,7 @@ type VLLMBackend struct {
 }
 
 func init() {
-	Register(&VLLMBackend{})
+	MustRegister(&VLLMBackend{})
 }
 
 func (b *VLLMBackend) Name() string {
@@ -45,7 +45,7 @@ func (b *VLLMBackend) Port() int32 {
 func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	args := []string{
 		"--host", "0.0.0.0",
-		"--port", "8000",
+		"--port", fmt.Sprintf("%d", b.Port()),
 	}
 
 	// Model path

@@ -16,7 +16,7 @@ type MLCLLMBackend struct {
 }
 
 func init() {
-	Register(&MLCLLMBackend{})
+	MustRegister(&MLCLLMBackend{})
 }
 
 func (b *MLCLLMBackend) Name() string {

@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -129,7 +131,9 @@ func getNamespace() string {
 	return namespace
 }
 
-// ctx returns a background context
+// ctx returns a context that respects SIGINT/SIGTERM signals.
+// This allows CLI commands to be gracefully interrupted.
 func ctx() context.Context {
-	return context.Background()
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return ctx
 }

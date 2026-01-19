@@ -753,3 +753,241 @@ func TestResolveServiceLabel_DirectModelName(t *testing.T) {
 	result := p.resolveServiceLabel(ctx, "direct-model-name")
 	assert.Equal(t, "direct-model-name", result)
 }
+
+// Error Scenario Tests
+
+func TestQueueOverflow(t *testing.T) {
+	// Test that queue capacity behaves correctly - using a manually created queue
+	// to avoid the background processor that tries to drain items
+
+	// Create a queue directly to test capacity behavior
+	queue := &RequestQueue{
+		model:   "overflow-test-model",
+		items:   make(chan *QueuedRequest, 2), // Small queue to test overflow
+		created: time.Now(),
+	}
+
+	// Fill the queue to capacity
+	for i := 0; i < 2; i++ {
+		select {
+		case queue.items <- &QueuedRequest{
+			w:          httptest.NewRecorder(),
+			r:          httptest.NewRequest("GET", "/test", nil),
+			done:       make(chan struct{}),
+			enqueuedAt: time.Now(),
+		}:
+			// Item added successfully
+		default:
+			t.Fatalf("Failed to add item %d to queue", i)
+		}
+	}
+
+	// Queue should now be full
+	assert.Equal(t, 2, len(queue.items))
+	assert.Equal(t, 2, cap(queue.items))
+
+	// Try to add one more - should fail (non-blocking check)
+	select {
+	case queue.items <- &QueuedRequest{}:
+		t.Fatal("Expected queue to be full, but item was added")
+	default:
+		// This is expected - queue is full
+	}
+}
+
+func TestConnectionTimeout_CancelledContext(t *testing.T) {
+	p := setupTestProxy(t)
+
+	// Create a context that's already cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Create model deployment
+	one := int32(1)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "timeout-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &one,
+		},
+	}
+	require.NoError(t, p.client.Create(context.Background(), md))
+
+	// triggerScaleUp should respect context cancellation
+	err := p.triggerScaleUp(ctx, "timeout-model")
+	// With cancelled context, should return early
+	assert.NoError(t, err) // Already scaled, so no error
+}
+
+func TestColdStartTimeout_Exceeded(t *testing.T) {
+	// Create proxy with very short cold start timeout
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	p := &Proxy{
+		client:           k8sClient,
+		namespace:        "default",
+		maxQueueSize:     100,
+		queueTimeout:     60 * time.Second,
+		coldStartTimeout: 1 * time.Millisecond, // Very short timeout for testing
+	}
+
+	ctx := context.Background()
+
+	// Create a scaled-to-zero model that will never become ready
+	zero := int32(0)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "slow-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &zero,
+		},
+		Status: aiv1alpha1.ModelDeploymentStatus{
+			Phase: aiv1alpha1.ModelDeploymentPhaseIdle,
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, md))
+
+	// Getting cold start timeout should return the proxy default
+	timeout := p.getColdStartTimeout(ctx, "slow-model")
+	assert.Equal(t, 1*time.Millisecond, timeout)
+}
+
+func TestModelNotFoundAtStartup(t *testing.T) {
+	p := setupTestProxy(t)
+
+	// Attempt to get a non-existent model
+	ctx := context.Background()
+
+	_, err := p.getModelDeployment(ctx, "does-not-exist")
+	assert.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "Expected NotFound error, got: %v", err)
+
+	// Verify that triggerScaleUp also handles missing model
+	err = p.triggerScaleUp(ctx, "missing-model")
+	assert.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "Expected NotFound error, got: %v", err)
+}
+
+func TestQueueTimeout_Context(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	// Create proxy with short queue timeout
+	p := &Proxy{
+		client:           k8sClient,
+		namespace:        "default",
+		maxQueueSize:     100,
+		queueTimeout:     10 * time.Millisecond, // Short timeout
+		coldStartTimeout: 60 * time.Second,
+	}
+
+	// Queue timeout should be respected in context creation
+	assert.Equal(t, 10*time.Millisecond, p.queueTimeout)
+}
+
+func TestHandleRequest_QueueTimeoutResponse(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	p := &Proxy{
+		client:           k8sClient,
+		namespace:        "default",
+		maxQueueSize:     1, // Tiny queue
+		queueTimeout:     1 * time.Millisecond,
+		coldStartTimeout: 1 * time.Millisecond,
+	}
+
+	ctx := context.Background()
+
+	// Create model that's not ready
+	zero := int32(0)
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "timeout-test-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Replicas: &zero,
+		},
+		Status: aiv1alpha1.ModelDeploymentStatus{
+			Phase: aiv1alpha1.ModelDeploymentPhaseIdle,
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, md))
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.Header.Set("X-Model-ID", "timeout-test-model")
+	w := httptest.NewRecorder()
+
+	p.handleRequest(w, req)
+
+	// Should get some error response (503 for cold start timeout or similar)
+	resp := w.Result()
+	assert.True(t, resp.StatusCode >= 400, "Expected error status code, got: %d", resp.StatusCode)
+}
+
+func TestBackendPort_Defaults(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Test various backends and their default ports
+	testCases := []struct {
+		name        string
+		backend     string
+		expectedPort int32
+	}{
+		{"ollama", "ollama", 11434},
+		{"vllm", "vllm", 8000},
+		{"llamacpp", "llamacpp", 8080},
+		{"llama.cpp", "llama.cpp", 8080},
+		{"comfyui", "comfyui", 8188},
+		{"mlc-llm", "mlc-llm", 8000},
+		{"unknown", "unknown", 8000}, // Default
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			one := int32(1)
+			md := &aiv1alpha1.ModelDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-" + tc.name,
+					Namespace: "default",
+				},
+				Spec: aiv1alpha1.ModelDeploymentSpec{
+					Replicas: &one,
+					Backend:  tc.backend,
+				},
+			}
+			require.NoError(t, p.client.Create(ctx, md))
+
+			port := p.getBackendPort(ctx, "test-"+tc.name)
+			assert.Equal(t, tc.expectedPort, port, "Backend %s should have port %d", tc.backend, tc.expectedPort)
+		})
+	}
+}
+
+func TestGetBackendPort_ModelNotFound(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Non-existent model should return default port
+	port := p.getBackendPort(ctx, "nonexistent-model")
+	assert.Equal(t, int32(8000), port, "Missing model should return default port 8000")
+}

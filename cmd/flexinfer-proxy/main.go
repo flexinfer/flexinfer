@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -193,8 +193,25 @@ type Proxy struct {
 
 func main() {
 	var port int
+	var logLevel string
 	flag.IntVar(&port, "port", 8080, "Port to listen on")
+	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
+
+	// Initialize structured logging
+	var level slog.Level
+	switch strings.ToLower(logLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(logger)
 
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
@@ -203,12 +220,14 @@ func main() {
 
 	cfg, err := config.GetConfig()
 	if err != nil {
-		log.Fatalf("unable to get kubeconfig: %v", err)
+		slog.Error("unable to get kubeconfig", "error", err)
+		os.Exit(1)
 	}
 
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatalf("unable to create k8s client: %v", err)
+		slog.Error("unable to create k8s client", "error", err)
+		os.Exit(1)
 	}
 
 	// Load configuration from environment variables
@@ -233,14 +252,19 @@ func main() {
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("ok")); err != nil {
-			log.Printf("healthz write failed: %v", err)
+			slog.Warn("healthz write failed", "error", err)
 		}
 	})
 
-	log.Printf("Starting proxy on :%d in namespace %s (queue_size=%d, queue_timeout=%s, cold_start_timeout=%s)",
-		port, namespace, maxQueueSize, queueTimeout, coldStartTimeout)
+	slog.Info("starting proxy",
+		"port", port,
+		"namespace", namespace,
+		"queue_size", maxQueueSize,
+		"queue_timeout", queueTimeout.String(),
+		"cold_start_timeout", coldStartTimeout.String())
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
-		log.Fatalf("server failed: %v", err)
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -279,7 +303,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
 	resolvedName := p.resolveServiceLabel(ctx, modelName)
 	if resolvedName != modelName {
-		log.Printf("Resolved service label %q to model %q", modelName, resolvedName)
+		slog.Debug("resolved service label", "label", modelName, "model", resolvedName)
 		modelName = resolvedName
 	}
 
@@ -289,7 +313,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if errors.IsNotFound(err) {
 			http.Error(w, fmt.Sprintf("Model deployment %s not found", modelName), http.StatusNotFound)
 		} else {
-			log.Printf("Error fetching model %s: %v", modelName, err)
+			slog.Error("error fetching model", "model", modelName, "error", err)
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 		}
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
@@ -299,7 +323,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 4. Check if model belongs to a GPUGroup
 	if md.Spec.GPUGroupRef != nil && *md.Spec.GPUGroupRef != "" {
 		if err := p.handleGPUGroupRequest(ctx, w, r, modelName, md, start); err != nil {
-			log.Printf("GPUGroup request failed for model %s: %v", modelName, err)
+			slog.Error("GPUGroup request failed", "model", modelName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
 		}
 		return
@@ -313,7 +337,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Model is scaled to zero or not ready - use queue
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
-		log.Printf("Cold start failed for model %s: %v", modelName, err)
+		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		// Error response already sent by handleColdStart
 	}
@@ -384,7 +408,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		// Successfully queued
 		queuedRequestsTotal.WithLabelValues(modelName).Inc()
 		queueDepth.WithLabelValues(modelName).Inc()
-		log.Printf("Request queued for model %s (queue depth: %d)", modelName, len(queue.items))
+		slog.Debug("request queued", "model", modelName, "queue_depth", len(queue.items))
 	default:
 		// Queue is full
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
@@ -440,7 +464,7 @@ func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 	// Start queue processor (handles scale-up and draining)
 	go p.processQueue(queue)
 
-	log.Printf("Created new request queue for model %s", modelName)
+	slog.Info("created request queue", "model", modelName)
 	return queue
 }
 
@@ -474,7 +498,7 @@ func (p *Proxy) getOrCreateGPUGroupQueue(modelName, gpuGroupName string) *Reques
 	// Start GPUGroup queue processor (waits for model to become active)
 	go p.processGPUGroupQueue(queue)
 
-	log.Printf("Created new GPUGroup request queue for model %s (group=%s)", modelName, gpuGroupName)
+	slog.Info("created GPUGroup request queue", "model", modelName, "gpugroup", gpuGroupName)
 	return queue
 }
 
@@ -483,7 +507,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 	modelName := queue.model
 	ctx := context.Background()
 
-	log.Printf("Starting queue processor for model %s", modelName)
+	slog.Info("starting queue processor", "model", modelName)
 
 	// Trigger scale-up using singleflight to deduplicate
 	_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (interface{}, error) {
@@ -491,7 +515,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 	})
 
 	if err != nil {
-		log.Printf("Failed to scale up model %s: %v", modelName, err)
+		slog.Error("failed to scale up model", "model", modelName, "error", err)
 		// Drain queue with errors
 		p.drainQueueWithError(queue, fmt.Errorf("scale-up failed: %v", err))
 		return
@@ -499,12 +523,12 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	// Wait for model to become ready
 	if err := p.waitForReady(ctx, modelName); err != nil {
-		log.Printf("Model %s failed to become ready: %v", modelName, err)
+		slog.Error("model failed to become ready", "model", modelName, "error", err)
 		p.drainQueueWithError(queue, err)
 		return
 	}
 
-	log.Printf("Model %s is ready, draining queue", modelName)
+	slog.Info("model ready, draining queue", "model", modelName)
 
 	// Mark queue as draining (prevents new requests from being queued here)
 	queue.draining.Store(true)
@@ -514,7 +538,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	// Clean up queue
 	p.queues.Delete(modelName)
-	log.Printf("Queue processor for model %s finished", modelName)
+	slog.Info("queue processor finished", "model", modelName)
 }
 
 // processGPUGroupQueue handles queue processing for GPUGroup-managed models.
@@ -527,16 +551,16 @@ func (p *Proxy) processGPUGroupQueue(queue *RequestQueue) {
 	gpuGroupName := queue.gpuGroupName
 	ctx := context.Background()
 
-	log.Printf("Starting GPUGroup queue processor for model %s (group=%s)", modelName, gpuGroupName)
+	slog.Info("starting GPUGroup queue processor", "model", modelName, "gpugroup", gpuGroupName)
 
 	// Wait for model to become active in the GPUGroup and ready
 	if err := p.waitForGPUGroupActive(ctx, modelName, gpuGroupName); err != nil {
-		log.Printf("Model %s failed to become active in GPUGroup %s: %v", modelName, gpuGroupName, err)
+		slog.Error("model failed to become active in GPUGroup", "model", modelName, "gpugroup", gpuGroupName, "error", err)
 		p.drainQueueWithError(queue, err)
 		return
 	}
 
-	log.Printf("Model %s is active in GPUGroup %s, draining queue", modelName, gpuGroupName)
+	slog.Info("model active in GPUGroup, draining queue", "model", modelName, "gpugroup", gpuGroupName)
 
 	// Mark queue as draining
 	queue.draining.Store(true)
@@ -549,7 +573,7 @@ func (p *Proxy) processGPUGroupQueue(queue *RequestQueue) {
 
 	// Clean up queue
 	p.queues.Delete(modelName)
-	log.Printf("GPUGroup queue processor for model %s finished", modelName)
+	slog.Info("GPUGroup queue processor finished", "model", modelName)
 }
 
 // waitForGPUGroupActive polls until the model is active in the GPUGroup and ready
@@ -574,21 +598,20 @@ func (p *Proxy) waitForGPUGroupActive(ctx context.Context, modelName, gpuGroupNa
 			// Check if model is active in GPUGroup
 			gpuGroup, err := p.getGPUGroup(ctx, gpuGroupName)
 			if err != nil {
-				log.Printf("Error checking GPUGroup %s: %v", gpuGroupName, err)
+				slog.Warn("error checking GPUGroup", "gpugroup", gpuGroupName, "error", err)
 				continue
 			}
 
 			if gpuGroup.Status.ActiveModel != modelName {
 				// Model is not yet active, keep waiting
-				log.Printf("Waiting for model %s to become active in GPUGroup %s (current active: %s)",
-					modelName, gpuGroupName, gpuGroup.Status.ActiveModel)
+				slog.Debug("waiting for model to become active", "model", modelName, "gpugroup", gpuGroupName, "current_active", gpuGroup.Status.ActiveModel)
 				continue
 			}
 
 			// Model is active, now check if it's ready
 			md, err := p.getModelDeployment(ctx, modelName)
 			if err != nil {
-				log.Printf("Error checking model %s readiness: %v", modelName, err)
+				slog.Warn("error checking model readiness", "model", modelName, "error", err)
 				continue
 			}
 
@@ -596,7 +619,7 @@ func (p *Proxy) waitForGPUGroupActive(ctx context.Context, modelName, gpuGroupNa
 				return nil // Model is active and ready
 			}
 
-			log.Printf("Model %s is active but not yet ready", modelName)
+			slog.Debug("model active but not ready", "model", modelName)
 		}
 	}
 }
@@ -613,20 +636,20 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 		return nil
 	}
 
-	log.Printf("Scaling up model %s from 0 to 1", modelName)
+	slog.Info("scaling up model", "model", modelName, "from", 0, "to", 1)
 	scaleUpsTotal.WithLabelValues(modelName).Inc()
 
 	// First, update LastAccessTime to prevent the controller from immediately
 	// scaling back down due to stale idle timeout.
 	// We need to update status first, then spec, to avoid race with controller.
 	now := metav1.Now()
-	log.Printf("DEBUG: Setting lastAccessTime to %v (resourceVersion=%s)", now.Time, md.ResourceVersion)
+	slog.Debug("setting lastAccessTime", "model", modelName, "time", now.Time, "resourceVersion", md.ResourceVersion)
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
-		log.Printf("ERROR: failed to update LastAccessTime before scale-up: %v", err)
+		slog.Warn("failed to update LastAccessTime before scale-up", "model", modelName, "error", err)
 		// Continue anyway - scale-up is more important
 	} else {
-		log.Printf("DEBUG: Successfully updated lastAccessTime")
+		slog.Debug("updated lastAccessTime", "model", modelName)
 	}
 
 	// Re-fetch to get latest version after status update
@@ -671,7 +694,7 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 		case <-ticker.C:
 			md, err := p.getModelDeployment(ctx, modelName)
 			if err != nil {
-				log.Printf("Error checking model %s readiness: %v", modelName, err)
+				slog.Warn("error checking model readiness", "model", modelName, "error", err)
 				continue
 			}
 			if isReady(md) {
@@ -779,7 +802,7 @@ func (p *Proxy) cleanupStaleQueues() {
 			queue := value.(*RequestQueue)
 			// Remove queues older than 2x queue timeout that are empty
 			if now.Sub(queue.created) > 2*p.queueTimeout && len(queue.items) == 0 {
-				log.Printf("Cleaning up stale queue for model %s", key.(string))
+				slog.Debug("cleaning up stale queue", "model", key.(string))
 				p.queues.Delete(key)
 			}
 			return true
@@ -794,7 +817,7 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 
 	md := &aiv1alpha1.ModelDeployment{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
-		log.Printf("Error fetching model for stats update: %v", err)
+		slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
 		return
 	}
 
@@ -803,12 +826,14 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
 		// Log but don't fail, it's just stats
-		log.Printf("Failed to update LastAccessTime: %v", err)
+		slog.Debug("failed to update LastAccessTime", "model", modelName, "error", err)
 	}
 }
 
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName string) {
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:8000", modelName, p.namespace) // FlexInfer services expose on port 8000
+	// Get the backend port for this model (defaults to 8000 if not found)
+	port := p.getBackendPort(r.Context(), modelName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", modelName, p.namespace, port)
 
 	// Get the actual backend model name (e.g., HuggingFace model ID)
 	backendModelName := p.getBackendModelName(r.Context(), modelName)
@@ -850,6 +875,28 @@ func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) strin
 	}
 	// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
 	return md.Spec.Model
+}
+
+// getBackendPort returns the port for a model's backend service.
+// Returns the backend-specific port based on model spec, or 8000 as default.
+func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
+		return 8000 // Default port
+	}
+
+	// Map backend types to their default ports
+	switch strings.ToLower(md.Spec.Backend) {
+	case "ollama":
+		return 11434
+	case "llamacpp", "llama.cpp", "llama-cpp":
+		return 8080
+	case "comfyui", "comfy":
+		return 8188
+	default:
+		// vllm, mlc-llm, diffusers, vllm-omni, tei all use 8000
+		return 8000
+	}
 }
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
@@ -900,7 +947,7 @@ func (p *Proxy) handleGPUGroupRequest(ctx context.Context, w http.ResponseWriter
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// GPUGroup not found - fall back to normal cold start behavior
-			log.Printf("GPUGroup %s not found for model %s, falling back to direct handling", gpuGroupName, modelName)
+			slog.Warn("GPUGroup not found, falling back to direct handling", "gpugroup", gpuGroupName, "model", modelName)
 			return p.handleColdStart(ctx, w, r, modelName, start)
 		}
 		http.Error(w, fmt.Sprintf("Error fetching GPUGroup: %v", err), http.StatusInternalServerError)
@@ -915,8 +962,8 @@ func (p *Proxy) handleGPUGroupRequest(ctx context.Context, w http.ResponseWriter
 	}
 
 	// Model is not active OR not ready - queue and signal demand
-	log.Printf("Model %s is not active in GPUGroup %s (active=%s), queuing request",
-		modelName, gpuGroupName, gpuGroup.Status.ActiveModel)
+	slog.Debug("model not active in GPUGroup, queuing request",
+		"model", modelName, "gpugroup", gpuGroupName, "active_model", gpuGroup.Status.ActiveModel)
 
 	gpuGroupQueuedRequestsTotal.WithLabelValues(gpuGroupName, modelName).Inc()
 
@@ -959,7 +1006,7 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 		queuedRequestsTotal.WithLabelValues(modelName).Inc()
 		queueDepth.WithLabelValues(modelName).Inc()
 		currentDepth := len(queue.items)
-		log.Printf("Request queued for GPUGroup model %s (queue depth: %d)", modelName, currentDepth)
+		slog.Debug("request queued for GPUGroup model", "model", modelName, "queue_depth", currentDepth)
 
 		// Signal demand to GPUGroup controller via annotations
 		go p.signalGPUGroupDemand(context.Background(), gpuGroupName, modelName, currentDepth)
@@ -1014,12 +1061,12 @@ func (p *Proxy) signalGPUGroupDemand(ctx context.Context, gpuGroupName, modelNam
 	}
 
 	if err := p.client.Patch(ctx, gpuGroup, patch); err != nil {
-		log.Printf("Failed to signal GPUGroup demand for %s/%s: %v", gpuGroupName, modelName, err)
+		slog.Warn("failed to signal GPUGroup demand", "gpugroup", gpuGroupName, "model", modelName, "error", err)
 		return
 	}
 
 	gpuGroupSwapSignalsTotal.WithLabelValues(gpuGroupName, modelName).Inc()
-	log.Printf("Signaled demand to GPUGroup %s for model %s (queue=%d)", gpuGroupName, modelName, queueDepthVal)
+	slog.Debug("signaled demand to GPUGroup", "gpugroup", gpuGroupName, "model", modelName, "queue_depth", queueDepthVal)
 }
 
 // clearGPUGroupDemand clears the queue annotations when queue is drained
@@ -1045,11 +1092,11 @@ func (p *Proxy) clearGPUGroupDemand(ctx context.Context, gpuGroupName, modelName
 	}
 
 	if err := p.client.Patch(ctx, gpuGroup, patch); err != nil {
-		log.Printf("Failed to clear GPUGroup demand for %s/%s: %v", gpuGroupName, modelName, err)
+		slog.Warn("failed to clear GPUGroup demand", "gpugroup", gpuGroupName, "model", modelName, "error", err)
 		return
 	}
 
-	log.Printf("Cleared demand signal from GPUGroup %s for model %s", gpuGroupName, modelName)
+	slog.Debug("cleared demand signal from GPUGroup", "gpugroup", gpuGroupName, "model", modelName)
 }
 
 // resolveServiceLabel resolves a service label to an actual model name.
@@ -1087,7 +1134,7 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	// List all Services in the namespace
 	var services corev1.ServiceList
 	if err := p.client.List(ctx, &services, client.InNamespace(p.namespace)); err != nil {
-		log.Printf("Failed to list services for label cache refresh: %v", err)
+		slog.Warn("failed to list services for label cache refresh", "error", err)
 		return
 	}
 
@@ -1110,12 +1157,12 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	// Second pass: build cache and warn on conflicts
 	for label, claimants := range labelClaims {
 		if len(claimants) > 1 {
-			log.Printf("WARN: serviceLabel %q claimed by multiple services: %v (using first: %s)",
-				label, claimants, claimants[0])
+			slog.Warn("serviceLabel claimed by multiple services",
+				"label", label, "services", claimants, "using", claimants[0])
 		}
 		// Use first claimant (deterministic based on k8s list order)
 		p.serviceLabelCache.Store(label, claimants[0])
-		log.Printf("Service label cache: %s -> %s", label, claimants[0])
+		slog.Debug("service label cache updated", "label", label, "model", claimants[0])
 	}
 
 	p.lastCacheRefresh = time.Now()
@@ -1151,7 +1198,7 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	// List ModelDeployments (v1alpha1)
 	var mds aiv1alpha1.ModelDeploymentList
 	if err := p.client.List(ctx, &mds, client.InNamespace(p.namespace)); err != nil {
-		log.Printf("Error listing ModelDeployments: %v", err)
+		slog.Warn("error listing ModelDeployments", "error", err)
 	} else {
 		for _, md := range mds.Items {
 			models = append(models, p.modelDeploymentToOpenAI(&md))
@@ -1161,7 +1208,7 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	// List Models (v1alpha2)
 	var ms aiv1alpha2.ModelList
 	if err := p.client.List(ctx, &ms, client.InNamespace(p.namespace)); err != nil {
-		log.Printf("Error listing Models: %v", err)
+		slog.Warn("error listing Models", "error", err)
 	} else {
 		for _, m := range ms.Items {
 			models = append(models, p.modelToOpenAI(&m))
@@ -1175,7 +1222,7 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding models response: %v", err)
+		slog.Warn("error encoding models response", "error", err)
 	}
 }
 

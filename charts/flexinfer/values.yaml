@@ -188,3 +188,26 @@ benchmarker:
 
 grafanaDashboard:
   enabled: true
+
+# Network Policy configuration
+# Restricts pod communication for improved security
+networkPolicy:
+  # Enable NetworkPolicy resources
+  enabled: false
+  # Namespace where Prometheus is deployed (for metrics scraping)
+  prometheusNamespace: monitoring
+
+# Pod Disruption Budget configuration
+# Ensures availability during voluntary disruptions (upgrades, node drains)
+podDisruptionBudget:
+  # Enable PDB resources
+  enabled: false
+  controller:
+    # minAvailable: 1
+    maxUnavailable: 1
+  proxy:
+    minAvailable: 1
+    # maxUnavailable: 1
+  scheduler:
+    minAvailable: 1
+    # maxUnavailable: 1

@@ -14,7 +14,7 @@ type DiffusersBackend struct {
 }
 
 func init() {
-	Register(&DiffusersBackend{})
+	MustRegister(&DiffusersBackend{})
 }
 
 func (b *DiffusersBackend) Name() string {

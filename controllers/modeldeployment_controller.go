@@ -2354,7 +2354,8 @@ func containsArg(args []string, target string) bool {
 
 // buildVLLMOmniArgs constructs command-line arguments for vLLM-Omni (diffusion server).
 func (r *ModelDeploymentReconciler) buildVLLMOmniArgs(m *aiv1alpha1.ModelDeployment, modelPath string) []string {
-	args := []string{"--model", modelPath, "--host", "0.0.0.0", "--port", "8000"}
+	port := r.getBackendPort(m)
+	args := []string{"--model", modelPath, "--host", "0.0.0.0", "--port", fmt.Sprintf("%d", port)}
 
 	if m.Spec.VLLMOmni == nil {
 		return args

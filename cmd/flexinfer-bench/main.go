@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/flexinfer/flexinfer/agents/benchmarker"
@@ -61,8 +63,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := bm.Run(context.Background(), *model, *configMapName); err != nil {
-		setupLog.Error(err, "Benchmark failed")
+	// Create context with timeout and signal handling
+	// Total timeout = cold start timeout + 10x min benchmark duration (generous buffer for iterations)
+	totalTimeout := *coldStartTimeout + (*minDuration * 10)
+	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+	defer cancel()
+
+	// Also listen for shutdown signals
+	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := bm.Run(sigCtx, *model, *configMapName); err != nil {
+		if sigCtx.Err() == context.DeadlineExceeded {
+			setupLog.Error(err, "Benchmark timed out", "timeout", totalTimeout)
+		} else if sigCtx.Err() == context.Canceled {
+			setupLog.Info("Benchmark interrupted by signal")
+		} else {
+			setupLog.Error(err, "Benchmark failed")
+		}
 		os.Exit(1)
 	}
 

@@ -20,9 +20,12 @@ FlexInfer is **functional and working** with comprehensive implementations of al
 
 ### High Priority (Deployment Ready)
 - [x] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
+- [x] **Helm security templates** - NetworkPolicy and PodDisruptionBudget templates
 - [ ] **Installation documentation** - Step-by-step deployment guides
 - [ ] **Integration tests** - End-to-end testing scenarios
 - [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
+- [x] **GPUGroup exclusive scheduling** - Single model per GPU group with demand-based swapping
+- [x] **AntiThrashing configuration** - Configurable cooldown periods for model swaps
 
 ### Backend-Specific Work
 - [ ] **ROCm GFX1100 image builds** - Complete MLC-LLM ROCm 6.4 image with gfx1100 tuning
@@ -31,6 +34,8 @@ FlexInfer is **functional and working** with comprehensive implementations of al
 - [ ] **VRAM detection** - Implement real free VRAM detection in node agent
 
 ### Medium Priority (Production Ready)
+- [x] **Structured logging migration** - Migrate proxy from log.Printf to slog
+- [x] **Environment variable documentation** - Complete docs/CONFIGURATION.md
 - [ ] **Performance optimization** - Memory usage and startup time improvements
 - [ ] **Security hardening** - RBAC refinements and security scanning
 - [ ] **Monitoring dashboards** - Grafana dashboards for operational visibility

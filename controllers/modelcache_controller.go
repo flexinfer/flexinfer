@@ -60,8 +60,6 @@ type ModelCacheReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
 	// Fetch the ModelCache instance
 	modelCache := &aiv1alpha1.ModelCache{}
 	err := r.Get(ctx, req.NamespacedName, modelCache)
@@ -99,8 +97,8 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.reconcileMemory(ctx, modelCache)
 	}
 
-	log.Info("Strategy not implemented yet", "strategy", strategy)
-	return ctrl.Result{}, nil
+	// Unknown or unsupported strategy - return error instead of silently succeeding
+	return ctrl.Result{}, fmt.Errorf("storage strategy %q not implemented", strategy)
 }
 
 func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCache *aiv1alpha1.ModelCache) (ctrl.Result, error) {

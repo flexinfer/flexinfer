@@ -14,7 +14,7 @@ type OllamaBackend struct {
 }
 
 func init() {
-	Register(&OllamaBackend{})
+	MustRegister(&OllamaBackend{})
 }
 
 func (b *OllamaBackend) Name() string {

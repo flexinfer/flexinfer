@@ -19,15 +19,15 @@ var (
 
 // Register adds a backend to the registry.
 // It also registers any aliases the backend provides.
-// Panics if a backend with the same name is already registered.
-func Register(b Backend) {
+// Returns an error if a backend with the same name is already registered.
+func Register(b Backend) error {
 	mu.Lock()
 	defer mu.Unlock()
 
 	name := strings.ToLower(b.Name())
 
 	if _, exists := registry[name]; exists {
-		panic(fmt.Sprintf("backend %q already registered", name))
+		return fmt.Errorf("backend %q already registered", name)
 	}
 
 	registry[name] = b
@@ -36,9 +36,19 @@ func Register(b Backend) {
 	for _, alias := range b.Aliases() {
 		alias = strings.ToLower(alias)
 		if existing, exists := aliases[alias]; exists {
-			panic(fmt.Sprintf("alias %q already registered for backend %q", alias, existing))
+			return fmt.Errorf("alias %q already registered for backend %q", alias, existing)
 		}
 		aliases[alias] = name
+	}
+
+	return nil
+}
+
+// MustRegister adds a backend to the registry.
+// Panics if registration fails. Use this only in init() functions.
+func MustRegister(b Backend) {
+	if err := Register(b); err != nil {
+		panic(err)
 	}
 }
 
@@ -61,13 +71,23 @@ func Get(name string) (Backend, bool) {
 }
 
 // MustGet retrieves a backend by name.
-// Panics if the backend is not found.
+// Panics if the backend is not found. Use GetOrError for error-returning variant.
 func MustGet(name string) Backend {
 	b, ok := Get(name)
 	if !ok {
 		panic(fmt.Sprintf("backend %q not found", name))
 	}
 	return b
+}
+
+// GetOrError retrieves a backend by name.
+// Returns an error if the backend is not found.
+func GetOrError(name string) (Backend, error) {
+	b, ok := Get(name)
+	if !ok {
+		return nil, fmt.Errorf("backend %q not found", name)
+	}
+	return b, nil
 }
 
 // List returns all registered backend names.
