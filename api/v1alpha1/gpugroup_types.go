@@ -172,7 +172,8 @@ type AntiThrashingConfig struct {
 	// Enabled turns on anti-thrashing protection.
 	// +kubebuilder:default=true
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
+	// NOTE: Do not use omitempty - false must be explicitly serialized to override CRD defaults
+	Enabled bool `json:"enabled"`
 
 	// MinimumRunDurationSeconds is how long a model must run before it can be preempted.
 	// Prevents thrashing when requests alternate rapidly between models.
@@ -200,11 +201,13 @@ type AntiThrashingConfig struct {
 
 	// HysteresisWindowSeconds is the observation window for decision making.
 	// Model swap only triggers if demand persists for this duration.
+	// Set to 0 to disable hysteresis window checking.
 	// +kubebuilder:default=10
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=60
 	// +optional
-	HysteresisWindowSeconds int32 `json:"hysteresisWindowSeconds,omitempty"`
+	// NOTE: Do not use omitempty - 0 must be explicitly serialized to disable hysteresis
+	HysteresisWindowSeconds int32 `json:"hysteresisWindowSeconds"`
 }
 
 // GPUGroupStatus defines the observed state of GPUGroup

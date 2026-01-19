@@ -70,16 +70,20 @@ spec:
                     type: integer
                   enabled:
                     default: true
-                    description: Enabled turns on anti-thrashing protection.
+                    description: |-
+                      Enabled turns on anti-thrashing protection.
+                      NOTE: Do not use omitempty - false must be explicitly serialized to override CRD defaults
                     type: boolean
                   hysteresisWindowSeconds:
                     default: 10
                     description: |-
                       HysteresisWindowSeconds is the observation window for decision making.
                       Model swap only triggers if demand persists for this duration.
+                      Set to 0 to disable hysteresis window checking.
+                      NOTE: Do not use omitempty - 0 must be explicitly serialized to disable hysteresis
                     format: int32
                     maximum: 60
-                    minimum: 1
+                    minimum: 0
                     type: integer
                   minimumRunDurationSeconds:
                     default: 30

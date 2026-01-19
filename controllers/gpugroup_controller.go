@@ -355,19 +355,14 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 			return "", "queue threshold not met"
 		}
 
-		// Check hysteresis window
-		hysteresisWindow := 10 * time.Second // default
+		// Check hysteresis window (skip if set to 0 to disable)
 		if gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds > 0 {
-			hysteresisWindow = time.Duration(gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds) * time.Second
-		}
-
-		if currentActive != "" && !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisWindow && winner.name != currentActive {
-			log.Info("Hysteresis window not elapsed",
-				"model", winner.name, "queuedSince", winner.queuedSince, "window", hysteresisWindow)
-			if currentActive != "" {
+			hysteresisDuration := time.Duration(gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds) * time.Second
+			if currentActive != "" && !winner.queuedSince.IsZero() && time.Since(winner.queuedSince) < hysteresisDuration && winner.name != currentActive {
+				log.Info("Hysteresis window not elapsed",
+					"model", winner.name, "queuedSince", winner.queuedSince, "window", hysteresisDuration)
 				return currentActive, "hysteresis window"
 			}
-			return "", "hysteresis window"
 		}
 
 		// Check demand trend for the winning model if it's not the current active

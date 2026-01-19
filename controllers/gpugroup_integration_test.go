@@ -200,17 +200,21 @@ var _ = Describe("GPUGroup Controller Integration", func() {
 			gpuGroup.Spec.AntiThrashing.MinimumRunDurationSeconds = 5
 			gpuGroup.Spec.AntiThrashing.HysteresisWindowSeconds = 0 // Disable hysteresis for this test
 
+			// Set model priorities in GPUGroup spec (controller reads priorities from here, not ModelDeployment)
+			// Model A has lower priority - it gets activated first due to initial demand
+			// Model B has higher priority - after minimum run duration, it should preempt A
+			gpuGroup.Spec.Models[0].Priority = 80  // model-a
+			gpuGroup.Spec.Models[1].Priority = 100 // model-b
+
 			// Create GPUGroup
 			Expect(k8sClient.Create(ctx, gpuGroup)).Should(Succeed())
 
 			// Create ModelDeployments
 			mdA := testutil.NewTestModelDeployment(modelAName,
 				testutil.MDWithGPUGroup(gpuGroupName),
-				testutil.MDWithPriority(100),
 			)
 			mdB := testutil.NewTestModelDeployment(modelBName,
 				testutil.MDWithGPUGroup(gpuGroupName),
-				testutil.MDWithPriority(80),
 			)
 
 			Expect(k8sClient.Create(ctx, mdA)).Should(Succeed())
