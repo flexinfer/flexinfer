@@ -35,7 +35,9 @@ cache:
   paths:
     - .go/pkg/mod/
     - .go-build/
-  policy: pull-push
+  # Pull cache everywhere, but only push from selected jobs to avoid repeatedly
+  # archiving tens of thousands of small Go cache files on every job.
+  policy: pull
 
 # Base template for Go jobs
 .go-template: &go-template
@@ -103,6 +105,12 @@ fmt:
 build:binaries:
   <<: *go-template
   stage: build
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - .go/pkg/mod/
+      - .go-build/
+    policy: pull-push
   script:
     - |
       VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
