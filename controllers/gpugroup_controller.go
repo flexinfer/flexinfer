@@ -123,11 +123,11 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				}
 				r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledUp",
 					"Ensured model %s is scaled up", currentActive)
-
-				// Add service labels if not already present
-				if err := r.updateServiceLabels(ctx, md, true); err != nil {
-					log.Error(err, "Failed to add service labels", "model", currentActive)
-				}
+			}
+			// Always sync service labels for the active model
+			// This handles serviceLabels changes that occur while the model is running
+			if err := r.updateServiceLabels(ctx, md, true); err != nil {
+				log.Error(err, "Failed to sync service labels", "model", currentActive)
 			}
 		}
 	}
