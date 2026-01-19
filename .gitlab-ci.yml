@@ -153,8 +153,16 @@ test:unit:
   stage: test
   script:
     - |
+      echo "Selecting packages with tests..."
+      mapfile -t PKGS < <(go list -f '{{if or (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d')
+      echo "Packages with tests: ${#PKGS[@]}"
+
       echo "Running unit tests with race detector..."
-      go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      go test -race -coverprofile=coverage.out -covermode=atomic "${PKGS[@]}"
+
+      # Convert Go coverprofile to Cobertura XML for GitLab coverage reports
+      go install github.com/boumenot/gocover-cobertura@v1.4.0
+      $(go env GOPATH)/bin/gocover-cobertura < coverage.out > coverage.xml
 
       echo ""
       echo "Coverage Summary:"
@@ -178,11 +186,12 @@ test:unit:
   artifacts:
     paths:
       - coverage.out
+      - coverage.xml
     expire_in: 1 week
     reports:
       coverage_report:
         coverage_format: cobertura
-        path: coverage.out
+        path: coverage.xml
 
 test:integration:
   <<: *go-template

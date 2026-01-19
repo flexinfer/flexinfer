@@ -1656,7 +1656,7 @@ func runProxy(socketPath string) error {
 
 		case "resources/list":
 			// Try daemon first for full resource list, fallback to built-in only
-			if err := ensureDaemon(); err != nil {
+			if derr := ensureDaemon(); derr != nil {
 				// Fallback: return built-in loom:// resources only
 				resp = handleProxyResourcesListBuiltinOnly(msg)
 			} else {
