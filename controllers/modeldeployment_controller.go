@@ -1881,10 +1881,10 @@ func (r *ModelDeploymentReconciler) rocmEnvVars() []corev1.EnvVar {
 			Value: "gfx1100",
 		},
 		{
-			// Use CK flash attention instead of Triton for better gfx1100 stability
-			// Triton flash attention can cause GPU hangs on RDNA3.
+			// Use Triton flash attention on gfx1100 - CK (Composable Kernel) crashes
+			// with "invalid device function" because CK isn't compiled for RDNA3.
 			Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-			Value: "0",
+			Value: "1",
 		},
 		{
 			// Disable AITER (AI Tensor Engine for ROCm) on consumer RDNA3 GPUs.
