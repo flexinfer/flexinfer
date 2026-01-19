@@ -17,6 +17,9 @@ variables:
   AUTO_DEVOPS_ENABLED: "false"
   GO_VERSION: "1.25.5"
   BINARY_NAME: "loom"
+  # Work around occasional runner fetch failures for ephemeral pipeline refs by
+  # disabling shallow clones (fetch full history).
+  GIT_DEPTH: "0"
   # Minimum test coverage threshold (percentage)
   COVERAGE_THRESHOLD: "20"
   IMAGE_REGISTRY: registry.harbor.lan
