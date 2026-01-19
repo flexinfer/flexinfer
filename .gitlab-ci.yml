@@ -128,10 +128,6 @@ build:binaries:
 
       echo "Built binaries:"
       ls -la bin/
-  artifacts:
-    paths:
-      - bin/
-    expire_in: 1 day
 
 # =============================================================================
 # TEST STAGE
@@ -185,8 +181,6 @@ test:unit:
 test:integration:
   <<: *go-template
   stage: test
-  needs:
-    - build:binaries
   script:
     - |
       echo "Setting up integration test environment..."
@@ -194,17 +188,29 @@ test:integration:
       export LOOM_RUN_MCP_SMOKE="1"
       export PATH="$CI_PROJECT_DIR/bin:$PATH"
 
+      echo "Building MCP server binaries for smoke tests..."
+      VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
+      LDFLAGS="-s -w -X main.version=${VERSION}"
+      mkdir -p bin
+      failures=0
+      for pkg in $(ls cmd/ | grep '^mcp-'); do
+        echo "Building $pkg..."
+        if ! CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg"; then
+          echo "ERROR: Failed to build $pkg"
+          failures=$((failures + 1))
+        fi
+      done
+      if [ "$failures" -ne 0 ]; then
+        echo "ERROR: $failures MCP server(s) failed to build"
+        exit 1
+      fi
+
       echo "Available MCP servers:"
       ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"
 
       echo ""
       echo "Running integration tests..."
       go test -v -race ./internal/integration/...
-  artifacts:
-    when: always
-    paths:
-      - bin/
-    expire_in: 1 day
 
 test:race:
   <<: *go-template
