@@ -342,6 +342,7 @@ func (p *Proxy) extractModelName(r *http.Request) string {
 		if err == nil {
 			// Restore body immediately so the proxy can upstream it
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			r.ContentLength = int64(len(bodyBytes)) // Update ContentLength for downstream handlers
 
 			// Parse partial JSON to find "model" field
 			var payload struct {
@@ -813,10 +814,12 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	backendModelName := p.getBackendModelName(r.Context(), modelName)
 
 	// Rewrite model name in request body if needed
-	if backendModelName != "" && r.Body != nil && r.ContentLength > 0 {
+	// Check for POST/PUT with JSON body (ContentLength may be -1 for chunked encoding)
+	if backendModelName != "" && r.Body != nil && r.Body != http.NoBody &&
+		(r.Method == http.MethodPost || r.Method == http.MethodPut) {
 		bodyBytes, err := io.ReadAll(r.Body)
 		r.Body.Close()
-		if err == nil {
+		if err == nil && len(bodyBytes) > 0 {
 			// Try to rewrite the model field in JSON body
 			modifiedBody := p.rewriteModelInBody(bodyBytes, backendModelName)
 			r.Body = io.NopCloser(bytes.NewReader(modifiedBody))
