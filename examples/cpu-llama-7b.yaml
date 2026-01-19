@@ -1,0 +1,106 @@
+# Example: CPU-only inference with llama.cpp
+#
+# This deployment runs llama.cpp in CPU-only mode without requiring a GPU.
+# Useful for:
+# - Nodes without GPUs
+# - Development/testing environments
+# - Cost optimization (when GPU nodes are expensive)
+# - Inference workloads that don't require GPU speed
+#
+# Performance Notes:
+# - CPU inference is significantly slower than GPU (10-50x slower)
+# - Use quantized models (GGUF Q4_K_M, Q5_K_M) to reduce memory and improve speed
+# - Enable AVX512 for better performance on supported CPUs
+# - Set appropriate thread count based on available CPU cores
+#
+# Prerequisites:
+# 1. GGUF model file in ModelCache
+# 2. llama.cpp CPU image (ghcr.io/ggerganov/llama.cpp:server)
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama-7b-cpu
+  labels:
+    app: flexinfer-llm
+    compute-type: cpu-only
+spec:
+  # llama.cpp is the only backend supporting efficient CPU inference
+  backend: llamacpp
+  model: llama-2-7b-chat.Q4_K_M.gguf
+
+  # Reference GGUF model cache
+  modelCacheRef: llama-7b-gguf
+
+  # Target nodes WITHOUT GPUs (optional)
+  # Remove this section to allow scheduling on any node
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: ""  # Nodes with no GPU detected
+
+  # llama.cpp configuration for CPU inference
+  llamacpp:
+    # Number of CPU threads for inference
+    # Set to number of physical cores (not hyperthreads) for best performance
+    threads: 8
+
+    # Context size (reduce for lower memory usage)
+    contextSize: 4096
+
+    # Batch size for prompt processing
+    batchSize: 512
+
+    # nGPULayers is automatically set to 0 for CPU vendor
+    # but can be explicitly set here for clarity
+    nGPULayers: 0
+
+    # Flash attention is disabled for CPU (GPU-only feature)
+    flashAttention: false
+
+  # CPU resources - no GPU limits
+  resources:
+    limits:
+      cpu: "8"
+      memory: 16Gi
+    requests:
+      cpu: "4"
+      memory: 8Gi
+
+  # Scale to zero when idle (longer timeout for CPU - slower to load)
+  minReplicas: 0
+  replicas: 1
+  idleTimeoutSeconds: 600
+
+  # Longer cold start for CPU inference (model loading is slow)
+  coldStartTimeoutSeconds: 180
+---
+# Alternative: Smaller model for faster CPU inference
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: tinyllama-cpu
+  labels:
+    app: flexinfer-llm
+    compute-type: cpu-only
+spec:
+  backend: llamacpp
+  model: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+  modelCacheRef: tinyllama-gguf
+
+  llamacpp:
+    threads: 4
+    contextSize: 2048
+    batchSize: 256
+    nGPULayers: 0
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 4Gi
+    requests:
+      cpu: "2"
+      memory: 2Gi
+
+  minReplicas: 0
+  replicas: 1
+  idleTimeoutSeconds: 300
+  coldStartTimeoutSeconds: 60

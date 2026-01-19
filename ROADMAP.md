@@ -19,10 +19,16 @@ FlexInfer is **functional and working** with comprehensive implementations of al
 ## Upcoming Work
 
 ### High Priority (Deployment Ready)
-- [ ] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
+- [x] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
 - [ ] **Installation documentation** - Step-by-step deployment guides
 - [ ] **Integration tests** - End-to-end testing scenarios
 - [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
+
+### Backend-Specific Work
+- [ ] **ROCm GFX1100 image builds** - Complete MLC-LLM ROCm 6.4 image with gfx1100 tuning
+- [ ] **Maxwell pre-compiled model docs** - Document FP32 model requirements and pre-compilation
+- [ ] **CPU backend support** - Add explicit CPU-only inference via llama.cpp
+- [ ] **VRAM detection** - Implement real free VRAM detection in node agent
 
 ### Medium Priority (Production Ready)
 - [ ] **Performance optimization** - Memory usage and startup time improvements

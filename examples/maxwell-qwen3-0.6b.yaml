@@ -1,0 +1,81 @@
+# Example: MLC-LLM on Maxwell GPU (GTX 980 Ti, etc.)
+#
+# Maxwell GPUs (sm_52) require special handling:
+# - No native FP16 support - must use FP32 quantization (q0f32, q4f32_1)
+# - Pre-compiled model library required (JIT will fail with FP16 errors)
+# - Limited VRAM (6GB typical) - use small models
+#
+# Prerequisites:
+# 1. Node labeled: nvidia.com/gpu.compute.major=5
+# 2. ModelCache 'qwen3-0.6b-maxwell' with pre-compiled maxwell-lib.so
+# 3. MLC-LLM Maxwell image deployed
+#
+# See: build/README-maxwell.md for full documentation
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-maxwell
+  labels:
+    app: flexinfer-llm
+    gpu-arch: maxwell
+spec:
+  # MLC-LLM backend with Maxwell-specific settings
+  backend: mlc-llm
+  model: Qwen3-0.6B-q0f32-MLC
+
+  # Reference pre-cached model with compiled library
+  # Must include maxwell-lib.so compiled for sm_52
+  modelCacheRef: qwen3-0.6b-maxwell
+
+  # Target Maxwell GPUs only (compute capability 5.x)
+  nodeSelector:
+    nvidia.com/gpu.compute.major: "5"
+
+  # MLC-LLM configuration for Maxwell
+  mlcllm:
+    # Local mode uses less memory than server mode
+    mode: local
+
+    # CRITICAL: Path to pre-compiled model library
+    # Without this, MLC-LLM will attempt JIT compilation which fails on Maxwell
+    modelLibPath: /models/maxwell-lib.so
+
+    # Disable JIT since we have pre-compiled library
+    jitPolicy: "OFF"
+
+    # GPU memory limit (~5GB for GTX 980 Ti, leave headroom)
+    gpuMemoryBytes: 5000000000
+
+    # Compile options (for documentation - not used when JIT is OFF)
+    compileOptions:
+      useCutlass: false      # Requires FP16 (disabled for Maxwell)
+      useFlashInfer: false   # Requires sm_80+ (Ampere)
+      useCublasGemm: true    # cuBLAS fallback for GEMM
+      useCudaGraph: false    # Disabled for stability on older GPUs
+
+    # Model parameter overrides
+    overrides:
+      # Reduced context for limited VRAM
+      maxTotalSeqLength: 2048
+      # Smaller prefill chunks reduce temporary buffer size
+      prefillChunkSize: 256
+
+  # Resource limits
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 8Gi
+    requests:
+      memory: 6Gi
+
+  # VRAM estimate for scheduler (in MB)
+  vramEstimateMB: 5100
+
+  # Scale to zero when idle
+  minReplicas: 0
+  replicas: 1
+  idleTimeoutSeconds: 300
+
+  # Cold start timeout (Maxwell is slow to load)
+  coldStartTimeoutSeconds: 120

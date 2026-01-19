@@ -100,9 +100,10 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 				Value: "0",
 			},
 			corev1.EnvVar{
-				// Disable Triton flash attention - use CK (Composable Kernel) instead
+				// Use Triton flash attention on gfx1100 - CK (Composable Kernel) crashes
+				// with "invalid device function" because CK isn't compiled for RDNA3
 				Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-				Value: "0",
+				Value: "1",
 			},
 			corev1.EnvVar{
 				// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100

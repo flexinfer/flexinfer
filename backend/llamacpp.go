@@ -33,6 +33,12 @@ func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			return img
 		}
 		return "ghcr.io/ggerganov/llama.cpp:server-rocm"
+	case GPUVendorCPU:
+		// CPU-only image without GPU dependencies
+		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_CPU"); img != "" {
+			return img
+		}
+		return "ghcr.io/ggerganov/llama.cpp:server"
 	default:
 		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE"); img != "" {
 			return img
@@ -63,8 +69,11 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--ctx-size", fmt.Sprintf("%d", ctxSize))
 	}
 
-	// Number of GPU layers
-	if nGPU := spec.ConfigInt("nGPULayers", 0); nGPU > 0 {
+	// Number of GPU layers - handle CPU-only mode
+	if spec.GPUVendor == GPUVendorCPU {
+		// CPU-only inference: no GPU layers
+		args = append(args, "--n-gpu-layers", "0")
+	} else if nGPU := spec.ConfigInt("nGPULayers", 0); nGPU > 0 {
 		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", nGPU))
 	} else {
 		// Default to using all layers on GPU
@@ -76,13 +85,13 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--batch-size", fmt.Sprintf("%d", batchSize))
 	}
 
-	// Number of threads
+	// Number of threads - important for CPU inference
 	if threads := spec.ConfigInt("threads", 0); threads > 0 {
 		args = append(args, "--threads", fmt.Sprintf("%d", threads))
 	}
 
-	// Flash attention
-	if spec.ConfigBool("flashAttention", false) {
+	// Flash attention (GPU only, skip for CPU)
+	if spec.GPUVendor != GPUVendorCPU && spec.ConfigBool("flashAttention", false) {
 		args = append(args, "--flash-attn")
 	}
 
@@ -106,4 +115,10 @@ func (b *LlamaCppBackend) ReadinessProbe() *corev1.Probe {
 
 func (b *LlamaCppBackend) StartupTimeout() time.Duration {
 	return 60 * time.Second
+}
+
+// SupportsGPUVendor returns true for NVIDIA, AMD, and CPU-only inference.
+// llama.cpp is unique in supporting efficient CPU-only inference.
+func (b *LlamaCppBackend) SupportsGPUVendor(vendor GPUVendor) bool {
+	return vendor == GPUVendorNVIDIA || vendor == GPUVendorAMD || vendor == GPUVendorCPU
 }

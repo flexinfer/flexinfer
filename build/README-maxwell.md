@@ -37,13 +37,56 @@ Maxwell GPUs (sm_52) lack native FP16 (`__half`) intrinsics. This means:
 | `q4f16_1` | 4-bit weights, FP16 activations | **No** | Low |
 | `q3f16_1` | 3-bit weights, FP16 activations | **No** | Lowest |
 
+## Curated Working Models
+
+These models have been verified to work on Maxwell GPUs with 6GB VRAM:
+
+### Small Models (< 6GB VRAM)
+
+| Model | HuggingFace ID | Quantization | VRAM | Notes |
+|-------|----------------|--------------|------|-------|
+| Qwen3-0.6B | `mlc-ai/Qwen3-0.6B-q0f32-MLC` | q0f32 | ~5.1GB | Recommended starter |
+| Qwen2.5-0.5B | `mlc-ai/Qwen2.5-0.5B-q0f32-MLC` | q0f32 | ~4.5GB | Good for testing |
+| TinyLlama-1.1B | `mlc-ai/TinyLlama-1.1B-q4f32_1-MLC` | q4f32_1 | ~2.5GB | Fast, lightweight |
+| Phi-2 | `mlc-ai/phi-2-q4f32_1-MLC` | q4f32_1 | ~4.0GB | Microsoft's small model |
+
+### Pre-compiled Model Libraries
+
+For Maxwell GPUs, you should pre-compile model libraries to avoid JIT compilation failures.
+Store compiled `.so` files alongside model weights:
+
+```
+/models/Qwen3-0.6B-q0f32-MLC/
+├── mlc-chat-config.json
+├── ndarray-cache.json
+├── params_shard_*.bin
+├── tokenizer.json
+└── maxwell-lib.so          # Pre-compiled for sm_52
+```
+
+### Finding FP32 Models
+
+Search HuggingFace for compatible models:
+```bash
+# Models with FP32 quantization
+https://huggingface.co/models?search=q0f32-MLC
+https://huggingface.co/models?search=q4f32-MLC
+
+# MLC-AI official models
+https://huggingface.co/mlc-ai
+```
+
 ## Performance Benchmarks
 
 Tested on GTX 980 Ti (6GB VRAM):
 
-| Model | Quantization | Tokens/sec | GPU Memory |
-|-------|--------------|------------|------------|
-| Qwen3-0.6B | q0f32 | ~60 | 5.1GB |
+| Model | Quantization | Tokens/sec | GPU Memory | Notes |
+|-------|--------------|------------|------------|-------|
+| Qwen3-0.6B | q0f32 | ~60 | 5.1GB | Recommended |
+| TinyLlama-1.1B | q4f32_1 | ~45 | 2.5GB | Good quality/speed |
+| Phi-2 | q4f32_1 | ~35 | 4.0GB | Better reasoning |
+
+**Note**: Maxwell GPUs are significantly slower than modern GPUs. Expect 3-5x slower inference compared to RTX 30/40 series.
 
 ## Setup Guide
 
@@ -249,6 +292,61 @@ mlc_llm convert_weight Qwen3-0.6B \
 - **Maxwell (5.x)**: No native FP16
 - **Pascal (6.x)**: FP16 at half rate (GP100 full rate)
 - **Volta+ (7.0+)**: Full FP16 support with Tensor Cores
+
+## FlexInfer ModelDeployment
+
+FlexInfer automatically detects Maxwell GPUs via the node agent and applies appropriate settings.
+
+### Example ModelDeployment for Maxwell
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-maxwell
+spec:
+  backend: mlc-llm
+  model: Qwen3-0.6B-q0f32-MLC
+  modelCacheRef: qwen3-0.6b-maxwell  # Pre-cached model with compiled lib
+  nodeSelector:
+    nvidia.com/gpu.compute.major: "5"  # Target Maxwell GPUs only
+  mlcllm:
+    mode: local
+    modelLibPath: /models/maxwell-lib.so  # Pre-compiled for sm_52
+    jitPolicy: "OFF"  # Disable JIT, use pre-compiled library
+    gpuMemoryBytes: 5000000000  # ~5GB for GTX 980 Ti
+    compileOptions:
+      useCutlass: false      # Disabled - requires FP16
+      useFlashInfer: false   # Disabled - requires sm_80+
+      useCublasGemm: true    # Enable cuBLAS fallback
+      useCudaGraph: false    # Disabled for stability
+    overrides:
+      maxTotalSeqLength: 2048  # Reduced for limited VRAM
+      prefillChunkSize: 256    # Smaller chunks for stability
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 8Gi
+    requests:
+      memory: 6Gi
+```
+
+### Node Labeling
+
+The FlexInfer agent automatically detects Maxwell GPUs and applies labels:
+```bash
+# Labels applied by flexinfer-agent
+flexinfer.ai/gpu.vendor: NVIDIA
+flexinfer.ai/gpu.arch: sm_52
+flexinfer.ai/gpu.vram: 6Gi
+flexinfer.ai/gpu.int4: false  # No INT4 tensor cores
+```
+
+Use node selectors to target Maxwell-specific deployments:
+```yaml
+nodeSelector:
+  flexinfer.ai/gpu.arch: sm_52
+```
 
 ## References
 

@@ -236,10 +236,92 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 		avgCache = totalCache / float64(count)
 	}
 
+	// Get free VRAM from GPU tools
+	freeVRAM := a.detectFreeVRAM(ctx)
+
 	return NodeMetrics{
 		TotalKVCacheUsage: avgCache,
-		FreeVRAMMB:        0, // TODO: Get real free VRAM from checking 'nvidia-smi' or similar
+		FreeVRAMMB:        freeVRAM,
 	}
+}
+
+// detectFreeVRAM queries GPU tools for available VRAM in MB.
+// Supports NVIDIA (nvidia-smi) and AMD (rocm-smi) GPUs.
+// Returns 0 if no GPU is detected or tools are unavailable.
+func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
+	log := log.FromContext(ctx)
+
+	// Try NVIDIA GPU first
+	out, err := a.runCmd(ctx, "nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits")
+	if err == nil {
+		freeVRAM := a.parseNvidiaFreeMemory(string(out))
+		if freeVRAM > 0 {
+			log.Info("Detected NVIDIA free VRAM", "freeMB", freeVRAM)
+			return freeVRAM
+		}
+	}
+
+	// Try AMD GPU
+	out, err = a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+	if err == nil {
+		freeVRAM := a.parseRocmFreeMemory(string(out))
+		if freeVRAM > 0 {
+			log.Info("Detected AMD free VRAM", "freeMB", freeVRAM)
+			return freeVRAM
+		}
+	}
+
+	log.Info("No GPU detected or unable to query free VRAM")
+	return 0
+}
+
+// parseNvidiaFreeMemory parses nvidia-smi output for free memory.
+// Input format: "12345\n6789\n" (one line per GPU, in MiB)
+// Returns total free memory across all GPUs in MB.
+func (a *Agent) parseNvidiaFreeMemory(out string) uint64 {
+	var totalFree uint64
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if free, err := strconv.ParseUint(line, 10, 64); err == nil {
+			totalFree += free
+		}
+	}
+	return totalFree
+}
+
+// parseRocmFreeMemory parses rocm-smi JSON output for free VRAM.
+// Returns total free memory across all GPUs in MB.
+func (a *Agent) parseRocmFreeMemory(out string) uint64 {
+	var data map[string]map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &data); err != nil {
+		return 0
+	}
+
+	var totalFree uint64
+	for _, gpu := range data {
+		for key, val := range gpu {
+			k := strings.ToLower(key)
+			// Look for "vram free" or similar keys
+			if strings.Contains(k, "vram") && strings.Contains(k, "free") {
+				str := fmt.Sprint(val)
+				fields := strings.Fields(str)
+				if len(fields) > 0 {
+					if num, err := strconv.ParseUint(fields[0], 10, 64); err == nil {
+						// Value may be in bytes or MiB; convert if in bytes
+						if num > 1<<30 { // Likely bytes if > 1GB
+							num = num / (1024 * 1024)
+						}
+						totalFree += num
+					}
+				}
+			}
+		}
+	}
+	return totalFree
 }
 
 // scrapeKVCache connects to the pod's metrics endpoint and parses vLLM/Ollama/LlamaCpp metrics

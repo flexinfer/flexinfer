@@ -91,8 +91,9 @@ spec:
                 description: |-
                   ColdStartTimeoutSeconds is the maximum time to wait for model activation during cold start.
                   Requests exceeding this timeout receive 503 Service Unavailable.
+                  Large models on NFS may need 900-1800s (15-30 min) to load.
                 format: int32
-                maximum: 300
+                maximum: 1800
                 minimum: 10
                 type: integer
               comfyui:

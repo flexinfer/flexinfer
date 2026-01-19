@@ -17,10 +17,12 @@ const (
 	GPUVendorNVIDIA  GPUVendor = "nvidia"
 	GPUVendorAMD     GPUVendor = "amd"
 	GPUVendorIntel   GPUVendor = "intel"
+	GPUVendorCPU     GPUVendor = "cpu" // CPU-only inference (no GPU)
 	GPUVendorUnknown GPUVendor = "unknown"
 )
 
 // GPUResourceName returns the Kubernetes resource name for the GPU vendor.
+// Returns empty string for CPU-only vendor (no GPU resources needed).
 func (v GPUVendor) ResourceName() corev1.ResourceName {
 	switch v {
 	case GPUVendorNVIDIA:
@@ -29,6 +31,8 @@ func (v GPUVendor) ResourceName() corev1.ResourceName {
 		return "amd.com/gpu"
 	case GPUVendorIntel:
 		return "gpu.intel.com/i915"
+	case GPUVendorCPU:
+		return "" // No GPU resource for CPU-only inference
 	default:
 		return "nvidia.com/gpu"
 	}
@@ -195,6 +199,7 @@ func (b *BaseBackend) NeedsVolume() bool {
 }
 
 // SupportsGPUVendor returns true for NVIDIA and AMD by default.
+// Backends that support CPU-only inference should override this method.
 func (b *BaseBackend) SupportsGPUVendor(vendor GPUVendor) bool {
 	return vendor == GPUVendorNVIDIA || vendor == GPUVendorAMD
 }

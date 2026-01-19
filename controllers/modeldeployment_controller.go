@@ -1578,6 +1578,15 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 		// ROCm-specific environment for AMD GPUs
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
 			env = append(env, r.rocmEnvVars()...)
+
+			// HIP_VISIBLE_DEVICES allows selecting specific GPUs on multi-GPU AMD systems.
+			// On systems with both iGPU and discrete GPU, set to "1" to use discrete.
+			if m.Spec.VLLM != nil && m.Spec.VLLM.HIPVisibleDevices != "" {
+				env = append(env, corev1.EnvVar{
+					Name:  "HIP_VISIBLE_DEVICES",
+					Value: m.Spec.VLLM.HIPVisibleDevices,
+				})
+			}
 		}
 
 		return env
@@ -1746,8 +1755,15 @@ func (r *ModelDeploymentReconciler) getResourceRequirements(m *aiv1alpha1.ModelD
 	// Only add GPU resources if this is not a CPU-only deployment
 	gpuResourceName := r.detectGPUResourceFromSpec(m)
 	if gpuResourceName != "" {
-		requirements.Requests[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
-		requirements.Limits[gpuResourceName] = *resource.NewQuantity(1, resource.DecimalSI)
+		// Use GPU count from spec, defaulting to 1 if not specified
+		gpuCount := int64(1)
+		if m.Spec.Resources.Limits != nil {
+			if qty, exists := m.Spec.Resources.Limits[gpuResourceName]; exists && !qty.IsZero() {
+				gpuCount = qty.Value()
+			}
+		}
+		requirements.Requests[gpuResourceName] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
+		requirements.Limits[gpuResourceName] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
 	}
 
 	return requirements
