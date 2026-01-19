@@ -96,9 +96,10 @@ type ModelDeploymentSpec struct {
 
 	// ColdStartTimeoutSeconds is the maximum time to wait for model activation during cold start.
 	// Requests exceeding this timeout receive 503 Service Unavailable.
+	// Large models on NFS may need 900-1800s (15-30 min) to load.
 	// +kubebuilder:default=60
 	// +kubebuilder:validation:Minimum=10
-	// +kubebuilder:validation:Maximum=300
+	// +kubebuilder:validation:Maximum=1800
 	// +optional
 	ColdStartTimeoutSeconds *int32 `json:"coldStartTimeoutSeconds,omitempty"`
 
