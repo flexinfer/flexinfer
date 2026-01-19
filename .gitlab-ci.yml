@@ -6,7 +6,6 @@ include:
     ref: main
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
-      - /ci/templates/security.yml
 
 stages:
   - lint
