@@ -345,7 +345,7 @@ build:image:loom-core:
     - >
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
       "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
-    - export IMAGE="$IMAGE_REGISTRY/services/loom-core"
+    - export IMAGE="$IMAGE_REGISTRY/mcp/loom-core"
     - >
       /kaniko/executor
       --context "$CI_PROJECT_DIR"
