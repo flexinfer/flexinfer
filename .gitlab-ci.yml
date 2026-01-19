@@ -20,6 +20,10 @@ variables:
   # Work around occasional runner fetch failures for ephemeral pipeline refs by
   # disabling shallow clones (fetch full history).
   GIT_DEPTH: "0"
+  # GitLab Runner intermittently attempts to fetch `refs/pipelines/<id>`, which
+  # is not reliably available on this GitLab instance. Skip the built-in
+  # checkout and fetch sources explicitly inside jobs instead.
+  GIT_STRATEGY: "none"
   # Minimum test coverage threshold (percentage)
   COVERAGE_THRESHOLD: "20"
   IMAGE_REGISTRY: registry.harbor.lan
@@ -49,6 +53,12 @@ cache:
         apt-get update -qq
         apt-get install -y --no-install-recommends git curl ca-certificates
         rm -rf /var/lib/apt/lists/*
+      fi
+    - |
+      if [ ! -f go.mod ]; then
+        echo "Fetching repository sources (archive)..."
+        URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
+        curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
       fi
     - |
       # This repo uses local `replace` directives to `../../libs/*`.
@@ -358,6 +368,14 @@ build:image:loom-core:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   script:
+    - |
+      echo "Fetching repository sources (archive)..."
+      URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
+      if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
+      else
+        wget -qO- --header="JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
+      fi
     - mkdir -p "$DOCKER_CONFIG"
     - >
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
@@ -389,6 +407,14 @@ build:image:custom-server:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   script:
+    - |
+      echo "Fetching repository sources (archive)..."
+      URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
+      if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
+      else
+        wget -qO- --header="JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
+      fi
     - mkdir -p "$DOCKER_CONFIG"
     - >
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
