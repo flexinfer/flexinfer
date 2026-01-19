@@ -8,15 +8,26 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
-var version = "1.0.0"
+var (
+	version     = "1.0.0"
+	defaultRepo string
+)
 
 func main() {
+	var err error
+	defaultRepo, err = filepath.Abs(getEnv("GIT_REPO_PATH", "."))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving GIT_REPO_PATH: %v\n", err)
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -314,11 +325,9 @@ func main() {
 
 func runGit(repoPath string, args ...string) (string, error) {
 	if repoPath == "" {
-		var err error
-		repoPath, err = os.Getwd()
-		if err != nil {
-			return "", err
-		}
+		repoPath = defaultRepo
+	} else if !filepath.IsAbs(repoPath) {
+		repoPath = filepath.Join(defaultRepo, repoPath)
 	}
 
 	cmd := exec.Command("git", args...)
@@ -363,6 +372,13 @@ func getStringSliceArg(args map[string]any, key string) []string {
 		return result
 	}
 	return nil
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
