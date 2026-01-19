@@ -1,7 +1,12 @@
 # Loom CI/CD Pipeline
 # Provides lint, test, build, and deploy stages with comprehensive testing
 
-include: []
+include:
+  - project: platform/gitops
+    ref: main
+    file:
+      - /k3s/ci/caches/gitlab-ci-cache.yml
+      - /ci/templates/security.yml
 
 stages:
   - lint
@@ -54,7 +59,6 @@ cache:
       fi
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
-    - export GOPROXY="https://proxy.golang.org,direct"
     - mkdir -p "$GOPATH" "$GOCACHE"
     - go mod download
 
@@ -88,20 +92,6 @@ fmt:
         gofmt -d ./cmd ./internal ./pkg
         exit 1
       fi
-
-sast:
-  <<: *go-template
-  stage: lint
-  script:
-    # NOTE: gosec output is useful, but it is not a GitLab SAST report JSON schema.
-    # Keep it as an artifact; use GitLab's official SAST template for UI integration.
-    - go install github.com/securego/gosec/v2/cmd/gosec@v2.22.11
-    - gosec -fmt json -out gosec-report.json ./... || true
-  artifacts:
-    paths:
-      - gosec-report.json
-    expire_in: 1 week
-  allow_failure: true
 
 # =============================================================================
 # BUILD STAGE
