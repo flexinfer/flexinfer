@@ -132,6 +132,33 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
+	// Enforce Exclusive strategy: ensure only the active model is running
+	// This handles cases where non-active models have replicas > 0 (e.g., from GitOps)
+	strategy := gpuGroup.Spec.ScalingPolicy.Strategy
+	if strategy == "" || strategy == aiv1alpha1.GPUShareStrategyExclusive {
+		activeModel := gpuGroup.Status.ActiveModel
+		for name, md := range members {
+			if name != activeModel {
+				if md.Spec.Replicas != nil && *md.Spec.Replicas > 0 {
+					log.Info("Scaling down non-active model in Exclusive mode", "model", name, "activeModel", activeModel)
+					zero := int32(0)
+					md.Spec.Replicas = &zero
+					if err := r.Update(ctx, md); err != nil {
+						log.Error(err, "Failed to scale down non-active model", "model", name)
+						// Continue trying other models
+					} else {
+						r.Recorder.Eventf(gpuGroup, "Normal", "ModelScaledDown",
+							"Scaled down non-active model %s (Exclusive strategy)", name)
+						// Remove service labels from scaled-down model
+						if err := r.updateServiceLabels(ctx, md, false); err != nil {
+							log.Error(err, "Failed to remove service labels", "model", name)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Update phase based on current state
 	r.updatePhase(gpuGroup, members)
 
