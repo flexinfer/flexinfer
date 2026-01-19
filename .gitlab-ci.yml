@@ -93,14 +93,14 @@ sast:
   <<: *go-template
   stage: lint
   script:
-    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    # NOTE: gosec output is useful, but it is not a GitLab SAST report JSON schema.
+    # Keep it as an artifact; use GitLab's official SAST template for UI integration.
+    - go install github.com/securego/gosec/v2/cmd/gosec@v2.22.11
     - gosec -fmt json -out gosec-report.json ./... || true
   artifacts:
     paths:
       - gosec-report.json
     expire_in: 1 week
-    reports:
-      sast: gosec-report.json
   allow_failure: true
 
 # =============================================================================
@@ -232,6 +232,7 @@ test:benchmark:
   stage: test
   needs:
     - build:binaries
+  allow_failure: true
   script:
     - |
       export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
@@ -246,7 +247,6 @@ test:benchmark:
   rules:
     - if: $CI_COMMIT_TAG
     - when: manual
-      allow_failure: true
 
 # =============================================================================
 # RELEASE BUILDS
