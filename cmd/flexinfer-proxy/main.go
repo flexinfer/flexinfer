@@ -809,6 +809,21 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName string) {
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:8000", modelName, p.namespace) // FlexInfer services expose on port 8000
 
+	// Get the actual backend model name (e.g., HuggingFace model ID)
+	backendModelName := p.getBackendModelName(r.Context(), modelName)
+
+	// Rewrite model name in request body if needed
+	if backendModelName != "" && r.Body != nil && r.ContentLength > 0 {
+		bodyBytes, err := io.ReadAll(r.Body)
+		r.Body.Close()
+		if err == nil {
+			// Try to rewrite the model field in JSON body
+			modifiedBody := p.rewriteModelInBody(bodyBytes, backendModelName)
+			r.Body = io.NopCloser(bytes.NewReader(modifiedBody))
+			r.ContentLength = int64(len(modifiedBody))
+		}
+	}
+
 	// Check if we have a proxy for this already
 	var rp *httputil.ReverseProxy
 	if val, ok := p.proxyMap.Load(modelName); ok {
@@ -821,6 +836,44 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	}
 
 	rp.ServeHTTP(w, r)
+}
+
+// getBackendModelName returns the actual model identifier used by the backend (e.g., HuggingFace model ID).
+// This allows the proxy to rewrite model names in requests before forwarding.
+func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) string {
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
+		return ""
+	}
+	// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
+	return md.Spec.Model
+}
+
+// rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
+// This allows clients to use FlexInfer model names/aliases while backends receive their native model IDs.
+func (p *Proxy) rewriteModelInBody(body []byte, backendModelName string) []byte {
+	// Parse the JSON
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		// Not valid JSON or parse error, return original
+		return body
+	}
+
+	// Check if there's a model field
+	if _, ok := data["model"]; !ok {
+		return body
+	}
+
+	// Replace the model field with the backend model name
+	data["model"] = backendModelName
+
+	// Re-marshal
+	modified, err := json.Marshal(data)
+	if err != nil {
+		return body
+	}
+
+	return modified
 }
 
 func isReady(md *aiv1alpha1.ModelDeployment) bool {
