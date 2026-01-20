@@ -949,8 +949,8 @@ func TestBackendPort_Defaults(t *testing.T) {
 
 	// Test various backends and their default ports
 	testCases := []struct {
-		name        string
-		backend     string
+		name         string
+		backend      string
 		expectedPort int32
 	}{
 		{"ollama", "ollama", 11434},
