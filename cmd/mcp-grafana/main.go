@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,16 @@ func getEnvBool(key string, fallback bool) bool {
 	if v := os.Getenv(key); v != "" {
 		v = strings.ToLower(v)
 		return v == "1" || v == "true" || v == "yes" || v == "on"
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }
@@ -273,13 +284,17 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("GRAFANA_MAX_RESPONSE_BYTES", 10*1024*1024)
+	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("grafana response exceeded %d bytes (set GRAFANA_MAX_RESPONSE_BYTES to increase; narrow your request)", maxBytes)
+	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
 	}
 
 	var result interface{}
@@ -297,6 +312,39 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 	return nil, fmt.Errorf("unexpected response format")
 }
 
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}
+
 // Handlers
 
 func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -305,7 +353,14 @@ func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 		params["query"] = v
 	}
 	if v, ok := args["limit"].(float64); ok {
-		params["limit"] = fmt.Sprintf("%d", int(v))
+		limit := int(v)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		params["limit"] = fmt.Sprintf("%d", limit)
 	} else {
 		params["limit"] = "20"
 	}

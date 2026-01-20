@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -174,7 +176,7 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com"+endpoint, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com"+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -187,18 +189,22 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("TAVILY_MAX_RESPONSE_BYTES", 5*1024*1024)
+	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("tavily response exceeded %d bytes (set TAVILY_MAX_RESPONSE_BYTES to increase; reduce max_results/max_tokens)", maxBytes)
+	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("tavily API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("tavily API error %d: %s", resp.StatusCode, bodySnippet(respBody))
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	return result, nil
@@ -225,6 +231,59 @@ func getBoolArg(args map[string]any, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
 func getStringSliceArg(args map[string]any, key string) []string {
 	if v, ok := args[key].([]any); ok {
 		var result []string
@@ -249,7 +308,7 @@ func (t *tavilyServer) handleSearch(ctx context.Context, args map[string]any) (*
 		"search_depth":        getStringArg(args, "search_depth", "basic"),
 		"include_answer":      getBoolArg(args, "include_answer", true),
 		"include_raw_content": getBoolArg(args, "include_raw_content", false),
-		"max_results":         getIntArg(args, "max_results", 5),
+		"max_results":         clampInt(getIntArg(args, "max_results", 5), 1, 10),
 	}
 
 	if domains := getStringSliceArg(args, "include_domains"); len(domains) > 0 {
@@ -276,8 +335,8 @@ func (t *tavilyServer) handleSearchNews(ctx context.Context, args map[string]any
 	payload := map[string]any{
 		"query":       query,
 		"topic":       "news",
-		"days":        getIntArg(args, "days", 3),
-		"max_results": getIntArg(args, "max_results", 5),
+		"days":        clampInt(getIntArg(args, "days", 3), 1, 30),
+		"max_results": clampInt(getIntArg(args, "max_results", 5), 1, 10),
 	}
 
 	result, err := t.request(ctx, "/search", payload)
@@ -320,7 +379,7 @@ func (t *tavilyServer) handleSearchContext(ctx context.Context, args map[string]
 		"max_results":         10,
 	}
 
-	maxTokens := getIntArg(args, "max_tokens", 4000)
+	maxTokens := clampInt(getIntArg(args, "max_tokens", 4000), 256, 16000)
 
 	result, err := t.request(ctx, "/search", payload)
 	if err != nil {

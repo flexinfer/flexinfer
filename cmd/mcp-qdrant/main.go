@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,16 @@ var (
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }
@@ -178,7 +189,10 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	url := fmt.Sprintf("%s/%s", qdrantURL, strings.TrimPrefix(endpoint, "/"))
 	var bodyReader io.Reader
 	if body != nil {
-		b, _ := json.Marshal(body)
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 		bodyReader = bytes.NewBuffer(b)
 	}
 
@@ -198,13 +212,25 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("QDRANT_MAX_RESPONSE_BYTES", 5*1024*1024)
+	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
+	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("qdrant response exceeded %d bytes (set QDRANT_MAX_RESPONSE_BYTES to increase)", maxBytes)
 	}
 
 	if len(respBody) == 0 {
 		return map[string]any{}, nil
+	}
+
+	if resp.StatusCode >= 400 {
+		var apiResp any
+		if err := json.Unmarshal(respBody, &apiResp); err == nil {
+			return nil, fmt.Errorf("qdrant HTTP %d: %v", resp.StatusCode, apiResp)
+		}
+		return nil, fmt.Errorf("qdrant HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
 	}
 
 	var result map[string]any
@@ -212,11 +238,40 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 		return nil, fmt.Errorf("failed to parse qdrant response: %w", err)
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("qdrant HTTP %d: %v", resp.StatusCode, result)
+	return result, nil
+}
+
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
 	}
 
-	return result, nil
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
 }
 
 // Handlers

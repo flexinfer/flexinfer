@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -176,13 +178,17 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("ALERTMANAGER_MAX_RESPONSE_BYTES", 5*1024*1024)
+	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("alertmanager response exceeded %d bytes (set ALERTMANAGER_MAX_RESPONSE_BYTES to increase)", maxBytes)
+	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
 	}
 
 	// Handle empty responses
@@ -206,6 +212,49 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	return map[string]any{"data": result}, nil
 }
 
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}
+
 func (s *alertmanagerServer) handleListAlerts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	filter := v.String("filter", "")
@@ -213,18 +262,18 @@ func (s *alertmanagerServer) handleListAlerts(ctx context.Context, args map[stri
 	inhibited := v.Bool("inhibited", false)
 
 	path := "/alerts"
-	params := []string{}
+	q := url.Values{}
 	if filter != "" {
-		params = append(params, "filter="+filter)
+		q.Set("filter", filter)
 	}
 	if silenced {
-		params = append(params, "silenced=true")
+		q.Set("silenced", "true")
 	}
 	if inhibited {
-		params = append(params, "inhibited=true")
+		q.Set("inhibited", "true")
 	}
-	if len(params) > 0 {
-		path += "?" + strings.Join(params, "&")
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 
 	result, err := s.request(ctx, "GET", path, nil)
@@ -246,7 +295,7 @@ func (s *alertmanagerServer) handleListSilences(ctx context.Context, args map[st
 
 	path := "/silences"
 	if filter != "" {
-		path += "?filter=" + filter
+		path += "?filter=" + url.QueryEscape(filter)
 	}
 
 	result, err := s.request(ctx, "GET", path, nil)

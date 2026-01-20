@@ -72,6 +72,7 @@ type Daemon struct {
 	hubPool     *pool.Pool
 	router      *router.Router
 	hubClient   *mcp.WebSocketClient
+	callLocks   gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
 	listener    net.Listener
 	logger      *slog.Logger
 	toolCache   *ToolCache
@@ -82,6 +83,15 @@ type Daemon struct {
 	syncManager *sync.Manager      // Sync manager for profile operations
 	wg          gosync.WaitGroup
 	done        chan struct{}
+}
+
+func (d *Daemon) callLock(serverName string) *gosync.Mutex {
+	if strings.TrimSpace(serverName) == "" {
+		// Shouldn't happen; avoid nil deref and avoid global lock.
+		return &gosync.Mutex{}
+	}
+	v, _ := d.callLocks.LoadOrStore(serverName, &gosync.Mutex{})
+	return v.(*gosync.Mutex)
 }
 
 // New creates a new daemon instance.
@@ -1232,20 +1242,20 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 
 	switch decision.Target {
 	case router.TargetLocal:
-		conn, err = d.pool.Get(ctx, params.Server)
+		conn, err = d.pool.Get(ctx, serverName)
 		target = router.TargetLocal
 	case router.TargetHub:
 		if d.hubPool == nil {
 			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "hub fallback not configured"), nil
 		}
-		conn, err = d.hubPool.Get(ctx, params.Server)
+		conn, err = d.hubPool.Get(ctx, serverName)
 		target = router.TargetHub
 	case router.TargetUnavailable:
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, fmt.Sprintf("server unavailable: %s", decision.Reason)), nil
 	}
 
 	if err != nil {
-		d.router.RecordFailure(params.Server, target, err)
+		d.router.RecordFailure(serverName, target, err)
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
@@ -1265,25 +1275,34 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	}
 
 	start := time.Now()
+	if target == router.TargetLocal {
+		// Local servers are stdio-based and currently use a shared process/transport per server.
+		// Serialize each request/response pair to avoid concurrent reads/writes on the shared transport.
+		// This prevents crashes and avoids response misdelivery when multiple clients call the same server concurrently.
+		mu := d.callLock(serverName)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+
 	if err := conn.Transport.Send(ctx, req); err != nil {
 		conn.Healthy = false
-		d.router.RecordFailure(params.Server, target, err)
+		d.router.RecordFailure(serverName, target, err)
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
 	resp, err := conn.Transport.Recv(ctx)
 	if err != nil {
 		conn.Healthy = false
-		d.router.RecordFailure(params.Server, target, err)
+		d.router.RecordFailure(serverName, target, err)
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
 	latencyMs := float64(time.Since(start).Milliseconds())
-	d.router.RecordSuccess(params.Server, target, latencyMs)
+	d.router.RecordSuccess(serverName, target, latencyMs)
 
 	// Track activity for idle reaping (local servers only)
 	if target == router.TargetLocal {
-		d.procMgr.MarkActivity(params.Server)
+		d.procMgr.MarkActivity(serverName)
 	}
 
 	return resp, nil

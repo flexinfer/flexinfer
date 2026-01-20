@@ -2,13 +2,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +24,15 @@ var version = "1.0.0"
 type githubServer struct {
 	token      string
 	httpClient *http.Client
+}
+
+type apiError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("GitHub API error %d: %s", e.StatusCode, e.Body)
 }
 
 func main() {
@@ -67,6 +79,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100). Defaults to 30.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 		},
@@ -118,6 +134,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100)",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"owner", "repo"},
@@ -209,6 +229,10 @@ func main() {
 					"type":        "integer",
 					"description": "Results per page (max 100)",
 				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
 			},
 			Required: []string{"owner", "repo"},
 		},
@@ -261,6 +285,10 @@ func main() {
 					"type":        "integer",
 					"description": "Results per page (max 100)",
 				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
 			},
 			Required: []string{"owner", "repo"},
 		},
@@ -281,6 +309,10 @@ func main() {
 					"type":        "integer",
 					"description": "Results per page (max 100)",
 				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
 			},
 			Required: []string{"query"},
 		},
@@ -300,6 +332,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100)",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"query"},
@@ -341,44 +377,28 @@ func main() {
 }
 
 func (g *githubServer) request(ctx context.Context, method, path string, body any) (map[string]any, error) {
-	url := "https://api.github.com" + path
+	reqURL := "https://api.github.com" + path
 
-	var reqBody io.Reader
+	var reqBodyBytes []byte
 	if body != nil {
-		b, err := json.Marshal(body)
+		var err error
+		reqBodyBytes, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reqBody = strings.NewReader(string(b))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	headers := map[string]string{
+		"Accept":               "application/vnd.github+json",
+		"X-GitHub-Api-Version": "2022-11-28",
+	}
+	if len(reqBodyBytes) > 0 {
+		headers["Content-Type"] = "application/json"
+	}
+
+	respBody, _, err := g.doRequest(ctx, method, reqURL, reqBodyBytes, headers)
 	if err != nil {
 		return nil, err
-	}
-
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]any
@@ -395,40 +415,26 @@ func (g *githubServer) request(ctx context.Context, method, path string, body an
 }
 
 func (g *githubServer) requestList(ctx context.Context, path string) ([]any, error) {
-	url := "https://api.github.com" + path
+	items, _, err := g.requestListWithMeta(ctx, path)
+	return items, err
+}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+func (g *githubServer) requestListWithMeta(ctx context.Context, path string) ([]any, map[string]any, error) {
+	reqURL := "https://api.github.com" + path
+	respBody, resp, err := g.doRequest(ctx, "GET", reqURL, nil, map[string]string{
+		"Accept":               "application/vnd.github+json",
+		"X-GitHub-Api-Version": "2022-11-28",
+	})
 	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
-	}
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, nil, err
 	}
 
 	var result []any
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
+		return nil, nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	return result, nil
+	return result, parseGitHubPagination(resp), nil
 }
 
 func getStringArg(args map[string]any, key, defaultVal string) string {
@@ -445,24 +451,234 @@ func getIntArg(args map[string]any, key string, defaultVal int) int {
 	return defaultVal
 }
 
+func normalizePerPage(perPage int, defaultVal int) int {
+	if perPage <= 0 {
+		return defaultVal
+	}
+	if perPage > 100 {
+		return 100
+	}
+	return perPage
+}
+
+func normalizePage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+	return page
+}
+
+func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, body []byte, headers map[string]string) ([]byte, *http.Response, error) {
+	const (
+		maxAttempts       = 3
+		maxErrorBodyBytes = 8192
+		maxRetryDelay     = 10 * time.Second
+	)
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var reqBody io.Reader
+		if len(body) > 0 {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "mcp-github/"+version)
+
+		for k, v := range headers {
+			if k != "" && v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		if g.token != "" {
+			req.Header.Set("Authorization", "Bearer "+g.token)
+		}
+
+		resp, err := g.httpClient.Do(req)
+		if err != nil {
+			if attempt < maxAttempts-1 && isTransientError(err) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, nil, err
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxAttempts-1 && isTransientError(readErr) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, resp, readErr
+		}
+
+		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
+			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if delay <= 0 {
+				delay = backoffDelay(attempt, maxRetryDelay)
+			}
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+			time.Sleep(delay)
+			continue
+		}
+
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
+			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			bodyText := string(trimTo(respBody, maxErrorBodyBytes))
+			// Add helpful rate limit context when possible.
+			if resp.StatusCode == 403 && strings.Contains(strings.ToLower(bodyText), "rate limit") {
+				bodyText = fmt.Sprintf("%s (rate_limit_remaining=%s reset=%s)", bodyText, resp.Header.Get("X-RateLimit-Remaining"), resp.Header.Get("X-RateLimit-Reset"))
+			}
+			return nil, resp, &apiError{StatusCode: resp.StatusCode, Body: bodyText}
+		}
+
+		return respBody, resp, nil
+	}
+
+	return nil, nil, fmt.Errorf("request failed after retries")
+}
+
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
+}
+
+func backoffDelay(attempt int, max time.Duration) time.Duration {
+	delay := time.Duration(1<<attempt) * time.Second
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "temporary failure") ||
+		strings.Contains(errStr, "EOF")
+}
+
+func trimTo(b []byte, max int) []byte {
+	if max <= 0 || len(b) <= max {
+		return b
+	}
+	out := make([]byte, 0, max+32)
+	out = append(out, b[:max]...)
+	out = append(out, []byte("\n... (truncated)")...)
+	return out
+}
+
+func parseGitHubPagination(resp *http.Response) map[string]any {
+	if resp == nil {
+		return nil
+	}
+	link := strings.TrimSpace(resp.Header.Get("Link"))
+	if link == "" {
+		return nil
+	}
+
+	out := map[string]any{}
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Format: <url>; rel="next"
+		semi := strings.Index(part, ";")
+		if semi <= 0 {
+			continue
+		}
+		urlPart := strings.TrimSpace(part[:semi])
+		metaPart := part[semi+1:]
+
+		if !strings.HasPrefix(urlPart, "<") || !strings.HasSuffix(urlPart, ">") {
+			continue
+		}
+		u := strings.TrimSuffix(strings.TrimPrefix(urlPart, "<"), ">")
+
+		relIdx := strings.Index(metaPart, "rel=\"")
+		if relIdx < 0 {
+			continue
+		}
+		relPart := metaPart[relIdx+5:]
+		end := strings.Index(relPart, "\"")
+		if end < 0 {
+			continue
+		}
+		rel := relPart[:end]
+
+		key := rel + "_url"
+		out[key] = u
+		if page, ok := extractPage(u); ok {
+			out[rel+"_page"] = page
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func extractPage(rawURL string) (int, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, false
+	}
+	pageStr := u.Query().Get("page")
+	if pageStr == "" {
+		return 0, false
+	}
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page <= 0 {
+		return 0, false
+	}
+	return page, true
+}
+
 func (g *githubServer) handleListRepos(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	owner := getStringArg(args, "owner", "")
 	repoType := getStringArg(args, "type", "owner")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	var path string
 	if owner != "" {
-		path = fmt.Sprintf("/users/%s/repos?type=%s&per_page=%d", owner, repoType, perPage)
+		path = fmt.Sprintf("/users/%s/repos?type=%s&per_page=%d&page=%d", owner, repoType, perPage, page)
 	} else {
-		path = fmt.Sprintf("/user/repos?type=%s&per_page=%d", repoType, perPage)
+		path = fmt.Sprintf("/user/repos?type=%s&per_page=%d&page=%d", repoType, perPage, page)
 	}
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"repositories": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"repositories": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -486,23 +702,24 @@ func (g *githubServer) handleListIssues(ctx context.Context, args map[string]any
 	repo := getStringArg(args, "repo", "")
 	state := getStringArg(args, "state", "open")
 	labels := getStringArg(args, "labels", "")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
 	}
 
-	path := fmt.Sprintf("/repos/%s/%s/issues?state=%s&per_page=%d", owner, repo, state, perPage)
+	path := fmt.Sprintf("/repos/%s/%s/issues?state=%s&per_page=%d&page=%d", owner, repo, state, perPage, page)
 	if labels != "" {
-		path += "&labels=" + labels
+		path += "&labels=" + url.QueryEscape(labels)
 	}
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -555,20 +772,21 @@ func (g *githubServer) handleListPRs(ctx context.Context, args map[string]any) (
 	owner := getStringArg(args, "owner", "")
 	repo := getStringArg(args, "repo", "")
 	state := getStringArg(args, "state", "open")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
 	}
 
-	path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&per_page=%d", owner, repo, state, perPage)
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&per_page=%d&page=%d", owner, repo, state, perPage, page)
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"pull_requests": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"pull_requests": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetPR(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -592,34 +810,36 @@ func (g *githubServer) handleListCommits(ctx context.Context, args map[string]an
 	owner := getStringArg(args, "owner", "")
 	repo := getStringArg(args, "repo", "")
 	sha := getStringArg(args, "sha", "")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
 	}
 
-	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", owner, repo, perPage)
+	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d&page=%d", owner, repo, perPage, page)
 	if sha != "" {
-		path += "&sha=" + sha
+		path += "&sha=" + url.QueryEscape(sha)
 	}
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"commits": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"commits": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleSearchRepos(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	query := getStringArg(args, "query", "")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
 
-	path := fmt.Sprintf("/search/repositories?q=%s&per_page=%d", query, perPage)
+	path := fmt.Sprintf("/search/repositories?q=%s&per_page=%d&page=%d", url.QueryEscape(query), perPage, page)
 
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
@@ -631,13 +851,14 @@ func (g *githubServer) handleSearchRepos(ctx context.Context, args map[string]an
 
 func (g *githubServer) handleSearchCode(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	query := getStringArg(args, "query", "")
-	perPage := getIntArg(args, "per_page", 30)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
 
-	path := fmt.Sprintf("/search/code?q=%s&per_page=%d", query, perPage)
+	path := fmt.Sprintf("/search/code?q=%s&per_page=%d&page=%d", url.QueryEscape(query), perPage, page)
 
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {

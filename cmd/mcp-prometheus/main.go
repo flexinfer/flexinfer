@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -221,18 +222,22 @@ func (p *promServer) request(ctx context.Context, path string, params url.Values
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("PROMETHEUS_MAX_RESPONSE_BYTES", 5*1024*1024)
+	body, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("prometheus response exceeded %d bytes (set PROMETHEUS_MAX_RESPONSE_BYTES to increase; narrow query/range or increase step)", maxBytes)
+	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("prometheus API error %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("prometheus API error %d: %s", resp.StatusCode, bodySnippet(body))
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	return result, nil
@@ -243,6 +248,49 @@ func getStringArg(args map[string]any, key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func bodySnippet(body []byte) string {
+	const max = 4 * 1024
+	truncated := false
+	if len(body) > max {
+		body = body[:max]
+		truncated = true
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	if truncated {
+		return s + "…"
+	}
+	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
 }
 
 func (p *promServer) handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

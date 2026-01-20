@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +53,16 @@ func getEnvBool(key string, fallback bool) bool {
 	if v := os.Getenv(key); v != "" {
 		v = strings.ToLower(v)
 		return v == "1" || v == "true" || v == "yes" || v == "on"
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }
@@ -304,9 +315,13 @@ func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[s
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	maxBytes := getEnvInt("LOKI_MAX_RESPONSE_BYTES", 5*1024*1024)
+	body, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
+	}
+	if truncated && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("loki response exceeded %d bytes (set LOKI_MAX_RESPONSE_BYTES to increase; try lowering limit/narrowing time range)", maxBytes)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -329,6 +344,16 @@ func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[s
 
 // Handlers
 
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
 func handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	params := url.Values{}
 	if v, ok := args["query"].(string); ok {
@@ -338,7 +363,7 @@ func handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 		params.Set("time", v)
 	}
 	if v, ok := args["limit"].(float64); ok {
-		params.Set("limit", fmt.Sprintf("%d", int(v)))
+		params.Set("limit", fmt.Sprintf("%d", clampInt(int(v), 1, 5000)))
 	}
 	if v, ok := args["direction"].(string); ok {
 		params.Set("direction", v)
@@ -375,7 +400,7 @@ func handleQueryRange(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		params.Set("step", v)
 	}
 	if v, ok := args["limit"].(float64); ok {
-		params.Set("limit", fmt.Sprintf("%d", int(v)))
+		params.Set("limit", fmt.Sprintf("%d", clampInt(int(v), 1, 5000)))
 	}
 	if v, ok := args["direction"].(string); ok {
 		params.Set("direction", v)
@@ -539,10 +564,10 @@ func handleDetectedFields(ctx context.Context, args map[string]any) (*mcp.CallTo
 		params.Set("end", v)
 	}
 	if v, ok := args["field_limit"].(float64); ok {
-		params.Set("field_limit", fmt.Sprintf("%d", int(v)))
+		params.Set("field_limit", fmt.Sprintf("%d", clampInt(int(v), 1, 1000)))
 	}
 	if v, ok := args["line_limit"].(float64); ok {
-		params.Set("line_limit", fmt.Sprintf("%d", int(v)))
+		params.Set("line_limit", fmt.Sprintf("%d", clampInt(int(v), 1, 5000)))
 	}
 
 	res, err := lokiRequest(ctx, "detected_fields", params)
@@ -694,6 +719,22 @@ func bodySnippet(body []byte) string {
 		return s + "…"
 	}
 	return s
+}
+
+func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
 }
 
 type limitedBuffer struct {
