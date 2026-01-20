@@ -309,7 +309,7 @@ echo "Download complete."
 ls -la "$DEST_DIR"
 `, modelID, modelPath)
 	} else {
-		// Standard HuggingFace models use huggingface-cli
+		// Standard HuggingFace models use huggingface_hub snapshot_download (more stable than huggingface-cli)
 		image = "python:3.10-slim"
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -324,7 +324,23 @@ fi
 
 pip install --no-cache-dir huggingface_hub
 echo "Downloading $MODEL_ID to $DEST_DIR..."
-huggingface-cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
+mkdir -p "$DEST_DIR"
+MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
+import os
+
+from huggingface_hub import snapshot_download
+
+repo_id = os.environ["MODEL_ID"]
+local_dir = os.environ["DEST_DIR"]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+snapshot_download(
+    repo_id=repo_id,
+    local_dir=local_dir,
+    local_dir_use_symlinks=False,
+    token=token,
+)
+PY
 echo "Download complete."
 `, modelID, modelPath)
 	}
@@ -608,7 +624,22 @@ fi
 pip install --no-cache-dir huggingface_hub
 echo "Downloading $MODEL_ID to $DEST_DIR..."
 mkdir -p "$DEST_DIR"
-huggingface-cli download "$MODEL_ID" --local-dir "$DEST_DIR" --local-dir-use-symlinks False
+MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
+import os
+
+from huggingface_hub import snapshot_download
+
+repo_id = os.environ["MODEL_ID"]
+local_dir = os.environ["DEST_DIR"]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+snapshot_download(
+    repo_id=repo_id,
+    local_dir=local_dir,
+    local_dir_use_symlinks=False,
+    token=token,
+)
+PY
 touch "$MARKER"
 echo "Sync complete, entering sleep"
 while true; do sleep 3600; done

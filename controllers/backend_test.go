@@ -1777,9 +1777,9 @@ func TestDaemonSetForNodeLocal_HuggingFace(t *testing.T) {
 		t.Errorf("Expected python:3.10-slim for HuggingFace source, got %s", container.Image)
 	}
 
-	// Check download script contains huggingface-cli
-	if len(container.Args) == 0 || !strings.Contains(container.Args[0], "huggingface-cli download") {
-		t.Error("Expected download script to contain 'huggingface-cli download'")
+	// Check download script uses snapshot_download (huggingface_hub)
+	if len(container.Args) == 0 || !strings.Contains(container.Args[0], "snapshot_download") {
+		t.Error("Expected download script to contain 'snapshot_download'")
 	}
 
 	// Check default node selector (GPU nodes)
