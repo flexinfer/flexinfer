@@ -153,8 +153,51 @@ class ImageGenerationRequest(BaseModel):
     response_format: str = "b64_json"  # or "url"
     style: Optional[str] = None
     negative_prompt: Optional[str] = None
-    num_inference_steps: int = Field(default=20, ge=1, le=100)
-    guidance_scale: float = Field(default=7.5, ge=1.0, le=20.0)
+    # If omitted, defaults are derived from env vars and/or the model type.
+    # This keeps SDXL Turbo fast by default (few steps, low/zero guidance).
+    num_inference_steps: Optional[int] = Field(default=None, ge=1, le=100)
+    guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+
+def _env_int(name: str) -> Optional[int]:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+def _env_float(name: str) -> Optional[float]:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+def _is_sdxl_turbo(model_id: str) -> bool:
+    model_id = (model_id or "").lower()
+    return "sdxl-turbo" in model_id or "sdxl_turbo" in model_id
+
+def _default_steps(model_id: str) -> int:
+    # Per-deployment override via env
+    steps = _env_int("DEFAULT_NUM_INFERENCE_STEPS")
+    if steps is not None and steps > 0:
+        return steps
+    # SDXL Turbo is designed for very few steps.
+    if _is_sdxl_turbo(model_id):
+        return 4
+    return 20
+
+def _default_guidance_scale(model_id: str) -> float:
+    scale = _env_float("DEFAULT_GUIDANCE_SCALE")
+    if scale is not None and scale >= 0.0:
+        return scale
+    # SDXL Turbo typically uses low/zero CFG for speed.
+    if _is_sdxl_turbo(model_id):
+        return 0.0
+    return 7.5
 
 class ImageData(BaseModel):
     b64_json: Optional[str] = None
@@ -174,11 +217,12 @@ def load_pipeline(model_id: str):
 
     # Check for local model path first (e.g., /models mounted from PVC)
     local_model_path = os.environ.get("LOCAL_MODEL_PATH", "/models")
+    resolved_model_id = model_id
     if os.path.isdir(local_model_path) and os.listdir(local_model_path):
         print(f"Found local model at: {local_model_path}")
-        model_id = local_model_path
+        resolved_model_id = local_model_path
 
-    print(f"Loading model: {model_id}")
+    print(f"Loading model: {resolved_model_id} (id: {model_id})")
     sys.stdout.flush()
 
     # With the fixed VAE (madebyollin/sdxl-vae-fp16-fix), fp16 is safe on gfx1100
@@ -225,7 +269,7 @@ def load_pipeline(model_id: str):
             print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
         sys.stdout.flush()
         pipeline = AutoPipelineForText2Image.from_pretrained(
-            model_id,
+            resolved_model_id,
             vae=vae,  # Use fixed VAE if provided
             torch_dtype=dtype,
             use_safetensors=True,
@@ -238,7 +282,7 @@ def load_pipeline(model_id: str):
         print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
         sys.stdout.flush()
         pipeline = DiffusionPipeline.from_pretrained(
-            model_id,
+            resolved_model_id,
             vae=vae,  # Use fixed VAE if provided
             torch_dtype=dtype,
             use_safetensors=True,
@@ -259,7 +303,7 @@ def load_pipeline(model_id: str):
 
     # Use CPU offloading to avoid memory access faults on gfx1100
     # This keeps the model on CPU and only moves components to GPU as needed
-    use_cpu_offload = os.environ.get("USE_CPU_OFFLOAD", "1") == "1"
+    use_cpu_offload = os.environ.get("USE_CPU_OFFLOAD", "0") == "1"
 
     if use_cpu_offload and torch.cuda.is_available():
         try:
@@ -299,25 +343,26 @@ def load_pipeline(model_id: str):
             sys.stdout.flush()
             pipeline = pipeline.to("cpu")
 
-    # Enable memory optimizations (safe for ROCm)
-    # Note: Attention slicing is safer than xformers on ROCm
-    try:
-        if hasattr(pipeline, 'enable_attention_slicing'):
-            pipeline.enable_attention_slicing("max")
-            print("Enabled attention slicing (max)")
-    except Exception as e:
-        print(f"Could not enable attention slicing: {e}")
+    # Optional memory optimizations (trade speed for memory).
+    # Defaults are OFF for performance; enable explicitly via env.
+    if os.environ.get("ENABLE_ATTENTION_SLICING", "0") == "1":
+        try:
+            if hasattr(pipeline, 'enable_attention_slicing'):
+                pipeline.enable_attention_slicing(os.environ.get("ATTENTION_SLICING", "max"))
+                print(f"Enabled attention slicing ({os.environ.get('ATTENTION_SLICING', 'max')})")
+        except Exception as e:
+            print(f"Could not enable attention slicing: {e}")
 
-    # VAE slicing helps with memory on large images
-    try:
-        if hasattr(pipeline, 'enable_vae_slicing'):
-            pipeline.enable_vae_slicing()
-            print("Enabled VAE slicing")
-    except Exception as e:
-        print(f"Could not enable VAE slicing: {e}")
+    if os.environ.get("ENABLE_VAE_SLICING", "0") == "1":
+        try:
+            if hasattr(pipeline, 'enable_vae_slicing'):
+                pipeline.enable_vae_slicing()
+                print("Enabled VAE slicing")
+        except Exception as e:
+            print(f"Could not enable VAE slicing: {e}")
 
     current_model = model_id
-    print(f"Model loaded successfully: {model_id}")
+    print(f"Model loaded successfully: {resolved_model_id} (id: {model_id})")
     sys.stdout.flush()
     return pipeline
 
@@ -364,6 +409,9 @@ async def generate_images(request: ImageGenerationRequest):
     # Load pipeline if needed
     pipe = load_pipeline(model_id)
 
+    steps = request.num_inference_steps if request.num_inference_steps is not None else _default_steps(model_id)
+    guidance_scale = request.guidance_scale if request.guidance_scale is not None else _default_guidance_scale(model_id)
+
     # Parse size
     try:
         width, height = map(int, request.size.split("x"))
@@ -373,14 +421,15 @@ async def generate_images(request: ImageGenerationRequest):
     # Generate images
     images = []
     for _ in range(request.n):
-        result = pipe(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
-            num_inference_steps=request.num_inference_steps,
-            guidance_scale=request.guidance_scale,
-            width=width,
-            height=height,
-        )
+        with torch.inference_mode():
+            result = pipe(
+                prompt=request.prompt,
+                negative_prompt=request.negative_prompt,
+                num_inference_steps=steps,
+                guidance_scale=guidance_scale,
+                width=width,
+                height=height,
+            )
 
         img = result.images[0]
 

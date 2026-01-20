@@ -1246,7 +1246,7 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 				return image
 			}
 			// ROCm-enabled Diffusers API server
-			return "registry.harbor.lan/library/diffusers-api:rocm6.2.3"
+			return "registry.harbor.lan/library/diffusers-api:rocm6.2.3-fast1"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_DIFFUSERS_IMAGE"); ok {
 				return image
@@ -1665,15 +1665,15 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "USE_FP16",
 				Value: "1",
 			})
-			// Force synchronous GPU operations for stability during model loading
+			// Allow async GPU operations for performance (sync mode is significantly slower)
 			env = append(env, corev1.EnvVar{
 				Name:  "HIP_LAUNCH_BLOCKING",
-				Value: "1",
+				Value: "0",
 			})
-			// Disable AOTriton experimental features - they can cause SIGSEGV
+			// Enable AOTriton flash attention for gfx1100 performance/stability
 			env = append(env, corev1.EnvVar{
 				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-				Value: "0",
+				Value: "1",
 			})
 			// Disable CPU offload - gfx1100 is fast enough without it and
 			// CPU offload causes ~10x slowdown on modern RDNA3 GPUs
@@ -1681,6 +1681,15 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "USE_CPU_OFFLOAD",
 				Value: "0",
 			})
+
+			// SDXL Turbo is designed to run in very few steps. When clients omit
+			// diffusion params (OpenAI-compatible requests), keep defaults fast.
+			if strings.Contains(strings.ToLower(m.Spec.Model), "sdxl-turbo") {
+				env = append(env,
+					corev1.EnvVar{Name: "DEFAULT_NUM_INFERENCE_STEPS", Value: "4"},
+					corev1.EnvVar{Name: "DEFAULT_GUIDANCE_SCALE", Value: "0.0"},
+				)
+			}
 		}
 		return env
 	case "tei":
