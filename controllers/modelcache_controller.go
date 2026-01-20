@@ -523,6 +523,106 @@ func (r *ModelCacheReconciler) reconcileNodeLocal(ctx context.Context, m *aiv1al
 		return ctrl.Result{}, err
 	}
 
+	// Keep the DaemonSet spec in sync with the desired state (no kubectl patches needed).
+	desiredDS, err := r.daemonSetForNodeLocal(m, modelPath, hostPath)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	dsNeedsUpdate := false
+
+	// Ensure controller ownership so we get DaemonSet events and can reconcile drift.
+	if !metav1.IsControlledBy(ds, m) {
+		if err := ctrl.SetControllerReference(m, ds, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		dsNeedsUpdate = true
+	}
+
+	// Sync labels (merge-only: keep any extra labels set by users/tools).
+	if ds.Labels == nil {
+		ds.Labels = make(map[string]string)
+	}
+	for k, v := range desiredDS.Labels {
+		if ds.Labels[k] != v {
+			ds.Labels[k] = v
+			dsNeedsUpdate = true
+		}
+	}
+	if ds.Spec.Template.Labels == nil {
+		ds.Spec.Template.Labels = make(map[string]string)
+	}
+	for k, v := range desiredDS.Spec.Template.Labels {
+		if ds.Spec.Template.Labels[k] != v {
+			ds.Spec.Template.Labels[k] = v
+			dsNeedsUpdate = true
+		}
+	}
+
+	// Sync the PodSpec fields we own.
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.NodeSelector, desiredDS.Spec.Template.Spec.NodeSelector) {
+		ds.Spec.Template.Spec.NodeSelector = desiredDS.Spec.Template.Spec.NodeSelector
+		dsNeedsUpdate = true
+	}
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.Tolerations, desiredDS.Spec.Template.Spec.Tolerations) {
+		ds.Spec.Template.Spec.Tolerations = desiredDS.Spec.Template.Spec.Tolerations
+		dsNeedsUpdate = true
+	}
+	if !reflect.DeepEqual(ds.Spec.Template.Spec.Volumes, desiredDS.Spec.Template.Spec.Volumes) {
+		ds.Spec.Template.Spec.Volumes = desiredDS.Spec.Template.Spec.Volumes
+		dsNeedsUpdate = true
+	}
+
+	if len(desiredDS.Spec.Template.Spec.Containers) == 0 {
+		return ctrl.Result{}, fmt.Errorf("desired DaemonSet has no containers")
+	}
+	desiredSyncer := desiredDS.Spec.Template.Spec.Containers[0]
+
+	syncerIndex := -1
+	for i := range ds.Spec.Template.Spec.Containers {
+		if ds.Spec.Template.Spec.Containers[i].Name == desiredSyncer.Name {
+			syncerIndex = i
+			break
+		}
+	}
+	if syncerIndex == -1 {
+		ds.Spec.Template.Spec.Containers = desiredDS.Spec.Template.Spec.Containers
+		dsNeedsUpdate = true
+	} else {
+		syncer := &ds.Spec.Template.Spec.Containers[syncerIndex]
+		if syncer.Image != desiredSyncer.Image {
+			syncer.Image = desiredSyncer.Image
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Command, desiredSyncer.Command) {
+			syncer.Command = desiredSyncer.Command
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Args, desiredSyncer.Args) {
+			syncer.Args = desiredSyncer.Args
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Env, desiredSyncer.Env) {
+			syncer.Env = desiredSyncer.Env
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.VolumeMounts, desiredSyncer.VolumeMounts) {
+			syncer.VolumeMounts = desiredSyncer.VolumeMounts
+			dsNeedsUpdate = true
+		}
+		if !reflect.DeepEqual(syncer.Resources, desiredSyncer.Resources) {
+			syncer.Resources = desiredSyncer.Resources
+			dsNeedsUpdate = true
+		}
+	}
+
+	if dsNeedsUpdate {
+		log.Info("Updating NodeLocal DaemonSet", "DaemonSet", dsName)
+		if err := r.Update(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// 3. Check DaemonSet status
 	readyNodes := ds.Status.NumberReady
 	totalNodes := ds.Status.DesiredNumberScheduled
@@ -592,7 +692,7 @@ DEST_DIR="%s"
 MODEL_ID="%s"
 MARKER="$DEST_DIR/.synced"
 
-if [ -f "$MARKER" ]; then
+if [ -f "$MARKER" ] || [ -f "$DEST_DIR/mlc-chat-config.json" ]; then
     echo "Model already synced at $DEST_DIR"
     while true; do sleep 3600; done
 fi
@@ -616,7 +716,7 @@ DEST_DIR="%s"
 MODEL_ID="%s"
 MARKER="$DEST_DIR/.synced"
 
-if [ -f "$MARKER" ]; then
+if [ -f "$MARKER" ] || { [ -d "$DEST_DIR" ] && [ "$(ls -A "$DEST_DIR" 2>/dev/null)" ]; }; then
     echo "Model already synced at $DEST_DIR"
     while true; do sleep 3600; done
 fi
@@ -637,7 +737,7 @@ snapshot_download(
     repo_id=repo_id,
     local_dir=local_dir,
     local_dir_use_symlinks=False,
-    token=token,
+token=token,
 )
 PY
 touch "$MARKER"
@@ -652,6 +752,26 @@ while true; do sleep 3600; done
 		nodeSelector = map[string]string{
 			"nvidia.com/gpu.present": "true",
 		}
+	}
+
+	// GPU node tolerations (allows scheduling on dedicated GPU nodes).
+	gpuTolerations := []corev1.Toleration{
+		{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+		{
+			Key:      "nvidia.com/gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+		{
+			Key:      "amd.com/gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
 	}
 
 	// Environment variables
@@ -732,6 +852,7 @@ while true; do sleep 3600; done
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
+					Tolerations:  gpuTolerations,
 					Containers: []corev1.Container{{
 						Name:         "syncer",
 						Image:        image,
