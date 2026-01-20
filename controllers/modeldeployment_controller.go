@@ -1675,6 +1675,12 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
 				Value: "0",
 			})
+			// Disable CPU offload - gfx1100 is fast enough without it and
+			// CPU offload causes ~10x slowdown on modern RDNA3 GPUs
+			env = append(env, corev1.EnvVar{
+				Name:  "USE_CPU_OFFLOAD",
+				Value: "0",
+			})
 		}
 		return env
 	case "tei":
