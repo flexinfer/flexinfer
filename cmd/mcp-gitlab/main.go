@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -82,6 +84,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100). Defaults to 20.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"search"},
@@ -268,6 +274,10 @@ func main() {
 					"type":        "integer",
 					"description": "Results per page (max 100)",
 				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
 			},
 			Required: []string{"project"},
 		},
@@ -327,6 +337,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100)",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"project"},
@@ -416,6 +430,10 @@ func main() {
 					"type":        "integer",
 					"description": "Results per page (max 100). Defaults to 20.",
 				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
 			},
 		},
 	}, gl.handleListProjects)
@@ -452,6 +470,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100). Defaults to 20.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"project"},
@@ -572,6 +594,10 @@ func main() {
 				"per_page": map[string]any{
 					"type":        "integer",
 					"description": "Results per page (max 100). Defaults to 100.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
 				},
 			},
 			Required: []string{"project", "pipeline_id"},
@@ -823,41 +849,24 @@ func main() {
 func (g *gitlabServer) request(ctx context.Context, method, path string, body any) (map[string]any, error) {
 	reqURL := g.apiURL + path
 
-	var reqBody io.Reader
+	var reqBodyBytes []byte
 	if body != nil {
-		b, err := json.Marshal(body)
+		var err error
+		reqBodyBytes, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reqBody = strings.NewReader(string(b))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+	headers := map[string]string{
+		"Accept": "application/json",
+	}
+	if len(reqBodyBytes) > 0 {
+		headers["Content-Type"] = "application/json"
+	}
+	respBody, _, err := g.doRequest(ctx, method, reqURL, reqBodyBytes, headers)
 	if err != nil {
 		return nil, err
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if g.token != "" {
-		req.Header.Set("PRIVATE-TOKEN", g.token)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, &apiError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var result map[string]any
@@ -874,72 +883,420 @@ func (g *gitlabServer) request(ctx context.Context, method, path string, body an
 }
 
 func (g *gitlabServer) requestList(ctx context.Context, path string) ([]any, error) {
+	items, _, err := g.requestListWithMeta(ctx, path)
+	return items, err
+}
+
+func (g *gitlabServer) requestListWithMeta(ctx context.Context, path string) ([]any, map[string]any, error) {
 	reqURL := g.apiURL + path
 
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	respBody, resp, err := g.doRequest(ctx, "GET", reqURL, nil, map[string]string{"Accept": "application/json"})
 	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if g.token != "" {
-		req.Header.Set("PRIVATE-TOKEN", g.token)
-	}
-
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, &apiError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		return nil, nil, err
 	}
 
 	var result []any
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
+		return nil, nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	return result, nil
+	return result, parsePaginationHeaders(resp), nil
 }
 
 func (g *gitlabServer) requestRaw(ctx context.Context, method, path string, headers map[string]string) ([]byte, *http.Response, error) {
 	reqURL := g.apiURL + path
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
-	if err != nil {
-		return nil, nil, err
+	return g.doRequest(ctx, method, reqURL, nil, headers)
+}
+
+func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, body []byte, headers map[string]string) ([]byte, *http.Response, error) {
+	const (
+		maxAttempts       = 3
+		maxErrorBodyBytes = 8192
+		maxRetryDelay     = 10 * time.Second
+	)
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var reqBody io.Reader
+		if len(body) > 0 {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
+		for k, v := range headers {
+			if k != "" && v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		if g.token != "" {
+			req.Header.Set("PRIVATE-TOKEN", g.token)
+		}
+
+		resp, err := g.httpClient.Do(req)
+		if err != nil {
+			if attempt < maxAttempts-1 && isTransientError(err) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, nil, err
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxAttempts-1 && isTransientError(readErr) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, resp, readErr
+		}
+
+		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
+			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if delay <= 0 {
+				delay = backoffDelay(attempt, maxRetryDelay)
+			}
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+			time.Sleep(delay)
+			continue
+		}
+
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
+			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, resp, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(respBody, maxErrorBodyBytes))}
+		}
+
+		return respBody, resp, nil
 	}
 
-	req.Header.Set("Accept", "*/*")
-	for k, v := range headers {
-		if k != "" {
-			req.Header.Set(k, v)
+	return nil, nil, fmt.Errorf("request failed after retries")
+}
+
+func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL string, body []byte, headers map[string]string, maxBytes int) ([]byte, *http.Response, bool, error) {
+	const (
+		maxAttempts       = 3
+		maxErrorBodyBytes = 8192
+		maxRetryDelay     = 10 * time.Second
+	)
+
+	if maxBytes <= 0 {
+		return nil, nil, false, fmt.Errorf("maxBytes must be > 0")
+	}
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var reqBody io.Reader
+		if len(body) > 0 {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, nil, false, err
+		}
+
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
+		for k, v := range headers {
+			if k != "" && v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		if g.token != "" {
+			req.Header.Set("PRIVATE-TOKEN", g.token)
+		}
+
+		resp, err := g.httpClient.Do(req)
+		if err != nil {
+			if attempt < maxAttempts-1 && isTransientError(err) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, nil, false, err
+		}
+
+		limited, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes+1)))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxAttempts-1 && isTransientError(readErr) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, resp, false, readErr
+		}
+
+		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
+			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if delay <= 0 {
+				delay = backoffDelay(attempt, maxRetryDelay)
+			}
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+			time.Sleep(delay)
+			continue
+		}
+
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
+			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			continue
+		}
+
+		truncated := len(limited) > maxBytes
+		if truncated {
+			limited = limited[:maxBytes]
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, resp, truncated, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(limited, maxErrorBodyBytes))}
+		}
+
+		return limited, resp, truncated, nil
+	}
+
+	return nil, nil, false, fmt.Errorf("request failed after retries")
+}
+
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
+}
+
+func backoffDelay(attempt int, max time.Duration) time.Duration {
+	delay := time.Duration(1<<attempt) * time.Second
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
+func trimTo(b []byte, max int) []byte {
+	if max <= 0 || len(b) <= max {
+		return b
+	}
+	out := make([]byte, 0, max+32)
+	out = append(out, b[:max]...)
+	out = append(out, []byte("\n... (truncated)")...)
+	return out
+}
+
+func parsePaginationHeaders(resp *http.Response) map[string]any {
+	if resp == nil {
+		return nil
+	}
+	h := resp.Header
+	out := map[string]any{}
+	for _, kv := range []struct {
+		key string
+		dst string
+	}{
+		{"X-Page", "page"},
+		{"X-Per-Page", "per_page"},
+		{"X-Next-Page", "next_page"},
+		{"X-Prev-Page", "prev_page"},
+		{"X-Total-Pages", "total_pages"},
+		{"X-Total", "total"},
+	} {
+		v := strings.TrimSpace(h.Get(kv.key))
+		if v == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(v); err == nil {
+			out[kv.dst] = n
+		} else {
+			out[kv.dst] = v
 		}
 	}
-	if g.token != "" {
-		req.Header.Set("PRIVATE-TOKEN", g.token)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string, headers map[string]string, maxBytes int) ([]byte, *http.Response, int, error) {
+	const (
+		maxAttempts   = 3
+		maxRetryDelay = 10 * time.Second
+	)
+
+	if maxBytes <= 0 {
+		maxBytes = 200_000
 	}
 
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
+		if err != nil {
+			return nil, nil, 0, err
+		}
 
-	b, err := io.ReadAll(resp.Body)
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
+		for k, v := range headers {
+			if k != "" && v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		if g.token != "" {
+			req.Header.Set("PRIVATE-TOKEN", g.token)
+		}
+
+		resp, err := g.httpClient.Do(req)
+		if err != nil {
+			if attempt < maxAttempts-1 && isTransientError(err) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, nil, 0, err
+		}
+
+		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
+			_ = resp.Body.Close()
+			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if delay <= 0 {
+				delay = backoffDelay(attempt, maxRetryDelay)
+			}
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+			time.Sleep(delay)
+			continue
+		}
+
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
+			_ = resp.Body.Close()
+			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			continue
+		}
+
+		tail, totalRead, readErr := readTail(resp.Body, maxBytes)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxAttempts-1 && isTransientError(readErr) {
+				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				continue
+			}
+			return nil, resp, totalRead, readErr
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, resp, totalRead, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(tail, 8192))}
+		}
+
+		return tail, resp, totalRead, nil
+	}
+
+	return nil, nil, 0, fmt.Errorf("request failed after retries")
+}
+
+func (g *gitlabServer) fetchJobTraceTail(ctx context.Context, project string, jobID int, tailLines int, maxBytes int) (string, string, bool, error) {
+	if tailLines <= 0 {
+		tailLines = 200
+	}
+	if maxBytes <= 0 {
+		maxBytes = 200_000
+	}
+
+	path := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), jobID)
+	reqURL := g.apiURL + path
+
+	b, resp, totalRead, err := g.doRequestTail(ctx, "GET", reqURL, map[string]string{"Accept": "text/plain"}, maxBytes)
 	if err != nil {
-		return nil, nil, err
+		return "", "", false, err
 	}
-	if resp.StatusCode >= 400 {
-		return nil, nil, &apiError{StatusCode: resp.StatusCode, Body: string(b)}
+
+	contentType := ""
+	if resp != nil {
+		contentType = resp.Header.Get("Content-Type")
 	}
-	return b, resp, nil
+
+	truncated := totalRead > maxBytes
+	trace := string(b)
+	lines := strings.Split(trace, "\n")
+	if tailLines > 0 && len(lines) > tailLines {
+		truncated = true
+		lines = lines[len(lines)-tailLines:]
+		trace = strings.Join(lines, "\n")
+	}
+
+	return trace, contentType, truncated, nil
+}
+
+func readTail(r io.Reader, maxBytes int) ([]byte, int, error) {
+	if maxBytes <= 0 {
+		return nil, 0, fmt.Errorf("maxBytes must be > 0")
+	}
+
+	ring := make([]byte, maxBytes)
+	buf := make([]byte, 32*1024)
+	pos := 0
+	filled := 0
+	total := 0
+
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			total += n
+			if n >= maxBytes {
+				copy(ring, buf[n-maxBytes:n])
+				pos = 0
+				filled = maxBytes
+			} else {
+				end := pos + n
+				if end <= maxBytes {
+					copy(ring[pos:end], buf[:n])
+				} else {
+					first := maxBytes - pos
+					copy(ring[pos:], buf[:first])
+					copy(ring[:end-maxBytes], buf[first:n])
+				}
+				pos = end % maxBytes
+				if filled < maxBytes {
+					filled += n
+					if filled > maxBytes {
+						filled = maxBytes
+					}
+				}
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, total, err
+		}
+	}
+
+	if filled == 0 {
+		return []byte{}, total, nil
+	}
+
+	if filled < maxBytes {
+		return ring[:filled], total, nil
+	}
+
+	// pos is the start of the oldest data.
+	out := make([]byte, 0, maxBytes)
+	out = append(out, ring[pos:]...)
+	out = append(out, ring[:pos]...)
+	return out, total, nil
 }
 
 func getStringArg(args map[string]any, key, defaultVal string) string {
@@ -967,22 +1324,40 @@ func encodeProject(project string) string {
 	return url.PathEscape(project)
 }
 
+func normalizePerPage(perPage int, defaultVal int) int {
+	if perPage <= 0 {
+		return defaultVal
+	}
+	if perPage > 100 {
+		return 100
+	}
+	return perPage
+}
+
+func normalizePage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+	return page
+}
+
 func (g *gitlabServer) handleSearchRepositories(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	search := getStringArg(args, "search", "")
-	perPage := getIntArg(args, "per_page", 20)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 20), 20)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if search == "" {
 		return nil, fmt.Errorf("search is required")
 	}
 
-	path := fmt.Sprintf("/projects?search=%s&per_page=%d", url.QueryEscape(search), perPage)
+	path := fmt.Sprintf("/projects?search=%s&per_page=%d&page=%d", url.QueryEscape(search), perPage, page)
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"projects": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"projects": result, "count": len(result), "pagination": meta})
 }
 
 func (g *gitlabServer) handleGetFileContents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1031,7 +1406,10 @@ func (g *gitlabServer) handleCreateOrUpdateFile(ctx context.Context, args map[st
 
 	result, err := g.request(ctx, "PUT", path, payload)
 	if err != nil {
-		// Try create
+		// Only fall back to create when the file doesn't exist.
+		if ae, ok := err.(*apiError); !ok || ae.StatusCode != 404 {
+			return nil, err
+		}
 		result, err = g.request(ctx, "POST", path, payload)
 		if err != nil {
 			return nil, err
@@ -1133,23 +1511,24 @@ func (g *gitlabServer) handleListIssues(ctx context.Context, args map[string]any
 	project := getStringArg(args, "project", "")
 	state := getStringArg(args, "state", "opened")
 	labels := getStringArg(args, "labels", "")
-	perPage := getIntArg(args, "per_page", 20)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 20), 20)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if project == "" {
 		return nil, fmt.Errorf("project is required")
 	}
 
-	path := fmt.Sprintf("/projects/%s/issues?state=%s&per_page=%d", encodeProject(project), state, perPage)
+	path := fmt.Sprintf("/projects/%s/issues?state=%s&per_page=%d&page=%d", encodeProject(project), state, perPage, page)
 	if labels != "" {
 		path += "&labels=" + url.QueryEscape(labels)
 	}
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result), "pagination": meta})
 }
 
 func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1187,20 +1566,21 @@ func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[st
 func (g *gitlabServer) handleListMergeRequests(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	project := getStringArg(args, "project", "")
 	state := getStringArg(args, "state", "opened")
-	perPage := getIntArg(args, "per_page", 20)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 20), 20)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if project == "" {
 		return nil, fmt.Errorf("project is required")
 	}
 
-	path := fmt.Sprintf("/projects/%s/merge_requests?state=%s&per_page=%d", encodeProject(project), state, perPage)
+	path := fmt.Sprintf("/projects/%s/merge_requests?state=%s&per_page=%d&page=%d", encodeProject(project), state, perPage, page)
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"merge_requests": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"merge_requests": result, "count": len(result), "pagination": meta})
 }
 
 func (g *gitlabServer) handleForkRepository(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1274,9 +1654,10 @@ func (g *gitlabServer) handleGetProject(ctx context.Context, args map[string]any
 func (g *gitlabServer) handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	owned := getBoolArg(args, "owned", false)
 	membership := getBoolArg(args, "membership", false)
-	perPage := getIntArg(args, "per_page", 20)
+	perPage := normalizePerPage(getIntArg(args, "per_page", 20), 20)
+	page := normalizePage(getIntArg(args, "page", 1))
 
-	path := fmt.Sprintf("/projects?per_page=%d", perPage)
+	path := fmt.Sprintf("/projects?per_page=%d&page=%d", perPage, page)
 	if owned {
 		path += "&owned=true"
 	}
@@ -1284,20 +1665,20 @@ func (g *gitlabServer) handleListProjects(ctx context.Context, args map[string]a
 		path += "&membership=true"
 	}
 
-	result, err := g.requestList(ctx, path)
+	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"projects": result, "count": len(result)})
+	return mcp.JSONResult(map[string]any{"projects": result, "count": len(result), "pagination": meta})
 }
 
 func (g *gitlabServer) handleVerifyToken(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if strings.TrimSpace(g.token) == "" {
-		return nil, fmt.Errorf("GITLAB_PERSONAL_ACCESS_TOKEN is not set")
+		return nil, fmt.Errorf("GITLAB_PERSONAL_ACCESS_TOKEN (or GITLAB_TOKEN) is not set")
 	}
 	if strings.Contains(g.token, "${") {
-		return nil, fmt.Errorf("GITLAB_PERSONAL_ACCESS_TOKEN appears to be unexpanded (%q); check your Loom secrets/keychain resolution", g.token)
+		return nil, fmt.Errorf("GitLab token appears to be unexpanded (%q); check your Loom secrets/keychain resolution", g.token)
 	}
 
 	result := map[string]any{
@@ -1335,10 +1716,8 @@ func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]
 	project := getStringArg(args, "project", "")
 	ref := getStringArg(args, "ref", "")
 	status := getStringArg(args, "status", "")
-	perPage := getIntArg(args, "per_page", 20)
-	if perPage <= 0 {
-		perPage = 20
-	}
+	perPage := normalizePerPage(getIntArg(args, "per_page", 20), 20)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if project == "" {
 		return nil, fmt.Errorf("project is required")
@@ -1346,6 +1725,7 @@ func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]
 
 	q := url.Values{}
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
+	q.Set("page", fmt.Sprintf("%d", page))
 	if ref != "" {
 		q.Set("ref", ref)
 	}
@@ -1354,11 +1734,11 @@ func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]
 	}
 	path := fmt.Sprintf("/projects/%s/pipelines?%s", encodeProject(project), q.Encode())
 
-	pipelines, err := g.requestList(ctx, path)
+	pipelines, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	return mcp.JSONResult(map[string]any{"pipelines": pipelines, "count": len(pipelines)})
+	return mcp.JSONResult(map[string]any{"pipelines": pipelines, "count": len(pipelines), "pagination": meta})
 }
 
 func (g *gitlabServer) handleGetPipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1436,10 +1816,8 @@ func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[stri
 	project := getStringArg(args, "project", "")
 	pipelineID := getIntArg(args, "pipeline_id", 0)
 	scope := getStringArg(args, "scope", "")
-	perPage := getIntArg(args, "per_page", 100)
-	if perPage <= 0 {
-		perPage = 100
-	}
+	perPage := normalizePerPage(getIntArg(args, "per_page", 100), 100)
+	page := normalizePage(getIntArg(args, "page", 1))
 
 	if project == "" || pipelineID <= 0 {
 		return nil, fmt.Errorf("project and pipeline_id are required")
@@ -1447,16 +1825,17 @@ func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[stri
 
 	q := url.Values{}
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
+	q.Set("page", fmt.Sprintf("%d", page))
 	if scope != "" {
 		q.Set("scope", scope)
 	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs?%s", encodeProject(project), pipelineID, q.Encode())
-	jobs, err := g.requestList(ctx, path)
+	jobs, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	return mcp.JSONResult(map[string]any{"jobs": jobs, "count": len(jobs)})
+	return mcp.JSONResult(map[string]any{"jobs": jobs, "count": len(jobs), "pagination": meta})
 }
 
 func (g *gitlabServer) handleGetJob(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -1491,31 +1870,16 @@ func (g *gitlabServer) handleGetJobTrace(ctx context.Context, args map[string]an
 		return nil, fmt.Errorf("project and job_id are required")
 	}
 
-	path := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), jobID)
-	b, resp, err := g.requestRaw(ctx, "GET", path, map[string]string{"Accept": "text/plain"})
+	trace, contentType, truncated, err := g.fetchJobTraceTail(ctx, project, jobID, tailLines, maxBytes)
 	if err != nil {
 		return nil, err
-	}
-
-	truncated := false
-	if len(b) > maxBytes {
-		truncated = true
-		b = b[len(b)-maxBytes:]
-	}
-
-	trace := string(b)
-	lines := strings.Split(trace, "\n")
-	if tailLines > 0 && len(lines) > tailLines {
-		truncated = true
-		lines = lines[len(lines)-tailLines:]
-		trace = strings.Join(lines, "\n")
 	}
 
 	return mcp.JSONResult(map[string]any{
 		"ok":           true,
 		"project":      project,
 		"job_id":       jobID,
-		"content_type": resp.Header.Get("Content-Type"),
+		"content_type": contentType,
 		"truncated":    truncated,
 		"tail_lines":   tailLines,
 		"max_bytes":    maxBytes,
@@ -1697,7 +2061,7 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 	// If specific file requested, fetch that file
 	if artifactPath != "" {
 		path := fmt.Sprintf("/projects/%s/jobs/%d/artifacts/%s", encodeProject(project), jobID, artifactPath)
-		data, resp, err := g.requestRaw(ctx, "GET", path, nil)
+		data, resp, truncated, err := g.doRequestLimited(ctx, "GET", g.apiURL+path, nil, nil, maxSizeBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -1708,6 +2072,7 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 			"job_id":        jobID,
 			"artifact_path": artifactPath,
 			"size_bytes":    len(data),
+			"truncated":     truncated,
 		}
 
 		contentType := ""
@@ -1716,8 +2081,7 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 		}
 		result["content_type"] = contentType
 
-		if len(data) > maxSizeBytes {
-			result["truncated"] = true
+		if truncated {
 			result["download_url"] = fmt.Sprintf("%s/projects/%s/jobs/%d/artifacts/%s", g.apiURL, encodeProject(project), jobID, artifactPath)
 		} else {
 			// Check if text or binary
@@ -1906,19 +2270,15 @@ func (g *gitlabServer) summarizeJobs(jobs []any, includeFailedLogs bool, ctx con
 			if !ok {
 				continue
 			}
-			logPath := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), int(jobID))
-			logData, _, err := g.requestRaw(ctx, "GET", logPath, map[string]string{"Accept": "text/plain"})
-			if err == nil {
-				lines := strings.Split(string(logData), "\n")
-				if len(lines) > 50 {
-					lines = lines[len(lines)-50:]
-				}
-				logsForJobs = append(logsForJobs, map[string]any{
-					"job_id":     int(jobID),
-					"job_name":   fj["name"],
-					"tail_lines": strings.Join(lines, "\n"),
-				})
+			trace, _, _, err := g.fetchJobTraceTail(ctx, project, int(jobID), 50, 200_000)
+			if err != nil {
+				continue
 			}
+			logsForJobs = append(logsForJobs, map[string]any{
+				"job_id":     int(jobID),
+				"job_name":   fj["name"],
+				"tail_lines": trace,
+			})
 		}
 		if len(logsForJobs) > 0 {
 			summary["failed_job_logs"] = logsForJobs
@@ -2050,15 +2410,9 @@ func (g *gitlabServer) getFailedJobLogs(ctx context.Context, project string, pip
 			continue
 		}
 
-		logPath := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), int(jobID))
-		logData, _, err := g.requestRaw(ctx, "GET", logPath, map[string]string{"Accept": "text/plain"})
+		trace, _, _, err := g.fetchJobTraceTail(ctx, project, int(jobID), tailLines, 200_000)
 		if err != nil {
 			continue
-		}
-
-		lines := strings.Split(string(logData), "\n")
-		if len(lines) > tailLines {
-			lines = lines[len(lines)-tailLines:]
 		}
 
 		logs = append(logs, map[string]any{
@@ -2066,7 +2420,7 @@ func (g *gitlabServer) getFailedJobLogs(ctx context.Context, project string, pip
 			"job_name":       jobMap["name"],
 			"stage":          jobMap["stage"],
 			"failure_reason": jobMap["failure_reason"],
-			"tail_lines":     strings.Join(lines, "\n"),
+			"tail_lines":     trace,
 		})
 	}
 
