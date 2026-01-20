@@ -548,7 +548,7 @@ spec:
                       KVCacheDtype specifies the data type for the KV cache.
                       Options: auto, fp8, fp8_e5m2, fp8_e4m3, fp8_inc, int8
                       Notes:
-                      - ROCm (AMD) effectively supports fp8 (=fp8_e4m3) for KV cache in vLLM.
+                      - ROCm (AMD) FP8 KV-cache support depends on the vLLM build and GPU arch.
                       - int8 is kept for backwards compatibility but is treated as an alias
                         for fp8 on modern vLLM builds.
                       Default: auto (vLLM chooses based on model config)

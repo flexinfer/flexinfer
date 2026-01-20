@@ -1986,14 +1986,15 @@ func (r *ModelDeploymentReconciler) validateVLLMSpecCompatibility(m *aiv1alpha1.
 	kvCacheDtype := strings.TrimSpace(v.KVCacheDtype)
 	if kvCacheDtype != "" {
 		if strings.EqualFold(kvCacheDtype, "int8") {
-			log.Info("vllm.kvCacheDtype=int8 is deprecated; treating as fp8 (fp8_e4m3 on ROCm)",
+			log.Info("vllm.kvCacheDtype=int8 is deprecated; treating as fp8",
 				"deployment", m.Name)
 		}
 
-		// vLLM help text indicates ROCm KV-cache only supports fp8 (=fp8_e4m3).
-		// Reject fp8_e5m2 explicitly for AMD to avoid runtime failures.
+		// Note: FP8 dtype support varies across GPU architectures and vLLM builds.
+		// Don't hard-fail here; let the backend validate at runtime.
 		if isAMD && kvCacheDtype == "fp8_e5m2" {
-			return fmt.Errorf("vllm.kvCacheDtype=fp8_e5m2 is not supported on ROCm AMD GPUs; use fp8 or fp8_e4m3 instead")
+			log.Info("vllm.kvCacheDtype=fp8_e5m2 requested on AMD; support depends on ROCm/vLLM build and GPU arch",
+				"deployment", m.Name)
 		}
 	}
 
