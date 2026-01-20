@@ -1896,10 +1896,11 @@ func (r *ModelDeploymentReconciler) rocmEnvVars() []corev1.EnvVar {
 			Value: "gfx1100",
 		},
 		{
-			// Use Triton flash attention on gfx1100 - CK (Composable Kernel) crashes
-			// with "invalid device function" because CK isn't compiled for RDNA3.
-			Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-			Value: "1",
+			Name: "VLLM_USE_TRITON_FLASH_ATTN",
+			// Prefer CK flash attention on consumer RDNA3 (gfx1100). This avoids
+			// Triton FP8 dtype issues during prefill and improves stability for
+			// some architectures (e.g., SWA support).
+			Value: "0",
 		},
 		{
 			// Disable AITER (AI Tensor Engine for ROCm) on consumer RDNA3 GPUs.
