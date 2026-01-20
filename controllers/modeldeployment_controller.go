@@ -1983,6 +1983,20 @@ func (r *ModelDeploymentReconciler) validateVLLMSpecCompatibility(m *aiv1alpha1.
 	isAMD := r.detectGPUResourceFromSpec(m) == GPUResourceAMD
 	log := ctrl.Log.WithName("validateVLLMSpec")
 
+	kvCacheDtype := strings.TrimSpace(v.KVCacheDtype)
+	if kvCacheDtype != "" {
+		if strings.EqualFold(kvCacheDtype, "int8") {
+			log.Info("vllm.kvCacheDtype=int8 is deprecated; treating as fp8 (fp8_e4m3 on ROCm)",
+				"deployment", m.Name)
+		}
+
+		// vLLM help text indicates ROCm KV-cache only supports fp8 (=fp8_e4m3).
+		// Reject fp8_e5m2 explicitly for AMD to avoid runtime failures.
+		if isAMD && kvCacheDtype == "fp8_e5m2" {
+			return fmt.Errorf("vllm.kvCacheDtype=fp8_e5m2 is not supported on ROCm AMD GPUs; use fp8 or fp8_e4m3 instead")
+		}
+	}
+
 	// Validate attention backend for AMD GPUs - warn about potentially unstable backends
 	if isAMD && v.AttentionBackend != "" {
 		backend := strings.ToUpper(v.AttentionBackend)
@@ -2229,9 +2243,28 @@ func (r *ModelDeploymentReconciler) buildVLLMArgs(m *aiv1alpha1.ModelDeployment,
 		args = append(args, "--enable-prefix-caching")
 	}
 
-	// KV cache data type - int8 recommended for AMD to reduce memory usage
-	if v.KVCacheDtype != "" {
-		args = append(args, "--kv-cache-dtype", v.KVCacheDtype)
+	// KV cache data type
+	kvCacheDtype := strings.TrimSpace(v.KVCacheDtype)
+	if kvCacheDtype != "" {
+		// Backwards-compatible alias: "int8" is not a valid vLLM CLI choice on
+		// modern builds; map it to fp8 (fp8_e4m3 on ROCm).
+		if strings.EqualFold(kvCacheDtype, "int8") {
+			kvCacheDtype = "fp8"
+		}
+
+		args = append(args, "--kv-cache-dtype", kvCacheDtype)
+
+		// When using FP8 KV cache on ROCm, enabling dynamic KV scales is commonly
+		// required unless the checkpoint embeds calibrated KV-scale tensors.
+		// Default to enabled for AMD when KV cache dtype is fp8.
+		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD &&
+			(kvCacheDtype == "fp8" || kvCacheDtype == "fp8_e4m3" || kvCacheDtype == "fp8_e5m2") {
+			if v.CalculateKVScales == nil || *v.CalculateKVScales {
+				args = append(args, "--calculate-kv-scales")
+			} else {
+				args = append(args, "--no-calculate-kv-scales")
+			}
+		}
 	}
 
 	// Attention backend selection

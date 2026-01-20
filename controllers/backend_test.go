@@ -1201,12 +1201,21 @@ func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
 			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--enable-prefix-caching"},
 		},
 		{
-			name: "KV cache dtype int8",
+			name: "KV cache dtype int8 (alias to fp8 on AMD)",
 			vllm: &aiv1alpha1.VLLMSpec{
 				KVCacheDtype: "int8",
 			},
 			gpuResource: GPUResourceAMD,
-			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "int8"},
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "fp8", "--calculate-kv-scales"},
+		},
+		{
+			name: "KV cache dtype fp8 with scales disabled",
+			vllm: &aiv1alpha1.VLLMSpec{
+				KVCacheDtype:      "fp8",
+				CalculateKVScales: ptrTo(false),
+			},
+			gpuResource: GPUResourceAMD,
+			expected:    []string{"--model", "test-model", "--host", "0.0.0.0", "--kv-cache-dtype", "fp8", "--no-calculate-kv-scales"},
 		},
 		{
 			name: "explicit attention backend for AMD GPU",
@@ -1265,7 +1274,8 @@ func TestBuildVLLMArgs_AMDOptimizations(t *testing.T) {
 				"--model", "test-model", "--host", "0.0.0.0",
 				"--gpu-memory-utilization", "0.85",
 				"--enable-prefix-caching",
-				"--kv-cache-dtype", "int8",
+				"--kv-cache-dtype", "fp8",
+				"--calculate-kv-scales",
 				"--enable-chunked-prefill",
 				"--block-size", "16",
 			},

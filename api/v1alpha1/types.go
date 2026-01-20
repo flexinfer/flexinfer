@@ -423,12 +423,23 @@ type VLLMSpec struct {
 	EnablePrefixCaching *bool `json:"enablePrefixCaching,omitempty"`
 
 	// KVCacheDtype specifies the data type for the KV cache.
-	// Options: auto, fp8, fp8_e5m2, fp8_e4m3, int8
-	// int8 is recommended for AMD GPUs to reduce memory usage (~50% savings).
+	// Options: auto, fp8, fp8_e5m2, fp8_e4m3, fp8_inc, int8
+	// Notes:
+	// - ROCm (AMD) effectively supports fp8 (=fp8_e4m3) for KV cache in vLLM.
+	// - int8 is kept for backwards compatibility but is treated as an alias
+	//   for fp8 on modern vLLM builds.
 	// Default: auto (vLLM chooses based on model config)
-	// +kubebuilder:validation:Enum=auto;fp8;fp8_e5m2;fp8_e4m3;int8
+	// +kubebuilder:validation:Enum=auto;fp8;fp8_e5m2;fp8_e4m3;fp8_inc;int8
 	// +optional
 	KVCacheDtype string `json:"kvCacheDtype,omitempty"`
+
+	// CalculateKVScales enables dynamic calculation of k_scale and v_scale when
+	// KVCacheDtype is fp8 (or fp8_e4m3/fp8_e5m2). If false, vLLM will attempt to
+	// load KV scales from the checkpoint when available, otherwise defaults to 1.
+	// On ROCm, enabling this is commonly required when using fp8 KV cache with
+	// non-precalibrated checkpoints.
+	// +optional
+	CalculateKVScales *bool `json:"calculateKvScales,omitempty"`
 
 	// AttentionBackend specifies the attention computation backend.
 	// Options: FLASH_ATTN, XFORMERS, ROCM_FLASH, FLASHINFER, TORCH_SDPA

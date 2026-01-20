@@ -1039,6 +1039,11 @@ func (in *VLLMSpec) DeepCopyInto(out *VLLMSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.CalculateKVScales != nil {
+		in, out := &in.CalculateKVScales, &out.CalculateKVScales
+		*out = new(bool)
+		**out = **in
+	}
 	if in.CPUOffloadGB != nil {
 		in, out := &in.CPUOffloadGB, &out.CPUOffloadGB
 		*out = new(int32)
