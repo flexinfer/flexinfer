@@ -942,6 +942,17 @@ ls -la /checkpoints || true
 						Env:          r.getBackendEnv(m),
 						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: volumeMounts,
+						// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
+						// Ensure the container can access the device nodes when using the AMD GPU device plugin.
+						SecurityContext: func() *corev1.SecurityContext {
+							if r.detectGPUResourceFromSpec(m) != "amd.com/gpu" {
+								return nil
+							}
+							return &corev1.SecurityContext{
+								RunAsUser:  ptr.To(int64(0)),
+								RunAsGroup: ptr.To(int64(0)),
+							}
+						}(),
 						// Readiness probe ensures pod is only marked Ready when inference endpoint is serving.
 						// This is critical for serverless scale-to-zero to work correctly.
 						ReadinessProbe: r.getReadinessProbe(m),
