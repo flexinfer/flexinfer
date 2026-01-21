@@ -64,7 +64,12 @@ func (b *MLCLLMBackend) Command() []string {
 }
 
 func (b *MLCLLMBackend) Args(spec *ModelSpec) []string {
-	mode := spec.ConfigString("mode", "server")
+	// MLC-LLM CLI uses `serve` for the HTTP server subcommand.
+	// Older configs may still specify `server`; accept it for compatibility.
+	mode := spec.ConfigString("mode", "serve")
+	if mode == "server" {
+		mode = "serve"
+	}
 
 	args := []string{mode}
 
