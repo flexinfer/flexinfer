@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,15 +38,28 @@ func httpResponse(statusCode int, body string) *http.Response {
 	}
 }
 
+func stripProxyModelPrefix(path, modelName string) string {
+	prefix := "/model/" + modelName
+	if !strings.HasPrefix(path, prefix) {
+		return path
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == "" {
+		return "/"
+	}
+	return rest
+}
+
 func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 	t.Parallel()
 	clientset := fake.NewSimpleClientset()
 
 	clock := &fakeClock{t: time.Unix(0, 0)}
 	var generateCalls int
+	model := "test-model"
 	httpClient := &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			switch r.URL.Path {
+			switch stripProxyModelPrefix(r.URL.Path, model) {
 			case "/api/tags":
 				return httpResponse(http.StatusOK, `{"models":[]}`), nil
 			case "/api/pull":
@@ -65,7 +79,6 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 		}),
 	}
 
-	model := "test-model"
 	configMapName := "test-cm"
 
 	node := &corev1.Node{
@@ -135,9 +148,10 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	clock := &fakeClock{t: time.Unix(0, 0)}
+	model := "test-model"
 	httpClient := &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			switch r.URL.Path {
+			switch stripProxyModelPrefix(r.URL.Path, model) {
 			case "/health":
 				return httpResponse(http.StatusOK, "ok"), nil
 			case "/v1/completions":
@@ -155,7 +169,6 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 		}),
 	}
 
-	model := "test-model"
 	configMapName := "test-cm"
 
 	b := &Benchmarker{
@@ -196,7 +209,7 @@ func TestRun_VLLM_ServerTimingViaMetrics(t *testing.T) {
 	var metricsCalls int
 	httpClient := &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			switch r.URL.Path {
+			switch stripProxyModelPrefix(r.URL.Path, "test-model") {
 			case "/health":
 				return httpResponse(http.StatusOK, "ok"), nil
 			case "/metrics":
@@ -261,7 +274,7 @@ func TestRun_OpenAICompatibleBackends_ComputesTPS(t *testing.T) {
 
 			httpClient := &http.Client{
 				Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-					switch r.URL.Path {
+					switch stripProxyModelPrefix(r.URL.Path, "test-model") {
 					case "/health":
 						return httpResponse(http.StatusOK, "ok"), nil
 					case "/v1/completions":
