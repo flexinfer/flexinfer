@@ -161,6 +161,7 @@ type QueuedRequest struct {
 	done       chan struct{}
 	err        error
 	enqueuedAt time.Time
+	responded  atomic.Bool
 }
 
 // RequestQueue holds requests for a model during cold start
@@ -466,7 +467,9 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	case <-queueCtx.Done():
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		http.Error(w, fmt.Sprintf("Timeout waiting for model to become ready (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+		if qr.responded.CompareAndSwap(false, true) {
+			http.Error(w, fmt.Sprintf("Timeout waiting for model to become ready (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+		}
 		return fmt.Errorf("queue timeout for model %s", modelName)
 	}
 }
@@ -797,9 +800,11 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 		select {
 		case qr := <-queue.items:
 			queueDepth.WithLabelValues(queue.model).Dec()
-			// Process request
-			start := time.Now()
-			p.trackAndServe(qr.w, qr.r, qr.modelName, start)
+			// Only one goroutine may write a response for a queued request.
+			if qr.responded.CompareAndSwap(false, true) {
+				start := time.Now()
+				p.trackAndServe(qr.w, qr.r, qr.modelName, start)
+			}
 			close(qr.done)
 		default:
 			// Queue is empty
@@ -816,7 +821,9 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 		case qr := <-queue.items:
 			queueDepth.WithLabelValues(queue.model).Dec()
 			qr.err = err
-			http.Error(qr.w, fmt.Sprintf("Failed to activate model: %v", err), http.StatusServiceUnavailable)
+			if qr.responded.CompareAndSwap(false, true) {
+				http.Error(qr.w, fmt.Sprintf("Failed to activate model: %v", err), http.StatusServiceUnavailable)
+			}
 			close(qr.done)
 		default:
 			// Queue is empty
@@ -1162,7 +1169,9 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 	case <-queueCtx.Done():
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		http.Error(w, fmt.Sprintf("Timeout waiting for model to become active (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+		if qr.responded.CompareAndSwap(false, true) {
+			http.Error(w, fmt.Sprintf("Timeout waiting for model to become active (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+		}
 		return fmt.Errorf("queue timeout for GPUGroup model %s", modelName)
 	}
 }

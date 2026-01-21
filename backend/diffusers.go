@@ -84,9 +84,9 @@ func (b *DiffusersBackend) StartupTimeout() time.Duration {
 	return 180 * time.Second // Image gen models can take longer to load
 }
 
-// NeedsVolume returns false because diffusers downloads models on-demand.
+// NeedsVolume returns true so HuggingFace artifacts can be cached on a SharedPVC.
 func (b *DiffusersBackend) NeedsVolume() bool {
-	return false
+	return true
 }
 
 // IsImageGeneration returns true for diffusers.

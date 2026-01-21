@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	stderrors "errors"
 	"fmt"
 	"strings"
@@ -383,6 +385,17 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		nodeSelector = make(map[string]string)
 	}
 
+	// Tolerate dedicated GPU nodes when requesting GPUs.
+	var tolerations []corev1.Toleration
+	if gpuCount > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
 	// Build container
 	container := corev1.Container{
 		Name:            "model",
@@ -454,6 +467,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector:       nodeSelector,
+					Tolerations:        tolerations,
 					Containers:         []corev1.Container{container},
 					Volumes:            volumes,
 					RestartPolicy:      corev1.RestartPolicyAlways,
@@ -544,6 +558,14 @@ func extractModelFromSource(source string) string {
 // getVolumeSource returns the appropriate volume source based on cache strategy.
 func (r *ModelReconciler) getVolumeSource(model *aiv1alpha2.Model) corev1.VolumeSource {
 	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {
+		if shouldStagePVCSourceToCache(model) {
+			cacheName, _ := cachePVCName(model)
+			return corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: cacheName,
+				},
+			}
+		}
 		return corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: pvcName,
@@ -592,6 +614,21 @@ func cacheStrategy(model *aiv1alpha2.Model) string {
 		return "Memory"
 	}
 	return "SharedPVC"
+}
+
+func shouldStagePVCSourceToCache(model *aiv1alpha2.Model) bool {
+	if !strings.HasPrefix(model.Spec.Source, "pvc://") {
+		return false
+	}
+	if model.Spec.Cache == nil {
+		return false
+	}
+	// If cache is specified for a pvc:// source, treat it as a request to stage/copy
+	// the artifact into the cache PVC (typically NVMe-backed) before starting.
+	if model.Spec.Cache.Strategy == "" {
+		return true
+	}
+	return model.Spec.Cache.Strategy == "SharedPVC"
 }
 
 func cachePVCName(model *aiv1alpha2.Model) (string, bool) {
@@ -673,12 +710,128 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	original := model.DeepCopy()
 
 	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {
-		jobName := model.Name + "-cache-check"
-		pvc := &corev1.PersistentVolumeClaim{}
-		if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: model.Namespace}, pvc); err != nil {
+		sourcePVC := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: model.Namespace}, sourcePVC); err != nil {
 			return false, err
 		}
 
+		// If cache is requested, stage/copy the source path into the cache PVC before starting.
+		if shouldStagePVCSourceToCache(model) {
+			cachePVCName, autoCreate := cachePVCName(model)
+			cachePVC := &corev1.PersistentVolumeClaim{}
+			cacheErr := r.Get(ctx, types.NamespacedName{Name: cachePVCName, Namespace: model.Namespace}, cachePVC)
+			if cacheErr != nil && !errors.IsNotFound(cacheErr) {
+				return false, cacheErr
+			}
+			if errors.IsNotFound(cacheErr) {
+				if !autoCreate {
+					return false, fmt.Errorf("pvc %q not found for model %s (spec.cache.pvcName is set)", cachePVCName, model.Name)
+				}
+
+				qty, err := resource.ParseQuantity(cacheSize(model))
+				if err != nil {
+					return false, fmt.Errorf("invalid cache size %q: %w", cacheSize(model), err)
+				}
+
+				storageClass := cacheStorageClass(model)
+				cachePVC = &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      cachePVCName,
+						Namespace: model.Namespace,
+						Labels:    r.labelsForModel(model),
+						OwnerReferences: []metav1.OwnerReference{
+							*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model")),
+						},
+					},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: qty,
+							},
+						},
+					},
+				}
+				if storageClass != "" {
+					cachePVC.Spec.StorageClassName = ptr.To(storageClass)
+				}
+				if err := r.Create(ctx, cachePVC); err != nil {
+					return false, err
+				}
+			}
+
+			jobName := model.Name + "-cache-copy"
+			ready := false
+			jobPhase := "Pending"
+			message := "waiting for cache copy job"
+
+			if sourcePVC.Status.Phase != corev1.ClaimBound {
+				jobPhase = "Pending"
+				message = "waiting for source PVC to bind"
+			} else {
+				job := &batchv1.Job{}
+				err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+				if err != nil && !errors.IsNotFound(err) {
+					return false, err
+				}
+				if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+						return false, delErr
+					}
+					err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+				}
+				if errors.IsNotFound(err) {
+					subPath := ""
+					if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+						subPath = sp
+					}
+					newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, subPath)
+					if err != nil {
+						return false, err
+					}
+					if err := r.Create(ctx, newJob); err != nil {
+						return false, err
+					}
+					jobPhase = "Running"
+					message = "cache copy job started"
+				} else {
+					if job.Status.Succeeded > 0 {
+						ready = true
+						jobPhase = "Succeeded"
+						message = "artifact copied to cache PVC"
+					} else if job.Status.Failed > 0 {
+						jobPhase = "Failed"
+						message = "cache copy job failed"
+					} else if job.Status.Active > 0 {
+						jobPhase = "Running"
+						message = "cache copy job running"
+					} else {
+						jobPhase = "Pending"
+						message = "cache copy job pending"
+					}
+				}
+			}
+
+			model.Status.Cache = &aiv1alpha2.CacheStatus{
+				Strategy:  "SharedPVC",
+				PVCName:   cachePVCName,
+				JobName:   jobName,
+				JobPhase:  jobPhase,
+				Message:   message,
+				Ready:     ready,
+				SizeBytes: 0,
+			}
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
+
+			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				return false, err
+			}
+			return ready, nil
+		}
+
+		// Default pvc:// behavior: mount the source PVC directly, but run a check job so
+		// status.cache.ready means "artifact present", not just "PVC bound".
+		jobName := model.Name + "-cache-check"
 		ready := false
 		jobPhase := "Pending"
 		message := "waiting for cache check job"
@@ -695,7 +848,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
 		}
 		if errors.IsNotFound(err) {
-			if pvc.Status.Phase != corev1.ClaimBound {
+			if sourcePVC.Status.Phase != corev1.ClaimBound {
 				jobPhase = "Pending"
 				message = "waiting for PVC to bind"
 			} else {
@@ -806,16 +959,6 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		}
 	}
 
-	if pvc.Status.Phase != corev1.ClaimBound {
-		model.Status.Cache.JobPhase = "Pending"
-		model.Status.Cache.Message = "waiting for PVC to bind"
-		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PVCNotBound", model.Status.Cache.Message)
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-
 	// For HF sources with SharedPVC, run a prefetch job that materializes the artifact directory.
 	if strings.HasPrefix(model.Spec.Source, "HF://") {
 		jobName := model.Name + "-cache-prefetch"
@@ -867,14 +1010,23 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		} else {
 			model.Status.Cache.Ready = false
 			model.Status.Cache.JobPhase = "Pending"
-			model.Status.Cache.Message = "prefetch job pending"
+			if pvc.Status.Phase != corev1.ClaimBound {
+				model.Status.Cache.Message = "prefetch job pending (waiting for PVC bind/schedule)"
+			} else {
+				model.Status.Cache.Message = "prefetch job pending"
+			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchPending", model.Status.Cache.Message)
 		}
 	} else {
 		model.Status.Cache.Ready = true
 		model.Status.Cache.JobPhase = "Succeeded"
-		model.Status.Cache.Message = "cache PVC is bound"
-		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PVCBound", model.Status.Cache.Message)
+		if pvc.Status.Phase == corev1.ClaimBound {
+			model.Status.Cache.Message = "cache PVC is bound"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PVCBound", model.Status.Cache.Message)
+		} else {
+			model.Status.Cache.Message = "cache PVC will bind on first use"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PVCProvisioning", model.Status.Cache.Message)
+		}
 	}
 
 	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
@@ -1187,10 +1339,29 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 
 	envVars := []corev1.EnvVar{
 		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
+		// Keep HuggingFace cache on the mounted volume so backends can reuse downloads.
+		{Name: "HF_HOME", Value: "/models/.cache/huggingface"},
+		{Name: "HF_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
+		{Name: "HUGGINGFACE_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
+		{Name: "TRANSFORMERS_CACHE", Value: "/models/.cache/huggingface/transformers"},
 	}
 
 	destSubdir = strings.Trim(destSubdir, "/")
 	destDir := "/models/" + destSubdir
+
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
 
 	var image string
 	var downloadScript string
@@ -1240,11 +1411,13 @@ from huggingface_hub import snapshot_download
 repo_id = os.environ["MODEL_ID"]
 local_dir = os.environ["DEST_DIR"]
 token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+cache_dir = os.environ.get("HF_HOME")
 
 snapshot_download(
     repo_id=repo_id,
     local_dir=local_dir,
     local_dir_use_symlinks=False,
+    cache_dir=cache_dir,
     token=token,
 )
 PY
@@ -1270,6 +1443,8 @@ echo "Download complete."
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
+					NodeSelector:  nodeSelector,
+					Tolerations:   tolerations,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
 						Image:   image,
@@ -1316,18 +1491,40 @@ func (r *ModelReconciler) jobForCacheCheck(model *aiv1alpha2.Model, pvcName, sub
 		target = "/models/" + subPath
 	}
 
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
 	script := fmt.Sprintf(`
 set -ex
 TARGET="%s"
-if [ ! -d "$TARGET" ]; then
-  echo "Missing directory: $TARGET"
+if [ ! -e "$TARGET" ]; then
+  echo "Missing path: $TARGET"
   exit 1
 fi
-if [ ! "$(ls -A \"$TARGET\" 2>/dev/null)" ]; then
-  echo "Directory is empty: $TARGET"
+if [ -d "$TARGET" ]; then
+  if [ -z "$(ls -A "$TARGET" 2>/dev/null)" ]; then
+    echo "Directory is empty: $TARGET"
+    exit 1
+  fi
+  echo "Artifact present at directory $TARGET"
+  exit 0
+fi
+if [ ! -s "$TARGET" ]; then
+  echo "File is empty: $TARGET"
   exit 1
 fi
-echo "Artifact present at $TARGET"
+echo "Artifact present at file $TARGET"
 `, target)
 
 	job := &batchv1.Job{
@@ -1347,6 +1544,8 @@ echo "Artifact present at $TARGET"
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					NodeSelector:  nodeSelector,
+					Tolerations:   tolerations,
 					Containers: []corev1.Container{{
 						Name:    "checker",
 						Image:   "alpine:3.19",
@@ -1374,6 +1573,135 @@ echo "Artifact present at $TARGET"
 							},
 						},
 					}},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, subPath string) (*batchv1.Job, error) {
+	subPath = strings.Trim(subPath, "/")
+	src := "/src"
+	dst := "/models"
+	if subPath != "" {
+		src = "/src/" + subPath
+		dst = "/models/" + subPath
+	}
+
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
+	sum := sha256.Sum256([]byte(model.Spec.Source))
+	marker := "/models/.flexinfer_cached_" + hex.EncodeToString(sum[:])
+
+	script := fmt.Sprintf(`
+set -ex
+SRC="%s"
+DST="%s"
+MARKER="%s"
+
+if [ -f "$MARKER" ]; then
+  echo "Already cached: $MARKER"
+  exit 0
+fi
+
+if [ ! -e "$SRC" ]; then
+  echo "Missing source path: $SRC"
+  exit 1
+fi
+
+if [ -d "$SRC" ]; then
+  mkdir -p "$DST"
+  cp -a "$SRC/." "$DST/"
+else
+  mkdir -p "$(dirname "$DST")"
+  cp -a "$SRC" "$DST"
+fi
+
+touch "$MARKER"
+echo "Copy complete."
+`, src, dst, marker)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-copy",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":        model.Spec.Source,
+				"flexinfer.ai/cache-kind":    "copy",
+				"flexinfer.ai/cache-src-pvc": sourcePVCName,
+				"flexinfer.ai/cache-pvc":     cachePVCName,
+				"flexinfer.ai/cache-path":    subPath,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(1)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					NodeSelector:  nodeSelector,
+					Tolerations:   tolerations,
+					Containers: []corev1.Container{{
+						Name:    "copier",
+						Image:   "alpine:3.20",
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{script},
+						VolumeMounts: []corev1.VolumeMount{
+							{
+								Name:      "source",
+								MountPath: "/src",
+								ReadOnly:  true,
+							},
+							{
+								Name:      "model-store",
+								MountPath: "/models",
+							},
+						},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("256Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{
+						{
+							Name: "source",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: sourcePVCName,
+								},
+							},
+						},
+						{
+							Name: "model-store",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: cachePVCName,
+								},
+							},
+						},
+					},
 				},
 			},
 		},
