@@ -1,6 +1,6 @@
 ---
 title: Operations
-description: Common day-2 workflows: inspect, debug, and clean up.
+description: "Common day-2 workflows: inspect, debug, and clean up."
 ---
 
 # Operations
@@ -58,4 +58,3 @@ FlexInfer resources are hierarchical. Delete the parent, not the children.
   ```
 
 For detailed cleanup guidance (including RAM caches and stuck Jobs), see the “Resource Cleanup Procedures” section in `services/flexinfer/AGENTS.md`.
-
