@@ -452,7 +452,12 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	}
 
 	// Wait for request to be processed with timeout
-	queueCtx, cancel := context.WithTimeout(ctx, p.queueTimeout)
+	timeout := p.queueTimeout
+	if coldStartTimeout := p.getColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {
+		timeout = coldStartTimeout
+	}
+
+	queueCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	select {
@@ -468,7 +473,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
 		if qr.responded.CompareAndSwap(false, true) {
-			http.Error(w, fmt.Sprintf("Timeout waiting for model to become ready (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+			http.Error(w, fmt.Sprintf("Timeout waiting for model to become ready (waited %s)", timeout), http.StatusGatewayTimeout)
 		}
 		return fmt.Errorf("queue timeout for model %s", modelName)
 	}
