@@ -59,6 +59,9 @@ const (
 // ModelSpec defines the desired state of Model
 // This is the simplified v1alpha2 spec optimized for homelab users.
 // +kubebuilder:object:generate=true
+// +kubebuilder:validation:XValidation:rule="!self.source.startsWith('pvc://') || !has(self.cache)",message="spec.cache must be omitted when spec.source is pvc://... (the PVC is mounted directly)"
+// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.limits) || (!has(self.resources.limits['nvidia.com/gpu']) && !has(self.resources.limits['amd.com/gpu']) && !has(self.resources.limits['gpu.intel.com/i915']))",message="Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count instead"
+// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.requests) || (!has(self.resources.requests['nvidia.com/gpu']) && !has(self.resources.requests['amd.com/gpu']) && !has(self.resources.requests['gpu.intel.com/i915']))",message="Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count instead"
 type ModelSpec struct {
 	// Backend is the inference backend to use.
 	// Supported: ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui, vllm-omni
@@ -129,7 +132,7 @@ const (
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.count)",message="gpu.count must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.vramEstimateMB)",message="gpu.vramEstimateMB must be omitted when gpu.vendor is cpu"
-// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || self.shared == ”",message="gpu.shared must be empty when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || self.shared == ''",message="gpu.shared must be empty when gpu.vendor is cpu"
 type GPUSpec struct {
 	// Vendor selects the GPU vendor to target.
 	// Use "auto" (or omit) to auto-detect based on available nodes.

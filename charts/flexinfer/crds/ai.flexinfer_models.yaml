@@ -296,6 +296,18 @@ spec:
             - backend
             - source
             type: object
+            x-kubernetes-validations:
+            - message: spec.cache must be omitted when spec.source is pvc://... (the
+                PVC is mounted directly)
+              rule: '!self.source.startsWith(''pvc://'') || !has(self.cache)'
+            - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
+                instead
+              rule: '!has(self.resources) || !has(self.resources.limits) || (!has(self.resources.limits[''nvidia.com/gpu''])
+                && !has(self.resources.limits[''amd.com/gpu'']) && !has(self.resources.limits[''gpu.intel.com/i915'']))'
+            - message: Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count
+                instead
+              rule: '!has(self.resources) || !has(self.resources.requests) || (!has(self.resources.requests[''nvidia.com/gpu''])
+                && !has(self.resources.requests[''amd.com/gpu'']) && !has(self.resources.requests[''gpu.intel.com/i915'']))'
           status:
             description: ModelStatus defines the observed state of Model
             properties:
