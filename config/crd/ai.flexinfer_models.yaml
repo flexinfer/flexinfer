@@ -160,8 +160,8 @@ spec:
                 - message: gpu.vramEstimateMB must be omitted when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
                 - message: gpu.shared must be empty when gpu.vendor is cpu
-                  rule: self.vendor != 'cpu' || !has(self.shared) || self.shared ==
-                    ”
+                  rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
+                    == 0
               litellm:
                 description: LiteLLM configures proxy integration for unified API
                   access.
@@ -301,7 +301,7 @@ spec:
             - message: spec.cache.strategy must be SharedPVC when spec.source is pvc://...
                 (cache stages into a PVC)
               rule: '!self.source.startsWith(''pvc://'') || !has(self.cache) || !has(self.cache.strategy)
-                || self.cache.strategy == ” || self.cache.strategy == ''SharedPVC'''
+                || size(self.cache.strategy) == 0 || self.cache.strategy == ''SharedPVC'''
             - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
                 instead
               rule: '!has(self.resources) || !has(self.resources.limits) || (!(''nvidia.com/gpu''
