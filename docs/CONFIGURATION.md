@@ -70,6 +70,26 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 
 ---
 
+## Scheduler Extender
+
+The scheduler extender (`flexinfer-sched`) plugs into kube-scheduler as an extender to filter and score nodes.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BENCHMARK_RESULTS_CONFIGMAP` | `flexinfer-benchmark-results` | ConfigMap containing benchmark results |
+| `SCHED_TPS_WEIGHT` | `0.7` | Weight for tokens/sec score |
+| `SCHED_UTIL_WEIGHT` | `0.2` | Weight for GPU utilization hint |
+| `SCHED_COST_WEIGHT` | `0.1` | Weight for node “cost” hint |
+| `SCHED_CACHE_WEIGHT` | `0.3` | Weight for KV-cache locality hint |
+
+### Command Line Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | `8082` | Port to listen on for extender HTTP endpoints |
+
+---
+
 ## Benchmarker
 
 The benchmarker runs inference performance tests against model backends.
@@ -164,6 +184,20 @@ Key configuration fields in the `ModelDeployment` CRD:
 | `idleTimeoutSeconds` | *int32 | Time before scaling to zero when idle |
 | `serviceLabels` | []string | Service labels for routing (e.g., "textgen", "chat") |
 | `config` | map | Backend-specific configuration |
+
+### Model Spec (v1alpha2)
+
+Key configuration fields in the `Model` CRD:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `backend` | string | Backend type: ollama, vllm, mlc-llm, llamacpp, comfyui, diffusers, vllm-omni |
+| `source` | string | Source URI: `HF://...`, `ollama://...`, `file://...`, `pvc://...` |
+| `gpu.shared` | string | Shared GPU group name for time-sharing |
+| `gpu.priority` | int | Preemption priority within shared group |
+| `serverless.*` | object | Scale-to-zero behavior (idle/cold start timeouts) |
+| `cache.*` | object | Cache strategy (Memory/SharedPVC/None) |
+| `serviceLabels` | []string | Semantic labels for routing |
 
 ### GPUGroup Spec
 

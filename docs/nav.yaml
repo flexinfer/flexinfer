@@ -1,0 +1,61 @@
+# Docs navigation for FlexInfer.
+#
+# This file is meant to be machine-readable for site sync/rendering (e.g.,
+# services/flexinfer-site) while still being pleasant to edit by hand.
+#
+# Paths are relative to this `docs/` directory.
+
+sections:
+  - id: user
+    title: User
+    pages:
+      - title: Overview
+        path: user/README.md
+      - title: Quickstart
+        path: user/quickstart.md
+      - title: Models (v1alpha2)
+        path: user/models-v1alpha2.md
+      - title: Legacy (v1alpha1)
+        path: user/legacy-v1alpha1.md
+      - title: Proxy & Requests
+        path: user/proxy.md
+      - title: GPU Sharing
+        path: user/gpu-sharing.md
+      - title: Caching
+        path: user/caching.md
+      - title: Operations
+        path: user/operations.md
+
+  - id: dev
+    title: Developer
+    pages:
+      - title: Overview
+        path: dev/README.md
+      - title: Local Dev
+        path: dev/local-dev.md
+      - title: Architecture
+        path: dev/architecture.md
+      - title: Backends
+        path: dev/backends.md
+      - title: Testing
+        path: dev/testing.md
+      - title: Release & Images
+        path: dev/release.md
+
+  - id: specs
+    title: Specs
+    pages:
+      - title: Overview
+        path: specs/README.md
+      - title: flexinfer-config (Playground)
+        path: specs/flexinfer-config.md
+      - title: CRDs
+        path: specs/crds.md
+      - title: Proxy API
+        path: specs/proxy-api.md
+      - title: Scheduler Extender
+        path: specs/scheduler-extender.md
+      - title: Labels & Annotations
+        path: specs/labels-and-annotations.md
+      - title: Metrics
+        path: specs/metrics.md

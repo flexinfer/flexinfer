@@ -81,6 +81,7 @@ graph TB
 The **Backend Plugin System** centralizes all backend-specific configuration (images, ports, args, environment variables, probes) into a single interface, making it easy to add new inference backends.
 
 See [AGENTS.md](AGENTS.md) for detailed component documentation.
+See [docs/README.md](docs/README.md) for user/dev/spec docs (including the flexinfer-site playground schema reference).
 
 ## GPU Compatibility
 

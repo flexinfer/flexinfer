@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flexinfer.ai/schemas/flexinfer-config/1.0.json",
+  "title": "FlexInfer Configuration",
+  "description": "YAML configuration schema for FlexInfer model serving deployments (used by flexinfer-site playground).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "model"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+      "description": "Configuration version (semver format)"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "backend"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model name or HuggingFace model ID"
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["vllm", "llamacpp", "tgi", "ollama"],
+          "description": "Inference backend to use"
+        },
+        "quantization": {
+          "type": ["string", "null"],
+          "enum": ["awq", "gptq", "fp16", "fp32", "int8", "int4", null],
+          "description": "Model quantization format"
+        },
+        "context_length": {
+          "type": ["integer", "null"],
+          "minimum": 512,
+          "maximum": 131072,
+          "description": "Maximum context length in tokens"
+        },
+        "max_batch_size": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Maximum batch size for inference"
+        }
+      }
+    },
+    "resources": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": ["string", "null"],
+              "enum": ["amd", "nvidia", "cpu", null],
+              "description": "GPU type or CPU-only mode"
+            },
+            "count": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 8,
+              "description": "Number of GPUs to use"
+            },
+            "memory": {
+              "type": ["string", "null"],
+              "pattern": "^\\d+(Gi|Mi|G|M)$",
+              "description": "GPU memory allocation (e.g., 24Gi)"
+            }
+          }
+        },
+        "replicas": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Number of replicas for scaling"
+        },
+        "cpu": {
+          "type": ["string", "null"],
+          "pattern": "^\\d+(m)?$",
+          "description": "CPU request/limit (e.g., 1000m, 4)"
+        },
+        "memory": {
+          "type": ["string", "null"],
+          "pattern": "^\\d+(Gi|Mi|G|M)$",
+          "description": "Memory request/limit (e.g., 8Gi)"
+        }
+      }
+    },
+    "serving": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Service port number"
+        },
+        "max_concurrent": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Maximum concurrent requests"
+        },
+        "timeout": {
+          "type": ["string", "null"],
+          "pattern": "^\\d+(s|m|h)$",
+          "description": "Request timeout (e.g., 30s, 5m)"
+        },
+        "health_check": {
+          "type": ["boolean", "null"],
+          "description": "Enable health check endpoint"
+        }
+      }
+    },
+    "logging": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": ["string", "null"],
+          "enum": ["debug", "info", "warn", "error", null],
+          "description": "Log level"
+        },
+        "format": {
+          "type": ["string", "null"],
+          "enum": ["json", "text", null],
+          "description": "Log output format"
+        }
+      }
+    }
+  }
+}
+

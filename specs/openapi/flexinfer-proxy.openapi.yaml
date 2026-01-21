@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: FlexInfer Proxy API
+  version: 0.1.0
+  description: |
+    FlexInfer proxy endpoints used for model discovery, health, and OpenAI-style routing.
+
+    Notes:
+    - Most inference paths are reverse-proxied to the selected backend; this spec documents only the stable surface.
+    - Model selection can be provided via:
+      - `X-Model-ID` header
+      - `/model/<name>/...` URL prefix
+      - JSON body field `"model"` for `application/json` POSTs (OpenAI-compatible)
+servers:
+  - url: http://flexinfer-proxy.flexinfer-system.svc
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/models:
+    get:
+      summary: List available models (OpenAI-compatible)
+      responses:
+        '200':
+          description: OpenAI model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModelsResponse'
+
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-style chat completions (reverse proxied)
+      description: |
+        This endpoint is forwarded to the selected backend service.
+        The proxy uses the request body field `"model"` for selection when present.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      parameters:
+        - in: header
+          name: X-Model-ID
+          required: false
+          schema:
+            type: string
+          description: Optional explicit model selection override.
+      responses:
+        '200':
+          description: Backend response (passthrough)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+components:
+  schemas:
+    OpenAIModelsResponse:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpenAIModel'
+
+    OpenAIModel:
+      type: object
+      required: [id, object, created, owned_by]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: model
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+          example: flexinfer
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Model name to route to.
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+          description: Backend-dependent; proxy forwards without interpretation.
+      additionalProperties: true
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+      additionalProperties: true
+

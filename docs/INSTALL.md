@@ -6,7 +6,9 @@ This repo ships a Helm chart at `charts/flexinfer/` that installs:
 - Node agent (`flexinfer-agent`)
 - Scheduler + `kube-scheduler` sidecar (`flexinfer-sched`)
 - Proxy/activator (`flexinfer-proxy`)
-- CRDs (`ModelDeployment`, `ModelCache`)
+- CRDs:
+  - v1alpha2: `Model`
+  - v1alpha1: `ModelDeployment`, `ModelCache`, `GPUGroup`
 
 ## Prerequisites
 
@@ -54,7 +56,14 @@ kubectl -n flexinfer-system get deploy,ds,svc
 kubectl -n flexinfer-system get pods
 ```
 
-## Create a ModelCache + ModelDeployment
+## Deploy your first model (recommended: v1alpha2 `Model`)
+
+```bash
+kubectl apply -n flexinfer-system -f services/flexinfer/examples/v1alpha2/model-basic.yaml
+kubectl -n flexinfer-system get models -w
+```
+
+## Legacy example (v1alpha1 ModelCache + ModelDeployment)
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
@@ -86,3 +95,8 @@ kubectl apply -f your-model.yaml
 kubectl get modeldeployments
 ```
 
+## Next steps
+
+- User docs: `docs/user/README.md`
+- Proxy usage: `docs/user/proxy.md`
+- CRD reference: `docs/specs/crds.md`

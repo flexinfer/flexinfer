@@ -1,5 +1,11 @@
 # FlexInfer Development Guide
 
+Preferred entrypoints:
+
+- `docs/dev/local-dev.md` (build/test loops, running locally)
+- `docs/dev/architecture.md` (component + code map)
+- `docs/dev/backends.md` (backend plugin system)
+
 ## Prerequisites
 
 - Go 1.25+
@@ -46,7 +52,6 @@
 
 The project includes a serverless "Activator" proxy.
 
-- Code: `cmd/flexinfer-proxy`
 - Code: `cmd/flexinfer-proxy`
 - Tests: `go test ./cmd/flexinfer-proxy/...`
 
