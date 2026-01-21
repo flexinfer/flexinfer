@@ -9,7 +9,8 @@ COPY agents/ agents/
 COPY pkg/ pkg/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o agent ./cmd/flexinfer-agent
 
-FROM gcr.io/distroless/static:nonroot
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
 WORKDIR /
 COPY --from=builder /workspace/agent .
 USER 65532:65532
