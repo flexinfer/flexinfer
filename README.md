@@ -8,6 +8,11 @@ Go backend for the Loom ecosystem:
 - `loom` CLI for config generation and sync (`cmd/loom/`)
 - `loomd` daemon for MCP server lifecycle management (`cmd/loomd/`)
 
+## Documentation
+
+- User guide: `docs/USER_GUIDE.md`
+- Developer guide: `docs/DEVELOPER_GUIDE.md`
+
 ## Quickstart
 
 ```bash
@@ -15,6 +20,16 @@ make build
 ./bin/loom generate configs --target all
 ./bin/loom sync all --regen
 ./bin/loomd
+```
+
+## Daemon management (launchd on macOS)
+
+```bash
+./bin/loom start
+./bin/loom status
+./bin/loom reload
+./bin/loom restart
+./bin/loom stop
 ```
 
 ## Kubernetes MCP Servers

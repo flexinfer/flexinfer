@@ -45,6 +45,7 @@ vendor/
 claude_desktop_config/
 
 # --- Loom MCP tooling (local; do not commit) ---
+generated/
 .codex/
 .gemini/
 .vscode-mcp/
