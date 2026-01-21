@@ -60,8 +60,8 @@ const (
 // This is the simplified v1alpha2 spec optimized for homelab users.
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:XValidation:rule="!self.source.startsWith('pvc://') || !has(self.cache)",message="spec.cache must be omitted when spec.source is pvc://... (the PVC is mounted directly)"
-// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.limits) || (!has(self.resources.limits['nvidia.com/gpu']) && !has(self.resources.limits['amd.com/gpu']) && !has(self.resources.limits['gpu.intel.com/i915']))",message="Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count instead"
-// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.requests) || (!has(self.resources.requests['nvidia.com/gpu']) && !has(self.resources.requests['amd.com/gpu']) && !has(self.resources.requests['gpu.intel.com/i915']))",message="Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count instead"
+// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.limits) || (!('nvidia.com/gpu' in self.resources.limits) && !('amd.com/gpu' in self.resources.limits) && !('gpu.intel.com/i915' in self.resources.limits))",message="Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count instead"
+// +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.requests) || (!('nvidia.com/gpu' in self.resources.requests) && !('amd.com/gpu' in self.resources.requests) && !('gpu.intel.com/i915' in self.resources.requests))",message="Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count instead"
 type ModelSpec struct {
 	// Backend is the inference backend to use.
 	// Supported: ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui, vllm-omni

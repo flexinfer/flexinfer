@@ -302,12 +302,14 @@ spec:
               rule: '!self.source.startsWith(''pvc://'') || !has(self.cache)'
             - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
                 instead
-              rule: '!has(self.resources) || !has(self.resources.limits) || (!has(self.resources.limits[''nvidia.com/gpu''])
-                && !has(self.resources.limits[''amd.com/gpu'']) && !has(self.resources.limits[''gpu.intel.com/i915'']))'
+              rule: '!has(self.resources) || !has(self.resources.limits) || (!(''nvidia.com/gpu''
+                in self.resources.limits) && !(''amd.com/gpu'' in self.resources.limits)
+                && !(''gpu.intel.com/i915'' in self.resources.limits))'
             - message: Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count
                 instead
-              rule: '!has(self.resources) || !has(self.resources.requests) || (!has(self.resources.requests[''nvidia.com/gpu''])
-                && !has(self.resources.requests[''amd.com/gpu'']) && !has(self.resources.requests[''gpu.intel.com/i915'']))'
+              rule: '!has(self.resources) || !has(self.resources.requests) || (!(''nvidia.com/gpu''
+                in self.resources.requests) && !(''amd.com/gpu'' in self.resources.requests)
+                && !(''gpu.intel.com/i915'' in self.resources.requests))'
           status:
             description: ModelStatus defines the observed state of Model
             properties:
