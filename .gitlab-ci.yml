@@ -174,13 +174,26 @@ publish:
 
         for tag in "$@"; do
           echo "Publishing ${name}: ${tag}"
-          buildctl --addr "${BUILDKIT_HOST}" build \
-            --frontend dockerfile.v0 \
-            --local context=. \
-            --local dockerfile=build \
-            --opt filename="${dockerfile}" \
-            --opt platform=linux/amd64 \
-            --output "type=image,name=${tag},push=true"
+          attempts=5
+          delay=2
+          for i in $(seq 1 "${attempts}"); do
+            if buildctl --addr "${BUILDKIT_HOST}" build \
+              --frontend dockerfile.v0 \
+              --local context=. \
+              --local dockerfile=build \
+              --opt filename="${dockerfile}" \
+              --opt platform=linux/amd64 \
+              --output "type=image,name=${tag},push=true"; then
+              break
+            fi
+            if [ "${i}" -eq "${attempts}" ]; then
+              echo "ERROR: failed to publish ${name} (${tag}) after ${attempts} attempts"
+              exit 1
+            fi
+            echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
+            sleep "${delay}"
+            delay=$((delay * 2))
+          done
         done
       }
 
@@ -225,7 +238,7 @@ publish:
 
 publish_binaries:
   stage: publish
-  image: alpine:3.20
+  image: alpine/helm:3.15.4
   needs:
     - job: build_manager
       artifacts: true
