@@ -114,7 +114,6 @@ spec:
                 description: GPU configures GPU allocation and sharing.
                 properties:
                   count:
-                    default: 1
                     description: Count is the number of GPUs required.
                     format: int32
                     maximum: 8
@@ -136,6 +135,18 @@ spec:
                       with higher priority models preempting lower priority ones.
                       If not set, model gets exclusive GPU access.
                     type: string
+                  vendor:
+                    default: auto
+                    description: |-
+                      Vendor selects the GPU vendor to target.
+                      Use "auto" (or omit) to auto-detect based on available nodes.
+                      Use "cpu" for CPU-only inference (no GPU resource requests).
+                    enum:
+                    - auto
+                    - nvidia
+                    - amd
+                    - cpu
+                    type: string
                   vramEstimateMB:
                     description: |-
                       VRAMEstimateMB is the estimated VRAM usage in MB.
@@ -143,6 +154,13 @@ spec:
                     format: int64
                     type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: gpu.count must be omitted when gpu.vendor is cpu
+                  rule: self.vendor != 'cpu' || !has(self.count)
+                - message: gpu.vramEstimateMB must be omitted when gpu.vendor is cpu
+                  rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
+                - message: gpu.shared must be empty when gpu.vendor is cpu
+                  rule: self.vendor != 'cpu' || self.shared == ''
               litellm:
                 description: LiteLLM configures proxy integration for unified API
                   access.
@@ -247,6 +265,15 @@ spec:
                       IdleTimeout is how long to wait before scaling to zero.
                       Default: 5m for LLMs, 10m for image generation backends.
                     type: string
+                  minReplicas:
+                    default: 0
+                    description: |-
+                      MinReplicas is the minimum number of replicas to keep running.
+                      Use 0 for true scale-to-zero. Use 1 for "warm start" behavior.
+                    format: int32
+                    maximum: 10
+                    minimum: 0
+                    type: integer
                 type: object
               serviceLabels:
                 description: |-
@@ -275,6 +302,18 @@ spec:
               cache:
                 description: Cache tracks the cache state.
                 properties:
+                  jobName:
+                    description: JobName is the cache job responsible for ensuring
+                      the artifact is present.
+                    type: string
+                  jobPhase:
+                    description: 'JobPhase is a coarse cache job phase: Pending, Running,
+                      Succeeded, Failed.'
+                    type: string
+                  message:
+                    description: Message is an optional human-friendly cache status
+                      message.
+                    type: string
                   pvcName:
                     description: PVCName is the PVC being used (if SharedPVC).
                     type: string

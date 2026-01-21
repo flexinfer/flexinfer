@@ -20,6 +20,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/singleflight"
@@ -130,6 +131,8 @@ const (
 	AnnotationQueueSincePrefix = "flexinfer.ai/queue-since."
 	// AnnotationActiveServiceLabels contains comma-separated service labels for an active model
 	AnnotationActiveServiceLabels = "ai.flexinfer/active-services"
+	// AnnotationServiceLabels contains comma-separated service labels (static claim)
+	AnnotationServiceLabels = "flexinfer.ai/service-labels"
 )
 
 func init() {
@@ -309,9 +312,43 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Fetch the model deployment
 	md, err := p.getModelDeployment(ctx, modelName)
+	if err == nil {
+		// 4. Check if model belongs to a GPUGroup (v1alpha1 only)
+		if md.Spec.GPUGroupRef != nil && *md.Spec.GPUGroupRef != "" {
+			if err := p.handleGPUGroupRequest(ctx, w, r, modelName, md, start); err != nil {
+				slog.Error("GPUGroup request failed", "model", modelName, "error", err)
+				requestsTotal.WithLabelValues(modelName, "error").Inc()
+			}
+			return
+		}
+
+		// 5. If model is ready, serve directly (non-GPUGroup path)
+		if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
+			p.trackAndServe(w, r, modelName, start)
+			return
+		}
+
+		// 6. Model is scaled to zero or not ready - use queue
+		if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
+			slog.Error("cold start failed", "model", modelName, "error", err)
+			requestsTotal.WithLabelValues(modelName, "error").Inc()
+			// Error response already sent by handleColdStart
+		}
+		return
+	}
+
+	if !errors.IsNotFound(err) {
+		slog.Error("error fetching model deployment", "model", modelName, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		requestsTotal.WithLabelValues(modelName, "error").Inc()
+		return
+	}
+
+	// v1alpha2 fallback
+	m, err := p.getModel(ctx, modelName)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			http.Error(w, fmt.Sprintf("Model deployment %s not found", modelName), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("Model %s not found", modelName), http.StatusNotFound)
 		} else {
 			slog.Error("error fetching model", "model", modelName, "error", err)
 			http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -320,26 +357,16 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Check if model belongs to a GPUGroup
-	if md.Spec.GPUGroupRef != nil && *md.Spec.GPUGroupRef != "" {
-		if err := p.handleGPUGroupRequest(ctx, w, r, modelName, md, start); err != nil {
-			slog.Error("GPUGroup request failed", "model", modelName, "error", err)
-			requestsTotal.WithLabelValues(modelName, "error").Inc()
-		}
-		return
-	}
-
-	// 5. If model is ready, serve directly (non-GPUGroup path)
-	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
+	// If model is ready, serve directly.
+	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}
 
-	// 6. Model is scaled to zero or not ready - use queue
+	// Model is scaled to zero or not ready - use queue.
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
-		// Error response already sent by handleColdStart
 	}
 }
 
@@ -386,6 +413,13 @@ func (p *Proxy) getModelDeployment(ctx context.Context, modelName string) (*aiv1
 	md := &aiv1alpha1.ModelDeployment{}
 	err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md)
 	return md, err
+}
+
+// getModel fetches the v1alpha2 Model resource.
+func (p *Proxy) getModel(ctx context.Context, modelName string) (*aiv1alpha2.Model, error) {
+	m := &aiv1alpha2.Model{}
+	err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m)
+	return m, err
 }
 
 // handleColdStart handles requests when model is scaled to zero
@@ -628,7 +662,25 @@ func (p *Proxy) waitForGPUGroupActive(ctx context.Context, modelName, gpuGroupNa
 func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 	md, err := p.getModelDeployment(ctx, modelName)
 	if err != nil {
-		return err
+		if !errors.IsNotFound(err) {
+			return err
+		}
+
+		// v1alpha2: update LastActiveTime to trigger controller scale-up.
+		m, err := p.getModel(ctx, modelName)
+		if err != nil {
+			return err
+		}
+
+		now := metav1.Now()
+		m.Status.LastActiveTime = &now
+		if err := p.client.Status().Update(ctx, m); err != nil {
+			if errors.IsConflict(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
+		}
+		return nil
 	}
 
 	// Already scaled up?
@@ -693,11 +745,23 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 			return fmt.Errorf("timeout waiting for model to become ready (after %v)", timeout)
 		case <-ticker.C:
 			md, err := p.getModelDeployment(ctx, modelName)
+			if err == nil {
+				if isReady(md) {
+					return nil
+				}
+				continue
+			}
+			if !errors.IsNotFound(err) {
+				slog.Warn("error checking model deployment readiness", "model", modelName, "error", err)
+				continue
+			}
+
+			m, err := p.getModel(ctx, modelName)
 			if err != nil {
 				slog.Warn("error checking model readiness", "model", modelName, "error", err)
 				continue
 			}
-			if isReady(md) {
+			if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 				return nil
 			}
 		}
@@ -710,6 +774,19 @@ func (p *Proxy) getColdStartTimeout(ctx context.Context, modelName string) time.
 	md, err := p.getModelDeployment(ctx, modelName)
 	if err == nil && md.Spec.ColdStartTimeoutSeconds != nil {
 		return time.Duration(*md.Spec.ColdStartTimeoutSeconds) * time.Second
+	}
+	if err == nil {
+		return p.coldStartTimeout
+	}
+	if !errors.IsNotFound(err) {
+		return p.coldStartTimeout
+	}
+
+	m, err := p.getModel(ctx, modelName)
+	if err == nil &&
+		m.Spec.Serverless != nil &&
+		m.Spec.Serverless.ColdStartTimeout != nil {
+		return m.Spec.Serverless.ColdStartTimeout.Duration
 	}
 	return p.coldStartTimeout
 }
@@ -817,7 +894,31 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 
 	md := &aiv1alpha1.ModelDeployment{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
-		slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
+		if !errors.IsNotFound(err) {
+			slog.Warn("error fetching modeldeployment for stats update", "model", modelName, "error", err)
+			return
+		}
+
+		// v1alpha2 fallback: update LastActiveTime
+		m := &aiv1alpha2.Model{}
+		if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+			slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
+			return
+		}
+
+		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < 1*time.Minute {
+			return
+		}
+
+		now := metav1.Now()
+		m.Status.LastActiveTime = &now
+		if err := p.client.Status().Update(ctx, m); err != nil {
+			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
+		}
+		return
+	}
+
+	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < 1*time.Minute {
 		return
 	}
 
@@ -870,33 +971,62 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 // This allows the proxy to rewrite model names in requests before forwarding.
 func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) string {
 	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
+		return md.Spec.Model
+	} else if !errors.IsNotFound(err) {
 		return ""
 	}
-	// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
-	return md.Spec.Model
+
+	// v1alpha2 fallback
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+		return ""
+	}
+	return extractModelFromSource(m.Spec.Source)
+}
+
+func extractModelFromSource(source string) string {
+	switch {
+	case strings.HasPrefix(source, "HF://"):
+		return strings.TrimPrefix(source, "HF://")
+	case strings.HasPrefix(source, "ollama://"):
+		return strings.TrimPrefix(source, "ollama://")
+	case strings.HasPrefix(source, "file://"):
+		return strings.TrimPrefix(source, "file://")
+	case strings.HasPrefix(source, "pvc://"):
+		rest := strings.TrimPrefix(source, "pvc://")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) == 2 {
+			return "/" + parts[1]
+		}
+		return ""
+	default:
+		return source
+	}
 }
 
 // getBackendPort returns the port for a model's backend service.
 // Returns the backend-specific port based on model spec, or 8000 as default.
 func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
 	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
-		return 8000 // Default port
-	}
-
-	// Map backend types to their default ports
-	switch strings.ToLower(md.Spec.Backend) {
-	case "ollama":
-		return 11434
-	case "llamacpp", "llama.cpp", "llama-cpp":
-		return 8080
-	case "comfyui", "comfy":
-		return 8188
-	default:
-		// vllm, mlc-llm, diffusers, vllm-omni, tei all use 8000
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if b, ok := backend.Get(md.Spec.Backend); ok {
+			return b.Port()
+		}
+		return 8000
+	} else if !errors.IsNotFound(err) {
 		return 8000
 	}
+
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+		return 8000
+	}
+	if b, ok := backend.Get(m.Spec.Backend); ok {
+		return b.Port()
+	}
+	return 8000
 }
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
@@ -1139,14 +1269,25 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	}
 
 	// First pass: collect all label claims to detect conflicts
+	// Prefer AnnotationActiveServiceLabels when present (GPUGroup active model),
+	// otherwise fall back to AnnotationServiceLabels (static claim).
 	labelClaims := make(map[string][]string) // label -> []serviceName
 	for _, svc := range services.Items {
-		if labels, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok && labels != "" {
-			for _, label := range strings.Split(labels, ",") {
-				label = strings.TrimSpace(label)
-				if label != "" {
-					labelClaims[label] = append(labelClaims[label], svc.Name)
-				}
+		labels := ""
+		if svc.Annotations != nil {
+			if active, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok && active != "" {
+				labels = active
+			} else if static, ok := svc.Annotations[AnnotationServiceLabels]; ok && static != "" {
+				labels = static
+			}
+		}
+		if labels == "" {
+			continue
+		}
+		for _, label := range strings.Split(labels, ",") {
+			label = strings.TrimSpace(label)
+			if label != "" {
+				labelClaims[label] = append(labelClaims[label], svc.Name)
 			}
 		}
 	}

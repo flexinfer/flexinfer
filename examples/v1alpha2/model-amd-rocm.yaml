@@ -1,6 +1,6 @@
 # AMD ROCm GPU Example
 # Models configured for AMD GPUs (RX 7900 XTX, etc.)
-# GPU vendor is auto-detected from node labels
+# GPU vendor is explicitly targeted to avoid auto-detect fallback
 ---
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -12,6 +12,7 @@ spec:
   nodeSelector:
     gpu.amd.com/gpu-architecture: gfx1100   # Target RDNA3 GPUs
   gpu:
+    vendor: amd
     shared: amd-gpu-pool
     priority: 100
   config:
@@ -28,6 +29,7 @@ spec:
   nodeSelector:
     gpu.amd.com/gpu-architecture: gfx1100
   gpu:
+    vendor: amd
     shared: amd-gpu-pool
     priority: 80
   config:

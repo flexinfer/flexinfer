@@ -30,6 +30,18 @@ spec:
     - jsonPath: .status.path
       name: Path
       type: string
+    - jsonPath: .status.cacheSizeBytes
+      name: Size
+      priority: 1
+      type: integer
+    - jsonPath: .status.lastAccessTime
+      name: LastAccess
+      priority: 1
+      type: date
+    - jsonPath: .status.evictionCount
+      name: Evictions
+      priority: 1
+      type: integer
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -59,6 +71,28 @@ spec:
                 description: ClusterStorageClassName is the storage class to use for
                   SharedPVC strategy
                 type: string
+              evictionPolicy:
+                default: LRU
+                description: |-
+                  EvictionPolicy defines the cache eviction strategy when storage pressure occurs.
+                  Supports LRU (least recently used), LFU (least frequently used), FIFO (oldest first),
+                  or None to disable automatic eviction.
+                enum:
+                - LRU
+                - LFU
+                - FIFO
+                - None
+                type: string
+              evictionThresholdPercent:
+                default: 85
+                description: |-
+                  EvictionThresholdPercent is the storage utilization percentage that triggers eviction.
+                  When /dev/shm usage exceeds this threshold, the controller evicts caches based on policy.
+                  Only applies to Memory storage strategy.
+                format: int32
+                maximum: 99
+                minimum: 50
+                type: integer
               existingClaimName:
                 description: |-
                   ExistingClaimName references an existing PVC to use instead of creating one.
@@ -69,6 +103,18 @@ spec:
                 description: |-
                   HostPath is the base directory for NodeLocal storage.
                   Defaults to /var/lib/flexinfer/models if not specified.
+                type: string
+              maxCacheSizeBytes:
+                description: |-
+                  MaxCacheSizeBytes limits the maximum size this cache can occupy.
+                  Used for capacity planning and eviction decisions.
+                format: int64
+                type: integer
+              modelGroup:
+                description: |-
+                  ModelGroup associates this cache with a named group for coordinated eviction.
+                  Caches in the same group are evicted together when any member exceeds thresholds.
+                  Useful for models with shared tokenizers or adapters.
                 type: string
               modelPath:
                 description: |-
@@ -87,6 +133,16 @@ spec:
                   OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
                   for authenticating to OCI registries. Used when source begins with oci:// or oras://
                 type: string
+              retentionPriority:
+                default: 50
+                description: |-
+                  RetentionPriority influences eviction order within the same policy tier.
+                  Higher values (0-100) mean the cache is kept longer.
+                  Production models should have higher priority than experimental ones.
+                format: int32
+                maximum: 100
+                minimum: 0
+                type: integer
               secretRef:
                 description: 'SecretRef is the name of the secret containing authentication
                   credentials (key: HF_TOKEN)'
@@ -117,6 +173,23 @@ spec:
           status:
             description: ModelCacheStatus defines the observed state of ModelCache
             properties:
+              accessCount:
+                description: |-
+                  AccessCount tracks total number of accesses to this cache.
+                  Used for LFU eviction policy and hit rate calculations.
+                format: int64
+                type: integer
+              cacheHitRate:
+                description: |-
+                  CacheHitRate is the ratio of successful cache lookups to total requests.
+                  Format: "0.95" (95% hit rate). Useful for tuning eviction policies.
+                type: string
+              cacheSizeBytes:
+                description: |-
+                  CacheSizeBytes is the actual size of the cached model data.
+                  Updated during provisioning and periodically during reconciliation.
+                format: int64
+                type: integer
               conditions:
                 description: Conditions represent the latest available observations
                   of the state
@@ -175,6 +248,18 @@ spec:
                   - type
                   type: object
                 type: array
+              evictionCount:
+                description: |-
+                  EvictionCount tracks how many times this cache has been evicted since creation.
+                  Useful for identifying hot/cold models and tuning retention priorities.
+                format: int64
+                type: integer
+              lastAccessTime:
+                description: |-
+                  LastAccessTime is the most recent time this cache was accessed by a ModelDeployment.
+                  Updated when a deployment references this cache.
+                format: date-time
+                type: string
               path:
                 description: Path is the path where the model is accessible (volume
                   name or host path)
@@ -187,6 +272,18 @@ spec:
                   cached (NodeLocal strategy)
                 format: int32
                 type: integer
+              residencySeconds:
+                description: |-
+                  ResidencySeconds is the cumulative time this cache has been resident in memory.
+                  Resets when cache is evicted. Useful for cost attribution.
+                format: int64
+                type: integer
+              residentSince:
+                description: |-
+                  ResidentSince is the timestamp when this cache became resident in memory.
+                  Nil when cache is not currently resident. Used for residency calculations.
+                format: date-time
+                type: string
               sizeBytes:
                 description: SizeBytes is the size of the cached model
                 type: string

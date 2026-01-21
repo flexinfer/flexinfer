@@ -46,34 +46,53 @@ func TestExtractModelFromSource(t *testing.T) {
 	}
 }
 
-func TestShouldScaleToZero(t *testing.T) {
-	// Model with recent activity should not scale
-	recentTime := metav1.Time{Time: time.Now().Add(-1 * time.Minute)}
+func TestDesiredReplicasServerless(t *testing.T) {
+	r := &ModelReconciler{}
+	vllmBackend, _ := backend.Get("vllm")
+
 	model := &aiv1alpha2.Model{
 		Spec: aiv1alpha2.ModelSpec{
 			Backend: "vllm",
 		},
-		Status: aiv1alpha2.ModelStatus{
-			LastActiveTime: &recentTime,
-		},
 	}
 
-	if shouldScaleToZero(model) {
-		t.Error("Model with recent activity should not scale to zero")
+	// Serverless defaults to enabled; no activity => min replicas (default 0).
+	if got := r.desiredReplicas(model, vllmBackend); got != 0 {
+		t.Errorf("desiredReplicas() = %d, want 0 (no activity, serverless)", got)
 	}
 
-	// Model with old activity should scale
+	// Recent activity => scale up to 1.
+	recentTime := metav1.Time{Time: time.Now().Add(-1 * time.Minute)}
+	model.Status.LastActiveTime = &recentTime
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (recent activity)", got)
+	}
+
+	// Old activity => scale back down to min replicas (0).
 	oldTime := metav1.Time{Time: time.Now().Add(-10 * time.Minute)}
 	model.Status.LastActiveTime = &oldTime
-
-	if !shouldScaleToZero(model) {
-		t.Error("Model with old activity should scale to zero")
+	if got := r.desiredReplicas(model, vllmBackend); got != 0 {
+		t.Errorf("desiredReplicas() = %d, want 0 (old activity)", got)
 	}
 
-	// Model with no activity timestamp should not scale
+	// Warm start via MinReplicas=1 keeps it running even without activity.
+	enabled := true
+	minOne := int32(1)
+	model.Spec.Serverless = &aiv1alpha2.ServerlessSpec{
+		Enabled:     &enabled,
+		MinReplicas: &minOne,
+	}
 	model.Status.LastActiveTime = nil
-	if shouldScaleToZero(model) {
-		t.Error("Model with no activity timestamp should not scale to zero")
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (minReplicas=1)", got)
+	}
+
+	// Serverless disabled => always 1.
+	disabled := false
+	model.Spec.Serverless.Enabled = &disabled
+	model.Spec.Serverless.MinReplicas = nil
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (serverless disabled)", got)
 	}
 }
 
@@ -175,7 +194,7 @@ func TestBuildBackendModelSpec(t *testing.T) {
 		t.Errorf("Expected GPU vendor AMD, got %v", spec.GPUVendor)
 	}
 
-	if spec.ModelPath != "/models" {
-		t.Errorf("Expected model path '/models', got %q", spec.ModelPath)
+	if spec.ModelPath != "" {
+		t.Errorf("Expected empty model path for HF source, got %q", spec.ModelPath)
 	}
 }

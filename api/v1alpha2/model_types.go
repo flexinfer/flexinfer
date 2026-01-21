@@ -18,6 +18,7 @@ package v1alpha2
 
 import (
 	"encoding/json"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -114,9 +115,30 @@ type ModelSpec struct {
 	ServiceLabels []string `json:"serviceLabels,omitempty"`
 }
 
+// GPUVendor selects which vendor GPU resource to request.
+type GPUVendor string
+
+const (
+	GPUVendorAuto   GPUVendor = "auto"
+	GPUVendorNVIDIA GPUVendor = "nvidia"
+	GPUVendorAMD    GPUVendor = "amd"
+	GPUVendorCPU    GPUVendor = "cpu"
+)
+
 // GPUSpec configures GPU allocation and sharing.
 // +kubebuilder:object:generate=true
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.count)",message="gpu.count must be omitted when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.vramEstimateMB)",message="gpu.vramEstimateMB must be omitted when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || self.shared == ”",message="gpu.shared must be empty when gpu.vendor is cpu"
 type GPUSpec struct {
+	// Vendor selects the GPU vendor to target.
+	// Use "auto" (or omit) to auto-detect based on available nodes.
+	// Use "cpu" for CPU-only inference (no GPU resource requests).
+	// +kubebuilder:validation:Enum=auto;nvidia;amd;cpu
+	// +kubebuilder:default=auto
+	// +optional
+	Vendor GPUVendor `json:"vendor,omitempty"`
+
 	// Shared groups models together for time-sharing a GPU.
 	// Models with the same shared value compete for the same GPU,
 	// with higher priority models preempting lower priority ones.
@@ -133,7 +155,6 @@ type GPUSpec struct {
 	Priority *int32 `json:"priority,omitempty"`
 
 	// Count is the number of GPUs required.
-	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=8
 	// +optional
@@ -152,6 +173,14 @@ type ServerlessSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// MinReplicas is the minimum number of replicas to keep running.
+	// Use 0 for true scale-to-zero. Use 1 for "warm start" behavior.
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +optional
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
 	// IdleTimeout is how long to wait before scaling to zero.
 	// Default: 5m for LLMs, 10m for image generation backends.
@@ -302,6 +331,15 @@ type CacheStatus struct {
 	Ready bool `json:"ready,omitempty"`
 	// PVCName is the PVC being used (if SharedPVC).
 	PVCName string `json:"pvcName,omitempty"`
+	// JobName is the cache job responsible for ensuring the artifact is present.
+	// +optional
+	JobName string `json:"jobName,omitempty"`
+	// JobPhase is a coarse cache job phase: Pending, Running, Succeeded, Failed.
+	// +optional
+	JobPhase string `json:"jobPhase,omitempty"`
+	// Message is an optional human-friendly cache status message.
+	// +optional
+	Message string `json:"message,omitempty"`
 	// SizeBytes is the cached model size.
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
 }
@@ -352,10 +390,46 @@ func (s *ModelSpec) GetPriority() int32 {
 
 // GetGPUCount returns the number of GPUs required, defaulting to 1.
 func (s *ModelSpec) GetGPUCount() int32 {
-	if s.GPU != nil && s.GPU.Count != nil {
+	if s.GPU == nil {
+		return 0
+	}
+	if strings.ToLower(string(s.GPU.Vendor)) == string(GPUVendorCPU) {
+		return 0
+	}
+	if s.GPU.Count != nil {
 		return *s.GPU.Count
 	}
 	return 1
+}
+
+// GetGPUVendor returns the configured GPU vendor selector.
+// Defaults to "auto" when not specified.
+func (s *ModelSpec) GetGPUVendor() GPUVendor {
+	if s.GPU == nil {
+		return GPUVendorCPU
+	}
+	v := strings.ToLower(strings.TrimSpace(string(s.GPU.Vendor)))
+	if v == "" {
+		return GPUVendorAuto
+	}
+	switch GPUVendor(v) {
+	case GPUVendorAuto, GPUVendorNVIDIA, GPUVendorAMD, GPUVendorCPU:
+		return GPUVendor(v)
+	default:
+		return GPUVendorAuto
+	}
+}
+
+// GetMinReplicas returns the minimum number of replicas to keep running.
+// Defaults to 0 when serverless is enabled.
+func (s *ModelSpec) GetMinReplicas() int32 {
+	if !s.IsServerless() {
+		return 1
+	}
+	if s.Serverless != nil && s.Serverless.MinReplicas != nil {
+		return *s.Serverless.MinReplicas
+	}
+	return 0
 }
 
 // IsShared returns true if this model participates in GPU sharing.

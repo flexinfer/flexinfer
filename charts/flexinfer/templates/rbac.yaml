@@ -262,6 +262,9 @@ rules:
   - apiGroups: ["ai.flexinfer"]
     resources: ["models"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["models/status"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch"]
@@ -314,4 +317,3 @@ roleRef:
   kind: ClusterRole
   name: {{ $fullname }}-benchmarker
 {{- end }}
-

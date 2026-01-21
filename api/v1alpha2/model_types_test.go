@@ -31,8 +31,8 @@ func TestModelSpecDefaults(t *testing.T) {
 	}
 
 	// Test default GPU count
-	if spec.GetGPUCount() != 1 {
-		t.Errorf("GetGPUCount() = %d, want 1", spec.GetGPUCount())
+	if spec.GetGPUCount() != 0 {
+		t.Errorf("GetGPUCount() = %d, want 0", spec.GetGPUCount())
 	}
 
 	// Test not shared by default
@@ -44,6 +44,11 @@ func TestModelSpecDefaults(t *testing.T) {
 	if !spec.IsServerless() {
 		t.Error("IsServerless() = false, want true by default")
 	}
+
+	// Test default min replicas (serverless)
+	if spec.GetMinReplicas() != 0 {
+		t.Errorf("GetMinReplicas() = %d, want 0", spec.GetMinReplicas())
+	}
 }
 
 func TestModelSpecWithGPUConfig(t *testing.T) {
@@ -52,6 +57,7 @@ func TestModelSpecWithGPUConfig(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPU: &GPUSpec{
+			Vendor:   GPUVendorAMD,
 			Shared:   "homelab-gpu",
 			Priority: &priority,
 			Count:    &count,
@@ -73,18 +79,42 @@ func TestModelSpecWithGPUConfig(t *testing.T) {
 	if spec.GPU.Shared != "homelab-gpu" {
 		t.Errorf("GPU.Shared = %q, want 'homelab-gpu'", spec.GPU.Shared)
 	}
+
+	if spec.GetGPUVendor() != GPUVendorAMD {
+		t.Errorf("GetGPUVendor() = %q, want %q", spec.GetGPUVendor(), GPUVendorAMD)
+	}
+}
+
+func TestModelSpecCPUVendor(t *testing.T) {
+	spec := &ModelSpec{
+		GPU: &GPUSpec{
+			Vendor: GPUVendorCPU,
+		},
+	}
+
+	if spec.GetGPUVendor() != GPUVendorCPU {
+		t.Errorf("GetGPUVendor() = %q, want %q", spec.GetGPUVendor(), GPUVendorCPU)
+	}
+	if spec.GetGPUCount() != 0 {
+		t.Errorf("GetGPUCount() = %d, want 0 for CPU vendor", spec.GetGPUCount())
+	}
 }
 
 func TestModelSpecServerlessConfig(t *testing.T) {
 	// Test explicit enabled
 	enabled := true
+	minReplicas := int32(1)
 	spec := &ModelSpec{
 		Serverless: &ServerlessSpec{
-			Enabled: &enabled,
+			Enabled:     &enabled,
+			MinReplicas: &minReplicas,
 		},
 	}
 	if !spec.IsServerless() {
 		t.Error("IsServerless() = false when explicitly enabled")
+	}
+	if spec.GetMinReplicas() != 1 {
+		t.Errorf("GetMinReplicas() = %d, want 1", spec.GetMinReplicas())
 	}
 
 	// Test explicit disabled
@@ -92,6 +122,9 @@ func TestModelSpecServerlessConfig(t *testing.T) {
 	spec.Serverless.Enabled = &disabled
 	if spec.IsServerless() {
 		t.Error("IsServerless() = true when explicitly disabled")
+	}
+	if spec.GetMinReplicas() != 1 {
+		t.Errorf("GetMinReplicas() = %d, want 1 when serverless disabled", spec.GetMinReplicas())
 	}
 }
 

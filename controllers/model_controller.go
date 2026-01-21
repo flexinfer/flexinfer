@@ -18,16 +18,19 @@ package controllers
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
@@ -39,6 +42,17 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 )
+
+type noMatchingNodesError struct {
+	reason string
+}
+
+func (e *noMatchingNodesError) Error() string { return e.reason }
+
+func isNoMatchingNodesError(err error) bool {
+	var e *noMatchingNodesError
+	return stderrors.As(err, &e)
+}
 
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {
@@ -54,6 +68,7 @@ type ModelReconciler struct {
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 // Reconcile is the main reconciliation loop for Model resources.
@@ -98,14 +113,6 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, nil
 	}
 
-	// Initialize status
-	if model.Status.Phase == "" {
-		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending); err != nil {
-			log.Error(err, "Failed to update initial status")
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Validate backend
 	b, ok := backend.Get(model.Spec.Backend)
 	if !ok {
@@ -115,16 +122,20 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed)
 	}
 
-	// Check if model should be scaled to zero (serverless idle)
-	if model.Spec.IsServerless() && model.Status.Phase == aiv1alpha2.ModelPhaseReady {
-		if shouldScaleToZero(model) {
-			log.Info("Scaling model to zero due to idle timeout")
-			if err := r.scaleToZero(ctx, model); err != nil {
-				log.Error(err, "Failed to scale to zero")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
+	desiredReplicas := r.desiredReplicas(model, b)
+	requeueAfter := 30 * time.Second
+
+	// Initialize status based on desired state.
+	if model.Status.Phase == "" {
+		phase := aiv1alpha2.ModelPhasePending
+		if desiredReplicas == 0 {
+			phase = aiv1alpha2.ModelPhaseIdle
 		}
+		if err := r.updatePhase(ctx, model, phase); err != nil {
+			log.Error(err, "Failed to update initial status")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Handle shared GPU scheduling
@@ -134,10 +145,13 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			log.Error(err, "Failed to handle shared GPU scheduling")
 			return result, err
 		}
-		// If we're preempted or queued, don't proceed with deployment
-		if model.Status.Phase == aiv1alpha2.ModelPhasePreempted ||
-			model.Status.SharedGroup != nil && model.Status.SharedGroup.State == "Queued" {
+		// Continue reconciliation even if queued/preempted; desiredReplicas will keep it at 0.
+		desiredReplicas = r.desiredReplicas(model, b)
+		if result.Requeue {
 			return result, nil
+		}
+		if result.RequeueAfter > 0 && result.RequeueAfter < requeueAfter {
+			requeueAfter = result.RequeueAfter
 		}
 	}
 
@@ -146,19 +160,47 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err != nil {
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
-		// Continue with defaults
-		gpuVendor = backend.GPUVendorNVIDIA
-		gpuArch = ""
+		if isNoMatchingNodesError(err) {
+			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
-	// Ensure Service exists
+	// Validate backend against selected vendor (especially CPU-only mode).
+	if !b.SupportsGPUVendor(gpuVendor) {
+		err := fmt.Errorf("backend %q does not support vendor %q", b.Name(), gpuVendor)
+		log.Error(err, "Backend vendor validation failed")
+		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+		return ctrl.Result{}, r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed)
+	}
+
+	// Ensure Service exists early (needed for stable endpoints even while cache is warming).
 	if err := r.ensureService(ctx, model, b); err != nil {
 		log.Error(err, "Failed to ensure Service")
 		return ctrl.Result{}, err
 	}
 
+	// Ensure cache resources exist (PVC provisioning) before creating the Deployment.
+	cacheReady, err := r.ensureCache(ctx, model, b)
+	if err != nil {
+		log.Error(err, "Failed to ensure cache resources")
+		r.Recorder.Event(model, corev1.EventTypeWarning, "CacheFailed", err.Error())
+		return ctrl.Result{}, err
+	}
+
+	// Gate activation on cache readiness: keep replicas at 0 while a prefetch job is running/failed.
+	if !cacheReady {
+		desiredReplicas = 0
+		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted && model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
+			_ = r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending)
+		}
+	}
+
 	// Ensure Deployment exists with correct spec
-	if err := r.ensureDeployment(ctx, model, b, gpuVendor, gpuArch); err != nil {
+	if err := r.ensureDeployment(ctx, model, b, gpuVendor, gpuArch, desiredReplicas); err != nil {
 		log.Error(err, "Failed to ensure Deployment")
 		return ctrl.Result{}, err
 	}
@@ -169,13 +211,37 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	// Requeue to check idle timeout for serverless
-	if model.Spec.IsServerless() && model.Status.Phase == aiv1alpha2.ModelPhaseReady {
-		idleTimeout := getIdleTimeout(model, b)
-		return ctrl.Result{RequeueAfter: idleTimeout / 2}, nil
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// desiredReplicas calculates the desired replica count for the model.
+// For serverless models, this is driven by LastActiveTime (written by the proxy) and idle timeout.
+func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Backend) int32 {
+	// Shared GPU: only the active model should run.
+	if model.Spec.IsShared() && model.Status.SharedGroup != nil {
+		if model.Status.SharedGroup.State != "Active" {
+			return 0
+		}
 	}
 
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	if !model.Spec.IsServerless() {
+		return 1
+	}
+
+	minReplicas := model.Spec.GetMinReplicas()
+	if model.Status.LastActiveTime == nil {
+		return minReplicas
+	}
+
+	idleTimeout := getIdleTimeout(model, b)
+	if time.Since(model.Status.LastActiveTime.Time) > idleTimeout {
+		return minReplicas
+	}
+
+	if minReplicas < 1 {
+		return 1
+	}
+	return minReplicas
 }
 
 // cleanupModel removes all resources created for the model.
@@ -272,7 +338,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 }
 
 // ensureDeployment creates or updates the Deployment for the model.
-func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
+func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string, desiredReplicas int32) error {
 	log := log.FromContext(ctx)
 
 	deployment := &appsv1.Deployment{}
@@ -292,10 +358,10 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	env := b.Env(spec)
 	probe := b.ReadinessProbe()
 
-	// Determine replicas (0 for serverless idle, 1 otherwise)
-	replicas := int32(1)
-	if model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
-		replicas = 0
+	// If this is a HuggingFace source and we have a /models volume, store HF caches on it.
+	// This makes SharedPVC act as a real cache layer without adding a dedicated downloader job.
+	if strings.HasPrefix(model.Spec.Source, "HF://") && b.NeedsVolume() {
+		env = mergeEnv(env, hfCacheEnvVars("/models/.cache/huggingface"))
 	}
 
 	// Build resource requirements
@@ -304,7 +370,12 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		resources.Limits = corev1.ResourceList{}
 	}
 	gpuCount := model.Spec.GetGPUCount()
-	resources.Limits[gpuVendor.ResourceName()] = *resource.NewQuantity(int64(gpuCount), resource.DecimalSI)
+	if gpuCount > 0 {
+		gpuResourceName := gpuVendor.ResourceName()
+		if gpuResourceName != "" {
+			resources.Limits[gpuResourceName] = *resource.NewQuantity(int64(gpuCount), resource.DecimalSI)
+		}
+	}
 
 	// Build node selector
 	nodeSelector := model.Spec.NodeSelector
@@ -373,7 +444,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(replicas),
+			Replicas: ptr.To(desiredReplicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: r.labelsForModel(model),
 			},
@@ -393,7 +464,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	if errors.IsNotFound(err) {
-		log.Info("Creating Deployment", "name", model.Name, "replicas", replicas)
+		log.Info("Creating Deployment", "name", model.Name, "replicas", desiredReplicas)
 		return r.Create(ctx, desiredDeployment)
 	}
 
@@ -404,10 +475,36 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.
 func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, gpuVendor backend.GPUVendor) *backend.ModelSpec {
+	modelValue := extractModelFromSource(model.Spec.Source)
 	spec := &backend.ModelSpec{
-		Model:     extractModelFromSource(model.Spec.Source),
-		ModelPath: "/models",
+		Model:     modelValue,
+		ModelPath: "",
 		GPUVendor: gpuVendor,
+	}
+
+	// If we're using a SharedPVC cache with an HF source, point backends at a local artifact directory
+	// populated by the prefetch job. This keeps model startup deterministic and avoids pulling weights
+	// during container startup.
+	if strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" && model.Status.Cache != nil {
+		if model.Status.Cache.PVCName != "" {
+			spec.ModelPath = "/models/" + model.Name
+		}
+	}
+
+	// If the source points at a PVC path, construct an absolute path under /models.
+	// Example: pvc://my-pvc/subdir -> /models/subdir
+	if strings.HasPrefix(model.Spec.Source, "pvc://") {
+		if strings.HasPrefix(modelValue, "/") {
+			spec.ModelPath = "/models" + modelValue
+		} else {
+			spec.ModelPath = "/models"
+		}
+	}
+
+	// If the source is a file path, treat it as an in-container absolute path.
+	// Example: file:///models/model.gguf -> /models/model.gguf
+	if strings.HasPrefix(model.Spec.Source, "file://") {
+		spec.ModelPath = modelValue
 	}
 
 	// Parse config into the spec
@@ -446,6 +543,14 @@ func extractModelFromSource(source string) string {
 
 // getVolumeSource returns the appropriate volume source based on cache strategy.
 func (r *ModelReconciler) getVolumeSource(model *aiv1alpha2.Model) corev1.VolumeSource {
+	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {
+		return corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvcName,
+			},
+		}
+	}
+
 	strategy := "SharedPVC" // default
 	if model.Spec.Cache != nil && model.Spec.Cache.Strategy != "" {
 		strategy = model.Spec.Cache.Strategy
@@ -477,6 +582,305 @@ func (r *ModelReconciler) getVolumeSource(model *aiv1alpha2.Model) corev1.Volume
 			},
 		}
 	}
+}
+
+func cacheStrategy(model *aiv1alpha2.Model) string {
+	if model.Spec.Cache != nil && model.Spec.Cache.Strategy != "" {
+		return model.Spec.Cache.Strategy
+	}
+	if model.Spec.IsShared() {
+		return "Memory"
+	}
+	return "SharedPVC"
+}
+
+func cachePVCName(model *aiv1alpha2.Model) (string, bool) {
+	if model.Spec.Cache != nil && model.Spec.Cache.PVCName != "" {
+		return model.Spec.Cache.PVCName, false
+	}
+	return model.Name + "-cache", true
+}
+
+func cacheStorageClass(model *aiv1alpha2.Model) string {
+	if model.Spec.Cache != nil && model.Spec.Cache.StorageClass != "" {
+		return model.Spec.Cache.StorageClass
+	}
+	return "longhorn"
+}
+
+func cacheSize(model *aiv1alpha2.Model) string {
+	if model.Spec.Cache != nil && model.Spec.Cache.Size != "" {
+		return model.Spec.Cache.Size
+	}
+	return "50Gi"
+}
+
+func parsePVCSource(source string) (pvcName string, subPath string, ok bool) {
+	if !strings.HasPrefix(source, "pvc://") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(source, "pvc://")
+	if rest == "" {
+		return "", "", false
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	if parts[0] == "" {
+		return "", "", false
+	}
+	pvcName = parts[0]
+	if len(parts) == 2 {
+		subPath = parts[1]
+	}
+	return pvcName, subPath, true
+}
+
+func hfCacheEnvVars(basePath string) []corev1.EnvVar {
+	basePath = strings.TrimRight(basePath, "/")
+	return []corev1.EnvVar{
+		{Name: "HF_HOME", Value: basePath},
+		{Name: "HF_HUB_CACHE", Value: basePath + "/hub"},
+		{Name: "HUGGINGFACE_HUB_CACHE", Value: basePath + "/hub"},
+		{Name: "TRANSFORMERS_CACHE", Value: basePath + "/transformers"},
+	}
+}
+
+func mergeEnv(existing []corev1.EnvVar, additional []corev1.EnvVar) []corev1.EnvVar {
+	if len(additional) == 0 {
+		return existing
+	}
+	out := make([]corev1.EnvVar, 0, len(existing)+len(additional))
+	indexByName := make(map[string]int, len(existing))
+	for _, e := range existing {
+		indexByName[e.Name] = len(out)
+		out = append(out, e)
+	}
+	for _, e := range additional {
+		if idx, ok := indexByName[e.Name]; ok {
+			out[idx] = e
+			continue
+		}
+		indexByName[e.Name] = len(out)
+		out = append(out, e)
+	}
+	return out
+}
+
+func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) (bool, error) {
+	if !b.NeedsVolume() {
+		return true, nil
+	}
+
+	original := model.DeepCopy()
+
+	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {
+		jobName := model.Name + "-cache-check"
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: model.Namespace}, pvc); err != nil {
+			return false, err
+		}
+
+		ready := false
+		jobPhase := "Pending"
+		message := "waiting for cache check job"
+
+		job := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+		if err != nil && !errors.IsNotFound(err) {
+			return false, err
+		}
+		if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+			if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+				return false, delErr
+			}
+			err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+		}
+		if errors.IsNotFound(err) {
+			if pvc.Status.Phase != corev1.ClaimBound {
+				jobPhase = "Pending"
+				message = "waiting for PVC to bind"
+			} else {
+				subPath := ""
+				if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+					subPath = sp
+				}
+				newJob, err := r.jobForCacheCheck(model, pvcName, subPath)
+				if err != nil {
+					return false, err
+				}
+				if err := r.Create(ctx, newJob); err != nil {
+					return false, err
+				}
+				jobPhase = "Running"
+				message = "cache check job started"
+			}
+		} else {
+			if job.Status.Succeeded > 0 {
+				ready = true
+				jobPhase = "Succeeded"
+				message = "artifact verified on PVC source"
+			} else if job.Status.Failed > 0 {
+				jobPhase = "Failed"
+				message = "cache check job failed"
+			} else if job.Status.Active > 0 {
+				jobPhase = "Running"
+				message = "cache check job running"
+			}
+		}
+
+		model.Status.Cache = &aiv1alpha2.CacheStatus{
+			Strategy:  "SharedPVC",
+			PVCName:   pvcName,
+			JobName:   jobName,
+			JobPhase:  jobPhase,
+			Message:   message,
+			Ready:     ready,
+			SizeBytes: 0,
+		}
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
+
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return ready, nil
+	}
+
+	strategy := cacheStrategy(model)
+	model.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: strategy,
+		Ready:    true,
+	}
+
+	if strategy != "SharedPVC" {
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "NoCacheJob", "no cache job required")
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	pvcName, autoCreate := cachePVCName(model)
+	model.Status.Cache.PVCName = pvcName
+	model.Status.Cache.Ready = false
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: model.Namespace}, pvc)
+	if err != nil && !errors.IsNotFound(err) {
+		return false, err
+	}
+
+	if errors.IsNotFound(err) {
+		if !autoCreate {
+			return false, fmt.Errorf("pvc %q not found for model %s (spec.cache.pvcName is set)", pvcName, model.Name)
+		}
+
+		qty, err := resource.ParseQuantity(cacheSize(model))
+		if err != nil {
+			return false, fmt.Errorf("invalid cache size %q: %w", cacheSize(model), err)
+		}
+
+		storageClass := cacheStorageClass(model)
+		pvc = &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: model.Namespace,
+				Labels:    r.labelsForModel(model),
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model")),
+				},
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: qty,
+					},
+				},
+			},
+		}
+		if storageClass != "" {
+			pvc.Spec.StorageClassName = ptr.To(storageClass)
+		}
+
+		if err := r.Create(ctx, pvc); err != nil {
+			return false, err
+		}
+	}
+
+	if pvc.Status.Phase != corev1.ClaimBound {
+		model.Status.Cache.JobPhase = "Pending"
+		model.Status.Cache.Message = "waiting for PVC to bind"
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PVCNotBound", model.Status.Cache.Message)
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	// For HF sources with SharedPVC, run a prefetch job that materializes the artifact directory.
+	if strings.HasPrefix(model.Spec.Source, "HF://") {
+		jobName := model.Name + "-cache-prefetch"
+		model.Status.Cache.JobName = jobName
+
+		job := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+		if err != nil && !errors.IsNotFound(err) {
+			return false, err
+		}
+		if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+			if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+				return false, delErr
+			}
+			err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+		}
+		if errors.IsNotFound(err) {
+			newJob, err := r.jobForPrefetch(model, pvcName, model.Name)
+			if err != nil {
+				return false, err
+			}
+			if err := r.Create(ctx, newJob); err != nil {
+				return false, err
+			}
+			model.Status.Cache.JobPhase = "Running"
+			model.Status.Cache.Message = "prefetch job started"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
+			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				return false, err
+			}
+			return false, nil
+		}
+
+		if job.Status.Succeeded > 0 {
+			model.Status.Cache.Ready = true
+			model.Status.Cache.JobPhase = "Succeeded"
+			model.Status.Cache.Message = "artifact prefetched"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PrefetchSucceeded", model.Status.Cache.Message)
+		} else if job.Status.Failed > 0 {
+			model.Status.Cache.Ready = false
+			model.Status.Cache.JobPhase = "Failed"
+			model.Status.Cache.Message = "prefetch job failed"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchFailed", model.Status.Cache.Message)
+		} else if job.Status.Active > 0 {
+			model.Status.Cache.Ready = false
+			model.Status.Cache.JobPhase = "Running"
+			model.Status.Cache.Message = "prefetch job running"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
+		} else {
+			model.Status.Cache.Ready = false
+			model.Status.Cache.JobPhase = "Pending"
+			model.Status.Cache.Message = "prefetch job pending"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchPending", model.Status.Cache.Message)
+		}
+	} else {
+		model.Status.Cache.Ready = true
+		model.Status.Cache.JobPhase = "Succeeded"
+		model.Status.Cache.Message = "cache PVC is bound"
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PVCBound", model.Status.Cache.Message)
+	}
+
+	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		return false, err
+	}
+	return model.Status.Cache.Ready, nil
 }
 
 // handleSharedGPU implements GPU sharing logic for models with gpu.shared set.
@@ -555,11 +959,6 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 				fmt.Sprintf("Preempted by %s with priority %d", activeModel.Name, activeModel.Spec.GetPriority()))
-
-			// Scale to zero
-			if err := r.scaleToZero(ctx, model); err != nil {
-				return ctrl.Result{}, err
-			}
 		}
 	}
 
@@ -568,30 +967,6 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-}
-
-// scaleToZero scales the deployment to zero replicas.
-func (r *ModelReconciler) scaleToZero(ctx context.Context, model *aiv1alpha2.Model) error {
-	log := log.FromContext(ctx)
-
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, deployment); err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-
-	if *deployment.Spec.Replicas > 0 {
-		log.Info("Scaling deployment to zero", "name", model.Name)
-		deployment.Spec.Replicas = ptr.To(int32(0))
-		if err := r.Update(ctx, deployment); err != nil {
-			return err
-		}
-	}
-
-	model.Status.Phase = aiv1alpha2.ModelPhaseIdle
-	return r.Status().Update(ctx, model)
 }
 
 // updateStatusFromDeployment updates the Model status based on the deployment state.
@@ -608,6 +983,14 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	b, _ := backend.Get(model.Spec.Backend)
 	port := b.Port()
 	model.Status.Endpoint = fmt.Sprintf("http://%s.%s.svc:%d", model.Name, model.Namespace, port)
+
+	// If the cache is not ready, keep the model in Pending regardless of deployment replicas.
+	if model.Status.Cache != nil && !model.Status.Cache.Ready {
+		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
+			model.Status.Phase = aiv1alpha2.ModelPhasePending
+		}
+		return r.Status().Update(ctx, model)
+	}
 
 	// Determine phase from deployment status
 	if deployment.Status.ReadyReplicas > 0 {
@@ -633,27 +1016,93 @@ func (r *ModelReconciler) updatePhase(ctx context.Context, model *aiv1alpha2.Mod
 
 // detectGPU detects the GPU vendor and architecture from nodes.
 func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model) (backend.GPUVendor, string, error) {
-	// If node selector is specified, check those nodes
+	if model.Spec.GetGPUCount() == 0 || model.Spec.GetGPUVendor() == aiv1alpha2.GPUVendorCPU {
+		return backend.GPUVendorCPU, "", nil
+	}
+
 	nodeList := &corev1.NodeList{}
 	if err := r.List(ctx, nodeList); err != nil {
-		return backend.GPUVendorNVIDIA, "", err
+		return backend.GPUVendorUnknown, "", err
 	}
 
-	for _, node := range nodeList.Items {
-		// Check for NVIDIA GPUs
-		if _, ok := node.Status.Capacity["nvidia.com/gpu"]; ok {
-			arch := node.Labels["nvidia.com/gpu.compute.major"]
-			return backend.GPUVendorNVIDIA, "sm_" + arch, nil
+	nodes := nodeList.Items
+	if len(model.Spec.NodeSelector) > 0 {
+		filtered := make([]corev1.Node, 0, len(nodes))
+		for _, node := range nodes {
+			matches := true
+			for k, v := range model.Spec.NodeSelector {
+				if node.Labels == nil || node.Labels[k] != v {
+					matches = false
+					break
+				}
+			}
+			if matches {
+				filtered = append(filtered, node)
+			}
 		}
-		// Check for AMD GPUs
-		if _, ok := node.Status.Capacity["amd.com/gpu"]; ok {
-			arch := node.Labels["gpu.amd.com/gpu-architecture"]
-			return backend.GPUVendorAMD, arch, nil
+		nodes = filtered
+	}
+
+	type nodeMatch struct {
+		vendor backend.GPUVendor
+		arch   string
+	}
+
+	findFirst := func(vendor backend.GPUVendor) (nodeMatch, bool) {
+		for _, node := range nodes {
+			switch vendor {
+			case backend.GPUVendorNVIDIA:
+				qty, ok := node.Status.Capacity["nvidia.com/gpu"]
+				if !ok || qty.Value() < 1 {
+					continue
+				}
+				major := ""
+				if node.Labels != nil {
+					major = node.Labels["nvidia.com/gpu.compute.major"]
+				}
+				arch := ""
+				if major != "" {
+					arch = "sm_" + major
+				}
+				return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
+			case backend.GPUVendorAMD:
+				qty, ok := node.Status.Capacity["amd.com/gpu"]
+				if !ok || qty.Value() < 1 {
+					continue
+				}
+				arch := ""
+				if node.Labels != nil {
+					arch = node.Labels["gpu.amd.com/gpu-architecture"]
+				}
+				return nodeMatch{vendor: backend.GPUVendorAMD, arch: arch}, true
+			default:
+				continue
+			}
+		}
+		return nodeMatch{}, false
+	}
+
+	switch model.Spec.GetGPUVendor() {
+	case aiv1alpha2.GPUVendorNVIDIA:
+		if match, ok := findFirst(backend.GPUVendorNVIDIA); ok {
+			return match.vendor, match.arch, nil
+		}
+		return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no NVIDIA GPU nodes match selector for model %s", model.Name)}
+	case aiv1alpha2.GPUVendorAMD:
+		if match, ok := findFirst(backend.GPUVendorAMD); ok {
+			return match.vendor, match.arch, nil
+		}
+		return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no AMD GPU nodes match selector for model %s", model.Name)}
+	default: // auto
+		if match, ok := findFirst(backend.GPUVendorNVIDIA); ok {
+			return match.vendor, match.arch, nil
+		}
+		if match, ok := findFirst(backend.GPUVendorAMD); ok {
+			return match.vendor, match.arch, nil
 		}
 	}
 
-	// Default to NVIDIA if no GPU detected
-	return backend.GPUVendorNVIDIA, "", nil
+	return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no GPU nodes match selector for model %s", model.Name)}
 }
 
 // labelsForModel returns the labels to apply to resources for this model.
@@ -674,20 +1123,6 @@ func (r *ModelReconciler) labelsForModel(model *aiv1alpha2.Model) map[string]str
 }
 
 // shouldScaleToZero checks if the model should be scaled to zero.
-func shouldScaleToZero(model *aiv1alpha2.Model) bool {
-	if model.Status.LastActiveTime == nil {
-		return false
-	}
-
-	b, ok := backend.Get(model.Spec.Backend)
-	if !ok {
-		return false
-	}
-
-	idleTimeout := getIdleTimeout(model, b)
-	return time.Since(model.Status.LastActiveTime.Time) > idleTimeout
-}
-
 // getIdleTimeout returns the idle timeout for the model.
 func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 	if model.Spec.Serverless != nil && model.Spec.Serverless.IdleTimeout != nil {
@@ -702,5 +1137,250 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&aiv1alpha2.Model{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+func setModelCondition(model *aiv1alpha2.Model, conditionType string, status bool, reason, message string) {
+	condStatus := metav1.ConditionFalse
+	if status {
+		condStatus = metav1.ConditionTrue
+	}
+
+	now := metav1.Now()
+	newCond := metav1.Condition{
+		Type:               conditionType,
+		Status:             condStatus,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: now,
+		ObservedGeneration: model.Generation,
+	}
+
+	// Upsert in-place.
+	for i := range model.Status.Conditions {
+		if model.Status.Conditions[i].Type == conditionType {
+			// Only bump transition time when status changes.
+			if model.Status.Conditions[i].Status == condStatus &&
+				model.Status.Conditions[i].Reason == reason &&
+				model.Status.Conditions[i].Message == message &&
+				model.Status.Conditions[i].ObservedGeneration == model.Generation {
+				return
+			}
+			if model.Status.Conditions[i].Status == condStatus {
+				newCond.LastTransitionTime = model.Status.Conditions[i].LastTransitionTime
+			}
+			model.Status.Conditions[i] = newCond
+			return
+		}
+	}
+	model.Status.Conditions = append(model.Status.Conditions, newCond)
+}
+
+func isMlcModelSource(source string) bool {
+	return strings.HasPrefix(source, "HF://mlc-ai/") || strings.Contains(source, "-MLC")
+}
+
+func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destSubdir string) (*batchv1.Job, error) {
+	modelID := extractModelFromSource(model.Spec.Source)
+
+	envVars := []corev1.EnvVar{
+		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
+	}
+
+	destSubdir = strings.Trim(destSubdir, "/")
+	destDir := "/models/" + destSubdir
+
+	var image string
+	var downloadScript string
+
+	if isMlcModelSource(model.Spec.Source) {
+		image = "debian:bookworm-slim"
+		downloadScript = fmt.Sprintf(`
+set -ex
+MODEL_ID="%s"
+DEST_DIR="%s"
+MARKER="$DEST_DIR/.flexinfer_cached"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already cached at $DEST_DIR"
+    exit 0
+fi
+
+apt-get update && apt-get install -y git git-lfs ca-certificates
+git lfs install
+
+mkdir -p "$DEST_DIR"
+echo "Cloning $MODEL_ID to $DEST_DIR..."
+GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+touch "$MARKER"
+echo "Download complete."
+`, modelID, destDir)
+	} else {
+		image = "python:3.10-slim"
+		downloadScript = fmt.Sprintf(`
+set -ex
+MODEL_ID="%s"
+DEST_DIR="%s"
+MARKER="$DEST_DIR/.flexinfer_cached"
+
+if [ -f "$MARKER" ]; then
+    echo "Model already cached at $DEST_DIR"
+    exit 0
+fi
+
+pip install --no-cache-dir huggingface_hub
+mkdir -p "$DEST_DIR"
+MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
+import os
+
+from huggingface_hub import snapshot_download
+
+repo_id = os.environ["MODEL_ID"]
+local_dir = os.environ["DEST_DIR"]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+snapshot_download(
+    repo_id=repo_id,
+    local_dir=local_dir,
+    local_dir_use_symlinks=False,
+    token=token,
+)
+PY
+touch "$MARKER"
+echo "Download complete."
+`, modelID, destDir)
+	}
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-prefetch",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":     model.Spec.Source,
+				"flexinfer.ai/cache-kind": "prefetch",
+				"flexinfer.ai/cache-pvc":  pvcName,
+				"flexinfer.ai/cache-dest": destSubdir,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(3)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{{
+						Name:    "downloader",
+						Image:   image,
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{downloadScript},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "model-store",
+							MountPath: "/models",
+						}},
+						Env: envVars,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "model-store",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: pvcName,
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func (r *ModelReconciler) jobForCacheCheck(model *aiv1alpha2.Model, pvcName, subPath string) (*batchv1.Job, error) {
+	subPath = strings.Trim(subPath, "/")
+	target := "/models"
+	if subPath != "" {
+		target = "/models/" + subPath
+	}
+
+	script := fmt.Sprintf(`
+set -ex
+TARGET="%s"
+if [ ! -d "$TARGET" ]; then
+  echo "Missing directory: $TARGET"
+  exit 1
+fi
+if [ ! "$(ls -A \"$TARGET\" 2>/dev/null)" ]; then
+  echo "Directory is empty: $TARGET"
+  exit 1
+fi
+echo "Artifact present at $TARGET"
+`, target)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-check",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":     model.Spec.Source,
+				"flexinfer.ai/cache-kind": "check",
+				"flexinfer.ai/cache-pvc":  pvcName,
+				"flexinfer.ai/cache-path": subPath,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(0)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{{
+						Name:    "checker",
+						Image:   "alpine:3.19",
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{script},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "model-store",
+							MountPath: "/models",
+						}},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("32Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "model-store",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: pvcName,
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
 }

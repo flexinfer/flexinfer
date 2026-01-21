@@ -20,6 +20,32 @@ FlexInfer supports caching at two layers:
 
 If `spec.cache` is omitted, FlexInfer infers a strategy based on GPU sharing.
 
+## v1alpha2 SharedPVC provisioning
+
+For backends that mount `/models`:
+
+- If `spec.cache.strategy: SharedPVC` and `spec.cache.pvcName` is omitted, the controller auto-creates a PVC named `<model>-cache`.
+- Defaults:
+  - `spec.cache.storageClass`: `longhorn`
+  - `spec.cache.size`: `50Gi`
+- `status.cache.ready` reflects whether the model artifact has been verified/prefetched onto the mounted volume.
+- `status.cache.jobName` / `status.cache.jobPhase` show the Job responsible for prefetch/verification.
+
+If you use `spec.source: pvc://<pvc-name>/<path>`, FlexInfer mounts that PVC directly at `/models` and uses the `/<path>` subdirectory as the model path.
+
+## HuggingFace prefetch
+
+For `HF://...` sources with `SharedPVC`, the controller runs a one-shot prefetch Job that materializes the repo under:
+
+- `/models/<model-name>/`
+
+This makes cold starts deterministic and keeps `status.cache.ready` meaningful.
+
+FlexInfer also sets HuggingFace cache env vars to keep secondary caches under the `/models` volume:
+
+- `HF_HOME=/models/.cache/huggingface`
+- `HF_HUB_CACHE=/models/.cache/huggingface/hub`
+
 ## v1alpha1 `ModelCache`
 
 `ModelCache` lets you pre-download (and optionally pre-warm) a model artifact.
@@ -45,4 +71,3 @@ Examples:
   ```bash
   kubectl -n flexinfer-system logs -l job-name=<cache-name>-downloader
   ```
-

@@ -54,10 +54,17 @@ Model source URI. Supported formats:
 
 Controls GPU allocation and optional time-sharing.
 
+- `vendor`: `auto`, `nvidia`, `amd`, or `cpu`
 - `shared`: group name; models with the same value compete for the same GPU
 - `priority`: higher wins preemption decisions
 - `count`: GPUs required (default 1)
 - `vramEstimateMB`: hint for scheduling/binpacking
+
+Notes:
+
+- If you omit `spec.gpu`, the model runs CPU-only.
+- If you set `spec.gpu.vendor: cpu`, the controller will not request GPU resources even if `count` is set.
+- If you set `spec.gpu.vendor: nvidia` or `amd`, the controller will only schedule on matching GPU nodes (it will not auto-fallback to the other vendor).
 
 ### `spec.serverless` (optional)
 
@@ -73,6 +80,11 @@ Model caching strategy.
 
 - `strategy`: `Memory`, `SharedPVC`, or `None`
 - `pvcName` / `storageClass` / `size`: only relevant for `SharedPVC`
+
+Notes:
+
+- If `spec.cache.strategy: SharedPVC` and `spec.cache.pvcName` is omitted, the controller auto-creates a PVC named `<model>-cache`.
+- If `spec.source` is `pvc://...`, FlexInfer mounts that PVC at `/models` and ignores `spec.cache` for volume provisioning.
 
 ### `spec.config` (optional)
 
@@ -106,6 +118,7 @@ Semantic labels describing the model (for dynamic routing). Example: `["textgen"
 - `phase`: `Idle`, `Pending`, `Loading`, `Ready`, `Preempted`, `Failed`
 - `endpoint`: service URL (cluster-internal)
 - `lastActiveTime`: last time the proxy observed traffic (used for scale-to-zero)
+- `cache`: cache readiness details (`ready`, plus the prefetch/check Job state)
 
 ## Examples
 
@@ -113,4 +126,3 @@ Semantic labels describing the model (for dynamic routing). Example: `["textgen"
 - `services/flexinfer/examples/v1alpha2/model-shared-gpu.yaml`
 - `services/flexinfer/examples/v1alpha2/model-amd-rocm.yaml`
 - `services/flexinfer/examples/v1alpha2/model-image-gen.yaml`
-
