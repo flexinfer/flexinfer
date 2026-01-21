@@ -1,0 +1,13 @@
+flowchart TB
+  Registry["registry.yaml<br/>(canonical server + tool metadata)"]
+  Gen["loom generate configs --loom-mode"]
+  Out["generated/mcp/<profile>/..."]
+  Sync["loom sync all --regen --loom-mode"]
+  Home["Client configs in $HOME<br/>(.codex/.vscode/.claude/etc.)"]
+  Daemon["loomd"]
+  Reload["loom reload"]
+
+  Registry --> Gen --> Out --> Sync --> Home
+  Registry --> Daemon
+  Sync --> Reload --> Daemon
+

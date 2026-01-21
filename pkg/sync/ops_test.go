@@ -220,6 +220,48 @@ args = ["server.js"]
 	}
 }
 
+func TestDiscoverRegistryPath_PrefersRepoOverride(t *testing.T) {
+	repoRoot := t.TempDir()
+
+	override := filepath.Join(repoRoot, "mcp", "context", "registry.yaml")
+	platform := filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "registry.yaml")
+
+	if err := os.MkdirAll(filepath.Dir(override), 0755); err != nil {
+		t.Fatalf("mkdir override dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(platform), 0755); err != nil {
+		t.Fatalf("mkdir platform dir: %v", err)
+	}
+	if err := os.WriteFile(override, []byte("override: true\n"), 0644); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+	if err := os.WriteFile(platform, []byte("platform: true\n"), 0644); err != nil {
+		t.Fatalf("write platform: %v", err)
+	}
+
+	got := discoverRegistryPath(repoRoot)
+	if got != override {
+		t.Fatalf("discoverRegistryPath()=%q, want %q", got, override)
+	}
+}
+
+func TestDiscoverRegistryPath_FindsPlatformGitopsRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+
+	platform := filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(platform), 0755); err != nil {
+		t.Fatalf("mkdir platform dir: %v", err)
+	}
+	if err := os.WriteFile(platform, []byte("platform: true\n"), 0644); err != nil {
+		t.Fatalf("write platform: %v", err)
+	}
+
+	got := discoverRegistryPath(repoRoot)
+	if got != platform {
+		t.Fatalf("discoverRegistryPath()=%q, want %q", got, platform)
+	}
+}
+
 func TestValidate_McpJson(t *testing.T) {
 	homeDir := t.TempDir()
 	profileDir := filepath.Join(homeDir, "test-profile")

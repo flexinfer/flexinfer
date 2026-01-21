@@ -126,10 +126,16 @@ func (m *Manager) compareDirectories(repoPath, homePath string, profile *Profile
 	// Get files in repo
 	repoFiles := make(map[string]string)
 	filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 		rel, _ := filepath.Rel(repoPath, path)
+		if info.IsDir() {
+			if m.shouldExclude(rel, profile) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if m.shouldExclude(rel, profile) {
 			return nil
 		}
@@ -141,10 +147,16 @@ func (m *Manager) compareDirectories(repoPath, homePath string, profile *Profile
 	// Get files in home
 	homeFiles := make(map[string]string)
 	filepath.Walk(homePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 		rel, _ := filepath.Rel(homePath, path)
+		if info.IsDir() {
+			if m.shouldExclude(rel, profile) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if m.shouldExclude(rel, profile) {
 			return nil
 		}

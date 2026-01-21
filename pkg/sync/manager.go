@@ -50,23 +50,25 @@ func NewManager(repoRoot string) (*Manager, error) {
 
 func (m *Manager) registerProfiles() {
 	m.Profiles["codex"] = &Profile{
-		Name:            "codex",
-		RepoDir:         ".codex",
-		HomeDir:         ".codex",
-		Excludes:        []string{"auth.json", "sessions", "backups"},
-		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "codex",
-		GeneratedFile:   "config.toml",
+		Name:              "codex",
+		RepoDir:           ".codex",
+		HomeDir:           ".codex",
+		Excludes:          []string{"auth.json", "sessions", "backups"},
+		SecretFiles:       []string{"auth.json"},
+		GeneratorTarget:   "codex",
+		GeneratedFile:     "config.toml",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["kilocode"] = &Profile{
-		Name:            "kilocode",
-		RepoDir:         ".kilocode",
-		HomeDir:         ".kilocode",
-		Excludes:        []string{"auth.json", "sessions", "backups"},
-		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "kilocode",
-		GeneratedFile:   "config.toml",
+		Name:              "kilocode",
+		RepoDir:           ".kilocode",
+		HomeDir:           ".kilocode",
+		Excludes:          []string{"auth.json", "sessions", "backups"},
+		SecretFiles:       []string{"auth.json"},
+		GeneratorTarget:   "kilocode",
+		GeneratedFile:     "config.toml",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["claude"] = &Profile{
@@ -92,13 +94,14 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["gemini"] = &Profile{
-		Name:            "gemini",
-		RepoDir:         ".gemini",
-		HomeDir:         ".gemini",
-		Excludes:        []string{"auth.json", "sessions", "backups"},
-		SecretFiles:     []string{"auth.json"},
-		GeneratorTarget: "gemini",
-		GeneratedFile:   "config.toml",
+		Name:              "gemini",
+		RepoDir:           ".gemini",
+		HomeDir:           ".gemini",
+		Excludes:          []string{"auth.json", "sessions", "backups"},
+		SecretFiles:       []string{"auth.json"},
+		GeneratorTarget:   "gemini",
+		GeneratedFile:     "config.toml",
+		SyncGeneratedOnly: true,
 	}
 
 	m.Profiles["antigravity"] = &Profile{

@@ -1,0 +1,46 @@
+flowchart LR
+  subgraph Clients
+    Codex[Codex CLI]
+    VSCode[VS Code MCP]
+    Claude[Claude / Claude Desktop]
+    Gemini[Gemini CLI]
+    Kilo[Kilo Code]
+    Other[Other MCP clients]
+  end
+
+  subgraph LocalMachine[Developer machine]
+    LoomProxy["loom proxy<br/>(stdio MCP server)"]
+    Loomd["loomd<br/>(local MCP hub + router)"]
+
+    subgraph LocalServers[Local MCP server processes]
+      GitLab["mcp-gitlab"]
+      GitHub["mcp-github"]
+      Loki["mcp-loki"]
+      Prom["mcp-prometheus"]
+      K8s["mcp-k8s / mcp-k8s-ops"]
+      OtherMCP["mcp-*"]
+    end
+  end
+
+  Codex -->|stdio MCP| LoomProxy
+  VSCode -->|stdio MCP| LoomProxy
+  Claude -->|stdio MCP| LoomProxy
+  Gemini -->|stdio MCP| LoomProxy
+  Kilo -->|stdio MCP| LoomProxy
+  Other -->|stdio MCP| LoomProxy
+
+  LoomProxy -->|unix socket| Loomd
+
+  Loomd -->|spawn + stdio MCP| GitLab
+  Loomd -->|spawn + stdio MCP| GitHub
+  Loomd -->|spawn + stdio MCP| Loki
+  Loomd -->|spawn + stdio MCP| Prom
+  Loomd -->|spawn + stdio MCP| K8s
+  Loomd -->|spawn + stdio MCP| OtherMCP
+
+  GitLab -->|HTTP| GitLabAPI[(GitLab API)]
+  GitHub -->|HTTP| GitHubAPI[(GitHub API)]
+  Loki -->|HTTP| LokiAPI[(Loki)]
+  Prom -->|HTTP| PromAPI[(Prometheus)]
+  K8s -->|HTTPS| K8sAPI[(Kubernetes API)]
+

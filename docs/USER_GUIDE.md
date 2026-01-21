@@ -2,6 +2,8 @@
 
 This guide covers day-to-day usage of Loom Core on a developer machine: generating client configs, running the daemon, and tuning MCP calls.
 
+For a system overview, see `docs/ARCHITECTURE.md`.
+
 ## Concepts
 
 - `loom` (CLI): generates + syncs MCP client configs and manages the local daemon.

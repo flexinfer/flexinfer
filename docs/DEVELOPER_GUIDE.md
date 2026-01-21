@@ -2,6 +2,8 @@
 
 This guide is for contributors working on the Loom Core Go codebase.
 
+For a system overview, see `docs/ARCHITECTURE.md`.
+
 ## Repo layout
 
 - `cmd/loom/`: CLI for config generation/sync and daemon management
@@ -48,4 +50,3 @@ cp -f bin/loomd ~/.local/bin/loomd
 - Inspect daemon logs:
   - `~/.config/loom/logs/daemon.log`
   - `~/.config/loom/logs/daemon.err`
-

@@ -12,6 +12,21 @@ import (
 	"github.com/crb2nu/loom/pkg/validator"
 )
 
+func discoverRegistryPath(repoRoot string) string {
+	// Prefer workspace-local registries first (repo overrides) before falling back
+	// to the user's default registry under ~/.config/loom.
+	candidates := []string{
+		filepath.Join(repoRoot, "mcp", "context", "registry.yaml"),
+		filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "registry.yaml"),
+	}
+	for _, candidate := range candidates {
+		if Exists(candidate) {
+			return candidate
+		}
+	}
+	return registry.FindRegistryOrDefault(candidates[0])
+}
+
 // SyncToHome syncs configuration from repo to home directory.
 func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOnly bool, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
 	p, err := m.GetProfile(profileName)
@@ -131,7 +146,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 	}
 
 	// Load registry - prefer local override, then home directory
-	regPath := registry.FindRegistryOrDefault(filepath.Join(m.RepoRoot, "mcp", "context", "registry.yaml"))
+	regPath := discoverRegistryPath(m.RepoRoot)
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		return fmt.Errorf("load registry from %s: %w", regPath, err)

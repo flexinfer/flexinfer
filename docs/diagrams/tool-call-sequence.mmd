@@ -1,0 +1,19 @@
+sequenceDiagram
+  participant Client as MCP client
+  participant Proxy as loom proxy (stdio)
+  participant Loomd as loomd (daemon)
+  participant Router as router
+  participant Server as mcp-<server> (child process)
+  participant API as external API
+
+  Client->>Proxy: tools/call server__tool(params)
+  Proxy->>Loomd: loom/call {server, tool, params}
+  Loomd->>Router: resolve + route call
+  Router->>Server: MCP tools/call tool(params)
+  Server->>API: HTTP/SDK request(s)
+  API-->>Server: response
+  Server-->>Router: result (+ pagination/metadata)
+  Router-->>Loomd: result
+  Loomd-->>Proxy: result
+  Proxy-->>Client: result
+

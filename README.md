@@ -12,6 +12,7 @@ Go backend for the Loom ecosystem:
 
 - User guide: `docs/USER_GUIDE.md`
 - Developer guide: `docs/DEVELOPER_GUIDE.md`
+- Architecture: `docs/ARCHITECTURE.md`
 
 ## Quickstart
 

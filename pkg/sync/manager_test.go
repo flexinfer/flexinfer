@@ -79,6 +79,26 @@ func TestNewManager_ProfileHasCorrectFields(t *testing.T) {
 	}
 }
 
+func TestNewManager_CliProfilesSyncGeneratedOnly(t *testing.T) {
+	m, err := NewManager("/tmp/test-repo")
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	for _, name := range []string{"codex", "gemini", "kilocode"} {
+		p := m.Profiles[name]
+		if p == nil {
+			t.Fatalf("profile %q not found", name)
+		}
+		if !p.SyncGeneratedOnly {
+			t.Fatalf("profile %q SyncGeneratedOnly=%v, want true", name, p.SyncGeneratedOnly)
+		}
+		if p.GeneratedFile != "config.toml" {
+			t.Fatalf("profile %q GeneratedFile=%q, want %q", name, p.GeneratedFile, "config.toml")
+		}
+	}
+}
+
 func TestGetProfile_ReturnsCorrectProfile(t *testing.T) {
 	m, err := NewManager("/tmp/test-repo")
 	if err != nil {
