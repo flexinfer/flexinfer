@@ -160,7 +160,7 @@ spec:
                 - message: gpu.vramEstimateMB must be omitted when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
                 - message: gpu.shared must be empty when gpu.vendor is cpu
-                  rule: self.vendor != 'cpu' || self.shared == ''
+                  rule: self.vendor != 'cpu' || self.shared == ”
               litellm:
                 description: LiteLLM configures proxy integration for unified API
                   access.

@@ -132,7 +132,7 @@ const (
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.count)",message="gpu.count must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.vramEstimateMB)",message="gpu.vramEstimateMB must be omitted when gpu.vendor is cpu"
-// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || self.shared == ''",message="gpu.shared must be empty when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || self.shared == ”",message="gpu.shared must be empty when gpu.vendor is cpu"
 type GPUSpec struct {
 	// Vendor selects the GPU vendor to target.
 	// Use "auto" (or omit) to auto-detect based on available nodes.
