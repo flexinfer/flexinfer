@@ -762,8 +762,8 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 
 			jobName := model.Name + "-cache-copy"
 			ready := false
-			jobPhase := "Pending"
-			message := "waiting for cache copy job"
+			jobPhase := ""
+			message := ""
 
 			if sourcePVC.Status.Phase != corev1.ClaimBound {
 				jobPhase = "Pending"
@@ -810,6 +810,13 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						message = "cache copy job pending"
 					}
 				}
+			}
+
+			if jobPhase == "" {
+				jobPhase = "Pending"
+			}
+			if message == "" {
+				message = "waiting for cache copy job"
 			}
 
 			model.Status.Cache = &aiv1alpha2.CacheStatus{
