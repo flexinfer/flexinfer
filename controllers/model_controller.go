@@ -415,6 +415,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		ReadinessProbe: probe,
 	}
 
+	// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
+	// Some ROCm images run as non-root by default; ensure they can access device nodes
+	// when using the AMD GPU device plugin.
+	if gpuVendor == backend.GPUVendorAMD && gpuCount > 0 {
+		container.SecurityContext = &corev1.SecurityContext{
+			RunAsUser:  ptr.To(int64(0)),
+			RunAsGroup: ptr.To(int64(0)),
+		}
+	}
+
 	// Add volume mounts if backend needs volume
 	var volumes []corev1.Volume
 	if b.NeedsVolume() {
