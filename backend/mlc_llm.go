@@ -179,6 +179,27 @@ func (b *MLCLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars()...)
+
+		// Some setups expose multiple AMD GPUs (e.g., iGPU + dGPU) to the container.
+		// Allow pinning the runtime to a specific device via config. Prefer setting
+		// both variables to avoid partial isolation depending on the stack.
+		hipVisible := spec.ConfigString("hipVisibleDevices", "")
+		rocrVisible := spec.ConfigString("rocrVisibleDevices", "")
+		if hipVisible != "" && rocrVisible == "" {
+			rocrVisible = hipVisible
+		}
+		if rocrVisible != "" && hipVisible == "" {
+			hipVisible = rocrVisible
+		}
+		if rocrVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "ROCR_VISIBLE_DEVICES", Value: rocrVisible})
+		}
+		if hipVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "HIP_VISIBLE_DEVICES", Value: hipVisible})
+		}
+		if ordinal := spec.ConfigString("gpuDeviceOrdinal", ""); ordinal != "" {
+			env = append(env, corev1.EnvVar{Name: "GPU_DEVICE_ORDINAL", Value: ordinal})
+		}
 	}
 
 	return env

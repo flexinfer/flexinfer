@@ -218,8 +218,10 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 // Use this helper in backend Env() implementations for AMD GPU support.
 // Optimized for gfx1100 (RX 7900 XTX) and RDNA3 architecture.
 //
-// Note: HIP_VISIBLE_DEVICES and ROCR_VISIBLE_DEVICES are set automatically
-// by the AMD GPU device plugin based on GPU allocation. Do not hardcode them.
+// Note: Some AMD GPU device plugin setups do not set HIP_VISIBLE_DEVICES /
+// ROCR_VISIBLE_DEVICES automatically. Prefer leaving them unset, but allow
+// opting in via per-model config (e.g., to force the discrete GPU on systems
+// that expose both an iGPU and dGPU to the container runtime).
 //
 // Note: LD_LIBRARY_PATH and LD_PRELOAD are no longer needed as mlc-llm:rocm64-v4+
 // images bundle all required libraries with matching glibc version (Ubuntu 24.04).
