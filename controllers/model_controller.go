@@ -112,6 +112,33 @@ func litellmAliases(model *aiv1alpha2.Model, servedModel string) []string {
 	return out
 }
 
+var managedModelAnnotations = []string{
+	"litellm.flexinfer.ai/served-model",
+	"litellm.flexinfer.ai/aliases",
+	"litellm.flexinfer.ai/copilot-model",
+	"flexinfer.ai/service-labels",
+}
+
+func applyManagedAnnotations(existing map[string]string, desired map[string]string, managedKeys []string) map[string]string {
+	out := make(map[string]string, len(existing)+len(desired))
+	for k, v := range existing {
+		out[k] = v
+	}
+	for _, k := range managedKeys {
+		if desired != nil {
+			if v, ok := desired[k]; ok && v != "" {
+				out[k] = v
+				continue
+			}
+		}
+		delete(out, k)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {
 	client.Client
@@ -388,7 +415,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 
 	// Update if needed
 	service.Spec = desiredService.Spec
-	service.Annotations = annotations
+	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
 	return r.Update(ctx, service)
 }
 
@@ -574,6 +601,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 	// Update deployment
 	deployment.Spec = desiredDeployment.Spec
+	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
 	return r.Update(ctx, deployment)
 }
 
