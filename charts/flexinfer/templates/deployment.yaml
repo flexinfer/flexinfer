@@ -116,6 +116,16 @@ spec:
             - name: DEFAULT_LLAMA_CPP_ARGS
               value: {{ .Values.llamacpp.defaults.args | quote }}
             {{- end }}
+            {{- if .Values.diffusers }}
+            {{- if .Values.diffusers.cudaImage }}
+            - name: DEFAULT_DIFFUSERS_IMAGE
+              value: {{ .Values.diffusers.cudaImage | quote }}
+            {{- end }}
+            {{- if .Values.diffusers.rocmImage }}
+            - name: DEFAULT_DIFFUSERS_IMAGE_AMD
+              value: {{ .Values.diffusers.rocmImage | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.oras.image }}
             - name: ORAS_DOWNLOADER_IMAGE
               value: {{ .Values.oras.image | quote }}

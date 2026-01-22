@@ -263,31 +263,34 @@ def load_pipeline(model_id: str):
     # Try AutoPipeline first, fall back to DiffusionPipeline
     # Pipelines load to CPU by default - do NOT use device_map (not supported)
     # Use local_files_only=True to prevent network requests when loading local models
+    pipeline_kwargs = {
+        "torch_dtype": dtype,
+        "use_safetensors": True,
+        "local_files_only": True,
+        # Disable safety checker to save memory
+        "safety_checker": None,
+    }
+    # Only pass the VAE override when we actually loaded one. Passing vae=None
+    # explicitly can disable VAE loading for some pipelines (SDXL requires it).
+    if vae is not None:
+        pipeline_kwargs["vae"] = vae
+
     try:
         print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
-        if vae:
+        if vae is not None:
             print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
         sys.stdout.flush()
         pipeline = AutoPipelineForText2Image.from_pretrained(
             resolved_model_id,
-            vae=vae,  # Use fixed VAE if provided
-            torch_dtype=dtype,
-            use_safetensors=True,
-            local_files_only=True,
-            # Disable safety checker to save memory
-            safety_checker=None,
             requires_safety_checker=False,
+            **pipeline_kwargs,
         )
     except Exception as e:
         print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
         sys.stdout.flush()
         pipeline = DiffusionPipeline.from_pretrained(
             resolved_model_id,
-            vae=vae,  # Use fixed VAE if provided
-            torch_dtype=dtype,
-            use_safetensors=True,
-            local_files_only=True,
-            safety_checker=None,
+            **pipeline_kwargs,
         )
 
     print("Pipeline loaded to CPU, preparing GPU transfer...")

@@ -142,6 +142,14 @@ llamacpp:
     # Complete args override. Use for advanced cases only
     args: ""
 
+# Diffusers backend configuration (used when spec.backend=diffusers)
+diffusers:
+  # Images - auto-selected based on GPU vendor, or set custom images
+  # CUDA image for NVIDIA GPUs (default: registry.harbor.lan/library/diffusers-api:cuda)
+  cudaImage: ""
+  # ROCm image for AMD GPUs (default: registry.harbor.lan/library/diffusers-api:rocm-latest)
+  rocmImage: ""
+
 # ORAS configuration for OCI artifact downloads (ModelCache with oci:// or oras:// sources)
 oras:
   # Image used for downloading OCI artifacts in ModelCache jobs

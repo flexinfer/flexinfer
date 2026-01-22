@@ -56,6 +56,17 @@ func isNoMatchingNodesError(err error) bool {
 	return stderrors.As(err, &e)
 }
 
+type ambiguousGPUVendorError struct {
+	reason string
+}
+
+func (e *ambiguousGPUVendorError) Error() string { return e.reason }
+
+func isAmbiguousGPUVendorError(err error) bool {
+	var e *ambiguousGPUVendorError
+	return stderrors.As(err, &e)
+}
+
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {
 	client.Client
@@ -162,7 +173,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err != nil {
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
-		if isNoMatchingNodesError(err) {
+		if isNoMatchingNodesError(err) || isAmbiguousGPUVendorError(err) {
 			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -1281,11 +1292,27 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 		}
 		return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no AMD GPU nodes match selector for model %s", model.Name)}
 	default: // auto
-		if match, ok := findFirst(backend.GPUVendorNVIDIA); ok {
-			return match.vendor, match.arch, nil
+		nvidiaMatch, nvidiaOK := findFirst(backend.GPUVendorNVIDIA)
+		amdMatch, amdOK := findFirst(backend.GPUVendorAMD)
+
+		// Tighten vendor selection: when both vendors match, force the user to pick.
+		// This avoids surprising behavior on mixed-vendor clusters where "auto" would
+		// otherwise prefer NVIDIA.
+		if nvidiaOK && amdOK {
+			return backend.GPUVendorUnknown, "", &ambiguousGPUVendorError{
+				reason: fmt.Sprintf(
+					"gpu.vendor is %q but both NVIDIA and AMD GPU nodes match selector for model %s; set spec.gpu.vendor explicitly",
+					aiv1alpha2.GPUVendorAuto,
+					model.Name,
+				),
+			}
 		}
-		if match, ok := findFirst(backend.GPUVendorAMD); ok {
-			return match.vendor, match.arch, nil
+
+		if nvidiaOK {
+			return nvidiaMatch.vendor, nvidiaMatch.arch, nil
+		}
+		if amdOK {
+			return amdMatch.vendor, amdMatch.arch, nil
 		}
 	}
 
