@@ -351,6 +351,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 	// Build ModelSpec for backend
 	spec := r.buildBackendModelSpec(model, gpuVendor)
+	spec.GPUArch = gpuArch
 
 	// Get container configuration from backend
 	image := b.Image(gpuVendor, gpuArch)

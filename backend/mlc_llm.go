@@ -84,7 +84,15 @@ func (b *MLCLLMBackend) Args(spec *ModelSpec) []string {
 	args = append(args, "--host", "0.0.0.0")
 
 	// Model library path
-	if libPath := spec.ConfigString("modelLibPath", ""); libPath != "" {
+	libPath := spec.ConfigString("modelLibPath", "")
+	if libPath == "" && strings.EqualFold(spec.ConfigString("jitPolicy", ""), "READONLY") {
+		// When JIT is disabled (READONLY), MLC requires a pre-compiled model library.
+		// Default to the conventional on-disk name when the model path is a mounted directory.
+		if spec.GPUVendor == GPUVendorAMD && spec.GPUArch != "" && strings.HasPrefix(modelPath, "/") {
+			libPath = fmt.Sprintf("%s/lib_rocm_%s.so", strings.TrimRight(modelPath, "/"), spec.GPUArch)
+		}
+	}
+	if libPath != "" {
 		args = append(args, "--model-lib", libPath)
 	}
 
