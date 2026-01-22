@@ -575,6 +575,23 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(desiredReplicas),
+			Strategy: func() appsv1.DeploymentStrategy {
+				// GPU workloads frequently run on tightly-constrained nodes where a second
+				// pod cannot be scheduled (e.g., 1x GPU nodes, or multi-GPU nodes where
+				// we allocate all GPUs). Avoid rolling update deadlocks by disabling surge.
+				if gpuCount > 0 {
+					maxSurge := intstr.FromInt(0)
+					maxUnavailable := intstr.FromInt(1)
+					return appsv1.DeploymentStrategy{
+						Type: appsv1.RollingUpdateDeploymentStrategyType,
+						RollingUpdate: &appsv1.RollingUpdateDeployment{
+							MaxSurge:       &maxSurge,
+							MaxUnavailable: &maxUnavailable,
+						},
+					}
+				}
+				return appsv1.DeploymentStrategy{}
+			}(),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: r.labelsForModel(model),
 			},
