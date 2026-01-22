@@ -108,7 +108,7 @@ func (b *MLCLLMBackend) buildOverrides(spec *ModelSpec) string {
 
 	// Max total sequence length
 	if maxLen := spec.ConfigInt("maxTotalSeqLength", 0); maxLen > 0 {
-		parts = append(parts, fmt.Sprintf("max_total_sequence_length=%d", maxLen))
+		parts = append(parts, fmt.Sprintf("max_total_seq_length=%d", maxLen))
 	}
 
 	// Prefill chunk size
