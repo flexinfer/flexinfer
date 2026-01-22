@@ -62,6 +62,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!self.source.startsWith('pvc://') || !has(self.cache) || !has(self.cache.strategy) || size(self.cache.strategy) == 0 || self.cache.strategy == 'SharedPVC'",message="spec.cache.strategy must be SharedPVC when spec.source is pvc://... (cache stages into a PVC)"
 // +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.limits) || (!('nvidia.com/gpu' in self.resources.limits) && !('amd.com/gpu' in self.resources.limits) && !('gpu.intel.com/i915' in self.resources.limits))",message="Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count instead"
 // +kubebuilder:validation:XValidation:rule="!has(self.resources) || !has(self.resources.requests) || (!('nvidia.com/gpu' in self.resources.requests) && !('amd.com/gpu' in self.resources.requests) && !('gpu.intel.com/i915' in self.resources.requests))",message="Do not set GPU requests in spec.resources.requests; use spec.gpu.vendor/spec.gpu.count instead"
+// +kubebuilder:validation:XValidation:rule="!has(self.gpu) || self.gpu.vendor == 'auto' || !has(self.nodeSelector) || !('node.flexstack.io/gpu-vendor' in self.nodeSelector) || self.nodeSelector['node.flexstack.io/gpu-vendor'] == self.gpu.vendor",message="spec.nodeSelector['node.flexstack.io/gpu-vendor'] must match spec.gpu.vendor"
 type ModelSpec struct {
 	// Backend is the inference backend to use.
 	// Supported: ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui, vllm-omni

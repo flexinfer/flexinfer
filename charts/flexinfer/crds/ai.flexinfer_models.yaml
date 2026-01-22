@@ -312,6 +312,11 @@ spec:
               rule: '!has(self.resources) || !has(self.resources.requests) || (!(''nvidia.com/gpu''
                 in self.resources.requests) && !(''amd.com/gpu'' in self.resources.requests)
                 && !(''gpu.intel.com/i915'' in self.resources.requests))'
+            - message: spec.nodeSelector['node.flexstack.io/gpu-vendor'] must match
+                spec.gpu.vendor
+              rule: '!has(self.gpu) || self.gpu.vendor == ''auto'' || !has(self.nodeSelector)
+                || !(''node.flexstack.io/gpu-vendor'' in self.nodeSelector) || self.nodeSelector[''node.flexstack.io/gpu-vendor'']
+                == self.gpu.vendor'
           status:
             description: ModelStatus defines the observed state of Model
             properties:
