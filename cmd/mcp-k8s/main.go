@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -28,6 +29,66 @@ type k8sServer struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	kubeconfig    string
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func boundedEventListResult(events []map[string]any, maxBytes int) (*mcp.CallToolResult, error) {
+	total := len(events)
+	payload := map[string]any{
+		"events": events,
+		"count":  total,
+	}
+
+	if maxBytes <= 0 {
+		return mcp.JSONResult(payload)
+	}
+
+	if b, err := json.Marshal(payload); err == nil && len(b) <= maxBytes {
+		return mcp.JSONResult(payload)
+	}
+
+	if total == 0 {
+		return mcp.JSONResult(payload)
+	}
+
+	// Truncate to fit within maxBytes (best-effort).
+	low, high := 0, total
+	best := 0
+	for low <= high {
+		mid := (low + high) / 2
+		p := map[string]any{
+			"events":             events[:mid],
+			"count":              mid,
+			"truncated":          true,
+			"total_event_count":  total,
+			"max_response_bytes": maxBytes,
+		}
+		b, err := json.Marshal(p)
+		if err == nil && len(b) <= maxBytes {
+			best = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"events":             events[:best],
+		"count":              best,
+		"truncated":          true,
+		"total_event_count":  total,
+		"max_response_bytes": maxBytes,
+		"note":               "Response was capped; reduce `limit` and/or add `field_selector` for more specific results.",
+	})
 }
 
 func main() {
@@ -841,6 +902,8 @@ func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (
 	ns := getStringArg(args, "namespace", "default")
 	fieldSelector := getStringArg(args, "field_selector", "")
 	limit := getIntArg(args, "limit", 50)
+	maxEvents := getEnvInt("MCP_K8S_MAX_EVENTS", 500)
+	limit = clampInt(limit, 1, maxEvents)
 
 	opts := metav1.ListOptions{
 		FieldSelector: fieldSelector,
@@ -882,7 +945,8 @@ func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (
 		})
 	}
 
-	return mcp.JSONResult(map[string]any{"events": result, "count": len(result)})
+	maxBytes := getEnvInt("MCP_K8S_MAX_RESPONSE_BYTES", 1024*1024)
+	return boundedEventListResult(result, maxBytes)
 }
 
 // ConfigMap handler

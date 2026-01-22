@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,73 @@ type fluxServer struct {
 
 	dynamicClient dynamic.Interface
 	kubeClient    kubernetes.Interface
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func boundedEventSliceResult(events []map[string]any, maxBytes int) (map[string]any, bool) {
+	if maxBytes <= 0 {
+		return map[string]any{"events": events, "count": len(events)}, false
+	}
+
+	total := len(events)
+	base := map[string]any{"events": events, "count": total}
+	if b, err := json.Marshal(base); err == nil && len(b) <= maxBytes {
+		return base, false
+	}
+
+	if total == 0 {
+		return base, false
+	}
+
+	low, high := 0, total
+	best := 0
+	for low <= high {
+		mid := (low + high) / 2
+		p := map[string]any{
+			"events":             events[:mid],
+			"count":              mid,
+			"truncated":          true,
+			"total_event_count":  total,
+			"max_response_bytes": maxBytes,
+		}
+		b, err := json.Marshal(p)
+		if err == nil && len(b) <= maxBytes {
+			best = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return map[string]any{
+		"events":             events[:best],
+		"count":              best,
+		"truncated":          true,
+		"total_event_count":  total,
+		"max_response_bytes": maxBytes,
+		"note":               "Response was capped; use `for` and/or a smaller `limit` for more specific results.",
+	}, true
 }
 
 func main() {
@@ -269,6 +337,10 @@ func main() {
 				"for": map[string]any{
 					"type":        "string",
 					"description": "Filter for specific resource (e.g., Kustomization/apps)",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of events to return after filtering. Defaults to 200.",
 				},
 			},
 		},
@@ -1270,6 +1342,9 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 	namespace := v.String("namespace", f.namespace)
 	allNs := v.Bool("all_namespaces", false)
 	forResource := v.String("for", "")
+	limit := v.Int("limit", 200)
+	limit = clampInt(limit, 1, getEnvInt("FLUX_EVENTS_MAX_ITEMS", 1000))
+	maxBytes := getEnvInt("FLUX_MAX_RESPONSE_BYTES", 1024*1024)
 
 	if f.fluxBin != "" {
 		cmdArgs := []string{"events"}
@@ -1288,18 +1363,64 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 			return mcp.ErrorResult(err), nil
 		}
 
-		var result any
-		if err := json.Unmarshal([]byte(output), &result); err != nil {
+		var parsed any
+		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+			wasTruncated := false
+			if maxBytes > 0 && len(output) > maxBytes {
+				output = output[:maxBytes]
+				wasTruncated = true
+			}
 			return mcp.JSONResult(map[string]any{
-				"ok":     true,
-				"output": output,
+				"ok":               true,
+				"mode":             "flux-cli",
+				"output":           output,
+				"max_bytes":        maxBytes,
+				"output_truncated": wasTruncated,
 			})
 		}
 
-		return mcp.JSONResult(map[string]any{
-			"ok":     true,
-			"events": result,
-		})
+		if arr, ok := parsed.([]any); ok {
+			total := len(arr)
+			if total > limit {
+				arr = arr[:limit]
+			}
+			payload := map[string]any{"ok": true, "mode": "flux-cli", "events": arr, "count": len(arr)}
+			if total > len(arr) {
+				payload["truncated"] = true
+				payload["total_event_count"] = total
+				payload["limit"] = limit
+			}
+			if maxBytes > 0 {
+				if b, err := json.Marshal(payload); err == nil && len(b) > maxBytes {
+					// As a fallback, drop events and return metadata.
+					return mcp.JSONResult(map[string]any{
+						"ok":                 true,
+						"mode":               "flux-cli",
+						"truncated":          true,
+						"total_event_count":  total,
+						"count":              0,
+						"max_response_bytes": maxBytes,
+						"note":               "Response exceeded cap; reduce `limit` and/or use `for` to narrow results.",
+					})
+				}
+			}
+			return mcp.JSONResult(payload)
+		}
+
+		payload := map[string]any{"ok": true, "mode": "flux-cli", "events": parsed}
+		if maxBytes > 0 {
+			if b, err := json.Marshal(payload); err == nil && len(b) > maxBytes {
+				return mcp.JSONResult(map[string]any{
+					"ok":                 true,
+					"mode":               "flux-cli",
+					"truncated":          true,
+					"count":              0,
+					"max_response_bytes": maxBytes,
+					"note":               "Response exceeded cap; use `for` and/or reduce `limit`.",
+				})
+			}
+		}
+		return mcp.JSONResult(payload)
 	}
 
 	cs, err := f.kubeClientset()
@@ -1326,12 +1447,12 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 
-	evs, err := cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{Limit: 500})
+	evs, err := cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{Limit: int64(limit)})
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	filtered := make([]corev1.Event, 0, len(evs.Items))
+	filtered := make([]map[string]any, 0, len(evs.Items))
 	for _, e := range evs.Items {
 		if kindFilter != "" && e.InvolvedObject.Kind != kindFilter {
 			continue
@@ -1339,13 +1460,32 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 		if nameFilter != "" && e.InvolvedObject.Name != nameFilter {
 			continue
 		}
-		filtered = append(filtered, e)
+		filtered = append(filtered, map[string]any{
+			"namespace": e.Namespace,
+			"type":      e.Type,
+			"reason":    e.Reason,
+			"message":   e.Message,
+			"count":     e.Count,
+			"involved_object": map[string]any{
+				"kind":      e.InvolvedObject.Kind,
+				"name":      e.InvolvedObject.Name,
+				"namespace": e.InvolvedObject.Namespace,
+			},
+			"source": map[string]any{
+				"component": e.Source.Component,
+				"host":      e.Source.Host,
+			},
+			"last_timestamp": e.LastTimestamp.Format(time.RFC3339),
+		})
 	}
 
-	return mcp.JSONResult(map[string]any{
-		"ok":     true,
-		"mode":   "kubernetes-api",
-		"count":  len(filtered),
-		"events": filtered,
-	})
+	result, truncated := boundedEventSliceResult(filtered, maxBytes)
+	result["ok"] = true
+	result["mode"] = "kubernetes-api"
+	result["limit"] = limit
+	if truncated {
+		// Keep signal visible in top-level payload.
+		result["truncated"] = true
+	}
+	return mcp.JSONResult(result)
 }
