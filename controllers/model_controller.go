@@ -430,10 +430,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	var volumes []corev1.Volume
 	if b.NeedsVolume() {
 		// Add model volume mount
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+		volumeMount := corev1.VolumeMount{
 			Name:      "model",
 			MountPath: "/models",
-		})
+		}
+		// For diffusers + HF SharedPVC, prefetch materializes a full diffusers repo under /models/<modelName>.
+		// Mount that directory as /models so the server finds model_index.json at the expected root.
+		if b.Name() == "diffusers" && strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" {
+			volumeMount.SubPath = model.Name
+		}
+		container.VolumeMounts = append(container.VolumeMounts, volumeMount)
 
 		// Determine volume source based on cache strategy
 		volumeSource := r.getVolumeSource(model)
