@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +66,50 @@ func (e *ambiguousGPUVendorError) Error() string { return e.reason }
 func isAmbiguousGPUVendorError(err error) bool {
 	var e *ambiguousGPUVendorError
 	return stderrors.As(err, &e)
+}
+
+func litellmEnabled(model *aiv1alpha2.Model) bool {
+	if model.Spec.LiteLLM == nil {
+		return false
+	}
+	if model.Spec.LiteLLM.Enabled == nil {
+		return true
+	}
+	return *model.Spec.LiteLLM.Enabled
+}
+
+func litellmServedModel(model *aiv1alpha2.Model) string {
+	if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.ServedModelName != "" {
+		return model.Spec.LiteLLM.ServedModelName
+	}
+	return model.Name
+}
+
+func litellmAliases(model *aiv1alpha2.Model, servedModel string) []string {
+	unique := make(map[string]struct{})
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || v == servedModel {
+			return
+		}
+		unique[v] = struct{}{}
+	}
+
+	for _, label := range model.Spec.ServiceLabels {
+		add(label)
+	}
+	if model.Spec.LiteLLM != nil {
+		for _, alias := range model.Spec.LiteLLM.Aliases {
+			add(alias)
+		}
+	}
+
+	out := make([]string, 0, len(unique))
+	for v := range unique {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ModelReconciler reconciles a Model object
@@ -296,16 +341,13 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 
 	// Build annotations including LiteLLM and service labels
 	annotations := make(map[string]string)
-	if model.Spec.LiteLLM != nil && (model.Spec.LiteLLM.Enabled == nil || *model.Spec.LiteLLM.Enabled) {
-		servedModel := model.Name
-		if model.Spec.LiteLLM.ServedModelName != "" {
-			servedModel = model.Spec.LiteLLM.ServedModelName
-		}
+	if litellmEnabled(model) {
+		servedModel := litellmServedModel(model)
 		annotations["litellm.flexinfer.ai/served-model"] = servedModel
-		if len(model.Spec.LiteLLM.Aliases) > 0 {
-			annotations["litellm.flexinfer.ai/aliases"] = strings.Join(model.Spec.LiteLLM.Aliases, ",")
+		if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
+			annotations["litellm.flexinfer.ai/aliases"] = strings.Join(aliases, ",")
 		}
-		if model.Spec.LiteLLM.CopilotAlias != "" {
+		if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
 			annotations["litellm.flexinfer.ai/copilot-model"] = model.Spec.LiteLLM.CopilotAlias
 		}
 	}
@@ -480,6 +522,26 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			Name:      model.Name,
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
+			Annotations: func() map[string]string {
+				annotations := make(map[string]string)
+				if litellmEnabled(model) {
+					servedModel := litellmServedModel(model)
+					annotations["litellm.flexinfer.ai/served-model"] = servedModel
+					if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
+						annotations["litellm.flexinfer.ai/aliases"] = strings.Join(aliases, ",")
+					}
+					if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
+						annotations["litellm.flexinfer.ai/copilot-model"] = model.Spec.LiteLLM.CopilotAlias
+					}
+				}
+				if len(model.Spec.ServiceLabels) > 0 {
+					annotations["flexinfer.ai/service-labels"] = strings.Join(model.Spec.ServiceLabels, ",")
+				}
+				if len(annotations) == 0 {
+					return nil
+				}
+				return annotations
+			}(),
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model")),
 			},
