@@ -2153,6 +2153,13 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 	var lastStatus string
 	var lastPipeline map[string]any
 
+	// Create a reusable timer to avoid memory leaks from time.After in loops
+	pollTimer := time.NewTimer(0)
+	if !pollTimer.Stop() {
+		<-pollTimer.C // Drain the channel if timer already fired
+	}
+	defer pollTimer.Stop()
+
 	for {
 		pollCount++
 
@@ -2170,10 +2177,15 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 		path := fmt.Sprintf("/projects/%s/pipelines/%d", encodeProject(project), pipelineID)
 		pipeline, err := g.request(ctx, "GET", path, nil)
 		if err != nil {
-			// Transient error - retry
+			// Transient error - retry with context-aware sleep
 			if isTransientError(err) && time.Now().Before(deadline) {
-				time.Sleep(time.Duration(pollIntervalSeconds) * time.Second)
-				continue
+				pollTimer.Reset(time.Duration(pollIntervalSeconds) * time.Second)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-pollTimer.C:
+					continue
+				}
 			}
 			return nil, err
 		}
@@ -2197,10 +2209,12 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 			interval = 10
 		}
 
+		// Use timer.Reset instead of time.After to avoid memory leaks
+		pollTimer.Reset(time.Duration(interval) * time.Second)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(interval) * time.Second):
+		case <-pollTimer.C:
 			// Continue polling
 		}
 	}
