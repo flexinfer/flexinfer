@@ -74,9 +74,14 @@ func main() {
 	// Handle signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		cancel()
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+			return
+		}
 	}()
 
 	server := mcp.NewServer("mcp-loki", version)
@@ -278,7 +283,7 @@ func maybeStartPortForward() {
 		pfMu.Unlock()
 	}(cmd)
 
-	if err := waitForLocalLokiReady(3 * time.Second); err != nil {
+	if err := waitForLocalLokiReady(context.Background(), 3*time.Second); err != nil {
 		pfMu.Lock()
 		if portForwardCmd == cmd && cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -652,34 +657,44 @@ func needsPortForward(host string) bool {
 	return !strings.Contains(host, ".")
 }
 
-func waitForLocalLokiReady(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	client := httpClientFactory()
+func waitForLocalLokiReady(ctx context.Context, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		req, err := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:3100/ready", nil)
+	client := httpClientFactory()
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		// Check immediately on first iteration
+		reqCtx, reqCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		req, err := http.NewRequestWithContext(reqCtx, "GET", "http://127.0.0.1:3100/ready", nil)
 		if err != nil {
-			cancel()
+			reqCancel()
 			return err
 		}
 		resp, err := client.Do(req)
-		cancel()
+		reqCancel()
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == 200 {
 				return nil
 			}
 		}
-		time.Sleep(150 * time.Millisecond)
-	}
 
-	pfMu.Lock()
-	defer pfMu.Unlock()
-	if pfStderr != nil && strings.TrimSpace(pfStderr.String()) != "" {
-		return fmt.Errorf("port-forward did not become ready: %s", strings.TrimSpace(pfStderr.String()))
+		// Wait for next tick or context cancellation
+		select {
+		case <-ctx.Done():
+			pfMu.Lock()
+			defer pfMu.Unlock()
+			if pfStderr != nil && strings.TrimSpace(pfStderr.String()) != "" {
+				return fmt.Errorf("port-forward did not become ready: %s", strings.TrimSpace(pfStderr.String()))
+			}
+			return fmt.Errorf("port-forward did not become ready")
+		case <-ticker.C:
+			// Continue to next iteration
+		}
 	}
-	return fmt.Errorf("port-forward did not become ready")
 }
 
 func lokiAPIURL(baseURL, endpoint string) (string, error) {

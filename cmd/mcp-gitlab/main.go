@@ -42,9 +42,14 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		cancel()
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+			return
+		}
 	}()
 
 	token := os.Getenv("GITLAB_PERSONAL_ACCESS_TOKEN")
@@ -940,7 +945,9 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, nil, sleepErr
+				}
 				continue
 			}
 			return nil, nil, err
@@ -950,7 +957,9 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, resp, sleepErr
+				}
 				continue
 			}
 			return nil, resp, readErr
@@ -964,12 +973,16 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			time.Sleep(delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, resp, sleepErr
+			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				return nil, resp, sleepErr
+			}
 			continue
 		}
 
@@ -1019,7 +1032,9 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, nil, false, sleepErr
+				}
 				continue
 			}
 			return nil, nil, false, err
@@ -1029,7 +1044,9 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, resp, false, sleepErr
+				}
 				continue
 			}
 			return nil, resp, false, readErr
@@ -1043,12 +1060,16 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			time.Sleep(delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, resp, false, sleepErr
+			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				return nil, resp, false, sleepErr
+			}
 			continue
 		}
 
@@ -1085,6 +1106,19 @@ func backoffDelay(attempt int, max time.Duration) time.Duration {
 		return max
 	}
 	return delay
+}
+
+// sleepWithContext waits for the specified duration or until context is cancelled.
+// Returns ctx.Err() if context is cancelled, nil otherwise.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func trimTo(b []byte, max int) []byte {
@@ -1160,7 +1194,9 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, nil, 0, sleepErr
+				}
 				continue
 			}
 			return nil, nil, 0, err
@@ -1175,13 +1211,17 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			time.Sleep(delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, nil, 0, sleepErr
+			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
 			_ = resp.Body.Close()
-			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				return nil, nil, 0, sleepErr
+			}
 			continue
 		}
 
@@ -1189,7 +1229,9 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, resp, totalRead, sleepErr
+				}
 				continue
 			}
 			return nil, resp, totalRead, readErr

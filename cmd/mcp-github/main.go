@@ -41,9 +41,14 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		cancel()
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+			return
+		}
 	}()
 
 	token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
@@ -502,7 +507,9 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 		resp, err := g.httpClient.Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, nil, sleepErr
+				}
 				continue
 			}
 			return nil, nil, err
@@ -512,7 +519,9 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				time.Sleep(backoffDelay(attempt, maxRetryDelay))
+				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+					return nil, resp, sleepErr
+				}
 				continue
 			}
 			return nil, resp, readErr
@@ -526,12 +535,16 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			time.Sleep(delay)
+			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+				return nil, resp, sleepErr
+			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			time.Sleep(backoffDelay(attempt, maxRetryDelay))
+			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				return nil, resp, sleepErr
+			}
 			continue
 		}
 
@@ -568,6 +581,19 @@ func backoffDelay(attempt int, max time.Duration) time.Duration {
 		return max
 	}
 	return delay
+}
+
+// sleepWithContext waits for the specified duration or until context is cancelled.
+// Returns ctx.Err() if context is cancelled, nil otherwise.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func isTransientError(err error) bool {

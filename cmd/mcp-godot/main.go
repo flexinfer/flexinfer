@@ -32,6 +32,7 @@ type GodotClient struct {
 	reconnectMs  int
 	responseChan chan json.RawMessage
 	errorChan    chan error
+	doneCh       chan struct{} // signals readResponses to exit
 }
 
 func NewGodotClient(host string, port int, autoConnect bool, reconnectMs int) *GodotClient {
@@ -42,6 +43,7 @@ func NewGodotClient(host string, port int, autoConnect bool, reconnectMs int) *G
 		reconnectMs:  reconnectMs,
 		responseChan: make(chan json.RawMessage, 1),
 		errorChan:    make(chan error, 1),
+		doneCh:       make(chan struct{}),
 	}
 }
 
@@ -70,12 +72,33 @@ func (c *GodotClient) Connect() error {
 func (c *GodotClient) readResponses() {
 	reader := bufio.NewReader(c.conn)
 	for {
+		// Check if we should exit before blocking on read
+		select {
+		case <-c.doneCh:
+			return
+		default:
+		}
+
+		// Set a read deadline so we can periodically check doneCh
+		c.mu.Lock()
+		if c.conn != nil {
+			_ = c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		}
+		c.mu.Unlock()
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			// Check if this was a timeout - if so, loop and check doneCh
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
 			c.mu.Lock()
 			c.conn = nil
 			c.mu.Unlock()
-			c.errorChan <- err
+			select {
+			case c.errorChan <- err:
+			case <-c.doneCh:
+			}
 			return
 		}
 
@@ -84,7 +107,29 @@ func (c *GodotClient) readResponses() {
 			continue
 		}
 
-		c.responseChan <- json.RawMessage(line)
+		select {
+		case c.responseChan <- json.RawMessage(line):
+		case <-c.doneCh:
+			return
+		}
+	}
+}
+
+// Close closes the client connection and stops the read goroutine.
+func (c *GodotClient) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	select {
+	case <-c.doneCh:
+		// Already closed
+	default:
+		close(c.doneCh)
+	}
+
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
 	}
 }
 
@@ -116,14 +161,19 @@ func (c *GodotClient) CallCommand(cmd map[string]any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("failed to send command: %w", err)
 	}
 
-	// Wait for response with timeout
+	// Wait for response with timeout - use NewTimer to avoid leaking timers
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+
 	select {
 	case resp := <-c.responseChan:
 		return resp, nil
 	case err := <-c.errorChan:
 		return nil, err
-	case <-time.After(30 * time.Second):
+	case <-timer.C:
 		return nil, fmt.Errorf("timeout waiting for response")
+	case <-c.doneCh:
+		return nil, fmt.Errorf("client closed")
 	}
 }
 
@@ -215,12 +265,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle signals
+	// Handle signals with proper cleanup
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		cancel()
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+			return
+		}
 	}()
 
 	// Load config from environment
@@ -249,6 +304,7 @@ func main() {
 
 	// Initialize clients
 	godotClient = NewGodotClient(host, port, autoConnect, reconnectMs)
+	defer godotClient.Close()
 	logReader = NewLogReader(logPath)
 
 	server := mcp.NewServer("mcp-godot", version)

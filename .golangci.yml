@@ -40,6 +40,9 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    # Memory safety linters (added for leak prevention)
+    - bodyclose     # Detect unclosed HTTP response bodies
+    - noctx         # Detect HTTP requests without context
   disable:
     - errcheck
 

@@ -25,7 +25,7 @@ variables:
   # checkout and fetch sources explicitly inside jobs instead.
   GIT_STRATEGY: "none"
   # Minimum test coverage threshold (percentage)
-  COVERAGE_THRESHOLD: "20"
+  COVERAGE_THRESHOLD: "30"
   IMAGE_REGISTRY: registry.harbor.lan
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
   DOCKER_CONFIG: /kaniko/.docker

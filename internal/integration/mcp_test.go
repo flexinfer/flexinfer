@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/testutil"
 )
 
 // MCPMessage represents a JSON-RPC 2.0 MCP message.
@@ -214,6 +216,7 @@ func TestMCPGit_Initialize(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-git")
 	if err != nil {
@@ -278,6 +281,7 @@ func TestMCPGit_ToolsList(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-git")
 	if err != nil {
@@ -349,6 +353,7 @@ func TestMCPGit_CallTool(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-git")
 	if err != nil {
@@ -433,6 +438,7 @@ func TestMCPTime_Initialize(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-time")
 	if err != nil {
@@ -469,6 +475,7 @@ func TestMCPTime_GetCurrentTime(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-time")
 	if err != nil {
@@ -539,6 +546,7 @@ func TestMCP_InvalidMethod(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-time")
 	if err != nil {
@@ -583,6 +591,7 @@ func TestMCP_InvalidTool(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	defer testutil.CheckGoroutineLeaksWithThreshold(t, 2)()
 
 	binary, err := findBinary("mcp-time")
 	if err != nil {
@@ -635,6 +644,8 @@ func min(a, b int) int {
 
 // BenchmarkMCPGit_Initialize benchmarks the initialize handshake.
 func BenchmarkMCPGit_Initialize(b *testing.B) {
+	b.ReportAllocs()
+
 	binary, err := findBinary("mcp-git")
 	if err != nil {
 		b.Skipf("mcp-git not found: %v", err)
@@ -667,6 +678,8 @@ func BenchmarkMCPGit_Initialize(b *testing.B) {
 
 // BenchmarkMCPTime_ToolCall benchmarks tool invocation latency.
 func BenchmarkMCPTime_ToolCall(b *testing.B) {
+	b.ReportAllocs()
+
 	binary, err := findBinary("mcp-time")
 	if err != nil {
 		b.Skipf("mcp-time not found: %v", err)

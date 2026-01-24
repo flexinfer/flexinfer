@@ -55,6 +55,14 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # Memory safety: detect time.After in loops (causes timer leaks)
+      - id: check-time-after-loop
+        name: Detect time.After in loops
+        entry: bash -c 'if grep -rn "for.*{" --include="*.go" cmd/ internal/ pkg/ 2>/dev/null | grep -v "_test.go" | while read -r line; do file=$(echo "$line" | cut -d: -f1); if grep -A20 "for.*{" "$file" 2>/dev/null | grep -q "time\.After"; then echo "WARNING: Potential time.After in loop found in $file"; exit 1; fi; done; then exit 0; fi'
+        language: system
+        types: [go]
+        pass_filenames: false
+
   # Security scanning
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
