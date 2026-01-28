@@ -31,7 +31,11 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 ### Phase 2: Core Infrastructure
 
 - [x] **Concurrency**: Parallel tool execution with configurable backpressure.
-- [ ] **Secure Tunneling**: SSH/WireGuard wrapping for remote server access.
+- [x] **Secure Tunneling**: SSH tunneling for remote MCP server access.
+  - `pkg/tunnel`: SSHTunnel, SSHTransport for secure remote connections.
+  - Registry support: `ssh:` config block in TargetSpec for host, user, key, etc.
+  - Process manager integration: Auto-detects SSH config and connects via tunnel.
+  - Auth methods: SSH agent, key files, known_hosts verification.
 - [x] **Context Caching**: Persistent tool manifest caching for instant startup.
 
 ## References

@@ -14,6 +14,7 @@ type Server = kitreg.Server
 type ToolSchema = kitreg.ToolSchema
 type InputSchema = kitreg.InputSchema
 type TargetSpec = kitreg.TargetSpec
+type SSHSpec = kitreg.SSHSpec
 
 func LoadConfig() (*Config, error)                { return kitreg.LoadConfig() }
 func GetRepoRoot(registryPath string) string      { return kitreg.GetRepoRoot(registryPath) }
