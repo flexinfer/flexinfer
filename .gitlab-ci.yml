@@ -99,7 +99,7 @@ fmt:
   stage: lint
   script:
     - |
-      UNFORMATTED=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' | grep -v '\.pb\.go$' || true)
+      UNFORMATTED=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' | grep -v '^\.go/' | grep -v '\.pb\.go$' || true)
       if [ -n "$UNFORMATTED" ]; then
         echo "The following files need formatting:"
         echo "$UNFORMATTED"
