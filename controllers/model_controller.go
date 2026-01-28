@@ -641,6 +641,15 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 					}(),
 					Containers:         []corev1.Container{container},
 					Volumes:            volumes,
+					RuntimeClassName: func() *string {
+						// NVIDIA GPUs require the "nvidia" runtime to inject /dev/nvidia* and driver libs.
+						// Without this, pods may schedule with nvidia.com/gpu but have no CUDA devices.
+						if gpuVendor == backend.GPUVendorNVIDIA && gpuCount > 0 {
+							runtime := "nvidia"
+							return &runtime
+						}
+						return nil
+					}(),
 					RestartPolicy:      corev1.RestartPolicyAlways,
 					ServiceAccountName: "default",
 				},
