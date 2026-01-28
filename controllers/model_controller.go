@@ -427,8 +427,9 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 		return r.Create(ctx, desiredService)
 	}
 
-	// Update if needed
-	service.Spec = desiredService.Spec
+	// Update service. Avoid clobbering immutable fields (e.g., clusterIP/clusterIPs).
+	service.Spec.Ports = desiredService.Spec.Ports
+	service.Spec.Selector = desiredService.Spec.Selector
 	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
 	return r.Update(ctx, service)
