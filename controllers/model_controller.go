@@ -415,6 +415,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 
 	// Update if needed
 	service.Spec = desiredService.Spec
+	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
 	return r.Update(ctx, service)
 }
@@ -664,6 +665,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 	// Update deployment
 	deployment.Spec = desiredDeployment.Spec
+	deployment.Labels = desiredDeployment.Labels
 	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
 	return r.Update(ctx, deployment)
 }
