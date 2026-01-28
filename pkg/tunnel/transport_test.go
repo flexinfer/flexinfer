@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestSSHTransport_SendWithoutConnect(t *testing.T) {
 	tunnel := NewSSHTunnel(cfg)
 	transport := NewSSHTransport(tunnel, "mcp-server")
 
-	err := transport.Send(nil, nil)
+	err := transport.Send(context.Background(), nil)
 	if err == nil {
 		t.Error("expected error sending without connection")
 	}
@@ -49,7 +50,7 @@ func TestSSHTransport_RecvWithoutConnect(t *testing.T) {
 	tunnel := NewSSHTunnel(cfg)
 	transport := NewSSHTransport(tunnel, "mcp-server")
 
-	_, err := transport.Recv(nil)
+	_, err := transport.Recv(context.Background())
 	if err == nil {
 		t.Error("expected error receiving without connection")
 	}

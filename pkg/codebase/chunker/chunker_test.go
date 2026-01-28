@@ -95,7 +95,7 @@ func TestSplitLargeChunks_LargeChunk(t *testing.T) {
 
 func TestEstimateLineTokens(t *testing.T) {
 	tests := []struct {
-		line     string
+		line      string
 		minTokens int
 		maxTokens int
 	}{

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -86,7 +87,7 @@ func TestSSHTunnel_SpawnWithoutConnect(t *testing.T) {
 
 	tunnel := NewSSHTunnel(cfg)
 
-	_, _, err := tunnel.SpawnProcess(nil, "echo hello")
+	_, _, err := tunnel.SpawnProcess(context.Background(), "echo hello")
 	if err == nil {
 		t.Error("expected error when spawning without connection")
 	}
@@ -100,7 +101,7 @@ func TestSSHTunnel_ForwardWithoutConnect(t *testing.T) {
 
 	tunnel := NewSSHTunnel(cfg)
 
-	_, err := tunnel.ForwardLocalPort(nil, "localhost:0", "localhost:8080")
+	_, err := tunnel.ForwardLocalPort(context.Background(), "localhost:0", "localhost:8080")
 	if err == nil {
 		t.Error("expected error when forwarding without connection")
 	}

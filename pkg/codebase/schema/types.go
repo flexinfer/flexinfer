@@ -20,11 +20,11 @@ type Chunk struct {
 	StartColumn int `json:"start_column"`
 	EndColumn   int `json:"end_column"`
 
-	Name       string   `json:"name,omitempty"`
-	Signature  string   `json:"signature,omitempty"`
-	Docstring  string   `json:"docstring,omitempty"`
-	ParentName string   `json:"parent_name,omitempty"`
-	ParentType string   `json:"parent_type,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Signature   string   `json:"signature,omitempty"`
+	Docstring   string   `json:"docstring,omitempty"`
+	ParentName  string   `json:"parent_name,omitempty"`
+	ParentType  string   `json:"parent_type,omitempty"`
 	Imports     []string `json:"imports,omitempty"`
 	Calls       []string `json:"calls,omitempty"`
 	Defs        []string `json:"definitions,omitempty"`
