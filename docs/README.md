@@ -7,6 +7,7 @@ If you’re looking for a quick entry point:
 - User docs: `docs/user/README.md`
 - Developer docs: `docs/dev/README.md`
 - Specs / reference: `docs/specs/README.md`
+- Planning: `docs/planning/README.md`
 
 Existing docs that are still referenced elsewhere:
 
@@ -21,4 +22,3 @@ These docs are intentionally written to be “site-syncable” (plain Markdown, 
 `services/flexinfer-site` can copy and render them as part of the playground/docs experience.
 
 Navigation is defined in `docs/nav.yaml`.
-

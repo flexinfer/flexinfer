@@ -59,3 +59,13 @@ sections:
         path: specs/labels-and-annotations.md
       - title: Metrics
         path: specs/metrics.md
+
+  - id: planning
+    title: Planning
+    pages:
+      - title: Overview
+        path: planning/README.md
+      - title: Feature Inventory
+        path: planning/feature-inventory.md
+      - title: Next Roadmap
+        path: planning/next-roadmap.md
