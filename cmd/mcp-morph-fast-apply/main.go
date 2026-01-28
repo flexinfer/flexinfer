@@ -16,8 +16,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/pathsec"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
+
+const (
+	maxFileSize     = 10 * 1024 * 1024 // 10MB max input file
+	maxResponseSize = 20 * 1024 * 1024 // 20MB max response
+)
+
+// Shared HTTP client for connection reuse
+var httpClient = &http.Client{Timeout: 90 * time.Second}
 
 var version = "dev"
 
@@ -116,20 +125,44 @@ func getConfig() (baseURL, apiKey, model string, err error) {
 	return baseURL, apiKey, model, nil
 }
 
-func resolvePath(path string) string {
-	// If absolute, use as is
-	if filepath.IsAbs(path) {
-		return path
+// getWorkspaceRoot returns the workspace root directory.
+func getWorkspaceRoot() (string, error) {
+	// Check MORPH_WORKSPACE_ROOT first (more specific)
+	if wsRoot := os.Getenv("MORPH_WORKSPACE_ROOT"); wsRoot != "" {
+		return filepath.Abs(wsRoot)
 	}
-
-	// Check WORKSPACE_ROOT env var
+	// Check WORKSPACE_ROOT (general)
 	if wsRoot := os.Getenv("WORKSPACE_ROOT"); wsRoot != "" {
-		return filepath.Join(wsRoot, path)
+		return filepath.Abs(wsRoot)
+	}
+	// Fall back to current directory
+	return os.Getwd()
+}
+
+// resolvePath resolves a path and validates it is within the workspace.
+func resolvePath(path string) (string, error) {
+	workspaceRoot, err := getWorkspaceRoot()
+	if err != nil {
+		return "", fmt.Errorf("get workspace root: %w", err)
 	}
 
-	// Fall back to current directory
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, path)
+	// Clean and make absolute
+	absPath, err := pathsec.CleanPath(path)
+	if err != nil {
+		return "", fmt.Errorf("clean path: %w", err)
+	}
+
+	// If relative, join with workspace root
+	if !filepath.IsAbs(path) {
+		absPath = filepath.Join(workspaceRoot, path)
+	}
+
+	// Validate path is within workspace
+	if err := pathsec.ValidatePath(absPath, workspaceRoot); err != nil {
+		return "", fmt.Errorf("path validation: %w", err)
+	}
+
+	return absPath, nil
 }
 
 func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -153,8 +186,16 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		return nil, fmt.Errorf("update is required")
 	}
 
-	// Resolve path
-	absPath := resolvePath(path)
+	// Resolve and validate path
+	absPath, err := resolvePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Validate file size before reading
+	if err := pathsec.ValidateFileSize(absPath, maxFileSize); err != nil {
+		return nil, fmt.Errorf("file validation: %w", err)
+	}
 
 	// Read original file
 	originalCode, err := os.ReadFile(absPath)
@@ -178,21 +219,34 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		"stream": false,
 	}
 
-	body, _ := json.Marshal(requestBody)
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
 
-	client := &http.Client{Timeout: 90 * time.Second}
 	url := baseURL + "/chat/completions"
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Morph API: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	// Limit response size to prevent memory exhaustion
+	limitedReader := io.LimitReader(resp.Body, maxResponseSize+1)
+	respBody, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(respBody) > maxResponseSize {
+		return nil, fmt.Errorf("response too large: exceeds %d bytes", maxResponseSize)
+	}
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("morph API error %d: %s", resp.StatusCode, string(respBody))
@@ -221,6 +275,11 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	}
 
 	newCode := result.Choices[0].Message.Content
+
+	// Validate response size before writing
+	if len(newCode) > maxResponseSize {
+		return nil, fmt.Errorf("edited content too large: %d bytes", len(newCode))
+	}
 
 	// Write the updated file
 	if err := os.WriteFile(absPath, []byte(newCode), 0644); err != nil {

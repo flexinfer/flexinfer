@@ -10,10 +10,33 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/crb2nu/loom/pkg/pathsec"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 var version = "1.0.0"
+
+const (
+	maxReadSize = 50 * 1024 * 1024 // 50MB max file read
+	maxResults  = 10000            // max search results
+)
+
+var allowedRoot string
+
+func init() {
+	// Determine allowed root directory
+	allowedRoot = os.Getenv("FILESYSTEM_ROOT")
+	if allowedRoot == "" {
+		// Default to home directory if not specified
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			allowedRoot = home
+		} else if cwd, err := os.Getwd(); err == nil {
+			allowedRoot = cwd
+		} else {
+			allowedRoot = "/"
+		}
+	}
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,14 +121,27 @@ func handleListDirectory(ctx context.Context, args map[string]any) (*mcp.CallToo
 		return nil, fmt.Errorf("path is required")
 	}
 
-	entries, err := os.ReadDir(path)
+	// Clean and validate path
+	absPath, err := pathsec.CleanPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+
+	if err := pathsec.ValidatePath(absPath, allowedRoot); err != nil {
+		return nil, fmt.Errorf("access denied: %w", err)
+	}
+
+	entries, err := os.ReadDir(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("read dir: %w", err)
 	}
 
 	var result []map[string]any
 	for _, entry := range entries {
-		info, _ := entry.Info()
+		info, err := entry.Info()
+		if err != nil {
+			continue // Skip entries we can't stat
+		}
 		result = append(result, map[string]any{
 			"name":  entry.Name(),
 			"isDir": entry.IsDir(),
@@ -115,7 +151,7 @@ func handleListDirectory(ctx context.Context, args map[string]any) (*mcp.CallToo
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"path":    path,
+		"path":    absPath,
 		"entries": result,
 	})
 }
@@ -126,7 +162,22 @@ func handleReadFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		return nil, fmt.Errorf("path is required")
 	}
 
-	data, err := os.ReadFile(path)
+	// Clean and validate path
+	absPath, err := pathsec.CleanPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+
+	if err := pathsec.ValidatePath(absPath, allowedRoot); err != nil {
+		return nil, fmt.Errorf("access denied: %w", err)
+	}
+
+	// Check file size before reading
+	if err := pathsec.ValidateFileSize(absPath, maxReadSize); err != nil {
+		return nil, fmt.Errorf("file too large: %w", err)
+	}
+
+	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
@@ -134,7 +185,7 @@ func handleReadFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	// Detect if binary? For now assume text or return base64 if needed.
 	// MCP protocol handles strings.
 	return mcp.JSONResult(map[string]any{
-		"path":    path,
+		"path":    absPath,
 		"content": string(data),
 		"size":    len(data),
 	})
@@ -151,14 +202,37 @@ func handleSearchFiles(ctx context.Context, args map[string]any) (*mcp.CallToolR
 		return nil, fmt.Errorf("pattern is required")
 	}
 
+	// Clean and validate search root
+	absRoot, err := pathsec.CleanPath(root)
+	if err != nil {
+		return nil, fmt.Errorf("invalid root: %w", err)
+	}
+
+	if err := pathsec.ValidatePath(absRoot, allowedRoot); err != nil {
+		return nil, fmt.Errorf("search root denied: %w", err)
+	}
+
 	var matches []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err != nil {
 			return nil // ignore errors
 		}
 		if d.IsDir() {
 			return nil
 		}
+
+		// Limit results to prevent memory exhaustion
+		if len(matches) >= maxResults {
+			return filepath.SkipAll
+		}
+
 		matched, err := filepath.Match(pattern, d.Name())
 		if err != nil {
 			return err
@@ -169,13 +243,16 @@ func handleSearchFiles(ctx context.Context, args map[string]any) (*mcp.CallToolR
 		return nil
 	})
 
-	if err != nil {
+	if err != nil && err != filepath.SkipAll {
 		return nil, fmt.Errorf("walk dir: %w", err)
 	}
 
+	truncated := len(matches) >= maxResults
+
 	return mcp.JSONResult(map[string]any{
-		"root":    root,
-		"pattern": pattern,
-		"matches": matches,
+		"root":      absRoot,
+		"pattern":   pattern,
+		"matches":   matches,
+		"truncated": truncated,
 	})
 }
