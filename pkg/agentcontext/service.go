@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -118,19 +119,21 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 	s.sessions[sessionID] = session
 	s.sessionsMu.Unlock()
 
-	// Persist to Qdrant (sessions collection doesn't need vectors)
-	if err := s.persistSession(ctx, session); err != nil {
-		// Log but don't fail - session is in memory
-		fmt.Printf("Warning: failed to persist session: %v\n", err)
-	}
-
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":         true,
 		"session_id": sessionID,
 		"agent_id":   agentID,
 		"namespace":  namespace,
 		"started_at": session.StartedAt.Format(time.RFC3339),
-	})
+	}
+
+	// Persist to Qdrant (sessions collection doesn't need vectors)
+	if err := s.persistSession(ctx, session); err != nil {
+		// Include warning in result but don't fail - session is in memory
+		result["_warning"] = fmt.Sprintf("failed to persist session: %v", err)
+	}
+
+	return mcp.JSONResult(result)
 }
 
 func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -155,16 +158,16 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 	s.sessions[sessionID] = session
 	s.sessionsMu.Unlock()
 
-	// Persist updated session
-	if err := s.persistSession(ctx, session); err != nil {
-		fmt.Printf("Warning: failed to persist session end: %v\n", err)
-	}
-
 	result := map[string]any{
 		"ok":         true,
 		"session_id": sessionID,
 		"ended_at":   now.Format(time.RFC3339),
 		"summarized": false,
+	}
+
+	// Persist updated session
+	if err := s.persistSession(ctx, session); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist session end: %v", err)
 	}
 
 	// Optionally generate summary
@@ -174,7 +177,9 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		} else {
 			result["summarized"] = true
 			session.Status = string(SessionStatusSummarized)
-			s.persistSession(ctx, session)
+			if err := s.persistSession(ctx, session); err != nil {
+				result["_persist_error"] = err.Error()
+			}
 		}
 	}
 
@@ -363,7 +368,11 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 		session.TotalTokens += e.TokenCount
 	}
 	s.sessionsMu.Unlock()
-	_ = s.persistSession(ctx, session)
+	// Best-effort persist - don't fail the add operation
+	if err := s.persistSession(ctx, session); err != nil {
+		// Log to stderr since we can't add to the result at this point
+		fmt.Fprintf(os.Stderr, "warning: persist session stats failed: %v\n", err)
+	}
 
 	// Check for auto-summarization
 	if s.cfg.AutoSummarize {

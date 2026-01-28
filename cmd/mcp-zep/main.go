@@ -20,6 +20,9 @@ import (
 
 var version = "dev"
 
+// Shared HTTP client for connection reuse
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -125,7 +128,8 @@ func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 		})
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Use a shorter timeout for health checks
+	healthClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Try various health endpoints
 	healthEndpoints := []string{
@@ -135,10 +139,13 @@ func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 
 	for _, url := range healthEndpoints {
-		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			continue // Skip if request creation fails
+		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
-		resp, err := client.Do(req)
+		resp, err := healthClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -153,11 +160,17 @@ func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 
 	// Fallback: try to get a session (will validate token)
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiURL+"/v2/sessions", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL+"/v2/sessions", nil)
+	if err != nil {
+		return mcp.JSONResult(map[string]any{
+			"ok":     false,
+			"detail": fmt.Sprintf("create request failed: %v", err),
+		})
+	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := healthClient.Do(req)
 	if err != nil {
 		return mcp.JSONResult(map[string]any{
 			"ok":     false,
@@ -244,15 +257,20 @@ func handleAddMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	payload := map[string]any{
 		"messages": messages,
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	url := fmt.Sprintf("%s/v2/sessions/%s/memory", apiURL, sessionID)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add messages: %w", err)
 	}
@@ -288,13 +306,15 @@ func handleGetMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 		}
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	url := fmt.Sprintf("%s/v2/sessions/%s/memory?lastK=%d", apiURL, sessionID, lastK)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
 	}

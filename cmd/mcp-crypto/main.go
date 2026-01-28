@@ -132,6 +132,15 @@ func handleRandomString(ctx context.Context, args map[string]any) (*mcp.CallTool
 	if l, ok := args["length"].(float64); ok {
 		length = int(l)
 	}
+
+	// Validate length to prevent DoS
+	if length <= 0 {
+		return nil, fmt.Errorf("length must be positive")
+	}
+	if length > 10000 {
+		return nil, fmt.Errorf("length exceeds maximum of 10000")
+	}
+
 	charsetType, _ := args["charset"].(string)
 
 	const (
@@ -155,7 +164,10 @@ func handleRandomString(ctx context.Context, args map[string]any) (*mcp.CallTool
 
 	b := make([]byte, length)
 	for i := range b {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return nil, fmt.Errorf("secure random generation failed: %w", err)
+		}
 		b[i] = charset[n.Int64()]
 	}
 
