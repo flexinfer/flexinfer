@@ -69,3 +69,5 @@ sections:
         path: planning/feature-inventory.md
       - title: Next Roadmap
         path: planning/next-roadmap.md
+      - title: Phase 1 (Controller Hardening)
+        path: planning/phase-1-controller-api-hardening.md

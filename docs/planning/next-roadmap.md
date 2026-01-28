@@ -17,6 +17,8 @@ This document is the working “next slice” roadmap. It is intentionally biase
 
 ## Phase 1: Controller & API correctness (1–2 weeks)
 
+Concrete checklist: `docs/planning/phase-1-controller-api-hardening.md`
+
 - Harden reconciliation around **immutable fields** (deployments/services) and drift correction.
 - Codify vendor-specific runtime requirements:
   - ensure NVIDIA workloads consistently set `runtimeClassName: nvidia` when requesting GPUs
