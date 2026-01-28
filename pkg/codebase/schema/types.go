@@ -25,9 +25,10 @@ type Chunk struct {
 	Docstring  string   `json:"docstring,omitempty"`
 	ParentName string   `json:"parent_name,omitempty"`
 	ParentType string   `json:"parent_type,omitempty"`
-	Imports    []string `json:"imports,omitempty"`
-	Calls      []string `json:"calls,omitempty"`
-	Defs       []string `json:"definitions,omitempty"`
+	Imports     []string `json:"imports,omitempty"`
+	Calls       []string `json:"calls,omitempty"`
+	Defs        []string `json:"definitions,omitempty"`
+	Identifiers []string `json:"identifiers,omitempty"` // Extracted identifiers for hybrid search
 
 	TokenCount  int       `json:"token_count"`
 	IndexedAt   time.Time `json:"indexed_at"`

@@ -1872,6 +1872,11 @@ func (s *Service) runIndexJob(
 			MinTokens:     s.cfg.ChunkMinTokens,
 		})
 
+		// Extract identifiers for hybrid search
+		for i := range chunks {
+			chunker.EnrichChunkIdentifiers(&chunks[i])
+		}
+
 		for _, ch := range chunks {
 			text := ch.Content
 			if ch.Docstring != "" {

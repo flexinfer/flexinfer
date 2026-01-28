@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -187,6 +188,108 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.OverlapTokens >= cfg.MaxTokens {
 		t.Error("OverlapTokens should be less than MaxTokens")
+	}
+}
+
+func TestExtractIdentifiers(t *testing.T) {
+	content := `
+func ProcessData(ctx context.Context, items []Item) error {
+	for _, item := range items {
+		if err := validateItem(item); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+		result := transformItem(item)
+		store.Save(result)
+	}
+	return nil
+}
+`
+	identifiers := ExtractIdentifiers(content)
+
+	// Should include function names and variables
+	expected := map[string]bool{
+		"ProcessData":   true,
+		"ctx":           true,
+		"context":       true,
+		"Context":       true,
+		"items":         true,
+		"Item":          true,
+		"item":          true,
+		"validateItem":  true,
+		"err":           true,
+		"fmt":           true,
+		"Errorf":        true,
+		"result":        true,
+		"transformItem": true,
+		"store":         true,
+		"Save":          true,
+	}
+
+	identSet := make(map[string]bool)
+	for _, id := range identifiers {
+		identSet[id] = true
+	}
+
+	for name := range expected {
+		if !identSet[name] {
+			t.Errorf("expected identifier %q not found", name)
+		}
+	}
+
+	// Keywords should not be included
+	keywords := []string{"func", "for", "range", "if", "return", "error"}
+	for _, kw := range keywords {
+		if identSet[kw] {
+			t.Errorf("keyword %q should not be in identifiers", kw)
+		}
+	}
+
+	// Should be sorted
+	for i := 1; i < len(identifiers); i++ {
+		if identifiers[i] < identifiers[i-1] {
+			t.Error("identifiers should be sorted")
+			break
+		}
+	}
+}
+
+func TestExtractIdentifiers_Limit(t *testing.T) {
+	// Generate content with many unique identifiers
+	var builder strings.Builder
+	for i := 0; i < 200; i++ {
+		builder.WriteString(fmt.Sprintf("var identifier%d = %d\n", i, i))
+	}
+	content := builder.String()
+
+	identifiers := ExtractIdentifiers(content)
+
+	if len(identifiers) > 100 {
+		t.Errorf("expected max 100 identifiers, got %d", len(identifiers))
+	}
+}
+
+func TestEnrichChunkIdentifiers(t *testing.T) {
+	chunk := &schema.Chunk{
+		Content: "func hello() { fmt.Println(message) }",
+	}
+
+	EnrichChunkIdentifiers(chunk)
+
+	if len(chunk.Identifiers) == 0 {
+		t.Error("expected identifiers to be extracted")
+	}
+
+	// Should include "hello", "fmt", "Println", "message"
+	identSet := make(map[string]bool)
+	for _, id := range chunk.Identifiers {
+		identSet[id] = true
+	}
+
+	expected := []string{"hello", "fmt", "Println", "message"}
+	for _, e := range expected {
+		if !identSet[e] {
+			t.Errorf("expected identifier %q not found", e)
+		}
 	}
 }
 

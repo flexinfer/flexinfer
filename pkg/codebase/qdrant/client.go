@@ -478,6 +478,7 @@ func ChunkToPayload(ch schema.Chunk, includeContent bool, embedModel string) map
 		"calls":          ch.Calls,
 		"call_names":     normalizeCallNames(ch.Calls),
 		"definitions":    ch.Defs,
+		"identifiers":    ch.Identifiers,
 		"start_line":     ch.StartLine,
 		"end_line":       ch.EndLine,
 		"start_column":   ch.StartColumn,

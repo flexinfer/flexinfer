@@ -2,6 +2,7 @@
 package chunker
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -270,7 +271,10 @@ func isKeyword(s string) bool {
 		"extends", "import", "export", "from", "as", "default", "const", "let",
 		"var", "function", "func", "def", "fn", "pub", "priv", "static", "final",
 		"abstract", "interface", "implements", "package", "range", "select", "go",
-		"defer", "chan", "map", "struct", "type", "enum", "match", "loop", "impl":
+		"defer", "chan", "map", "struct", "type", "enum", "match", "loop", "impl",
+		// Common type names that aren't useful for search
+		"error", "string", "int", "bool", "float", "byte", "rune", "nil", "null",
+		"true", "false", "void", "this", "self", "super", "None", "True", "False":
 		return true
 	}
 	return false
@@ -286,4 +290,53 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// ExtractIdentifiers extracts unique identifiers from code content for hybrid search.
+// Returns a deduplicated, sorted list of identifiers (min 2 chars, max 100 identifiers).
+func ExtractIdentifiers(content string) []string {
+	seen := make(map[string]bool)
+	var identifiers []string
+
+	i := 0
+	for i < len(content) {
+		// Skip to potential identifier start
+		for i < len(content) && !isIdentStart(content[i]) {
+			i++
+		}
+		if i >= len(content) {
+			break
+		}
+
+		// Read identifier
+		start := i
+		for i < len(content) && isIdentChar(content[i]) {
+			i++
+		}
+		ident := content[start:i]
+
+		// Filter: min 2 chars, not a keyword, not seen before
+		if len(ident) >= 2 && !isKeyword(ident) && !seen[ident] {
+			seen[ident] = true
+			identifiers = append(identifiers, ident)
+		}
+	}
+
+	// Sort for consistency
+	sort.Strings(identifiers)
+
+	// Limit to 100 identifiers (most common/useful ones come first alphabetically)
+	if len(identifiers) > 100 {
+		identifiers = identifiers[:100]
+	}
+
+	return identifiers
+}
+
+// EnrichChunkIdentifiers adds extracted identifiers to a chunk.
+func EnrichChunkIdentifiers(chunk *schema.Chunk) {
+	if chunk.Content == "" {
+		return
+	}
+	chunk.Identifiers = ExtractIdentifiers(chunk.Content)
 }

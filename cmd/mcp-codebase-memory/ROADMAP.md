@@ -49,7 +49,7 @@ Goal: support more environments than "Morph API only".
   - Defaults to `http://localhost:11434` and `nomic-embed-text` model
   - Also supports `CODEBASE_EMBED_PROVIDER=dummy` for explicit no-embeddings mode
 
-### Phase F — Better chunking & retrieval (in progress)
+### Phase F — Better chunking & retrieval (complete)
 
 Goal: reduce "too large chunk" and improve context relevance.
 
@@ -62,7 +62,11 @@ Goal: reduce "too large chunk" and improve context relevance.
 - ~~Integration: Wire chunker into indexing pipeline~~ (Done: `service.go`)
   - Chunker runs after git metadata annotation, before embedding
   - Configurable via env: `CODEBASE_CHUNK_MAX_TOKENS`, `CODEBASE_CHUNK_OVERLAP_TOKENS`, `CODEBASE_CHUNK_MIN_TOKENS`
-- [ ] Store extra lightweight signals (lexical tokens, identifiers) for improved hybrid reranking
+- ~~Store extra lightweight signals for hybrid reranking~~ (Done: `identifiers` field)
+  - `ExtractIdentifiers()` extracts unique identifiers from code content
+  - `EnrichChunkIdentifiers()` adds extracted identifiers to chunks
+  - Filters keywords, common type names; limits to 100 identifiers per chunk
+  - Stored in Qdrant payload as `identifiers` field
 - ~~Add a "raw text search" tool for exact match fallback.~~ (Done: `codebase_text_search`)
 
 ### Phase G — Tree-sitter without CGO (longer-term)
