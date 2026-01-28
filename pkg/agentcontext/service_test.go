@@ -103,10 +103,10 @@ func TestContentHashFunc_Uniqueness(t *testing.T) {
 
 func TestEstimateTokens(t *testing.T) {
 	tests := []struct {
-		name     string
-		text     string
-		wantMin  int
-		wantMax  int
+		name    string
+		text    string
+		wantMin int
+		wantMax int
 	}{
 		{"empty", "", 0, 1},
 		{"short", "hi", 0, 2},
