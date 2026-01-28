@@ -16,6 +16,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/codebase/chunker"
 	"github.com/crb2nu/loom/pkg/codebase/embed"
 	"github.com/crb2nu/loom/pkg/codebase/index"
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
@@ -1863,6 +1864,13 @@ func (s *Service) runIndexJob(
 				s.incrementJobError(jobID, fmt.Sprintf("git metadata %s: %v", relSlash, err))
 			}
 		}
+
+		// Split large chunks into overlapping windows
+		chunks = chunker.SplitLargeChunks(chunks, chunker.Config{
+			MaxTokens:     s.cfg.ChunkMaxTokens,
+			OverlapTokens: s.cfg.ChunkOverlapTokens,
+			MinTokens:     s.cfg.ChunkMinTokens,
+		})
 
 		for _, ch := range chunks {
 			text := ch.Content

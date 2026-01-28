@@ -28,6 +28,11 @@ type Config struct {
 	ScrollLimit      int
 
 	MaxFileBytes int64
+
+	// Chunker settings for splitting large code chunks
+	ChunkMaxTokens     int
+	ChunkOverlapTokens int
+	ChunkMinTokens     int
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -61,6 +66,10 @@ func LoadConfigFromEnv() (Config, error) {
 		ScrollLimit:      intEnv("CODEBASE_SCROLL_LIMIT", 256),
 
 		MaxFileBytes: int64Env("CODEBASE_MAX_FILE_BYTES", 2*1024*1024), // 2MiB per file by default
+
+		ChunkMaxTokens:     intEnv("CODEBASE_CHUNK_MAX_TOKENS", 2000),
+		ChunkOverlapTokens: intEnv("CODEBASE_CHUNK_OVERLAP_TOKENS", 200),
+		ChunkMinTokens:     intEnv("CODEBASE_CHUNK_MIN_TOKENS", 50),
 	}
 
 	if cfg.EmbedBatchSize <= 0 {

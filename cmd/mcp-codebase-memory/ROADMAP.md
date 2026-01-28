@@ -59,7 +59,9 @@ Goal: reduce "too large chunk" and improve context relevance.
   - Preserves metadata (RepoID, FilePath, Language, GitCommit, etc.)
   - First window keeps docstring and imports; subsequent windows omit them
   - Extracts function calls from each window
-- [ ] Integration: Wire chunker into indexing pipeline
+- ~~Integration: Wire chunker into indexing pipeline~~ (Done: `service.go`)
+  - Chunker runs after git metadata annotation, before embedding
+  - Configurable via env: `CODEBASE_CHUNK_MAX_TOKENS`, `CODEBASE_CHUNK_OVERLAP_TOKENS`, `CODEBASE_CHUNK_MIN_TOKENS`
 - [ ] Store extra lightweight signals (lexical tokens, identifiers) for improved hybrid reranking
 - ~~Add a "raw text search" tool for exact match fallback.~~ (Done: `codebase_text_search`)
 
