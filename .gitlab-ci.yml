@@ -99,11 +99,11 @@ fmt:
   stage: lint
   script:
     - |
-      UNFORMATTED=$(gofmt -l ./cmd ./internal ./pkg 2>/dev/null || true)
+      UNFORMATTED=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' | grep -v '\.pb\.go$' || true)
       if [ -n "$UNFORMATTED" ]; then
         echo "The following files need formatting:"
         echo "$UNFORMATTED"
-        gofmt -d ./cmd ./internal ./pkg
+        gofmt -d $(echo "$UNFORMATTED" | head -20)
         exit 1
       fi
 
@@ -149,6 +149,10 @@ build:binaries:
 
       echo "Built binaries:"
       ls -la bin/
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 day
 
 # =============================================================================
 # TEST STAGE
@@ -202,6 +206,8 @@ test:unit:
 test:integration:
   <<: *go-template
   stage: test
+  needs:
+    - build:binaries
   script:
     - |
       echo "Setting up integration test environment..."
@@ -209,23 +215,7 @@ test:integration:
       export LOOM_RUN_MCP_SMOKE="1"
       export PATH="$CI_PROJECT_DIR/bin:$PATH"
 
-      echo "Building MCP server binaries for smoke tests..."
-      VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
-      LDFLAGS="-s -w -X main.version=${VERSION}"
-      mkdir -p bin
-      failures=0
-      for pkg in $(ls cmd/ | grep '^mcp-'); do
-        echo "Building $pkg..."
-        if ! CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg"; then
-          echo "ERROR: Failed to build $pkg"
-          failures=$((failures + 1))
-        fi
-      done
-      if [ "$failures" -ne 0 ]; then
-        echo "ERROR: $failures MCP server(s) failed to build"
-        exit 1
-      fi
-
+      echo "Using pre-built MCP server binaries from build:binaries job..."
       echo "Available MCP servers:"
       ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"
 
@@ -259,9 +249,10 @@ test:benchmark:
   artifacts:
     paths:
       - benchmark.txt
-    expire_in: 1 week
+    expire_in: 30 days
   rules:
     - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - when: manual
 
 # =============================================================================
@@ -384,22 +375,21 @@ build:image:loom-core:
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
       "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
     - export IMAGE="$IMAGE_REGISTRY/mcp/loom-core"
-    - >
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
-      --destination "$IMAGE:$CI_COMMIT_SHORT_SHA"
-      --build-arg "VERSION=$CI_COMMIT_SHORT_SHA"
-      --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
     - |
+      DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        /kaniko/executor \
-          --context "$CI_PROJECT_DIR" \
-          --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-          --destination "$IMAGE:latest" \
-          --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+        DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
       fi
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+      fi
+      echo "Building with destinations: $DESTINATIONS"
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        $DESTINATIONS \
+        --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
+        --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
@@ -426,20 +416,20 @@ build:image:custom-server:
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
       "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
     - export IMAGE="$IMAGE_REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
-    - >
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server"
-      --destination "$IMAGE:$CI_COMMIT_SHORT_SHA"
-      --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
     - |
+      DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        /kaniko/executor \
-          --context "$CI_PROJECT_DIR" \
-          --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
-          --destination "$IMAGE:latest" \
-          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
+        DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
       fi
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+      fi
+      echo "Building with destinations: $DESTINATIONS"
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
+        $DESTINATIONS \
+        --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
