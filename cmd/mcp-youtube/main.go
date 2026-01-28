@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/kkdai/youtube/v2"
@@ -15,6 +16,19 @@ import (
 )
 
 var version = "dev"
+
+// Singleton YouTube client for connection reuse
+var (
+	ytClient     *youtube.Client
+	ytClientOnce sync.Once
+)
+
+func getYouTubeClient() *youtube.Client {
+	ytClientOnce.Do(func() {
+		ytClient = &youtube.Client{}
+	})
+	return ytClient
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,7 +128,7 @@ func handleGetTranscript(ctx context.Context, args map[string]any) (*mcp.CallToo
 
 	videoID := extractVideoID(urlStr)
 
-	client := youtube.Client{}
+	client := getYouTubeClient()
 	video, err := client.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video: %w", err)
@@ -158,7 +172,7 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 
 	videoID := extractVideoID(urlStr)
 
-	client := youtube.Client{}
+	client := getYouTubeClient()
 	video, err := client.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video: %w", err)
