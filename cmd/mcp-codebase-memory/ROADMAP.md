@@ -9,6 +9,7 @@ This server provides “codebase memory” for Loom via MCP: index code, store v
 - Storage: Qdrant payloads + vectors (`services/loom-core/pkg/codebase/qdrant`)
 - Embeddings: Pluggable `Embedder` interface (`services/loom-core/pkg/codebase/embed`)
   - `MorphClient` for Morph/OpenAI-compatible APIs (default)
+  - `OllamaClient` for Ollama local embeddings (`CODEBASE_EMBED_PROVIDER=ollama`)
   - `DummyEmbedder` for no-embeddings mode
 - Indexers:
   - Go: `go/ast` (`services/loom-core/pkg/codebase/index/goindex`)
@@ -32,7 +33,7 @@ This server provides “codebase memory” for Loom via MCP: index code, store v
 
 ## Phases (planned)
 
-### Phase E — Embedding flexibility (in progress)
+### Phase E — Embedding flexibility (complete)
 
 Goal: support more environments than "Morph API only".
 
@@ -43,7 +44,10 @@ Goal: support more environments than "Morph API only".
   - `NewServiceWithEmbedder()` for custom embedder injection
 - ~~Optional "no-embeddings" indexing mode~~ (Done: `CODEBASE_DISABLE_EMBEDDINGS=true` uses `DummyEmbedder`)
 - ~~Cache embeddings per `(content_hash, model)`~~ (Done: `GetFileEmbeddingCache` in qdrant client)
-- [ ] Optional local embeddings (e.g., sentence-transformers via a sidecar service, or Ollama)
+- ~~Optional local embeddings~~ (Done: `OllamaClient` for Ollama local embeddings)
+  - Set `CODEBASE_EMBED_PROVIDER=ollama` to use Ollama
+  - Defaults to `http://localhost:11434` and `nomic-embed-text` model
+  - Also supports `CODEBASE_EMBED_PROVIDER=dummy` for explicit no-embeddings mode
 
 ### Phase F — Better chunking & retrieval
 

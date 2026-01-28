@@ -63,8 +63,25 @@ func NewServiceFromEnv() (*Service, error) {
 		// Use dummy embedder when embeddings are disabled
 		embedder = embed.NewDummyEmbedder(1)
 	} else {
-		// Default to Morph/OpenAI-compatible API
-		embedder = embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel)
+		switch cfg.EmbedProvider {
+		case "ollama":
+			// Ollama local embeddings
+			baseURL := cfg.EmbedBaseURL
+			if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
+				baseURL = "http://localhost:11434"
+			}
+			model := cfg.EmbedModel
+			if model == "" || model == "morph-embedding-v3" {
+				model = "nomic-embed-text"
+			}
+			embedder = embed.NewOllamaClient(hc, baseURL, model)
+		case "dummy", "none":
+			// Explicit dummy mode
+			embedder = embed.NewDummyEmbedder(1)
+		default:
+			// Default to Morph/OpenAI-compatible API
+			embedder = embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel)
+		}
 	}
 
 	svc := &Service{
