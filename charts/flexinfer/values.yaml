@@ -43,6 +43,11 @@ controller:
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
     tag: "latest"
+  # Optional scheduling controls for the controller Deployment.
+  # Useful when your cluster has mixed architectures (e.g., arm64 nodes).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
   resources:
     limits:
       cpu: 500m

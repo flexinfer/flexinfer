@@ -602,6 +602,26 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				Spec: corev1.PodSpec{
 					NodeSelector:       nodeSelector,
 					Tolerations:        tolerations,
+					Affinity: func() *corev1.Affinity {
+						// For multi-replica models, enforce one pod per node (best-effort load balancing
+						// across identical GPU nodes, and avoids accidentally packing both replicas onto
+						// a single multi-GPU node).
+						if desiredReplicas <= 1 {
+							return nil
+						}
+						return &corev1.Affinity{
+							PodAntiAffinity: &corev1.PodAntiAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+									{
+										LabelSelector: &metav1.LabelSelector{
+											MatchLabels: r.labelsForModel(model),
+										},
+										TopologyKey: "kubernetes.io/hostname",
+									},
+								},
+							},
+						}
+					}(),
 					TopologySpreadConstraints: func() []corev1.TopologySpreadConstraint {
 						// If we run multiple replicas (e.g., active-active on two GPU nodes),
 						// spread them across nodes when possible, but allow co-location as fallback.
