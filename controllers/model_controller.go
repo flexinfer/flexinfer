@@ -139,6 +139,20 @@ func applyManagedAnnotations(existing map[string]string, desired map[string]stri
 	return out
 }
 
+func mergeStringMap(existing map[string]string, additional map[string]string) map[string]string {
+	if len(existing) == 0 && len(additional) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(existing)+len(additional))
+	for k, v := range existing {
+		out[k] = v
+	}
+	for k, v := range additional {
+		out[k] = v
+	}
+	return out
+}
+
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {
 	client.Client
@@ -395,7 +409,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 			},
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: r.labelsForModel(model),
+			Selector: r.selectorLabelsForModel(model),
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "http",
@@ -594,15 +608,15 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				return appsv1.DeploymentStrategy{}
 			}(),
 			Selector: &metav1.LabelSelector{
-				MatchLabels: r.labelsForModel(model),
+				MatchLabels: r.selectorLabelsForModel(model),
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: r.labelsForModel(model),
 				},
 				Spec: corev1.PodSpec{
-					NodeSelector:       nodeSelector,
-					Tolerations:        tolerations,
+					NodeSelector: nodeSelector,
+					Tolerations:  tolerations,
 					Affinity: func() *corev1.Affinity {
 						// For multi-replica models, enforce one pod per node (best-effort load balancing
 						// across identical GPU nodes, and avoids accidentally packing both replicas onto
@@ -615,7 +629,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 								RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
 									{
 										LabelSelector: &metav1.LabelSelector{
-											MatchLabels: r.labelsForModel(model),
+											MatchLabels: r.selectorLabelsForModel(model),
 										},
 										TopologyKey: "kubernetes.io/hostname",
 									},
@@ -635,13 +649,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 								TopologyKey:       "kubernetes.io/hostname",
 								WhenUnsatisfiable: corev1.ScheduleAnyway,
 								LabelSelector: &metav1.LabelSelector{
-									MatchLabels: r.labelsForModel(model),
+									MatchLabels: r.selectorLabelsForModel(model),
 								},
 							},
 						}
 					}(),
-					Containers:         []corev1.Container{container},
-					Volumes:            volumes,
+					Containers: []corev1.Container{container},
+					Volumes:    volumes,
 					RuntimeClassName: func() *string {
 						// NVIDIA GPUs require the "nvidia" runtime to inject /dev/nvidia* and driver libs.
 						// Without this, pods may schedule with nvidia.com/gpu but have no CUDA devices.
@@ -664,7 +678,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	// Update deployment
-	deployment.Spec = desiredDeployment.Spec
+	desiredSpec := desiredDeployment.Spec
+	// Deployment selectors are immutable. Preserve the existing selector on updates to avoid
+	// deadlocking reconciliation when labels change (e.g., shared GPU group assignment).
+	if deployment.Spec.Selector != nil {
+		desiredSpec.Selector = deployment.Spec.Selector.DeepCopy()
+		if desiredSpec.Selector.MatchLabels != nil {
+			desiredSpec.Template.Labels = mergeStringMap(desiredSpec.Template.Labels, desiredSpec.Selector.MatchLabels)
+		}
+	}
+	deployment.Spec = desiredSpec
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
 	return r.Update(ctx, deployment)
@@ -1476,19 +1499,30 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 
 // labelsForModel returns the labels to apply to resources for this model.
 func (r *ModelReconciler) labelsForModel(model *aiv1alpha2.Model) map[string]string {
-	labels := map[string]string{
+	labels := r.selectorLabelsForModel(model)
+
+	var gpuGroup string
+	if model.Spec.GPU != nil && model.Spec.GPU.Shared != "" {
+		gpuGroup = model.Spec.GPU.Shared
+	}
+	if gpuGroup == "" && model.Status.SharedGroup != nil && model.Status.SharedGroup.GroupName != "" {
+		gpuGroup = model.Status.SharedGroup.GroupName
+	}
+	if gpuGroup != "" {
+		labels["flexinfer.ai/gpu-group"] = gpuGroup
+	}
+
+	return labels
+}
+
+func (r *ModelReconciler) selectorLabelsForModel(model *aiv1alpha2.Model) map[string]string {
+	return map[string]string{
 		"app.kubernetes.io/name":       "model",
 		"app.kubernetes.io/instance":   model.Name,
 		"app.kubernetes.io/managed-by": "flexinfer",
 		"flexinfer.ai/model":           model.Name,
 		"flexinfer.ai/backend":         model.Spec.Backend,
 	}
-
-	if model.Spec.GPU != nil && model.Spec.GPU.Shared != "" {
-		labels["flexinfer.ai/gpu-group"] = model.Spec.GPU.Shared
-	}
-
-	return labels
 }
 
 // shouldScaleToZero checks if the model should be scaled to zero.
