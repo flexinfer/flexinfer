@@ -56,11 +56,18 @@ func TestMCP_AllServers_InitializeAndToolsList(t *testing.T) {
 		"MEMORY_AUTO_SAVE":   "false",
 	}
 
+	// Map of servers that require external services and their env vars
+	requiredEnvVars := map[string]string{
+		"mcp-postgres": "POSTGRES_URL",
+		"mcp-neo4j":    "NEO4J_URI",
+		"mcp-redis":    "REDIS_URL",
+	}
+
 	ran := false
 	for _, serverName := range servers {
 		t.Run(serverName, func(t *testing.T) {
-			if serverName == "mcp-postgres" && os.Getenv("POSTGRES_URL") == "" {
-				t.Skip("POSTGRES_URL not set; skipping postgres smoke test")
+			if envVar, ok := requiredEnvVars[serverName]; ok && os.Getenv(envVar) == "" {
+				t.Skipf("%s not set; skipping %s smoke test", envVar, serverName)
 			}
 
 			binary, err := findBinary(serverName)
