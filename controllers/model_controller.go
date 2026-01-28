@@ -602,6 +602,23 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				Spec: corev1.PodSpec{
 					NodeSelector:       nodeSelector,
 					Tolerations:        tolerations,
+					TopologySpreadConstraints: func() []corev1.TopologySpreadConstraint {
+						// If we run multiple replicas (e.g., active-active on two GPU nodes),
+						// spread them across nodes when possible, but allow co-location as fallback.
+						if desiredReplicas <= 1 {
+							return nil
+						}
+						return []corev1.TopologySpreadConstraint{
+							{
+								MaxSkew:           1,
+								TopologyKey:       "kubernetes.io/hostname",
+								WhenUnsatisfiable: corev1.ScheduleAnyway,
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: r.labelsForModel(model),
+								},
+							},
+						}
+					}(),
 					Containers:         []corev1.Container{container},
 					Volumes:            volumes,
 					RestartPolicy:      corev1.RestartPolicyAlways,
