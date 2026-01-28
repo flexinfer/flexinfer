@@ -49,12 +49,18 @@ Goal: support more environments than "Morph API only".
   - Defaults to `http://localhost:11434` and `nomic-embed-text` model
   - Also supports `CODEBASE_EMBED_PROVIDER=dummy` for explicit no-embeddings mode
 
-### Phase F — Better chunking & retrieval
+### Phase F — Better chunking & retrieval (in progress)
 
 Goal: reduce "too large chunk" and improve context relevance.
 
-- Chunk splitting for very large functions/types (windowing with overlap).
-- Store extra lightweight signals (lexical tokens, identifiers) for improved hybrid reranking.
+- ~~Chunk splitting for very large functions/types~~ (Done: `pkg/codebase/chunker`)
+  - `SplitLargeChunks()` splits chunks exceeding MaxTokens into overlapping windows
+  - Configurable MaxTokens (default 2000), OverlapTokens (default 200), MinTokens (default 50)
+  - Preserves metadata (RepoID, FilePath, Language, GitCommit, etc.)
+  - First window keeps docstring and imports; subsequent windows omit them
+  - Extracts function calls from each window
+- [ ] Integration: Wire chunker into indexing pipeline
+- [ ] Store extra lightweight signals (lexical tokens, identifiers) for improved hybrid reranking
 - ~~Add a "raw text search" tool for exact match fallback.~~ (Done: `codebase_text_search`)
 
 ### Phase G — Tree-sitter without CGO (longer-term)
