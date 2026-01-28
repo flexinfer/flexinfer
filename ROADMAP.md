@@ -25,8 +25,8 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 ### Phase 1: Server Expansion
 
 - [x] **`mcp-jira`**: Jira issue tracking integration.
-- [ ] **`mcp-confluence`**: Knowledge base search.
-- [ ] **`mcp-postgres`**: Database schema and query inspector.
+- [x] **`mcp-confluence`**: Knowledge base search.
+- [x] **`mcp-postgres`**: Database schema and query inspector.
 
 ### Phase 2: Core Infrastructure
 

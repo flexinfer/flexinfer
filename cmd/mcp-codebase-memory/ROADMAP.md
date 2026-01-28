@@ -7,12 +7,21 @@ This server provides “codebase memory” for Loom via MCP: index code, store v
 - Go MCP server: `services/loom-core/cmd/mcp-codebase-memory`
 - Core package: `services/loom-core/pkg/codebase`
 - Storage: Qdrant payloads + vectors (`services/loom-core/pkg/codebase/qdrant`)
-- Embeddings: Morph embeddings API (`services/loom-core/pkg/codebase/embed`)
+- Embeddings: Pluggable `Embedder` interface (`services/loom-core/pkg/codebase/embed`)
+  - `MorphClient` for Morph/OpenAI-compatible APIs (default)
+  - `DummyEmbedder` for no-embeddings mode
 - Indexers:
   - Go: `go/ast` (`services/loom-core/pkg/codebase/index/goindex`)
   - TS/JS/Python/Rust:
     - `cgo` builds: tree-sitter via `github.com/smacker/go-tree-sitter`
     - `!cgo` builds: regex fallbacks (best-effort)
+- **Phase C - Git metadata**: `annotateChunksWithGitMetadata()` in `pkg/codebase/gitmeta.go`
+  - Per-chunk git blame info (commit SHA, author) stored in Qdrant payloads
+- **Phase D - Graph tools**: `codebase_call_graph` and `codebase_module_graph` in `tools.go`
+  - BFS traversal of stored `calls[]` edges with depth/limit controls
+  - Module dependency edges from indexed imports
+  - Mermaid output format support
+- **Text search**: `codebase_text_search` tool for exact match fallback queries
 
 ## Guiding principles
 
@@ -23,39 +32,26 @@ This server provides “codebase memory” for Loom via MCP: index code, store v
 
 ## Phases (planned)
 
-### Phase C — Git metadata (next)
+### Phase E — Embedding flexibility (in progress)
 
-Goal: attach lightweight git context to chunks to improve attribution and result quality.
+Goal: support more environments than "Morph API only".
 
-- Add optional per-chunk fields (e.g., last commit short SHA + author) populated from `git blame`.
-- Make it opt-in (flag/env/tool arg) to avoid slowing indexing for large repos.
-- Store in Qdrant payload so results remain useful even after process restarts.
-
-### Phase D — Graph tools
-
-Goal: make structure queries easier than repeated callers/callees calls.
-
-- `codebase_call_graph`: return edges from stored `calls[]` for a symbol (BFS with depth/limits).
-- `codebase_module_graph`: return import/dependency edges between modules/files (best-effort per language).
-- Optional render helpers (Mermaid/DOT) as string output.
-
-### Phase E — Embedding flexibility
-
-Goal: support more environments than “Morph API only”.
-
-- Pluggable embedder interface:
-  - Morph embeddings (current)
-  - Optional local embeddings (e.g., sentence-transformers via a sidecar service, or another MCP server)
-- Optional “no-embeddings” indexing mode (dummy vectors) so non-embedding tools (definition/context/text search/graphs) work without an embeddings API key.
-- Cache embeddings per `(content_hash, model)` to avoid recompute on re-index.
+- ~~Pluggable embedder interface~~ (Done: `pkg/codebase/embed/embed.go`)
+  - `Embedder` interface with `EmbedQuery`, `EmbedDocuments`, `Name`, `Model` methods
+  - `MorphClient` implements `Embedder` for Morph/OpenAI-compatible APIs
+  - `DummyEmbedder` for no-embedding mode
+  - `NewServiceWithEmbedder()` for custom embedder injection
+- ~~Optional "no-embeddings" indexing mode~~ (Done: `CODEBASE_DISABLE_EMBEDDINGS=true` uses `DummyEmbedder`)
+- ~~Cache embeddings per `(content_hash, model)`~~ (Done: `GetFileEmbeddingCache` in qdrant client)
+- [ ] Optional local embeddings (e.g., sentence-transformers via a sidecar service, or Ollama)
 
 ### Phase F — Better chunking & retrieval
 
-Goal: reduce “too large chunk” and improve context relevance.
+Goal: reduce "too large chunk" and improve context relevance.
 
 - Chunk splitting for very large functions/types (windowing with overlap).
 - Store extra lightweight signals (lexical tokens, identifiers) for improved hybrid reranking.
-- Add a “raw text search” tool for exact match fallback.
+- ~~Add a "raw text search" tool for exact match fallback.~~ (Done: `codebase_text_search`)
 
 ### Phase G — Tree-sitter without CGO (longer-term)
 

@@ -27,7 +27,7 @@ type Service struct {
 	cfg Config
 
 	qdrant *qdrant.Client
-	embed  *embed.MorphClient
+	embed  embed.Embedder
 
 	indexers *index.Registry
 
@@ -57,10 +57,38 @@ func NewServiceFromEnv() (*Service, error) {
 
 	hc := httpclient.NewDefault()
 
+	// Select embedder based on configuration
+	var embedder embed.Embedder
+	if cfg.DisableEmbeddingsDefault {
+		// Use dummy embedder when embeddings are disabled
+		embedder = embed.NewDummyEmbedder(1)
+	} else {
+		// Default to Morph/OpenAI-compatible API
+		embedder = embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel)
+	}
+
 	svc := &Service{
 		cfg:       cfg,
 		qdrant:    qdrant.NewClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollection, cfg.QdrantDistance),
-		embed:     embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
+		embed:     embedder,
+		jobs:      make(map[string]*indexJob),
+		watchJobs: make(map[string]*watchJob),
+		indexers: index.NewRegistry(
+			cfg.MaxFileBytes,
+		),
+	}
+
+	return svc, nil
+}
+
+// NewServiceWithEmbedder creates a service with a custom embedder.
+func NewServiceWithEmbedder(cfg Config, embedder embed.Embedder) (*Service, error) {
+	hc := httpclient.NewDefault()
+
+	svc := &Service{
+		cfg:       cfg,
+		qdrant:    qdrant.NewClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollection, cfg.QdrantDistance),
+		embed:     embedder,
 		jobs:      make(map[string]*indexJob),
 		watchJobs: make(map[string]*watchJob),
 		indexers: index.NewRegistry(
@@ -1645,7 +1673,7 @@ func (s *Service) runIndexJob(
 
 	embedModel := ""
 	if embeddings {
-		embedModel = s.cfg.EmbedModel
+		embedModel = s.embed.Model()
 	}
 
 	if !embeddings {
@@ -1789,7 +1817,7 @@ func (s *Service) runIndexJob(
 
 		var fileCache map[string][]float64
 		if embeddings && !fullRefresh {
-			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.cfg.EmbedModel, 4096)
+			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.embed.Model(), 4096)
 			if err != nil {
 				s.incrementJobError(jobID, fmt.Sprintf("embedding cache %s: %v", relSlash, err))
 			} else {

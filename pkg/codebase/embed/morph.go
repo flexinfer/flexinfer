@@ -12,12 +12,16 @@ import (
 	"github.com/crb2nu/loom/pkg/httpclient"
 )
 
+// MorphClient implements Embedder using the Morph/OpenAI-compatible embeddings API.
 type MorphClient struct {
 	http    *httpclient.Client
 	baseURL string
 	apiKey  string
 	model   string
 }
+
+// Ensure MorphClient implements Embedder.
+var _ Embedder = (*MorphClient)(nil)
 
 func NewMorphClient(httpc *httpclient.Client, baseURL, apiKey, model string) *MorphClient {
 	return &MorphClient{
@@ -26,6 +30,16 @@ func NewMorphClient(httpc *httpclient.Client, baseURL, apiKey, model string) *Mo
 		apiKey:  apiKey,
 		model:   model,
 	}
+}
+
+// Name returns the embedder name.
+func (c *MorphClient) Name() string {
+	return "morph"
+}
+
+// Model returns the model identifier.
+func (c *MorphClient) Model() string {
+	return c.model
 }
 
 func (c *MorphClient) EmbedQuery(ctx context.Context, query string) ([]float64, error) {
