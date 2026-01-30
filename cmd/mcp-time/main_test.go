@@ -23,10 +23,10 @@ func TestParseDurationWithDays(t *testing.T) {
 		{"500ms", 500 * time.Millisecond, false},
 		{"1h30m", 90 * time.Minute, false},
 		{"-1h", -1 * time.Hour, false},
-		{"1.5d", 0, true},     // non-integer days
-		{"", 0, true},         // empty
-		{"invalid", 0, true},  // invalid format
-		{"abc", 0, true},      // not parseable
+		{"1.5d", 0, true},    // non-integer days
+		{"", 0, true},        // empty
+		{"invalid", 0, true}, // invalid format
+		{"abc", 0, true},     // not parseable
 	}
 
 	for _, tt := range tests {

@@ -461,16 +461,16 @@ func TestSessionToPayload(t *testing.T) {
 func TestPayloadToSession(t *testing.T) {
 	now := time.Now()
 	payload := map[string]any{
-		"id":            "session-123",
-		"agent_id":      "agent-456",
-		"namespace":     "test",
-		"started_at":    now.Format(time.RFC3339Nano),
-		"ended_at":      now.Add(time.Hour).Format(time.RFC3339Nano),
-		"status":        "active",
-		"description":   "Test session",
-		"working_dir":   "/tmp/test",
-		"entry_count":   float64(10),
-		"total_tokens":  float64(500),
+		"id":           "session-123",
+		"agent_id":     "agent-456",
+		"namespace":    "test",
+		"started_at":   now.Format(time.RFC3339Nano),
+		"ended_at":     now.Add(time.Hour).Format(time.RFC3339Nano),
+		"status":       "active",
+		"description":  "Test session",
+		"working_dir":  "/tmp/test",
+		"entry_count":  float64(10),
+		"total_tokens": float64(500),
 	}
 
 	session, err := PayloadToSession(payload)

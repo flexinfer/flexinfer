@@ -358,12 +358,12 @@ func (s *slackServer) handleSearchMessages(ctx context.Context, args map[string]
 		Messages struct {
 			Total   int `json:"total"`
 			Matches []struct {
-				Type      string `json:"type"`
-				User      string `json:"user"`
-				Username  string `json:"username"`
-				Text      string `json:"text"`
-				Ts        string `json:"ts"`
-				Channel   struct {
+				Type     string `json:"type"`
+				User     string `json:"user"`
+				Username string `json:"username"`
+				Text     string `json:"text"`
+				Ts       string `json:"ts"`
+				Channel  struct {
 					ID   string `json:"id"`
 					Name string `json:"name"`
 				} `json:"channel"`
@@ -410,12 +410,12 @@ func (s *slackServer) handleListChannels(ctx context.Context, args map[string]an
 	var result struct {
 		OK       bool `json:"ok"`
 		Channels []struct {
-			ID             string `json:"id"`
-			Name           string `json:"name"`
-			IsPrivate      bool   `json:"is_private"`
-			IsArchived     bool   `json:"is_archived"`
-			NumMembers     int    `json:"num_members"`
-			Topic          struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			IsPrivate  bool   `json:"is_private"`
+			IsArchived bool   `json:"is_archived"`
+			NumMembers int    `json:"num_members"`
+			Topic      struct {
 				Value string `json:"value"`
 			} `json:"topic"`
 			Purpose struct {
@@ -473,11 +473,11 @@ func (s *slackServer) handleGetChannelHistory(ctx context.Context, args map[stri
 	var result struct {
 		OK       bool `json:"ok"`
 		Messages []struct {
-			Type     string `json:"type"`
-			User     string `json:"user"`
-			Text     string `json:"text"`
-			Ts       string `json:"ts"`
-			ThreadTs string `json:"thread_ts"`
+			Type      string `json:"type"`
+			User      string `json:"user"`
+			Text      string `json:"text"`
+			Ts        string `json:"ts"`
+			ThreadTs  string `json:"thread_ts"`
 			Reactions []struct {
 				Name  string   `json:"name"`
 				Count int      `json:"count"`
@@ -646,14 +646,14 @@ func (s *slackServer) handleGetUserInfo(ctx context.Context, args map[string]any
 			TZ       string `json:"tz"`
 			TZLabel  string `json:"tz_label"`
 			Profile  struct {
-				Title                 string `json:"title"`
-				Phone                 string `json:"phone"`
-				DisplayName           string `json:"display_name"`
-				RealName              string `json:"real_name"`
-				Email                 string `json:"email"`
-				StatusText            string `json:"status_text"`
-				StatusEmoji           string `json:"status_emoji"`
-				StatusExpiration      int64  `json:"status_expiration"`
+				Title            string `json:"title"`
+				Phone            string `json:"phone"`
+				DisplayName      string `json:"display_name"`
+				RealName         string `json:"real_name"`
+				Email            string `json:"email"`
+				StatusText       string `json:"status_text"`
+				StatusEmoji      string `json:"status_emoji"`
+				StatusExpiration int64  `json:"status_expiration"`
 			} `json:"profile"`
 		} `json:"user"`
 	}

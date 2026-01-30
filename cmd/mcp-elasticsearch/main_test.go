@@ -207,7 +207,7 @@ func TestHandleCount(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"count":  42,
+			"count":   42,
 			"_shards": map[string]any{"total": 5, "successful": 5},
 		})
 	})
