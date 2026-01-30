@@ -98,7 +98,7 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 
 	// Flash attention (GPU only, skip for CPU)
 	if spec.GPUVendor != GPUVendorCPU && spec.ConfigBool("flashAttention", false) {
-		args = append(args, "--flash-attn")
+		args = append(args, "--flash-attn", "on")
 	}
 
 	// Multimodal projection file for vision models (e.g., LLaVA, Qwen-VL)
