@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,7 +27,6 @@ var (
 
 	awsRegion = getEnv("AWS_REGION", "us-east-1")
 
-	awsCfg    aws.Config
 	s3Client  *s3.Client
 	ec2Client *ec2.Client
 	stsClient *sts.Client
@@ -42,22 +40,11 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
 func initAWS(ctx context.Context) error {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
 	if err != nil {
 		return fmt.Errorf("load AWS config: %w", err)
 	}
-	awsCfg = cfg
 	s3Client = s3.NewFromConfig(cfg)
 	ec2Client = ec2.NewFromConfig(cfg)
 	stsClient = sts.NewFromConfig(cfg)
@@ -505,18 +492,18 @@ func handleEC2DescribeInstances(ctx context.Context, args map[string]any) (*mcp.
 			}
 
 			instances = append(instances, map[string]any{
-				"instance_id":    aws.ToString(inst.InstanceId),
-				"name":           name,
-				"instance_type":  string(inst.InstanceType),
-				"state":          string(inst.State.Name),
-				"private_ip":     aws.ToString(inst.PrivateIpAddress),
-				"public_ip":      aws.ToString(inst.PublicIpAddress),
-				"vpc_id":         aws.ToString(inst.VpcId),
-				"subnet_id":      aws.ToString(inst.SubnetId),
-				"launch_time":    inst.LaunchTime.Format(time.RFC3339),
-				"az":             aws.ToString(inst.Placement.AvailabilityZone),
-				"ami_id":         aws.ToString(inst.ImageId),
-				"key_name":       aws.ToString(inst.KeyName),
+				"instance_id":   aws.ToString(inst.InstanceId),
+				"name":          name,
+				"instance_type": string(inst.InstanceType),
+				"state":         string(inst.State.Name),
+				"private_ip":    aws.ToString(inst.PrivateIpAddress),
+				"public_ip":     aws.ToString(inst.PublicIpAddress),
+				"vpc_id":        aws.ToString(inst.VpcId),
+				"subnet_id":     aws.ToString(inst.SubnetId),
+				"launch_time":   inst.LaunchTime.Format(time.RFC3339),
+				"az":            aws.ToString(inst.Placement.AvailabilityZone),
+				"ami_id":        aws.ToString(inst.ImageId),
+				"key_name":      aws.ToString(inst.KeyName),
 			})
 		}
 	}
@@ -597,10 +584,10 @@ func handleEC2DescribeSecurityGroups(ctx context.Context, args map[string]any) (
 	groups := make([]map[string]any, 0, len(result.SecurityGroups))
 	for _, sg := range result.SecurityGroups {
 		groups = append(groups, map[string]any{
-			"group_id":    aws.ToString(sg.GroupId),
-			"group_name":  aws.ToString(sg.GroupName),
-			"description": aws.ToString(sg.Description),
-			"vpc_id":      aws.ToString(sg.VpcId),
+			"group_id":             aws.ToString(sg.GroupId),
+			"group_name":           aws.ToString(sg.GroupName),
+			"description":          aws.ToString(sg.Description),
+			"vpc_id":               aws.ToString(sg.VpcId),
 			"inbound_rules_count":  len(sg.IpPermissions),
 			"outbound_rules_count": len(sg.IpPermissionsEgress),
 		})
@@ -664,18 +651,18 @@ func handleLambdaGetFunction(ctx context.Context, args map[string]any) (*mcp.Cal
 
 	config := result.Configuration
 	response := map[string]any{
-		"function_name":  aws.ToString(config.FunctionName),
-		"function_arn":   aws.ToString(config.FunctionArn),
-		"runtime":        string(config.Runtime),
-		"handler":        aws.ToString(config.Handler),
-		"role":           aws.ToString(config.Role),
-		"memory_size":    config.MemorySize,
-		"timeout":        config.Timeout,
-		"last_modified":  aws.ToString(config.LastModified),
-		"code_size":      config.CodeSize,
-		"description":    aws.ToString(config.Description),
-		"state":          string(config.State),
-		"code_sha256":    aws.ToString(config.CodeSha256),
+		"function_name": aws.ToString(config.FunctionName),
+		"function_arn":  aws.ToString(config.FunctionArn),
+		"runtime":       string(config.Runtime),
+		"handler":       aws.ToString(config.Handler),
+		"role":          aws.ToString(config.Role),
+		"memory_size":   config.MemorySize,
+		"timeout":       config.Timeout,
+		"last_modified": aws.ToString(config.LastModified),
+		"code_size":     config.CodeSize,
+		"description":   aws.ToString(config.Description),
+		"state":         string(config.State),
+		"code_sha256":   aws.ToString(config.CodeSha256),
 	}
 
 	if result.Code != nil {
@@ -714,8 +701,8 @@ func handleLambdaInvoke(ctx context.Context, args map[string]any) (*mcp.CallTool
 	}
 
 	response := map[string]any{
-		"function_name":   functionName,
-		"status_code":     result.StatusCode,
+		"function_name":    functionName,
+		"status_code":      result.StatusCode,
 		"executed_version": aws.ToString(result.ExecutedVersion),
 	}
 

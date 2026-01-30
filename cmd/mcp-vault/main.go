@@ -501,14 +501,10 @@ func handleTokenLookup(ctx context.Context, args map[string]any) (*mcp.CallToolR
 		return nil, err
 	}
 
-	response := map[string]any{}
 	if data, ok := result["data"].(map[string]any); ok {
-		response = data
-	} else {
-		response = result
+		return mcp.JSONResult(data)
 	}
-
-	return mcp.JSONResult(response)
+	return mcp.JSONResult(result)
 }
 
 func handlePolicies(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

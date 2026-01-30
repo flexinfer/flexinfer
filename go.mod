@@ -28,6 +28,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.0.0
 	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260116221656-df35197c2d46
+	go.mongodb.org/mongo-driver v1.17.8
 	golang.org/x/crypto v0.47.0
 	golang.org/x/term v0.39.0
 	google.golang.org/api v0.264.0
@@ -93,6 +94,7 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/pprof v0.0.0-20250208200701-d0013a598941 // indirect
@@ -110,6 +112,7 @@ require (
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -122,6 +125,10 @@ require (
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/trivago/tgo v1.0.7 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/scram v1.1.2 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.38.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect

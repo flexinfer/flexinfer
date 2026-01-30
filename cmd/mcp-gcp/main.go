@@ -7,14 +7,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/compute/apiv1"
+	compute "cloud.google.com/go/compute/apiv1"
 	computepb "cloud.google.com/go/compute/apiv1/computepb"
-	"cloud.google.com/go/functions/apiv2"
+	functions "cloud.google.com/go/functions/apiv2"
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	"cloud.google.com/go/storage"
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -37,16 +36,6 @@ var (
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
 	}
 	return fallback
 }
@@ -466,18 +455,18 @@ func handleStorageObjectMetadata(ctx context.Context, args map[string]any) (*mcp
 	}
 
 	return mcp.JSONResult(map[string]any{
-		"bucket":          bucket,
-		"name":            attrs.Name,
-		"size":            attrs.Size,
-		"content_type":    attrs.ContentType,
-		"updated":         attrs.Updated.Format(time.RFC3339),
-		"created":         attrs.Created.Format(time.RFC3339),
-		"storage_class":   attrs.StorageClass,
-		"md5":             attrs.MD5,
-		"crc32c":          attrs.CRC32C,
-		"generation":      attrs.Generation,
-		"metageneration":  attrs.Metageneration,
-		"metadata":        attrs.Metadata,
+		"bucket":           bucket,
+		"name":             attrs.Name,
+		"size":             attrs.Size,
+		"content_type":     attrs.ContentType,
+		"updated":          attrs.Updated.Format(time.RFC3339),
+		"created":          attrs.Created.Format(time.RFC3339),
+		"storage_class":    attrs.StorageClass,
+		"md5":              attrs.MD5,
+		"crc32c":           attrs.CRC32C,
+		"generation":       attrs.Generation,
+		"metageneration":   attrs.Metageneration,
+		"metadata":         attrs.Metadata,
 		"content_encoding": attrs.ContentEncoding,
 	})
 }
@@ -605,15 +594,15 @@ func handleComputeGetInstance(ctx context.Context, args map[string]any) (*mcp.Ca
 	}
 
 	response := map[string]any{
-		"id":                 instance.Id,
-		"name":               instance.Name,
-		"status":             instance.Status,
-		"machine_type":       extractResourceName(instance.MachineType),
-		"zone":               extractResourceName(instance.Zone),
-		"created":            instance.CreationTimestamp,
-		"network_interfaces": networkInterfaces,
-		"disks":              disks,
-		"can_ip_forward":     instance.CanIpForward,
+		"id":                  instance.Id,
+		"name":                instance.Name,
+		"status":              instance.Status,
+		"machine_type":        extractResourceName(instance.MachineType),
+		"zone":                extractResourceName(instance.Zone),
+		"created":             instance.CreationTimestamp,
+		"network_interfaces":  networkInterfaces,
+		"disks":               disks,
+		"can_ip_forward":      instance.CanIpForward,
 		"deletion_protection": instance.DeletionProtection,
 	}
 
@@ -733,13 +722,13 @@ func handleFunctionsGet(ctx context.Context, args map[string]any) (*mcp.CallTool
 
 	if fn.ServiceConfig != nil {
 		response["service"] = map[string]any{
-			"memory":               fn.ServiceConfig.AvailableMemory,
-			"timeout_seconds":      fn.ServiceConfig.TimeoutSeconds,
-			"max_instance_count":   fn.ServiceConfig.MaxInstanceCount,
-			"min_instance_count":   fn.ServiceConfig.MinInstanceCount,
-			"service_account":      fn.ServiceConfig.ServiceAccountEmail,
-			"ingress_settings":     fn.ServiceConfig.IngressSettings.String(),
-			"vpc_connector":        fn.ServiceConfig.VpcConnector,
+			"memory":             fn.ServiceConfig.AvailableMemory,
+			"timeout_seconds":    fn.ServiceConfig.TimeoutSeconds,
+			"max_instance_count": fn.ServiceConfig.MaxInstanceCount,
+			"min_instance_count": fn.ServiceConfig.MinInstanceCount,
+			"service_account":    fn.ServiceConfig.ServiceAccountEmail,
+			"ingress_settings":   fn.ServiceConfig.IngressSettings.String(),
+			"vpc_connector":      fn.ServiceConfig.VpcConnector,
 		}
 		if fn.ServiceConfig.Uri != "" {
 			response["url"] = fn.ServiceConfig.Uri

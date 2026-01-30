@@ -44,14 +44,14 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 
 Planned MCP servers for broader ecosystem coverage:
 
-- [ ] **`mcp-linear`**: Linear issue tracking (alternative to Jira for modern teams).
-- [ ] **`mcp-notion`**: Notion pages and databases.
-- [ ] **`mcp-sentry`**: Error tracking and issue management.
-- [ ] **`mcp-pagerduty`**: Incident management and on-call scheduling.
+- [x] **`mcp-linear`**: Linear issue tracking (alternative to Jira for modern teams).
+- [x] **`mcp-notion`**: Notion pages and databases.
+- [x] **`mcp-sentry`**: Error tracking and issue management.
+- [x] **`mcp-pagerduty`**: Incident management and on-call scheduling.
 - [x] **`mcp-elasticsearch`**: Full-text search and log analysis.
-- [ ] **`mcp-mongodb`**: MongoDB document queries.
-- [ ] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
-- [ ] **`mcp-terraform`**: Terraform state and plan management.
+- [x] **`mcp-mongodb`**: MongoDB document queries.
+- [x] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
+- [x] **`mcp-terraform`**: Terraform Cloud/Enterprise state and plan management.
 - [x] **`mcp-vault`**: HashiCorp Vault secrets access.
 - [x] **`mcp-aws`**: AWS resource access (S3, Lambda, EC2).
 - [x] **`mcp-gcp`**: Google Cloud Platform (Storage, Compute, Functions).
