@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -82,6 +83,7 @@ type Daemon struct {
 	metadata    *registry.Metadata // Tool metadata for enhanced descriptions
 	watcher     *sync.Watcher      // File watcher for hot reload
 	syncManager *sync.Manager      // Sync manager for profile operations
+	metrics     *Metrics           // Prometheus metrics
 	wg          gosync.WaitGroup
 	done        chan struct{}
 }
@@ -276,6 +278,7 @@ func New(cfg Config) (*Daemon, error) {
 		profiles:    profileMgr,
 		metadata:    toolMetadata,
 		syncManager: syncMgr,
+		metrics:     NewMetrics(),
 		done:        make(chan struct{}),
 	}, nil
 }
@@ -340,6 +343,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// Start idle server reaper
 	go d.idleReaperLoop()
 
+	// Start metrics collector
+	go d.metricsCollectorLoop()
+
 	// Start file watcher for hot reload
 	if d.syncManager != nil {
 		watcher, err := sync.NewWatcher(sync.WatcherConfig{
@@ -388,6 +394,69 @@ func (d *Daemon) idleReaperLoop() {
 				d.logger.Info("reaped idle servers", "servers", reaped, "count", len(reaped))
 			}
 		}
+	}
+}
+
+// metricsCollectorLoop periodically updates metrics that require polling.
+func (d *Daemon) metricsCollectorLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ticker.C:
+			d.collectMetrics()
+		}
+	}
+}
+
+// collectMetrics gathers current state and updates metrics.
+func (d *Daemon) collectMetrics() {
+	// Pool stats
+	stats := d.pool.Stats()
+	d.metrics.UpdatePoolStats("local", stats.IdleConns, stats.ActiveConns)
+
+	if d.hubPool != nil {
+		hubStats := d.hubPool.Stats()
+		d.metrics.UpdatePoolStats("hub", hubStats.IdleConns, hubStats.ActiveConns)
+	}
+
+	// Process count
+	processes := d.procMgr.List()
+	d.metrics.UpdateProcessCount(len(processes))
+
+	// Tool cache
+	d.toolCache.mu.RLock()
+	cacheSize := len(d.toolCache.tools)
+	cacheAge := time.Since(d.toolCache.updatedAt)
+	d.toolCache.mu.RUnlock()
+	d.metrics.UpdateToolCache(cacheSize, cacheAge)
+
+	// Server health from router
+	allHealth := d.router.GetAllHealth()
+	for name, h := range allHealth {
+		if h.Local != nil {
+			d.metrics.UpdateServerHealth(name, "local", h.Local.Healthy, h.Local.AvgLatencyMs)
+		}
+		if h.Hub != nil {
+			d.metrics.UpdateServerHealth(name, "hub", h.Hub.Healthy, h.Hub.AvgLatencyMs)
+		}
+	}
+
+	// Hub connection status
+	if d.hubClient != nil {
+		// Simple check - if hubPool exists and has connections, we're connected
+		connected := false
+		var latency float64
+		if d.hubPool != nil {
+			hubStats := d.hubPool.Stats()
+			if hubStats.IdleConns > 0 || hubStats.ActiveConns > 0 {
+				connected = true
+			}
+		}
+		d.metrics.UpdateHubConnection(connected, latency)
 	}
 }
 
@@ -484,6 +553,16 @@ func (d *Daemon) Stop() error {
 // Wait waits for the daemon to stop.
 func (d *Daemon) Wait() {
 	d.wg.Wait()
+}
+
+// MetricsHandler returns the HTTP handler for the /metrics endpoint.
+func (d *Daemon) MetricsHandler() http.Handler {
+	return d.metrics.Handler()
+}
+
+// Metrics returns the metrics instance for direct access.
+func (d *Daemon) Metrics() *Metrics {
+	return d.metrics
 }
 
 func (d *Daemon) acceptLoop(ctx context.Context) {
@@ -950,6 +1029,11 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 	d.toolCache.updatedAt = time.Now()
 	d.toolCache.mu.Unlock()
 
+	// Update metrics
+	d.metrics.RecordToolCacheRefresh()
+	d.metrics.UpdateToolCache(len(allTools), 0)
+	d.metrics.UpdateProcessCount(len(d.procMgr.List()))
+
 	// Persist manifest in background
 	go func() {
 		if err := d.manifest.Save(); err != nil {
@@ -1276,6 +1360,12 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	}
 
 	start := time.Now()
+	targetStr := target.String()
+
+	// Record metrics
+	d.metrics.RecordRequestStart(serverName)
+	defer d.metrics.RecordRequestEnd(serverName)
+
 	if target == router.TargetLocal {
 		// Local servers are stdio-based and currently use a shared process/transport per server.
 		// Serialize each request/response pair to avoid concurrent reads/writes on the shared transport.
@@ -1288,6 +1378,8 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	if err := conn.Transport.Send(ctx, req); err != nil {
 		conn.Healthy = false
 		d.router.RecordFailure(serverName, target, err)
+		d.metrics.RecordServerFailure(serverName, targetStr, "send")
+		d.metrics.RecordRequest(serverName, params.Method, "error", targetStr, time.Since(start))
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
@@ -1295,11 +1387,16 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	if err != nil {
 		conn.Healthy = false
 		d.router.RecordFailure(serverName, target, err)
+		d.metrics.RecordServerFailure(serverName, targetStr, "recv")
+		d.metrics.RecordRequest(serverName, params.Method, "error", targetStr, time.Since(start))
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
-	latencyMs := float64(time.Since(start).Milliseconds())
+	duration := time.Since(start)
+	latencyMs := float64(duration.Milliseconds())
 	d.router.RecordSuccess(serverName, target, latencyMs)
+	d.metrics.RecordServerSuccess(serverName, targetStr)
+	d.metrics.RecordRequest(serverName, params.Method, "success", targetStr, duration)
 
 	// Track activity for idle reaping (local servers only)
 	if target == router.TargetLocal {

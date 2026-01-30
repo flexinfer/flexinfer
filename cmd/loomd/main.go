@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,13 +19,14 @@ var version = "dev"
 
 func main() {
 	var cfg daemon.Config
+	var metricsAddr string
 
 	rootCmd := &cobra.Command{
 		Use:     "loomd",
 		Short:   "Loom daemon - unified MCP hub management",
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cfg)
+			return run(cfg, metricsAddr)
 		},
 	}
 
@@ -38,13 +41,14 @@ func main() {
 	flags.BoolVar(&cfg.HubPrefer, "hub-prefer", defaultCfg.HubPrefer, "Prefer hub over local servers (hub-capable servers only)")
 	flags.StringSliceVar(&cfg.WarmOnStart, "warm", nil, "Servers to warm up on start")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
+	flags.StringVar(&metricsAddr, "metrics-addr", "", "Address for metrics endpoint (e.g., :9090)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(cfg daemon.Config) error {
+func run(cfg daemon.Config, metricsAddr string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -55,6 +59,34 @@ func run(cfg daemon.Config) error {
 
 	if err := d.Start(ctx); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
+	}
+
+	// Start metrics server if address is provided
+	if metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", d.MetricsHandler())
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK\n"))
+		})
+
+		server := &http.Server{
+			Addr:    metricsAddr,
+			Handler: mux,
+		}
+
+		go func() {
+			slog.Info("metrics server started", "addr", metricsAddr)
+			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("metrics server error", "error", err)
+			}
+		}()
+
+		// Shutdown metrics server on context cancel
+		go func() {
+			<-ctx.Done()
+			server.Shutdown(context.Background())
+		}()
 	}
 
 	// Handle signals

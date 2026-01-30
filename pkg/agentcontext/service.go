@@ -32,6 +32,15 @@ type Service struct {
 	sessions   map[string]*Session
 
 	vectorSize int
+
+	// Workflow orchestration
+	workflowEngine *WorkflowEngine
+
+	// Knowledge graph
+	knowledgeGraph *KnowledgeGraph
+
+	// Memory hierarchy
+	memoryHierarchy *MemoryHierarchy
 }
 
 func NewServiceFromEnv() (*Service, error) {
@@ -59,6 +68,15 @@ func NewServiceFromEnv() (*Service, error) {
 	if exists, size, err := svc.contextQdrant.GetCollectionVectorSize(context.Background()); err == nil && exists && size > 0 {
 		svc.vectorSize = size
 	}
+
+	// Initialize workflow engine
+	svc.workflowEngine = NewWorkflowEngine(nil) // Tool executor set by daemon
+
+	// Initialize knowledge graph
+	svc.knowledgeGraph = NewKnowledgeGraph()
+
+	// Initialize memory hierarchy
+	svc.memoryHierarchy = NewMemoryHierarchy()
 
 	return svc, nil
 }
@@ -2404,4 +2422,1450 @@ func priorityRank(p TaskPriority) int {
 		return 1
 	}
 	return 0
+}
+
+// =========================================================================
+// Workflow Orchestration Handlers
+// =========================================================================
+
+// SetToolExecutor sets the callback for executing MCP tools from workflows
+func (s *Service) SetToolExecutor(executor ToolExecutor) {
+	s.workflowEngine.toolExecutor = executor
+}
+
+// GetWorkflowEngine returns the workflow engine for direct access
+func (s *Service) GetWorkflowEngine() *WorkflowEngine {
+	return s.workflowEngine
+}
+
+// HandleWorkflowDefine registers a new workflow definition
+func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	name := toString(args["name"])
+	if name == "" {
+		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	}
+
+	description := toString(args["description"])
+	namespace := toString(args["namespace"])
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	createdBy := toString(args["created_by"])
+	if createdBy == "" {
+		createdBy = s.cfg.DefaultAgentID
+	}
+
+	// Parse steps
+	stepsRaw, ok := args["steps"].([]any)
+	if !ok || len(stepsRaw) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("steps array is required")), nil
+	}
+
+	steps := make([]WorkflowStep, len(stepsRaw))
+	for i, stepRaw := range stepsRaw {
+		stepMap, ok := stepRaw.(map[string]any)
+		if !ok {
+			return mcp.ErrorResult(fmt.Errorf("step %d must be an object", i)), nil
+		}
+
+		step := WorkflowStep{
+			ID:               toString(stepMap["id"]),
+			Name:             toString(stepMap["name"]),
+			Description:      toString(stepMap["description"]),
+			StepType:         StepType(toString(stepMap["step_type"])),
+			ToolName:         toString(stepMap["tool_name"]),
+			ServerName:       toString(stepMap["server_name"]),
+			RequiresApproval: getBool(stepMap["requires_approval"], false),
+			ApprovalMessage:  toString(stepMap["approval_message"]),
+			Condition:        toString(stepMap["condition"]),
+			MaxRetries:       toInt(stepMap["max_retries"]),
+			RetryDelay:       toInt(stepMap["retry_delay_ms"]),
+			Timeout:          toInt(stepMap["timeout_seconds"]),
+			RollbackStepID:   toString(stepMap["rollback_step_id"]),
+			SubflowID:        toString(stepMap["subflow_id"]),
+		}
+
+		if step.ID == "" {
+			step.ID = fmt.Sprintf("step-%d", i+1)
+		}
+		if step.StepType == "" {
+			step.StepType = StepTypeTool
+		}
+
+		// Parse tool args
+		if toolArgs, ok := stepMap["tool_args"].(map[string]any); ok {
+			step.ToolArgs = toolArgs
+		}
+
+		// Parse depends_on
+		if deps, ok := stepMap["depends_on"].([]any); ok {
+			step.DependsOn = make([]string, len(deps))
+			for j, dep := range deps {
+				step.DependsOn[j] = toString(dep)
+			}
+		}
+
+		steps[i] = step
+	}
+
+	def := &WorkflowDefinition{
+		Name:              name,
+		Description:       description,
+		Namespace:         namespace,
+		CreatedBy:         createdBy,
+		Steps:             steps,
+		RollbackOnFailure: getBool(args["rollback_on_failure"], false),
+		TimeoutSeconds:    toInt(args["timeout_seconds"]),
+	}
+
+	// Parse input schema if provided
+	if schema, ok := args["input_schema"].(map[string]any); ok {
+		def.InputSchema = schema
+	}
+
+	if err := s.workflowEngine.RegisterDefinition(def); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":            true,
+		"definition_id": def.ID,
+		"name":          def.Name,
+		"step_count":    len(def.Steps),
+	})
+}
+
+// HandleWorkflowStart starts a new workflow instance
+func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	definitionID := toString(args["definition_id"])
+	if definitionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("definition_id is required")), nil
+	}
+
+	sessionID := toString(args["session_id"])
+	if sessionID == "" {
+		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	}
+
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+
+	// Parse input
+	var input map[string]any
+	if inputRaw, ok := args["input"].(map[string]any); ok {
+		input = inputRaw
+	}
+
+	wf, err := s.workflowEngine.StartWorkflow(ctx, definitionID, sessionID, agentID, input)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"workflow_id": wf.ID,
+		"name":        wf.Definition.Name,
+		"status":      string(wf.Status),
+		"total_steps": wf.TotalSteps,
+	})
+}
+
+// HandleWorkflowStatus gets the status of a workflow
+func (s *Service) HandleWorkflowStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	workflowID := toString(args["workflow_id"])
+	if workflowID == "" {
+		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	}
+
+	wf, err := s.workflowEngine.GetWorkflow(workflowID)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	progress := 0.0
+	if wf.TotalSteps > 0 {
+		progress = float64(wf.CompletedSteps) / float64(wf.TotalSteps)
+	}
+
+	// Build step summaries
+	stepSummaries := make([]map[string]any, 0, len(wf.StepStates))
+	for _, step := range wf.Definition.Steps {
+		state := wf.StepStates[step.ID]
+		summary := map[string]any{
+			"id":     step.ID,
+			"name":   step.Name,
+			"type":   string(step.StepType),
+			"status": string(state.Status),
+		}
+		if state.Error != "" {
+			summary["error"] = state.Error
+		}
+		if state.ApprovalInfo != nil {
+			summary["approval_status"] = string(state.ApprovalInfo.Status)
+		}
+		stepSummaries = append(stepSummaries, summary)
+	}
+
+	result := map[string]any{
+		"workflow_id":     wf.ID,
+		"name":            wf.Definition.Name,
+		"status":          string(wf.Status),
+		"current_step":    wf.CurrentStep,
+		"progress":        progress,
+		"completed_steps": wf.CompletedSteps,
+		"total_steps":     wf.TotalSteps,
+		"steps":           stepSummaries,
+		"created_at":      wf.CreatedAt.Format(time.RFC3339Nano),
+	}
+
+	if wf.Error != "" {
+		result["error"] = wf.Error
+	}
+	if wf.StartedAt != nil {
+		result["started_at"] = wf.StartedAt.Format(time.RFC3339Nano)
+	}
+	if wf.CompletedAt != nil {
+		result["completed_at"] = wf.CompletedAt.Format(time.RFC3339Nano)
+	}
+
+	// Include output if completed
+	if wf.Status == WorkflowStatusCompleted && wf.Output != nil {
+		result["output"] = wf.Output
+	}
+
+	return mcp.JSONResult(result)
+}
+
+// HandleWorkflowList lists workflows with filtering
+func (s *Service) HandleWorkflowList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+	status := WorkflowStatus(toString(args["status"]))
+
+	workflows := s.workflowEngine.ListWorkflows(sessionID, agentID, status)
+
+	results := make([]map[string]any, len(workflows))
+	for i, wf := range workflows {
+		results[i] = map[string]any{
+			"workflow_id":  wf.ID,
+			"name":         wf.Name,
+			"status":       string(wf.Status),
+			"progress":     wf.Progress,
+			"current_step": wf.CurrentStep,
+			"created_at":   wf.CreatedAt.Format(time.RFC3339Nano),
+		}
+		if wf.Error != "" {
+			results[i]["error"] = wf.Error
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":        true,
+		"count":     len(results),
+		"workflows": results,
+	})
+}
+
+// HandleWorkflowApprove approves a pending step
+func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	workflowID := toString(args["workflow_id"])
+	if workflowID == "" {
+		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	}
+
+	stepID := toString(args["step_id"])
+	if stepID == "" {
+		return mcp.ErrorResult(fmt.Errorf("step_id is required")), nil
+	}
+
+	approverID := toString(args["approver_id"])
+	if approverID == "" {
+		approverID = s.cfg.DefaultAgentID
+	}
+	comment := toString(args["comment"])
+
+	if err := s.workflowEngine.ApproveStep(workflowID, stepID, approverID, comment); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"workflow_id": workflowID,
+		"step_id":     stepID,
+		"approved_by": approverID,
+	})
+}
+
+// HandleWorkflowReject rejects a pending step
+func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	workflowID := toString(args["workflow_id"])
+	if workflowID == "" {
+		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	}
+
+	stepID := toString(args["step_id"])
+	if stepID == "" {
+		return mcp.ErrorResult(fmt.Errorf("step_id is required")), nil
+	}
+
+	rejecterID := toString(args["rejecter_id"])
+	if rejecterID == "" {
+		rejecterID = s.cfg.DefaultAgentID
+	}
+	comment := toString(args["comment"])
+
+	if err := s.workflowEngine.RejectStep(workflowID, stepID, rejecterID, comment); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"workflow_id": workflowID,
+		"step_id":     stepID,
+		"rejected_by": rejecterID,
+	})
+}
+
+// HandleWorkflowCancel cancels a running workflow
+func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	workflowID := toString(args["workflow_id"])
+	if workflowID == "" {
+		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	}
+
+	reason := toString(args["reason"])
+	if reason == "" {
+		reason = "cancelled by user"
+	}
+
+	if err := s.workflowEngine.CancelWorkflow(workflowID, reason); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"workflow_id": workflowID,
+		"reason":      reason,
+	})
+}
+
+// HandleWorkflowEvents gets events for a workflow
+func (s *Service) HandleWorkflowEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	workflowID := toString(args["workflow_id"])
+	if workflowID == "" {
+		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	}
+
+	events, err := s.workflowEngine.GetEvents(workflowID)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	results := make([]map[string]any, len(events))
+	for i, e := range events {
+		results[i] = map[string]any{
+			"id":         e.ID,
+			"event_type": e.EventType,
+			"timestamp":  e.Timestamp.Format(time.RFC3339Nano),
+		}
+		if e.StepID != "" {
+			results[i]["step_id"] = e.StepID
+		}
+		if e.Details != nil {
+			results[i]["details"] = e.Details
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"workflow_id": workflowID,
+		"count":       len(results),
+		"events":      results,
+	})
+}
+
+// HandleWorkflowDefinitionList lists workflow definitions
+func (s *Service) HandleWorkflowDefinitionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	namespace := toString(args["namespace"])
+
+	definitions := s.workflowEngine.ListDefinitions(namespace)
+
+	results := make([]map[string]any, len(definitions))
+	for i, def := range definitions {
+		results[i] = map[string]any{
+			"id":          def.ID,
+			"name":        def.Name,
+			"description": def.Description,
+			"namespace":   def.Namespace,
+			"step_count":  len(def.Steps),
+			"created_by":  def.CreatedBy,
+			"created_at":  def.CreatedAt.Format(time.RFC3339Nano),
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"count":       len(results),
+		"definitions": results,
+	})
+}
+
+// =========================================================================
+// Knowledge Graph Handlers
+// =========================================================================
+
+// GetKnowledgeGraph returns the knowledge graph for direct access
+func (s *Service) GetKnowledgeGraph() *KnowledgeGraph {
+	return s.knowledgeGraph
+}
+
+// HandleEntityAdd adds entities to the knowledge graph
+func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+
+	entitiesRaw, ok := args["entities"].([]any)
+	if !ok || len(entitiesRaw) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("entities array is required")), nil
+	}
+
+	var addedIDs []string
+	for i, entityRaw := range entitiesRaw {
+		entityMap, ok := entityRaw.(map[string]any)
+		if !ok {
+			return mcp.ErrorResult(fmt.Errorf("entity %d must be an object", i)), nil
+		}
+
+		entity := &Entity{
+			ID:          toString(entityMap["id"]),
+			Type:        EntityType(toString(entityMap["type"])),
+			Name:        toString(entityMap["name"]),
+			Description: toString(entityMap["description"]),
+			Namespace:   toString(entityMap["namespace"]),
+			FilePath:    toString(entityMap["file_path"]),
+			LineStart:   toInt(entityMap["line_start"]),
+			LineEnd:     toInt(entityMap["line_end"]),
+			Language:    toString(entityMap["language"]),
+			Signature:   toString(entityMap["signature"]),
+			SessionID:   sessionID,
+			AgentID:     agentID,
+		}
+
+		if entity.Namespace == "" {
+			entity.Namespace = s.cfg.DefaultNamespace
+		}
+
+		// Parse properties
+		if props, ok := entityMap["properties"].(map[string]any); ok {
+			entity.Properties = props
+		}
+
+		// Parse tags
+		if tags, ok := entityMap["tags"].([]any); ok {
+			for _, t := range tags {
+				if ts := toString(t); ts != "" {
+					entity.Tags = append(entity.Tags, ts)
+				}
+			}
+		}
+
+		if err := s.knowledgeGraph.AddEntity(entity); err != nil {
+			return mcp.ErrorResult(fmt.Errorf("failed to add entity %d: %w", i, err)), nil
+		}
+
+		addedIDs = append(addedIDs, entity.ID)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":         true,
+		"count":      len(addedIDs),
+		"entity_ids": addedIDs,
+	})
+}
+
+// HandleEntityGet retrieves entities by ID
+func (s *Service) HandleEntityGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	entityIDs := toStringSlice(args["entity_ids"])
+	if len(entityIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("entity_ids is required")), nil
+	}
+
+	var entities []map[string]any
+	for _, id := range entityIDs {
+		entity, err := s.knowledgeGraph.GetEntity(id)
+		if err != nil {
+			continue // Skip not found
+		}
+		entities = append(entities, entityToMap(entity))
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"count":    len(entities),
+		"entities": entities,
+	})
+}
+
+// HandleEntityFind searches for entities
+func (s *Service) HandleEntityFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	entityType := EntityType(toString(args["type"]))
+	namespace := toString(args["namespace"])
+	namePattern := toString(args["name_pattern"])
+	limit := toInt(args["limit"])
+	if limit <= 0 {
+		limit = 50
+	}
+
+	entities := s.knowledgeGraph.FindEntities(entityType, namespace, namePattern, limit)
+
+	results := make([]map[string]any, len(entities))
+	for i, e := range entities {
+		results[i] = entityToMap(e)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"count":    len(results),
+		"entities": results,
+	})
+}
+
+// HandleEntityDelete removes entities
+func (s *Service) HandleEntityDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	entityIDs := toStringSlice(args["entity_ids"])
+	if len(entityIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("entity_ids is required")), nil
+	}
+
+	confirm := getBool(args["confirm"], false)
+	if !confirm {
+		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete entities")), nil
+	}
+
+	var deleted []string
+	for _, id := range entityIDs {
+		if err := s.knowledgeGraph.DeleteEntity(id); err == nil {
+			deleted = append(deleted, id)
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"deleted": deleted,
+	})
+}
+
+// HandleRelationAdd adds relations to the knowledge graph
+func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+
+	relationsRaw, ok := args["relations"].([]any)
+	if !ok || len(relationsRaw) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("relations array is required")), nil
+	}
+
+	var addedIDs []string
+	for i, relRaw := range relationsRaw {
+		relMap, ok := relRaw.(map[string]any)
+		if !ok {
+			return mcp.ErrorResult(fmt.Errorf("relation %d must be an object", i)), nil
+		}
+
+		rel := &Relation{
+			ID:            toString(relMap["id"]),
+			Type:          RelationType(toString(relMap["type"])),
+			SourceID:      toString(relMap["source_id"]),
+			TargetID:      toString(relMap["target_id"]),
+			Weight:        toFloat(relMap["weight"]),
+			Bidirectional: getBool(relMap["bidirectional"], false),
+			Evidence:      toString(relMap["evidence"]),
+			Reasoning:     toString(relMap["reasoning"]),
+			SessionID:     sessionID,
+			AgentID:       agentID,
+		}
+
+		// Parse properties
+		if props, ok := relMap["properties"].(map[string]any); ok {
+			rel.Properties = props
+		}
+
+		if err := s.knowledgeGraph.AddRelation(rel); err != nil {
+			return mcp.ErrorResult(fmt.Errorf("failed to add relation %d: %w", i, err)), nil
+		}
+
+		addedIDs = append(addedIDs, rel.ID)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":           true,
+		"count":        len(addedIDs),
+		"relation_ids": addedIDs,
+	})
+}
+
+// HandleRelationGet gets relations for an entity
+func (s *Service) HandleRelationGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	entityID := toString(args["entity_id"])
+	if entityID == "" {
+		return mcp.ErrorResult(fmt.Errorf("entity_id is required")), nil
+	}
+
+	outgoing := getBool(args["outgoing"], true)
+	incoming := getBool(args["incoming"], true)
+
+	var relTypes []RelationType
+	if types, ok := args["relation_types"].([]any); ok {
+		for _, t := range types {
+			if ts := toString(t); ts != "" {
+				relTypes = append(relTypes, RelationType(ts))
+			}
+		}
+	}
+
+	relations := s.knowledgeGraph.GetEntityRelations(entityID, relTypes, outgoing, incoming)
+
+	results := make([]map[string]any, len(relations))
+	for i, r := range relations {
+		results[i] = relationToMap(r)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":        true,
+		"count":     len(results),
+		"relations": results,
+	})
+}
+
+// HandleRelationDelete removes relations
+func (s *Service) HandleRelationDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	relationIDs := toStringSlice(args["relation_ids"])
+	if len(relationIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("relation_ids is required")), nil
+	}
+
+	confirm := getBool(args["confirm"], false)
+	if !confirm {
+		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete relations")), nil
+	}
+
+	var deleted []string
+	for _, id := range relationIDs {
+		if err := s.knowledgeGraph.DeleteRelation(id); err == nil {
+			deleted = append(deleted, id)
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"deleted": deleted,
+	})
+}
+
+// HandleGraphQuery executes a graph query
+func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	query := GraphQuery{
+		Pattern:           toString(args["pattern"]),
+		EntityID:          toString(args["entity_id"]),
+		Namespace:         toString(args["namespace"]),
+		SessionID:         toString(args["session_id"]),
+		AgentID:           toString(args["agent_id"]),
+		MaxDepth:          toInt(args["max_depth"]),
+		Bidirectional:     getBool(args["bidirectional"], false),
+		Limit:             toInt(args["limit"]),
+		IncludeProperties: getBool(args["include_properties"], true),
+	}
+
+	// Parse entity types
+	if types, ok := args["source_types"].([]any); ok {
+		for _, t := range types {
+			if ts := toString(t); ts != "" {
+				query.SourceTypes = append(query.SourceTypes, EntityType(ts))
+			}
+		}
+	}
+	if types, ok := args["target_types"].([]any); ok {
+		for _, t := range types {
+			if ts := toString(t); ts != "" {
+				query.TargetTypes = append(query.TargetTypes, EntityType(ts))
+			}
+		}
+	}
+
+	// Parse relation types
+	if types, ok := args["relation_types"].([]any); ok {
+		for _, t := range types {
+			if ts := toString(t); ts != "" {
+				query.RelationTypes = append(query.RelationTypes, RelationType(ts))
+			}
+		}
+	}
+
+	result, err := s.knowledgeGraph.Query(query)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	entities := make([]map[string]any, len(result.Entities))
+	for i, e := range result.Entities {
+		entities[i] = entityToMap(&e)
+	}
+
+	relations := make([]map[string]any, len(result.Relations))
+	for i, r := range result.Relations {
+		relations[i] = relationToMap(&r)
+	}
+
+	paths := make([]map[string]any, len(result.Paths))
+	for i, p := range result.Paths {
+		paths[i] = map[string]any{
+			"nodes":  p.Nodes,
+			"edges":  p.Edges,
+			"length": p.Length,
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":             true,
+		"entity_count":   len(entities),
+		"relation_count": len(relations),
+		"entities":       entities,
+		"relations":      relations,
+		"paths":          paths,
+	})
+}
+
+// HandleFindPath finds a path between two entities
+func (s *Service) HandleFindPath(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sourceID := toString(args["source_id"])
+	targetID := toString(args["target_id"])
+	if sourceID == "" || targetID == "" {
+		return mcp.ErrorResult(fmt.Errorf("source_id and target_id are required")), nil
+	}
+
+	maxDepth := toInt(args["max_depth"])
+	if maxDepth <= 0 {
+		maxDepth = 5
+	}
+
+	var relTypes []RelationType
+	if types, ok := args["relation_types"].([]any); ok {
+		for _, t := range types {
+			if ts := toString(t); ts != "" {
+				relTypes = append(relTypes, RelationType(ts))
+			}
+		}
+	}
+
+	path, err := s.knowledgeGraph.FindPath(sourceID, targetID, maxDepth, relTypes)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":     true,
+		"path":   path.Nodes,
+		"edges":  path.Edges,
+		"length": path.Length,
+	})
+}
+
+// HandleReasoningChainAdd adds a reasoning chain
+func (s *Service) HandleReasoningChainAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+
+	query := toString(args["query"])
+	if query == "" {
+		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
+	}
+
+	chain := &ReasoningChain{
+		Query:      query,
+		Conclusion: toString(args["conclusion"]),
+		Confidence: toFloat(args["confidence"]),
+		SessionID:  sessionID,
+		AgentID:    agentID,
+	}
+
+	// Parse steps
+	if stepsRaw, ok := args["steps"].([]any); ok {
+		for i, stepRaw := range stepsRaw {
+			stepMap, ok := stepRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			step := ReasoningStep{
+				StepNumber:  i + 1,
+				Description: toString(stepMap["description"]),
+				Conclusion:  toString(stepMap["conclusion"]),
+				Confidence:  toFloat(stepMap["confidence"]),
+				EntityIDs:   toStringSlice(stepMap["entity_ids"]),
+				RelationIDs: toStringSlice(stepMap["relation_ids"]),
+			}
+			chain.Steps = append(chain.Steps, step)
+		}
+	}
+
+	if err := s.knowledgeGraph.AddReasoningChain(chain); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"chain_id": chain.ID,
+	})
+}
+
+// HandleReasoningChainGet retrieves a reasoning chain
+func (s *Service) HandleReasoningChainGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	chainID := toString(args["chain_id"])
+	if chainID == "" {
+		return mcp.ErrorResult(fmt.Errorf("chain_id is required")), nil
+	}
+
+	chain, err := s.knowledgeGraph.GetReasoningChain(chainID)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	steps := make([]map[string]any, len(chain.Steps))
+	for i, step := range chain.Steps {
+		steps[i] = map[string]any{
+			"step_number":  step.StepNumber,
+			"description":  step.Description,
+			"conclusion":   step.Conclusion,
+			"confidence":   step.Confidence,
+			"entity_ids":   step.EntityIDs,
+			"relation_ids": step.RelationIDs,
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":         true,
+		"chain_id":   chain.ID,
+		"query":      chain.Query,
+		"steps":      steps,
+		"conclusion": chain.Conclusion,
+		"confidence": chain.Confidence,
+		"created_at": chain.CreatedAt.Format(time.RFC3339Nano),
+	})
+}
+
+// HandleReasoningChainList lists reasoning chains
+func (s *Service) HandleReasoningChainList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	limit := toInt(args["limit"])
+	if limit <= 0 {
+		limit = 50
+	}
+
+	chains := s.knowledgeGraph.ListReasoningChains(sessionID, agentID, limit)
+
+	results := make([]map[string]any, len(chains))
+	for i, chain := range chains {
+		results[i] = map[string]any{
+			"chain_id":   chain.ID,
+			"query":      chain.Query,
+			"step_count": len(chain.Steps),
+			"conclusion": chain.Conclusion,
+			"confidence": chain.Confidence,
+			"created_at": chain.CreatedAt.Format(time.RFC3339Nano),
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":     true,
+		"count":  len(results),
+		"chains": results,
+	})
+}
+
+// HandleGraphStats returns knowledge graph statistics
+func (s *Service) HandleGraphStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	stats := s.knowledgeGraph.Stats()
+
+	return mcp.JSONResult(map[string]any{
+		"ok":                true,
+		"total_entities":    stats.TotalEntities,
+		"total_relations":   stats.TotalRelations,
+		"entities_by_type":  stats.EntitiesByType,
+		"relations_by_type": stats.RelationsByType,
+		"namespaces":        stats.Namespaces,
+	})
+}
+
+// Helper functions for knowledge graph
+
+func entityToMap(e *Entity) map[string]any {
+	m := map[string]any{
+		"id":          e.ID,
+		"type":        string(e.Type),
+		"name":        e.Name,
+		"description": e.Description,
+		"namespace":   e.Namespace,
+		"created_at":  e.CreatedAt.Format(time.RFC3339Nano),
+		"updated_at":  e.UpdatedAt.Format(time.RFC3339Nano),
+	}
+	if e.FilePath != "" {
+		m["file_path"] = e.FilePath
+	}
+	if e.LineStart > 0 {
+		m["line_start"] = e.LineStart
+	}
+	if e.LineEnd > 0 {
+		m["line_end"] = e.LineEnd
+	}
+	if e.Language != "" {
+		m["language"] = e.Language
+	}
+	if e.Signature != "" {
+		m["signature"] = e.Signature
+	}
+	if e.Properties != nil {
+		m["properties"] = e.Properties
+	}
+	if len(e.Tags) > 0 {
+		m["tags"] = e.Tags
+	}
+	if e.SessionID != "" {
+		m["session_id"] = e.SessionID
+	}
+	if e.AgentID != "" {
+		m["agent_id"] = e.AgentID
+	}
+	return m
+}
+
+func relationToMap(r *Relation) map[string]any {
+	m := map[string]any{
+		"id":         r.ID,
+		"type":       string(r.Type),
+		"source_id":  r.SourceID,
+		"target_id":  r.TargetID,
+		"weight":     r.Weight,
+		"created_at": r.CreatedAt.Format(time.RFC3339Nano),
+	}
+	if r.Bidirectional {
+		m["bidirectional"] = true
+	}
+	if r.Evidence != "" {
+		m["evidence"] = r.Evidence
+	}
+	if r.Reasoning != "" {
+		m["reasoning"] = r.Reasoning
+	}
+	if r.Properties != nil {
+		m["properties"] = r.Properties
+	}
+	if r.SessionID != "" {
+		m["session_id"] = r.SessionID
+	}
+	if r.AgentID != "" {
+		m["agent_id"] = r.AgentID
+	}
+	return m
+}
+
+// =========================================================================
+// Memory Hierarchy Handlers
+// =========================================================================
+
+// GetMemoryHierarchy returns the memory hierarchy for direct access
+func (s *Service) GetMemoryHierarchy() *MemoryHierarchy {
+	return s.memoryHierarchy
+}
+
+// HandleMemoryAdd adds items to the memory hierarchy
+func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	sessionID := toString(args["session_id"])
+	agentID := toString(args["agent_id"])
+	if agentID == "" {
+		agentID = s.cfg.DefaultAgentID
+	}
+	namespace := toString(args["namespace"])
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+
+	itemsRaw, ok := args["items"].([]any)
+	if !ok || len(itemsRaw) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("items array is required")), nil
+	}
+
+	var addedIDs []string
+	for i, itemRaw := range itemsRaw {
+		itemMap, ok := itemRaw.(map[string]any)
+		if !ok {
+			return mcp.ErrorResult(fmt.Errorf("item %d must be an object", i)), nil
+		}
+
+		item := &MemoryItem{
+			ID:         toString(itemMap["id"]),
+			Tier:       MemoryTier(toString(itemMap["tier"])),
+			Importance: ImportanceLevel(toString(itemMap["importance"])),
+			Title:      toString(itemMap["title"]),
+			Content:    toString(itemMap["content"]),
+			Category:   toString(itemMap["category"]),
+			Namespace:  namespace,
+			SessionID:  sessionID,
+			AgentID:    agentID,
+		}
+
+		// Parse tags
+		if tags, ok := itemMap["tags"].([]any); ok {
+			for _, t := range tags {
+				if ts := toString(t); ts != "" {
+					item.Tags = append(item.Tags, ts)
+				}
+			}
+		}
+
+		// Parse metadata
+		if metadata, ok := itemMap["metadata"].(map[string]any); ok {
+			item.Metadata = metadata
+		}
+
+		// Parse related_ids
+		if related, ok := itemMap["related_ids"].([]any); ok {
+			for _, r := range related {
+				if rs := toString(r); rs != "" {
+					item.RelatedIDs = append(item.RelatedIDs, rs)
+				}
+			}
+		}
+
+		if err := s.memoryHierarchy.AddItem(item); err != nil {
+			return mcp.ErrorResult(fmt.Errorf("failed to add item %d: %w", i, err)), nil
+		}
+
+		addedIDs = append(addedIDs, item.ID)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"count":    len(addedIDs),
+		"item_ids": addedIDs,
+	})
+}
+
+// HandleMemoryGet retrieves memory items by ID
+func (s *Service) HandleMemoryGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	itemIDs := toStringSlice(args["item_ids"])
+	if len(itemIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	}
+
+	var items []map[string]any
+	for _, id := range itemIDs {
+		item, err := s.memoryHierarchy.GetItem(id)
+		if err != nil {
+			continue // Skip not found
+		}
+		items = append(items, memoryItemToMap(item))
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":    true,
+		"count": len(items),
+		"items": items,
+	})
+}
+
+// HandleMemoryRecall recalls memories matching criteria
+func (s *Service) HandleMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	req := MemoryRecallRequest{
+		Query:         toString(args["query"]),
+		Namespace:     toString(args["namespace"]),
+		SessionID:     toString(args["session_id"]),
+		AgentID:       toString(args["agent_id"]),
+		TokenBudget:   toInt(args["token_budget"]),
+		Limit:         toInt(args["limit"]),
+		MinImportance: toFloat(args["min_importance"]),
+	}
+
+	// Parse tiers
+	if tiers, ok := args["tiers"].([]any); ok {
+		for _, t := range tiers {
+			if ts := toString(t); ts != "" {
+				req.Tiers = append(req.Tiers, MemoryTier(ts))
+			}
+		}
+	}
+
+	// Parse categories
+	req.Categories = toStringSlice(args["categories"])
+
+	// Parse tags
+	req.Tags = toStringSlice(args["tags"])
+
+	result, err := s.memoryHierarchy.Recall(req)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	items := make([]map[string]any, len(result.Items))
+	for i, item := range result.Items {
+		items[i] = memoryItemToMap(&item)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":           true,
+		"count":        len(items),
+		"items":        items,
+		"by_tier":      result.ByTier,
+		"total_tokens": result.TotalTokens,
+		"truncated":    result.Truncated,
+	})
+}
+
+// HandleMemoryDelete deletes memory items
+func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	itemIDs := toStringSlice(args["item_ids"])
+	if len(itemIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	}
+
+	confirm := getBool(args["confirm"], false)
+	if !confirm {
+		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete items")), nil
+	}
+
+	var deleted []string
+	for _, id := range itemIDs {
+		if err := s.memoryHierarchy.DeleteItem(id); err == nil {
+			deleted = append(deleted, id)
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"deleted": deleted,
+	})
+}
+
+// HandleMemoryPromote promotes items to a higher tier
+func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	itemIDs := toStringSlice(args["item_ids"])
+	if len(itemIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	}
+
+	var promoted []string
+	var errors []string
+	for _, id := range itemIDs {
+		if err := s.memoryHierarchy.PromoteItem(id); err == nil {
+			promoted = append(promoted, id)
+		} else {
+			errors = append(errors, fmt.Sprintf("%s: %v", id, err))
+		}
+	}
+
+	result := map[string]any{
+		"ok":       true,
+		"promoted": promoted,
+	}
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	return mcp.JSONResult(result)
+}
+
+// HandleMemoryDemote demotes items to a lower tier
+func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	itemIDs := toStringSlice(args["item_ids"])
+	if len(itemIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	}
+
+	var demoted []string
+	var errors []string
+	for _, id := range itemIDs {
+		if err := s.memoryHierarchy.DemoteItem(id); err == nil {
+			demoted = append(demoted, id)
+		} else {
+			errors = append(errors, fmt.Sprintf("%s: %v", id, err))
+		}
+	}
+
+	result := map[string]any{
+		"ok":      true,
+		"demoted": demoted,
+	}
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	return mcp.JSONResult(result)
+}
+
+// HandleMemoryCompress compresses items to reduce token usage
+func (s *Service) HandleMemoryCompress(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	// Check if we're compressing specific items or running tier-wide compression
+	itemIDs := toStringSlice(args["item_ids"])
+	tier := MemoryTier(toString(args["tier"]))
+
+	if len(itemIDs) > 0 {
+		// Compress specific items
+		var compressed []string
+		var errors []string
+		for _, id := range itemIDs {
+			if err := s.memoryHierarchy.CompressItem(id); err == nil {
+				compressed = append(compressed, id)
+			} else {
+				errors = append(errors, fmt.Sprintf("%s: %v", id, err))
+			}
+		}
+
+		result := map[string]any{
+			"ok":         true,
+			"compressed": compressed,
+		}
+		if len(errors) > 0 {
+			result["errors"] = errors
+		}
+		return mcp.JSONResult(result)
+	}
+
+	if tier != "" {
+		// Run tier-wide compression
+		job, err := s.memoryHierarchy.RunCompression(tier)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
+		return mcp.JSONResult(map[string]any{
+			"ok":                true,
+			"job_id":            job.ID,
+			"tier":              job.Tier,
+			"item_count":        job.ItemCount,
+			"expired_count":     job.ExpiredCount,
+			"original_tokens":   job.OriginalTokens,
+			"compressed_tokens": job.CompressedTokens,
+			"status":            job.Status,
+		})
+	}
+
+	return mcp.ErrorResult(fmt.Errorf("either item_ids or tier is required")), nil
+}
+
+// HandleMemoryMerge merges multiple items into one
+func (s *Service) HandleMemoryMerge(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	itemIDs := toStringSlice(args["item_ids"])
+	if len(itemIDs) < 2 {
+		return mcp.ErrorResult(fmt.Errorf("at least 2 item_ids are required to merge")), nil
+	}
+
+	newTitle := toString(args["new_title"])
+	if newTitle == "" {
+		newTitle = "Merged Memory"
+	}
+
+	merged, err := s.memoryHierarchy.MergeItems(itemIDs, newTitle)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":              true,
+		"merged_item_id":  merged.ID,
+		"merged_item":     memoryItemToMap(merged),
+		"source_item_ids": itemIDs,
+	})
+}
+
+// HandleMemoryStats returns memory hierarchy statistics
+func (s *Service) HandleMemoryStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	stats := s.memoryHierarchy.Stats()
+
+	return mcp.JSONResult(map[string]any{
+		"ok":                        true,
+		"total_items":               stats.TotalItems,
+		"total_tokens":              stats.TotalTokens,
+		"compression_ratio":         stats.CompressionRatio,
+		"items_added_last_24h":      stats.ItemsAddedLast24h,
+		"items_compressed_last_24h": stats.ItemsCompressedLast24h,
+		"working_memory": map[string]any{
+			"item_count":     stats.WorkingMemory.ItemCount,
+			"token_count":    stats.WorkingMemory.TokenCount,
+			"avg_importance": stats.WorkingMemory.AvgImportance,
+			"by_category":    stats.WorkingMemory.ByCategory,
+			"by_importance":  stats.WorkingMemory.ByImportance,
+		},
+		"short_term_memory": map[string]any{
+			"item_count":     stats.ShortTermMemory.ItemCount,
+			"token_count":    stats.ShortTermMemory.TokenCount,
+			"avg_importance": stats.ShortTermMemory.AvgImportance,
+			"by_category":    stats.ShortTermMemory.ByCategory,
+			"by_importance":  stats.ShortTermMemory.ByImportance,
+		},
+		"long_term_memory": map[string]any{
+			"item_count":     stats.LongTermMemory.ItemCount,
+			"token_count":    stats.LongTermMemory.TokenCount,
+			"avg_importance": stats.LongTermMemory.AvgImportance,
+			"by_category":    stats.LongTermMemory.ByCategory,
+			"by_importance":  stats.LongTermMemory.ByImportance,
+		},
+	})
+}
+
+// HandleMemoryPolicyGet returns retention policy for a tier
+func (s *Service) HandleMemoryPolicyGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	tier := MemoryTier(toString(args["tier"]))
+	if tier == "" {
+		return mcp.ErrorResult(fmt.Errorf("tier is required")), nil
+	}
+
+	policy := s.memoryHierarchy.GetRetentionPolicy(tier)
+	if policy == nil {
+		return mcp.ErrorResult(fmt.Errorf("no policy for tier: %s", tier)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok": true,
+		"policy": map[string]any{
+			"id":                     policy.ID,
+			"name":                   policy.Name,
+			"tier":                   string(policy.Tier),
+			"default_ttl_hours":      policy.DefaultTTL,
+			"compress_after_hours":   policy.CompressAfterHours,
+			"compression_ratio":      policy.CompressionRatio,
+			"merge_threshold":        policy.MergeThreshold,
+			"promotion_threshold":    policy.PromotionThreshold,
+			"demotion_threshold":     policy.DemotionThreshold,
+			"access_count_threshold": policy.AccessCountThreshold,
+			"max_items":              policy.MaxItems,
+			"max_tokens":             policy.MaxTokens,
+			"dedupe_enabled":         policy.DedupeEnabled,
+			"dedupe_similarity":      policy.DedupeSimilarity,
+		},
+	})
+}
+
+// HandleMemoryPolicySet updates retention policy for a tier
+func (s *Service) HandleMemoryPolicySet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	tier := MemoryTier(toString(args["tier"]))
+	if tier == "" {
+		return mcp.ErrorResult(fmt.Errorf("tier is required")), nil
+	}
+
+	// Get existing policy or create new
+	policy := s.memoryHierarchy.GetRetentionPolicy(tier)
+	if policy == nil {
+		policy = &RetentionPolicy{
+			ID:   fmt.Sprintf("custom-%s", tier),
+			Tier: tier,
+		}
+	}
+
+	// Update fields if provided
+	if name := toString(args["name"]); name != "" {
+		policy.Name = name
+	}
+	if ttl := toInt(args["default_ttl_hours"]); ttl > 0 {
+		policy.DefaultTTL = ttl
+	}
+	if compress := toInt(args["compress_after_hours"]); compress > 0 {
+		policy.CompressAfterHours = compress
+	}
+	if ratio := toFloat(args["compression_ratio"]); ratio > 0 {
+		policy.CompressionRatio = ratio
+	}
+	if merge := toFloat(args["merge_threshold"]); merge > 0 {
+		policy.MergeThreshold = merge
+	}
+	if promo := toFloat(args["promotion_threshold"]); promo > 0 {
+		policy.PromotionThreshold = promo
+	}
+	if demo := toFloat(args["demotion_threshold"]); demo > 0 {
+		policy.DemotionThreshold = demo
+	}
+	if access := toInt(args["access_count_threshold"]); access > 0 {
+		policy.AccessCountThreshold = access
+	}
+	if maxItems := toInt(args["max_items"]); maxItems > 0 {
+		policy.MaxItems = maxItems
+	}
+	if maxTokens := toInt(args["max_tokens"]); maxTokens > 0 {
+		policy.MaxTokens = maxTokens
+	}
+	if _, ok := args["dedupe_enabled"]; ok {
+		policy.DedupeEnabled = getBool(args["dedupe_enabled"], true)
+	}
+	if sim := toFloat(args["dedupe_similarity"]); sim > 0 {
+		policy.DedupeSimilarity = sim
+	}
+
+	s.memoryHierarchy.SetRetentionPolicy(policy)
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"tier":    string(tier),
+		"message": "Retention policy updated",
+	})
+}
+
+// Helper function for memory items
+func memoryItemToMap(item *MemoryItem) map[string]any {
+	m := map[string]any{
+		"id":               item.ID,
+		"tier":             string(item.Tier),
+		"status":           string(item.Status),
+		"importance":       string(item.Importance),
+		"importance_score": item.ImportanceScore,
+		"title":            item.Title,
+		"content":          item.Content,
+		"category":         item.Category,
+		"original_tokens":  item.OriginalTokens,
+		"access_count":     item.AccessCount,
+		"created_at":       item.CreatedAt.Format(time.RFC3339Nano),
+		"last_accessed_at": item.LastAccessedAt.Format(time.RFC3339Nano),
+	}
+
+	if item.Summary != "" {
+		m["summary"] = item.Summary
+		m["compressed_tokens"] = item.CompressedTokens
+	}
+	if item.Namespace != "" {
+		m["namespace"] = item.Namespace
+	}
+	if item.SessionID != "" {
+		m["session_id"] = item.SessionID
+	}
+	if item.AgentID != "" {
+		m["agent_id"] = item.AgentID
+	}
+	if len(item.Tags) > 0 {
+		m["tags"] = item.Tags
+	}
+	if item.Metadata != nil {
+		m["metadata"] = item.Metadata
+	}
+	if len(item.RelatedIDs) > 0 {
+		m["related_ids"] = item.RelatedIDs
+	}
+	if item.ExpiresAt != nil {
+		m["expires_at"] = item.ExpiresAt.Format(time.RFC3339Nano)
+	}
+	if item.CompressedAt != nil {
+		m["compressed_at"] = item.CompressedAt.Format(time.RFC3339Nano)
+	}
+
+	return m
 }

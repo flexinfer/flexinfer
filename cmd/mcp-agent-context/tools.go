@@ -848,4 +848,1114 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleEnhancedRecall(ctx, args)
 	})
+
+	// =========================================================================
+	// Workflow Orchestration Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_define",
+		Description: "Define a reusable workflow with steps that can be executed as a DAG with parallel execution, approval gates, and rollback support.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Workflow name.",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Workflow description.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace for the workflow.",
+				},
+				"created_by": map[string]any{
+					"type":        "string",
+					"description": "Agent ID of creator.",
+				},
+				"steps": map[string]any{
+					"type":        "array",
+					"description": "Array of workflow steps.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id": map[string]any{
+								"type":        "string",
+								"description": "Unique step ID (auto-generated if not provided).",
+							},
+							"name": map[string]any{
+								"type":        "string",
+								"description": "Step name.",
+							},
+							"description": map[string]any{
+								"type":        "string",
+								"description": "Step description.",
+							},
+							"step_type": map[string]any{
+								"type":        "string",
+								"enum":        []string{"tool", "approval", "gate", "parallel", "subflow"},
+								"description": "Type of step (default: tool).",
+							},
+							"tool_name": map[string]any{
+								"type":        "string",
+								"description": "MCP tool name (for tool steps).",
+							},
+							"tool_args": map[string]any{
+								"type":        "object",
+								"description": "Arguments for the tool. Use ${input.key} or ${step_id.key} for variable references.",
+							},
+							"server_name": map[string]any{
+								"type":        "string",
+								"description": "MCP server name (for routing).",
+							},
+							"depends_on": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Step IDs this step depends on.",
+							},
+							"requires_approval": map[string]any{
+								"type":        "boolean",
+								"description": "Wait for approval before executing.",
+							},
+							"approval_message": map[string]any{
+								"type":        "string",
+								"description": "Message shown when requesting approval.",
+							},
+							"condition": map[string]any{
+								"type":        "string",
+								"description": "Condition expression for gate steps.",
+							},
+							"max_retries": map[string]any{
+								"type":        "integer",
+								"description": "Maximum retry attempts on failure.",
+							},
+							"retry_delay_ms": map[string]any{
+								"type":        "integer",
+								"description": "Delay between retries in milliseconds.",
+							},
+							"timeout_seconds": map[string]any{
+								"type":        "integer",
+								"description": "Step timeout in seconds.",
+							},
+							"rollback_step_id": map[string]any{
+								"type":        "string",
+								"description": "Step ID to execute on rollback.",
+							},
+							"subflow_id": map[string]any{
+								"type":        "string",
+								"description": "Workflow definition ID (for subflow steps).",
+							},
+						},
+						"required": []string{"name"},
+					},
+				},
+				"input_schema": map[string]any{
+					"type":        "object",
+					"description": "JSON Schema for workflow input validation.",
+				},
+				"rollback_on_failure": map[string]any{
+					"type":        "boolean",
+					"description": "Execute rollback steps on failure (default: false).",
+				},
+				"timeout_seconds": map[string]any{
+					"type":        "integer",
+					"description": "Global workflow timeout.",
+				},
+			},
+			Required: []string{"name", "steps"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowDefine(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_start",
+		Description: "Start a workflow instance from a definition. Returns immediately while workflow executes in background.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"definition_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow definition ID to start.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Agent session ID for context.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID.",
+				},
+				"input": map[string]any{
+					"type":        "object",
+					"description": "Input parameters for the workflow. Referenced via ${input.key} in steps.",
+				},
+			},
+			Required: []string{"definition_id", "session_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowStart(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_status",
+		Description: "Get the current status of a running or completed workflow.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"workflow_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow instance ID.",
+				},
+			},
+			Required: []string{"workflow_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowStatus(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_list",
+		Description: "List workflows with filtering options.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by session ID.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"status": map[string]any{
+					"type":        "string",
+					"enum":        []string{"pending", "running", "paused", "waiting_approval", "completed", "failed", "cancelled", "rolled_back"},
+					"description": "Filter by status.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowList(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_approve",
+		Description: "Approve a workflow step that is waiting for approval.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"workflow_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow instance ID.",
+				},
+				"step_id": map[string]any{
+					"type":        "string",
+					"description": "Step ID to approve.",
+				},
+				"approver_id": map[string]any{
+					"type":        "string",
+					"description": "ID of approver.",
+				},
+				"comment": map[string]any{
+					"type":        "string",
+					"description": "Approval comment.",
+				},
+			},
+			Required: []string{"workflow_id", "step_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowApprove(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_reject",
+		Description: "Reject a workflow step that is waiting for approval, failing the workflow.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"workflow_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow instance ID.",
+				},
+				"step_id": map[string]any{
+					"type":        "string",
+					"description": "Step ID to reject.",
+				},
+				"rejecter_id": map[string]any{
+					"type":        "string",
+					"description": "ID of rejecter.",
+				},
+				"comment": map[string]any{
+					"type":        "string",
+					"description": "Rejection reason.",
+				},
+			},
+			Required: []string{"workflow_id", "step_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowReject(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_cancel",
+		Description: "Cancel a running workflow.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"workflow_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow instance ID.",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Cancellation reason.",
+				},
+			},
+			Required: []string{"workflow_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowCancel(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_events",
+		Description: "Get the event history for a workflow.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"workflow_id": map[string]any{
+					"type":        "string",
+					"description": "Workflow instance ID.",
+				},
+			},
+			Required: []string{"workflow_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowEvents(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_workflow_definitions",
+		Description: "List available workflow definitions.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorkflowDefinitionList(ctx, args)
+	})
+
+	// =========================================================================
+	// Knowledge Graph Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_entity_add",
+		Description: "Add entities to the knowledge graph. Entities represent code elements, concepts, decisions, or other important items.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID for provenance.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID for provenance.",
+				},
+				"entities": map[string]any{
+					"type":        "array",
+					"description": "Array of entities to add.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"type": map[string]any{
+								"type":        "string",
+								"enum":        []string{"file", "function", "class", "module", "variable", "concept", "decision", "issue", "pr", "commit", "agent", "session", "task", "error", "service", "api", "database", "config"},
+								"description": "Entity type.",
+							},
+							"name": map[string]any{
+								"type":        "string",
+								"description": "Entity name.",
+							},
+							"description": map[string]any{
+								"type":        "string",
+								"description": "Entity description.",
+							},
+							"namespace": map[string]any{
+								"type":        "string",
+								"description": "Namespace for grouping.",
+							},
+							"file_path": map[string]any{
+								"type":        "string",
+								"description": "File path (for code entities).",
+							},
+							"line_start": map[string]any{
+								"type":        "integer",
+								"description": "Starting line number.",
+							},
+							"line_end": map[string]any{
+								"type":        "integer",
+								"description": "Ending line number.",
+							},
+							"language": map[string]any{
+								"type":        "string",
+								"description": "Programming language.",
+							},
+							"signature": map[string]any{
+								"type":        "string",
+								"description": "Function/method signature.",
+							},
+							"properties": map[string]any{
+								"type":        "object",
+								"description": "Additional properties.",
+							},
+							"tags": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Tags for filtering.",
+							},
+						},
+						"required": []string{"type", "name"},
+					},
+				},
+			},
+			Required: []string{"entities"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEntityAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_entity_get",
+		Description: "Retrieve entities by ID.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"entity_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Entity IDs to retrieve.",
+				},
+			},
+			Required: []string{"entity_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEntityGet(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_entity_find",
+		Description: "Search for entities by type, namespace, or name pattern.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"file", "function", "class", "module", "variable", "concept", "decision", "issue", "pr", "commit", "agent", "session", "task", "error", "service", "api", "database", "config"},
+					"description": "Filter by entity type.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+				"name_pattern": map[string]any{
+					"type":        "string",
+					"description": "Regex pattern to match entity names.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum results (default: 50).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEntityFind(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_entity_delete",
+		Description: "Delete entities and their relations from the graph.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"entity_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Entity IDs to delete.",
+				},
+				"confirm": map[string]any{
+					"type":        "boolean",
+					"description": "Must be true to confirm deletion.",
+				},
+			},
+			Required: []string{"entity_ids", "confirm"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEntityDelete(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_relation_add",
+		Description: "Add relations between entities in the knowledge graph.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID for provenance.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID for provenance.",
+				},
+				"relations": map[string]any{
+					"type":        "array",
+					"description": "Array of relations to add.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"type": map[string]any{
+								"type":        "string",
+								"enum":        []string{"depends_on", "implements", "extends", "calls", "imports", "defines", "contains", "references", "overrides", "caused", "resolved", "blocked_by", "triggered", "created_by", "modified_by", "discovered_by", "assigned_to", "related_to", "similar_to", "opposite_of", "part_of", "version_of", "precedes", "follows", "occurred_with"},
+								"description": "Relation type.",
+							},
+							"source_id": map[string]any{
+								"type":        "string",
+								"description": "Source entity ID.",
+							},
+							"target_id": map[string]any{
+								"type":        "string",
+								"description": "Target entity ID.",
+							},
+							"weight": map[string]any{
+								"type":        "number",
+								"description": "Relation strength/confidence (default: 1.0).",
+							},
+							"bidirectional": map[string]any{
+								"type":        "boolean",
+								"description": "Create reverse relation too.",
+							},
+							"evidence": map[string]any{
+								"type":        "string",
+								"description": "Evidence supporting this relation.",
+							},
+							"reasoning": map[string]any{
+								"type":        "string",
+								"description": "Reasoning for this relation.",
+							},
+							"properties": map[string]any{
+								"type":        "object",
+								"description": "Additional properties.",
+							},
+						},
+						"required": []string{"type", "source_id", "target_id"},
+					},
+				},
+			},
+			Required: []string{"relations"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleRelationAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_relation_get",
+		Description: "Get relations for an entity.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"entity_id": map[string]any{
+					"type":        "string",
+					"description": "Entity ID to get relations for.",
+				},
+				"relation_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by relation types.",
+				},
+				"outgoing": map[string]any{
+					"type":        "boolean",
+					"description": "Include outgoing relations (default: true).",
+				},
+				"incoming": map[string]any{
+					"type":        "boolean",
+					"description": "Include incoming relations (default: true).",
+				},
+			},
+			Required: []string{"entity_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleRelationGet(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_relation_delete",
+		Description: "Delete relations from the graph.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"relation_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Relation IDs to delete.",
+				},
+				"confirm": map[string]any{
+					"type":        "boolean",
+					"description": "Must be true to confirm deletion.",
+				},
+			},
+			Required: []string{"relation_ids", "confirm"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleRelationDelete(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_graph_query",
+		Description: "Query the knowledge graph. Supports pattern matching like (file)-[calls]->(function) or traversal from an entity.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"pattern": map[string]any{
+					"type":        "string",
+					"description": "Pattern to match: (type)-[relation]->(type). Types and relations are optional.",
+				},
+				"entity_id": map[string]any{
+					"type":        "string",
+					"description": "Start traversal from this entity.",
+				},
+				"source_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter source entity types.",
+				},
+				"target_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter target entity types.",
+				},
+				"relation_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter relation types.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+				"max_depth": map[string]any{
+					"type":        "integer",
+					"description": "Maximum traversal depth (default: 2).",
+				},
+				"bidirectional": map[string]any{
+					"type":        "boolean",
+					"description": "Follow relations in both directions.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum results.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleGraphQuery(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_graph_find_path",
+		Description: "Find a path between two entities in the knowledge graph.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"source_id": map[string]any{
+					"type":        "string",
+					"description": "Source entity ID.",
+				},
+				"target_id": map[string]any{
+					"type":        "string",
+					"description": "Target entity ID.",
+				},
+				"max_depth": map[string]any{
+					"type":        "integer",
+					"description": "Maximum path length (default: 5).",
+				},
+				"relation_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by relation types.",
+				},
+			},
+			Required: []string{"source_id", "target_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFindPath(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_reasoning_chain_add",
+		Description: "Store a reasoning chain documenting how conclusions were reached using the knowledge graph.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID.",
+				},
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The question being answered.",
+				},
+				"steps": map[string]any{
+					"type":        "array",
+					"description": "Reasoning steps.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"description": map[string]any{
+								"type":        "string",
+								"description": "Step description.",
+							},
+							"entity_ids": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Entities involved in this step.",
+							},
+							"relation_ids": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Relations involved in this step.",
+							},
+							"conclusion": map[string]any{
+								"type":        "string",
+								"description": "Step conclusion.",
+							},
+							"confidence": map[string]any{
+								"type":        "number",
+								"description": "Confidence (0-1).",
+							},
+						},
+					},
+				},
+				"conclusion": map[string]any{
+					"type":        "string",
+					"description": "Final conclusion.",
+				},
+				"confidence": map[string]any{
+					"type":        "number",
+					"description": "Overall confidence (0-1).",
+				},
+			},
+			Required: []string{"query"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleReasoningChainAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_reasoning_chain_get",
+		Description: "Retrieve a reasoning chain by ID.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"chain_id": map[string]any{
+					"type":        "string",
+					"description": "Reasoning chain ID.",
+				},
+			},
+			Required: []string{"chain_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleReasoningChainGet(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_reasoning_chain_list",
+		Description: "List reasoning chains.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by session ID.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum results (default: 50).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleReasoningChainList(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_graph_stats",
+		Description: "Get statistics about the knowledge graph.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleGraphStats(ctx, args)
+	})
+
+	// Memory Hierarchy Tools
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_add",
+		Description: "Add items to the tiered memory hierarchy. Items start in working memory and can be promoted to short-term or long-term memory.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID for the memories.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Namespace for organization.",
+				},
+				"items": map[string]any{
+					"type":        "array",
+					"description": "Memory items to add.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"title": map[string]any{
+								"type":        "string",
+								"description": "Short title for the memory.",
+							},
+							"content": map[string]any{
+								"type":        "string",
+								"description": "Full content of the memory.",
+							},
+							"tier": map[string]any{
+								"type":        "string",
+								"enum":        []string{"working", "short_term", "long_term"},
+								"description": "Memory tier (default: working).",
+							},
+							"importance": map[string]any{
+								"type":        "string",
+								"enum":        []string{"low", "medium", "high", "critical"},
+								"description": "Importance level (default: medium).",
+							},
+							"category": map[string]any{
+								"type":        "string",
+								"description": "Category for grouping (e.g., 'decision', 'insight', 'task').",
+							},
+							"tags": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Tags for filtering.",
+							},
+							"metadata": map[string]any{
+								"type":        "object",
+								"description": "Additional metadata.",
+							},
+							"related_ids": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "Related memory item IDs.",
+							},
+						},
+						"required": []string{"title", "content"},
+					},
+				},
+			},
+			Required: []string{"items"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryAdd(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_get",
+		Description: "Retrieve memory items by ID.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Memory item IDs to retrieve.",
+				},
+			},
+			Required: []string{"item_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryGet(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_recall",
+		Description: "Recall memories matching criteria. Returns most relevant items within token budget, prioritized by importance and recency.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Search query (matches title and content).",
+				},
+				"tiers": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Tiers to search: working, short_term, long_term (default: all).",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by session.",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent.",
+				},
+				"categories": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by categories.",
+				},
+				"tags": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by tags.",
+				},
+				"min_importance": map[string]any{
+					"type":        "number",
+					"description": "Minimum importance score (0-1).",
+				},
+				"token_budget": map[string]any{
+					"type":        "integer",
+					"description": "Maximum tokens to return (default: 8000).",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum items (default: 100).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryRecall(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_delete",
+		Description: "Delete memory items.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Memory item IDs to delete.",
+				},
+				"confirm": map[string]any{
+					"type":        "boolean",
+					"description": "Must be true to confirm deletion.",
+				},
+			},
+			Required: []string{"item_ids", "confirm"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryDelete(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_promote",
+		Description: "Promote memory items to a higher tier (working -> short_term -> long_term).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Memory item IDs to promote.",
+				},
+			},
+			Required: []string{"item_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryPromote(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_demote",
+		Description: "Demote memory items to a lower tier (long_term -> short_term -> working).",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Memory item IDs to demote.",
+				},
+			},
+			Required: []string{"item_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryDemote(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_compress",
+		Description: "Compress memory items to reduce token usage. Can compress specific items or run tier-wide compression.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Specific item IDs to compress.",
+				},
+				"tier": map[string]any{
+					"type":        "string",
+					"enum":        []string{"working", "short_term", "long_term"},
+					"description": "Run compression on entire tier.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryCompress(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_merge",
+		Description: "Merge multiple memory items into a single item. Original items are archived.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"item_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "IDs of items to merge (minimum 2).",
+				},
+				"new_title": map[string]any{
+					"type":        "string",
+					"description": "Title for the merged item.",
+				},
+			},
+			Required: []string{"item_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryMerge(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_stats",
+		Description: "Get statistics about the memory hierarchy.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryStats(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_policy_get",
+		Description: "Get the retention policy for a memory tier.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"tier": map[string]any{
+					"type":        "string",
+					"enum":        []string{"working", "short_term", "long_term"},
+					"description": "Memory tier.",
+				},
+			},
+			Required: []string{"tier"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryPolicyGet(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_policy_set",
+		Description: "Update the retention policy for a memory tier.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"tier": map[string]any{
+					"type":        "string",
+					"enum":        []string{"working", "short_term", "long_term"},
+					"description": "Memory tier to configure.",
+				},
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Policy name.",
+				},
+				"default_ttl_hours": map[string]any{
+					"type":        "integer",
+					"description": "Default time-to-live in hours (0 = no expiry).",
+				},
+				"compress_after_hours": map[string]any{
+					"type":        "integer",
+					"description": "Hours before auto-compression.",
+				},
+				"compression_ratio": map[string]any{
+					"type":        "number",
+					"description": "Target compression ratio (0-1).",
+				},
+				"merge_threshold": map[string]any{
+					"type":        "number",
+					"description": "Similarity threshold for auto-merge (0-1).",
+				},
+				"promotion_threshold": map[string]any{
+					"type":        "number",
+					"description": "Importance threshold for promotion (0-1).",
+				},
+				"demotion_threshold": map[string]any{
+					"type":        "number",
+					"description": "Importance threshold for demotion (0-1).",
+				},
+				"access_count_threshold": map[string]any{
+					"type":        "integer",
+					"description": "Access count for auto-promotion.",
+				},
+				"max_items": map[string]any{
+					"type":        "integer",
+					"description": "Maximum items in tier.",
+				},
+				"max_tokens": map[string]any{
+					"type":        "integer",
+					"description": "Maximum tokens in tier.",
+				},
+				"dedupe_enabled": map[string]any{
+					"type":        "boolean",
+					"description": "Enable deduplication.",
+				},
+				"dedupe_similarity": map[string]any{
+					"type":        "number",
+					"description": "Similarity threshold for deduplication (0-1).",
+				},
+			},
+			Required: []string{"tier"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryPolicySet(ctx, args)
+	})
 }
