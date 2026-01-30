@@ -51,6 +51,12 @@ func (b *LlamaCppBackend) Port() int32 {
 	return 8080
 }
 
+// Command returns the llama-server binary path.
+// Required for custom images that use tini as entrypoint (e.g., Harbor ROCm builds).
+func (b *LlamaCppBackend) Command() []string {
+	return []string{"/opt/src/llama.cpp/build/bin/llama-server"}
+}
+
 func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 	args := []string{
 		"--host", "0.0.0.0",
