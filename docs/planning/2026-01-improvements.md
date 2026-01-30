@@ -2,6 +2,7 @@
 
 > **Status:** Completed
 > **Implemented:** 2026-01-28
+> **Updated:** 2026-01-29 (additional test coverage, new server deployments)
 
 ## Summary
 
@@ -134,6 +135,20 @@ Tests for:
 - `Manager.List` deduplication across backends
 - `EnvBackend` read-only behavior
 - Error types (`ErrNotFound`, `ErrReadOnly`)
+- `FileBackend` persistence, multiple keys, basic operations
+- `Manager` with empty backends and all-read-only backends
+
+**Coverage improved:** 18.3% → 39.2%
+
+### 4.3 Extended pkg/agentcontext Tests
+
+Additional tests added:
+- Session/Entry payload conversions
+- Filter helper functions (`toString`, `toInt`, `toStringSlice`)
+- Constants and type definitions
+- Edge cases for nil/minimal payloads
+
+**Coverage improved:** 6.1% → 8.8%
 
 ---
 
@@ -156,10 +171,26 @@ go test -v ./pkg/secrets/...
 
 ## Commits
 
-The changes should be committed in logical phases:
+The changes were committed in logical phases:
 
 1. `fix(security): add pathsec utility and harden filesystem/morph servers`
 2. `fix: handle ignored errors in crypto, zep, and agentcontext`
 3. `fix: add client pooling to youtube, zep, and morph-fast-apply`
 4. `test: add coverage for agentcontext and secrets packages`
 5. `docs: add planning documentation`
+
+---
+
+## Additional Work (2026-01-29)
+
+### New MCP Server Deployments
+
+Added deployment manifests to loom-hub for:
+
+**mcp-github-actions** (`platform/gitops/k3s/loom-hub/servers/github-actions/`)
+- Tools: list_workflows, get_workflow, list_workflow_runs, get_workflow_run, list_workflow_jobs, get_job_logs, list_artifacts
+
+**mcp-slack** (`platform/gitops/k3s/loom-hub/servers/slack/`)
+- Tools: search_messages, list_channels, get_channel_history, list_users, get_user_info, get_channel_info, get_permalink
+
+Commit: `feat(loom-hub): add mcp-github-actions and mcp-slack servers`
