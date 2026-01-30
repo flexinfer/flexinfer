@@ -21,6 +21,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/internal/routing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/singleflight"
@@ -193,6 +194,11 @@ type Proxy struct {
 	queueTimeout       time.Duration // Default: 60s (how long request can wait in queue)
 	coldStartTimeout   time.Duration // Default: 60s (how long to wait for model to become ready)
 	connectionTracking sync.Map      // map[string]*int64 for tracking active connections per model
+
+	// Routing for multi-replica models
+	router             *routing.Router
+	routingEnabled     bool     // Enable advanced routing (session affinity, prefix-based)
+	podConnectionCount sync.Map // map[string]*int64 for tracking connections per pod address
 }
 
 func main() {
@@ -238,6 +244,7 @@ func main() {
 	maxQueueSize := getEnvInt("PROXY_MAX_QUEUE_SIZE", 100)
 	queueTimeout := getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second)
 	coldStartTimeout := getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second)
+	routingEnabled := getEnvBool("PROXY_ROUTING_ENABLED", true)
 
 	p := &Proxy{
 		client:           k8sClient,
@@ -245,10 +252,17 @@ func main() {
 		maxQueueSize:     maxQueueSize,
 		queueTimeout:     queueTimeout,
 		coldStartTimeout: coldStartTimeout,
+		router:           routing.NewRouter(),
+		routingEnabled:   routingEnabled,
 	}
 
 	// Start queue cleanup goroutine
 	go p.cleanupStaleQueues()
+
+	// Start endpoint watcher for routing
+	if routingEnabled {
+		go p.watchEndpoints(context.Background())
+	}
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/v1/models", p.handleModels)
@@ -287,6 +301,19 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 	if val := os.Getenv(key); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
 			return d
+		}
+	}
+	return defaultVal
+}
+
+// getEnvBool returns a boolean from environment variable or default
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		switch strings.ToLower(val) {
+		case "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
 		}
 	}
 	return defaultVal
@@ -880,6 +907,29 @@ func (p *Proxy) GetActiveConnections(modelName string) int64 {
 	return 0
 }
 
+// incrementPodConnections atomically increments the connection count for a pod
+func (p *Proxy) incrementPodConnections(podAddr string) {
+	val, _ := p.podConnectionCount.LoadOrStore(podAddr, new(int64))
+	count := val.(*int64)
+	atomic.AddInt64(count, 1)
+}
+
+// decrementPodConnections atomically decrements the connection count for a pod
+func (p *Proxy) decrementPodConnections(podAddr string) {
+	if val, ok := p.podConnectionCount.Load(podAddr); ok {
+		count := val.(*int64)
+		atomic.AddInt64(count, -1)
+	}
+}
+
+// getPodConnections returns the current connection count for a pod address
+func (p *Proxy) getPodConnections(podAddr string) int64 {
+	if val, ok := p.podConnectionCount.Load(podAddr); ok {
+		return atomic.LoadInt64(val.(*int64))
+	}
+	return 0
+}
+
 // cleanupStaleQueues periodically removes stale queues
 func (p *Proxy) cleanupStaleQueues() {
 	ticker := time.NewTicker(30 * time.Second)
@@ -944,36 +994,73 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 }
 
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName string) {
+	ctx := r.Context()
+
 	// Get the backend port for this model (defaults to 8000 if not found)
-	port := p.getBackendPort(r.Context(), modelName)
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", modelName, p.namespace, port)
+	port := p.getBackendPort(ctx, modelName)
 
 	// Get the actual backend model name (e.g., HuggingFace model ID)
-	backendModelName := p.getBackendModelName(r.Context(), modelName)
+	backendModelName := p.getBackendModelName(ctx, modelName)
 
-	// Rewrite model name in request body if needed
-	// Check for POST/PUT with JSON body (ContentLength may be -1 for chunked encoding)
-	if backendModelName != "" && r.Body != nil && r.Body != http.NoBody &&
+	// Read body for routing decision and model rewriting
+	var bodyBytes []byte
+	if r.Body != nil && r.Body != http.NoBody &&
 		(r.Method == http.MethodPost || r.Method == http.MethodPut) {
-		bodyBytes, err := io.ReadAll(r.Body)
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
 		r.Body.Close()
-		if err == nil && len(bodyBytes) > 0 {
-			// Try to rewrite the model field in JSON body
-			modifiedBody := p.rewriteModelInBody(bodyBytes, backendModelName)
-			r.Body = io.NopCloser(bytes.NewReader(modifiedBody))
-			r.ContentLength = int64(len(modifiedBody))
+		if err != nil {
+			bodyBytes = nil
 		}
 	}
 
-	// Check if we have a proxy for this already
+	// Determine target URL - try routing first, fall back to Service DNS
+	var targetURL string
+	var targetPod string // Track if we routed to a specific pod
+	strategy := p.getRoutingStrategy(ctx, modelName)
+
+	if strategy != routing.StrategyDefault && p.router != nil {
+		// Try to route to a specific pod
+		// Use RouteWithLoad to support least-loaded routing
+		targetPod = p.router.RouteWithLoad(modelName, strategy, r, bodyBytes, p.getPodConnections)
+		if targetPod != "" {
+			targetURL = fmt.Sprintf("http://%s", targetPod)
+			slog.Debug("routing to pod", "model", modelName, "strategy", strategy, "target", targetPod)
+		}
+	}
+
+	// Fall back to Service DNS if no routing target
+	if targetURL == "" {
+		targetURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", modelName, p.namespace, port)
+	}
+
+	// Rewrite model name in request body if needed
+	if backendModelName != "" && len(bodyBytes) > 0 {
+		bodyBytes = p.rewriteModelInBody(bodyBytes, backendModelName)
+	}
+
+	// Restore body if we read it
+	if len(bodyBytes) > 0 {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+	}
+
+	// Track per-pod connections for least-loaded routing
+	if targetPod != "" {
+		p.incrementPodConnections(targetPod)
+		defer p.decrementPodConnections(targetPod)
+	}
+
+	// Create or get cached proxy for this target
 	var rp *httputil.ReverseProxy
-	if val, ok := p.proxyMap.Load(modelName); ok {
+	proxyKey := targetURL // Use full URL as key for pod-specific proxies
+	if val, ok := p.proxyMap.Load(proxyKey); ok {
 		rp = val.(*httputil.ReverseProxy)
 	} else {
 		// Create new proxy
 		u, _ := url.Parse(targetURL)
 		rp = httputil.NewSingleHostReverseProxy(u)
-		p.proxyMap.Store(modelName, rp)
+		p.proxyMap.Store(proxyKey, rp)
 	}
 
 	rp.ServeHTTP(w, r)
@@ -1321,6 +1408,105 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	}
 
 	p.lastCacheRefresh = time.Now()
+}
+
+// Routing annotation for models
+const (
+	AnnotationRouting = "flexinfer.ai/routing"
+)
+
+// watchEndpoints periodically updates the router with current pod endpoints for each model.
+// This enables direct pod routing for session affinity and prefix-based routing.
+func (p *Proxy) watchEndpoints(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	slog.Info("starting endpoint watcher for routing")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.refreshEndpoints(ctx)
+		}
+	}
+}
+
+// refreshEndpoints updates the router with current endpoints for all models.
+func (p *Proxy) refreshEndpoints(ctx context.Context) {
+	// List all Services in namespace (each model has a service)
+	var services corev1.ServiceList
+	if err := p.client.List(ctx, &services, client.InNamespace(p.namespace)); err != nil {
+		slog.Warn("failed to list services for endpoint refresh", "error", err)
+		return
+	}
+
+	for _, svc := range services.Items {
+		// Only process services that look like model services
+		if svc.Spec.Selector == nil {
+			continue
+		}
+		modelName, hasModelLabel := svc.Spec.Selector["flexinfer.ai/model"]
+		if !hasModelLabel {
+			continue
+		}
+
+		// List endpoints for this service
+		var endpoints corev1.Endpoints
+		if err := p.client.Get(ctx, client.ObjectKey{Name: svc.Name, Namespace: p.namespace}, &endpoints); err != nil {
+			continue
+		}
+
+		// Collect ready pod addresses
+		var podAddresses []string
+		for _, subset := range endpoints.Subsets {
+			port := int32(8000) // default
+			for _, p := range subset.Ports {
+				port = p.Port
+				break
+			}
+			for _, addr := range subset.Addresses {
+				podAddresses = append(podAddresses, fmt.Sprintf("%s:%d", addr.IP, port))
+			}
+		}
+
+		// Update router if we have endpoints
+		if len(podAddresses) > 0 {
+			p.router.UpdateEndpoints(modelName, podAddresses)
+			slog.Debug("updated routing endpoints", "model", modelName, "endpoints", len(podAddresses))
+		}
+	}
+}
+
+// getRoutingStrategy returns the routing strategy for a model from its annotation.
+func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routing.Strategy {
+	if !p.routingEnabled {
+		return routing.StrategyDefault
+	}
+
+	// Check v1alpha1 ModelDeployment
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if md.Annotations != nil {
+			if strategy, ok := md.Annotations[AnnotationRouting]; ok {
+				return routing.Strategy(strategy)
+			}
+		}
+		return routing.StrategyDefault
+	}
+
+	// Check v1alpha2 Model
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if strategy, ok := m.Annotations[AnnotationRouting]; ok {
+				return routing.Strategy(strategy)
+			}
+		}
+	}
+
+	return routing.StrategyDefault
 }
 
 // OpenAI-compatible model types for /v1/models endpoint
