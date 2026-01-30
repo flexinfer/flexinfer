@@ -145,6 +145,11 @@ func cleanupModel(t *testing.T, name string) {
 	})
 }
 
+// int32Ptr returns a pointer to an int32 value.
+func int32Ptr(i int32) *int32 {
+	return &i
+}
+
 // TestModelLifecycle tests the basic Model create/ready/delete lifecycle.
 func TestModelLifecycle(t *testing.T) {
 	if testing.Short() {
@@ -168,7 +173,7 @@ func TestModelLifecycle(t *testing.T) {
 			Backend: "ollama",
 			Source:  "ollama://llama3.2:1b",
 			GPU: &aiv1alpha2.GPUSpec{
-				Count: 1,
+				Count: int32Ptr(1),
 			},
 		},
 	}
@@ -302,7 +307,7 @@ func TestServerlessScaleToZero(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a model with serverless config (short idle timeout for testing)
-	idleTimeout := int32(30) // 30 seconds idle timeout
+	idleTimeout := metav1.Duration{Duration: 30 * time.Second}
 	model := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      modelName,
@@ -312,15 +317,15 @@ func TestServerlessScaleToZero(t *testing.T) {
 			Backend: "ollama",
 			Source:  "ollama://llama3.2:1b",
 			GPU: &aiv1alpha2.GPUSpec{
-				Count: 1,
+				Count: int32Ptr(1),
 			},
 			Serverless: &aiv1alpha2.ServerlessSpec{
-				IdleTimeoutSeconds: &idleTimeout,
+				IdleTimeout: &idleTimeout,
 			},
 		},
 	}
 
-	t.Logf("Creating serverless model %s with %ds idle timeout", modelName, idleTimeout)
+	t.Logf("Creating serverless model %s with %v idle timeout", modelName, idleTimeout.Duration)
 	if err := k8sClient.Create(ctx, model); err != nil {
 		t.Fatalf("Failed to create model: %v", err)
 	}
@@ -340,9 +345,9 @@ func TestServerlessScaleToZero(t *testing.T) {
 	t.Logf("Model phase: %s", model.Status.Phase)
 
 	// Check that serverless config was applied
-	if model.Status.Phase == aiv1alpha2.PhaseIdle {
+	if model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
 		t.Log("Model correctly started in Idle phase (scale-to-zero)")
-	} else if model.Status.Phase == aiv1alpha2.PhaseReady {
+	} else if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		t.Log("Model is Ready, waiting for idle timeout to trigger scale-down...")
 
 		// Wait for the model to scale down to Idle
@@ -350,7 +355,7 @@ func TestServerlessScaleToZero(t *testing.T) {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
 				return false, err
 			}
-			return model.Status.Phase == aiv1alpha2.PhaseIdle, nil
+			return model.Status.Phase == aiv1alpha2.ModelPhaseIdle, nil
 		})
 		if err != nil {
 			t.Logf("Note: Model did not scale to Idle within timeout (phase: %s)", model.Status.Phase)
