@@ -16,15 +16,16 @@ import (
 	stdsync "sync"
 	"time"
 
+	"github.com/spf13/cobra"
+	"gitlab.flexinfer.ai/libs/mcp-go"
+	"golang.org/x/term"
+
 	loomcontext "github.com/crb2nu/loom/pkg/context"
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/sync"
-	"github.com/spf13/cobra"
-	"gitlab.flexinfer.ai/libs/mcp-go"
-	"golang.org/x/term"
 )
 
 var version = "0.2.0"

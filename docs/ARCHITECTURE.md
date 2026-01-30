@@ -112,4 +112,3 @@ flowchart TB
 ## Diagram sources
 
 Source `.mmd` files (including auto-generated internal/package dependency graphs) live under `docs/diagrams/`.
-

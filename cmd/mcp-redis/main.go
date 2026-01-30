@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/validate"
 	"github.com/redis/go-redis/v9"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"

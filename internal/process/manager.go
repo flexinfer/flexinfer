@@ -5,8 +5,9 @@
 package process
 
 import (
-	"github.com/crb2nu/loom/pkg/registry"
 	kitprocess "gitlab.flexinfer.ai/libs/fi-mcp-kit/pkg/process"
+
+	"github.com/crb2nu/loom/pkg/registry"
 )
 
 type Process = kitprocess.Process

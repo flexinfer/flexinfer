@@ -16,8 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/validate"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"

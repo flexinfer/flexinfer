@@ -31,4 +31,3 @@ uv run diagram-gen modules ../../services/loom-core/pkg \
 ```
 
 If you want rendered SVGs, install Mermaid CLI (`mmdc`) and rerun with `--render-svg`.
-

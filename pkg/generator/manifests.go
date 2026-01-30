@@ -1,8 +1,9 @@
 package generator
 
 import (
-	"github.com/crb2nu/loom/pkg/registry"
 	kitgen "gitlab.flexinfer.ai/libs/fi-mcp-kit/pkg/generator"
+
+	"github.com/crb2nu/loom/pkg/registry"
 )
 
 type ManifestsOptions = kitgen.ManifestsOptions

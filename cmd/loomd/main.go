@@ -8,8 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/crb2nu/loom/internal/daemon"
 	"github.com/spf13/cobra"
+
+	"github.com/crb2nu/loom/internal/daemon"
 )
 
 var version = "dev"

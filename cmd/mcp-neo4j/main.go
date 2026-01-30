@@ -9,9 +9,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/crb2nu/loom/pkg/validate"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"

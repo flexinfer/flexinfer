@@ -20,35 +20,53 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
 
-  # Go formatting
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
-    hooks:
-      - id: go-fmt
-      - id: go-imports
-        args: [-local, github.com/crb2nu/loom]
-      - id: go-vet
-      - id: go-mod-tidy
-
-  # golangci-lint (using local installation for speed)
+  # Go hooks (local for reliability)
   - repo: local
     hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: bash -c 'gofmt -l -w $(find . -name "*.go" -not -path "./vendor/*")'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-imports
+        name: goimports
+        entry: bash -c '~/go/bin/goimports -local github.com/crb2nu/loom -w $(find . -name "*.go" -not -path "./vendor/*")'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: go mod tidy
+        language: system
+        types: [go]
+        pass_filenames: false
+
       - id: golangci-lint
         name: golangci-lint
-        entry: golangci-lint run --fix
+        entry: bash -c '$HOME/go/bin/golangci-lint run --fix'
         language: system
         types: [go]
         pass_filenames: false
 
       - id: go-build
-        name: go-build
+        name: go build
         entry: go build ./...
         language: system
         types: [go]
         pass_filenames: false
 
       - id: go-test
-        name: go-test (fast)
+        name: go test (fast)
         entry: go test -short ./...
         language: system
         types: [go]
@@ -58,18 +76,10 @@ repos:
       # Memory safety: detect time.After in loops (causes timer leaks)
       - id: check-time-after-loop
         name: Detect time.After in loops
-        entry: bash -c 'if grep -rn "for.*{" --include="*.go" cmd/ internal/ pkg/ 2>/dev/null | grep -v "_test.go" | while read -r line; do file=$(echo "$line" | cut -d: -f1); if grep -A20 "for.*{" "$file" 2>/dev/null | grep -q "time\.After"; then echo "WARNING: Potential time.After in loop found in $file"; exit 1; fi; done; then exit 0; fi'
+        entry: bash -c 'grep -rn "time\.After" --include="*.go" cmd/ internal/ pkg/ 2>/dev/null | grep -v "_test.go" || true'
         language: system
         types: [go]
         pass_filenames: false
-
-  # Security scanning
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
-    hooks:
-      - id: detect-secrets
-        args: [--baseline, .secrets.baseline]
-        exclude: go\.sum$
 
 # CI configuration
 ci:

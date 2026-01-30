@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/crb2nu/loom/pkg/pathsec"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/pathsec"
 )
 
 var version = "1.0.0"
