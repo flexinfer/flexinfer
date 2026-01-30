@@ -139,7 +139,7 @@ func cleanupModel(t *testing.T, name string) {
 	}
 
 	// Wait for deletion
-	_ = wait.PollImmediate(time.Second, 30*time.Second, func() (bool, error) {
+	_ = wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model)
 		return errors.IsNotFound(err), nil
 	})
@@ -185,7 +185,7 @@ func TestModelLifecycle(t *testing.T) {
 
 	// Wait for model to be processed (reach any non-empty phase)
 	t.Log("Waiting for model to be processed...")
-	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
 			return false, err
 		}
@@ -213,7 +213,7 @@ func TestModelLifecycle(t *testing.T) {
 	}
 
 	// Verify deletion
-	err = wait.PollImmediate(time.Second, 30*time.Second, func() (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model)
 		return errors.IsNotFound(err), nil
 	})
