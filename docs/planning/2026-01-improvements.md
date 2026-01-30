@@ -194,3 +194,22 @@ Added deployment manifests to loom-hub for:
 - Tools: search_messages, list_channels, get_channel_history, list_users, get_user_info, get_channel_info, get_permalink
 
 Commit: `feat(loom-hub): add mcp-github-actions and mcp-slack servers`
+
+### Test Coverage Sprint (2026-01-30)
+
+Additional packages with new test coverage:
+
+| Package | Before | After |
+|---------|--------|-------|
+| pkg/validate | 0% | 100% |
+| pkg/httpclient | 0% | 92.6% |
+| pkg/generator | 0% | 21.0% |
+| pkg/tunnel | 17.8% | 36.2% |
+
+Tests cover:
+- Args validation (required, int, string, bool, slice, enum, pattern, length)
+- HTTP client retry logic, backoff, context cancellation
+- Path/token resolution and plaintext secret detection
+- SSH tunnel connection lifecycle, transport state management
+
+Commit: `test: add coverage for validate, httpclient, generator, tunnel packages`
