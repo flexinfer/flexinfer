@@ -9,6 +9,7 @@ This document describes all environment variables and configuration options for 
 - [Benchmarker](#benchmarker)
 - [Node Agent](#node-agent)
 - [Backend Images](#backend-images)
+- [Image Pinning Best Practices](#image-pinning-best-practices)
 
 ---
 
@@ -60,6 +61,28 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_MAX_QUEUE_SIZE` | `100` | Maximum number of requests that can be queued per model |
 | `PROXY_QUEUE_TIMEOUT` | `60s` | How long a request can wait in queue before timeout |
 | `PROXY_COLD_START_TIMEOUT` | `60s` | Default timeout waiting for a model to become ready after scale-up |
+| `PROXY_ROUTING_ENABLED` | `true` | Enable advanced routing (session affinity, prefix-based) |
+
+### Routing Configuration
+
+Enable routing strategies via model annotations:
+
+```yaml
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: my-model
+  annotations:
+    flexinfer.ai/routing: session-affinity  # or: prefix, least-loaded
+```
+
+Available strategies:
+- `session-affinity`: Route by session ID for KV-cache locality
+- `prefix`: Route by system prompt for shared prefix caching
+- `least-loaded`: Route to pod with fewest active connections
+- (default): Kubernetes Service round-robin
+
+See [docs/user/routing.md](user/routing.md) for detailed routing documentation.
 
 ### Command Line Flags
 
@@ -165,6 +188,79 @@ Default container images for each backend type:
 ### Diffusers
 - **NVIDIA**: `registry.harbor.lan/library/diffusers-api:cuda`
 - **AMD**: `registry.harbor.lan/library/diffusers-api:rocm-latest`
+
+### Image Pinning Best Practices
+
+#### Why image pinning matters
+
+Kubernetes uses `imagePullPolicy: IfNotPresent` by default for tagged images. This can cause issues when:
+
+1. **Mutable tags** (like `:latest` or `:cuda`) are used
+2. A node has an older version of the image cached
+3. A new pod schedules to that node and gets the stale cached image
+4. Different nodes in your cluster end up running different image versions
+
+This leads to inconsistent behavior and makes debugging difficult.
+
+#### Recommended patterns
+
+**For production deployments:**
+
+Pin images by digest rather than tag:
+
+```yaml
+# Instead of:
+image: ghcr.io/mlc-ai/mlc-llm:cuda
+
+# Use digest:
+image: ghcr.io/mlc-ai/mlc-llm@sha256:abc123...
+```
+
+**For development/testing:**
+
+Use explicit versioned tags with `imagePullPolicy: Always`:
+
+```yaml
+image: ghcr.io/mlc-ai/mlc-llm:v0.1.0
+imagePullPolicy: Always
+```
+
+**To force re-pull on all nodes:**
+
+If you need to update a mutable tag cluster-wide, either:
+1. Change the image reference to use a digest
+2. Delete the cached image on each node (`crictl rmi <image>`)
+3. Use a different tag and update the Model spec
+
+#### Configuring default images
+
+Override default backend images via controller environment variables:
+
+```yaml
+# In your controller Deployment or Helm values:
+env:
+  - name: DEFAULT_MLC_LLM_IMAGE
+    value: "ghcr.io/mlc-ai/mlc-llm@sha256:abc123..."
+  - name: DEFAULT_VLLM_IMAGE
+    value: "vllm/vllm-openai:v0.4.0"
+```
+
+See the [Backend Image Overrides](#backend-image-overrides) section for the complete list of environment variables.
+
+#### Per-model image override
+
+Individual models can specify a custom image in the spec:
+
+```yaml
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: my-model
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+  image: ghcr.io/mlc-ai/mlc-llm@sha256:abc123...  # Pinned image
+```
 
 ---
 
