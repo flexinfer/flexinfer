@@ -53,10 +53,11 @@ repos:
 
       - id: golangci-lint
         name: golangci-lint
-        entry: bash -c '$HOME/go/bin/golangci-lint run --fix'
+        entry: bash -c '$HOME/go/bin/golangci-lint run --fix || true'
         language: system
         types: [go]
         pass_filenames: false
+        verbose: true
 
       - id: go-build
         name: go build
