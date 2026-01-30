@@ -277,6 +277,23 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	if len(updated.Spec.ClusterIPs) != 1 || updated.Spec.ClusterIPs[0] != clusterIP {
 		t.Fatalf("expected clusterIPs [%q], got %#v", clusterIP, updated.Spec.ClusterIPs)
 	}
+
+	// Verify ports are updated (from 1234 to backend port 8000)
+	expectedPort := b.Port()
+	if len(updated.Spec.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(updated.Spec.Ports))
+	}
+	if updated.Spec.Ports[0].Port != expectedPort {
+		t.Fatalf("expected port %d, got %d", expectedPort, updated.Spec.Ports[0].Port)
+	}
+
+	// Verify selector is set
+	if updated.Spec.Selector == nil {
+		t.Fatal("expected selector to be set")
+	}
+	if updated.Spec.Selector["flexinfer.ai/model"] != model.Name {
+		t.Fatalf("expected selector flexinfer.ai/model=%s, got %v", model.Name, updated.Spec.Selector)
+	}
 }
 
 func TestEnsureDeploymentPreservesSelectorAndMatchesTemplate(t *testing.T) {
@@ -428,5 +445,110 @@ func TestEnsureDeploymentMultiReplicaIncludesSpreadingConstraints(t *testing.T) 
 	}
 	if len(created.Spec.Template.Spec.TopologySpreadConstraints) == 0 {
 		t.Fatal("expected topology spread constraints to be set for multi-replica model")
+	}
+}
+
+// TestSetModelCondition verifies that setModelCondition correctly adds and updates conditions.
+func TestSetModelCondition(t *testing.T) {
+	tests := []struct {
+		name            string
+		existingConds   []metav1.Condition
+		condType        string
+		status          bool
+		reason          string
+		message         string
+		expectCondCount int
+		expectStatus    metav1.ConditionStatus
+	}{
+		{
+			name:            "add new condition to empty list",
+			existingConds:   nil,
+			condType:        aiv1alpha2.ConditionModelSchedulable,
+			status:          true,
+			reason:          aiv1alpha2.ReasonSchedulable,
+			message:         "Model can be scheduled",
+			expectCondCount: 1,
+			expectStatus:    metav1.ConditionTrue,
+		},
+		{
+			name: "update existing condition status",
+			existingConds: []metav1.Condition{
+				{
+					Type:               aiv1alpha2.ConditionModelSchedulable,
+					Status:             metav1.ConditionTrue,
+					Reason:             aiv1alpha2.ReasonSchedulable,
+					Message:            "Was schedulable",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+			condType:        aiv1alpha2.ConditionModelSchedulable,
+			status:          false,
+			reason:          aiv1alpha2.ReasonNoMatchingNodes,
+			message:         "No matching nodes",
+			expectCondCount: 1,
+			expectStatus:    metav1.ConditionFalse,
+		},
+		{
+			name: "add different condition type",
+			existingConds: []metav1.Condition{
+				{
+					Type:               aiv1alpha2.ConditionModelSchedulable,
+					Status:             metav1.ConditionTrue,
+					Reason:             aiv1alpha2.ReasonSchedulable,
+					Message:            "Schedulable",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+			condType:        aiv1alpha2.ConditionModelReady,
+			status:          false,
+			reason:          aiv1alpha2.ReasonStartingBackend,
+			message:         "Backend is starting",
+			expectCondCount: 2,
+			expectStatus:    metav1.ConditionFalse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-model",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Status: aiv1alpha2.ModelStatus{
+					Conditions: tt.existingConds,
+				},
+			}
+
+			setModelCondition(model, tt.condType, tt.status, tt.reason, tt.message)
+
+			if len(model.Status.Conditions) != tt.expectCondCount {
+				t.Fatalf("expected %d conditions, got %d", tt.expectCondCount, len(model.Status.Conditions))
+			}
+
+			// Find the condition we just set
+			var found *metav1.Condition
+			for i := range model.Status.Conditions {
+				if model.Status.Conditions[i].Type == tt.condType {
+					found = &model.Status.Conditions[i]
+					break
+				}
+			}
+
+			if found == nil {
+				t.Fatalf("condition %s not found", tt.condType)
+			}
+
+			if found.Status != tt.expectStatus {
+				t.Errorf("expected status %s, got %s", tt.expectStatus, found.Status)
+			}
+			if found.Reason != tt.reason {
+				t.Errorf("expected reason %s, got %s", tt.reason, found.Reason)
+			}
+			if found.Message != tt.message {
+				t.Errorf("expected message %q, got %q", tt.message, found.Message)
+			}
+		})
 	}
 }

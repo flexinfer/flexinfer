@@ -259,8 +259,18 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err != nil {
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
-		if isNoMatchingNodesError(err) || isAmbiguousGPUVendorError(err) {
-			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed); err != nil {
+		if isNoMatchingNodesError(err) {
+			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonNoMatchingNodes, err.Error())
+			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+			if err := r.Status().Update(ctx, model); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+		if isAmbiguousGPUVendorError(err) {
+			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonAmbiguousGPUVendor, err.Error())
+			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+			if err := r.Status().Update(ctx, model); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -273,8 +283,13 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		err := fmt.Errorf("backend %q does not support vendor %q", b.Name(), gpuVendor)
 		log.Error(err, "Backend vendor validation failed")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
-		return ctrl.Result{}, r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed)
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.Status().Update(ctx, model)
 	}
+
+	// GPU detection succeeded - model is schedulable
+	setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, true, aiv1alpha2.ReasonSchedulable, "Model can be scheduled on available nodes")
 
 	// Ensure Service exists early (needed for stable endpoints even while cache is warming).
 	if err := r.ensureService(ctx, model, b); err != nil {
@@ -1352,23 +1367,36 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 
 	// If the cache is not ready, keep the model in Pending regardless of deployment replicas.
 	if model.Status.Cache != nil && !model.Status.Cache.Ready {
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, aiv1alpha2.ReasonCacheNotReady, "Cache is not ready")
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonCacheNotReady, "Waiting for cache to be ready")
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhasePending
 		}
 		return r.Status().Update(ctx, model)
 	}
 
-	// Determine phase from deployment status
+	// Cache is ready (or not applicable)
+	if model.Status.Cache != nil && model.Status.Cache.Ready {
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, aiv1alpha2.ReasonBackendReady, "Cache is ready")
+	}
+
+	// Determine phase from deployment status and set conditions
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
 	} else if *deployment.Spec.Replicas == 0 {
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhaseIdle
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonWaitingForActivation, "Model is idle, waiting for traffic")
+		} else {
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, "Model was preempted by higher priority model")
 		}
 	} else if deployment.Status.UnavailableReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseLoading
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Backend container is starting")
 	} else {
 		model.Status.Phase = aiv1alpha2.ModelPhasePending
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Waiting for deployment to be ready")
 	}
 
 	return r.Status().Update(ctx, model)

@@ -54,6 +54,30 @@ const (
 	ConditionModelLoaded = "Loaded"
 	// ConditionModelReady indicates the model is ready to serve
 	ConditionModelReady = "Ready"
+	// ConditionModelSchedulable indicates whether the model can be scheduled
+	ConditionModelSchedulable = "Schedulable"
+)
+
+// Condition reasons for Model status
+const (
+	// ReasonNoMatchingNodes - no nodes match the model's GPU/selector requirements
+	ReasonNoMatchingNodes = "NoMatchingNodes"
+	// ReasonAmbiguousGPUVendor - multiple GPU vendors found, must specify gpu.vendor
+	ReasonAmbiguousGPUVendor = "AmbiguousGPUVendor"
+	// ReasonBackendUnsupported - backend does not support the detected GPU vendor
+	ReasonBackendUnsupported = "BackendUnsupported"
+	// ReasonSchedulable - model can be scheduled
+	ReasonSchedulable = "Schedulable"
+	// ReasonCacheNotReady - waiting for cache to be ready
+	ReasonCacheNotReady = "CacheNotReady"
+	// ReasonWaitingForActivation - model is idle, waiting for traffic
+	ReasonWaitingForActivation = "WaitingForActivation"
+	// ReasonStartingBackend - backend container is starting
+	ReasonStartingBackend = "StartingBackend"
+	// ReasonBackendReady - backend is ready to serve requests
+	ReasonBackendReady = "BackendReady"
+	// ReasonPreempted - model was preempted by higher priority model
+	ReasonPreempted = "Preempted"
 )
 
 // ModelSpec defines the desired state of Model
