@@ -332,7 +332,7 @@ func TestServerlessScaleToZero(t *testing.T) {
 
 	// Wait for model to reach a phase
 	t.Log("Waiting for model to be processed...")
-	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
 			return false, err
 		}
@@ -345,13 +345,14 @@ func TestServerlessScaleToZero(t *testing.T) {
 	t.Logf("Model phase: %s", model.Status.Phase)
 
 	// Check that serverless config was applied
-	if model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
+	switch model.Status.Phase {
+	case aiv1alpha2.ModelPhaseIdle:
 		t.Log("Model correctly started in Idle phase (scale-to-zero)")
-	} else if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
+	case aiv1alpha2.ModelPhaseReady:
 		t.Log("Model is Ready, waiting for idle timeout to trigger scale-down...")
 
 		// Wait for the model to scale down to Idle
-		err = wait.PollImmediate(5*time.Second, 90*time.Second, func() (bool, error) {
+		err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 90*time.Second, true, func(ctx context.Context) (bool, error) {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
 				return false, err
 			}
@@ -363,7 +364,7 @@ func TestServerlessScaleToZero(t *testing.T) {
 		} else {
 			t.Log("Model scaled to Idle phase successfully")
 		}
-	} else {
+	default:
 		t.Logf("Model in phase %s (serverless behavior depends on cluster state)", model.Status.Phase)
 	}
 
