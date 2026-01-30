@@ -72,6 +72,20 @@ test-coverage: ## Run tests with coverage report
 	go tool cover -func=coverage.out | tail -1
 	@echo "HTML coverage report: go tool cover -html=coverage.out"
 
+##@ E2E Tests
+
+.PHONY: test-e2e
+test-e2e: ## Run E2E tests against a real cluster (requires kubeconfig)
+	go test -v ./e2e/... -timeout 10m
+
+.PHONY: test-e2e-skip
+test-e2e-skip: ## Run E2E tests, skip if no cluster available (CI-friendly)
+	go test -v ./e2e/... -timeout 10m -args -skip-no-cluster
+
+.PHONY: test-e2e-namespace
+test-e2e-namespace: ## Run E2E tests in a custom namespace (use NAMESPACE=myns)
+	go test -v ./e2e/... -timeout 10m -args -namespace=$(NAMESPACE)
+
 ##@ Build
 
 .PHONY: build
