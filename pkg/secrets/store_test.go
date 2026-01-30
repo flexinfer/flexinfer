@@ -365,3 +365,200 @@ func TestErrors(t *testing.T) {
 		t.Error("ErrReadOnly should not be nil")
 	}
 }
+
+func TestFileBackend_BasicOperations(t *testing.T) {
+	// Create temp directory for test
+	tmpDir := t.TempDir()
+	tmpPath := tmpDir + "/test_secrets.enc"
+
+	// Set a master key for testing
+	os.Setenv("LOOM_MASTER_KEY", "test-master-key-for-unit-tests")
+	defer os.Unsetenv("LOOM_MASTER_KEY")
+
+	backend, err := NewFileBackend(tmpPath)
+	if err != nil {
+		t.Fatalf("NewFileBackend() error = %v", err)
+	}
+
+	// Test Name
+	if backend.Name() != "file" {
+		t.Errorf("Name() = %v, want file", backend.Name())
+	}
+
+	// Test ReadOnly
+	if backend.ReadOnly() {
+		t.Error("ReadOnly() = true, want false")
+	}
+
+	// Test Set and Get
+	if err := backend.Set("test_key", "test_value"); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	value, err := backend.Get("test_key")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if value != "test_value" {
+		t.Errorf("Get() = %v, want test_value", value)
+	}
+
+	// Test Get nonexistent
+	value, err = backend.Get("nonexistent")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if value != "" {
+		t.Errorf("Get(nonexistent) = %v, want empty string", value)
+	}
+
+	// Test List
+	keys, err := backend.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(keys) != 1 {
+		t.Errorf("List() returned %d keys, want 1", len(keys))
+	}
+
+	// Test Delete
+	if err := backend.Delete("test_key"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	value, err = backend.Get("test_key")
+	if err != nil {
+		t.Fatalf("Get() after delete error = %v", err)
+	}
+	if value != "" {
+		t.Errorf("Get() after delete = %v, want empty", value)
+	}
+}
+
+func TestFileBackend_Persistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpPath := tmpDir + "/persist_secrets.enc"
+
+	os.Setenv("LOOM_MASTER_KEY", "test-master-key-for-persistence")
+	defer os.Unsetenv("LOOM_MASTER_KEY")
+
+	// Create backend and set a value
+	backend1, err := NewFileBackend(tmpPath)
+	if err != nil {
+		t.Fatalf("NewFileBackend() error = %v", err)
+	}
+
+	if err := backend1.Set("persist_key", "persist_value"); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	// Create new backend pointing to same file
+	backend2, err := NewFileBackend(tmpPath)
+	if err != nil {
+		t.Fatalf("NewFileBackend() second error = %v", err)
+	}
+
+	// Should read the persisted value
+	value, err := backend2.Get("persist_key")
+	if err != nil {
+		t.Fatalf("Get() from second backend error = %v", err)
+	}
+	if value != "persist_value" {
+		t.Errorf("Get() = %v, want persist_value", value)
+	}
+}
+
+func TestFileBackend_MultipleKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpPath := tmpDir + "/multi_secrets.enc"
+
+	os.Setenv("LOOM_MASTER_KEY", "test-master-key-multi")
+	defer os.Unsetenv("LOOM_MASTER_KEY")
+
+	backend, err := NewFileBackend(tmpPath)
+	if err != nil {
+		t.Fatalf("NewFileBackend() error = %v", err)
+	}
+
+	// Set multiple keys
+	keys := map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+		"key3": "value3",
+	}
+
+	for k, v := range keys {
+		if err := backend.Set(k, v); err != nil {
+			t.Fatalf("Set(%s) error = %v", k, err)
+		}
+	}
+
+	// Verify all keys
+	for k, expected := range keys {
+		value, err := backend.Get(k)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", k, err)
+		}
+		if value != expected {
+			t.Errorf("Get(%s) = %v, want %v", k, value, expected)
+		}
+	}
+
+	// Verify List returns all keys
+	listed, err := backend.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != len(keys) {
+		t.Errorf("List() returned %d keys, want %d", len(listed), len(keys))
+	}
+}
+
+func TestMockBackend_Interface(t *testing.T) {
+	// Verify mock implements Backend interface
+	var _ Backend = (*mockBackend)(nil)
+}
+
+func TestManager_EmptyBackends(t *testing.T) {
+	mgr := NewManager()
+
+	_, _, err := mgr.Get("any")
+	if err != ErrNotFound {
+		t.Errorf("Get() error = %v, want ErrNotFound", err)
+	}
+
+	err = mgr.Set("key", "value")
+	if err == nil {
+		t.Error("Set() should return error with no backends")
+	}
+
+	err = mgr.Delete("key")
+	if err == nil {
+		t.Error("Delete() should return error with no backends")
+	}
+}
+
+func TestManager_AllReadOnly(t *testing.T) {
+	readOnly1 := newMockBackend("ro1", true)
+	readOnly2 := newMockBackend("ro2", true)
+
+	mgr := NewManager(readOnly1, readOnly2)
+
+	primary := mgr.PrimaryBackend()
+	if primary != nil {
+		t.Error("PrimaryBackend() should be nil when all backends are read-only")
+	}
+}
+
+func TestManager_List_Empty(t *testing.T) {
+	backend := newMockBackend("empty", false)
+	mgr := NewManager(backend)
+
+	keys, err := mgr.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("List() returned %d keys, want 0", len(keys))
+	}
+}
