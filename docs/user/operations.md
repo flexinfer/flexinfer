@@ -109,4 +109,119 @@ FlexInfer resources are hierarchical. Delete the parent, not the children.
   kubectl -n flexinfer-system delete modeldeployment <name>
   ```
 
-For detailed cleanup guidance (including RAM caches and stuck Jobs), see the “Resource Cleanup Procedures” section in `services/flexinfer/AGENTS.md`.
+For detailed cleanup guidance (including RAM caches and stuck Jobs), see the "Resource Cleanup Procedures" section in `services/flexinfer/AGENTS.md`.
+
+## AMD ROCm GPU requirements
+
+### Container setup
+
+AMD GPUs require ROCm-compatible container images. FlexInfer uses ROCm variants automatically when AMD GPUs are detected.
+
+```bash
+# Verify ROCm device visibility
+kubectl -n flexinfer-system exec <pod> -- ls /dev/dri/
+# Should show: card0 renderD128 (or similar)
+
+kubectl -n flexinfer-system exec <pod> -- rocm-smi
+# Should show GPU(s) with temperature, utilization, etc.
+```
+
+### Common AMD issues
+
+| Symptom | Likely Cause |
+|---------|--------------|
+| `No GPU detected` | Missing ROCm container toolkit or device plugin |
+| `HSA_STATUS_ERROR_OUT_OF_RESOURCES` | Insufficient GPU memory; reduce batch size |
+| Slow inference | Using CPU fallback; check `/dev/kfd` visibility |
+
+### Cluster prerequisites for AMD
+
+1. AMD device plugin deployed (creates `amd.com/gpu` resources)
+2. ROCm drivers installed on GPU nodes (6.0+ recommended)
+3. Container runtime configured for AMD GPUs
+
+## Backend-specific quirks
+
+### Ollama
+
+- **Model naming**: Ollama uses `model:tag` format (e.g., `llama3.2:1b`)
+- **Pull on first use**: Model downloads on first request if not cached
+- **Memory**: Ollama manages its own memory; set `OLLAMA_NUM_PARALLEL` for concurrency
+
+### vLLM
+
+- **Memory configuration**: vLLM pre-allocates GPU memory
+  ```yaml
+  spec:
+    config:
+      gpu-memory-utilization: "0.9"  # Use 90% of GPU memory
+  ```
+- **Tensor parallelism**: For multi-GPU, set `tensor-parallel-size`
+- **Known issue**: vLLM 0.4+ requires specific CUDA versions; check compatibility
+
+### MLC-LLM
+
+- **Model format**: Requires MLC-compiled models (`.mlc` format)
+- **Source URI**: Use `HF://mlc-ai/<model>-MLC` for pre-compiled models
+- **Maxwell GPUs (sm_52)**: Use the Maxwell-specific image variant
+  ```yaml
+  spec:
+    image: registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7
+  ```
+
+### llama.cpp
+
+- **Model format**: Requires GGUF format models
+- **CPU fallback**: Works without GPU; useful for testing
+- **Memory mapping**: Uses mmap by default; can reduce memory usage
+  ```yaml
+  spec:
+    config:
+      n-gpu-layers: "35"  # Number of layers to offload to GPU
+  ```
+
+### ComfyUI / Diffusers
+
+- **Image generation**: These backends are for image models, not LLMs
+- **VRAM requirements**: Typically need 8GB+ VRAM for image models
+- **Workflow files**: ComfyUI requires workflow JSON in the request
+
+## Troubleshooting decision tree
+
+```
+Model not becoming Ready?
+├── Check phase: kubectl describe model <name>
+│   ├── Pending → No matching nodes (check GPU labels, node selector)
+│   ├── Downloading → Network issue or invalid source URI
+│   ├── Creating → Check pod events and logs
+│   └── Error → Check conditions for specific reason
+│
+├── Pod not starting?
+│   ├── ImagePullBackOff → Check image name/registry access
+│   ├── ContainerCreating → Check RuntimeClass, volume mounts
+│   └── CrashLoopBackOff → Check container logs
+│
+└── Pod running but model not responding?
+    ├── Check model container logs
+    ├── Verify port-forward to pod directly
+    └── Check health endpoint: /health or /v1/models
+```
+
+## Metrics and monitoring
+
+FlexInfer exposes Prometheus metrics:
+
+```bash
+# Scrape metrics from controller
+kubectl -n flexinfer-system port-forward deploy/flexinfer-controller 8080:8080
+curl localhost:8080/metrics
+
+# Scrape metrics from proxy
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 8080:8080
+curl localhost:8080/metrics
+```
+
+Key metrics:
+- `flexinfer_models_total{phase}` - Models by phase
+- `flexinfer_proxy_requests_total{model,status}` - Request counts
+- `flexinfer_proxy_queue_depth{model}` - Pending requests per model

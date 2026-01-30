@@ -19,6 +19,10 @@ sections:
         path: user/legacy-v1alpha1.md
       - title: Proxy & Requests
         path: user/proxy.md
+      - title: API Compatibility
+        path: user/api-compatibility.md
+      - title: Routing
+        path: user/routing.md
       - title: GPU Sharing
         path: user/gpu-sharing.md
       - title: Caching
@@ -71,3 +75,9 @@ sections:
         path: planning/next-roadmap.md
       - title: Phase 1 (Controller Hardening)
         path: planning/phase-1-controller-api-hardening.md
+      - title: Phase 2 (Serverless Hardening)
+        path: planning/phase-2-serverless-activator-hardening.md
+      - title: Phase 3 (Routing & Performance)
+        path: planning/phase-3-routing-performance.md
+      - title: Phase 4 (Operational Polish)
+        path: planning/phase-4-operational-polish.md
