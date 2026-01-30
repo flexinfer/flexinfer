@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/singleflight"
@@ -122,6 +124,49 @@ var (
 		},
 		[]string{"gpugroup", "model"},
 	)
+
+	// Endpoint routing metrics
+	endpointChangesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "proxy_endpoint_changes_total",
+			Help: "Total number of endpoint changes detected per model and change type.",
+		},
+		[]string{"model", "change_type"},
+	)
+
+	endpointCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "proxy_endpoint_count",
+			Help: "Current number of endpoints per model.",
+		},
+		[]string{"model"},
+	)
+
+	endpointRefreshDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "proxy_endpoint_refresh_seconds",
+			Help:    "Time spent refreshing endpoints.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		},
+	)
+
+	// Backoff metrics
+	activationRetriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "proxy_activation_retries_total",
+			Help: "Total number of activation retries per model.",
+		},
+		[]string{"model"},
+	)
+
+	activationRetryWaitDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "proxy_activation_retry_wait_seconds",
+			Help:    "Time spent waiting between activation retries.",
+			Buckets: []float64{1, 2, 5, 10, 15, 20, 30, 45, 60},
+		},
+		[]string{"model"},
+	)
 )
 
 // GPUGroup annotation constants (must match gpugroup_controller.go)
@@ -152,6 +197,11 @@ func init() {
 	prometheus.MustRegister(queueDepth)
 	prometheus.MustRegister(gpuGroupSwapSignalsTotal)
 	prometheus.MustRegister(gpuGroupQueuedRequestsTotal)
+	prometheus.MustRegister(endpointChangesTotal)
+	prometheus.MustRegister(endpointCount)
+	prometheus.MustRegister(endpointRefreshDuration)
+	prometheus.MustRegister(activationRetriesTotal)
+	prometheus.MustRegister(activationRetryWaitDuration)
 }
 
 // QueuedRequest represents a request waiting in queue during cold start
@@ -199,6 +249,18 @@ type Proxy struct {
 	router             *routing.Router
 	routingEnabled     bool     // Enable advanced routing (session affinity, prefix-based)
 	podConnectionCount sync.Map // map[string]*int64 for tracking connections per pod address
+
+	// Request validation
+	validateRequests bool // Enable OpenAI request schema validation
+
+	// Endpoint tracking for metrics
+	endpointCache sync.Map // map[string][]string - model name -> list of endpoint addresses
+
+	// Backoff configuration for failed activations
+	backoffEnabled     bool          // Enable exponential backoff for failed activations
+	backoffMaxRetries  int           // Maximum retry attempts (default: 3)
+	backoffInitialWait time.Duration // Initial wait time (default: 5s)
+	backoffMaxWait     time.Duration // Maximum wait time (default: 30s)
 }
 
 func main() {
@@ -245,15 +307,25 @@ func main() {
 	queueTimeout := getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second)
 	coldStartTimeout := getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second)
 	routingEnabled := getEnvBool("PROXY_ROUTING_ENABLED", true)
+	validateRequests := getEnvBool("PROXY_VALIDATE_REQUESTS", false)
+	backoffEnabled := getEnvBool("PROXY_BACKOFF_ENABLED", false)
+	backoffMaxRetries := getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3)
+	backoffInitialWait := getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second)
+	backoffMaxWait := getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second)
 
 	p := &Proxy{
-		client:           k8sClient,
-		namespace:        namespace,
-		maxQueueSize:     maxQueueSize,
-		queueTimeout:     queueTimeout,
-		coldStartTimeout: coldStartTimeout,
-		router:           routing.NewRouter(),
-		routingEnabled:   routingEnabled,
+		client:             k8sClient,
+		namespace:          namespace,
+		maxQueueSize:       maxQueueSize,
+		queueTimeout:       queueTimeout,
+		coldStartTimeout:   coldStartTimeout,
+		router:             routing.NewRouter(),
+		routingEnabled:     routingEnabled,
+		validateRequests:   validateRequests,
+		backoffEnabled:     backoffEnabled,
+		backoffMaxRetries:  backoffMaxRetries,
+		backoffInitialWait: backoffInitialWait,
+		backoffMaxWait:     backoffMaxWait,
 	}
 
 	// Start queue cleanup goroutine
@@ -279,7 +351,9 @@ func main() {
 		"namespace", namespace,
 		"queue_size", maxQueueSize,
 		"queue_timeout", queueTimeout.String(),
-		"cold_start_timeout", coldStartTimeout.String())
+		"cold_start_timeout", coldStartTimeout.String(),
+		"validate_requests", validateRequests,
+		"backoff_enabled", backoffEnabled)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
@@ -322,11 +396,19 @@ func getEnvBool(key string, defaultVal bool) bool {
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	// 1. Extract model name from request
-	modelName := p.extractModelName(r)
+	// 1. Extract model name and body from request
+	modelName, bodyBytes := p.extractModelNameAndBody(r)
 	if modelName == "" {
-		http.Error(w, "X-Model-ID header or /model/<name> path required", http.StatusBadRequest)
+		validation.WriteBadRequestWithCode(w, "X-Model-ID header, /model/<name> path, or 'model' field in request body required", validation.CodeMissingRequiredField)
 		return
+	}
+
+	// 2. Validate request if enabled
+	if p.validateRequests && len(bodyBytes) > 0 {
+		if result := validation.ValidateRequest(r.URL.Path, bodyBytes); result != nil && !result.Valid {
+			validation.WriteValidationErrors(w, result)
+			return
+		}
 	}
 
 	ctx := r.Context()
@@ -367,7 +449,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	if !errors.IsNotFound(err) {
 		slog.Error("error fetching model deployment", "model", modelName, "error", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		validation.WriteInternalError(w, "Internal error fetching model deployment")
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		return
 	}
@@ -376,10 +458,10 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	m, err := p.getModel(ctx, modelName)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			http.Error(w, fmt.Sprintf("Model %s not found", modelName), http.StatusNotFound)
+			validation.WriteModelNotFound(w, modelName)
 		} else {
 			slog.Error("error fetching model", "model", modelName, "error", err)
-			http.Error(w, "Internal error", http.StatusInternalServerError)
+			validation.WriteInternalError(w, "Internal error fetching model")
 		}
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		return
@@ -399,11 +481,21 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractModelName extracts the model name from request headers, path, or body
-func (p *Proxy) extractModelName(r *http.Request) string {
+// extractModelNameAndBody extracts the model name from a request and returns the body bytes.
+// The body is restored to the request for downstream handlers.
+func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
+	var bodyBytes []byte
+
 	// Check X-Model-ID header first
 	modelName := r.Header.Get("X-Model-ID")
 	if modelName != "" {
-		return modelName
+		// Still need to read body for validation
+		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+			bodyBytes, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			r.ContentLength = int64(len(bodyBytes))
+		}
+		return modelName, bodyBytes
 	}
 
 	// Fallback: Use path prefix /model/<name>/...
@@ -412,28 +504,38 @@ func (p *Proxy) extractModelName(r *http.Request) string {
 		modelName = pathParts[1]
 		// Strip the /model/<name> prefix for upstream
 		r.URL.Path = "/" + strings.Join(pathParts[2:], "/")
-		return modelName
+		// Still need to read body for validation
+		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+			bodyBytes, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			r.ContentLength = int64(len(bodyBytes))
+		}
+		return modelName, bodyBytes
 	}
 
 	// Fallback: Check JSON Body (OpenAI Standard)
 	if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err == nil {
-			// Restore body immediately so the proxy can upstream it
-			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			r.ContentLength = int64(len(bodyBytes)) // Update ContentLength for downstream handlers
+		bodyBytes, _ = io.ReadAll(r.Body)
+		// Restore body immediately so the proxy can upstream it
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes)) // Update ContentLength for downstream handlers
 
-			// Parse partial JSON to find "model" field
-			var payload struct {
-				Model string `json:"model"`
-			}
-			if err := json.Unmarshal(bodyBytes, &payload); err == nil && payload.Model != "" {
-				return payload.Model
-			}
+		// Parse partial JSON to find "model" field
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(bodyBytes, &payload); err == nil && payload.Model != "" {
+			return payload.Model, bodyBytes
 		}
 	}
 
-	return ""
+	return "", bodyBytes
+}
+
+// extractModelName extracts the model name from a request (for backward compatibility).
+func (p *Proxy) extractModelName(r *http.Request) string {
+	modelName, _ := p.extractModelNameAndBody(r)
+	return modelName
 }
 
 // getModelDeployment fetches the ModelDeployment resource
@@ -474,7 +576,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	default:
 		// Queue is full
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
-		http.Error(w, "Service overloaded, please retry", http.StatusServiceUnavailable)
+		validation.WriteQueueFull(w)
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
 
@@ -500,7 +602,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
 		if qr.responded.CompareAndSwap(false, true) {
-			http.Error(w, fmt.Sprintf("Timeout waiting for model to become ready (waited %s)", timeout), http.StatusGatewayTimeout)
+			validation.WriteColdStartTimeout(w, timeout.String())
 		}
 		return fmt.Errorf("queue timeout for model %s", modelName)
 	}
@@ -578,22 +680,55 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	slog.Info("starting queue processor", "model", modelName)
 
-	// Trigger scale-up using singleflight to deduplicate
-	_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (interface{}, error) {
-		return nil, p.triggerScaleUp(ctx, modelName)
-	})
-
-	if err != nil {
-		slog.Error("failed to scale up model", "model", modelName, "error", err)
-		// Drain queue with errors
-		p.drainQueueWithError(queue, fmt.Errorf("scale-up failed: %v", err))
-		return
+	// Attempt activation with optional backoff
+	var lastErr error
+	maxAttempts := 1
+	if p.backoffEnabled {
+		maxAttempts = p.backoffMaxRetries + 1 // Initial attempt + retries
 	}
 
-	// Wait for model to become ready
-	if err := p.waitForReady(ctx, modelName); err != nil {
-		slog.Error("model failed to become ready", "model", modelName, "error", err)
-		p.drainQueueWithError(queue, err)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Calculate backoff with jitter
+			waitTime := p.calculateBackoff(attempt)
+			slog.Info("retrying activation with backoff",
+				"model", modelName,
+				"attempt", attempt+1,
+				"max_attempts", maxAttempts,
+				"wait", waitTime.String())
+
+			activationRetriesTotal.WithLabelValues(modelName).Inc()
+			activationRetryWaitDuration.WithLabelValues(modelName).Observe(waitTime.Seconds())
+
+			time.Sleep(waitTime)
+		}
+
+		// Trigger scale-up using singleflight to deduplicate
+		_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (interface{}, error) {
+			return nil, p.triggerScaleUp(ctx, modelName)
+		})
+
+		if err != nil {
+			lastErr = fmt.Errorf("scale-up failed: %v", err)
+			slog.Warn("activation attempt failed", "model", modelName, "attempt", attempt+1, "error", err)
+			continue
+		}
+
+		// Wait for model to become ready
+		if err := p.waitForReady(ctx, modelName); err != nil {
+			lastErr = err
+			slog.Warn("model failed to become ready", "model", modelName, "attempt", attempt+1, "error", err)
+			continue
+		}
+
+		// Success!
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		slog.Error("all activation attempts failed", "model", modelName, "attempts", maxAttempts, "error", lastErr)
+		p.drainQueueWithError(queue, lastErr)
 		return
 	}
 
@@ -608,6 +743,21 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 	// Clean up queue
 	p.queues.Delete(modelName)
 	slog.Info("queue processor finished", "model", modelName)
+}
+
+// calculateBackoff returns the wait time for a given retry attempt using exponential backoff with jitter.
+func (p *Proxy) calculateBackoff(attempt int) time.Duration {
+	// Exponential backoff: initialWait * 2^attempt
+	backoff := p.backoffInitialWait * time.Duration(1<<uint(attempt))
+
+	// Cap at max wait
+	if backoff > p.backoffMaxWait {
+		backoff = p.backoffMaxWait
+	}
+
+	// Add jitter: random value between 0.5x and 1.5x of the backoff
+	jitter := float64(backoff) * (0.5 + rand.Float64())
+	return time.Duration(jitter)
 }
 
 // processGPUGroupQueue handles queue processing for GPUGroup-managed models.
@@ -854,7 +1004,7 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 			queueDepth.WithLabelValues(queue.model).Dec()
 			qr.err = err
 			if qr.responded.CompareAndSwap(false, true) {
-				http.Error(qr.w, fmt.Sprintf("Failed to activate model: %v", err), http.StatusServiceUnavailable)
+				validation.WriteActivationFailed(qr.w, fmt.Sprintf("Failed to activate model: %v", err))
 			}
 			close(qr.done)
 		default:
@@ -1179,7 +1329,7 @@ func (p *Proxy) handleGPUGroupRequest(ctx context.Context, w http.ResponseWriter
 			slog.Warn("GPUGroup not found, falling back to direct handling", "gpugroup", gpuGroupName, "model", modelName)
 			return p.handleColdStart(ctx, w, r, modelName, start)
 		}
-		http.Error(w, fmt.Sprintf("Error fetching GPUGroup: %v", err), http.StatusInternalServerError)
+		validation.WriteInternalError(w, fmt.Sprintf("Error fetching GPUGroup: %v", err))
 		return err
 	}
 
@@ -1242,7 +1392,7 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 	default:
 		// Queue is full
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
-		http.Error(w, "Service overloaded, please retry", http.StatusServiceUnavailable)
+		validation.WriteQueueFull(w)
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
 
@@ -1262,7 +1412,7 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
 		if qr.responded.CompareAndSwap(false, true) {
-			http.Error(w, fmt.Sprintf("Timeout waiting for model to become active (waited %s)", p.queueTimeout), http.StatusGatewayTimeout)
+			validation.WriteGPUGroupTimeout(w, p.queueTimeout.String())
 		}
 		return fmt.Errorf("queue timeout for GPUGroup model %s", modelName)
 	}
@@ -1433,8 +1583,15 @@ func (p *Proxy) watchEndpoints(ctx context.Context) {
 	}
 }
 
-// refreshEndpoints updates the router with current endpoints for all models.
+// refreshEndpoints updates the router with current endpoints for models that have routing enabled.
+// Only models with the flexinfer.ai/routing annotation will get direct pod routing;
+// others will use Kubernetes Service DNS for load balancing.
 func (p *Proxy) refreshEndpoints(ctx context.Context) {
+	start := time.Now()
+	defer func() {
+		endpointRefreshDuration.Observe(time.Since(start).Seconds())
+	}()
+
 	// List all Services in namespace (each model has a service)
 	var services corev1.ServiceList
 	if err := p.client.List(ctx, &services, client.InNamespace(p.namespace)); err != nil {
@@ -1449,6 +1606,19 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		}
 		modelName, hasModelLabel := svc.Spec.Selector["flexinfer.ai/model"]
 		if !hasModelLabel {
+			continue
+		}
+
+		// Check if this model has routing annotation enabled
+		// Only models with explicit routing strategy will get direct pod routing
+		hasRoutingAnnotation := p.modelHasRoutingAnnotation(ctx, modelName)
+		if !hasRoutingAnnotation {
+			// Remove from router if previously added, so it falls back to Service DNS
+			p.router.RemoveModel(modelName)
+			// Clear endpoint cache and metrics for this model
+			if _, existed := p.endpointCache.LoadAndDelete(modelName); existed {
+				endpointCount.DeleteLabelValues(modelName)
+			}
 			continue
 		}
 
@@ -1471,12 +1641,80 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 			}
 		}
 
+		// Track endpoint changes for metrics
+		p.trackEndpointChanges(modelName, podAddresses)
+
 		// Update router if we have endpoints
 		if len(podAddresses) > 0 {
 			p.router.UpdateEndpoints(modelName, podAddresses)
 			slog.Debug("updated routing endpoints", "model", modelName, "endpoints", len(podAddresses))
 		}
 	}
+}
+
+// trackEndpointChanges compares current endpoints with cached ones and updates metrics.
+func (p *Proxy) trackEndpointChanges(modelName string, newEndpoints []string) {
+	// Update endpoint count gauge
+	endpointCount.WithLabelValues(modelName).Set(float64(len(newEndpoints)))
+
+	// Get previous endpoints from cache
+	var oldEndpoints []string
+	if cached, ok := p.endpointCache.Load(modelName); ok {
+		oldEndpoints = cached.([]string)
+	}
+
+	// Create sets for comparison
+	oldSet := make(map[string]bool, len(oldEndpoints))
+	for _, ep := range oldEndpoints {
+		oldSet[ep] = true
+	}
+	newSet := make(map[string]bool, len(newEndpoints))
+	for _, ep := range newEndpoints {
+		newSet[ep] = true
+	}
+
+	// Count additions
+	for ep := range newSet {
+		if !oldSet[ep] {
+			endpointChangesTotal.WithLabelValues(modelName, "added").Inc()
+		}
+	}
+
+	// Count removals
+	for ep := range oldSet {
+		if !newSet[ep] {
+			endpointChangesTotal.WithLabelValues(modelName, "removed").Inc()
+		}
+	}
+
+	// Store updated cache
+	p.endpointCache.Store(modelName, newEndpoints)
+}
+
+// modelHasRoutingAnnotation checks if a model has the flexinfer.ai/routing annotation set.
+func (p *Proxy) modelHasRoutingAnnotation(ctx context.Context, modelName string) bool {
+	// Check v1alpha1 ModelDeployment
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if md.Annotations != nil {
+			if _, ok := md.Annotations[AnnotationRouting]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Check v1alpha2 Model
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if _, ok := m.Annotations[AnnotationRouting]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getRoutingStrategy returns the routing strategy for a model from its annotation.
@@ -1529,7 +1767,7 @@ type OpenAIModelsResponse struct {
 // handleModels returns OpenAI-compatible list of available models
 func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		validation.WriteMethodNotAllowed(w, r.Method)
 		return
 	}
 

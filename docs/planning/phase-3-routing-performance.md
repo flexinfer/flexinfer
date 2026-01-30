@@ -43,7 +43,9 @@ The proxy currently uses Kubernetes Service load balancing (round-robin by defau
   - `session_id` field in body
   - Hash of `messages` content (implicit, for chat)
 - [x] Implement consistent hash ring for pod selection
-- [ ] Maintain pod membership via endpoint watch (integration pending)
+- [x] Maintain pod membership via endpoint watch
+  - Only models with `flexinfer.ai/routing` annotation get direct pod routing
+  - Others use Kubernetes Service DNS for load balancing
 - [x] Handle pod additions/removals gracefully (minimal rehashing)
 
 **Acceptance**
@@ -82,7 +84,10 @@ The proxy currently uses Kubernetes Service load balancing (round-robin by defau
 - [x] Watch Endpoints/EndpointSlices for model Services
 - [x] Maintain in-memory pod list per model
 - [x] Update hash ring when endpoints change
-- [ ] Add metrics for endpoint churn (future enhancement)
+- [x] Add metrics for endpoint churn:
+  - `proxy_endpoint_changes_total{model, change_type}` (counter)
+  - `proxy_endpoint_count{model}` (gauge)
+  - `proxy_endpoint_refresh_seconds` (histogram)
 
 **Acceptance**
 - Proxy discovers all ready pods for multi-replica models.

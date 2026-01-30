@@ -40,6 +40,33 @@ The proxy writes queue state onto a `GPUGroup` so the controller can decide swap
 - `flexinfer.ai/queue.<modelName>: "<depth>"`
 - `flexinfer.ai/queue-since.<modelName>: "<rfc3339>"`
 
+## Routing annotations
+
+The proxy uses annotations to enable advanced routing strategies for multi-replica models.
+
+### `flexinfer.ai/routing`
+
+Enables direct pod routing instead of Kubernetes Service round-robin. Without this annotation, requests are routed through the Kubernetes Service for standard load balancing.
+
+| Value | Description |
+|-------|-------------|
+| `session-affinity` | Route requests with the same session ID to the same pod for KV-cache locality |
+| `prefix` | Route requests with the same system prompt to the same pod for shared prefix caching |
+| `least-loaded` | Route to the pod with the fewest active connections |
+
+**Example:**
+
+```yaml
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: my-chatbot
+  annotations:
+    flexinfer.ai/routing: session-affinity
+```
+
+**Note:** Models without this annotation use Kubernetes Service DNS for load balancing, which is the recommended default for most workloads.
+
 ## Service label routing
 
 Service labels can be attached to a model and used for routing. Relevant fields/annotations:

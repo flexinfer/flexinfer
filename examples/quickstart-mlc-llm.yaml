@@ -1,0 +1,63 @@
+# Quickstart: MLC-LLM Backend
+# Deploys Qwen3 8B using MLC-LLM optimized for AMD and NVIDIA GPUs.
+#
+# Prerequisites:
+# - FlexInfer installed (helm upgrade --install flexinfer ...)
+# - NVIDIA or AMD GPU with 16GB+ VRAM
+# - Pre-compiled MLC model (q4f16 quantization recommended)
+#
+# Deploy:
+#   kubectl apply -f quickstart-mlc-llm.yaml -n flexinfer-system
+#
+# Test:
+#   # Port-forward proxy
+#   kubectl port-forward svc/flexinfer-proxy 8080:80 -n flexinfer-system
+#
+#   # Query the model
+#   curl -s http://localhost:8080/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "model": "qwen3-8b-mlc",
+#       "messages": [{"role": "user", "content": "Write a haiku about programming."}]
+#     }'
+#
+# Expected output:
+#   {"id":"...","object":"chat.completion","model":"mlc-ai/Qwen3-8B-q4f16_1-MLC",...}
+#
+# Troubleshooting:
+# - TVM compilation errors: ensure model is pre-compiled for your GPU architecture
+# - AMD: use q4f32_1 instead of q4f16 to avoid ROCm TVM bugs
+# - Check logs: kubectl logs -l flexinfer.ai/model=qwen3-8b-mlc -n flexinfer-system
+# - Slow first start: JIT compilation takes time, consider pre-compiling with jitPolicy: "OFF"
+---
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-mlc
+spec:
+  # Backend: MLC-LLM - optimized for both NVIDIA and AMD GPUs
+  backend: mlc-llm
+
+  # Model source: MLC-AI HuggingFace pre-quantized model
+  # These models are pre-compiled for common GPU architectures
+  source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
+
+  # MLC-LLM-specific configuration
+  mlcllm:
+    mode: server                 # server mode for throughput, local for memory efficiency
+    # jitPolicy: "ON"            # ON for auto-compile (default), OFF for pre-compiled only
+
+  # Serverless: scale to zero when idle
+  serverless:
+    enabled: true
+    idleTimeout: 5m          # Scale down after 5 minutes
+    coldStartTimeout: 120s   # Allow 2 minutes for model loading
+
+  # GPU allocation - works with both NVIDIA and AMD
+  resources:
+    limits:
+      nvidia.com/gpu: "1"    # Change to amd.com/gpu for AMD GPUs
+
+  # Optional: target specific GPU vendor
+  # nodeSelector:
+  #   flexinfer.ai/gpu.vendor: nvidia  # or: amd

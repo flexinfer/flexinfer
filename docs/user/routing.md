@@ -31,7 +31,7 @@ Many applications use the same system prompt across different conversations. Pre
 
 ### Default (Kubernetes Service)
 
-By default, requests are routed through Kubernetes Service load balancing, which typically uses round-robin selection.
+By default, requests are routed through Kubernetes Service load balancing, which typically uses round-robin selection. This is the recommended configuration for most workloads.
 
 ```yaml
 apiVersion: inference.flexinfer.ai/v1alpha2
@@ -39,8 +39,15 @@ kind: Model
 metadata:
   name: my-model
 spec:
-  # No routing annotation = default behavior
+  # No routing annotation = Kubernetes Service load balancing
+  backend: ollama
+  source: ollama://llama3:8b
 ```
+
+**When to use default routing:**
+- Stateless inference (embeddings, single-shot completions)
+- Development/testing environments
+- Applications that handle their own routing
 
 ### Session Affinity
 

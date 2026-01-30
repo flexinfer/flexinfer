@@ -64,7 +64,10 @@ This is the checklist for Phase 4: improve operational readiness with **E2E test
   - Make an inference request
   - Enable serverless scaling
   - Monitor with Prometheus metrics
-- [ ] Add examples for each backend (ollama, vllm, mlc-llm)
+- [x] Add examples for each backend (ollama, vllm, mlc-llm):
+  - `examples/quickstart-ollama.yaml`
+  - `examples/quickstart-vllm.yaml`
+  - `examples/quickstart-mlc-llm.yaml`
 
 **Acceptance**
 - New user can deploy and query a model within 15 minutes. ✓

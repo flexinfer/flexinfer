@@ -1,0 +1,52 @@
+# Quickstart: Ollama Backend
+# Deploys a Llama 3.1 8B model using Ollama for simple GPU inference.
+#
+# Prerequisites:
+# - FlexInfer installed (helm upgrade --install flexinfer ...)
+# - NVIDIA or AMD GPU with drivers + device plugin
+#
+# Deploy:
+#   kubectl apply -f quickstart-ollama.yaml -n flexinfer-system
+#
+# Test:
+#   # Port-forward proxy
+#   kubectl port-forward svc/flexinfer-proxy 8080:80 -n flexinfer-system
+#
+#   # Query the model
+#   curl -s http://localhost:8080/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "model": "llama31-8b-ollama",
+#       "messages": [{"role": "user", "content": "Say hello in one sentence."}]
+#     }'
+#
+# Expected output:
+#   {"id":"chatcmpl-...","object":"chat.completion","created":...,"model":"llama3.1:8b",...}
+#
+# Troubleshooting:
+# - Check model status: kubectl get models -n flexinfer-system
+# - Check pod logs: kubectl logs -l flexinfer.ai/model=llama31-8b-ollama -n flexinfer-system
+# - Model not starting: ensure GPU resources are available (kubectl describe nodes | grep -A5 gpu)
+---
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: llama31-8b-ollama
+spec:
+  # Backend: Ollama - simplest setup, auto-pulls models
+  backend: ollama
+
+  # Model source: Ollama registry format
+  # Ollama will pull this automatically on first request
+  source: ollama://llama3.1:8b
+
+  # Serverless: scale to zero when idle
+  serverless:
+    enabled: true
+    idleTimeout: 5m          # Scale down after 5 minutes of no requests
+    coldStartTimeout: 120s   # Allow 2 minutes for model to start
+
+  # GPU allocation
+  resources:
+    limits:
+      nvidia.com/gpu: "1"    # Change to amd.com/gpu for AMD GPUs

@@ -29,10 +29,12 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
   - `/v1/completions`
   - `/v1/embeddings`
   - `/v1/models`
-- [ ] Verify request parsing matches OpenAI spec:
+- [x] Verify request parsing matches OpenAI spec:
   - required fields, optional fields, error responses
-- [ ] Verify response format matches OpenAI spec:
+  - Implemented in `pkg/validation/openai.go` (opt-in via `PROXY_VALIDATE_REQUESTS=true`)
+- [x] Verify response format matches OpenAI spec:
   - response structure, error format, status codes
+  - Implemented in `pkg/validation/errors.go` - all errors now return OpenAI JSON format
 
 **Acceptance**
 - Documentation lists supported endpoints with compatibility notes.
@@ -68,9 +70,9 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - [x] Review current cold start timeout behavior:
   - per-model `coldStartTimeoutSeconds` (v1alpha1) and `serverless.coldStartTimeout` (v1alpha2)
   - proxy-level `PROXY_COLD_START_TIMEOUT`
-- [ ] Add configurable backoff strategy for failed activations:
-  - exponential backoff with jitter (future enhancement)
-  - max retries before returning error (future enhancement)
+- [x] Add configurable backoff strategy for failed activations:
+  - exponential backoff with jitter via `PROXY_BACKOFF_ENABLED=true`
+  - max retries configurable via `PROXY_BACKOFF_MAX_RETRIES` (default: 3)
 - [x] Document cold start behavior for operators
 
 **Acceptance**

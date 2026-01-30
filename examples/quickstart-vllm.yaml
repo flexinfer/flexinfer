@@ -1,0 +1,63 @@
+# Quickstart: vLLM Backend
+# Deploys Qwen 2.5 7B Instruct using vLLM for high-throughput inference.
+#
+# Prerequisites:
+# - FlexInfer installed (helm upgrade --install flexinfer ...)
+# - NVIDIA GPU with 16GB+ VRAM (vLLM requires NVIDIA CUDA)
+# - HuggingFace model access (may require HF_TOKEN for gated models)
+#
+# Deploy:
+#   kubectl apply -f quickstart-vllm.yaml -n flexinfer-system
+#
+# Test:
+#   # Port-forward proxy
+#   kubectl port-forward svc/flexinfer-proxy 8080:80 -n flexinfer-system
+#
+#   # Query the model
+#   curl -s http://localhost:8080/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "model": "qwen25-7b-vllm",
+#       "messages": [{"role": "user", "content": "Explain quantum computing in 2 sentences."}],
+#       "max_tokens": 100
+#     }'
+#
+# Expected output:
+#   {"id":"cmpl-...","object":"chat.completion","model":"Qwen/Qwen2.5-7B-Instruct",...}
+#
+# Troubleshooting:
+# - Long cold start: vLLM compiles CUDA kernels on first start (1-2 minutes normal)
+# - OOM errors: reduce gpu_memory_utilization or use smaller model
+# - Check logs: kubectl logs -l flexinfer.ai/model=qwen25-7b-vllm -n flexinfer-system
+---
+apiVersion: inference.flexinfer.ai/v1alpha2
+kind: Model
+metadata:
+  name: qwen25-7b-vllm
+spec:
+  # Backend: vLLM - high-throughput serving with PagedAttention
+  backend: vllm
+
+  # Model source: HuggingFace format
+  source: HF://Qwen/Qwen2.5-7B-Instruct
+
+  # vLLM-specific configuration
+  vllm:
+    dtype: auto                      # Use model's native dtype
+    maxModelLen: 8192                # Context length (reduce if OOM)
+    gpuMemoryUtilization: "0.85"     # Reserve 15% VRAM for KV cache overhead
+
+  # Serverless: scale to zero when idle
+  serverless:
+    enabled: true
+    idleTimeout: 10m         # Scale down after 10 minutes (vLLM cold start is slow)
+    coldStartTimeout: 180s   # Allow 3 minutes for model loading + CUDA compilation
+
+  # GPU allocation - vLLM requires NVIDIA GPU
+  resources:
+    limits:
+      nvidia.com/gpu: "1"
+
+  # Optional: specify node with enough VRAM
+  # nodeSelector:
+  #   flexinfer.ai/gpu.vram: "24Gi"

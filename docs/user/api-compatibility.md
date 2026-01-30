@@ -147,26 +147,88 @@ The client will receive no data until the model is ready. Configure appropriate 
 | 404 | Model not found |
 | 405 | Method not allowed (e.g., POST to `/v1/models`) |
 | 503 | Queue full, activation timeout, or activation failure |
+| 504 | Cold start timeout or GPUGroup activation timeout |
 
 ### Error Format
 
-FlexInfer currently returns plain text error messages:
+FlexInfer returns errors in the standard OpenAI JSON format:
 
-```
-Model not found: nonexistent-model
-```
-
-```
-Timeout waiting for model to become ready
-```
-
-**Note**: This differs from the OpenAI error format which returns JSON:
 ```json
 {
   "error": {
-    "message": "...",
-    "type": "...",
-    "code": "..."
+    "message": "Model 'nonexistent-model' not found",
+    "type": "not_found_error",
+    "param": "model",
+    "code": "model_not_found"
+  }
+}
+```
+
+### Error Types
+
+| Type | Description |
+|------|-------------|
+| `invalid_request_error` | Malformed or invalid request (400) |
+| `not_found_error` | Requested resource not found (404) |
+| `server_error` | Internal server error (500) |
+| `service_unavailable_error` | Service temporarily unavailable (503) |
+| `timeout_error` | Request timeout (504) |
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `missing_required_field` | Required field not provided |
+| `invalid_field_value` | Field has invalid value |
+| `model_not_found` | Model does not exist |
+| `method_not_allowed` | HTTP method not supported |
+| `queue_full` | Request queue is full |
+| `activation_failed` | Model failed to activate |
+| `timeout` | Cold start or activation timeout |
+
+### Example Error Responses
+
+**Missing model ID (400)**:
+```json
+{
+  "error": {
+    "message": "X-Model-ID header, /model/<name> path, or 'model' field in request body required",
+    "type": "invalid_request_error",
+    "code": "missing_required_field"
+  }
+}
+```
+
+**Model not found (404)**:
+```json
+{
+  "error": {
+    "message": "Model 'my-model' not found",
+    "type": "not_found_error",
+    "param": "model",
+    "code": "model_not_found"
+  }
+}
+```
+
+**Queue full (503)**:
+```json
+{
+  "error": {
+    "message": "Service overloaded, please retry",
+    "type": "service_unavailable_error",
+    "code": "queue_full"
+  }
+}
+```
+
+**Cold start timeout (504)**:
+```json
+{
+  "error": {
+    "message": "Timeout waiting for model to become ready (waited 60s)",
+    "type": "timeout_error",
+    "code": "timeout"
   }
 }
 ```
@@ -230,23 +292,44 @@ When the queue is full, new requests receive:
 
 ## Known Limitations
 
-1. **No request validation**: The proxy does not validate request schemas against the OpenAI spec
-2. **Plain text errors**: Error responses are plain text, not OpenAI JSON format
-3. **No rate limiting**: Rate limiting must be implemented externally
-4. **No authentication**: Auth should be handled by ingress or service mesh
-5. **Single-model requests**: Each request targets one model (no routing/load balancing across models)
+1. **No request validation**: The proxy does not validate request schemas against the OpenAI spec (opt-in validation available via `PROXY_VALIDATE_REQUESTS=true`)
+2. **No rate limiting**: Rate limiting must be implemented externally
+3. **No authentication**: Auth should be handled by ingress or service mesh
+4. **Single-model requests**: Each request targets one model (no routing/load balancing across models)
 
 ## Metrics
 
 The proxy exports Prometheus metrics at `/metrics`:
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `proxy_requests_total` | counter | Total requests (labels: model, status) |
-| `proxy_request_duration_seconds` | histogram | Request latency (labels: model) |
-| `proxy_scale_ups_total` | counter | Cold start activations (labels: model) |
-| `proxy_queued_requests_total` | counter | Requests queued during cold start |
-| `proxy_queue_rejected_total` | counter | Requests rejected (queue full) |
-| `proxy_queue_wait_seconds` | histogram | Time spent waiting in queue |
-| `proxy_queue_depth` | gauge | Current queue depth per model |
-| `proxy_active_connections` | gauge | Active connections per model |
+### Request Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `proxy_requests_total` | counter | model, status | Total requests processed |
+| `proxy_request_duration_seconds` | histogram | model | Request latency distribution |
+| `proxy_active_connections` | gauge | model | Current active connections per model |
+
+### Cold Start / Queue Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `proxy_scale_ups_total` | counter | model | Cold start activations triggered |
+| `proxy_queued_requests_total` | counter | model | Requests queued during cold start |
+| `proxy_queue_rejected_total` | counter | model | Requests rejected (queue full) |
+| `proxy_queue_wait_seconds` | histogram | model | Time spent waiting in queue |
+| `proxy_queue_depth` | gauge | model | Current queue depth per model |
+
+### Endpoint Routing Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `proxy_endpoint_changes_total` | counter | model, change_type | Endpoint additions/removals (change_type: added, removed) |
+| `proxy_endpoint_count` | gauge | model | Current number of endpoints per model |
+| `proxy_endpoint_refresh_seconds` | histogram | - | Time spent refreshing endpoints |
+
+### GPUGroup Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `proxy_gpugroup_swap_signals_total` | counter | gpugroup, model | Swap signals sent to controller |
+| `proxy_gpugroup_queued_requests_total` | counter | gpugroup, model | Requests queued for model swap |
