@@ -25,6 +25,7 @@ import (
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/secrets"
+	"github.com/crb2nu/loom/pkg/skills"
 	"github.com/crb2nu/loom/pkg/sync"
 )
 
@@ -325,7 +326,102 @@ Example mcp.json:
 	genConfigsCmd.Flags().String("registry", "", "Path to registry.yaml")
 	genConfigsCmd.Flags().Bool("emit", true, "Emit generated files (always true)")
 
-	generateCmd.AddCommand(genManifestsCmd, genConfigsCmd)
+	// Generate Skills
+	genSkillsCmd := &cobra.Command{
+		Use:   "skills",
+		Short: "Generate skill configurations for Codex, Claude, etc.",
+		Long: `Generate skill configurations from the unified skills registry.
+
+This command reads skills-registry.yaml and generates platform-specific
+skill configurations for AI coding assistants like Codex CLI and Claude Code.
+
+Codex skills are generated as:
+  ~/.codex/skills/<skill-name>/
+    SKILL.md        # Main skill file with YAML frontmatter
+    scripts/        # Bundled scripts
+    references/     # Reference documentation
+    assets/         # Templates and other assets
+
+Claude skills are generated as:
+  .agents/skills/<skill-name>.md  # Simple markdown file
+
+Example:
+  loom generate skills --target codex
+  loom generate skills --target claude --output-dir .agents/skills
+  loom generate skills --target all --dry-run`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, _ := cmd.Flags().GetString("target")
+			outputDir, _ := cmd.Flags().GetString("output-dir")
+			registryPath, _ := cmd.Flags().GetString("registry")
+			codexHome, _ := cmd.Flags().GetString("codex-home")
+			workspaceRoot, _ := cmd.Flags().GetString("workspace")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			validate, _ := cmd.Flags().GetBool("validate")
+
+			cwd, _ := os.Getwd()
+
+			// Find skills registry
+			if registryPath == "" {
+				var found bool
+				registryPath, found = skills.FindRegistry()
+				if !found {
+					// Try standard location
+					registryPath = filepath.Join(cwd, "mcp", "context", "skills-registry.yaml")
+					if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+						registryPath = filepath.Join(cwd, "platform", "gitops", "mcp", "context", "skills-registry.yaml")
+					}
+				}
+			}
+
+			if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+				return fmt.Errorf("skills registry not found at %s", registryPath)
+			}
+
+			// Validate only mode
+			if validate {
+				reg, err := skills.Load(registryPath)
+				if err != nil {
+					return fmt.Errorf("validation failed: %w", err)
+				}
+				fmt.Printf("✓ Skills registry valid: %d skills defined\n", len(reg.Skills))
+				for _, skill := range reg.Skills {
+					fmt.Printf("  - %s (%s)\n", skill.Name, strings.Join(skill.Categories, ", "))
+				}
+				return nil
+			}
+
+			if workspaceRoot == "" {
+				workspaceRoot = cwd
+			}
+
+			gen, err := skills.NewGenerator(skills.GeneratorOptions{
+				RegistryPath:  registryPath,
+				Target:        target,
+				OutputDir:     outputDir,
+				CodexHome:     codexHome,
+				WorkspaceRoot: workspaceRoot,
+				DryRun:        dryRun,
+				Verbose:       verbose,
+			})
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Generating skills from %s...\n", registryPath)
+			return gen.Generate()
+		},
+	}
+	genSkillsCmd.Flags().String("target", "all", "Target platform (all, codex, claude)")
+	genSkillsCmd.Flags().String("output-dir", "", "Output directory (default: platform-specific)")
+	genSkillsCmd.Flags().String("registry", "", "Path to skills-registry.yaml")
+	genSkillsCmd.Flags().String("codex-home", "", "Codex home directory (default: ~/.codex)")
+	genSkillsCmd.Flags().String("workspace", "", "Workspace root for Claude skills")
+	genSkillsCmd.Flags().Bool("dry-run", false, "Show what would be generated without writing")
+	genSkillsCmd.Flags().Bool("verbose", false, "Verbose output")
+	genSkillsCmd.Flags().Bool("validate", false, "Only validate the registry, don't generate")
+
+	generateCmd.AddCommand(genManifestsCmd, genConfigsCmd, genSkillsCmd)
 
 	// Sync Command
 	syncCmd := &cobra.Command{
