@@ -228,3 +228,21 @@ New tests added:
 - **internal/daemon/daemon_test.go**: Call lock serialization (callLock), variable expansion (expandVarsWithRegistry with ${HOME}, ${repo}, ${env:}, ${keychain:}, ${secret:} patterns)
 
 Commit: `test: add coverage for codebase and daemon core functions`
+
+### MCP Server Test Coverage (2026-01-30)
+
+Additional coverage for MCP server command handlers:
+
+| Package | Before | After |
+|---------|--------|-------|
+| cmd/mcp-time | 18.3% | 80.8% |
+
+Tests added:
+- **parseDurationWithDays**: Various duration formats including days, negative values, invalid inputs
+- **handleGetCurrentTime**: Timezone handling, response field verification
+- **handleConvertTimezone**: Time format parsing, timezone validation, error cases
+- **handleAddDuration**: Duration arithmetic, timezone application, error handling
+- **handleListTimezones**: Response structure verification
+- **handleWait**: Deadline handling, negative duration rejection
+
+Commit: `test: add comprehensive coverage for mcp-time server`
