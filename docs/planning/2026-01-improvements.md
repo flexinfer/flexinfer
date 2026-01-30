@@ -246,3 +246,31 @@ Tests added:
 - **handleWait**: Deadline handling, negative duration rejection
 
 Commit: `test: add comprehensive coverage for mcp-time server`
+
+### New MCP Server: Elasticsearch (2026-01-30)
+
+Implemented `mcp-elasticsearch` MCP server with comprehensive Elasticsearch integration:
+
+**File:** `cmd/mcp-elasticsearch/main.go`
+
+**Tools provided:**
+- **es_search**: Full Elasticsearch Query DSL search with pagination
+- **es_query**: Simple Lucene query string search (q parameter)
+- **es_get**: Get document by ID
+- **es_count**: Count documents matching query
+- **es_indices**: List all indices with health/status
+- **es_mapping**: Get index mapping schema
+- **es_aliases**: List index aliases
+- **es_health**: Cluster health status
+- **es_info**: Cluster info and version
+- **es_stats**: Index statistics
+
+**Configuration:**
+- `ELASTICSEARCH_URL`: Server URL (default: http://localhost:9200)
+- `ELASTICSEARCH_USERNAME`/`ELASTICSEARCH_PASSWORD`: Basic auth
+- `ELASTICSEARCH_API_KEY`: API key auth (preferred)
+- `ELASTICSEARCH_SKIP_VERIFY`: Skip TLS verification
+
+**Test coverage:** 63.9% with mock server tests
+
+Commit: `feat: add mcp-elasticsearch server with full query support`

@@ -48,7 +48,7 @@ Planned MCP servers for broader ecosystem coverage:
 - [ ] **`mcp-notion`**: Notion pages and databases.
 - [ ] **`mcp-sentry`**: Error tracking and issue management.
 - [ ] **`mcp-pagerduty`**: Incident management and on-call scheduling.
-- [ ] **`mcp-elasticsearch`**: Full-text search and log analysis.
+- [x] **`mcp-elasticsearch`**: Full-text search and log analysis.
 - [ ] **`mcp-mongodb`**: MongoDB document queries.
 - [ ] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
 - [ ] **`mcp-terraform`**: Terraform state and plan management.
