@@ -52,8 +52,9 @@ Planned MCP servers for broader ecosystem coverage:
 - [ ] **`mcp-mongodb`**: MongoDB document queries.
 - [ ] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
 - [ ] **`mcp-terraform`**: Terraform state and plan management.
-- [ ] **`mcp-vault`**: HashiCorp Vault secrets access.
-- [ ] **`mcp-aws`**: AWS resource access (S3, Lambda, etc.).
+- [x] **`mcp-vault`**: HashiCorp Vault secrets access.
+- [x] **`mcp-aws`**: AWS resource access (S3, Lambda, EC2).
+- [x] **`mcp-gcp`**: Google Cloud Platform (Storage, Compute, Functions).
 
 ## References
 
