@@ -27,6 +27,8 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 - [x] **`mcp-jira`**: Jira issue tracking integration.
 - [x] **`mcp-confluence`**: Knowledge base search.
 - [x] **`mcp-postgres`**: Database schema and query inspector.
+- [x] **`mcp-github-actions`**: GitHub Actions workflow management (trigger, cancel, rerun, logs).
+- [x] **`mcp-slack`**: Slack integration (search, channels, messages, reactions).
 
 ### Phase 2: Core Infrastructure
 
@@ -37,6 +39,21 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
   - Process manager integration: Auto-detects SSH config and connects via tunnel.
   - Auth methods: SSH agent, key files, known_hosts verification.
 - [x] **Context Caching**: Persistent tool manifest caching for instant startup.
+
+### Phase 3: Additional Integrations
+
+Planned MCP servers for broader ecosystem coverage:
+
+- [ ] **`mcp-linear`**: Linear issue tracking (alternative to Jira for modern teams).
+- [ ] **`mcp-notion`**: Notion pages and databases.
+- [ ] **`mcp-sentry`**: Error tracking and issue management.
+- [ ] **`mcp-pagerduty`**: Incident management and on-call scheduling.
+- [ ] **`mcp-elasticsearch`**: Full-text search and log analysis.
+- [ ] **`mcp-mongodb`**: MongoDB document queries.
+- [ ] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
+- [ ] **`mcp-terraform`**: Terraform state and plan management.
+- [ ] **`mcp-vault`**: HashiCorp Vault secrets access.
+- [ ] **`mcp-aws`**: AWS resource access (S3, Lambda, etc.).
 
 ## References
 
