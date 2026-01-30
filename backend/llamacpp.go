@@ -95,6 +95,39 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--flash-attn")
 	}
 
+	// Multimodal projection file for vision models (e.g., LLaVA, Qwen-VL)
+	if mmproj := spec.ConfigString("mmproj", ""); mmproj != "" {
+		args = append(args, "--mmproj", mmproj)
+	}
+
+	// Chat template (e.g., chatml, llama2, etc.)
+	if chatTemplate := spec.ConfigString("chatTemplate", ""); chatTemplate != "" {
+		args = append(args, "--chat-template", chatTemplate)
+	}
+
+	// Parallel requests
+	if parallel := spec.ConfigInt("parallel", 0); parallel > 0 {
+		args = append(args, "--parallel", fmt.Sprintf("%d", parallel))
+	}
+
+	// KV cache quantization (for memory efficiency)
+	if cacheTypeK := spec.ConfigString("cacheTypeK", ""); cacheTypeK != "" {
+		args = append(args, "--cache-type-k", cacheTypeK)
+	}
+	if cacheTypeV := spec.ConfigString("cacheTypeV", ""); cacheTypeV != "" {
+		args = append(args, "--cache-type-v", cacheTypeV)
+	}
+
+	// Ubatch size for better throughput
+	if ubatchSize := spec.ConfigInt("ubatchSize", 0); ubatchSize > 0 {
+		args = append(args, "--ubatch-size", fmt.Sprintf("%d", ubatchSize))
+	}
+
+	// Enable metrics endpoint
+	if spec.ConfigBool("metrics", false) {
+		args = append(args, "--metrics")
+	}
+
 	return args
 }
 
