@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestNewSSHTransport(t *testing.T) {
@@ -67,6 +68,71 @@ func TestSSHTransport_CloseWithoutConnect(t *testing.T) {
 	err := transport.Close()
 	if err != nil {
 		t.Errorf("unexpected error closing disconnected transport: %v", err)
+	}
+}
+
+func TestSSHTransport_DoubleClose(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com:22",
+		User: "testuser",
+	}
+	tunnel := NewSSHTunnel(cfg)
+	transport := NewSSHTransport(tunnel, "mcp-server")
+
+	// First close should succeed
+	err := transport.Close()
+	if err != nil {
+		t.Errorf("first Close() error = %v", err)
+	}
+
+	// Second close should also succeed (idempotent)
+	err = transport.Close()
+	if err != nil {
+		t.Errorf("second Close() error = %v", err)
+	}
+}
+
+func TestSSHTransport_ConnectWithoutTunnel(t *testing.T) {
+	cfg := SSHConfig{
+		Host:     "127.0.0.1:1", // Invalid port
+		User:     "testuser",
+		UseAgent: false,
+	}
+	tunnel := NewSSHTunnel(cfg)
+	transport := NewSSHTransport(tunnel, "mcp-server")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := transport.Connect(ctx)
+	if err == nil {
+		transport.Close()
+		t.Error("expected error for invalid connection")
+	}
+}
+
+func TestSSHTransport_Fields(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com:22",
+		User: "testuser",
+	}
+	tunnel := NewSSHTunnel(cfg)
+	transport := NewSSHTransport(tunnel, "my-command --flag")
+
+	if transport.tunnel != tunnel {
+		t.Error("tunnel not set correctly")
+	}
+	if transport.command != "my-command --flag" {
+		t.Errorf("command = %q, want 'my-command --flag'", transport.command)
+	}
+	if transport.connected {
+		t.Error("should start disconnected")
+	}
+	if transport.stdin != nil {
+		t.Error("stdin should be nil initially")
+	}
+	if transport.stdout != nil {
+		t.Error("stdout should be nil initially")
 	}
 }
 
