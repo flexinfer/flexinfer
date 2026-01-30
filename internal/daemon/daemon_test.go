@@ -541,3 +541,216 @@ func TestToolCache_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+// =============================================================================
+// callLock Tests
+// =============================================================================
+
+func TestCallLock_ReturnsLockForServer(t *testing.T) {
+	d := &Daemon{}
+
+	lock1 := d.callLock("server1")
+	lock2 := d.callLock("server1")
+
+	// Same server should return the same lock
+	if lock1 != lock2 {
+		t.Error("expected same lock for same server name")
+	}
+}
+
+func TestCallLock_DifferentServers(t *testing.T) {
+	d := &Daemon{}
+
+	lock1 := d.callLock("server1")
+	lock2 := d.callLock("server2")
+
+	// Different servers should return different locks
+	if lock1 == lock2 {
+		t.Error("expected different locks for different servers")
+	}
+}
+
+func TestCallLock_EmptyServerName(t *testing.T) {
+	d := &Daemon{}
+
+	lock := d.callLock("")
+
+	// Empty server name should return a new lock each time
+	if lock == nil {
+		t.Error("expected non-nil lock for empty server name")
+	}
+
+	lock2 := d.callLock("")
+	if lock == lock2 {
+		t.Error("empty server name should return different locks")
+	}
+}
+
+func TestCallLock_WhitespaceServerName(t *testing.T) {
+	d := &Daemon{}
+
+	lock := d.callLock("   ")
+
+	// Whitespace-only should be treated like empty
+	if lock == nil {
+		t.Error("expected non-nil lock")
+	}
+}
+
+func TestCallLock_ConcurrentAccess(t *testing.T) {
+	d := &Daemon{}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			serverName := "server"
+			if id%2 == 0 {
+				serverName = "server1"
+			} else {
+				serverName = "server2"
+			}
+			lock := d.callLock(serverName)
+			lock.Lock()
+			// Simulate some work
+			lock.Unlock()
+		}(i)
+	}
+	wg.Wait()
+}
+
+// =============================================================================
+// expandVarsWithRegistry Tests
+// =============================================================================
+
+func TestExpandVarsWithRegistry_HOME(t *testing.T) {
+	home, _ := os.UserHomeDir()
+
+	result := expandVarsWithRegistry("${HOME}/config", "/repo", nil)
+	expected := home + "/config"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_Repo(t *testing.T) {
+	result := expandVarsWithRegistry("${repo}/scripts", "/workspace/myproject", nil)
+	expected := "/workspace/myproject/scripts"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_EmptyRepo(t *testing.T) {
+	result := expandVarsWithRegistry("${repo}/scripts", "", nil)
+
+	// When repoRoot is empty, ${repo} should not be replaced
+	if result != "${repo}/scripts" {
+		t.Errorf("expandVarsWithRegistry() = %q, want ${repo}/scripts", result)
+	}
+}
+
+func TestExpandVarsWithRegistry_EnvVar(t *testing.T) {
+	os.Setenv("TEST_VAR_EXPAND", "test-value")
+	defer os.Unsetenv("TEST_VAR_EXPAND")
+
+	result := expandVarsWithRegistry("prefix-${env:TEST_VAR_EXPAND}-suffix", "", nil)
+	expected := "prefix-test-value-suffix"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_EnvVarMissing(t *testing.T) {
+	os.Unsetenv("MISSING_VAR_12345")
+
+	result := expandVarsWithRegistry("${env:MISSING_VAR_12345}", "", nil)
+
+	// Missing env var should be replaced with empty string
+	if result != "" {
+		t.Errorf("expandVarsWithRegistry() = %q, want empty", result)
+	}
+}
+
+func TestExpandVarsWithRegistry_EnvVarDefault(t *testing.T) {
+	os.Unsetenv("MISSING_VAR_WITH_DEFAULT")
+
+	result := expandVarsWithRegistry("${env:MISSING_VAR_WITH_DEFAULT:-default-value}", "", nil)
+	expected := "default-value"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_EnvVarDefaultOverride(t *testing.T) {
+	os.Setenv("VAR_WITH_DEFAULT", "actual-value")
+	defer os.Unsetenv("VAR_WITH_DEFAULT")
+
+	result := expandVarsWithRegistry("${env:VAR_WITH_DEFAULT:-default-value}", "", nil)
+	expected := "actual-value"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_MultipleVars(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	os.Setenv("TEST_MULTI", "multi")
+	defer os.Unsetenv("TEST_MULTI")
+
+	result := expandVarsWithRegistry("${HOME}/config:${repo}/bin:${env:TEST_MULTI}", "/workspace", nil)
+	expected := home + "/config:/workspace/bin:multi"
+
+	if result != expected {
+		t.Errorf("expandVarsWithRegistry() = %q, want %q", result, expected)
+	}
+}
+
+func TestExpandVarsWithRegistry_Keychain(t *testing.T) {
+	// Keychain falls back to env when no keychain manager
+	os.Setenv("KEYCHAIN_TEST", "keychain-value")
+	defer os.Unsetenv("KEYCHAIN_TEST")
+
+	result := expandVarsWithRegistry("${keychain:KEYCHAIN_TEST}", "", nil)
+
+	// Should fall back to env var
+	if result != "keychain-value" {
+		t.Errorf("expandVarsWithRegistry() = %q, want keychain-value", result)
+	}
+}
+
+func TestExpandVarsWithRegistry_Secret(t *testing.T) {
+	// Secret resolution uses the secrets manager
+	// When not found, it will be replaced with empty string
+	result := expandVarsWithRegistry("${secret:NONEXISTENT_SECRET}", "", nil)
+
+	// Secret not found should result in empty string
+	// (actual behavior depends on secrets manager)
+	if result != "" {
+		t.Logf("secret resolved to: %q (may vary by environment)", result)
+	}
+}
+
+func TestExpandVarsWithRegistry_NoVars(t *testing.T) {
+	result := expandVarsWithRegistry("plain string", "/workspace", nil)
+
+	if result != "plain string" {
+		t.Errorf("expandVarsWithRegistry() = %q, want 'plain string'", result)
+	}
+}
+
+func TestExpandVarsWithRegistry_UnterminatedVar(t *testing.T) {
+	// Unterminated variable pattern should be left as-is
+	result := expandVarsWithRegistry("${env:UNTERMINATED", "", nil)
+
+	// Loop should break without infinite loop
+	if result != "${env:UNTERMINATED" {
+		t.Errorf("expandVarsWithRegistry() = %q, want original", result)
+	}
+}

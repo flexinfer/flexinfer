@@ -213,3 +213,18 @@ Tests cover:
 - SSH tunnel connection lifecycle, transport state management
 
 Commit: `test: add coverage for validate, httpclient, generator, tunnel packages`
+
+### Core Component Coverage Sprint (2026-01-30)
+
+Further coverage improvements for core packages:
+
+| Package | Before | After |
+|---------|--------|-------|
+| pkg/codebase | 1.7% | 9.9% |
+| internal/daemon | 10.7% | 19.8% |
+
+New tests added:
+- **pkg/codebase/service_test.go**: Helper functions (minInt, minFloat64, lexicalTokens), graph escaping (escapeMermaidLabel, escapeDotLabel), graph rendering (renderCallGraph, renderModuleGraph)
+- **internal/daemon/daemon_test.go**: Call lock serialization (callLock), variable expansion (expandVarsWithRegistry with ${HOME}, ${repo}, ${env:}, ${keychain:}, ${secret:} patterns)
+
+Commit: `test: add coverage for codebase and daemon core functions`
