@@ -12,11 +12,11 @@ import (
 // It maintains a ring of virtual nodes (vnodes) to distribute load evenly
 // and minimize redistribution when pods are added/removed.
 type HashRing struct {
-	mu       sync.RWMutex
-	vnodes   int              // Number of virtual nodes per real node
-	ring     []uint32         // Sorted list of vnode hashes
-	nodeMap  map[uint32]string // vnode hash -> node address
-	nodes    map[string]bool  // Set of node addresses
+	mu      sync.RWMutex
+	vnodes  int               // Number of virtual nodes per real node
+	ring    []uint32          // Sorted list of vnode hashes
+	nodeMap map[uint32]string // vnode hash -> node address
+	nodes   map[string]bool   // Set of node addresses
 }
 
 // NewHashRing creates a new consistent hash ring.
