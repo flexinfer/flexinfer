@@ -1,0 +1,11 @@
+# Basic Ollama Model
+# This is the simplest way to deploy an Ollama model with FlexInfer.
+# The model will auto-scale based on traffic (serverless by default).
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: llama3
+spec:
+  backend: ollama
+  source: ollama://llama3.2:1b
+  # GPU auto-detected, serverless enabled by default

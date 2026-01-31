@@ -1,0 +1,21 @@
+# vLLM with HuggingFace Model
+# Deploy a HuggingFace model using vLLM for high-throughput inference.
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: mistral-vllm
+spec:
+  backend: vllm
+  source: HF://mistralai/Mistral-7B-Instruct-v0.2
+  gpu:
+    vendor: nvidia
+    count: 1
+  config:
+    tensorParallelSize: 1
+    maxModelLen: 4096
+  cache:
+    strategy: SharedPVC
+    size: 100Gi
+  serverless:
+    idleTimeout: 10m
+    coldStartTimeout: 5m  # Large models need more time

@@ -1,0 +1,16 @@
+# Always-On Ollama Model
+# Set minReplicas: 1 to keep the model warm (no cold starts).
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: llama3-warm
+spec:
+  backend: ollama
+  source: ollama://llama3.2:3b
+  gpu:
+    vendor: auto
+    count: 1
+  serverless:
+    enabled: true
+    minReplicas: 1  # Keep warm
+    idleTimeout: 30m

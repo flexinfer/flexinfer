@@ -762,7 +762,11 @@ type ModelMetrics struct {
 //+kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
 //+kubebuilder:printcolumn:name="TPS",type="string",JSONPath=".status.tokensPerSecond"
 
-// ModelDeployment is the Schema for the modeldeployments API
+// ModelDeployment is the Schema for the modeldeployments API.
+//
+// Deprecated: ModelDeployment is deprecated in favor of the v1alpha2 Model resource.
+// ModelDeployment will be removed in a future release. Please migrate to v1alpha2 Model.
+// See docs/migration/v1alpha1-to-v1alpha2.md for migration guide.
 type ModelDeployment struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -1,0 +1,23 @@
+# LiteLLM Integration
+# Expose local models as OpenAI-compatible endpoints with aliases.
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: local-gpt
+spec:
+  backend: ollama
+  source: ollama://llama3:70b
+  gpu:
+    vendor: nvidia
+    count: 2  # Multi-GPU for large model
+  litellm:
+    enabled: true
+    servedModelName: gpt-4          # Clients see "gpt-4"
+    aliases:
+      - gpt-4-turbo
+      - gpt-4-turbo-preview
+    copilotAlias: copilot-gpt4       # IDE compatibility
+  serviceLabels:
+    - textgen
+    - code
+    - reasoning

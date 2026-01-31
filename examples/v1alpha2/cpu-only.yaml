@@ -1,0 +1,21 @@
+# CPU-Only Model
+# Deploy a model on CPU when no GPU is available.
+# Good for small models or testing.
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: phi-cpu
+spec:
+  backend: llamacpp
+  source: HF://microsoft/phi-2-GGUF
+  gpu:
+    vendor: cpu    # Explicitly request CPU-only
+  resources:
+    requests:
+      cpu: "4"
+      memory: 8Gi
+    limits:
+      cpu: "8"
+      memory: 16Gi
+  serverless:
+    idleTimeout: 5m

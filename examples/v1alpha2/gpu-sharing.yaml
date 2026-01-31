@@ -1,0 +1,31 @@
+# GPU Sharing Example
+# Multiple models share a single GPU using time-slicing.
+# Higher priority models preempt lower priority ones.
+---
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: codellama
+spec:
+  backend: ollama
+  source: ollama://codellama:7b
+  gpu:
+    shared: my-workstation    # Group name for sharing
+    priority: 200             # Higher = more important
+    vramEstimateMB: 5000
+  serverless:
+    idleTimeout: 2m           # Quick scale-down when idle
+---
+apiVersion: ai.flexinfer.io/v1alpha2
+kind: Model
+metadata:
+  name: phi
+spec:
+  backend: ollama
+  source: ollama://phi3:mini
+  gpu:
+    shared: my-workstation    # Same group as codellama
+    priority: 100             # Lower priority, will be preempted
+    vramEstimateMB: 2000
+  serverless:
+    idleTimeout: 2m
