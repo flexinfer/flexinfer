@@ -422,6 +422,37 @@ publish_mlcllm_cuda:
       when: manual
     - when: never
 
+# CUDA 11.8 MLC-LLM image for Maxwell GPUs (GTX 980 Ti, etc.)
+# Builds TVM from source with compute capability 52, CUTLASS disabled
+# Required for legacy Maxwell nodes with 6GB VRAM
+publish_mlcllm_maxwell:
+  stage: publish
+  image: moby/buildkit:v0.12.5
+  timeout: 2h  # Builds TVM from source
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building MLC-LLM Maxwell image (CUDA 11.8, sm_52)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.mlc-cuda-maxwell" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=${REGISTRY}/mlc-llm:cuda-maxwell-v7,push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # --- Diffusers Backend Images ---
 # OpenAI-compatible image generation API for AMD/NVIDIA GPUs
 publish_diffusers_rocm:

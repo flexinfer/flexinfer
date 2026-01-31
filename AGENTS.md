@@ -1010,12 +1010,30 @@ The ROCm 6.4 driver is installed on both 7900XTX nodes, but the MLC-LLM containe
 
 #### Available Dockerfiles
 
-| Dockerfile | Purpose | Status |
-|------------|---------|--------|
-| `build/Dockerfile.mlc-rocm64-full` | Full build from source with TVM for ROCm 6.4 | Ready to build |
-| `build/Dockerfile.mlc-rocm64-build` | Multi-stage optimized build | Alternative |
-| `build/Dockerfile.mlc-cuda` | CUDA backend | Built |
-| `build/Dockerfile.mlc-cuda-maxwell` | Maxwell GPU support | Built |
+| Dockerfile | Purpose | CI Job | Image Tag |
+|------------|---------|--------|-----------|
+| `build/Dockerfile.mlc-rocm64-full` | ROCm 6.4 for gfx1100 | `publish_mlcllm_rocm64` | `library/mlc-llm:rocm64-src` |
+| `build/Dockerfile.mlc-cuda-maxwell` | CUDA 11.8 for Maxwell (sm_52) | `publish_mlcllm_maxwell` | `flexinfer/mlc-llm:cuda-maxwell-v7` |
+| `build/Dockerfile.mlc-cuda` | CUDA generic backend | `publish_mlcllm_cuda` | `flexinfer/mlc-llm:cuda` |
+| `build/Dockerfile.mlc-rocm` | ROCm generic backend | `publish_mlcllm_rocm` | `flexinfer/mlc-llm:rocm` |
+
+#### Building Images
+
+**Local builds** (for testing or when CI is slow):
+```bash
+# ROCm 6.4 gfx1100 (~3 hours, use 7900xtx docker context)
+make build-mlc-rocm64 push-mlc-rocm64
+
+# Maxwell sm_52 (~2 hours)
+make build-mlc-maxwell push-mlc-maxwell
+
+# Verify all images exist
+make verify-images
+```
+
+**CI builds** (manual trigger in GitLab):
+- Go to CI/CD > Pipelines > Run Pipeline
+- Select `publish_mlcllm_rocm64` or `publish_mlcllm_maxwell`
 
 #### Target Image
 

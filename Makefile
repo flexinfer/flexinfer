@@ -171,3 +171,32 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+##@ Backend Images
+
+HARBOR_REGISTRY ?= registry.harbor.lan
+MLC_ROCM64_IMAGE ?= $(HARBOR_REGISTRY)/library/mlc-llm:rocm64-src
+MLC_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/mlc-llm:cuda-maxwell-v7
+
+# Docker context for GPU builds (requires remote builder with GPU access)
+DOCKER_CONTEXT_GPU ?= 7900xtx
+
+.PHONY: build-mlc-rocm64
+build-mlc-rocm64: ## Build MLC-LLM ROCm 6.4 image on GPU node (gfx1100, ~3 hours)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-rocm64-full -t $(MLC_ROCM64_IMAGE) build/
+
+.PHONY: push-mlc-rocm64
+push-mlc-rocm64: ## Push MLC-LLM ROCm 6.4 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_ROCM64_IMAGE)
+
+.PHONY: build-mlc-maxwell
+build-mlc-maxwell: ## Build MLC-LLM Maxwell image on GPU node (sm_52, ~2 hours)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-cuda-maxwell -t $(MLC_MAXWELL_IMAGE) build/
+
+.PHONY: push-mlc-maxwell
+push-mlc-maxwell: ## Push MLC-LLM Maxwell image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_MAXWELL_IMAGE)
+
+.PHONY: verify-images
+verify-images: ## Verify all backend images exist in Harbor registry
+	@./scripts/verify-images.sh
