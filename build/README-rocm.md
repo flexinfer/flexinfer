@@ -181,7 +181,33 @@ Look for models with `-MLC` suffix that include ROCm-compatible quantizations.
 | `Dockerfile.mlc-rocm` | Older ROCm version, less stable |
 | `Dockerfile.mlc-rocm64-build` | Build stage only |
 | `Dockerfile.mlc-rocm64-hipblas` | HIPBlas backend variant |
-| `Dockerfile.mlc-rocm64-full` | Recommended, source build |
+| `Dockerfile.mlc-rocm64-full` | Recommended, generic ROCm source build |
+| `Dockerfile.mlc-rocm64-gfx1100` | GFX1100 (RX 7900 series) optimized build |
+| `Dockerfile.vllm-rocm-gfx1100` | vLLM for GFX1100 with flash attention disabled |
+
+### Building GFX1100 Images
+
+For RX 7900 XTX/XT/GRE (gfx1100 architecture):
+
+```bash
+# MLC-LLM for gfx1100
+docker build \
+  -f build/Dockerfile.mlc-rocm64-gfx1100 \
+  -t registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100 \
+  build/
+
+# vLLM for gfx1100
+docker build \
+  -f build/Dockerfile.vllm-rocm-gfx1100 \
+  -t registry.harbor.lan/flexinfer/vllm:rocm-gfx1100 \
+  build/
+```
+
+The GFX1100-specific images include:
+- `PYTORCH_ROCM_ARCH=gfx1100` for targeted kernel compilation
+- `HSA_OVERRIDE_GFX_VERSION=11.0.0` for RDNA3 compatibility
+- `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` for stable flash attention
+- Flash attention disabled in vLLM (`BUILD_FA=0`) to prevent GPU hangs
 
 ## References
 

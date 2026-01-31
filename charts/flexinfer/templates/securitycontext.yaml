@@ -1,0 +1,54 @@
+{{- /*
+Security context helpers for FlexInfer pods.
+These templates provide secure defaults that can be overridden per-component.
+*/ -}}
+
+{{- define "flexinfer.securityContext.pod" -}}
+{{- $defaults := dict
+  "runAsNonRoot" true
+  "runAsUser" 65532
+  "runAsGroup" 65532
+  "fsGroup" 65532
+  "seccompProfile" (dict "type" "RuntimeDefault")
+-}}
+{{- $merged := merge (default dict .securityContext) $defaults -}}
+{{- toYaml $merged -}}
+{{- end -}}
+
+{{- define "flexinfer.securityContext.container" -}}
+{{- $defaults := dict
+  "allowPrivilegeEscalation" false
+  "readOnlyRootFilesystem" true
+  "capabilities" (dict "drop" (list "ALL"))
+-}}
+{{- $merged := merge (default dict .securityContext) $defaults -}}
+{{- toYaml $merged -}}
+{{- end -}}
+
+{{- /*
+GPU containers need additional capabilities/devices.
+Use this for backend inference containers.
+*/ -}}
+{{- define "flexinfer.securityContext.gpuContainer" -}}
+{{- $defaults := dict
+  "allowPrivilegeEscalation" false
+  "readOnlyRootFilesystem" false
+  "capabilities" (dict "drop" (list "ALL"))
+-}}
+{{- $merged := merge (default dict .securityContext) $defaults -}}
+{{- toYaml $merged -}}
+{{- end -}}
+
+{{- /*
+Agent pods need host access for hardware detection.
+*/ -}}
+{{- define "flexinfer.securityContext.agent" -}}
+{{- $defaults := dict
+  "allowPrivilegeEscalation" false
+  "readOnlyRootFilesystem" true
+  "capabilities" (dict "drop" (list "ALL"))
+  "privileged" false
+-}}
+{{- $merged := merge (default dict .securityContext) $defaults -}}
+{{- toYaml $merged -}}
+{{- end -}}

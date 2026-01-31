@@ -175,16 +175,31 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			// Path includes both PVC name and model subdirectory
 			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
+
+			// Set OCI-specific status fields
+			if isOCISource(modelCache.Spec.Source) {
+				now := metav1.Now()
+				modelCache.Status.OCIPulledAt = &now
+				modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
+				// Note: OCIDigest is set by the download job via ConfigMap (see jobForOCIDownload)
+			}
+
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 			log.Info("ModelCache is Ready", "path", modelCache.Status.Path)
+
+			// Record event for successful cache provisioning
+			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
+				fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
 		}
 	} else if job.Status.Failed > 0 {
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "CacheFailed",
+			"Model download job failed - check job logs for details")
 	}
 
 	return ctrl.Result{}, nil
@@ -241,6 +256,17 @@ func parseModelSource(source string) string {
 func isOCISource(source string) bool {
 	return strings.HasPrefix(source, "oci://") ||
 		strings.HasPrefix(source, "oras://")
+}
+
+// extractOCIRegistry extracts the registry hostname from an OCI source URL
+func extractOCIRegistry(source string) string {
+	ref := parseOCISource(source)
+	// Split on first slash to get registry hostname
+	parts := strings.SplitN(ref, "/", 2)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
 }
 
 // parseOCISource extracts the registry reference from OCI source formats
@@ -401,10 +427,16 @@ func (r *ModelCacheReconciler) jobForOCIDownload(m *aiv1alpha1.ModelCache, pvcNa
 		orasImage = img
 	}
 
+	// Extract registry host for health check
+	registryHost := extractOCIRegistry(m.Spec.Source)
+
 	downloadScript := fmt.Sprintf(`
-set -ex
+set -e
 MODEL_REF="%s"
 DEST_DIR="/models/%s"
+REGISTRY_HOST="%s"
+MAX_RETRIES=3
+RETRY_DELAY=10
 
 # Skip if already downloaded
 if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
@@ -412,12 +444,45 @@ if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
     exit 0
 fi
 
+# Registry health check with retry
+echo "Checking registry connectivity to $REGISTRY_HOST..."
+for i in $(seq 1 $MAX_RETRIES); do
+    if oras repo tags "$MODEL_REF" --last 1 >/dev/null 2>&1; then
+        echo "Registry is reachable"
+        break
+    fi
+    if [ $i -eq $MAX_RETRIES ]; then
+        echo "ERROR: Cannot reach registry $REGISTRY_HOST after $MAX_RETRIES attempts"
+        exit 1
+    fi
+    echo "Registry check failed, retrying in ${RETRY_DELAY}s... (attempt $i/$MAX_RETRIES)"
+    sleep $RETRY_DELAY
+    RETRY_DELAY=$((RETRY_DELAY * 2))
+done
+
 mkdir -p "$DEST_DIR"
-echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR..."
-oras pull "$MODEL_REF" -o "$DEST_DIR"
-echo "Download complete."
+
+# Pull with retry and exponential backoff
+RETRY_DELAY=10
+for i in $(seq 1 $MAX_RETRIES); do
+    echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR (attempt $i/$MAX_RETRIES)..."
+    if oras pull "$MODEL_REF" -o "$DEST_DIR"; then
+        echo "Download complete."
+        break
+    fi
+    if [ $i -eq $MAX_RETRIES ]; then
+        echo "ERROR: Failed to pull artifact after $MAX_RETRIES attempts"
+        exit 1
+    fi
+    echo "Pull failed, retrying in ${RETRY_DELAY}s..."
+    sleep $RETRY_DELAY
+    RETRY_DELAY=$((RETRY_DELAY * 2))
+done
+
+# Show downloaded contents
 ls -la "$DEST_DIR"
-`, registryRef, modelPath)
+echo "Successfully cached model from $MODEL_REF"
+`, registryRef, modelPath, registryHost)
 
 	volumes := []corev1.Volume{{
 		Name: "model-store",
@@ -454,12 +519,21 @@ ls -la "$DEST_DIR"
 		})
 	}
 
+	// BackoffLimit controls Kubernetes-level job retries (in addition to in-script retries)
+	backoffLimit := int32(3)
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-downloader",
 			Namespace: m.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "modelcache-downloader",
+				"app.kubernetes.io/component": "oci-puller",
+				"app.kubernetes.io/instance":  m.Name,
+			},
 		},
 		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

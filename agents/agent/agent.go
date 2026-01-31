@@ -172,6 +172,7 @@ func (a *Agent) parseNvidia(out string, labels map[string]string) {
 }
 
 // parseRocm parses output from rocm-smi and rocminfo to fill GPU labels.
+// Supports multiple ROCm versions (5.x, 6.0-6.3, 6.4+).
 func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 	var data map[string]map[string]interface{}
 	if err := json.Unmarshal([]byte(smiOut), &data); err != nil {
@@ -180,21 +181,24 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 	labels[a.labelPrefix+"gpu.vendor"] = "AMD"
 	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(data))
 
-	for _, v := range data {
-		for key, val := range v {
-			k := strings.ToLower(key)
-			if strings.Contains(k, "vram") && strings.Contains(k, "total") {
-				str := fmt.Sprint(val)
-				num, _ := strconv.Atoi(strings.Fields(str)[0])
-				// value may be in MiB or bytes; assume MiB if < 1e7
-				if num > 1<<30 {
-					num = num / (1024 * 1024)
-				}
-				labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", num/1024)
-				break
-			}
+	// Extract total VRAM from first GPU
+	for _, gpu := range data {
+		totalMB := a.extractMemoryValue(gpu, []string{
+			// ROCm 6.4+ (in MB)
+			"GPU Memory Total (MB)",
+			"gpu memory total (mb)",
+			// ROCm 6.0-6.3 (in bytes)
+			"VRAM Total Memory (B)",
+			"vram total memory (b)",
+			// ROCm 5.x
+			"vram_total",
+			"VRAM Total",
+			"vram total",
+		})
+		if totalMB > 0 {
+			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", totalMB/1024)
 		}
-		break
+		break // Only need first GPU for total VRAM label
 	}
 
 	re := regexp.MustCompile(`gfx[0-9a-z]+`)
@@ -247,6 +251,7 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 
 // detectFreeVRAM queries GPU tools for available VRAM in MB.
 // Supports NVIDIA (nvidia-smi) and AMD (rocm-smi) GPUs.
+// Falls back to sysfs on Linux if GPU tools are unavailable.
 // Returns 0 if no GPU is detected or tools are unavailable.
 func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 	log := log.FromContext(ctx)
@@ -256,19 +261,25 @@ func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 	if err == nil {
 		freeVRAM := a.parseNvidiaFreeMemory(string(out))
 		if freeVRAM > 0 {
-			log.Info("Detected NVIDIA free VRAM", "freeMB", freeVRAM)
+			log.Info("Detected NVIDIA free VRAM via nvidia-smi", "freeMB", freeVRAM)
 			return freeVRAM
 		}
 	}
 
-	// Try AMD GPU
+	// Try AMD GPU via rocm-smi
 	out, err = a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
 	if err == nil {
 		freeVRAM := a.parseRocmFreeMemory(string(out))
 		if freeVRAM > 0 {
-			log.Info("Detected AMD free VRAM", "freeMB", freeVRAM)
+			log.Info("Detected AMD free VRAM via rocm-smi", "freeMB", freeVRAM)
 			return freeVRAM
 		}
+	}
+
+	// Fallback: Try sysfs for AMD GPUs (Linux only)
+	if freeVRAM := a.getFreeAMDVRAMSysfs(); freeVRAM > 0 {
+		log.Info("Detected AMD free VRAM via sysfs", "freeMB", freeVRAM)
+		return freeVRAM
 	}
 
 	log.Info("No GPU detected or unable to query free VRAM")
@@ -295,6 +306,11 @@ func (a *Agent) parseNvidiaFreeMemory(out string) uint64 {
 
 // parseRocmFreeMemory parses rocm-smi JSON output for free VRAM.
 // Returns total free memory across all GPUs in MB.
+//
+// Supports multiple ROCm versions:
+// - ROCm 5.x: {"card0": {"vram_free": "12345"}}
+// - ROCm 6.0-6.3: {"card0": {"VRAM Total Free Memory (B)": "12345"}}
+// - ROCm 6.4+: {"card0": {"GPU Memory Free (MB)": "12345"}}
 func (a *Agent) parseRocmFreeMemory(out string) uint64 {
 	var data map[string]map[string]interface{}
 	if err := json.Unmarshal([]byte(out), &data); err != nil {
@@ -303,25 +319,72 @@ func (a *Agent) parseRocmFreeMemory(out string) uint64 {
 
 	var totalFree uint64
 	for _, gpu := range data {
-		for key, val := range gpu {
-			k := strings.ToLower(key)
-			// Look for "vram free" or similar keys
-			if strings.Contains(k, "vram") && strings.Contains(k, "free") {
-				str := fmt.Sprint(val)
-				fields := strings.Fields(str)
-				if len(fields) > 0 {
-					if num, err := strconv.ParseUint(fields[0], 10, 64); err == nil {
-						// Value may be in bytes or MiB; convert if in bytes
-						if num > 1<<30 { // Likely bytes if > 1GB
-							num = num / (1024 * 1024)
-						}
-						totalFree += num
-					}
-				}
+		free := a.extractMemoryValue(gpu, []string{
+			// ROCm 6.4+ (in MB)
+			"GPU Memory Free (MB)",
+			"gpu memory free (mb)",
+			// ROCm 6.0-6.3 (in bytes)
+			"VRAM Total Free Memory (B)",
+			"vram total free memory (b)",
+			// ROCm 5.x
+			"vram_free",
+			"VRAM Free",
+			"vram free",
+		})
+		totalFree += free
+	}
+	return totalFree
+}
+
+// extractMemoryValue extracts a memory value from GPU data, trying multiple key names.
+// Handles both bytes and MB values automatically.
+func (a *Agent) extractMemoryValue(gpu map[string]interface{}, keys []string) uint64 {
+	for _, key := range keys {
+		// Try exact match first
+		if val, ok := gpu[key]; ok {
+			return a.parseMemoryString(key, fmt.Sprint(val))
+		}
+		// Try case-insensitive match
+		for k, v := range gpu {
+			if strings.EqualFold(k, key) {
+				return a.parseMemoryString(k, fmt.Sprint(v))
 			}
 		}
 	}
-	return totalFree
+	return 0
+}
+
+// parseMemoryString converts a memory value string to MB.
+// Handles both bytes (large numbers) and MB values.
+func (a *Agent) parseMemoryString(key, val string) uint64 {
+	fields := strings.Fields(val)
+	if len(fields) == 0 {
+		return 0
+	}
+
+	num, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	// Determine if value is in bytes or MB based on:
+	// 1. Key name containing "(B)" or "(MB)"
+	// 2. Value magnitude (> 1GB likely bytes)
+	keyLower := strings.ToLower(key)
+	if strings.Contains(keyLower, "(mb)") {
+		// Already in MB
+		return num
+	}
+	if strings.Contains(keyLower, "(b)") || num > 1<<30 {
+		// Convert bytes to MB
+		return num / (1024 * 1024)
+	}
+
+	// Assume MB if small number, bytes if large
+	if num > 1<<20 { // > 1MB as raw number
+		return num / (1024 * 1024)
+	}
+	return num
 }
 
 // scrapeKVCache connects to the pod's metrics endpoint and parses vLLM/Ollama/LlamaCpp metrics

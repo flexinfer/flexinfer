@@ -1,0 +1,70 @@
+# Llama 2 7B CPU-only deployment
+#
+# General-purpose LLM running on CPU. Expect 5-12 tokens/second
+# depending on CPU cores and AVX support.
+#
+# Prerequisites:
+# 1. Apply the ModelCache first to download the GGUF model
+# 2. Node with 8+ physical CPU cores
+# 3. 16+ GB RAM available
+# 4. AVX2 support (AVX512 preferred)
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama-7b-gguf
+spec:
+  source:
+    type: huggingface
+    repository: TheBloke/Llama-2-7B-Chat-GGUF
+    filename: llama-2-7b-chat.Q4_K_M.gguf
+  storageStrategy: SharedPVC
+  storageClassName: longhorn
+  storageSize: 10Gi
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama-7b-cpu
+  labels:
+    app: flexinfer-llm
+    compute-type: cpu-only
+    model-size: 7b
+spec:
+  backend: llamacpp
+  model: llama-2-7b-chat.Q4_K_M.gguf
+  modelCacheRef: llama-7b-gguf
+
+  # Target nodes without GPUs
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: ""
+
+  llamacpp:
+    # Set to physical cores (not hyperthreads)
+    # Example: 16 vCPU node with HT = 8 physical cores
+    threads: 8
+    # Standard context size
+    contextSize: 4096
+    # Batch size for prompt processing
+    batchSize: 512
+    # Explicit CPU-only mode
+    nGPULayers: 0
+    flashAttention: false
+    # Handle concurrent requests (optional, uses more CPU)
+    # parallel: 2
+
+  resources:
+    limits:
+      cpu: "8"
+      memory: 16Gi
+    requests:
+      cpu: "4"
+      memory: 8Gi
+
+  # Serverless configuration
+  minReplicas: 0
+  replicas: 1
+  # Longer idle timeout - slower to cold start
+  idleTimeoutSeconds: 600
+  # Allow 3 minutes for model loading
+  coldStartTimeoutSeconds: 180

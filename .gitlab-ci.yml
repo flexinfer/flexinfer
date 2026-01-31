@@ -9,6 +9,7 @@ stages:
   - test
   - build
   - publish
+  - security
 
 variables:
   GO_VERSION: "1.25.5"
@@ -97,6 +98,37 @@ integration_test:
     - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
     - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
     - go test -v ./controllers/...
+
+# E2E tests against real cluster (nightly)
+# Requires k3s kubeconfig to be available
+e2e_test:
+  stage: test
+  <<: *go-cache
+  variables:
+    KUBECONFIG: /etc/kubeconfig/k3s.yaml
+    E2E_TIMEOUT_MODEL_READY: "10m"
+    E2E_TIMEOUT_COLD_START: "5m"
+    E2E_TIMEOUT_INFERENCE: "3m"
+    E2E_POLL_INTERVAL: "5s"
+  script:
+    - |
+      echo "Running E2E tests against real cluster..."
+      if [ ! -f "${KUBECONFIG}" ]; then
+        echo "Kubeconfig not found at ${KUBECONFIG}, skipping E2E tests"
+        exit 0
+      fi
+    - go test -v ./e2e/... -timeout 30m
+  rules:
+    # Run nightly via schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # Manual trigger for ad-hoc testing
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+  allow_failure: true
+  artifacts:
+    reports:
+      junit: e2e-report.xml
+    when: always
 
 # --- Build Stage ---
 build_manager:
@@ -478,3 +510,192 @@ publish_vllm_rocm_gfx1100:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
+
+# --- Security Stage ---
+# Trivy vulnerability scanning for container images
+# Fails pipeline on HIGH or CRITICAL CVEs in production images
+.trivy-scan: &trivy-scan
+  stage: security
+  image: aquasec/trivy:0.58.0
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+  cache:
+    paths:
+      - .trivycache/
+  artifacts:
+    reports:
+      container_scanning: trivy-report.json
+    paths:
+      - trivy-report.json
+      - trivy-report.sarif
+    expire_in: 7 days
+    when: always
+
+trivy_scan_controller:
+  <<: *trivy-scan
+  needs:
+    - job: publish
+      optional: true
+  script:
+    - |
+      echo "Scanning flexinfer-controller image for vulnerabilities..."
+      IMAGE="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
+
+      # Generate JSON report for GitLab integration
+      trivy image --exit-code 0 \
+        --format json \
+        --output trivy-report.json \
+        "${IMAGE}"
+
+      # Generate SARIF report for GitHub-compatible tools
+      trivy image --exit-code 0 \
+        --format sarif \
+        --output trivy-report.sarif \
+        "${IMAGE}"
+
+      # Fail on HIGH/CRITICAL vulnerabilities
+      echo ""
+      echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
+      trivy image --exit-code 1 \
+        --severity HIGH,CRITICAL \
+        --ignore-unfixed \
+        "${IMAGE}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+trivy_scan_agent:
+  <<: *trivy-scan
+  needs:
+    - job: publish
+      optional: true
+  script:
+    - |
+      echo "Scanning flexinfer-agent image for vulnerabilities..."
+      IMAGE="${REGISTRY}/flexinfer-agent:${CI_COMMIT_SHORT_SHA}"
+
+      trivy image --exit-code 0 \
+        --format json \
+        --output trivy-report.json \
+        "${IMAGE}"
+
+      trivy image --exit-code 0 \
+        --format sarif \
+        --output trivy-report.sarif \
+        "${IMAGE}"
+
+      echo ""
+      echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
+      trivy image --exit-code 1 \
+        --severity HIGH,CRITICAL \
+        --ignore-unfixed \
+        "${IMAGE}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+trivy_scan_proxy:
+  <<: *trivy-scan
+  needs:
+    - job: publish
+      optional: true
+  script:
+    - |
+      echo "Scanning flexinfer-proxy image for vulnerabilities..."
+      IMAGE="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+
+      trivy image --exit-code 0 \
+        --format json \
+        --output trivy-report.json \
+        "${IMAGE}"
+
+      trivy image --exit-code 0 \
+        --format sarif \
+        --output trivy-report.sarif \
+        "${IMAGE}"
+
+      echo ""
+      echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
+      trivy image --exit-code 1 \
+        --severity HIGH,CRITICAL \
+        --ignore-unfixed \
+        "${IMAGE}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+trivy_scan_scheduler:
+  <<: *trivy-scan
+  needs:
+    - job: publish
+      optional: true
+  script:
+    - |
+      echo "Scanning flexinfer-scheduler image for vulnerabilities..."
+      IMAGE="${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
+
+      trivy image --exit-code 0 \
+        --format json \
+        --output trivy-report.json \
+        "${IMAGE}"
+
+      trivy image --exit-code 0 \
+        --format sarif \
+        --output trivy-report.sarif \
+        "${IMAGE}"
+
+      echo ""
+      echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
+      trivy image --exit-code 1 \
+        --severity HIGH,CRITICAL \
+        --ignore-unfixed \
+        "${IMAGE}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+
+# Nightly comprehensive scan of all images
+# Includes MEDIUM vulnerabilities and generates full reports
+trivy_scan_nightly:
+  <<: *trivy-scan
+  script:
+    - |
+      echo "=== Nightly Security Scan ==="
+      echo "Scanning all FlexInfer images..."
+
+      IMAGES="
+        ${REGISTRY}/flexinfer-controller:latest
+        ${REGISTRY}/flexinfer-agent:latest
+        ${REGISTRY}/flexinfer-proxy:latest
+        ${REGISTRY}/flexinfer-scheduler:latest
+        ${REGISTRY}/flexinfer-bench:latest
+      "
+
+      all_passed=true
+      for image in ${IMAGES}; do
+        echo ""
+        echo "=== Scanning ${image} ==="
+
+        # Full scan including MEDIUM severity
+        if ! trivy image --exit-code 1 \
+          --severity MEDIUM,HIGH,CRITICAL \
+          --ignore-unfixed \
+          "${image}"; then
+          all_passed=false
+          echo "WARN: Vulnerabilities found in ${image}"
+        fi
+      done
+
+      if [ "${all_passed}" = "false" ]; then
+        echo ""
+        echo "=== SUMMARY: Some images have vulnerabilities ==="
+        exit 1
+      fi
+
+      echo ""
+      echo "=== All images passed security scan ==="
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual

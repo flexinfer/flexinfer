@@ -54,3 +54,60 @@ func TestMLCLLMBackendArgs_UsesMaxTotalSeqLengthOverrideKey(t *testing.T) {
 		t.Fatalf("expected args to not contain legacy key %q, got %#v", bad, args)
 	}
 }
+
+func TestMLCLLMBackendImage_GFX1100(t *testing.T) {
+	b := &MLCLLMBackend{}
+
+	tests := []struct {
+		name      string
+		gpuVendor GPUVendor
+		gpuArch   string
+		wantImage string
+	}{
+		{
+			name:      "AMD gfx1100 returns gfx1100-specific image",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			wantImage: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100",
+		},
+		{
+			name:      "AMD gfx1101 returns gfx1100-specific image",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1101",
+			wantImage: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100",
+		},
+		{
+			name:      "AMD gfx1102 returns gfx1100-specific image",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1102",
+			wantImage: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100",
+		},
+		{
+			name:      "AMD gfx942 returns generic ROCm image",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx942",
+			wantImage: "ghcr.io/mlc-ai/mlc-llm:rocm",
+		},
+		{
+			name:      "NVIDIA sm_52 returns Maxwell image",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_52",
+			wantImage: "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7",
+		},
+		{
+			name:      "NVIDIA sm_89 returns generic CUDA image",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_89",
+			wantImage: "ghcr.io/mlc-ai/mlc-llm:cuda",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := b.Image(tt.gpuVendor, tt.gpuArch)
+			if got != tt.wantImage {
+				t.Errorf("Image(%v, %q) = %q, want %q", tt.gpuVendor, tt.gpuArch, got, tt.wantImage)
+			}
+		})
+	}
+}

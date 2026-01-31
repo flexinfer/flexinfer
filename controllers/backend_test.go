@@ -1609,6 +1609,23 @@ func TestParseOCISource(t *testing.T) {
 	}
 }
 
+func TestExtractOCIRegistry(t *testing.T) {
+	tests := []struct {
+		source   string
+		expected string
+	}{
+		{"oci://harbor.lan/library/model:v1", "harbor.lan"},
+		{"oci://registry.example.com:5000/models/llama3:latest", "registry.example.com:5000"},
+		{"oras://ghcr.io/org/model:v1", "ghcr.io"},
+		{"oci://123456789.dkr.ecr.us-east-1.amazonaws.com/models/llama:v1", "123456789.dkr.ecr.us-east-1.amazonaws.com"},
+	}
+	for _, tt := range tests {
+		if got := extractOCIRegistry(tt.source); got != tt.expected {
+			t.Errorf("extractOCIRegistry(%q) = %q, want %q", tt.source, got, tt.expected)
+		}
+	}
+}
+
 func TestJobForOCIDownload_NoAuth(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = aiv1alpha1.AddToScheme(scheme)

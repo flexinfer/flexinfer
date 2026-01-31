@@ -30,6 +30,14 @@ func (b *MLCLLMBackend) Aliases() []string {
 func (b *MLCLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
+		// Check for gfx1100 (RX 7900 series, RDNA3) which needs specialized image
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+			// GFX1100-specific image built with ROCm 6.4 and RDNA3 optimizations
+			return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
+		}
 		if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_AMD"); img != "" {
 			return img
 		}

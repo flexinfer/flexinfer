@@ -226,6 +226,23 @@ type ModelCacheStatus struct {
 	// Used for LFU eviction policy and hit rate calculations.
 	// +optional
 	AccessCount int64 `json:"accessCount,omitempty"`
+
+	// === OCI Registry Status ===
+
+	// OCIDigest is the immutable digest of the OCI artifact that was pulled.
+	// Format: sha256:<hash>. Only set for OCI/ORAS sources.
+	// +optional
+	OCIDigest string `json:"ociDigest,omitempty"`
+
+	// OCIPulledAt is the timestamp when the OCI artifact was last pulled.
+	// Useful for tracking freshness and triggering re-pulls on tag updates.
+	// +optional
+	OCIPulledAt *metav1.Time `json:"ociPulledAt,omitempty"`
+
+	// OCIRegistry is the registry hostname where the artifact was pulled from.
+	// Extracted from the source URL for observability.
+	// +optional
+	OCIRegistry string `json:"ociRegistry,omitempty"`
 }
 
 //+kubebuilder:object:root=true

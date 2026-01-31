@@ -307,6 +307,11 @@ func (in *ServerlessSpec) DeepCopyInto(out *ServerlessSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.MinReplicas != nil {
+		in, out := &in.MinReplicas, &out.MinReplicas
+		*out = new(int32)
+		**out = **in
+	}
 	if in.IdleTimeout != nil {
 		in, out := &in.IdleTimeout, &out.IdleTimeout
 		*out = new(metav1.Duration)

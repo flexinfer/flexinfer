@@ -1,0 +1,363 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-gpugroup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-gpugroup.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "GPUGroup Overview",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Active Model per GPUGroup",
+          "description": "Currently active model in each GPU group",
+          "type": "stat",
+          "gridPos": { "x": 0, "y": 1, "w": 8, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_gpugroup_active_model",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "1": { "text": "Active", "color": "green" } } },
+                { "type": "value", "options": { "0": { "text": "Inactive", "color": "text" } } }
+              ],
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "text", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Swap Signals",
+          "description": "Model swap signals sent to GPUGroup controller",
+          "type": "timeseries",
+          "gridPos": { "x": 8, "y": 1, "w": 8, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (gpugroup, model) (rate(flexinfer_proxy_gpugroup_swap_signals_total[5m]))",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }} → {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "GPUGroup Queued Requests",
+          "description": "Requests waiting for model swap to complete",
+          "type": "timeseries",
+          "gridPos": { "x": 16, "y": 1, "w": 8, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (gpugroup, model) (rate(flexinfer_proxy_gpugroup_queued_requests_total[5m]))",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Anti-Thrashing Status",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 7, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Model Run Duration",
+          "description": "How long each model has been active (anti-thrashing metric)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_gpugroup_model_run_duration_seconds",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 15 },
+                  { "color": "green", "value": 30 }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": { "mode": "line+area" }
+              }
+            }
+          }
+        },
+        {
+          "title": "Swap Cooldown Remaining",
+          "description": "Time until next swap allowed (anti-thrashing cooldown)",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_gpugroup_swap_cooldown_seconds",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 30 },
+                  { "color": "red", "value": 60 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Swap Events",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 16, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Swap Events Timeline",
+          "description": "Model swap events over time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 17, "w": 16, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (gpugroup, from_model, to_model) (increase(flexinfer_gpugroup_swaps_total[5m]))",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}from_model{{ "}}" }} → {{ "{{" }}to_model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 60,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "normal" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Swap Statistics",
+          "description": "Summary of swap activity",
+          "type": "stat",
+          "gridPos": { "x": 16, "y": 17, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum(increase(flexinfer_gpugroup_swaps_total[1h]))",
+              "legendFormat": "Swaps/hr",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(increase(flexinfer_gpugroup_swap_blocked_antithrashing_total[1h]))",
+              "legendFormat": "Blocked (anti-thrash)",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(increase(flexinfer_gpugroup_swap_blocked_cooldown_total[1h]))",
+              "legendFormat": "Blocked (cooldown)",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "vertical",
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        },
+        {
+          "title": "Queue Depth by Model",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 25, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Request Queue Depth per GPUGroup Model",
+          "description": "Queue depth by model within GPU groups (used for swap decisions)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 26, "w": 24, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_gpugroup_model_queue_depth",
+              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 3 },
+                  { "color": "red", "value": 10 }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": ["flexinfer", "gpugroup", "gpu-sharing"],
+      "templating": {
+        "list": [
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": "Prometheus",
+            "definition": "label_values(flexinfer_gpugroup_active_model, gpugroup)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "GPUGroup",
+            "multi": true,
+            "name": "gpugroup",
+            "query": "label_values(flexinfer_gpugroup_active_model, gpugroup)",
+            "refresh": 2,
+            "regex": "",
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer GPUGroup",
+      "uid": "flexinfer-gpugroup",
+      "version": 1,
+      "weekStart": ""
+    }
+{{- end }}

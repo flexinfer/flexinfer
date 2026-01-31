@@ -1,0 +1,439 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-modelcache
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-modelcache.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Cache Status",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Cache Phase",
+          "description": "Current phase of each model cache (1=Pending, 2=Initializing, 3=Provisioning, 4=Ready, 5=Failed)",
+          "type": "stat",
+          "gridPos": { "x": 0, "y": 1, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_modelcache_phase{phase=\"Ready\"} == 1",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }} (Ready)",
+              "refId": "A"
+            },
+            {
+              "expr": "flexinfer_modelcache_phase{phase!=\"Ready\"} == 1",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }} ({{ "{{" }}phase{{ "}}" }})",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "1": { "text": "Active" } } }
+              ],
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "text", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": ".*Failed.*" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+              },
+              {
+                "matcher": { "id": "byRegexp", "options": ".*Pending.*|.*Initializing.*|.*Provisioning.*" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+              }
+            ]
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "/dev/shm Utilization",
+          "description": "Percentage of /dev/shm used for RAM caching per node",
+          "type": "gauge",
+          "gridPos": { "x": 12, "y": 1, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_dev_shm_utilization_percent",
+              "legendFormat": "{{ "{{" }}node{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "red", "value": 90 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "auto",
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          }
+        },
+        {
+          "title": "Cache Size & Residence",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 7, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Cache Size",
+          "description": "Size of each model cache in bytes",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_modelcache_size_bytes",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }} ({{ "{{" }}strategy{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Cache Residence Time",
+          "description": "How long each cache has been resident in memory",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_modelcache_resident_seconds",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }} @ {{ "{{" }}node{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Hit Rate & Access",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 16, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Cache Hit Rate",
+          "description": "Hit rate for model loading (0.0 to 1.0)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 17, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_modelcache_hit_rate",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 0.7 },
+                  { "color": "green", "value": 0.9 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Access Count",
+          "description": "Total number of times each cache has been accessed",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 17, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_modelcache_access_count",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Evictions",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 25, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Eviction Rate",
+          "description": "Cache evictions per minute by policy (LRU, manual, etc.)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (cache, policy) (rate(flexinfer_modelcache_evictions_total[5m]))",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }} ({{ "{{" }}policy{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "normal" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Total Evictions",
+          "description": "Cumulative evictions per cache",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (cache) (flexinfer_modelcache_evictions_total)",
+              "legendFormat": "{{ "{{" }}cache{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "red", "value": 50 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Storage Strategy Breakdown",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 34, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Cache by Storage Strategy",
+          "description": "Distribution of caches by storage strategy (Memory, SharedPVC, etc.)",
+          "type": "piechart",
+          "gridPos": { "x": 0, "y": 35, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "count by (strategy) (flexinfer_modelcache_size_bytes)",
+              "legendFormat": "{{ "{{" }}strategy{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "pieType": "pie",
+            "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }
+          }
+        },
+        {
+          "title": "Total Cache Size by Strategy",
+          "description": "Total bytes used by each storage strategy",
+          "type": "bargauge",
+          "gridPos": { "x": 12, "y": 35, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (strategy) (flexinfer_modelcache_size_bytes)",
+              "legendFormat": "{{ "{{" }}strategy{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "showUnfilled": true
+          }
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": ["flexinfer", "modelcache", "storage"],
+      "templating": {
+        "list": [
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": "Prometheus",
+            "definition": "label_values(flexinfer_modelcache_phase, cache)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "Cache",
+            "multi": true,
+            "name": "cache",
+            "query": "label_values(flexinfer_modelcache_phase, cache)",
+            "refresh": 2,
+            "regex": "",
+            "sort": 1,
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": "Prometheus",
+            "definition": "label_values(flexinfer_modelcache_size_bytes, node)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "Node",
+            "multi": true,
+            "name": "node",
+            "query": "label_values(flexinfer_modelcache_size_bytes, node)",
+            "refresh": 2,
+            "regex": "",
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer ModelCache",
+      "uid": "flexinfer-modelcache",
+      "version": 1,
+      "weekStart": ""
+    }
+{{- end }}

@@ -1,0 +1,540 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-proxy-operations.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Proxy Operations",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Request Rate",
+          "description": "Requests per second by model and status",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (model, status) (rate(flexinfer_proxy_requests_total[5m]))",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}status{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": ".*error.*|.*5[0-9][0-9].*" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+              }
+            ]
+          }
+        },
+        {
+          "title": "Error Rate",
+          "description": "Percentage of requests resulting in errors",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(rate(flexinfer_proxy_requests_total{status=~\"5..\"}[5m])) / sum(rate(flexinfer_proxy_requests_total[5m])) * 100",
+              "legendFormat": "Error %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Active Connections",
+          "description": "Current active proxy connections by model",
+          "type": "stat",
+          "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum by (model) (flexinfer_proxy_active_connections)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        },
+        {
+          "title": "Request Throughput",
+          "description": "Total requests over time",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 5, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(increase(flexinfer_proxy_requests_total[1h]))",
+              "legendFormat": "Requests/hr",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        },
+        {
+          "title": "Endpoints Available",
+          "description": "Number of backend endpoints per model",
+          "type": "stat",
+          "gridPos": { "x": 18, "y": 5, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum by (model) (flexinfer_proxy_endpoint_count)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Latency",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 9, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Request Latency Percentiles",
+          "description": "P50, P95, P99 latency over time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 10, "w": 16, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le, model) (rate(flexinfer_proxy_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p50 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model) (rate(flexinfer_proxy_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le, model) (rate(flexinfer_proxy_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p99 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 5,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Latency Heatmap",
+          "description": "Request latency distribution",
+          "type": "heatmap",
+          "gridPos": { "x": 16, "y": 10, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (le) (rate(flexinfer_proxy_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "{{ "{{" }}le{{ "}}" }}",
+              "refId": "A",
+              "format": "heatmap"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": { "axisPlacement": "left", "unit": "s" },
+            "color": { "scheme": "Oranges", "mode": "scheme" },
+            "cellGap": 1,
+            "showValue": "never"
+          }
+        },
+        {
+          "title": "Queue & Cold Start",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Queue Depth",
+          "description": "Current requests waiting in queue per model",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 19, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (model) (flexinfer_proxy_queue_depth)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 5 },
+                  { "color": "red", "value": 10 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Queue Wait Time",
+          "description": "Time requests spend waiting in queue",
+          "type": "timeseries",
+          "gridPos": { "x": 8, "y": 19, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le, model) (rate(flexinfer_proxy_queue_wait_duration_seconds_bucket[5m])))",
+              "legendFormat": "p50 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model) (rate(flexinfer_proxy_queue_wait_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Cold Start Metrics",
+          "description": "Scale-up events and activation retries",
+          "type": "timeseries",
+          "gridPos": { "x": 16, "y": 19, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_scale_ups_total[5m]))",
+              "legendFormat": "Scale-ups - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_activation_retries_total[5m]))",
+              "legendFormat": "Retries - {{ "{{" }}model{{ "}}" }}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Queued vs Rejected",
+          "description": "Rate of queued requests vs rejected (queue full)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 27, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_queued_requests_total[5m]))",
+              "legendFormat": "Queued - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_queue_rejected_total[5m]))",
+              "legendFormat": "Rejected - {{ "{{" }}model{{ "}}" }}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": "Rejected.*" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+              }
+            ]
+          }
+        },
+        {
+          "title": "Activation Retry Wait Time",
+          "description": "Time spent waiting for model activation during retries",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 27, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model) (rate(flexinfer_proxy_activation_retry_wait_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Endpoints",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 33, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Endpoint Changes",
+          "description": "Rate of endpoint additions/removals",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 34, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (model, event) (rate(flexinfer_proxy_endpoint_changes_total[5m]))",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}event{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Endpoint Refresh Duration",
+          "description": "Time to refresh endpoint list",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 34, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(flexinfer_proxy_endpoint_refresh_duration_seconds_bucket[5m]))",
+              "legendFormat": "p95",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.99, rate(flexinfer_proxy_endpoint_refresh_duration_seconds_bucket[5m]))",
+              "legendFormat": "p99",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": ["flexinfer", "proxy", "operations"],
+      "templating": {
+        "list": [
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": "Prometheus",
+            "definition": "label_values(flexinfer_proxy_requests_total, model)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "Model",
+            "multi": true,
+            "name": "model",
+            "query": "label_values(flexinfer_proxy_requests_total, model)",
+            "refresh": 2,
+            "regex": "",
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer Proxy Operations",
+      "uid": "flexinfer-proxy",
+      "version": 1,
+      "weekStart": ""
+    }
+{{- end }}

@@ -140,6 +140,9 @@ GPUGroup works with all inference backends:
 | `ram-cached-models.yaml` | RAM-cached models with serverless for fast cold starts |
 | `llama3-8b.yaml` | Basic Ollama deployment |
 | `phi3-mini-nvidia.yaml` | Ollama on NVIDIA GPU with benchmarking |
+| `cpu-inference/tinyllama-cpu.yaml` | TinyLlama on CPU (fastest, for testing) |
+| `cpu-inference/llama-7b-cpu.yaml` | Llama 2 7B on CPU (general purpose) |
+| `cpu-inference/embedding-cpu.yaml` | Embedding models on CPU (Nomic, MiniLM) |
 
 ## Backend-Specific Configuration
 

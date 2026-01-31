@@ -1,0 +1,64 @@
+# TinyLlama CPU-only deployment
+#
+# Fastest CPU inference option - ideal for testing and simple tasks.
+# ~15-25 tokens/second on modern CPUs.
+#
+# Prerequisites:
+# 1. Apply the ModelCache first to download the GGUF model
+# 2. Ensure nodes have CPU with AVX2 support
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: tinyllama-gguf
+spec:
+  source:
+    type: huggingface
+    repository: TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
+    filename: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+  storageStrategy: SharedPVC
+  storageClassName: longhorn
+  storageSize: 2Gi
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: tinyllama-cpu
+  labels:
+    app: flexinfer-llm
+    compute-type: cpu-only
+    model-size: 1b
+spec:
+  backend: llamacpp
+  model: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+  modelCacheRef: tinyllama-gguf
+
+  # Target nodes without GPUs
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: ""
+
+  llamacpp:
+    # 4 threads for a small model
+    threads: 4
+    # Smaller context for faster inference
+    contextSize: 2048
+    batchSize: 256
+    # Explicit CPU-only mode
+    nGPULayers: 0
+    flashAttention: false
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 4Gi
+    requests:
+      cpu: "2"
+      memory: 2Gi
+
+  # Serverless configuration
+  minReplicas: 0
+  replicas: 1
+  # Short idle timeout - fast to restart
+  idleTimeoutSeconds: 300
+  # Quick cold start for small model
+  coldStartTimeoutSeconds: 60

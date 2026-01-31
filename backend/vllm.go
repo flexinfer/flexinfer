@@ -3,6 +3,7 @@ package backend
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,11 +26,19 @@ func (b *VLLMBackend) Name() string {
 func (b *VLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
+		// Check for gfx1100 (RX 7900 series, RDNA3) which needs specialized image
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_VLLM_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+			// GFX1100-specific image built with ROCm 6.4 and flash attention disabled
+			return "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100"
+		}
 		if img := os.Getenv("DEFAULT_VLLM_IMAGE_AMD"); img != "" {
 			return img
 		}
-		// ROCm-enabled vLLM image for gfx1100 (RX 7900 XTX)
-		return "registry.harbor.lan/library/vllm-api:rocm-navi"
+		// Generic ROCm image for other AMD GPUs (MI300X, etc.)
+		return "rocm/vllm:latest"
 	default:
 		if img := os.Getenv("DEFAULT_VLLM_IMAGE"); img != "" {
 			return img

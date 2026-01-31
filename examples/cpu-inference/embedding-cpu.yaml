@@ -1,0 +1,110 @@
+# Nomic Embed Text - CPU-optimized embedding model
+#
+# Embedding models run efficiently on CPU. This model provides
+# high-quality text embeddings for semantic search, RAG, etc.
+#
+# Performance: ~100-500 embeddings/second depending on text length
+#
+# Prerequisites:
+# 1. Apply the ModelCache first to download the GGUF model
+# 2. Node with 4+ CPU cores
+# 3. 4+ GB RAM available
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: nomic-embed-gguf
+spec:
+  source:
+    type: huggingface
+    repository: nomic-ai/nomic-embed-text-v1.5-GGUF
+    filename: nomic-embed-text-v1.5.Q8_0.gguf
+  storageStrategy: SharedPVC
+  storageClassName: longhorn
+  storageSize: 1Gi
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: nomic-embed-cpu
+  labels:
+    app: flexinfer-embedding
+    compute-type: cpu-only
+    model-type: embedding
+spec:
+  backend: llamacpp
+  model: nomic-embed-text-v1.5.Q8_0.gguf
+  modelCacheRef: nomic-embed-gguf
+
+  # Target nodes without GPUs (or any node)
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: ""
+
+  llamacpp:
+    threads: 4
+    # Embedding models need longer context for full documents
+    contextSize: 8192
+    batchSize: 512
+    nGPULayers: 0
+    flashAttention: false
+    # Enable embedding mode (required for embedding models)
+    embedding: true
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 2Gi
+    requests:
+      cpu: "2"
+      memory: 1Gi
+
+  # Keep embedding service always running for low latency
+  minReplicas: 1
+  replicas: 1
+  # Never scale down (embeddings should be instant)
+  idleTimeoutSeconds: 0
+---
+# Alternative: Lightweight embedding for constrained environments
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: all-minilm-cpu
+  labels:
+    app: flexinfer-embedding
+    compute-type: cpu-only
+    model-type: embedding
+spec:
+  backend: llamacpp
+  model: all-MiniLM-L6-v2.Q8_0.gguf
+  modelCacheRef: minilm-gguf
+
+  llamacpp:
+    threads: 2
+    contextSize: 512  # MiniLM has 512 token limit
+    batchSize: 256
+    nGPULayers: 0
+    embedding: true
+
+  resources:
+    limits:
+      cpu: "2"
+      memory: 512Mi
+    requests:
+      cpu: "1"
+      memory: 256Mi
+
+  minReplicas: 1
+  idleTimeoutSeconds: 0
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: minilm-gguf
+spec:
+  source:
+    type: huggingface
+    repository: leliuga/all-MiniLM-L6-v2-GGUF
+    filename: all-MiniLM-L6-v2.Q8_0.gguf
+  storageStrategy: SharedPVC
+  storageClassName: longhorn
+  storageSize: 500Mi

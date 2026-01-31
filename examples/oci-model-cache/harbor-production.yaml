@@ -1,0 +1,99 @@
+# OCI ModelCache Example - Production Setup with Immutable Digests
+#
+# This example demonstrates production best practices:
+# - Immutable references via SHA256 digest
+# - Robot account credentials
+# - Memory caching for performance
+# - High retention priority
+
+---
+# Robot account credentials (more secure than user credentials)
+# Create in Harbor UI: Project > Robot Accounts > New Robot Account
+# Grant only 'pull' permission on the model repository
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-robot-flexinfer
+  namespace: flexinfer-system
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "harbor.lan": {
+          "username": "robot$flexinfer-prod",
+          "password": "<robot-token-here>",
+          "auth": "<base64-encoded-credentials>"
+        }
+      }
+    }
+---
+# Production ModelCache with immutable digest reference
+# Use: oras manifest fetch harbor.lan/library/llama3-8b:prod --descriptor
+# to get the exact digest for your model
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama3-8b-prod
+  namespace: flexinfer-system
+  labels:
+    environment: production
+    model-family: llama
+spec:
+  # Immutable reference via SHA256 digest
+  # This ensures the exact same model version is always pulled
+  source: oci://harbor.lan/library/llama3-8b-instruct@sha256:a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6
+
+  # Robot account credentials
+  ociRegistrySecretRef: harbor-robot-flexinfer
+
+  # Memory caching for fastest inference startup
+  storageStrategy: Memory
+
+  # LRU eviction with high retention priority
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
+  retentionPriority: 90  # High priority - evict last
+
+  # Model group for coordinated management
+  modelGroup: production-llms
+---
+# Production ModelDeployment with full configuration
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-8b-prod
+  namespace: flexinfer-system
+  labels:
+    environment: production
+spec:
+  backend: mlc-llm
+  model: Llama-3-8B-Instruct-q4f16_1-MLC
+  modelCacheRef: llama3-8b-prod
+
+  # Target specific GPU architecture
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: NVIDIA
+    kubernetes.io/os: linux
+
+  mlcllm:
+    mode: local
+    jitPolicy: READONLY  # No JIT compilation in production
+    gpuMemoryBytes: 14000000000  # ~14GB reserved
+    overrides:
+      maxTotalSeqLength: 8192
+      prefillChunkSize: 512
+
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 20Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 16Gi
+
+  # Production scaling settings
+  minReplicas: 1  # Always keep at least 1 replica warm
+  replicas: 2
+  idleTimeoutSeconds: 1800  # 30 minutes before scale-down
+  coldStartTimeoutSeconds: 180

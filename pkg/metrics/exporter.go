@@ -37,6 +37,44 @@ var (
 		[]string{"gpu", "node"},
 	)
 
+	// === GPU VRAM Metrics ===
+
+	// GPUVRAMFreeBytes tracks free VRAM per GPU.
+	GPUVRAMFreeBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_vram_free_bytes",
+			Help: "Free GPU VRAM in bytes.",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
+	// GPUVRAMTotalBytes tracks total VRAM per GPU.
+	GPUVRAMTotalBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_vram_total_bytes",
+			Help: "Total GPU VRAM in bytes.",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
+	// GPUVRAMUsedBytes tracks used VRAM per GPU.
+	GPUVRAMUsedBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_vram_used_bytes",
+			Help: "Used GPU VRAM in bytes.",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
+	// GPUVRAMUtilizationPercent tracks VRAM utilization as a percentage.
+	GPUVRAMUtilizationPercent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_vram_utilization_percent",
+			Help: "GPU VRAM utilization as a percentage (0-100).",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
 	// === ModelCache LRU Eviction Metrics ===
 
 	// ModelCacheResidentSeconds tracks how long a cache has been resident in memory.
@@ -108,6 +146,12 @@ func init() {
 	prometheus.MustRegister(TokensPerSecond)
 	prometheus.MustRegister(ModelLoadSeconds)
 	prometheus.MustRegister(GPUTemperature)
+
+	// GPU VRAM metrics
+	prometheus.MustRegister(GPUVRAMFreeBytes)
+	prometheus.MustRegister(GPUVRAMTotalBytes)
+	prometheus.MustRegister(GPUVRAMUsedBytes)
+	prometheus.MustRegister(GPUVRAMUtilizationPercent)
 
 	// ModelCache LRU eviction metrics
 	prometheus.MustRegister(ModelCacheResidentSeconds)

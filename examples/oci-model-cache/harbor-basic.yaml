@@ -1,0 +1,79 @@
+# OCI ModelCache Example - Basic Harbor Setup
+#
+# This example shows how to use a Harbor registry as a model source.
+# Models are stored as OCI artifacts and pulled using ORAS.
+#
+# Prerequisites:
+# 1. Push model to Harbor:
+#    oras login harbor.lan -u admin -p Harbor12345
+#    oras push harbor.lan/library/qwen3-8b-mlc:q4f16_1 ./qwen3-8b-mlc/
+#
+# 2. Create registry credentials secret (see below)
+
+---
+# Registry credentials for Harbor
+# Create with: kubectl create secret docker-registry harbor-credentials \
+#   --docker-server=harbor.lan \
+#   --docker-username=admin \
+#   --docker-password=Harbor12345 \
+#   -n flexinfer-system
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-credentials
+  namespace: flexinfer-system
+type: kubernetes.io/dockerconfigjson
+data:
+  # Base64 encoded Docker config JSON
+  # Replace with your actual credentials
+  .dockerconfigjson: eyJhdXRocyI6eyJoYXJib3IubGFuIjp7InVzZXJuYW1lIjoiYWRtaW4iLCJwYXNzd29yZCI6IkhhcmJvcjEyMzQ1IiwiYXV0aCI6IllXUnRhVzQ2U0dGeVltOXlNVEl6TkRVPSJ9fX0=
+---
+# ModelCache pulling from Harbor
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-8b-harbor
+  namespace: flexinfer-system
+spec:
+  # OCI source format: oci://<registry>/<repository>:<tag>
+  source: oci://harbor.lan/library/qwen3-8b-mlc:q4f16_1
+
+  # Reference to the docker config secret for authentication
+  ociRegistrySecretRef: harbor-credentials
+
+  # Storage configuration
+  storageStrategy: SharedPVC
+  storageClassName: longhorn
+  storageSize: 10Gi
+
+  # Eviction settings (optional)
+  evictionPolicy: LRU
+  retentionPriority: 70
+---
+# ModelDeployment using the cached model
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: qwen3-8b-harbor
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  model: Qwen3-8B-q4f16_1-MLC
+  modelCacheRef: qwen3-8b-harbor
+
+  mlcllm:
+    mode: local
+    overrides:
+      maxTotalSeqLength: 8192
+      prefillChunkSize: 512
+
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 16Gi
+    requests:
+      memory: 12Gi
+
+  minReplicas: 0
+  replicas: 1
+  idleTimeoutSeconds: 600
