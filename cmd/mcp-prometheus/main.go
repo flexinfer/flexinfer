@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -122,7 +123,7 @@ func main() {
 			Properties: map[string]any{
 				"match": map[string]any{
 					"type":        "string",
-					"description": "Filter pattern (regex)",
+					"description": "Filter pattern (regex). Applied client-side to filter metric names.",
 				},
 			},
 		},
@@ -349,16 +350,30 @@ func (p *promServer) handleQueryRange(ctx context.Context, args map[string]any) 
 }
 
 func (p *promServer) handleListMetrics(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	match := getStringArg(args, "match", "")
+	matchPattern := getStringArg(args, "match", "")
 
-	params := url.Values{}
-	if match != "" {
-		params.Set("match[]", match)
-	}
-
-	result, err := p.request(ctx, "/api/v1/label/__name__/values", params)
+	// Fetch all metric names (no server-side filter - Prometheus match[] expects
+	// series selectors like {job="prometheus"}, not regex patterns)
+	result, err := p.request(ctx, "/api/v1/label/__name__/values", nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// If match pattern provided, filter client-side with regex
+	if matchPattern != "" {
+		re, err := regexp.Compile(matchPattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex pattern: %w", err)
+		}
+		if data, ok := result["data"].([]any); ok {
+			filtered := make([]any, 0, len(data)/4) // preallocate conservatively
+			for _, name := range data {
+				if s, ok := name.(string); ok && re.MatchString(s) {
+					filtered = append(filtered, name)
+				}
+			}
+			result["data"] = filtered
+		}
 	}
 
 	return mcp.JSONResult(result)
