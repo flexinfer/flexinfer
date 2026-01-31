@@ -1,4 +1,33 @@
 apiVersion: v2
 name: flexinfer
-description: A Helm chart for FlexInfer
-version: 0.1.10
+description: FlexInfer - Kubernetes-native AI inference operator with multi-backend support, GPU scheduling, and serverless autoscaling
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.26.0-0"
+home: https://flexinfer.ai
+sources:
+  - https://gitlab.flexinfer.ai/services/flexinfer
+keywords:
+  - ai
+  - inference
+  - llm
+  - gpu
+  - kubernetes
+  - operator
+  - ollama
+  - vllm
+  - mlc-llm
+  - serverless
+maintainers:
+  - name: FlexInfer Team
+    email: team@flexinfer.ai
+annotations:
+  artifacthub.io/category: ai-machine-learning
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Full Lifecycle
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/signKey: |
+    fingerprint: TBD
+    url: https://flexinfer.ai/keys/gpg-key.pub

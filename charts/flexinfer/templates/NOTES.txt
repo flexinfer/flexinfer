@@ -1,0 +1,84 @@
+FlexInfer {{ .Chart.Version }} has been deployed!
+
+COMPONENTS INSTALLED:
+{{- if .Values.controller.enabled }}
+  - Controller (manages Model, GPUGroup, ModelCache CRDs)
+{{- end }}
+{{- if .Values.agent.enabled }}
+  - Agent DaemonSet (GPU discovery on each node)
+{{- end }}
+{{- if .Values.proxy.enabled }}
+  - Proxy Service (OpenAI-compatible API gateway)
+{{- end }}
+{{- if .Values.scheduler.enabled }}
+  - Scheduler (GPU-aware model placement)
+{{- end }}
+
+QUICK START:
+
+1. Create your first model:
+
+   kubectl apply -f - <<EOF
+   apiVersion: ai.flexinfer.io/v1alpha2
+   kind: Model
+   metadata:
+     name: llama3
+     namespace: {{ .Release.Namespace }}
+   spec:
+     backend: ollama
+     source: ollama://llama3.2:1b
+     gpu:
+       count: 1
+   EOF
+
+2. Wait for the model to be ready:
+
+   kubectl wait --for=condition=Ready model/llama3 -n {{ .Release.Namespace }} --timeout=300s
+
+3. Access the inference API:
+
+{{- if .Values.proxy.enabled }}
+   # Port-forward to the proxy service
+   kubectl port-forward svc/{{ include "flexinfer.fullname" . }}-proxy 8080:{{ .Values.proxy.service.port }} -n {{ .Release.Namespace }}
+
+   # Send a request
+   curl http://localhost:8080/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{"model": "llama3", "messages": [{"role": "user", "content": "Hello!"}]}'
+{{- else }}
+   # Direct access to model endpoint (check model status for endpoint)
+   kubectl get model llama3 -n {{ .Release.Namespace }} -o jsonpath='{.status.endpoint}'
+{{- end }}
+
+MONITORING:
+{{- if .Values.grafanaDashboard.enabled }}
+  Grafana dashboards are installed. Import them into your Grafana instance:
+  - FlexInfer Overview (general metrics)
+  - FlexInfer Proxy (request latency, throughput)
+  - FlexInfer GPUGroup (GPU utilization, scheduling)
+  - FlexInfer ModelCache (cache hit rates, storage)
+{{- end }}
+
+DOCUMENTATION:
+
+  For full documentation, visit: {{ .Chart.Home }}
+
+  Supported backends:
+  - ollama    - Ollama inference server
+  - vllm      - vLLM high-throughput serving
+  - mlc-llm   - MLC-LLM optimized inference
+  - llamacpp  - llama.cpp server
+  - diffusers - Hugging Face Diffusers (image generation)
+
+UPGRADE NOTES:
+
+  This is FlexInfer v1.0.0, the first stable release.
+
+  If upgrading from v0.x:
+  - Review any Model CRDs using v1alpha1 API (deprecated)
+  - Migrate to v1alpha2 API for new features
+
+GETTING HELP:
+
+  - Documentation: {{ .Chart.Home }}
+  - Issues: {{ (index .Chart.Sources 0) }}/issues
