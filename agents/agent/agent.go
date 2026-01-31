@@ -415,7 +415,7 @@ func (a *Agent) scrapeKVCache(ctx context.Context, ip string) float64 {
 		// All attempts failed
 		return -1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -1158,7 +1158,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		(r.Method == http.MethodPost || r.Method == http.MethodPut) {
 		var err error
 		bodyBytes, err = io.ReadAll(r.Body)
-		r.Body.Close()
+		_ = r.Body.Close()
 		if err != nil {
 			bodyBytes = nil
 		}

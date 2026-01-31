@@ -187,7 +187,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// Handle finalizer
-	if model.ObjectMeta.DeletionTimestamp.IsZero() {
+	if model.DeletionTimestamp.IsZero() {
 		if !containsString(model.GetFinalizers(), aiv1alpha2.ModelFinalizer) {
 			model.SetFinalizers(append(model.GetFinalizers(), aiv1alpha2.ModelFinalizer))
 			if err := r.Update(ctx, model); err != nil {

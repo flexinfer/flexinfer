@@ -103,7 +103,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stream logs: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Read and print logs
 	reader := bufio.NewReader(stream)

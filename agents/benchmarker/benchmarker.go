@@ -524,7 +524,7 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -565,7 +565,7 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -611,7 +611,7 @@ func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimi
 	if err != nil {
 		return vllmTimingSnapshot{}, false, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 			logger.Error(err, "Failed to drain vLLM metrics response body", "status", resp.StatusCode)
@@ -716,7 +716,7 @@ func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt 
 	if err != nil {
 		return streamSample{}, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -831,7 +831,7 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -872,7 +872,7 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 	if err != nil {
 		return streamSample{}, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -951,7 +951,7 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -980,11 +980,11 @@ func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("Diffusers health check failed: status %d, body: %s", resp.StatusCode, string(body))
+		return 0, 0, false, fmt.Errorf("diffusers health check failed: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	duration = b.now().Sub(start)
@@ -1017,7 +1017,7 @@ func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (token
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

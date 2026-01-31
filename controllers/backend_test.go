@@ -17,7 +17,6 @@ limitations under the License.
 package controllers
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -117,8 +116,7 @@ func TestGetBackendImage_MlcLlm_MaxwellArch(t *testing.T) {
 
 func TestGetBackendImage_MlcLlm_EnvOverride(t *testing.T) {
 	// Test AMD env override
-	os.Setenv("DEFAULT_MLC_LLM_IMAGE_AMD", "custom/mlc:rocm-custom")
-	defer os.Unsetenv("DEFAULT_MLC_LLM_IMAGE_AMD")
+	t.Setenv("DEFAULT_MLC_LLM_IMAGE_AMD", "custom/mlc:rocm-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -140,8 +138,7 @@ func TestGetBackendImage_MlcLlm_EnvOverride(t *testing.T) {
 }
 
 func TestGetBackendImage_MlcLlm_MaxwellEnvOverride(t *testing.T) {
-	os.Setenv("DEFAULT_MLC_LLM_IMAGE_MAXWELL", "custom/mlc:maxwell-custom")
-	defer os.Unsetenv("DEFAULT_MLC_LLM_IMAGE_MAXWELL")
+	t.Setenv("DEFAULT_MLC_LLM_IMAGE_MAXWELL", "custom/mlc:maxwell-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -206,8 +203,7 @@ func TestGetBackendImage_VLLM_AMD(t *testing.T) {
 }
 
 func TestGetBackendImage_VLLM_EnvOverride(t *testing.T) {
-	os.Setenv("DEFAULT_VLLM_IMAGE", "custom/vllm:cuda-custom")
-	defer os.Unsetenv("DEFAULT_VLLM_IMAGE")
+	t.Setenv("DEFAULT_VLLM_IMAGE", "custom/vllm:cuda-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -229,8 +225,7 @@ func TestGetBackendImage_VLLM_EnvOverride(t *testing.T) {
 }
 
 func TestGetBackendImage_VLLM_AMD_EnvOverride(t *testing.T) {
-	os.Setenv("DEFAULT_VLLM_IMAGE_AMD", "custom/vllm:rocm-custom")
-	defer os.Unsetenv("DEFAULT_VLLM_IMAGE_AMD")
+	t.Setenv("DEFAULT_VLLM_IMAGE_AMD", "custom/vllm:rocm-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -292,8 +287,7 @@ func TestGetBackendImage_LlamaCpp_AMD(t *testing.T) {
 }
 
 func TestGetBackendImage_LlamaCpp_EnvOverride(t *testing.T) {
-	os.Setenv("DEFAULT_LLAMA_CPP_IMAGE", "custom/llamacpp:cuda-custom")
-	defer os.Unsetenv("DEFAULT_LLAMA_CPP_IMAGE")
+	t.Setenv("DEFAULT_LLAMA_CPP_IMAGE", "custom/llamacpp:cuda-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -315,8 +309,7 @@ func TestGetBackendImage_LlamaCpp_EnvOverride(t *testing.T) {
 }
 
 func TestGetBackendImage_LlamaCpp_AMD_EnvOverride(t *testing.T) {
-	os.Setenv("DEFAULT_LLAMA_CPP_IMAGE_AMD", "custom/llamacpp:rocm-custom")
-	defer os.Unsetenv("DEFAULT_LLAMA_CPP_IMAGE_AMD")
+	t.Setenv("DEFAULT_LLAMA_CPP_IMAGE_AMD", "custom/llamacpp:rocm-custom")
 
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
@@ -652,8 +645,7 @@ func TestGetMLCMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envValue != "" {
-				os.Setenv("DEFAULT_MLC_LLM_MODE", tt.envValue)
-				defer os.Unsetenv("DEFAULT_MLC_LLM_MODE")
+				t.Setenv("DEFAULT_MLC_LLM_MODE", tt.envValue)
 			}
 
 			m := &aiv1alpha1.ModelDeployment{
@@ -711,8 +703,7 @@ func TestGetMLCModelLib(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envValue != "" {
-				os.Setenv("DEFAULT_MLC_LLM_MODEL_LIB", tt.envValue)
-				defer os.Unsetenv("DEFAULT_MLC_LLM_MODEL_LIB")
+				t.Setenv("DEFAULT_MLC_LLM_MODEL_LIB", tt.envValue)
 			}
 
 			m := &aiv1alpha1.ModelDeployment{
@@ -781,8 +772,7 @@ func TestGetMLCGPUMemory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envValue != "" {
-				os.Setenv("DEFAULT_MLC_GPU_SIZE_BYTES", tt.envValue)
-				defer os.Unsetenv("DEFAULT_MLC_GPU_SIZE_BYTES")
+				t.Setenv("DEFAULT_MLC_GPU_SIZE_BYTES", tt.envValue)
 			}
 
 			m := &aiv1alpha1.ModelDeployment{
@@ -841,8 +831,7 @@ func TestGetMLCJITPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envValue != "" {
-				os.Setenv("DEFAULT_MLC_JIT_POLICY", tt.envValue)
-				defer os.Unsetenv("DEFAULT_MLC_JIT_POLICY")
+				t.Setenv("DEFAULT_MLC_JIT_POLICY", tt.envValue)
 			}
 
 			m := &aiv1alpha1.ModelDeployment{
@@ -1733,8 +1722,7 @@ func TestJobForOCIDownload_WithAuth(t *testing.T) {
 
 func TestJobForOCIDownload_EnvOverride(t *testing.T) {
 	// Set custom ORAS image
-	os.Setenv("ORAS_DOWNLOADER_IMAGE", "my-registry/custom-oras:v2.0.0")
-	defer os.Unsetenv("ORAS_DOWNLOADER_IMAGE")
+	t.Setenv("ORAS_DOWNLOADER_IMAGE", "my-registry/custom-oras:v2.0.0")
 
 	scheme := runtime.NewScheme()
 	_ = aiv1alpha1.AddToScheme(scheme)

@@ -106,9 +106,10 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 		}
 
 		ready := fmt.Sprintf("%d/%d", mc.Status.ReadyNodes, mc.Status.TotalNodes)
-		if mc.Status.Phase == aiv1alpha1.ModelCachePhaseReady {
+		switch mc.Status.Phase {
+		case aiv1alpha1.ModelCachePhaseReady:
 			ready = "Ready"
-		} else if mc.Status.Phase == aiv1alpha1.ModelCachePhaseFailed {
+		case aiv1alpha1.ModelCachePhaseFailed:
 			ready = "Failed"
 		}
 

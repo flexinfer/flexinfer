@@ -155,7 +155,7 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Handle finalizer logic for cleanup
-	if modelDeployment.ObjectMeta.DeletionTimestamp.IsZero() {
+	if modelDeployment.DeletionTimestamp.IsZero() {
 		// Object is not being deleted, ensure finalizer is present
 		if !containsString(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer) {
 			modelDeployment.SetFinalizers(append(modelDeployment.GetFinalizers(), aiv1alpha1.ModelDeploymentFinalizer))
@@ -1043,7 +1043,7 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 	benchmarkerImage := r.getBenchmarkerImage()
 
 	warmupIterations := int32(2)
-	var minDuration time.Duration = 30 * time.Second
+	minDuration := 30 * time.Second
 	batchSize := int32(128)
 	iterations := int32(5)
 	if m.Spec.Benchmark != nil {

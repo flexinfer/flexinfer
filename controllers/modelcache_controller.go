@@ -106,7 +106,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 	// Determine PVC name - either existing or create new
 	var pvcName string
-	var pvcNamespace string = modelCache.Namespace
+	pvcNamespace := modelCache.Namespace
 
 	if modelCache.Spec.ExistingClaimName != nil && *modelCache.Spec.ExistingClaimName != "" {
 		// Use existing PVC - may be in a different namespace, parse if needed
@@ -1680,7 +1680,7 @@ func (r *ModelCacheReconciler) evictCache(ctx context.Context, cache *aiv1alpha1
 
 	// Calculate residency time if we were tracking it
 	if cache.Status.ResidentSince != nil {
-		residencyDuration := now.Time.Sub(cache.Status.ResidentSince.Time)
+		residencyDuration := now.Sub(cache.Status.ResidentSince.Time)
 		cache.Status.ResidencySeconds += int64(residencyDuration.Seconds())
 		cache.Status.ResidentSince = nil
 	}

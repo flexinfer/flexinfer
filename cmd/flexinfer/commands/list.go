@@ -69,9 +69,9 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	if allNs {
-		fmt.Fprintln(w, "NAMESPACE\tNAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
+		_, _ = fmt.Fprintln(w, "NAMESPACE\tNAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
 	} else {
-		fmt.Fprintln(w, "NAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
+		_, _ = fmt.Fprintln(w, "NAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
 	}
 
 	for _, md := range mdList.Items {
@@ -118,10 +118,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 
 		if allNs {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				md.Namespace, md.Name, md.Spec.Backend, status, replicasStr, idleStr, tps)
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				md.Name, md.Spec.Backend, status, replicasStr, idleStr, tps)
 		}
 	}

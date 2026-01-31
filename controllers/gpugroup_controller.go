@@ -741,7 +741,7 @@ func (r *GPUGroupReconciler) recordQueueSample(modelStatus *aiv1alpha1.GPUGroupM
 	cutoff := time.Now().Add(-TrendWindowDuration)
 	var trimmed []aiv1alpha1.QueueSample
 	for _, s := range modelStatus.QueueHistory {
-		if s.Timestamp.Time.After(cutoff) {
+		if s.Timestamp.After(cutoff) {
 			trimmed = append(trimmed, s)
 		}
 	}
