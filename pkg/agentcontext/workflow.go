@@ -517,7 +517,7 @@ func (e *WorkflowEngine) executeStep(ctx context.Context, wf *Workflow, stepID s
 	step.CompletedAt = &completedAt
 
 	if err != nil {
-		// Check retry
+		// Check retry with exponential backoff
 		if step.RetryCount < step.MaxRetries {
 			step.RetryCount++
 			step.Status = StepStatusPending
@@ -533,8 +533,10 @@ func (e *WorkflowEngine) executeStep(ctx context.Context, wf *Workflow, stepID s
 				Details:    map[string]any{"attempt": step.RetryCount, "error": err.Error()},
 			})
 
-			if step.RetryDelay > 0 {
-				time.Sleep(time.Duration(step.RetryDelay) * time.Millisecond)
+			// Calculate delay with exponential backoff
+			delay := calculateBackoffDelay(step.RetryCount, step.RetryDelay)
+			if delay > 0 {
+				time.Sleep(delay)
 			}
 			return
 		}
@@ -785,13 +787,15 @@ func (e *WorkflowEngine) emitEvent(event WorkflowEvent) {
 // Helper functions
 
 func validateDAG(steps []WorkflowStep) error {
-	// Build adjacency list
+	// Build adjacency list and step map
 	stepMap := make(map[string]bool)
+	adjacency := make(map[string][]string)
 	for _, s := range steps {
 		stepMap[s.ID] = true
+		adjacency[s.ID] = s.DependsOn
 	}
 
-	// Check all dependencies exist and no cycles (simplified)
+	// Check all dependencies exist
 	for _, step := range steps {
 		for _, dep := range step.DependsOn {
 			if !stepMap[dep] {
@@ -800,8 +804,95 @@ func validateDAG(steps []WorkflowStep) error {
 		}
 	}
 
-	// TODO: Full cycle detection with DFS
+	// Full cycle detection with DFS
+	// States: 0 = unvisited, 1 = visiting, 2 = visited
+	state := make(map[string]int)
+	var path []string
+
+	var dfs func(node string) error
+	dfs = func(node string) error {
+		if state[node] == 1 {
+			// Found cycle - build cycle path
+			cycleStart := -1
+			for i, n := range path {
+				if n == node {
+					cycleStart = i
+					break
+				}
+			}
+			cyclePath := append(path[cycleStart:], node)
+			return fmt.Errorf("cycle detected: %s", formatCycle(cyclePath))
+		}
+		if state[node] == 2 {
+			return nil // Already visited
+		}
+
+		state[node] = 1 // Visiting
+		path = append(path, node)
+
+		for _, dep := range adjacency[node] {
+			if err := dfs(dep); err != nil {
+				return err
+			}
+		}
+
+		path = path[:len(path)-1]
+		state[node] = 2 // Visited
+		return nil
+	}
+
+	// Run DFS from each unvisited node
+	for stepID := range stepMap {
+		if state[stepID] == 0 {
+			if err := dfs(stepID); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+func formatCycle(cycle []string) string {
+	result := ""
+	for i, node := range cycle {
+		if i > 0 {
+			result += " -> "
+		}
+		result += node
+	}
+	return result
+}
+
+// calculateBackoffDelay returns the delay for a retry attempt using exponential backoff.
+// baseDelay is in milliseconds. Returns time.Duration.
+// Formula: min(baseDelay * 2^(attempt-1), maxDelay) with jitter
+func calculateBackoffDelay(attempt int, baseDelayMs int) time.Duration {
+	if baseDelayMs <= 0 {
+		baseDelayMs = 1000 // Default 1 second
+	}
+
+	const maxDelayMs = 60000 // Max 1 minute
+
+	// Calculate exponential delay: base * 2^(attempt-1)
+	delayMs := baseDelayMs
+	for i := 1; i < attempt; i++ {
+		delayMs *= 2
+		if delayMs > maxDelayMs {
+			delayMs = maxDelayMs
+			break
+		}
+	}
+
+	// Add jitter (up to 25% of delay)
+	jitterMs := delayMs / 4
+	if jitterMs > 0 {
+		// Simple pseudo-random jitter using time
+		jitter := int(time.Now().UnixNano() % int64(jitterMs))
+		delayMs += jitter
+	}
+
+	return time.Duration(delayMs) * time.Millisecond
 }
 
 func resolveVariables(args map[string]any, input, context map[string]any) map[string]any {
