@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -55,16 +54,6 @@ func getEnvDuration(name string, defaultVal time.Duration) time.Duration {
 	if val := os.Getenv(name); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
 			return d
-		}
-	}
-	return defaultVal
-}
-
-// getEnvInt reads an integer from an environment variable.
-func getEnvInt(name string, defaultVal int) int {
-	if val := os.Getenv(name); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
 		}
 	}
 	return defaultVal
