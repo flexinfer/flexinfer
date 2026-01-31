@@ -1,0 +1,90 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitTypeAll(chore)",
+    ":separateMajorReleases",
+    "group:allNonMajor"
+  ],
+  "labels": ["dependencies"],
+  "timezone": "America/Denver",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "automerge": false,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Auto-merge patch updates for trusted packages",
+      "matchUpdateTypes": ["patch"],
+      "matchPackagePatterns": [
+        "^k8s.io/",
+        "^sigs.k8s.io/",
+        "^golang.org/x/"
+      ],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Group Kubernetes packages",
+      "matchPackagePatterns": ["^k8s.io/"],
+      "groupName": "kubernetes"
+    },
+    {
+      "description": "Group controller-runtime with k8s",
+      "matchPackagePatterns": ["^sigs.k8s.io/controller-runtime"],
+      "groupName": "kubernetes"
+    },
+    {
+      "description": "Group golang.org/x packages",
+      "matchPackagePatterns": ["^golang.org/x/"],
+      "groupName": "golang-x"
+    },
+    {
+      "description": "Group testing packages",
+      "matchPackagePatterns": [
+        "github.com/onsi/ginkgo",
+        "github.com/onsi/gomega",
+        "github.com/stretchr/testify"
+      ],
+      "groupName": "testing"
+    },
+    {
+      "description": "Group Prometheus packages",
+      "matchPackagePatterns": ["github.com/prometheus/"],
+      "groupName": "prometheus"
+    },
+    {
+      "description": "Pin Go version in go.mod",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
+      "description": "Helm chart updates",
+      "matchManagers": ["helm-values", "helmfile"],
+      "groupName": "helm"
+    },
+    {
+      "description": "Docker base images",
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker"
+    }
+  ],
+  "gomod": {
+    "enabled": true,
+    "postUpdateOptions": ["gomodTidy"]
+  },
+  "dockerfile": {
+    "enabled": true,
+    "fileMatch": ["(^|/|\\.)Dockerfile[^/]*$", "(^|/)Dockerfile\\.[^/]*$"]
+  },
+  "helm-values": {
+    "enabled": true,
+    "fileMatch": ["charts/.+/values\\.yaml$"]
+  }
+}

@@ -512,6 +512,65 @@ publish_vllm_rocm_gfx1100:
     - when: never
 
 # --- Security Stage ---
+# Go dependency vulnerability scanning using govulncheck
+govulncheck:
+  stage: security
+  <<: *go-cache
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export PATH=$PATH:$GOPATH/bin
+    - go install golang.org/x/vuln/cmd/govulncheck@latest
+  script:
+    - echo "Scanning Go dependencies for known vulnerabilities..."
+    - govulncheck -show verbose ./...
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: false
+
+# Trivy filesystem scanning for go.mod vulnerabilities
+trivy_scan_deps:
+  stage: security
+  image: aquasec/trivy:0.58.0
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+  cache:
+    paths:
+      - .trivycache/
+  script:
+    - echo "Scanning go.mod for dependency vulnerabilities..."
+    - trivy fs --scanners vuln --exit-code 0 --format table .
+    - echo ""
+    - echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
+    - trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL .
+  artifacts:
+    reports:
+      dependency_scanning: trivy-deps-report.json
+    when: always
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Go module update check (informational)
+go_mod_outdated:
+  stage: security
+  <<: *go-cache
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export PATH=$PATH:$GOPATH/bin
+    - go install github.com/psampaz/go-mod-outdated@latest
+  script:
+    - echo "Checking for outdated Go dependencies..."
+    - go list -u -m -json all | go-mod-outdated -direct -update
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
+
 # Trivy vulnerability scanning for container images
 # Fails pipeline on HIGH or CRITICAL CVEs in production images
 .trivy-scan: &trivy-scan
