@@ -48,12 +48,9 @@ spec:
             # GPU device files
             - name: dev-dri
               mountPath: /dev/dri
-            # NVIDIA tools and libraries from host
-            - name: host-usr-bin
-              mountPath: /host/usr/bin
-              readOnly: true
-            - name: host-usr-lib
-              mountPath: /host/usr/lib/x86_64-linux-gnu
+            # Host root for nsenter/chroot nvidia-smi execution
+            - name: host-root
+              mountPath: /host
               readOnly: true
             # Host sysfs for GPU metrics fallback
             - name: sys
@@ -75,16 +72,11 @@ spec:
           hostPath:
             path: /dev/dri
             type: DirectoryOrCreate
-        # Host /usr/bin for nvidia-smi and other tools
-        - name: host-usr-bin
+        # Host root filesystem for chroot nvidia-smi execution
+        - name: host-root
           hostPath:
-            path: /usr/bin
+            path: /
             type: Directory
-        # Host libraries (includes NVIDIA libs on Debian/Ubuntu hosts)
-        - name: host-usr-lib
-          hostPath:
-            path: /usr/lib/x86_64-linux-gnu
-            type: DirectoryOrCreate
         # Host sysfs for GPU metrics fallback
         - name: sys
           hostPath:

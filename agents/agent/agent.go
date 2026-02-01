@@ -125,10 +125,16 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 	log := log.FromContext(ctx)
 
-	// Try NVIDIA first (check multiple paths)
-	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
-	for _, smiPath := range nvidiaSmiPaths {
-		out, err := a.runCmd(ctx, smiPath, "--query-gpu=memory.total,compute_cap", "--format=csv,noheader")
+	// Try NVIDIA first (direct, then via chroot to host)
+	nvidiaQueries := []struct {
+		cmd  string
+		args []string
+	}{
+		{"nvidia-smi", []string{"--query-gpu=memory.total,compute_cap", "--format=csv,noheader"}},
+		{"chroot", []string{"/host", "nvidia-smi", "--query-gpu=memory.total,compute_cap", "--format=csv,noheader"}},
+	}
+	for _, q := range nvidiaQueries {
+		out, err := a.runCmd(ctx, q.cmd, q.args...)
 		if err == nil {
 			a.parseNvidia(string(out), labels)
 			return
@@ -283,10 +289,16 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 	log := log.FromContext(ctx)
 
-	// Try NVIDIA GPU first (check multiple paths)
-	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
-	for _, smiPath := range nvidiaSmiPaths {
-		out, err := a.runCmd(ctx, smiPath, "--query-gpu=memory.free", "--format=csv,noheader,nounits")
+	// Try NVIDIA GPU first (direct, then via chroot)
+	nvidiaQueries := []struct {
+		cmd  string
+		args []string
+	}{
+		{"nvidia-smi", []string{"--query-gpu=memory.free", "--format=csv,noheader,nounits"}},
+		{"chroot", []string{"/host", "nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"}},
+	}
+	for _, q := range nvidiaQueries {
+		out, err := a.runCmd(ctx, q.cmd, q.args...)
 		if err == nil {
 			freeVRAM := a.parseNvidiaFreeMemory(string(out))
 			if freeVRAM > 0 {
@@ -516,15 +528,20 @@ func (a *Agent) DetectGPUMetrics(ctx context.Context) []GPUMetrics {
 
 // detectNvidiaMetrics queries nvidia-smi for GPU metrics.
 func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
-	// Try nvidia-smi from PATH first, then from host mount
-	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
+	// Try nvidia-smi directly first, then via chroot to host filesystem
+	// Chroot is needed because nvidia-smi requires host's glibc
+	queries := []struct {
+		cmd  string
+		args []string
+	}{
+		{"nvidia-smi", []string{"--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu", "--format=csv,noheader,nounits"}},
+		{"chroot", []string{"/host", "nvidia-smi", "--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu", "--format=csv,noheader,nounits"}},
+	}
 
 	var out []byte
 	var err error
-	for _, smiPath := range nvidiaSmiPaths {
-		out, err = a.runCmd(ctx, smiPath,
-			"--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu",
-			"--format=csv,noheader,nounits")
+	for _, q := range queries {
+		out, err = a.runCmd(ctx, q.cmd, q.args...)
 		if err == nil {
 			break
 		}
