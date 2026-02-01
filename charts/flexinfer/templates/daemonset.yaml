@@ -35,8 +35,49 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: PATH
+              value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/rocm/bin"
+            - name: LD_LIBRARY_PATH
+              value: "/opt/rocm/lib:/usr/local/nvidia/lib64"
+          volumeMounts:
+            # AMD ROCm tools and libraries
+            - name: rocm
+              mountPath: /opt/rocm
+              readOnly: true
+            # GPU device files
+            - name: dev-dri
+              mountPath: /dev/dri
+            # NVIDIA tools (if available)
+            - name: nvidia-bin
+              mountPath: /usr/bin/nvidia-smi
+              readOnly: true
+            # NVIDIA libraries (if available)
+            - name: nvidia-lib
+              mountPath: /usr/local/nvidia
+              readOnly: true
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
+      volumes:
+        # AMD ROCm installation from host
+        - name: rocm
+          hostPath:
+            path: /opt/rocm
+            type: DirectoryOrCreate
+        # GPU device files
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: DirectoryOrCreate
+        # NVIDIA nvidia-smi binary
+        - name: nvidia-bin
+          hostPath:
+            path: /usr/bin/nvidia-smi
+            type: FileOrCreate
+        # NVIDIA libraries
+        - name: nvidia-lib
+          hostPath:
+            path: /usr/local/nvidia
+            type: DirectoryOrCreate
       {{- with .Values.agent.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
