@@ -54,6 +54,43 @@ make build
 
 # Start daemon (manages MCP server processes)
 ./bin/loomd
+
+# Check daemon health (includes per-server status)
+curl http://localhost:9876/health
+
+# Check SSH tunnel status
+./bin/loom tunnel status
+```
+
+## Daemon Features
+
+### Health Monitoring
+
+The daemon includes a HealthMonitor that:
+- Periodically probes each MCP server for health
+- Auto-restarts failed servers with exponential backoff
+- Tracks uptime, restart counts, and error messages
+- Exposes status via `/health` HTTP endpoint and `loom/health` IPC
+
+### SSH Tunnel Management
+
+For remote K8s access via jump hosts:
+- TunnelManager auto-connects tunnels on daemon start
+- Reconnects on failure with exponential backoff
+- Query status via `loom tunnel status` or `loom/tunnels` IPC
+
+Registry config example:
+```yaml
+servers:
+  - name: remote_k8s
+    targets:
+      vscode:
+        ssh:
+          host: "jump.example.com"
+          user: "admin"
+        command: "kubectl"
+        env:
+          KUBECONFIG_REMOTE_HOST: "k8s-api.internal:6443"
 ```
 
 MCP Servers Included

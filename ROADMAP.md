@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: January 30, 2026
+> Last Updated: February 1, 2026
 
 ## Current Status
 
@@ -12,6 +12,9 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
 - ✅ **Daemon Mode**: Background process (`loomd`) managing persistent connections and tool aggregation.
 - ✅ **Smart Routing**: Support for prefix-less tool calls and argument-based routing.
 - ✅ **Hub Bridging**: Automatic discovery and transparent access to remote MCP Hub tools.
+- ✅ **Health Monitoring**: Periodic health probes with auto-restart on server failure.
+- ✅ **SSH Tunnel Management**: Auto-connect tunnels for remote K8s access via jump hosts.
+- ✅ **Prometheus Metrics**: `/metrics` endpoint for observability.
 - ✅ **MCP Servers**:
   - `mcp-gitlab`: GitLab integration.
   - `mcp-k8s`: Kubernetes resource access.
@@ -20,7 +23,19 @@ Loom Core provides the high-performance Go backend components for the Loom ecosy
   - `mcp-minio`: S3/MinIO file access.
 - ✅ **Shared Utils**: Delegation to `fi-mcp-kit` for enterprise orchestration.
 
-## Upcoming Work
+## v0.9.0 (Current)
+
+Production hardening and remote access:
+
+- [x] **Health Monitoring**: HealthMonitor integrated into daemon lifecycle with auto-restart.
+- [x] **SSH Tunnel Manager**: TunnelManager for remote K8s access via SSH tunnels.
+- [x] **CLI Tunnel Commands**: `loom tunnel status` for monitoring tunnel health.
+- [x] **Enhanced Health Endpoint**: `/health` returns detailed JSON with per-server status.
+- [ ] **Response Caching**: TTL-based caching for read-only tool results.
+- [ ] **Test Coverage**: Target 60%+ on critical paths.
+- [ ] **Platform Expansion**: Core servers on all platforms (Claude, Gemini, Codex).
+
+## Completed Work
 
 ### Phase 1: Server Expansion
 

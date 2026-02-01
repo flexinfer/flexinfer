@@ -744,7 +744,7 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleHealth(ctx, msg)
 	case "loom/tools":
 		return d.handleTools(ctx, msg)
-	case "loom/call":
+	case "loom/call", "tools/call":
 		return d.handleCall(ctx, msg)
 	case "loom/reload":
 		return d.handleReload(ctx, msg)
