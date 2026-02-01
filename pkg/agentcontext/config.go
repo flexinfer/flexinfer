@@ -49,6 +49,29 @@ type Config struct {
 	AnnotationsCollection string
 	HandoffsCollection    string
 	TemplatesCollection   string
+
+	// Persistence collections (Phase 1)
+	GraphEntitiesCollection  string
+	GraphRelationsCollection string
+	WorkflowsCollection      string
+	WorkflowDefsCollection   string
+	MemoryCollection         string
+
+	// Parallel embedding
+	EmbedConcurrency int
+
+	// Semantic deduplication
+	DedupeSimilarity float64
+
+	// Trusted sources (Phase 2.5)
+	TrustedSources []TrustedSource
+}
+
+// TrustedSource defines a trusted source pattern for context weighting
+type TrustedSource struct {
+	Pattern     string  `json:"pattern"`     // Glob pattern (e.g., "*.md", "src/**/*.go")
+	Priority    float64 `json:"priority"`    // 0.0-1.0, higher = more trusted
+	Description string  `json:"description"` // Human-readable description
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -99,6 +122,16 @@ func LoadConfigFromEnv() (Config, error) {
 		AnnotationsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_ANNOTATIONS_COLLECTION"}, "agent_annotations_v1"),
 		HandoffsCollection:    firstNonEmptyEnv([]string{"AGENT_CONTEXT_HANDOFFS_COLLECTION"}, "agent_handoffs_v1"),
 		TemplatesCollection:   firstNonEmptyEnv([]string{"AGENT_CONTEXT_TEMPLATES_COLLECTION"}, "agent_templates_v1"),
+
+		// Persistence collections
+		GraphEntitiesCollection:  firstNonEmptyEnv([]string{"AGENT_CONTEXT_GRAPH_ENTITIES_COLLECTION"}, "agent_graph_entities_v1"),
+		GraphRelationsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_GRAPH_RELATIONS_COLLECTION"}, "agent_graph_relations_v1"),
+		WorkflowsCollection:      firstNonEmptyEnv([]string{"AGENT_CONTEXT_WORKFLOWS_COLLECTION"}, "agent_workflows_v1"),
+		WorkflowDefsCollection:   firstNonEmptyEnv([]string{"AGENT_CONTEXT_WORKFLOW_DEFS_COLLECTION"}, "agent_workflow_defs_v1"),
+		MemoryCollection:         firstNonEmptyEnv([]string{"AGENT_CONTEXT_MEMORY_COLLECTION"}, "agent_memory_v1"),
+
+		EmbedConcurrency: intEnv("AGENT_CONTEXT_EMBED_CONCURRENCY", 4),
+		DedupeSimilarity: floatEnv("AGENT_CONTEXT_DEDUPE_SIMILARITY", 0.9),
 	}
 
 	// Validate visibility

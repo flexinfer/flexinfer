@@ -1,7 +1,9 @@
 package agentcontext
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +34,10 @@ type MemoryHierarchy struct {
 
 	// Summarizer callback (for LLM-based compression)
 	summarizer func(content string, maxTokens int) (string, error)
+
+	// Deduplication
+	dedupeSimilarityThreshold float64
+	embedFunc                 func(text string) ([]float64, error)
 }
 
 // NewMemoryHierarchy creates a new memory hierarchy
@@ -99,6 +105,20 @@ func (mh *MemoryHierarchy) SetSummarizer(fn func(content string, maxTokens int) 
 	mh.mu.Lock()
 	defer mh.mu.Unlock()
 	mh.summarizer = fn
+}
+
+// SetEmbedFunc sets the callback for generating embeddings (for deduplication)
+func (mh *MemoryHierarchy) SetEmbedFunc(fn func(text string) ([]float64, error)) {
+	mh.mu.Lock()
+	defer mh.mu.Unlock()
+	mh.embedFunc = fn
+}
+
+// SetDedupeSimilarityThreshold sets the similarity threshold for deduplication
+func (mh *MemoryHierarchy) SetDedupeSimilarityThreshold(threshold float64) {
+	mh.mu.Lock()
+	defer mh.mu.Unlock()
+	mh.dedupeSimilarityThreshold = threshold
 }
 
 // AddItem adds an item to the memory hierarchy
@@ -532,7 +552,7 @@ func (mh *MemoryHierarchy) DemoteItem(id string) error {
 	return nil
 }
 
-// CompressItem compresses an item's content
+// CompressItem compresses an item's content using LLM or fallback extractive compression
 func (mh *MemoryHierarchy) CompressItem(id string) error {
 	mh.mu.Lock()
 	item := mh.findItem(id)
@@ -554,36 +574,37 @@ func (mh *MemoryHierarchy) CompressItem(id string) error {
 	}
 
 	summarizer := mh.summarizer
+	content := item.Content
 	mh.mu.Unlock()
 
-	// Generate summary
-	var summary string
-	if summarizer != nil {
-		targetTokens := int(float64(item.OriginalTokens) * ratio)
-		var err error
-		summary, err = summarizer(item.Content, targetTokens)
-		if err != nil {
-			return fmt.Errorf("compression failed: %w", err)
-		}
-	} else {
-		// Simple truncation as fallback
-		targetChars := int(float64(len(item.Content)) * ratio)
-		if targetChars < len(item.Content) {
-			summary = item.Content[:targetChars] + "..."
-		} else {
-			summary = item.Content
-		}
-	}
+	// Use fallback compression with LLM if available
+	result := CompressWithFallback(content, ratio, summarizer)
 
 	mh.mu.Lock()
 	defer mh.mu.Unlock()
 
+	// Re-find item after unlocking (safety check)
+	item = mh.findItem(id)
+	if item == nil {
+		return fmt.Errorf("memory item not found: %s", id)
+	}
+
 	// Update item
 	now := time.Now().UTC()
-	item.Summary = summary
-	item.CompressedTokens = EstimateTokens(summary)
+	item.Summary = result.Summary
+	item.CompressedTokens = EstimateTokens(result.Summary)
 	item.Status = MemoryItemStatusCompressed
 	item.CompressedAt = &now
+
+	// Store compression metadata
+	if item.Metadata == nil {
+		item.Metadata = make(map[string]any)
+	}
+	item.Metadata["compression_method"] = string(result.Method)
+	item.Metadata["compression_ratio"] = result.Ratio
+	if len(result.Keywords) > 0 {
+		item.Metadata["keywords"] = result.Keywords
+	}
 
 	return nil
 }
@@ -896,4 +917,477 @@ func importanceLevelToScore(level ImportanceLevel) float64 {
 	}
 }
 
+// cosineSimilarity calculates cosine similarity between two vectors
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+// DeduplicationResult contains the result of a deduplication check
+type DeduplicationResult struct {
+	IsDuplicate bool    `json:"is_duplicate"`
+	ExistingID  string  `json:"existing_id,omitempty"`
+	Similarity  float64 `json:"similarity,omitempty"`
+	Action      string  `json:"action"` // "add", "skip", "merge"
+}
+
+// CheckDuplicate checks if an item is a duplicate of an existing item
+// Returns the existing item ID and similarity if found
+func (mh *MemoryHierarchy) CheckDuplicate(item *MemoryItem, embedding []float64) DeduplicationResult {
+	mh.mu.RLock()
+	defer mh.mu.RUnlock()
+
+	// Get policy for this tier
+	policy := mh.policies[item.Tier]
+	if policy == nil || !policy.DedupeEnabled {
+		return DeduplicationResult{Action: "add"}
+	}
+
+	threshold := policy.DedupeSimilarity
+	if mh.dedupeSimilarityThreshold > 0 {
+		threshold = mh.dedupeSimilarityThreshold
+	}
+	if threshold <= 0 {
+		threshold = 0.9 // Default 90% similarity
+	}
+
+	// Check items in the same tier
+	var tierItems map[string]*MemoryItem
+	switch item.Tier {
+	case MemoryTierWorking:
+		tierItems = mh.working
+	case MemoryTierShortTerm:
+		tierItems = mh.shortTerm
+	case MemoryTierLongTerm:
+		tierItems = mh.longTerm
+	}
+
+	var bestMatch *MemoryItem
+	var bestSimilarity float64
+
+	for _, existing := range tierItems {
+		// Skip archived/expired items
+		if existing.Status == MemoryItemStatusArchived || existing.Status == MemoryItemStatusExpired {
+			continue
+		}
+
+		// Skip same namespace/session requirement for stricter dedup
+		if item.Namespace != "" && existing.Namespace != item.Namespace {
+			continue
+		}
+
+		// Calculate similarity
+		var similarity float64
+
+		// If we have embeddings, use cosine similarity
+		if len(embedding) > 0 && len(existing.Embedding) > 0 {
+			// Convert []float32 to []float64 for comparison
+			existingEmbed := make([]float64, len(existing.Embedding))
+			for i, v := range existing.Embedding {
+				existingEmbed[i] = float64(v)
+			}
+			similarity = cosineSimilarity(embedding, existingEmbed)
+		} else {
+			// Fall back to text similarity (Jaccard on words)
+			similarity = textSimilarity(item.Content, existing.Content)
+		}
+
+		if similarity >= threshold && similarity > bestSimilarity {
+			bestSimilarity = similarity
+			bestMatch = existing
+		}
+	}
+
+	if bestMatch != nil {
+		return DeduplicationResult{
+			IsDuplicate: true,
+			ExistingID:  bestMatch.ID,
+			Similarity:  bestSimilarity,
+			Action:      "skip", // Or "merge" based on business logic
+		}
+	}
+
+	return DeduplicationResult{Action: "add"}
+}
+
+// textSimilarity calculates text similarity using Jaccard coefficient on words
+func textSimilarity(a, b string) float64 {
+	wordsA := tokenize(a)
+	wordsB := tokenize(b)
+
+	if len(wordsA) == 0 && len(wordsB) == 0 {
+		return 1.0
+	}
+	if len(wordsA) == 0 || len(wordsB) == 0 {
+		return 0.0
+	}
+
+	setA := make(map[string]bool)
+	for _, w := range wordsA {
+		setA[strings.ToLower(w)] = true
+	}
+
+	setB := make(map[string]bool)
+	for _, w := range wordsB {
+		setB[strings.ToLower(w)] = true
+	}
+
+	// Calculate Jaccard coefficient
+	intersection := 0
+	for w := range setA {
+		if setB[w] {
+			intersection++
+		}
+	}
+
+	union := len(setA) + len(setB) - intersection
+	if union == 0 {
+		return 0
+	}
+
+	return float64(intersection) / float64(union)
+}
+
+// AddItemWithDedup adds an item with deduplication check
+// Returns the deduplication result
+func (mh *MemoryHierarchy) AddItemWithDedup(item *MemoryItem, embedding []float64) (DeduplicationResult, error) {
+	// Check for duplicates first
+	result := mh.CheckDuplicate(item, embedding)
+
+	if result.IsDuplicate {
+		// Track dedup in metadata
+		if item.Metadata == nil {
+			item.Metadata = make(map[string]any)
+		}
+		item.Metadata["dedup_check"] = map[string]any{
+			"is_duplicate": true,
+			"existing_id":  result.ExistingID,
+			"similarity":   result.Similarity,
+			"action":       result.Action,
+		}
+
+		// If we should skip, return without adding
+		if result.Action == "skip" {
+			// Update access count on existing item to track interest
+			mh.mu.Lock()
+			existing := mh.findItem(result.ExistingID)
+			if existing != nil {
+				existing.AccessCount++
+				existing.LastAccessedAt = time.Now().UTC()
+			}
+			mh.mu.Unlock()
+			return result, nil
+		}
+	}
+
+	// Add the item
+	if err := mh.AddItem(item); err != nil {
+		return result, err
+	}
+
+	// Store embedding if provided
+	if len(embedding) > 0 {
+		mh.mu.Lock()
+		if existingItem := mh.findItem(item.ID); existingItem != nil {
+			existingItem.Embedding = make([]float32, len(embedding))
+			for i, v := range embedding {
+				existingItem.Embedding[i] = float32(v)
+			}
+		}
+		mh.mu.Unlock()
+	}
+
+	result.Action = "add"
+	return result, nil
+}
+
 // uniqueStrings defined in service.go
+
+// =========================================================================
+// Persistence Layer (Phase 1.3)
+// =========================================================================
+
+// MemoryPersistenceConfig holds Qdrant client for memory persistence
+type MemoryPersistenceConfig struct {
+	MemoryQdrant *QdrantClient
+	EmbedModel   string
+	VectorSize   int
+}
+
+// persistedMemoryHierarchy wraps MemoryHierarchy with Qdrant persistence
+type persistedMemoryHierarchy struct {
+	*MemoryHierarchy
+	cfg *MemoryPersistenceConfig
+}
+
+// SetPersistence configures Qdrant persistence for memory hierarchy
+func (mh *MemoryHierarchy) SetPersistence(cfg *MemoryPersistenceConfig) *persistedMemoryHierarchy {
+	return &persistedMemoryHierarchy{
+		MemoryHierarchy: mh,
+		cfg:             cfg,
+	}
+}
+
+// PersistItem saves a memory item to Qdrant
+func (pmh *persistedMemoryHierarchy) PersistItem(ctx context.Context, item *MemoryItem, vector []float64) error {
+	if pmh.cfg == nil || pmh.cfg.MemoryQdrant == nil {
+		return nil // No persistence configured
+	}
+
+	// Ensure collection exists
+	vectorSize := pmh.cfg.VectorSize
+	if vectorSize <= 0 {
+		vectorSize = 4 // Minimal size if embeddings not configured
+	}
+	if err := pmh.cfg.MemoryQdrant.EnsureCollection(ctx, vectorSize); err != nil {
+		return fmt.Errorf("ensure memory collection: %w", err)
+	}
+
+	// Use zero vector if not provided
+	if len(vector) == 0 {
+		vector = make([]float64, vectorSize)
+	}
+
+	point := Point{
+		ID:      item.ID,
+		Vector:  vector,
+		Payload: MemoryItemToPayload(*item, pmh.cfg.EmbedModel),
+	}
+
+	if err := pmh.cfg.MemoryQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+		return fmt.Errorf("persist memory item: %w", err)
+	}
+
+	return nil
+}
+
+// DeletePersistedItem removes a memory item from Qdrant
+func (pmh *persistedMemoryHierarchy) DeletePersistedItem(ctx context.Context, id string) error {
+	if pmh.cfg == nil || pmh.cfg.MemoryQdrant == nil {
+		return nil
+	}
+	return pmh.cfg.MemoryQdrant.Delete(ctx, []string{id})
+}
+
+// LoadMemoryFromQdrant loads all memory items from Qdrant into memory
+func (pmh *persistedMemoryHierarchy) LoadMemoryFromQdrant(ctx context.Context) error {
+	if pmh.cfg == nil || pmh.cfg.MemoryQdrant == nil {
+		return nil
+	}
+
+	exists, err := pmh.cfg.MemoryQdrant.CollectionExists(ctx)
+	if err != nil {
+		return fmt.Errorf("check memory collection: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	points, err := pmh.cfg.MemoryQdrant.ScrollPoints(ctx, nil, 10000, false)
+	if err != nil {
+		return fmt.Errorf("load memory items: %w", err)
+	}
+
+	pmh.mu.Lock()
+	defer pmh.mu.Unlock()
+
+	for _, p := range points {
+		item, err := PayloadToMemoryItem(p.Payload)
+		if err != nil || item == nil {
+			continue
+		}
+
+		// Add to appropriate tier
+		pmh.addToTier(item)
+		pmh.indexItem(item)
+	}
+
+	return nil
+}
+
+// AddItemWithPersistence adds an item and persists it to Qdrant
+func (pmh *persistedMemoryHierarchy) AddItemWithPersistence(ctx context.Context, item *MemoryItem, vector []float64) error {
+	// Add to in-memory hierarchy first
+	if err := pmh.AddItem(item); err != nil {
+		return err
+	}
+
+	// Persist to Qdrant
+	if err := pmh.PersistItem(ctx, item, vector); err != nil {
+		// Rollback in-memory change on persistence failure
+		pmh.mu.Lock()
+		pmh.removeFromTier(item)
+		pmh.removeFromIndexes(item)
+		pmh.mu.Unlock()
+		return err
+	}
+
+	return nil
+}
+
+// UpdateItemWithPersistence updates an item and persists changes
+func (pmh *persistedMemoryHierarchy) UpdateItemWithPersistence(ctx context.Context, item *MemoryItem, vector []float64) error {
+	if err := pmh.UpdateItem(item); err != nil {
+		return err
+	}
+	return pmh.PersistItem(ctx, item, vector)
+}
+
+// DeleteItemWithPersistence deletes an item and removes from Qdrant
+func (pmh *persistedMemoryHierarchy) DeleteItemWithPersistence(ctx context.Context, id string) error {
+	if err := pmh.DeleteItem(id); err != nil {
+		return err
+	}
+	return pmh.DeletePersistedItem(ctx, id)
+}
+
+// PromoteItemWithPersistence promotes an item and persists the change
+func (pmh *persistedMemoryHierarchy) PromoteItemWithPersistence(ctx context.Context, id string) error {
+	if err := pmh.PromoteItem(id); err != nil {
+		return err
+	}
+
+	// Get the item to persist
+	pmh.mu.RLock()
+	item := pmh.findItem(id)
+	pmh.mu.RUnlock()
+
+	if item != nil {
+		return pmh.PersistItem(ctx, item, nil)
+	}
+	return nil
+}
+
+// DemoteItemWithPersistence demotes an item and persists the change
+func (pmh *persistedMemoryHierarchy) DemoteItemWithPersistence(ctx context.Context, id string) error {
+	if err := pmh.DemoteItem(id); err != nil {
+		return err
+	}
+
+	// Get the item to persist
+	pmh.mu.RLock()
+	item := pmh.findItem(id)
+	pmh.mu.RUnlock()
+
+	if item != nil {
+		return pmh.PersistItem(ctx, item, nil)
+	}
+	return nil
+}
+
+// CompressItemWithPersistence compresses an item and persists the change
+func (pmh *persistedMemoryHierarchy) CompressItemWithPersistence(ctx context.Context, id string) error {
+	if err := pmh.CompressItem(id); err != nil {
+		return err
+	}
+
+	// Get the item to persist
+	pmh.mu.RLock()
+	item := pmh.findItem(id)
+	pmh.mu.RUnlock()
+
+	if item != nil {
+		return pmh.PersistItem(ctx, item, nil)
+	}
+	return nil
+}
+
+// MergeItemsWithPersistence merges items and persists changes
+func (pmh *persistedMemoryHierarchy) MergeItemsWithPersistence(ctx context.Context, ids []string, newTitle string, vector []float64) (*MemoryItem, error) {
+	merged, err := pmh.MergeItems(ids, newTitle)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist the merged item
+	if err := pmh.PersistItem(ctx, merged, vector); err != nil {
+		return merged, fmt.Errorf("persist merged item: %w", err)
+	}
+
+	// Persist archived items
+	for _, id := range ids {
+		pmh.mu.RLock()
+		item := pmh.findItem(id)
+		pmh.mu.RUnlock()
+		if item != nil && item.Status == MemoryItemStatusArchived {
+			if err := pmh.PersistItem(ctx, item, nil); err != nil {
+				// Non-fatal
+				fmt.Printf("warning: failed to persist archived item: %v\n", err)
+			}
+		}
+	}
+
+	return merged, nil
+}
+
+// SearchMemorySemantic performs semantic search for memory items
+func (pmh *persistedMemoryHierarchy) SearchMemorySemantic(ctx context.Context, vector []float64, limit int, tier MemoryTier, namespace string) ([]*MemoryItem, error) {
+	if pmh.cfg == nil || pmh.cfg.MemoryQdrant == nil {
+		return nil, fmt.Errorf("no persistence configured for semantic search")
+	}
+
+	// Build filter
+	var conds []any
+	if tier != "" {
+		conds = append(conds, Match("tier", string(tier)))
+	}
+	if namespace != "" {
+		conds = append(conds, Match("namespace", namespace))
+	}
+	// Exclude expired/archived items
+	conds = append(conds, map[string]any{
+		"key": "status",
+		"match": map[string]any{
+			"any": []string{string(MemoryItemStatusActive), string(MemoryItemStatusCompressed)},
+		},
+	})
+
+	filter := FilterMust(conds...)
+
+	// Search
+	type searchResult struct {
+		ID      string         `json:"id"`
+		Score   float64        `json:"score"`
+		Payload map[string]any `json:"payload"`
+	}
+
+	path := fmt.Sprintf("/collections/%s/points/search", pmh.cfg.MemoryQdrant.collection)
+	body := map[string]any{
+		"vector":       vector,
+		"limit":        limit,
+		"with_payload": true,
+		"filter":       filter,
+	}
+
+	var resp struct {
+		Result []searchResult `json:"result"`
+	}
+	if err := pmh.cfg.MemoryQdrant.doJSON(ctx, "POST", path, body, &resp); err != nil {
+		return nil, err
+	}
+
+	items := make([]*MemoryItem, 0, len(resp.Result))
+	for _, hit := range resp.Result {
+		item, err := PayloadToMemoryItem(hit.Payload)
+		if err != nil || item == nil {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return items, nil
+}

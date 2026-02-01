@@ -94,6 +94,14 @@ const (
 	SessionStatusSummarized SessionStatus = "summarized"
 )
 
+// SourceVersion tracks version information for source-grounded entries (btca-inspired)
+type SourceVersion struct {
+	CommitHash string    `json:"commit_hash,omitempty"` // Git commit when content was indexed
+	FileMtime  time.Time `json:"file_mtime,omitempty"`  // File modification time when indexed
+	IndexedAt  time.Time `json:"indexed_at"`            // When this entry was created/indexed
+	IsStale    bool      `json:"is_stale,omitempty"`    // True if source has changed since indexing
+}
+
 // ContextEntry represents a single piece of agent context
 type ContextEntry struct {
 	ID            string `json:"id"`
@@ -120,6 +128,9 @@ type ContextEntry struct {
 	FilePath  string `json:"file_path,omitempty"`
 	LineStart int    `json:"line_start,omitempty"`
 	LineEnd   int    `json:"line_end,omitempty"`
+
+	// Source versioning (Phase 2.1 - btca-inspired)
+	SourceVersion *SourceVersion `json:"source_version,omitempty"`
 
 	// Relationships
 	ParentID   string   `json:"parent_id,omitempty"`

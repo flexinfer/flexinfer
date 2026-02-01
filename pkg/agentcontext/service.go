@@ -28,6 +28,13 @@ type Service struct {
 	templatesQdrant   *QdrantClient
 	embed             *embed.MorphClient
 
+	// Persistence collections (Phase 1)
+	graphEntitiesQdrant  *QdrantClient
+	graphRelationsQdrant *QdrantClient
+	workflowsQdrant      *QdrantClient
+	workflowDefsQdrant   *QdrantClient
+	memoryQdrant         *QdrantClient
+
 	sessionsMu sync.RWMutex
 	sessions   map[string]*Session
 
@@ -36,11 +43,16 @@ type Service struct {
 	// Workflow orchestration
 	workflowEngine *WorkflowEngine
 
-	// Knowledge graph
-	knowledgeGraph *KnowledgeGraph
+	// Knowledge graph (with persistence)
+	knowledgeGraph          *KnowledgeGraph
+	persistedKnowledgeGraph *persistedGraph
 
-	// Memory hierarchy
-	memoryHierarchy *MemoryHierarchy
+	// Memory hierarchy (with persistence)
+	memoryHierarchy          *MemoryHierarchy
+	persistedMemoryHierarchy *persistedMemoryHierarchy
+
+	// Workflow engine (with persistence)
+	persistedWorkflowEngine *persistedWorkflowEngine
 }
 
 func NewServiceFromEnv() (*Service, error) {
@@ -61,6 +73,13 @@ func NewServiceFromEnv() (*Service, error) {
 		templatesQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TemplatesCollection, cfg.QdrantDistance),
 		embed:             embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
 		sessions:          make(map[string]*Session),
+
+		// Persistence collections (Phase 1)
+		graphEntitiesQdrant:  NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.GraphEntitiesCollection, cfg.QdrantDistance),
+		graphRelationsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.GraphRelationsCollection, cfg.QdrantDistance),
+		workflowsQdrant:      NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowsCollection, cfg.QdrantDistance),
+		workflowDefsQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowDefsCollection, cfg.QdrantDistance),
+		memoryQdrant:         NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.MemoryCollection, cfg.QdrantDistance),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
@@ -72,13 +91,62 @@ func NewServiceFromEnv() (*Service, error) {
 	// Initialize workflow engine
 	svc.workflowEngine = NewWorkflowEngine(nil) // Tool executor set by daemon
 
-	// Initialize knowledge graph
+	// Initialize knowledge graph with persistence
 	svc.knowledgeGraph = NewKnowledgeGraph()
+	svc.persistedKnowledgeGraph = svc.knowledgeGraph.SetPersistence(&GraphPersistenceConfig{
+		EntitiesQdrant:  svc.graphEntitiesQdrant,
+		RelationsQdrant: svc.graphRelationsQdrant,
+		EmbedModel:      cfg.EmbedModel,
+		VectorSize:      svc.vectorSize,
+	})
 
-	// Initialize memory hierarchy
+	// Initialize memory hierarchy with persistence
 	svc.memoryHierarchy = NewMemoryHierarchy()
+	svc.persistedMemoryHierarchy = svc.memoryHierarchy.SetPersistence(&MemoryPersistenceConfig{
+		MemoryQdrant: svc.memoryQdrant,
+		EmbedModel:   cfg.EmbedModel,
+		VectorSize:   svc.vectorSize,
+	})
+
+	// Initialize workflow engine with persistence
+	svc.persistedWorkflowEngine = svc.workflowEngine.SetPersistence(&WorkflowPersistenceConfig{
+		WorkflowsQdrant:    svc.workflowsQdrant,
+		WorkflowDefsQdrant: svc.workflowDefsQdrant,
+	})
+
+	// Load persisted state on startup (best-effort)
+	ctx := context.Background()
+	if err := svc.loadPersistedState(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load persisted state: %v\n", err)
+	}
 
 	return svc, nil
+}
+
+// loadPersistedState loads all persisted data from Qdrant on startup
+func (s *Service) loadPersistedState(ctx context.Context) error {
+	// Load knowledge graph
+	if err := s.persistedKnowledgeGraph.LoadGraphFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load knowledge graph: %v\n", err)
+	}
+	if err := s.persistedKnowledgeGraph.LoadReasoningChainsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load reasoning chains: %v\n", err)
+	}
+
+	// Load memory hierarchy
+	if err := s.persistedMemoryHierarchy.LoadMemoryFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load memory hierarchy: %v\n", err)
+	}
+
+	// Load workflows and definitions
+	if err := s.persistedWorkflowEngine.LoadWorkflowsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load workflows: %v\n", err)
+	}
+	if err := s.persistedWorkflowEngine.LoadDefinitionsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load workflow definitions: %v\n", err)
+	}
+
+	return nil
 }
 
 // Session Handlers
