@@ -96,6 +96,12 @@ RUN git clone --recursive https://github.com/mlc-ai/mlc-llm.git /build/mlc-llm &
     cd /build/mlc-llm && \
     git submodule update --init --recursive
 
+# Install PyTorch ROCm version FIRST (before MLC-LLM pulls in CUDA torch)
+# ROCm 6.2.4 wheels are compatible with ROCm 6.4 runtime
+RUN pip3 install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/rocm6.2
+
 # Install MLC-LLM dependencies
 RUN pip3 install --no-cache-dir \
     fastapi \
