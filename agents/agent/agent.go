@@ -36,6 +36,17 @@ type NodeMetrics struct {
 	FreeVRAMMB        uint64  // Available VRAM in MB
 }
 
+// GPUMetrics represents per-GPU metrics for Prometheus export
+type GPUMetrics struct {
+	Index       int     // GPU index (0, 1, 2, ...)
+	Temperature float64 // Temperature in Celsius
+	UsedVRAMMB  uint64  // Used VRAM in MB
+	TotalVRAMMB uint64  // Total VRAM in MB
+	FreeVRAMMB  uint64  // Free VRAM in MB
+	Utilization float64 // GPU utilization percentage (0-100)
+	Vendor      string  // "NVIDIA" or "AMD"
+}
+
 // NewAgent creates a new Agent.
 func NewAgent(labelPrefix string) (*Agent, error) {
 	config, err := rest.InClusterConfig()
@@ -455,5 +466,211 @@ func (a *Agent) scrapeKVCache(ctx context.Context, ip string) float64 {
 		}
 	}
 
+	return 0
+}
+
+// GetNodeName returns the node name this agent is running on.
+func (a *Agent) GetNodeName() string {
+	return a.nodeName
+}
+
+// DetectGPUMetrics queries GPU hardware for detailed metrics.
+// Returns a slice of GPUMetrics, one per GPU detected.
+func (a *Agent) DetectGPUMetrics(ctx context.Context) []GPUMetrics {
+	log := log.FromContext(ctx)
+
+	// Try NVIDIA first
+	metrics := a.detectNvidiaMetrics(ctx)
+	if len(metrics) > 0 {
+		return metrics
+	}
+
+	// Try AMD
+	metrics = a.detectAMDMetrics(ctx)
+	if len(metrics) > 0 {
+		return metrics
+	}
+
+	log.V(1).Info("No GPU metrics available")
+	return nil
+}
+
+// detectNvidiaMetrics queries nvidia-smi for GPU metrics.
+func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
+	// Query: index, temperature, memory.used, memory.total, memory.free, utilization.gpu
+	out, err := a.runCmd(ctx, "nvidia-smi",
+		"--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu",
+		"--format=csv,noheader,nounits")
+	if err != nil {
+		return nil
+	}
+
+	var metrics []GPUMetrics
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Split(line, ",")
+		if len(parts) < 6 {
+			continue
+		}
+
+		m := GPUMetrics{Vendor: "NVIDIA"}
+
+		if idx, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil {
+			m.Index = idx
+		}
+		if temp, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
+			m.Temperature = temp
+		}
+		if used, err := strconv.ParseUint(strings.TrimSpace(parts[2]), 10, 64); err == nil {
+			m.UsedVRAMMB = used
+		}
+		if total, err := strconv.ParseUint(strings.TrimSpace(parts[3]), 10, 64); err == nil {
+			m.TotalVRAMMB = total
+		}
+		if free, err := strconv.ParseUint(strings.TrimSpace(parts[4]), 10, 64); err == nil {
+			m.FreeVRAMMB = free
+		}
+		if util, err := strconv.ParseFloat(strings.TrimSpace(parts[5]), 64); err == nil {
+			m.Utilization = util
+		}
+
+		metrics = append(metrics, m)
+	}
+
+	return metrics
+}
+
+// detectAMDMetrics queries rocm-smi for GPU metrics.
+func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
+	// Get temperature
+	tempOut, err := a.runCmd(ctx, "rocm-smi", "--showtemp", "--json")
+	if err != nil {
+		return nil
+	}
+
+	// Get memory info
+	memOut, _ := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+
+	// Get utilization
+	utilOut, _ := a.runCmd(ctx, "rocm-smi", "--showuse", "--json")
+
+	var tempData map[string]map[string]interface{}
+	var memData map[string]map[string]interface{}
+	var utilData map[string]map[string]interface{}
+
+	_ = json.Unmarshal(tempOut, &tempData)
+	_ = json.Unmarshal(memOut, &memData)
+	_ = json.Unmarshal(utilOut, &utilData)
+
+	var metrics []GPUMetrics
+
+	// Iterate over GPUs (card0, card1, etc.)
+	for cardName := range tempData {
+		m := GPUMetrics{Vendor: "AMD"}
+
+		// Extract GPU index from card name (e.g., "card0" -> 0)
+		if idx, err := strconv.Atoi(strings.TrimPrefix(cardName, "card")); err == nil {
+			m.Index = idx
+		}
+
+		// Extract temperature (try multiple key names for different ROCm versions)
+		if card, ok := tempData[cardName]; ok {
+			m.Temperature = a.extractTempValue(card)
+		}
+
+		// Extract memory info
+		if card, ok := memData[cardName]; ok {
+			m.TotalVRAMMB = a.extractMemoryValue(card, []string{
+				"GPU Memory Total (MB)", "gpu memory total (mb)",
+				"VRAM Total Memory (B)", "vram total memory (b)",
+				"vram_total", "VRAM Total",
+			})
+			m.FreeVRAMMB = a.extractMemoryValue(card, []string{
+				"GPU Memory Free (MB)", "gpu memory free (mb)",
+				"VRAM Total Free Memory (B)", "vram total free memory (b)",
+				"vram_free", "VRAM Free",
+			})
+			m.UsedVRAMMB = a.extractMemoryValue(card, []string{
+				"GPU Memory Used (MB)", "gpu memory used (mb)",
+				"VRAM Total Used Memory (B)", "vram total used memory (b)",
+				"vram_used", "VRAM Used",
+			})
+			// Calculate used if not directly available
+			if m.UsedVRAMMB == 0 && m.TotalVRAMMB > 0 && m.FreeVRAMMB > 0 {
+				m.UsedVRAMMB = m.TotalVRAMMB - m.FreeVRAMMB
+			}
+		}
+
+		// Extract utilization
+		if card, ok := utilData[cardName]; ok {
+			m.Utilization = a.extractUtilValue(card)
+		}
+
+		metrics = append(metrics, m)
+	}
+
+	return metrics
+}
+
+// extractTempValue extracts temperature from rocm-smi JSON data.
+func (a *Agent) extractTempValue(gpu map[string]interface{}) float64 {
+	// Try various key names for different ROCm versions
+	keys := []string{
+		"Temperature (Sensor edge) (C)",
+		"Temperature (Sensor junction) (C)",
+		"temperature (sensor edge) (c)",
+		"temperature (sensor junction) (c)",
+		"GPU Temperature (C)",
+		"gpu temperature (c)",
+		"Temperature",
+		"temperature",
+		"temp",
+	}
+
+	for _, key := range keys {
+		if val, ok := gpu[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				return v
+			case string:
+				if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					return f
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// extractUtilValue extracts GPU utilization from rocm-smi JSON data.
+func (a *Agent) extractUtilValue(gpu map[string]interface{}) float64 {
+	keys := []string{
+		"GPU use (%)",
+		"gpu use (%)",
+		"GPU Utilization (%)",
+		"gpu utilization (%)",
+		"use",
+		"utilization",
+	}
+
+	for _, key := range keys {
+		if val, ok := gpu[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				return v
+			case string:
+				// Remove % suffix if present
+				v = strings.TrimSuffix(strings.TrimSpace(v), "%")
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					return f
+				}
+			}
+		}
+	}
 	return 0
 }
