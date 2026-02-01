@@ -125,16 +125,32 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 	log := log.FromContext(ctx)
 
-	out, err := a.runCmd(ctx, "nvidia-smi", "--query-gpu=memory.total,compute_cap", "--format=csv,noheader")
-	if err == nil {
-		a.parseNvidia(string(out), labels)
-		return
+	// Try NVIDIA first (check multiple paths)
+	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
+	for _, smiPath := range nvidiaSmiPaths {
+		out, err := a.runCmd(ctx, smiPath, "--query-gpu=memory.total,compute_cap", "--format=csv,noheader")
+		if err == nil {
+			a.parseNvidia(string(out), labels)
+			return
+		}
 	}
 
-	out, err = a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+	// Try AMD rocm-smi
+	out, err := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
 	if err == nil {
 		archOut, _ := a.runCmd(ctx, "rocminfo")
 		a.parseRocm(string(out), string(archOut), labels)
+		return
+	}
+
+	// Fallback to sysfs for AMD GPUs (when rocm-smi unavailable)
+	sysfsGPUs := a.detectAMDGPUSysfs()
+	if len(sysfsGPUs) > 0 {
+		labels[a.labelPrefix+"gpu.vendor"] = "AMD"
+		labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(sysfsGPUs))
+		if sysfsGPUs[0].TotalMB > 0 {
+			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", sysfsGPUs[0].TotalMB/1024)
+		}
 		return
 	}
 
@@ -267,18 +283,21 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 	log := log.FromContext(ctx)
 
-	// Try NVIDIA GPU first
-	out, err := a.runCmd(ctx, "nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits")
-	if err == nil {
-		freeVRAM := a.parseNvidiaFreeMemory(string(out))
-		if freeVRAM > 0 {
-			log.Info("Detected NVIDIA free VRAM via nvidia-smi", "freeMB", freeVRAM)
-			return freeVRAM
+	// Try NVIDIA GPU first (check multiple paths)
+	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
+	for _, smiPath := range nvidiaSmiPaths {
+		out, err := a.runCmd(ctx, smiPath, "--query-gpu=memory.free", "--format=csv,noheader,nounits")
+		if err == nil {
+			freeVRAM := a.parseNvidiaFreeMemory(string(out))
+			if freeVRAM > 0 {
+				log.Info("Detected NVIDIA free VRAM via nvidia-smi", "freeMB", freeVRAM)
+				return freeVRAM
+			}
 		}
 	}
 
 	// Try AMD GPU via rocm-smi
-	out, err = a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+	out, err := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
 	if err == nil {
 		freeVRAM := a.parseRocmFreeMemory(string(out))
 		if freeVRAM > 0 {
@@ -497,10 +516,19 @@ func (a *Agent) DetectGPUMetrics(ctx context.Context) []GPUMetrics {
 
 // detectNvidiaMetrics queries nvidia-smi for GPU metrics.
 func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
-	// Query: index, temperature, memory.used, memory.total, memory.free, utilization.gpu
-	out, err := a.runCmd(ctx, "nvidia-smi",
-		"--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu",
-		"--format=csv,noheader,nounits")
+	// Try nvidia-smi from PATH first, then from host mount
+	nvidiaSmiPaths := []string{"nvidia-smi", "/host/usr/bin/nvidia-smi"}
+
+	var out []byte
+	var err error
+	for _, smiPath := range nvidiaSmiPaths {
+		out, err = a.runCmd(ctx, smiPath,
+			"--query-gpu=index,temperature.gpu,memory.used,memory.total,memory.free,utilization.gpu",
+			"--format=csv,noheader,nounits")
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil
 	}

@@ -1,4 +1,4 @@
-FROM golang:1.25.5 as builder
+FROM golang:1.25.5 AS builder
 WORKDIR /workspace
 COPY go.mod go.mod
 COPY go.sum go.sum
@@ -9,10 +9,12 @@ COPY agents/ agents/
 COPY pkg/ pkg/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o agent ./cmd/flexinfer-agent
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+# Use Debian slim for glibc compatibility (required for nvidia-smi)
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /
 COPY --from=builder /workspace/agent .
-USER 65532:65532
 
 ENTRYPOINT ["/agent"]

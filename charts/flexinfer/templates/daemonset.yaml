@@ -37,9 +37,9 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: PATH
-              value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/rocm/bin"
+              value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/rocm/bin:/host/usr/bin"
             - name: LD_LIBRARY_PATH
-              value: "/opt/rocm/lib:/usr/local/nvidia/lib64"
+              value: "/opt/rocm/lib:/host/usr/lib/x86_64-linux-gnu"
           volumeMounts:
             # AMD ROCm tools and libraries
             - name: rocm
@@ -48,18 +48,20 @@ spec:
             # GPU device files
             - name: dev-dri
               mountPath: /dev/dri
-            # NVIDIA tools (if available)
-            - name: nvidia-bin
-              mountPath: /usr/bin/nvidia-smi
+            # NVIDIA tools and libraries from host
+            - name: host-usr-bin
+              mountPath: /host/usr/bin
               readOnly: true
-            # NVIDIA libraries (if available)
-            - name: nvidia-lib
-              mountPath: /usr/local/nvidia
+            - name: host-usr-lib
+              mountPath: /host/usr/lib/x86_64-linux-gnu
               readOnly: true
             # Host sysfs for GPU metrics fallback
             - name: sys
               mountPath: /sys
               readOnly: true
+            # Host /dev for NVIDIA devices
+            - name: dev
+              mountPath: /dev
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
       volumes:
@@ -73,20 +75,25 @@ spec:
           hostPath:
             path: /dev/dri
             type: DirectoryOrCreate
-        # NVIDIA nvidia-smi binary
-        - name: nvidia-bin
+        # Host /usr/bin for nvidia-smi and other tools
+        - name: host-usr-bin
           hostPath:
-            path: /usr/bin/nvidia-smi
-            type: FileOrCreate
-        # NVIDIA libraries
-        - name: nvidia-lib
+            path: /usr/bin
+            type: Directory
+        # Host libraries (includes NVIDIA libs on Debian/Ubuntu hosts)
+        - name: host-usr-lib
           hostPath:
-            path: /usr/local/nvidia
+            path: /usr/lib/x86_64-linux-gnu
             type: DirectoryOrCreate
         # Host sysfs for GPU metrics fallback
         - name: sys
           hostPath:
             path: /sys
+            type: Directory
+        # Host /dev for NVIDIA device files
+        - name: dev
+          hostPath:
+            path: /dev
             type: Directory
       {{- with .Values.agent.tolerations }}
       tolerations:
