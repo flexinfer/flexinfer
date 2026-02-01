@@ -527,16 +527,6 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		ReadinessProbe: probe,
 	}
 
-	// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
-	// Some ROCm images run as non-root by default; ensure they can access device nodes
-	// when using the AMD GPU device plugin.
-	if gpuVendor == backend.GPUVendorAMD && gpuCount > 0 {
-		container.SecurityContext = &corev1.SecurityContext{
-			RunAsUser:  ptr.To(int64(0)),
-			RunAsGroup: ptr.To(int64(0)),
-		}
-	}
-
 	// Add volume mounts if backend needs volume
 	var volumes []corev1.Volume
 	if b.NeedsVolume() {
@@ -633,6 +623,18 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
 					Tolerations:  tolerations,
+					// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
+					// Add the render group GID (992 on most systems) to supplementalGroups so
+					// non-root users can access GPU devices without running as root.
+					SecurityContext: func() *corev1.PodSecurityContext {
+						if gpuVendor != backend.GPUVendorAMD || gpuCount == 0 {
+							return nil
+						}
+						return &corev1.PodSecurityContext{
+							// GID 992 is the render group on most ROCm hosts
+							SupplementalGroups: []int64{992},
+						}
+					}(),
 					Affinity: func() *corev1.Affinity {
 						// For multi-replica models, enforce one pod per node (best-effort load balancing
 						// across identical GPU nodes, and avoids accidentally packing both replicas onto
