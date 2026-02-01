@@ -36,10 +36,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # Note: We don't add host paths to PATH/LD_LIBRARY_PATH to avoid
+            # glibc version conflicts. nvidia-smi runs via chroot /host instead.
             - name: PATH
-              value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/rocm/bin:/host/usr/bin"
+              value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/rocm/bin"
             - name: LD_LIBRARY_PATH
-              value: "/opt/rocm/lib:/host/usr/lib/x86_64-linux-gnu"
+              value: "/opt/rocm/lib"
           volumeMounts:
             # AMD ROCm tools and libraries
             - name: rocm
