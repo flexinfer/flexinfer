@@ -126,8 +126,9 @@ ENV TVM_SOURCE_DIR=/build/tvm
 ENV TVM_BUILD_PATH=/build/tvm/build
 RUN pip3 install --no-cache-dir .
 
-# Create non-root user (use UID 10000 to avoid conflicts with base image users)
-RUN useradd -m -u 10000 mlc && \
+# Create non-root user with video/render groups for ROCm GPU access (/dev/kfd, /dev/dri)
+# The video and render groups provide access to GPU devices on the host
+RUN useradd -m -u 10000 -G video,render mlc && \
     mkdir -p /models && \
     chown -R mlc:mlc /models
 

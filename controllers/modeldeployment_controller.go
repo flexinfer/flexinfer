@@ -452,6 +452,10 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		found.Spec.Template.Spec.Tolerations = desiredPodSpec.Tolerations
 		needsUpdate = true
 	}
+	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.SecurityContext, desiredPodSpec.SecurityContext) {
+		found.Spec.Template.Spec.SecurityContext = desiredPodSpec.SecurityContext
+		needsUpdate = true
+	}
 	if !apiequality.Semantic.DeepEqual(found.Spec.Template.Spec.InitContainers, desiredPodSpec.InitContainers) {
 		found.Spec.Template.Spec.InitContainers = desiredPodSpec.InitContainers
 		needsUpdate = true
@@ -928,6 +932,18 @@ ls -la /checkpoints || true
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
 					},
+					// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
+					// Add the render group GID (992 on most systems) to supplementalGroups so
+					// non-root users can access GPU devices without running as root.
+					SecurityContext: func() *corev1.PodSecurityContext {
+						if r.detectGPUResourceFromSpec(m) != "amd.com/gpu" {
+							return nil
+						}
+						return &corev1.PodSecurityContext{
+							// GID 992 is the render group on most ROCm hosts
+							SupplementalGroups: []int64{992},
+						}
+					}(),
 					InitContainers: initContainers,
 					Containers: []corev1.Container{{
 						Image:           backendImage,
@@ -942,17 +958,6 @@ ls -la /checkpoints || true
 						Env:          r.getBackendEnv(m),
 						Resources:    r.getResourceRequirements(m),
 						VolumeMounts: volumeMounts,
-						// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
-						// Ensure the container can access the device nodes when using the AMD GPU device plugin.
-						SecurityContext: func() *corev1.SecurityContext {
-							if r.detectGPUResourceFromSpec(m) != "amd.com/gpu" {
-								return nil
-							}
-							return &corev1.SecurityContext{
-								RunAsUser:  ptr.To(int64(0)),
-								RunAsGroup: ptr.To(int64(0)),
-							}
-						}(),
 						// Readiness probe ensures pod is only marked Ready when inference endpoint is serving.
 						// This is critical for serverless scale-to-zero to work correctly.
 						ReadinessProbe: r.getReadinessProbe(m),
