@@ -26,6 +26,10 @@ spec:
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
           securityContext:
             privileged: true # Required for hardware access
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
           env:
             - name: NODE_NAME
               valueFrom:
