@@ -546,11 +546,16 @@ func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
 }
 
 // detectAMDMetrics queries rocm-smi for GPU metrics.
+// Falls back to sysfs if rocm-smi is not available (e.g., in containers without Python).
 func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
+	log := log.FromContext(ctx)
+
 	// Get temperature
 	tempOut, err := a.runCmd(ctx, "rocm-smi", "--showtemp", "--json")
 	if err != nil {
-		return nil
+		// rocm-smi failed (likely no Python in container), try sysfs fallback
+		log.V(1).Info("rocm-smi failed, trying sysfs fallback", "error", err)
+		return a.detectAMDMetricsSysfs()
 	}
 
 	// Get memory info
@@ -611,6 +616,30 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 			m.Utilization = a.extractUtilValue(card)
 		}
 
+		metrics = append(metrics, m)
+	}
+
+	return metrics
+}
+
+// detectAMDMetricsSysfs reads AMD GPU metrics from sysfs (fallback for containers).
+func (a *Agent) detectAMDMetricsSysfs() []GPUMetrics {
+	sysfsGPUs := a.detectAMDGPUSysfs()
+	if len(sysfsGPUs) == 0 {
+		return nil
+	}
+
+	var metrics []GPUMetrics
+	for _, gpu := range sysfsGPUs {
+		m := GPUMetrics{
+			Index:       gpu.Index,
+			Vendor:      "AMD",
+			Temperature: gpu.Temperature,
+			TotalVRAMMB: gpu.TotalMB,
+			UsedVRAMMB:  gpu.UsedMB,
+			FreeVRAMMB:  gpu.FreeMB,
+			Utilization: 0, // GPU utilization not easily available via sysfs
+		}
 		metrics = append(metrics, m)
 	}
 

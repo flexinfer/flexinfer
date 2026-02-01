@@ -26,6 +26,7 @@ spec:
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
           securityContext:
             privileged: true # Required for hardware access
+            runAsUser: 0     # Must run as root for GPU access
           ports:
             - name: metrics
               containerPort: 9100
@@ -55,6 +56,10 @@ spec:
             - name: nvidia-lib
               mountPath: /usr/local/nvidia
               readOnly: true
+            # Host sysfs for GPU metrics fallback
+            - name: sys
+              mountPath: /sys
+              readOnly: true
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
       volumes:
@@ -78,6 +83,11 @@ spec:
           hostPath:
             path: /usr/local/nvidia
             type: DirectoryOrCreate
+        # Host sysfs for GPU metrics fallback
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
       {{- with .Values.agent.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
