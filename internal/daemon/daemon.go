@@ -65,27 +65,29 @@ type ToolCache struct {
 
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg         Config
-	fileCfg     FileConfig // File-based configuration
-	registry    *registry.Registry
-	repoRoot    string // Repository root for ${repo} expansion
-	procMgr     *process.Manager
-	pool        *pool.Pool
-	hubPool     *pool.Pool
-	router      *router.Router
-	hubClient   *mcp.WebSocketClient
-	callLocks   gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
-	listener    net.Listener
-	logger      *slog.Logger
-	toolCache   *ToolCache
-	manifest    *ManifestManager   // Persistent tool cache
-	profiles    *profiles.Manager  // Tool profile manager
-	metadata    *registry.Metadata // Tool metadata for enhanced descriptions
-	watcher     *sync.Watcher      // File watcher for hot reload
-	syncManager *sync.Manager      // Sync manager for profile operations
-	metrics     *Metrics           // Prometheus metrics
-	wg          gosync.WaitGroup
-	done        chan struct{}
+	cfg           Config
+	fileCfg       FileConfig // File-based configuration
+	registry      *registry.Registry
+	repoRoot      string // Repository root for ${repo} expansion
+	procMgr       *process.Manager
+	pool          *pool.Pool
+	hubPool       *pool.Pool
+	router        *router.Router
+	hubClient     *mcp.WebSocketClient
+	callLocks     gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
+	listener      net.Listener
+	logger        *slog.Logger
+	toolCache     *ToolCache
+	manifest      *ManifestManager   // Persistent tool cache
+	profiles      *profiles.Manager  // Tool profile manager
+	metadata      *registry.Metadata // Tool metadata for enhanced descriptions
+	watcher       *sync.Watcher      // File watcher for hot reload
+	syncManager   *sync.Manager      // Sync manager for profile operations
+	metrics       *Metrics           // Prometheus metrics
+	healthMonitor *HealthMonitor     // Server health monitoring
+	tunnelMgr     *TunnelManager     // SSH tunnel management
+	wg            gosync.WaitGroup
+	done          chan struct{}
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
@@ -260,7 +262,7 @@ func New(cfg Config) (*Daemon, error) {
 	// Determine cache TTL from config
 	cacheTTL := fileCfg.Resources.GetManifestTTL()
 
-	return &Daemon{
+	d := &Daemon{
 		cfg:       cfg,
 		fileCfg:   fileCfg,
 		registry:  reg,
@@ -280,7 +282,15 @@ func New(cfg Config) (*Daemon, error) {
 		syncManager: syncMgr,
 		metrics:     NewMetrics(),
 		done:        make(chan struct{}),
-	}, nil
+	}
+
+	// Initialize health monitor
+	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
+
+	// Initialize tunnel manager
+	d.tunnelMgr = NewTunnelManager(DefaultTunnelManagerConfig(), logger)
+
+	return d, nil
 }
 
 // Start starts the daemon.
@@ -345,6 +355,19 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	// Start metrics collector
 	go d.metricsCollectorLoop()
+
+	// Start health monitor
+	if d.healthMonitor != nil {
+		d.healthMonitor.Start()
+		d.logger.Info("health monitor started")
+	}
+
+	// Start tunnel manager and establish tunnels for servers with SSH config
+	if d.tunnelMgr != nil {
+		d.tunnelMgr.Start(ctx)
+		d.startTunnelsForServers()
+		d.logger.Info("tunnel manager started")
+	}
 
 	// Start file watcher for hot reload
 	if d.syncManager != nil {
@@ -520,6 +543,16 @@ func (d *Daemon) signalLoop(ctx context.Context) {
 func (d *Daemon) Stop() error {
 	close(d.done)
 
+	// Stop health monitor first
+	if d.healthMonitor != nil {
+		d.healthMonitor.Stop()
+	}
+
+	// Stop tunnel manager
+	if d.tunnelMgr != nil {
+		d.tunnelMgr.Stop()
+	}
+
 	if d.listener != nil {
 		d.listener.Close()
 	}
@@ -563,6 +596,74 @@ func (d *Daemon) MetricsHandler() http.Handler {
 // Metrics returns the metrics instance for direct access.
 func (d *Daemon) Metrics() *Metrics {
 	return d.metrics
+}
+
+// HealthResponse is the JSON response for the /health endpoint.
+type HealthResponse struct {
+	Status    string                         `json:"status"`
+	Timestamp string                         `json:"timestamp"`
+	Uptime    string                         `json:"uptime,omitempty"`
+	Servers   map[string]*ServerHealthStatus `json:"servers,omitempty"`
+	Tunnels   map[string]*TunnelStatus       `json:"tunnels,omitempty"`
+	Summary   HealthSummary                  `json:"summary"`
+}
+
+// HealthSummary provides aggregate health statistics.
+type HealthSummary struct {
+	Total     int `json:"total"`
+	Healthy   int `json:"healthy"`
+	Unhealthy int `json:"unhealthy"`
+	Unknown   int `json:"unknown"`
+}
+
+// HealthHandler returns an HTTP handler for detailed health status.
+func (d *Daemon) HealthHandler() http.HandlerFunc {
+	startTime := time.Now()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp := HealthResponse{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Uptime:    time.Since(startTime).Round(time.Second).String(),
+		}
+
+		// Get server health from monitor
+		if d.healthMonitor != nil {
+			resp.Servers = d.healthMonitor.GetAllStatuses()
+		}
+
+		// Get tunnel status
+		if d.tunnelMgr != nil {
+			resp.Tunnels = d.tunnelMgr.GetAllStatuses()
+		}
+
+		// Calculate summary
+		if d.registry != nil {
+			resp.Summary.Total = len(d.registry.Servers)
+		}
+		for _, status := range resp.Servers {
+			if status.Healthy {
+				resp.Summary.Healthy++
+			} else {
+				resp.Summary.Unhealthy++
+			}
+		}
+		resp.Summary.Unknown = resp.Summary.Total - resp.Summary.Healthy - resp.Summary.Unhealthy
+
+		// Determine overall status
+		if resp.Summary.Unhealthy > 0 {
+			resp.Status = "degraded"
+			w.WriteHeader(http.StatusOK) // Still return 200 for degraded
+		} else if resp.Summary.Healthy == 0 && resp.Summary.Total > 0 {
+			resp.Status = "unhealthy"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			resp.Status = "healthy"
+			w.WriteHeader(http.StatusOK)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
 }
 
 func (d *Daemon) acceptLoop(ctx context.Context) {
@@ -651,6 +752,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleConfigHash(ctx, msg)
 	case "loom/profile":
 		return d.handleProfile(ctx, msg)
+	case "loom/tunnels":
+		return d.handleTunnels(ctx, msg)
 	default:
 		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
 	}
@@ -1536,4 +1639,84 @@ func (d *Daemon) handleProfile(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 	}
 
 	return mcp.NewResponse(msg.ID, result)
+}
+
+type tunnelsResult struct {
+	Tunnels   map[string]*TunnelStatus `json:"tunnels"`
+	Total     int                      `json:"total"`
+	Connected int                      `json:"connected"`
+}
+
+// handleTunnels returns the status of all SSH tunnels.
+func (d *Daemon) handleTunnels(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.tunnelMgr == nil {
+		return mcp.NewResponse(msg.ID, tunnelsResult{
+			Tunnels: make(map[string]*TunnelStatus),
+		})
+	}
+
+	result := tunnelsResult{
+		Tunnels:   d.tunnelMgr.GetAllStatuses(),
+		Total:     d.tunnelMgr.TunnelCount(),
+		Connected: d.tunnelMgr.ConnectedCount(),
+	}
+
+	return mcp.NewResponse(msg.ID, result)
+}
+
+// startTunnelsForServers scans the registry and starts tunnels for servers with SSH config.
+func (d *Daemon) startTunnelsForServers() {
+	if d.tunnelMgr == nil || d.registry == nil {
+		return
+	}
+
+	// Port allocation starts at 16443 for K8s API tunnels
+	nextPort := 16443
+
+	for _, server := range d.registry.Servers {
+		if server == nil {
+			continue
+		}
+
+		// Get target spec for current target profile
+		spec, err := d.registry.GetServerSpec(server.Name, d.cfg.Target)
+		if err != nil || spec == nil {
+			continue
+		}
+
+		// Check if server has SSH configuration
+		if spec.SSH == nil {
+			continue
+		}
+
+		// Determine the remote address from server config
+		// Common pattern: K8s API server on 6443, or use env var
+		remoteAddr := "localhost:6443"
+		if envHost, ok := spec.Env["KUBECONFIG_REMOTE_HOST"]; ok {
+			remoteAddr = d.expandVars(envHost)
+		}
+
+		d.logger.Info("starting tunnel for server",
+			"server", server.Name,
+			"ssh_host", spec.SSH.Host,
+			"local_port", nextPort,
+			"remote_addr", remoteAddr)
+
+		if err := d.tunnelMgr.AddTunnel(server.Name, spec.SSH, nextPort, remoteAddr); err != nil {
+			d.logger.Warn("failed to start tunnel", "server", server.Name, "error", err)
+			continue
+		}
+
+		nextPort++
+	}
+
+	count := d.tunnelMgr.TunnelCount()
+	if count > 0 {
+		d.logger.Info("tunnels started", "count", count)
+	}
+}
+
+// TunnelManager returns the tunnel manager instance.
+func (d *Daemon) TunnelManager() *TunnelManager {
+	return d.tunnelMgr
 }
