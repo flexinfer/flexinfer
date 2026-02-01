@@ -176,7 +176,8 @@ func TestGPUGroupReconciler_shouldBlockSwap(t *testing.T) {
 				Scheme:    s,
 			}
 
-			blocked := reconciler.shouldBlockSwap(tt.group, tt.targetModel)
+			blockReason := reconciler.getSwapBlockReason(tt.group, tt.targetModel)
+			blocked := blockReason != ""
 
 			assert.Equal(t, tt.expectedBlock, blocked, "Block status should match")
 		})
@@ -858,7 +859,8 @@ func TestGPUGroupReconciler_shouldBlockSwap_AllConditions(t *testing.T) {
 				Scheme:    s,
 			}
 
-			blocked := reconciler.shouldBlockSwap(group, tt.targetModel)
+			blockReason := reconciler.getSwapBlockReason(group, tt.targetModel)
+			blocked := blockReason != ""
 			assert.Equal(t, tt.expectedBlock, blocked, "Block status should match")
 		})
 	}

@@ -43,7 +43,7 @@ var (
 
 	requestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_requests_total",
+			Name: "flexinfer_proxy_requests_total",
 			Help: "Total number of requests processed by the proxy.",
 		},
 		[]string{"model", "status"},
@@ -51,7 +51,7 @@ var (
 
 	scaleUpsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_scale_ups_total",
+			Name: "flexinfer_proxy_scale_ups_total",
 			Help: "Total number of scale-up operations triggered.",
 		},
 		[]string{"model"},
@@ -59,7 +59,7 @@ var (
 
 	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "proxy_request_duration_seconds",
+			Name:    "flexinfer_proxy_request_duration_seconds",
 			Help:    "Histogram of request processing duration.",
 			Buckets: prometheus.DefBuckets,
 		},
@@ -69,7 +69,7 @@ var (
 	// Request queue metrics
 	queuedRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_queued_requests_total",
+			Name: "flexinfer_proxy_queued_requests_total",
 			Help: "Total number of requests queued during cold start.",
 		},
 		[]string{"model"},
@@ -77,7 +77,7 @@ var (
 
 	queueRejectedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_queue_rejected_total",
+			Name: "flexinfer_proxy_queue_rejected_total",
 			Help: "Total number of requests rejected due to full queue.",
 		},
 		[]string{"model"},
@@ -85,7 +85,7 @@ var (
 
 	queueWaitDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "proxy_queue_wait_seconds",
+			Name:    "flexinfer_proxy_queue_wait_duration_seconds",
 			Help:    "Time requests spent waiting in queue during cold start.",
 			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 20, 30, 60},
 		},
@@ -94,7 +94,7 @@ var (
 
 	activeConnections = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "proxy_active_connections",
+			Name: "flexinfer_proxy_active_connections",
 			Help: "Number of active connections per model.",
 		},
 		[]string{"model"},
@@ -102,7 +102,7 @@ var (
 
 	queueDepth = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "proxy_queue_depth",
+			Name: "flexinfer_proxy_queue_depth",
 			Help: "Current number of requests waiting in queue per model.",
 		},
 		[]string{"model"},
@@ -111,7 +111,7 @@ var (
 	// GPUGroup metrics
 	gpuGroupSwapSignalsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_gpugroup_swap_signals_total",
+			Name: "flexinfer_proxy_gpugroup_swap_signals_total",
 			Help: "Total number of swap signals sent to GPUGroup controller.",
 		},
 		[]string{"gpugroup", "model"},
@@ -119,7 +119,7 @@ var (
 
 	gpuGroupQueuedRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_gpugroup_queued_requests_total",
+			Name: "flexinfer_proxy_gpugroup_queued_requests_total",
 			Help: "Total requests queued waiting for GPUGroup model swap.",
 		},
 		[]string{"gpugroup", "model"},
@@ -128,7 +128,7 @@ var (
 	// Endpoint routing metrics
 	endpointChangesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_endpoint_changes_total",
+			Name: "flexinfer_proxy_endpoint_changes_total",
 			Help: "Total number of endpoint changes detected per model and change type.",
 		},
 		[]string{"model", "change_type"},
@@ -136,7 +136,7 @@ var (
 
 	endpointCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "proxy_endpoint_count",
+			Name: "flexinfer_proxy_endpoint_count",
 			Help: "Current number of endpoints per model.",
 		},
 		[]string{"model"},
@@ -144,7 +144,7 @@ var (
 
 	endpointRefreshDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "proxy_endpoint_refresh_seconds",
+			Name:    "flexinfer_proxy_endpoint_refresh_duration_seconds",
 			Help:    "Time spent refreshing endpoints.",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
 		},
@@ -153,7 +153,7 @@ var (
 	// Backoff metrics
 	activationRetriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "proxy_activation_retries_total",
+			Name: "flexinfer_proxy_activation_retries_total",
 			Help: "Total number of activation retries per model.",
 		},
 		[]string{"model"},
@@ -161,7 +161,7 @@ var (
 
 	activationRetryWaitDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "proxy_activation_retry_wait_seconds",
+			Name:    "flexinfer_proxy_activation_retry_wait_duration_seconds",
 			Help:    "Time spent waiting between activation retries.",
 			Buckets: []float64{1, 2, 5, 10, 15, 20, 30, 45, 60},
 		},

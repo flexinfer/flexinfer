@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,9 +35,80 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
+
+var (
+	// GPUGroup metrics for Grafana dashboard
+	gpuGroupActiveModel = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpugroup_active_model",
+			Help: "Indicates which model is active in a GPUGroup (1=active, 0=inactive).",
+		},
+		[]string{"gpugroup", "model", "namespace"},
+	)
+
+	gpuGroupModelRunDuration = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpugroup_model_run_duration_seconds",
+			Help: "How long the current model has been active in seconds.",
+		},
+		[]string{"gpugroup", "model", "namespace"},
+	)
+
+	gpuGroupSwapCooldown = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpugroup_swap_cooldown_seconds",
+			Help: "Seconds remaining until next swap is allowed (anti-thrashing cooldown).",
+		},
+		[]string{"gpugroup", "namespace"},
+	)
+
+	gpuGroupSwapsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_gpugroup_swaps_total",
+			Help: "Total number of model swaps performed.",
+		},
+		[]string{"gpugroup", "from_model", "to_model", "namespace"},
+	)
+
+	gpuGroupSwapBlockedAntithrashing = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_gpugroup_swap_blocked_antithrashing_total",
+			Help: "Total swaps blocked due to minimum run time (anti-thrashing).",
+		},
+		[]string{"gpugroup", "namespace"},
+	)
+
+	gpuGroupSwapBlockedCooldown = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_gpugroup_swap_blocked_cooldown_total",
+			Help: "Total swaps blocked due to cooldown period.",
+		},
+		[]string{"gpugroup", "namespace"},
+	)
+
+	gpuGroupModelQueueDepth = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpugroup_model_queue_depth",
+			Help: "Current queue depth for each model in a GPUGroup.",
+		},
+		[]string{"gpugroup", "model", "namespace"},
+	)
+)
+
+func init() {
+	// Register GPUGroup metrics with controller-runtime's registry
+	metrics.Registry.MustRegister(gpuGroupActiveModel)
+	metrics.Registry.MustRegister(gpuGroupModelRunDuration)
+	metrics.Registry.MustRegister(gpuGroupSwapCooldown)
+	metrics.Registry.MustRegister(gpuGroupSwapsTotal)
+	metrics.Registry.MustRegister(gpuGroupSwapBlockedAntithrashing)
+	metrics.Registry.MustRegister(gpuGroupSwapBlockedCooldown)
+	metrics.Registry.MustRegister(gpuGroupModelQueueDepth)
+}
 
 // GPUGroupReconciler reconciles a GPUGroup object
 type GPUGroupReconciler struct {
@@ -96,9 +168,18 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	currentActive := gpuGroup.Status.ActiveModel
 	if desiredActive != currentActive {
 		// Check anti-thrashing rules
-		if r.shouldBlockSwap(gpuGroup, desiredActive) {
+		blockReason := r.getSwapBlockReason(gpuGroup, desiredActive)
+		if blockReason != "" {
 			log.Info("Swap blocked by anti-thrashing rules",
-				"current", currentActive, "desired", desiredActive)
+				"current", currentActive, "desired", desiredActive, "reason", blockReason)
+			// Record blocked swap metrics
+			if blockReason == "minimum_run_time" {
+				gpuGroupSwapBlockedAntithrashing.WithLabelValues(gpuGroup.Name, gpuGroup.Namespace).Inc()
+			} else if blockReason == "cooldown" {
+				gpuGroupSwapBlockedCooldown.WithLabelValues(gpuGroup.Name, gpuGroup.Namespace).Inc()
+			}
+			// Update metrics before returning
+			r.updateMetrics(gpuGroup, members)
 			// Requeue to check again after cooldown
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.updateStatus(ctx, gpuGroup)
 		}
@@ -108,6 +189,9 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to perform model swap")
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
+
+		// Record successful swap metric
+		gpuGroupSwapsTotal.WithLabelValues(gpuGroup.Name, currentActive, desiredActive, gpuGroup.Namespace).Inc()
 	} else if currentActive != "" {
 		// No swap needed, but ensure the current active model is scaled up
 		// This handles the case where the model was marked active but never scaled up
@@ -161,6 +245,9 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Update phase based on current state
 	r.updatePhase(gpuGroup, members)
+
+	// Update Prometheus metrics
+	r.updateMetrics(gpuGroup, members)
 
 	// Save status
 	if err := r.updateStatus(ctx, gpuGroup); err != nil {
@@ -390,9 +477,12 @@ func (r *GPUGroupReconciler) determineActiveModel(ctx context.Context, gpuGroup 
 }
 
 // shouldBlockSwap checks anti-thrashing rules to see if swap should be blocked
-func (r *GPUGroupReconciler) shouldBlockSwap(gpuGroup *aiv1alpha1.GPUGroup, desiredActive string) bool {
+// getSwapBlockReason returns the reason for blocking a swap, or empty string if swap is allowed.
+// Returns "minimum_run_time" if blocked due to anti-thrashing min run time.
+// Returns "cooldown" if blocked due to preemption cooldown.
+func (r *GPUGroupReconciler) getSwapBlockReason(gpuGroup *aiv1alpha1.GPUGroup, desiredActive string) string {
 	if !gpuGroup.Spec.AntiThrashing.Enabled {
-		return false
+		return ""
 	}
 
 	// Check minimum run duration for current active model
@@ -404,7 +494,7 @@ func (r *GPUGroupReconciler) shouldBlockSwap(gpuGroup *aiv1alpha1.GPUGroup, desi
 
 		runDuration := time.Since(gpuGroup.Status.LastSwapTime.Time)
 		if runDuration < minRunDuration {
-			return true
+			return "minimum_run_time"
 		}
 	}
 
@@ -417,12 +507,12 @@ func (r *GPUGroupReconciler) shouldBlockSwap(gpuGroup *aiv1alpha1.GPUGroup, desi
 	for _, status := range gpuGroup.Status.ModelStatuses {
 		if status.Name == desiredActive && status.PreemptedAt != nil {
 			if time.Since(status.PreemptedAt.Time) < cooldown {
-				return true
+				return "cooldown"
 			}
 		}
 	}
 
-	return false
+	return ""
 }
 
 // performModelSwap orchestrates the scale-down of current model and scale-up of new model
@@ -819,6 +909,49 @@ func (r *GPUGroupReconciler) shouldSwapBasedOnTrend(modelStatus *aiv1alpha1.GPUG
 
 	// Low stability means unstable demand - be conservative
 	return modelStatus.TrendStability < minStability
+}
+
+// updateMetrics updates Prometheus gauge metrics for Grafana dashboard.
+func (r *GPUGroupReconciler) updateMetrics(gpuGroup *aiv1alpha1.GPUGroup, members map[string]*aiv1alpha1.ModelDeployment) {
+	ns := gpuGroup.Namespace
+	name := gpuGroup.Name
+	activeModel := gpuGroup.Status.ActiveModel
+
+	// Update active model gauge - set 1 for active, 0 for inactive
+	for modelName := range members {
+		if modelName == activeModel {
+			gpuGroupActiveModel.WithLabelValues(name, modelName, ns).Set(1)
+		} else {
+			gpuGroupActiveModel.WithLabelValues(name, modelName, ns).Set(0)
+		}
+	}
+
+	// Update model run duration for active model
+	if activeModel != "" && gpuGroup.Status.LastSwapTime != nil {
+		duration := time.Since(gpuGroup.Status.LastSwapTime.Time).Seconds()
+		gpuGroupModelRunDuration.WithLabelValues(name, activeModel, ns).Set(duration)
+	}
+
+	// Update swap cooldown (time remaining)
+	if gpuGroup.Spec.AntiThrashing.Enabled && gpuGroup.Status.LastSwapTime != nil {
+		minRunDuration := float64(30) // default
+		if gpuGroup.Spec.AntiThrashing.MinimumRunDurationSeconds > 0 {
+			minRunDuration = float64(gpuGroup.Spec.AntiThrashing.MinimumRunDurationSeconds)
+		}
+		elapsed := time.Since(gpuGroup.Status.LastSwapTime.Time).Seconds()
+		remaining := minRunDuration - elapsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		gpuGroupSwapCooldown.WithLabelValues(name, ns).Set(remaining)
+	} else {
+		gpuGroupSwapCooldown.WithLabelValues(name, ns).Set(0)
+	}
+
+	// Update queue depth for each model from status
+	for _, status := range gpuGroup.Status.ModelStatuses {
+		gpuGroupModelQueueDepth.WithLabelValues(name, status.Name, ns).Set(float64(status.QueuedRequests))
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
