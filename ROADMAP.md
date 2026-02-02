@@ -79,11 +79,11 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] **Documentation** - API docs, operations guide, quickstart complete
 
 ### Tech Debt (High Priority)
-- [ ] **TD-1**: Add error handling to ignored returns (13+ locations in proxy/scheduler)
-- [ ] **TD-3**: Increase CLI test coverage to 50%+ (currently 7%)
-- [ ] **TD-4**: Replace panic with graceful error handling in backend registry
-- [ ] **TD-11**: E2E test names violate RFC 1123 (uppercase in generated names like `TestInferenceOllama`)
-- [ ] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme (causes GPUGroup tests to fail)
+- [~] **TD-1**: Add error handling to ignored returns - Already using safe patterns (Get/GetOrError)
+- [ ] **TD-3**: Increase CLI test coverage to 50%+ (currently 11.7%, was 0%)
+- [~] **TD-4**: Replace panic with graceful error handling - `MustGet` is never called, safe variants used
+- [x] **TD-11**: E2E test names violate RFC 1123 - Fixed with lowercase + "/" replacement
+- [x] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme - Added to scheme
 
 ### Tech Debt (Medium Priority)
 - [ ] **TD-5**: Create v1alpha1 → v1alpha2 migration guide
