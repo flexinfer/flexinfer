@@ -1379,6 +1379,7 @@ func (d *Daemon) expandVars(s string) string {
 type callParams struct {
 	Server    string          `json:"server,omitempty"`
 	Tool      string          `json:"tool,omitempty"` // For smart routing without prefix
+	Name      string          `json:"name,omitempty"` // MCP standard tools/call format
 	Method    string          `json:"method"`
 	Params    json.RawMessage `json:"params,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"` // For smart routing
@@ -1392,6 +1393,25 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 
 	serverName := params.Server
 	toolName := params.Tool
+	// Support MCP standard tools/call format where tool name is in "name" field
+	if toolName == "" && params.Name != "" {
+		toolName = params.Name
+	}
+
+	// If tool name contains server prefix (server__tool), split it
+	if serverName == "" && strings.Contains(toolName, "__") {
+		parts := strings.SplitN(toolName, "__", 2)
+		if len(parts) == 2 {
+			serverName = parts[0]
+			toolName = parts[1]
+		}
+	}
+
+	// Set method for MCP standard tools/call if not specified
+	method := params.Method
+	if method == "" {
+		method = "tools/call"
+	}
 
 	// If server not provided, try to resolve it from tool name and arguments (Smart Routing)
 	if serverName == "" && toolName != "" {
@@ -1456,8 +1476,28 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		}
 	}()
 
+	// Build params for forwarded request
+	var forwardParams json.RawMessage
+	if len(params.Params) > 0 {
+		// Already have full params (e.g., from loom/call)
+		forwardParams = params.Params
+	} else {
+		// Build tools/call params from name and arguments
+		callParams := map[string]any{
+			"name": toolName,
+		}
+		if len(params.Arguments) > 0 {
+			var args map[string]any
+			_ = json.Unmarshal(params.Arguments, &args)
+			callParams["arguments"] = args
+		} else {
+			callParams["arguments"] = map[string]any{}
+		}
+		forwardParams, _ = json.Marshal(callParams)
+	}
+
 	// Forward request to server
-	req, err := mcp.NewRequest(msg.ID, params.Method, json.RawMessage(params.Params))
+	req, err := mcp.NewRequest(msg.ID, method, forwardParams)
 	if err != nil {
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
@@ -1482,7 +1522,7 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		conn.Healthy = false
 		d.router.RecordFailure(serverName, target, err)
 		d.metrics.RecordServerFailure(serverName, targetStr, "send")
-		d.metrics.RecordRequest(serverName, params.Method, "error", targetStr, time.Since(start))
+		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
@@ -1491,7 +1531,7 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		conn.Healthy = false
 		d.router.RecordFailure(serverName, target, err)
 		d.metrics.RecordServerFailure(serverName, targetStr, "recv")
-		d.metrics.RecordRequest(serverName, params.Method, "error", targetStr, time.Since(start))
+		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
@@ -1499,7 +1539,7 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	latencyMs := float64(duration.Milliseconds())
 	d.router.RecordSuccess(serverName, target, latencyMs)
 	d.metrics.RecordServerSuccess(serverName, targetStr)
-	d.metrics.RecordRequest(serverName, params.Method, "success", targetStr, duration)
+	d.metrics.RecordRequest(serverName, method, "success", targetStr, duration)
 
 	// Track activity for idle reaping (local servers only)
 	if target == router.TargetLocal {

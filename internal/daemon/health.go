@@ -204,7 +204,7 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 		// Update Prometheus metrics
 		if h.daemon.metrics != nil {
 			h.daemon.metrics.ServerHealth.WithLabelValues(serverName, "local").Set(0)
-			h.daemon.metrics.ServerFailures.WithLabelValues(serverName).Inc()
+			h.daemon.metrics.ServerFailures.WithLabelValues(serverName, "local", "health_check").Inc()
 		}
 
 		// Check if we should mark as unhealthy
@@ -230,7 +230,7 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 		// Update Prometheus metrics
 		if h.daemon.metrics != nil {
 			h.daemon.metrics.ServerHealth.WithLabelValues(serverName, "local").Set(1)
-			h.daemon.metrics.ServerSuccesses.WithLabelValues(serverName).Inc()
+			h.daemon.metrics.ServerSuccesses.WithLabelValues(serverName, "local").Inc()
 			h.daemon.metrics.ServerLatency.WithLabelValues(serverName, "local").Set(latencyMs)
 		}
 
