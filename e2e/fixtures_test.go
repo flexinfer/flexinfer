@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,9 +76,12 @@ type Fixture struct {
 // NewFixture creates a new test fixture with cleanup registration.
 func NewFixture(t *testing.T) *Fixture {
 	t.Helper()
+	// Lowercase the test name for RFC 1123 compliant Kubernetes resource names.
+	// Also replace "/" with "-" since subtest names contain slashes (e.g., "TestFoo/subtest").
+	name := strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-"))
 	f := &Fixture{
 		t:    t,
-		name: t.Name(),
+		name: name,
 	}
 	t.Cleanup(f.Cleanup)
 	return f
