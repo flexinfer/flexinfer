@@ -86,8 +86,8 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme - Added to scheme
 
 ### Tech Debt (Medium Priority)
-- [ ] **TD-5**: Create v1alpha1 → v1alpha2 migration guide
-- [ ] **TD-6**: Centralize hardcoded URLs/ConfigMap names
+- [x] **TD-5**: Create v1alpha1 → v1alpha2 migration guide (docs/migration/v1alpha1-to-v1alpha2.md)
+- [~] **TD-6**: Centralize hardcoded URLs/ConfigMap names (backends already support env var overrides)
 - [ ] **TD-7**: E2E tests for GPU scenarios (currently skipped)
 
 ### Tech Debt (Low Priority)
