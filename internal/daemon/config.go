@@ -25,6 +25,9 @@ type FileConfig struct {
 	// Context controls tool filtering and profile settings
 	Context ContextConfig `yaml:"context,omitempty"`
 
+	// Cache controls response caching for read-only tools
+	Cache CacheConfig `yaml:"cache,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -108,6 +111,7 @@ func DefaultFileConfig() FileConfig {
 			AutoDetect:         false,
 			EnrichDescriptions: false,
 		},
+		Cache: DefaultCacheConfig(),
 		Debug: false,
 	}
 }

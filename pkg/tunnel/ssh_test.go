@@ -2,6 +2,10 @@ package tunnel
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"os"
 	"path/filepath"
@@ -215,6 +219,279 @@ func TestSessionWriter(t *testing.T) {
 	// Test sessionWriter struct behavior
 	// We can't fully test without SSH, but we can verify the type exists
 	var _ io.WriteCloser = (*sessionWriter)(nil)
+}
+
+// TestSSHTunnel_buildAuthMethods tests authentication method building
+func TestSSHTunnel_buildAuthMethods_NoAgent(t *testing.T) {
+	// Unset SSH_AUTH_SOCK to simulate no agent
+	origSock := os.Getenv("SSH_AUTH_SOCK")
+	os.Unsetenv("SSH_AUTH_SOCK")
+	defer func() {
+		if origSock != "" {
+			os.Setenv("SSH_AUTH_SOCK", origSock)
+		}
+	}()
+
+	cfg := SSHConfig{
+		Host:     "example.com",
+		User:     "test",
+		UseAgent: true, // Agent requested but not available
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// Without agent or key file, this should fail
+	methods, err := tunnel.buildAuthMethods()
+	if err == nil && len(methods) == 0 {
+		t.Error("expected error or empty methods when no auth available")
+	}
+}
+
+func TestSSHTunnel_buildAuthMethods_WithKeyFile(t *testing.T) {
+	// Generate a real RSA key for testing
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate test key: %v", err)
+	}
+
+	// Encode as PEM
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	pemBlock := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	}
+	pemData := pem.EncodeToMemory(pemBlock)
+
+	// Write to temp file
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "test_key")
+	if err := os.WriteFile(keyPath, pemData, 0600); err != nil {
+		t.Fatalf("failed to write test key: %v", err)
+	}
+
+	// Unset agent
+	origSock := os.Getenv("SSH_AUTH_SOCK")
+	os.Unsetenv("SSH_AUTH_SOCK")
+	defer func() {
+		if origSock != "" {
+			os.Setenv("SSH_AUTH_SOCK", origSock)
+		}
+	}()
+
+	cfg := SSHConfig{
+		Host:     "example.com",
+		User:     "test",
+		UseAgent: false,
+		KeyFile:  keyPath,
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	methods, err := tunnel.buildAuthMethods()
+	if err != nil {
+		t.Fatalf("unexpected buildAuthMethods error: %v", err)
+	}
+	if len(methods) == 0 {
+		t.Error("expected at least one auth method")
+	}
+}
+
+func TestSSHTunnel_buildAuthMethods_KeyFileNotFound(t *testing.T) {
+	cfg := SSHConfig{
+		Host:     "example.com",
+		User:     "test",
+		UseAgent: false,
+		KeyFile:  "/nonexistent/path/to/key",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	_, err := tunnel.buildAuthMethods()
+	if err == nil {
+		t.Error("expected error for nonexistent key file")
+	}
+}
+
+func TestSSHTunnel_buildAuthMethods_TildeExpansion(t *testing.T) {
+	cfg := SSHConfig{
+		Host:     "example.com",
+		User:     "test",
+		UseAgent: false,
+		KeyFile:  "~/.ssh/nonexistent_key_12345",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// This should fail because the file doesn't exist, but the path should be expanded
+	_, err := tunnel.buildAuthMethods()
+	if err == nil {
+		t.Error("expected error for nonexistent expanded key file")
+	}
+	// Verify the error mentions the expanded path
+	if err != nil && strings.Contains(err.Error(), "~") {
+		t.Error("path should have been expanded (~ should not appear in error)")
+	}
+}
+
+func TestSSHTunnel_buildHostKeyCallback_InsecureMode(t *testing.T) {
+	cfg := SSHConfig{
+		Host:                  "example.com",
+		User:                  "test",
+		StrictHostKeyChecking: false,
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	callback, err := tunnel.buildHostKeyCallback()
+	if err != nil {
+		t.Fatalf("buildHostKeyCallback error: %v", err)
+	}
+	if callback == nil {
+		t.Error("expected non-nil callback")
+	}
+}
+
+func TestSSHTunnel_buildHostKeyCallback_WithKnownHosts(t *testing.T) {
+	tmpDir := t.TempDir()
+	knownHostsPath := filepath.Join(tmpDir, "known_hosts")
+
+	// Write a minimal known_hosts file
+	knownHosts := "example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILbXD9jR5T5E/0B6iqDxv1p1l0MlcB0r7NXv3x5bFH+0"
+	if err := os.WriteFile(knownHostsPath, []byte(knownHosts), 0600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+
+	cfg := SSHConfig{
+		Host:                  "example.com",
+		User:                  "test",
+		StrictHostKeyChecking: true,
+		KnownHostsFile:        knownHostsPath,
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	callback, err := tunnel.buildHostKeyCallback()
+	if err != nil {
+		t.Fatalf("buildHostKeyCallback error: %v", err)
+	}
+	if callback == nil {
+		t.Error("expected non-nil callback")
+	}
+}
+
+func TestSSHTunnel_buildHostKeyCallback_MissingKnownHosts(t *testing.T) {
+	cfg := SSHConfig{
+		Host:                  "example.com",
+		User:                  "test",
+		StrictHostKeyChecking: true,
+		KnownHostsFile:        "/nonexistent/known_hosts",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// When known_hosts doesn't exist, it should fall back to insecure
+	callback, err := tunnel.buildHostKeyCallback()
+	if err != nil {
+		t.Fatalf("buildHostKeyCallback error: %v", err)
+	}
+	if callback == nil {
+		t.Error("expected non-nil callback (fallback to insecure)")
+	}
+}
+
+func TestSSHTunnel_buildHostKeyCallback_DefaultPath(t *testing.T) {
+	cfg := SSHConfig{
+		Host:                  "example.com",
+		User:                  "test",
+		StrictHostKeyChecking: true,
+		KnownHostsFile:        "", // Empty = use default
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// This will use the default known_hosts path
+	callback, err := tunnel.buildHostKeyCallback()
+	// May or may not error depending on whether ~/.ssh/known_hosts exists
+	if callback == nil && err == nil {
+		t.Error("expected either callback or error")
+	}
+}
+
+func TestSSHTunnel_DefaultConfigValues(t *testing.T) {
+	cfg := DefaultSSHConfig()
+
+	if cfg.ConnectTimeout != 30*time.Second {
+		t.Errorf("ConnectTimeout = %v, want 30s", cfg.ConnectTimeout)
+	}
+	if cfg.KeepAliveInterval != 30*time.Second {
+		t.Errorf("KeepAliveInterval = %v, want 30s", cfg.KeepAliveInterval)
+	}
+}
+
+func TestSSHTunnel_DoubleClose(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com",
+		User: "test",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// First close
+	err := tunnel.Close()
+	if err != nil {
+		t.Errorf("first Close() error = %v", err)
+	}
+
+	// Second close should also be safe
+	err = tunnel.Close()
+	if err != nil {
+		t.Errorf("second Close() error = %v", err)
+	}
+}
+
+func TestSSHTunnel_ConcurrentClose(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com",
+		User: "test",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	// Close from multiple goroutines
+	done := make(chan struct{})
+	for i := 0; i < 10; i++ {
+		go func() {
+			tunnel.Close()
+			done <- struct{}{}
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestSSHTunnel_SpawnProcessErrorMessage(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com",
+		User: "test",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	_, _, err := tunnel.SpawnProcess(context.Background(), "test-command")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not connected") {
+		t.Errorf("error should mention 'not connected': %v", err)
+	}
+}
+
+func TestSSHTunnel_ForwardLocalPortErrorMessage(t *testing.T) {
+	cfg := SSHConfig{
+		Host: "example.com",
+		User: "test",
+	}
+	tunnel := NewSSHTunnel(cfg)
+
+	_, err := tunnel.ForwardLocalPort(context.Background(), ":0", "localhost:8080")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not connected") {
+		t.Errorf("error should mention 'not connected': %v", err)
+	}
 }
 
 // Integration tests would require an actual SSH server

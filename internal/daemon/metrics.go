@@ -3,7 +3,6 @@ package daemon
 
 import (
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,12 +31,19 @@ type Metrics struct {
 	ProcessCount    prometheus.Gauge
 	ProcessRestarts *prometheus.CounterVec
 
-	// Cache metrics
+	// Cache metrics (tool manifest cache)
 	ToolCacheSize    prometheus.Gauge
 	ToolCacheAge     prometheus.Gauge
 	ToolCacheHits    prometheus.Counter
 	ToolCacheMisses  prometheus.Counter
 	ToolCacheRefresh prometheus.Counter
+
+	// Response cache metrics
+	ResponseCacheHits    *prometheus.CounterVec
+	ResponseCacheMisses  *prometheus.CounterVec
+	ResponseCacheSize    prometheus.Gauge
+	ResponseCacheEntries prometheus.Gauge
+	ResponseCacheEvicts  prometheus.Counter
 
 	// Hub metrics
 	HubConnected prometheus.Gauge
@@ -46,7 +52,6 @@ type Metrics struct {
 	HubFailures  prometheus.Counter
 
 	registry *prometheus.Registry
-	once     sync.Once
 }
 
 // NewMetrics creates a new Metrics instance with all metrics registered.
@@ -225,6 +230,54 @@ func NewMetrics() *Metrics {
 		},
 	)
 
+	// Response cache metrics
+	m.ResponseCacheHits = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "response_cache_hits_total",
+			Help:      "Total number of response cache hits",
+		},
+		[]string{"server", "tool"},
+	)
+
+	m.ResponseCacheMisses = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "response_cache_misses_total",
+			Help:      "Total number of response cache misses",
+		},
+		[]string{"server", "tool"},
+	)
+
+	m.ResponseCacheSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "response_cache_size_bytes",
+			Help:      "Current size of the response cache in bytes",
+		},
+	)
+
+	m.ResponseCacheEntries = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "response_cache_entries",
+			Help:      "Current number of entries in the response cache",
+		},
+	)
+
+	m.ResponseCacheEvicts = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "response_cache_evictions_total",
+			Help:      "Total number of response cache evictions",
+		},
+	)
+
 	// Hub metrics
 	m.HubConnected = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -282,6 +335,11 @@ func NewMetrics() *Metrics {
 		m.ToolCacheHits,
 		m.ToolCacheMisses,
 		m.ToolCacheRefresh,
+		m.ResponseCacheHits,
+		m.ResponseCacheMisses,
+		m.ResponseCacheSize,
+		m.ResponseCacheEntries,
+		m.ResponseCacheEvicts,
 		m.HubConnected,
 		m.HubLatency,
 		m.HubRequests,
@@ -371,6 +429,27 @@ func (m *Metrics) RecordToolCacheMiss() {
 // RecordToolCacheRefresh records a tool cache refresh.
 func (m *Metrics) RecordToolCacheRefresh() {
 	m.ToolCacheRefresh.Inc()
+}
+
+// RecordResponseCacheHit records a response cache hit.
+func (m *Metrics) RecordResponseCacheHit(server, tool string) {
+	m.ResponseCacheHits.WithLabelValues(server, tool).Inc()
+}
+
+// RecordResponseCacheMiss records a response cache miss.
+func (m *Metrics) RecordResponseCacheMiss(server, tool string) {
+	m.ResponseCacheMisses.WithLabelValues(server, tool).Inc()
+}
+
+// UpdateResponseCacheStats updates the response cache statistics.
+func (m *Metrics) UpdateResponseCacheStats(entries int, sizeBytes int64) {
+	m.ResponseCacheEntries.Set(float64(entries))
+	m.ResponseCacheSize.Set(float64(sizeBytes))
+}
+
+// RecordResponseCacheEviction records a cache eviction.
+func (m *Metrics) RecordResponseCacheEviction() {
+	m.ResponseCacheEvicts.Inc()
 }
 
 // UpdateHubConnection updates the hub connection status.

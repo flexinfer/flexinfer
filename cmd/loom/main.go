@@ -1199,6 +1199,39 @@ Example:
 
 	tunnelCmd.AddCommand(tunnelStatusCmd)
 
+	// Cache command group - response cache management
+	cacheCmd := &cobra.Command{
+		Use:   "cache",
+		Short: "Manage response cache for read-only tools",
+	}
+
+	// Cache stats subcommand
+	var cacheJSON bool
+	cacheStatsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show cache statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return showCacheStats(socketPath, cacheJSON)
+		},
+	}
+	cacheStatsCmd.Flags().BoolVar(&cacheJSON, "json", false, "Output in JSON format")
+
+	// Cache clear subcommand
+	cacheClearCmd := &cobra.Command{
+		Use:   "clear [server]",
+		Short: "Clear the response cache",
+		Long:  "Clear the response cache. Optionally specify a server name to clear only that server's cached responses.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var server string
+			if len(args) > 0 {
+				server = args[0]
+			}
+			return clearCache(socketPath, server)
+		},
+	}
+
+	cacheCmd.AddCommand(cacheStatsCmd, cacheClearCmd)
+
 	// REPL command - interactive tool exploration
 	replCmd := &cobra.Command{
 		Use:   "repl",
@@ -1222,7 +1255,7 @@ Example session:
 		},
 	}
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, replCmd)
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1378,6 +1411,104 @@ servers:
 	}
 
 	return nil
+}
+
+func showCacheStats(socketPath string, jsonOutput bool) error {
+	result, err := call(socketPath, "loom/cache/stats", nil)
+	if err != nil {
+		return fmt.Errorf("get cache stats: %w", err)
+	}
+
+	var stats struct {
+		Enabled   bool  `json:"enabled"`
+		Entries   int   `json:"entries"`
+		SizeBytes int64 `json:"size_bytes"`
+		MaxBytes  int64 `json:"max_bytes"`
+		TotalHits int64 `json:"total_hits"`
+	}
+
+	if err := json.Unmarshal(result, &stats); err != nil {
+		return fmt.Errorf("parse cache stats: %w", err)
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(stats)
+	}
+
+	if !stats.Enabled {
+		fmt.Println("Response caching is disabled")
+		fmt.Println("\nTo enable, add to ~/.config/loom/config.yaml:")
+		fmt.Println(`
+cache:
+  enabled: true
+  default_ttl_seconds: 60
+  max_size_mb: 100`)
+		return nil
+	}
+
+	fmt.Println("Response Cache Statistics")
+	fmt.Println("─────────────────────────")
+	fmt.Printf("  Status:     enabled\n")
+	fmt.Printf("  Entries:    %d\n", stats.Entries)
+	fmt.Printf("  Size:       %s / %s\n", formatBytes(stats.SizeBytes), formatBytes(stats.MaxBytes))
+	fmt.Printf("  Total Hits: %d\n", stats.TotalHits)
+
+	if stats.MaxBytes > 0 {
+		pct := float64(stats.SizeBytes) / float64(stats.MaxBytes) * 100
+		fmt.Printf("  Usage:      %.1f%%\n", pct)
+	}
+
+	return nil
+}
+
+func clearCache(socketPath string, server string) error {
+	params := map[string]any{}
+	if server != "" {
+		params["server"] = server
+	}
+
+	result, err := call(socketPath, "loom/cache/clear", params)
+	if err != nil {
+		return fmt.Errorf("clear cache: %w", err)
+	}
+
+	var resp struct {
+		Cleared bool   `json:"cleared"`
+		Server  string `json:"server,omitempty"`
+		Reason  string `json:"reason,omitempty"`
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if !resp.Cleared {
+		fmt.Printf("Cache not cleared: %s\n", resp.Reason)
+		return nil
+	}
+
+	if resp.Server != "" {
+		fmt.Printf("Cache cleared for server: %s\n", resp.Server)
+	} else {
+		fmt.Println("Cache cleared")
+	}
+
+	return nil
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 const launchdLabel = "com.loom.daemon"

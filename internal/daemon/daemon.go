@@ -86,6 +86,7 @@ type Daemon struct {
 	metrics       *Metrics           // Prometheus metrics
 	healthMonitor *HealthMonitor     // Server health monitoring
 	tunnelMgr     *TunnelManager     // SSH tunnel management
+	respCache     *ResponseCache     // Response cache for read-only tools
 	wg            gosync.WaitGroup
 	done          chan struct{}
 }
@@ -281,6 +282,7 @@ func New(cfg Config) (*Daemon, error) {
 		metadata:    toolMetadata,
 		syncManager: syncMgr,
 		metrics:     NewMetrics(),
+		respCache:   NewResponseCache(fileCfg.Cache),
 		done:        make(chan struct{}),
 	}
 
@@ -754,6 +756,10 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleProfile(ctx, msg)
 	case "loom/tunnels":
 		return d.handleTunnels(ctx, msg)
+	case "loom/cache/stats":
+		return d.handleCacheStats(ctx, msg)
+	case "loom/cache/clear":
+		return d.handleCacheClear(ctx, msg)
 	default:
 		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
 	}
@@ -1437,6 +1443,24 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "missing server or tool for call"), nil
 	}
 
+	// Check response cache for read-only tools
+	var cacheKey string
+	if d.respCache != nil && d.respCache.IsCacheable(serverName, toolName) {
+		// Use params or arguments for cache key
+		cacheParams := params.Params
+		if len(cacheParams) == 0 {
+			cacheParams = params.Arguments
+		}
+		cacheKey = d.respCache.Key(serverName, toolName, cacheParams)
+		if cached, ok := d.respCache.Get(cacheKey); ok {
+			d.metrics.RecordResponseCacheHit(serverName, toolName)
+			d.logger.Debug("response cache hit", "server", serverName, "tool", toolName)
+			// Return cached response with original message ID
+			return mcp.NewResponse(msg.ID, json.RawMessage(cached))
+		}
+		d.metrics.RecordResponseCacheMiss(serverName, toolName)
+	}
+
 	// Route the request based on health
 	decision, err := d.router.Route(ctx, serverName)
 	if err != nil {
@@ -1546,6 +1570,14 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		d.procMgr.MarkActivity(serverName)
 	}
 
+	// Store successful response in cache if cacheable
+	if cacheKey != "" && resp.Error == nil && resp.Result != nil {
+		d.respCache.Set(cacheKey, resp.Result, serverName, toolName)
+		stats := d.respCache.Stats()
+		d.metrics.UpdateResponseCacheStats(stats.Entries, stats.SizeBytes)
+		d.logger.Debug("response cached", "server", serverName, "tool", toolName)
+	}
+
 	return resp, nil
 }
 
@@ -1558,6 +1590,58 @@ func (d *Daemon) handleReload(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 	return mcp.NewResponse(msg.ID, map[string]any{
 		"reloaded": true,
 		"servers":  len(d.registry.Servers),
+	})
+}
+
+// handleCacheStats returns response cache statistics.
+func (d *Daemon) handleCacheStats(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.respCache == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"enabled": false,
+		})
+	}
+
+	stats := d.respCache.Stats()
+	return mcp.NewResponse(msg.ID, map[string]any{
+		"enabled":    true,
+		"entries":    stats.Entries,
+		"size_bytes": stats.SizeBytes,
+		"max_bytes":  stats.MaxBytes,
+		"total_hits": stats.TotalHits,
+	})
+}
+
+// handleCacheClear clears the response cache.
+func (d *Daemon) handleCacheClear(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.respCache == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"cleared": false,
+			"reason":  "cache not enabled",
+		})
+	}
+
+	// Parse optional server parameter
+	var params struct {
+		Server string `json:"server,omitempty"`
+	}
+	if len(msg.Params) > 0 {
+		json.Unmarshal(msg.Params, &params)
+	}
+
+	if params.Server != "" {
+		d.respCache.ClearServer(params.Server)
+		d.logger.Info("response cache cleared for server", "server", params.Server)
+	} else {
+		d.respCache.Clear()
+		d.logger.Info("response cache cleared")
+	}
+
+	stats := d.respCache.Stats()
+	d.metrics.UpdateResponseCacheStats(stats.Entries, stats.SizeBytes)
+
+	return mcp.NewResponse(msg.ID, map[string]any{
+		"cleared": true,
+		"server":  params.Server,
 	})
 }
 

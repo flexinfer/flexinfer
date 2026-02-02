@@ -1,10 +1,8 @@
 package secrets
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 )
@@ -12,30 +10,36 @@ import (
 // OnePasswordBackend retrieves secrets from 1Password CLI (op).
 // Requires 1Password CLI to be installed and authenticated.
 type OnePasswordBackend struct {
-	vault string // Optional vault name
-	mu    sync.RWMutex
-	cache map[string]string // Simple cache to avoid repeated CLI calls
+	vault    string // Optional vault name
+	mu       sync.RWMutex
+	cache    map[string]string // Simple cache to avoid repeated CLI calls
+	executor CommandExecutor   // Command executor (for testing)
 }
 
 // NewOnePasswordBackend creates a new 1Password backend.
 // vault can be empty to use the default vault.
 func NewOnePasswordBackend(vault string) (*OnePasswordBackend, error) {
+	return NewOnePasswordBackendWithExecutor(vault, defaultExecutor)
+}
+
+// NewOnePasswordBackendWithExecutor creates a new 1Password backend with a custom executor.
+// This is useful for testing.
+func NewOnePasswordBackendWithExecutor(vault string, exec CommandExecutor) (*OnePasswordBackend, error) {
 	// Check if op CLI is available
 	if _, err := exec.LookPath("op"); err != nil {
 		return nil, fmt.Errorf("1Password CLI (op) not found: %w", err)
 	}
 
 	// Verify we're signed in by running a simple command
-	cmd := exec.Command("op", "whoami", "--format=json")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("1Password CLI not authenticated: %s", stderr.String())
+	_, stderr, err := exec.Run("op", "whoami", "--format=json")
+	if err != nil {
+		return nil, fmt.Errorf("1Password CLI not authenticated: %s", string(stderr))
 	}
 
 	return &OnePasswordBackend{
-		vault: vault,
-		cache: make(map[string]string),
+		vault:    vault,
+		cache:    make(map[string]string),
+		executor: exec,
 	}, nil
 }
 
@@ -73,21 +77,17 @@ func (b *OnePasswordBackend) Get(key string) (string, error) {
 		args = append(args, "--vault", b.vault)
 	}
 
-	cmd := exec.Command("op", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := b.executor.Run("op", args...)
+	if err != nil {
 		// Item not found is not an error, just return empty
-		if strings.Contains(stderr.String(), "not found") {
+		if strings.Contains(string(stderr), "not found") {
 			return "", nil
 		}
-		return "", fmt.Errorf("op get: %s", stderr.String())
+		return "", fmt.Errorf("op get: %s", string(stderr))
 	}
 
 	var opItem opItem
-	if err := json.Unmarshal(stdout.Bytes(), &opItem); err != nil {
+	if err := json.Unmarshal(stdout, &opItem); err != nil {
 		return "", fmt.Errorf("parse 1Password response: %w", err)
 	}
 
@@ -115,11 +115,8 @@ func (b *OnePasswordBackend) Set(key, value string) error {
 		args = append(args, "--vault", b.vault)
 	}
 
-	cmd := exec.Command("op", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	_, _, err := b.executor.Run("op", args...)
+	if err != nil {
 		// Item doesn't exist, create it
 		createArgs := []string{
 			"item", "create",
@@ -131,10 +128,9 @@ func (b *OnePasswordBackend) Set(key, value string) error {
 			createArgs = append(createArgs, "--vault", b.vault)
 		}
 
-		cmd = exec.Command("op", createArgs...)
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("op create: %s", stderr.String())
+		_, stderr, err := b.executor.Run("op", createArgs...)
+		if err != nil {
+			return fmt.Errorf("op create: %s", string(stderr))
 		}
 	} else {
 		// Item exists, update field
@@ -146,10 +142,9 @@ func (b *OnePasswordBackend) Set(key, value string) error {
 			editArgs = append(editArgs, "--vault", b.vault)
 		}
 
-		cmd = exec.Command("op", editArgs...)
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("op edit: %s", stderr.String())
+		_, stderr, err := b.executor.Run("op", editArgs...)
+		if err != nil {
+			return fmt.Errorf("op edit: %s", string(stderr))
 		}
 	}
 
@@ -171,16 +166,13 @@ func (b *OnePasswordBackend) Delete(key string) error {
 		args = append(args, "--vault", b.vault)
 	}
 
-	cmd := exec.Command("op", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	_, stderr, err := b.executor.Run("op", args...)
+	if err != nil {
 		// Already deleted is not an error
-		if strings.Contains(stderr.String(), "not found") {
+		if strings.Contains(string(stderr), "not found") {
 			return nil
 		}
-		return fmt.Errorf("op delete: %s", stderr.String())
+		return fmt.Errorf("op delete: %s", string(stderr))
 	}
 
 	// Clear from cache
@@ -199,19 +191,15 @@ func (b *OnePasswordBackend) List() ([]string, error) {
 		args = append(args, "--vault", b.vault)
 	}
 
-	cmd := exec.Command("op", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("op list: %s", stderr.String())
+	stdout, stderr, err := b.executor.Run("op", args...)
+	if err != nil {
+		return nil, fmt.Errorf("op list: %s", string(stderr))
 	}
 
 	var items []struct {
 		Title string `json:"title"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+	if err := json.Unmarshal(stdout, &items); err != nil {
 		return nil, fmt.Errorf("parse 1Password list: %w", err)
 	}
 
