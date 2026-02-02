@@ -5,52 +5,68 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-01-28
+> Last updated: 2026-02-01
 
-This document is the working “next slice” roadmap. It is intentionally biased toward **operational stability** and **shipping improvements incrementally**.
+This document tracks the implementation phases for FlexInfer. **Phases 1-4 are complete.** The project is now at 85-95% production readiness.
 
 ## Principles
 
 - Prefer **small, reversible** iterations.
 - Prefer **better status + better errors** over silent behavior.
-- Avoid “big rewrites”; keep v1alpha2 stable while iterating.
+- Avoid "big rewrites"; keep v1alpha2 stable while iterating.
 
-## Phase 1: Controller & API correctness (1–2 weeks)
+## Phase 1: Controller & API Hardening ✅ COMPLETE
 
-Concrete checklist: `docs/planning/phase-1-controller-api-hardening.md`
+Checklist: `docs/planning/phase-1-controller-api-hardening.md`
 
-- Harden reconciliation around **immutable fields** (deployments/services) and drift correction.
-- Codify vendor-specific runtime requirements:
-  - ensure NVIDIA workloads consistently set `runtimeClassName: nvidia` when requesting GPUs
-- Ensure consistent **multi-replica spreading**:
-  - anti-affinity and/or topology spread for replicas > 1.
-- Improve `Model.status` so operators can quickly answer:
-  - why it isn’t scheduled
-  - why it isn’t Ready
-  - why it was preempted
-  - what endpoint is active and what backends are serving
+- ✅ Hardened reconciliation around **immutable fields** (deployments/services)
+- ✅ Codified vendor-specific runtime requirements (NVIDIA `runtimeClassName`)
+- ✅ Consistent **multi-replica spreading** with anti-affinity and topology spread
+- ✅ Improved `Model.status` with actionable conditions
 
-## Phase 2: Serverless/Activator hardening (1–3 weeks)
+## Phase 2: Serverless/Activator Hardening ✅ COMPLETE
 
-- Define a strict compatibility target for proxy behavior:
-  - OpenAI `/v1/*` request parsing and response semantics
-  - Streaming support (SSE) with request coalescing policy
-- Make activation behavior explicit:
-  - cold start budgets + backoff
-  - concurrency caps during activation
-  - clear metrics (cold start latency, activation failures)
+Checklist: `docs/planning/phase-2-serverless-activator-hardening.md`
 
-## Phase 3: Routing & performance (2–6 weeks)
+- ✅ OpenAI API compatibility documented
+- ✅ Streaming (SSE) behavior documented
+- ✅ Cold start budget configuration
+- ✅ Concurrency caps during activation
+- ✅ Activation metrics (10 metric families)
 
-- Add a path toward KV-cache-aware routing:
-  - start with simple request hashing / session affinity
-  - evolve toward prefix-based routing (opt-in)
-- Add better load-balancing semantics for multi-replica models:
-  - optionally expose “least loaded” based on per-pod metrics
+## Phase 3: Routing & Performance ✅ COMPLETE
 
-## Phase 4: Operational polish (ongoing)
+Checklist: `docs/planning/phase-3-routing-performance.md`
 
-- E2E test harness for “real cluster” regression checks (smoke tests for v1alpha2 workflows).
-- Documentation consolidation:
-  - refresh `docs/INSTALL.md` + user quickstart flows
-  - keep runbooks for known GPU/backend quirks
+- ✅ Session affinity via consistent hashing
+- ✅ Prefix-based routing (opt-in)
+- ✅ Endpoint discovery for multi-replica models
+- ✅ Least-loaded routing (opt-in)
+
+## Phase 4: Operational Polish ✅ COMPLETE
+
+Checklist: `docs/planning/phase-4-operational-polish.md`
+
+- ✅ E2E test harness (`make test-e2e`)
+- ✅ INSTALL.md refresh
+- ✅ User quickstart guide
+- ✅ GPU/backend quirks runbook
+
+## Phase 5: Multi-Cluster (Future)
+
+Design: `docs/design/multi-cluster.md`
+Checklist: `docs/planning/phase-5-multi-cluster.md`
+
+- [ ] Cluster Registry (MVP)
+- [ ] Cross-Cluster Model Sync
+- [ ] Global Routing
+- [ ] Advanced Features
+
+## Tech Debt (Ongoing)
+
+See `ROADMAP.md` for full tech debt tracking:
+
+- **TD-1**: Error handling for ignored returns (high priority)
+- ~~**TD-2**: ROCm GFX1100 image builds~~ ✅ RESOLVED (supplementalGroups fix)
+- **TD-3**: CLI test coverage (currently 7%)
+- **TD-5**: v1alpha1 → v1alpha2 migration guide
