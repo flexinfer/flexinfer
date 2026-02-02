@@ -13,6 +13,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/codebase/embed"
 	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 const sessionsVectorSize = 4
@@ -152,24 +153,20 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 // Session Handlers
 
 func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
-	}
+	v := validate.NewArgs(args)
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	namespace := v.String("namespace", s.cfg.DefaultNamespace)
+	description := v.String("description", "")
+	workingDir := v.String("working_dir", "")
+	resumeID := v.String("resume_session_id", "")
+
+	// agent_id is required if no default is configured
 	if agentID == "" {
 		return mcp.ErrorResult(fmt.Errorf("agent_id is required")), nil
 	}
 
-	namespace := toString(args["namespace"])
-	if namespace == "" {
-		namespace = s.cfg.DefaultNamespace
-	}
-
-	description := toString(args["description"])
-	workingDir := toString(args["working_dir"])
-
 	// Check for resume
-	if resumeID := toString(args["resume_session_id"]); resumeID != "" {
+	if resumeID != "" {
 		existing, err := s.getSession(ctx, resumeID)
 		if err != nil || existing == nil {
 			return mcp.ErrorResult(fmt.Errorf("session %s not found or cannot be resumed", resumeID)), nil
@@ -223,14 +220,12 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 }
 
 func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	summarize := v.Bool("summarize", true)
 
-	summarize := true
-	if v, ok := args["summarize"].(bool); ok {
-		summarize = v
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -273,16 +268,14 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		return mcp.ErrorResult(fmt.Errorf("agent_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	agentID := v.Required("agent_id")
+	namespace := v.String("namespace", "")
+	status := v.String("status", "")
+	limit := v.Int("limit", 20)
 
-	namespace := toString(args["namespace"])
-	status := toString(args["status"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 20
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build filter
@@ -327,9 +320,12 @@ func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*
 // Context Storage Handlers
 
 func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	entriesRaw := v.RequiredAny("entries")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -337,8 +333,8 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
 	}
 
-	entriesRaw, ok := args["entries"].([]any)
-	if !ok || len(entriesRaw) == 0 {
+	entriesArr, ok := entriesRaw.([]any)
+	if !ok || len(entriesArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("entries array is required")), nil
 	}
 
@@ -349,7 +345,7 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 	var entries []ContextEntry
 	var embedTexts []string
 
-	for _, raw := range entriesRaw {
+	for _, raw := range entriesArr {
 		m, ok := raw.(map[string]any)
 		if !ok {
 			continue
@@ -478,10 +474,11 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	idsRaw := args["entry_ids"]
-	ids := toStringSlice(idsRaw)
-	if len(ids) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("entry_ids is required")), nil
+	v := validate.NewArgs(args)
+	ids := v.RequiredStringSlice("entry_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var entries []ContextEntry
@@ -505,13 +502,14 @@ func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleContextDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	idsRaw := args["entry_ids"]
-	ids := toStringSlice(idsRaw)
-	if len(ids) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("entry_ids is required")), nil
+	v := validate.NewArgs(args)
+	ids := v.RequiredStringSlice("entry_ids")
+	confirm := v.Bool("confirm", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	confirm, _ := args["confirm"].(bool)
 	if !confirm {
 		return mcp.ErrorResult(fmt.Errorf("confirm=true required for deletion")), nil
 	}
@@ -529,24 +527,19 @@ func (s *Service) HandleContextDelete(ctx context.Context, args map[string]any) 
 // Retrieval Handlers
 
 func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := toString(args["query"])
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
-	}
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
+	namespace := v.String("namespace", "")
+	entryTypes := v.StringSlice("entry_types")
+	tags := v.StringSlice("tags")
+	filePath := v.String("file_path", "")
+	limit := v.Int("limit", 10)
+	includeContent := v.Bool("include_content", true)
 
-	agentID := toString(args["agent_id"])
-	sessionID := toString(args["session_id"])
-	namespace := toString(args["namespace"])
-	entryTypes := toStringSlice(args["entry_types"])
-	tags := toStringSlice(args["tags"])
-	filePath := toString(args["file_path"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 10
-	}
-	includeContent := true
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build filter
@@ -594,26 +587,18 @@ func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleContextRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := toString(args["query"])
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
-	}
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
+	tokenBudget := v.Int("token_budget", s.cfg.DefaultTokenBudget)
+	includeSummaries := v.Bool("include_summaries", true)
+	includeDecisions := v.Bool("include_decisions", true)
+	fileContext := v.String("file_context", "")
 
-	agentID := toString(args["agent_id"])
-	sessionID := toString(args["session_id"])
-	tokenBudget := toInt(args["token_budget"])
-	if tokenBudget <= 0 {
-		tokenBudget = s.cfg.DefaultTokenBudget
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	includeSummaries := true
-	if v, ok := args["include_summaries"].(bool); ok {
-		includeSummaries = v
-	}
-	includeDecisions := true
-	if v, ok := args["include_decisions"].(bool); ok {
-		includeDecisions = v
-	}
-	fileContext := toString(args["file_context"])
 
 	opts := RecallOptions{
 		Query:            query,
@@ -647,20 +632,16 @@ func (s *Service) HandleContextRecall(ctx context.Context, args map[string]any) 
 // Cross-Agent Handlers
 
 func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entryIDs := toStringSlice(args["entry_ids"])
-	if len(entryIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("entry_ids is required")), nil
+	v := validate.NewArgs(args)
+	entryIDs := v.RequiredStringSlice("entry_ids")
+	targetAgents := v.RequiredStringSlice("target_agents")
+	visibilityStr := v.String("visibility", string(VisibilityShared))
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	targetAgents := toStringSlice(args["target_agents"])
-	if len(targetAgents) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("target_agents is required")), nil
-	}
-
-	visibility := Visibility(toString(args["visibility"]))
-	if visibility == "" {
-		visibility = VisibilityShared
-	}
+	visibility := Visibility(visibilityStr)
 
 	// Update entries
 	updated := 0
@@ -693,22 +674,16 @@ func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (
 }
 
 func (s *Service) HandleContextQueryShared(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := toString(args["query"])
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
-	}
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	requestingAgent := v.Required("requesting_agent_id")
+	sourceAgentID := v.String("source_agent_id", "")
+	entryTypes := v.StringSlice("entry_types")
+	namespace := v.String("namespace", "")
+	limit := v.Int("limit", 10)
 
-	requestingAgent := toString(args["requesting_agent_id"])
-	if requestingAgent == "" {
-		return mcp.ErrorResult(fmt.Errorf("requesting_agent_id is required")), nil
-	}
-
-	sourceAgentID := toString(args["source_agent_id"])
-	entryTypes := toStringSlice(args["entry_types"])
-	namespace := toString(args["namespace"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 10
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build filter for shared/public entries
@@ -754,9 +729,11 @@ func (s *Service) HandleContextQueryShared(ctx context.Context, args map[string]
 // Summarization Handler
 
 func (s *Service) HandleContextSummarize(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -778,9 +755,10 @@ func (s *Service) HandleContextSummarize(ctx context.Context, args map[string]an
 // Stats Handler
 
 func (s *Service) HandleContextStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	agentID := toString(args["agent_id"])
-	sessionID := toString(args["session_id"])
-	namespace := toString(args["namespace"])
+	v := validate.NewArgs(args)
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
+	namespace := v.String("namespace", "")
 
 	var conds []any
 	if agentID != "" {
@@ -823,20 +801,17 @@ func (s *Service) HandleContextStats(ctx context.Context, args map[string]any) (
 // Codebase Link Handler
 
 func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	filePath := v.Required("file_path")
+	repoID := v.String("repo_id", "")
+	symbol := v.String("symbol", "")
+	note := v.String("note", "")
+	tags := v.StringSlice("tags")
 
-	filePath := toString(args["file_path"])
-	if filePath == "" {
-		return mcp.ErrorResult(fmt.Errorf("file_path is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	repoID := toString(args["repo_id"])
-	symbol := toString(args["symbol"])
-	note := toString(args["note"])
-	tags := toStringSlice(args["tags"])
 
 	session, err := s.getSession(ctx, sessionID)
 	if err != nil || session == nil {
@@ -1252,9 +1227,12 @@ func uniqueStrings(in []string) []string {
 // ============================================================================
 
 func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	tasksRaw := v.RequiredAny("tasks")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -1262,8 +1240,8 @@ func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.
 		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
 	}
 
-	tasksRaw, ok := args["tasks"].([]any)
-	if !ok || len(tasksRaw) == 0 {
+	tasksArr, ok := tasksRaw.([]any)
+	if !ok || len(tasksArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("tasks array is required")), nil
 	}
 
@@ -1271,7 +1249,7 @@ func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.
 	var embedTexts []string
 	now := time.Now()
 
-	for _, raw := range tasksRaw {
+	for _, raw := range tasksArr {
 		m, ok := raw.(map[string]any)
 		if !ok {
 			continue
@@ -1367,13 +1345,16 @@ func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.
 }
 
 func (s *Service) HandleTaskUpdate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	taskID := toString(args["task_id"])
-	if taskID == "" {
-		return mcp.ErrorResult(fmt.Errorf("task_id is required")), nil
+	v := validate.NewArgs(args)
+	taskID := v.Required("task_id")
+	statusStr := v.String("status", "")
+	resolution := v.String("resolution", "")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	status := TaskStatus(toString(args["status"]))
-	resolution := toString(args["resolution"])
+	status := TaskStatus(statusStr)
 
 	// Get existing task
 	p, err := s.tasksQdrant.GetPoint(ctx, taskID, false)
@@ -1413,14 +1394,12 @@ func (s *Service) HandleTaskUpdate(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleTaskList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	statusesRaw := toStringSlice(args["status"])
-	includeCompleted := getBool(args["include_completed"], false)
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 50
-	}
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", "")
+	statusesRaw := v.StringSlice("status")
+	includeCompleted := v.Bool("include_completed", false)
+	limit := v.Int("limit", 50)
 
 	// Build filter
 	var conds []any
@@ -1483,9 +1462,18 @@ func (s *Service) HandleTaskList(ctx context.Context, args map[string]any) (*mcp
 // ============================================================================
 
 func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	filePath := v.Required("file_path")
+	lineStart := v.RequiredInt("line_start")
+	content := v.Required("content")
+	annotationTypeStr := v.String("annotation_type", string(AnnotationTypeNote))
+	lineEnd := v.Int("line_end", 0)
+	symbol := v.String("symbol", "")
+	repoID := v.String("repo_id", "")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -1493,25 +1481,7 @@ func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) 
 		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
 	}
 
-	filePath := toString(args["file_path"])
-	if filePath == "" {
-		return mcp.ErrorResult(fmt.Errorf("file_path is required")), nil
-	}
-
-	lineStart := toInt(args["line_start"])
-	if lineStart <= 0 {
-		return mcp.ErrorResult(fmt.Errorf("line_start is required")), nil
-	}
-
-	content := toString(args["content"])
-	if content == "" {
-		return mcp.ErrorResult(fmt.Errorf("content is required")), nil
-	}
-
-	annotationType := AnnotationType(toString(args["annotation_type"]))
-	if annotationType == "" {
-		annotationType = AnnotationTypeNote
-	}
+	annotationType := AnnotationType(annotationTypeStr)
 
 	now := time.Now()
 	annotation := CodeAnnotation{
@@ -1521,9 +1491,9 @@ func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) 
 		Namespace:      session.Namespace,
 		FilePath:       filePath,
 		LineStart:      lineStart,
-		LineEnd:        toInt(args["line_end"]),
-		Symbol:         toString(args["symbol"]),
-		RepoID:         toString(args["repo_id"]),
+		LineEnd:        lineEnd,
+		Symbol:         symbol,
+		RepoID:         repoID,
 		AnnotationType: annotationType,
 		Content:        content,
 		CreatedAt:      now,
@@ -1564,15 +1534,13 @@ func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	filePath := toString(args["file_path"])
-	agentID := toString(args["agent_id"])
-	lineStart := toInt(args["line_start"])
-	lineEnd := toInt(args["line_end"])
-	annotationTypes := toStringSlice(args["annotation_types"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 50
-	}
+	v := validate.NewArgs(args)
+	filePath := v.String("file_path", "")
+	agentID := v.String("agent_id", "")
+	lineStart := v.Int("line_start", 0)
+	lineEnd := v.Int("line_end", 0)
+	annotationTypes := v.StringSlice("annotation_types")
+	limit := v.Int("limit", 50)
 
 	// Build filter
 	var conds []any
@@ -1629,9 +1597,16 @@ func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any)
 // ============================================================================
 
 func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	targetAgentID := v.Required("target_agent_id")
+	handoffTypeStr := v.String("handoff_type", string(HandoffTypeSummaryOnly))
+	instructions := v.String("instructions", "")
+	entryIDs := v.StringSlice("entry_ids")
+	tokenBudget := v.Int("token_budget", s.cfg.HandoffMaxTokens)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
@@ -1639,22 +1614,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
 	}
 
-	targetAgentID := toString(args["target_agent_id"])
-	if targetAgentID == "" {
-		return mcp.ErrorResult(fmt.Errorf("target_agent_id is required")), nil
-	}
-
-	handoffType := HandoffType(toString(args["handoff_type"]))
-	if handoffType == "" {
-		handoffType = HandoffTypeSummaryOnly
-	}
-
-	instructions := toString(args["instructions"])
-	entryIDs := toStringSlice(args["entry_ids"])
-	tokenBudget := toInt(args["token_budget"])
-	if tokenBudget <= 0 {
-		tokenBudget = s.cfg.HandoffMaxTokens
-	}
+	handoffType := HandoffType(handoffTypeStr)
 
 	now := time.Now()
 	handoff := Handoff{
@@ -1758,22 +1718,19 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	handoffID := toString(args["handoff_id"])
-	if handoffID == "" {
-		return mcp.ErrorResult(fmt.Errorf("handoff_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	handoffID := v.Required("handoff_id")
+	sessionID := v.Required("session_id")
+	importEntries := v.Bool("import_entries", false)
 
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	session, err := s.getSession(ctx, sessionID)
 	if err != nil || session == nil {
 		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
 	}
-
-	importEntries := getBool(args["import_entries"], false)
 
 	// Get handoff
 	p, err := s.handoffsQdrant.GetPoint(ctx, handoffID, false)
@@ -1847,19 +1804,15 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 // ============================================================================
 
 func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name := toString(args["name"])
-	if name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
-	}
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	description := v.String("description", "")
+	namespace := v.String("namespace", "")
+	fromSessionID := v.String("from_session_id", "")
+	createdBy := v.String("created_by", s.cfg.DefaultAgentID)
 
-	description := toString(args["description"])
-	namespace := toString(args["namespace"])
-	fromSessionID := toString(args["from_session_id"])
-
-	// Determine creator
-	createdBy := toString(args["created_by"])
-	if createdBy == "" {
-		createdBy = s.cfg.DefaultAgentID
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	now := time.Now()
@@ -1926,11 +1879,9 @@ func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any)
 }
 
 func (s *Service) HandleTemplateList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	namespace := toString(args["namespace"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 50
-	}
+	v := validate.NewArgs(args)
+	namespace := v.String("namespace", "")
+	limit := v.Int("limit", 50)
 
 	var filter map[string]any
 	if namespace != "" {
@@ -1966,32 +1917,37 @@ func (s *Service) HandleTemplateList(ctx context.Context, args map[string]any) (
 // ============================================================================
 
 func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := toString(args["query"])
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
+	namespace := v.String("namespace", "")
+	tokenBudget := v.Int("token_budget", s.cfg.DefaultTokenBudget)
+	includeSummaries := v.Bool("include_summaries", true)
+	includeDecisions := v.Bool("include_decisions", true)
+	fileContext := v.String("file_context", "")
+	symbolContext := v.String("symbol_context", "")
+	recencyWeight := v.Float("recency_weight", s.cfg.DefaultRecencyWeight)
+	includeTasks := v.Bool("include_tasks", true)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	opts := EnhancedRecallOptions{
 		RecallOptions: RecallOptions{
 			Query:            query,
-			AgentID:          toString(args["agent_id"]),
-			SessionID:        toString(args["session_id"]),
-			Namespace:        toString(args["namespace"]),
-			TokenBudget:      toInt(args["token_budget"]),
-			IncludeSummaries: getBool(args["include_summaries"], true),
-			IncludeDecisions: getBool(args["include_decisions"], true),
-			FileContext:      toString(args["file_context"]),
+			AgentID:          agentID,
+			SessionID:        sessionID,
+			Namespace:        namespace,
+			TokenBudget:      tokenBudget,
+			IncludeSummaries: includeSummaries,
+			IncludeDecisions: includeDecisions,
+			FileContext:      fileContext,
 		},
-		SymbolContext: toString(args["symbol_context"]),
-		RecencyWeight: toFloat(args["recency_weight"]),
-		IncludeTasks:  getBool(args["include_tasks"], true),
-	}
-
-	if opts.TokenBudget <= 0 {
-		opts.TokenBudget = s.cfg.DefaultTokenBudget
-	}
-	if opts.RecencyWeight <= 0 {
-		opts.RecencyWeight = s.cfg.DefaultRecencyWeight
+		SymbolContext: symbolContext,
+		RecencyWeight: recencyWeight,
+		IncludeTasks:  includeTasks,
 	}
 
 	entries, err := s.enhancedRecallContext(ctx, opts)
@@ -2508,29 +2464,27 @@ func (s *Service) GetWorkflowEngine() *WorkflowEngine {
 
 // HandleWorkflowDefine registers a new workflow definition
 func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name := toString(args["name"])
-	if name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
-	}
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	description := v.String("description", "")
+	namespace := v.String("namespace", s.cfg.DefaultNamespace)
+	createdBy := v.String("created_by", s.cfg.DefaultAgentID)
+	stepsRaw := v.RequiredAny("steps")
+	rollbackOnFailure := v.Bool("rollback_on_failure", false)
+	timeoutSeconds := v.Int("timeout_seconds", 0)
 
-	description := toString(args["description"])
-	namespace := toString(args["namespace"])
-	if namespace == "" {
-		namespace = s.cfg.DefaultNamespace
-	}
-	createdBy := toString(args["created_by"])
-	if createdBy == "" {
-		createdBy = s.cfg.DefaultAgentID
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Parse steps
-	stepsRaw, ok := args["steps"].([]any)
-	if !ok || len(stepsRaw) == 0 {
+	stepsArr, ok := stepsRaw.([]any)
+	if !ok || len(stepsArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("steps array is required")), nil
 	}
 
-	steps := make([]WorkflowStep, len(stepsRaw))
-	for i, stepRaw := range stepsRaw {
+	steps := make([]WorkflowStep, len(stepsArr))
+	for i, stepRaw := range stepsArr {
 		stepMap, ok := stepRaw.(map[string]any)
 		if !ok {
 			return mcp.ErrorResult(fmt.Errorf("step %d must be an object", i)), nil
@@ -2582,8 +2536,8 @@ func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any)
 		Namespace:         namespace,
 		CreatedBy:         createdBy,
 		Steps:             steps,
-		RollbackOnFailure: getBool(args["rollback_on_failure"], false),
-		TimeoutSeconds:    toInt(args["timeout_seconds"]),
+		RollbackOnFailure: rollbackOnFailure,
+		TimeoutSeconds:    timeoutSeconds,
 	}
 
 	// Parse input schema if provided
@@ -2605,19 +2559,13 @@ func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any)
 
 // HandleWorkflowStart starts a new workflow instance
 func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	definitionID := toString(args["definition_id"])
-	if definitionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("definition_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	definitionID := v.Required("definition_id")
+	sessionID := v.Required("session_id")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
 
-	sessionID := toString(args["session_id"])
-	if sessionID == "" {
-		return mcp.ErrorResult(fmt.Errorf("session_id is required")), nil
-	}
-
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Parse input
@@ -2642,9 +2590,11 @@ func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) 
 
 // HandleWorkflowStatus gets the status of a workflow
 func (s *Service) HandleWorkflowStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workflowID := toString(args["workflow_id"])
-	if workflowID == "" {
-		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	v := validate.NewArgs(args)
+	workflowID := v.Required("workflow_id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	wf, err := s.workflowEngine.GetWorkflow(workflowID)
@@ -2708,12 +2658,12 @@ func (s *Service) HandleWorkflowStatus(ctx context.Context, args map[string]any)
 
 // HandleWorkflowList lists workflows with filtering
 func (s *Service) HandleWorkflowList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
-	}
-	status := WorkflowStatus(toString(args["status"]))
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	statusStr := v.String("status", "")
+
+	status := WorkflowStatus(statusStr)
 
 	workflows := s.workflowEngine.ListWorkflows(sessionID, agentID, status)
 
@@ -2741,21 +2691,15 @@ func (s *Service) HandleWorkflowList(ctx context.Context, args map[string]any) (
 
 // HandleWorkflowApprove approves a pending step
 func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workflowID := toString(args["workflow_id"])
-	if workflowID == "" {
-		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	workflowID := v.Required("workflow_id")
+	stepID := v.Required("step_id")
+	approverID := v.String("approver_id", s.cfg.DefaultAgentID)
+	comment := v.String("comment", "")
 
-	stepID := toString(args["step_id"])
-	if stepID == "" {
-		return mcp.ErrorResult(fmt.Errorf("step_id is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	approverID := toString(args["approver_id"])
-	if approverID == "" {
-		approverID = s.cfg.DefaultAgentID
-	}
-	comment := toString(args["comment"])
 
 	if err := s.workflowEngine.ApproveStep(workflowID, stepID, approverID, comment); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -2771,21 +2715,15 @@ func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any
 
 // HandleWorkflowReject rejects a pending step
 func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workflowID := toString(args["workflow_id"])
-	if workflowID == "" {
-		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	workflowID := v.Required("workflow_id")
+	stepID := v.Required("step_id")
+	rejecterID := v.String("rejecter_id", s.cfg.DefaultAgentID)
+	comment := v.String("comment", "")
 
-	stepID := toString(args["step_id"])
-	if stepID == "" {
-		return mcp.ErrorResult(fmt.Errorf("step_id is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	rejecterID := toString(args["rejecter_id"])
-	if rejecterID == "" {
-		rejecterID = s.cfg.DefaultAgentID
-	}
-	comment := toString(args["comment"])
 
 	if err := s.workflowEngine.RejectStep(workflowID, stepID, rejecterID, comment); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -2801,14 +2739,12 @@ func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any)
 
 // HandleWorkflowCancel cancels a running workflow
 func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workflowID := toString(args["workflow_id"])
-	if workflowID == "" {
-		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	workflowID := v.Required("workflow_id")
+	reason := v.String("reason", "cancelled by user")
 
-	reason := toString(args["reason"])
-	if reason == "" {
-		reason = "cancelled by user"
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	if err := s.workflowEngine.CancelWorkflow(workflowID, reason); err != nil {
@@ -2824,9 +2760,11 @@ func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any)
 
 // HandleWorkflowEvents gets events for a workflow
 func (s *Service) HandleWorkflowEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workflowID := toString(args["workflow_id"])
-	if workflowID == "" {
-		return mcp.ErrorResult(fmt.Errorf("workflow_id is required")), nil
+	v := validate.NewArgs(args)
+	workflowID := v.Required("workflow_id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	events, err := s.workflowEngine.GetEvents(workflowID)
@@ -2859,7 +2797,8 @@ func (s *Service) HandleWorkflowEvents(ctx context.Context, args map[string]any)
 
 // HandleWorkflowDefinitionList lists workflow definitions
 func (s *Service) HandleWorkflowDefinitionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	namespace := toString(args["namespace"])
+	v := validate.NewArgs(args)
+	namespace := v.String("namespace", "")
 
 	definitions := s.workflowEngine.ListDefinitions(namespace)
 
@@ -2894,19 +2833,22 @@ func (s *Service) GetKnowledgeGraph() *KnowledgeGraph {
 
 // HandleEntityAdd adds entities to the knowledge graph
 func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	entitiesRaw := v.RequiredAny("entities")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	entitiesRaw, ok := args["entities"].([]any)
-	if !ok || len(entitiesRaw) == 0 {
+	entitiesArr, ok := entitiesRaw.([]any)
+	if !ok || len(entitiesArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("entities array is required")), nil
 	}
 
 	var addedIDs []string
-	for i, entityRaw := range entitiesRaw {
+	for i, entityRaw := range entitiesArr {
 		entityMap, ok := entityRaw.(map[string]any)
 		if !ok {
 			return mcp.ErrorResult(fmt.Errorf("entity %d must be an object", i)), nil
@@ -2961,9 +2903,11 @@ func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mc
 
 // HandleEntityGet retrieves entities by ID
 func (s *Service) HandleEntityGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entityIDs := toStringSlice(args["entity_ids"])
-	if len(entityIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("entity_ids is required")), nil
+	v := validate.NewArgs(args)
+	entityIDs := v.RequiredStringSlice("entity_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var entities []map[string]any
@@ -2984,13 +2928,13 @@ func (s *Service) HandleEntityGet(ctx context.Context, args map[string]any) (*mc
 
 // HandleEntityFind searches for entities
 func (s *Service) HandleEntityFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entityType := EntityType(toString(args["type"]))
-	namespace := toString(args["namespace"])
-	namePattern := toString(args["name_pattern"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 50
-	}
+	v := validate.NewArgs(args)
+	entityTypeStr := v.String("type", "")
+	namespace := v.String("namespace", "")
+	namePattern := v.String("name_pattern", "")
+	limit := v.Int("limit", 50)
+
+	entityType := EntityType(entityTypeStr)
 
 	entities := s.knowledgeGraph.FindEntities(entityType, namespace, namePattern, limit)
 
@@ -3008,12 +2952,14 @@ func (s *Service) HandleEntityFind(ctx context.Context, args map[string]any) (*m
 
 // HandleEntityDelete removes entities
 func (s *Service) HandleEntityDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entityIDs := toStringSlice(args["entity_ids"])
-	if len(entityIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("entity_ids is required")), nil
+	v := validate.NewArgs(args)
+	entityIDs := v.RequiredStringSlice("entity_ids")
+	confirm := v.Bool("confirm", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	confirm := getBool(args["confirm"], false)
 	if !confirm {
 		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete entities")), nil
 	}
@@ -3033,19 +2979,22 @@ func (s *Service) HandleEntityDelete(ctx context.Context, args map[string]any) (
 
 // HandleRelationAdd adds relations to the knowledge graph
 func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	relationsRaw := v.RequiredAny("relations")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	relationsRaw, ok := args["relations"].([]any)
-	if !ok || len(relationsRaw) == 0 {
+	relationsArr, ok := relationsRaw.([]any)
+	if !ok || len(relationsArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("relations array is required")), nil
 	}
 
 	var addedIDs []string
-	for i, relRaw := range relationsRaw {
+	for i, relRaw := range relationsArr {
 		relMap, ok := relRaw.(map[string]any)
 		if !ok {
 			return mcp.ErrorResult(fmt.Errorf("relation %d must be an object", i)), nil
@@ -3085,13 +3034,14 @@ func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*
 
 // HandleRelationGet gets relations for an entity
 func (s *Service) HandleRelationGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entityID := toString(args["entity_id"])
-	if entityID == "" {
-		return mcp.ErrorResult(fmt.Errorf("entity_id is required")), nil
-	}
+	v := validate.NewArgs(args)
+	entityID := v.Required("entity_id")
+	outgoing := v.Bool("outgoing", true)
+	incoming := v.Bool("incoming", true)
 
-	outgoing := getBool(args["outgoing"], true)
-	incoming := getBool(args["incoming"], true)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	var relTypes []RelationType
 	if types, ok := args["relation_types"].([]any); ok {
@@ -3118,12 +3068,14 @@ func (s *Service) HandleRelationGet(ctx context.Context, args map[string]any) (*
 
 // HandleRelationDelete removes relations
 func (s *Service) HandleRelationDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	relationIDs := toStringSlice(args["relation_ids"])
-	if len(relationIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("relation_ids is required")), nil
+	v := validate.NewArgs(args)
+	relationIDs := v.RequiredStringSlice("relation_ids")
+	confirm := v.Bool("confirm", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	confirm := getBool(args["confirm"], false)
 	if !confirm {
 		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete relations")), nil
 	}
@@ -3143,16 +3095,27 @@ func (s *Service) HandleRelationDelete(ctx context.Context, args map[string]any)
 
 // HandleGraphQuery executes a graph query
 func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	pattern := v.String("pattern", "")
+	entityID := v.String("entity_id", "")
+	namespace := v.String("namespace", "")
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", "")
+	maxDepth := v.Int("max_depth", 2)
+	bidirectional := v.Bool("bidirectional", false)
+	limit := v.Int("limit", 0)
+	includeProperties := v.Bool("include_properties", true)
+
 	query := GraphQuery{
-		Pattern:           toString(args["pattern"]),
-		EntityID:          toString(args["entity_id"]),
-		Namespace:         toString(args["namespace"]),
-		SessionID:         toString(args["session_id"]),
-		AgentID:           toString(args["agent_id"]),
-		MaxDepth:          toInt(args["max_depth"]),
-		Bidirectional:     getBool(args["bidirectional"], false),
-		Limit:             toInt(args["limit"]),
-		IncludeProperties: getBool(args["include_properties"], true),
+		Pattern:           pattern,
+		EntityID:          entityID,
+		Namespace:         namespace,
+		SessionID:         sessionID,
+		AgentID:           agentID,
+		MaxDepth:          maxDepth,
+		Bidirectional:     bidirectional,
+		Limit:             limit,
+		IncludeProperties: includeProperties,
 	}
 
 	// Parse entity types
@@ -3216,15 +3179,13 @@ func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*m
 
 // HandleFindPath finds a path between two entities
 func (s *Service) HandleFindPath(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sourceID := toString(args["source_id"])
-	targetID := toString(args["target_id"])
-	if sourceID == "" || targetID == "" {
-		return mcp.ErrorResult(fmt.Errorf("source_id and target_id are required")), nil
-	}
+	v := validate.NewArgs(args)
+	sourceID := v.Required("source_id")
+	targetID := v.Required("target_id")
+	maxDepth := v.Int("max_depth", 5)
 
-	maxDepth := toInt(args["max_depth"])
-	if maxDepth <= 0 {
-		maxDepth = 5
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var relTypes []RelationType
@@ -3251,21 +3212,21 @@ func (s *Service) HandleFindPath(ctx context.Context, args map[string]any) (*mcp
 
 // HandleReasoningChainAdd adds a reasoning chain
 func (s *Service) HandleReasoningChainAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
-	}
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	query := v.Required("query")
+	conclusion := v.String("conclusion", "")
+	confidence := v.Float("confidence", 0)
 
-	query := toString(args["query"])
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	chain := &ReasoningChain{
 		Query:      query,
-		Conclusion: toString(args["conclusion"]),
-		Confidence: toFloat(args["confidence"]),
+		Conclusion: conclusion,
+		Confidence: confidence,
 		SessionID:  sessionID,
 		AgentID:    agentID,
 	}
@@ -3301,9 +3262,11 @@ func (s *Service) HandleReasoningChainAdd(ctx context.Context, args map[string]a
 
 // HandleReasoningChainGet retrieves a reasoning chain
 func (s *Service) HandleReasoningChainGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID := toString(args["chain_id"])
-	if chainID == "" {
-		return mcp.ErrorResult(fmt.Errorf("chain_id is required")), nil
+	v := validate.NewArgs(args)
+	chainID := v.Required("chain_id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	chain, err := s.knowledgeGraph.GetReasoningChain(chainID)
@@ -3336,12 +3299,10 @@ func (s *Service) HandleReasoningChainGet(ctx context.Context, args map[string]a
 
 // HandleReasoningChainList lists reasoning chains
 func (s *Service) HandleReasoningChainList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	limit := toInt(args["limit"])
-	if limit <= 0 {
-		limit = 50
-	}
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", "")
+	limit := v.Int("limit", 50)
 
 	chains := s.knowledgeGraph.ListReasoningChains(sessionID, agentID, limit)
 
@@ -3461,23 +3422,23 @@ func (s *Service) GetMemoryHierarchy() *MemoryHierarchy {
 
 // HandleMemoryAdd adds items to the memory hierarchy
 func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	sessionID := toString(args["session_id"])
-	agentID := toString(args["agent_id"])
-	if agentID == "" {
-		agentID = s.cfg.DefaultAgentID
-	}
-	namespace := toString(args["namespace"])
-	if namespace == "" {
-		namespace = s.cfg.DefaultNamespace
+	v := validate.NewArgs(args)
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
+	namespace := v.String("namespace", s.cfg.DefaultNamespace)
+	itemsRaw := v.RequiredAny("items")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	itemsRaw, ok := args["items"].([]any)
-	if !ok || len(itemsRaw) == 0 {
+	itemsArr, ok := itemsRaw.([]any)
+	if !ok || len(itemsArr) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("items array is required")), nil
 	}
 
 	var addedIDs []string
-	for i, itemRaw := range itemsRaw {
+	for i, itemRaw := range itemsArr {
 		itemMap, ok := itemRaw.(map[string]any)
 		if !ok {
 			return mcp.ErrorResult(fmt.Errorf("item %d must be an object", i)), nil
@@ -3534,9 +3495,11 @@ func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mc
 
 // HandleMemoryGet retrieves memory items by ID
 func (s *Service) HandleMemoryGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	itemIDs := toStringSlice(args["item_ids"])
-	if len(itemIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	v := validate.NewArgs(args)
+	itemIDs := v.RequiredStringSlice("item_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var items []map[string]any
@@ -3557,30 +3520,37 @@ func (s *Service) HandleMemoryGet(ctx context.Context, args map[string]any) (*mc
 
 // HandleMemoryRecall recalls memories matching criteria
 func (s *Service) HandleMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	query := v.String("query", "")
+	namespace := v.String("namespace", "")
+	sessionID := v.String("session_id", "")
+	agentID := v.String("agent_id", "")
+	tokenBudget := v.Int("token_budget", 8000)
+	limit := v.Int("limit", 100)
+	minImportance := v.Float("min_importance", 0)
+	categories := v.StringSlice("categories")
+	tags := v.StringSlice("tags")
+
 	req := MemoryRecallRequest{
-		Query:         toString(args["query"]),
-		Namespace:     toString(args["namespace"]),
-		SessionID:     toString(args["session_id"]),
-		AgentID:       toString(args["agent_id"]),
-		TokenBudget:   toInt(args["token_budget"]),
-		Limit:         toInt(args["limit"]),
-		MinImportance: toFloat(args["min_importance"]),
+		Query:         query,
+		Namespace:     namespace,
+		SessionID:     sessionID,
+		AgentID:       agentID,
+		TokenBudget:   tokenBudget,
+		Limit:         limit,
+		MinImportance: minImportance,
+		Categories:    categories,
+		Tags:          tags,
 	}
 
 	// Parse tiers
 	if tiers, ok := args["tiers"].([]any); ok {
 		for _, t := range tiers {
-			if ts := toString(t); ts != "" {
+			if ts, ok := t.(string); ok && ts != "" {
 				req.Tiers = append(req.Tiers, MemoryTier(ts))
 			}
 		}
 	}
-
-	// Parse categories
-	req.Categories = toStringSlice(args["categories"])
-
-	// Parse tags
-	req.Tags = toStringSlice(args["tags"])
 
 	result, err := s.memoryHierarchy.Recall(req)
 	if err != nil {
@@ -3604,12 +3574,14 @@ func (s *Service) HandleMemoryRecall(ctx context.Context, args map[string]any) (
 
 // HandleMemoryDelete deletes memory items
 func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	itemIDs := toStringSlice(args["item_ids"])
-	if len(itemIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	v := validate.NewArgs(args)
+	itemIDs := v.RequiredStringSlice("item_ids")
+	confirm := v.Bool("confirm", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	confirm := getBool(args["confirm"], false)
 	if !confirm {
 		return mcp.ErrorResult(fmt.Errorf("confirm must be true to delete items")), nil
 	}
@@ -3629,9 +3601,11 @@ func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (
 
 // HandleMemoryPromote promotes items to a higher tier
 func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	itemIDs := toStringSlice(args["item_ids"])
-	if len(itemIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	v := validate.NewArgs(args)
+	itemIDs := v.RequiredStringSlice("item_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var promoted []string
@@ -3657,9 +3631,11 @@ func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) 
 
 // HandleMemoryDemote demotes items to a lower tier
 func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	itemIDs := toStringSlice(args["item_ids"])
-	if len(itemIDs) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("item_ids is required")), nil
+	v := validate.NewArgs(args)
+	itemIDs := v.RequiredStringSlice("item_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var demoted []string
@@ -3685,9 +3661,12 @@ func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (
 
 // HandleMemoryCompress compresses items to reduce token usage
 func (s *Service) HandleMemoryCompress(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
 	// Check if we're compressing specific items or running tier-wide compression
-	itemIDs := toStringSlice(args["item_ids"])
-	tier := MemoryTier(toString(args["tier"]))
+	itemIDs := v.StringSlice("item_ids")
+	tierStr := v.String("tier", "")
+
+	tier := MemoryTier(tierStr)
 
 	if len(itemIDs) > 0 {
 		// Compress specific items
@@ -3735,14 +3714,16 @@ func (s *Service) HandleMemoryCompress(ctx context.Context, args map[string]any)
 
 // HandleMemoryMerge merges multiple items into one
 func (s *Service) HandleMemoryMerge(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	itemIDs := toStringSlice(args["item_ids"])
-	if len(itemIDs) < 2 {
-		return mcp.ErrorResult(fmt.Errorf("at least 2 item_ids are required to merge")), nil
+	v := validate.NewArgs(args)
+	itemIDs := v.RequiredStringSlice("item_ids")
+	newTitle := v.String("new_title", "Merged Memory")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	newTitle := toString(args["new_title"])
-	if newTitle == "" {
-		newTitle = "Merged Memory"
+	if len(itemIDs) < 2 {
+		return mcp.ErrorResult(fmt.Errorf("at least 2 item_ids are required to merge")), nil
 	}
 
 	merged, err := s.memoryHierarchy.MergeItems(itemIDs, newTitle)
@@ -3795,10 +3776,14 @@ func (s *Service) HandleMemoryStats(ctx context.Context, args map[string]any) (*
 
 // HandleMemoryPolicyGet returns retention policy for a tier
 func (s *Service) HandleMemoryPolicyGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	tier := MemoryTier(toString(args["tier"]))
-	if tier == "" {
-		return mcp.ErrorResult(fmt.Errorf("tier is required")), nil
+	v := validate.NewArgs(args)
+	tierStr := v.Required("tier")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
+
+	tier := MemoryTier(tierStr)
 
 	policy := s.memoryHierarchy.GetRetentionPolicy(tier)
 	if policy == nil {
@@ -3828,10 +3813,26 @@ func (s *Service) HandleMemoryPolicyGet(ctx context.Context, args map[string]any
 
 // HandleMemoryPolicySet updates retention policy for a tier
 func (s *Service) HandleMemoryPolicySet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	tier := MemoryTier(toString(args["tier"]))
-	if tier == "" {
-		return mcp.ErrorResult(fmt.Errorf("tier is required")), nil
+	v := validate.NewArgs(args)
+	tierStr := v.Required("tier")
+	name := v.String("name", "")
+	ttl := v.Int("default_ttl_hours", 0)
+	compress := v.Int("compress_after_hours", 0)
+	ratio := v.Float("compression_ratio", 0)
+	merge := v.Float("merge_threshold", 0)
+	promo := v.Float("promotion_threshold", 0)
+	demo := v.Float("demotion_threshold", 0)
+	access := v.Int("access_count_threshold", 0)
+	maxItems := v.Int("max_items", 0)
+	maxTokens := v.Int("max_tokens", 0)
+	dedupeEnabled := v.Bool("dedupe_enabled", true)
+	dedupeSim := v.Float("dedupe_similarity", 0)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
+
+	tier := MemoryTier(tierStr)
 
 	// Get existing policy or create new
 	policy := s.memoryHierarchy.GetRetentionPolicy(tier)
@@ -3843,41 +3844,41 @@ func (s *Service) HandleMemoryPolicySet(ctx context.Context, args map[string]any
 	}
 
 	// Update fields if provided
-	if name := toString(args["name"]); name != "" {
+	if name != "" {
 		policy.Name = name
 	}
-	if ttl := toInt(args["default_ttl_hours"]); ttl > 0 {
+	if ttl > 0 {
 		policy.DefaultTTL = ttl
 	}
-	if compress := toInt(args["compress_after_hours"]); compress > 0 {
+	if compress > 0 {
 		policy.CompressAfterHours = compress
 	}
-	if ratio := toFloat(args["compression_ratio"]); ratio > 0 {
+	if ratio > 0 {
 		policy.CompressionRatio = ratio
 	}
-	if merge := toFloat(args["merge_threshold"]); merge > 0 {
+	if merge > 0 {
 		policy.MergeThreshold = merge
 	}
-	if promo := toFloat(args["promotion_threshold"]); promo > 0 {
+	if promo > 0 {
 		policy.PromotionThreshold = promo
 	}
-	if demo := toFloat(args["demotion_threshold"]); demo > 0 {
+	if demo > 0 {
 		policy.DemotionThreshold = demo
 	}
-	if access := toInt(args["access_count_threshold"]); access > 0 {
+	if access > 0 {
 		policy.AccessCountThreshold = access
 	}
-	if maxItems := toInt(args["max_items"]); maxItems > 0 {
+	if maxItems > 0 {
 		policy.MaxItems = maxItems
 	}
-	if maxTokens := toInt(args["max_tokens"]); maxTokens > 0 {
+	if maxTokens > 0 {
 		policy.MaxTokens = maxTokens
 	}
 	if _, ok := args["dedupe_enabled"]; ok {
-		policy.DedupeEnabled = getBool(args["dedupe_enabled"], true)
+		policy.DedupeEnabled = dedupeEnabled
 	}
-	if sim := toFloat(args["dedupe_similarity"]); sim > 0 {
-		policy.DedupeSimilarity = sim
+	if dedupeSim > 0 {
+		policy.DedupeSimilarity = dedupeSim
 	}
 
 	s.memoryHierarchy.SetRetentionPolicy(policy)

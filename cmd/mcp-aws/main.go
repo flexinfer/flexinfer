@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,6 +18,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -53,25 +55,21 @@ func initAWS(ctx context.Context) error {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
-
-	if err := initAWS(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "AWS init error: %v\n", err)
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+
+	if err := initAWS(ctx); err != nil {
+		logger.Error("AWS init error", "error", err)
+		return err
+	}
+
+	logger.Info("starting server", "name", "mcp-aws", "version", version, "region", awsRegion)
 
 	server := mcp.NewServer("mcp-aws", version)
 	server.SetInstructions("AWS services tools. Uses standard AWS credential chain (env vars, shared credentials, IAM role). Set AWS_REGION to change region.")
@@ -273,10 +271,7 @@ func main() {
 		},
 	}, handleLambdaInvoke)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func handleWhoAmI(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -314,24 +309,21 @@ func handleS3ListBuckets(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleS3ListObjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	prefix := v.String("prefix", "")
+	maxKeys := v.IntRange("max_keys", 100, 1, 1000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),
-		MaxKeys: aws.Int32(100),
+		MaxKeys: aws.Int32(int32(maxKeys)),
 	}
 
-	if prefix, ok := args["prefix"].(string); ok && prefix != "" {
+	if prefix != "" {
 		input.Prefix = aws.String(prefix)
-	}
-	if maxKeys, ok := args["max_keys"].(float64); ok && maxKeys > 0 {
-		if maxKeys > 1000 {
-			maxKeys = 1000
-		}
-		input.MaxKeys = aws.Int32(int32(maxKeys))
 	}
 
 	result, err := s3Client.ListObjectsV2(ctx, input)
@@ -359,18 +351,12 @@ func handleS3ListObjects(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleS3GetObject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
-	}
-	key, ok := args["key"].(string)
-	if !ok || key == "" {
-		return mcp.ErrorResult(fmt.Errorf("key is required")), nil
-	}
-
-	maxSize := int64(1024 * 1024) // 1MB default
-	if ms, ok := args["max_size"].(float64); ok && ms > 0 {
-		maxSize = int64(ms)
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	maxSize := v.Int("max_size", 1024*1024) // 1MB default
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
@@ -392,7 +378,7 @@ func handleS3GetObject(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	}
 
 	// Only read content if it's small enough and likely text
-	if result.ContentLength != nil && *result.ContentLength <= maxSize {
+	if result.ContentLength != nil && *result.ContentLength <= int64(maxSize) {
 		contentType := aws.ToString(result.ContentType)
 		if strings.HasPrefix(contentType, "text/") ||
 			strings.Contains(contentType, "json") ||
@@ -410,13 +396,11 @@ func handleS3GetObject(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleS3HeadObject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
-	}
-	key, ok := args["key"].(string)
-	if !ok || key == "" {
-		return mcp.ErrorResult(fmt.Errorf("key is required")), nil
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := s3Client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -440,24 +424,26 @@ func handleS3HeadObject(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleEC2DescribeInstances(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	input := &ec2.DescribeInstancesInput{
-		MaxResults: aws.Int32(100),
+	v := validate.NewArgs(args)
+	instanceIDs := v.StringSlice("instance_ids")
+	maxResults := v.IntRange("max_results", 100, 1, 1000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	if ids, ok := args["instance_ids"].([]any); ok && len(ids) > 0 {
-		instanceIDs := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if s, ok := id.(string); ok {
-				instanceIDs = append(instanceIDs, s)
-			}
-		}
+	input := &ec2.DescribeInstancesInput{
+		MaxResults: aws.Int32(int32(maxResults)),
+	}
+
+	if len(instanceIDs) > 0 {
 		input.InstanceIds = instanceIDs
 	}
 
+	// Handle filters separately as they need custom processing
 	if filters, ok := args["filters"].(map[string]any); ok && len(filters) > 0 {
 		ec2Filters := make([]ec2types.Filter, 0, len(filters))
-		for k, v := range filters {
-			if s, ok := v.(string); ok {
+		for k, fv := range filters {
+			if s, ok := fv.(string); ok {
 				ec2Filters = append(ec2Filters, ec2types.Filter{
 					Name:   aws.String(k),
 					Values: []string{s},
@@ -465,13 +451,6 @@ func handleEC2DescribeInstances(ctx context.Context, args map[string]any) (*mcp.
 			}
 		}
 		input.Filters = ec2Filters
-	}
-
-	if maxResults, ok := args["max_results"].(float64); ok && maxResults > 0 {
-		if maxResults > 1000 {
-			maxResults = 1000
-		}
-		input.MaxResults = aws.Int32(int32(maxResults))
 	}
 
 	result, err := ec2Client.DescribeInstances(ctx, input)
@@ -515,15 +494,15 @@ func handleEC2DescribeInstances(ctx context.Context, args map[string]any) (*mcp.
 }
 
 func handleEC2DescribeVPCs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	vpcIDs := v.StringSlice("vpc_ids")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	input := &ec2.DescribeVpcsInput{}
 
-	if ids, ok := args["vpc_ids"].([]any); ok && len(ids) > 0 {
-		vpcIDs := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if s, ok := id.(string); ok {
-				vpcIDs = append(vpcIDs, s)
-			}
-		}
+	if len(vpcIDs) > 0 {
 		input.VpcIds = vpcIDs
 	}
 
@@ -558,19 +537,20 @@ func handleEC2DescribeVPCs(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleEC2DescribeSecurityGroups(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	groupIDs := v.StringSlice("group_ids")
+	vpcID := v.String("vpc_id", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	input := &ec2.DescribeSecurityGroupsInput{}
 
-	if ids, ok := args["group_ids"].([]any); ok && len(ids) > 0 {
-		groupIDs := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if s, ok := id.(string); ok {
-				groupIDs = append(groupIDs, s)
-			}
-		}
+	if len(groupIDs) > 0 {
 		input.GroupIds = groupIDs
 	}
 
-	if vpcID, ok := args["vpc_id"].(string); ok && vpcID != "" {
+	if vpcID != "" {
 		input.Filters = []ec2types.Filter{
 			{Name: aws.String("vpc-id"), Values: []string{vpcID}},
 		}
@@ -600,15 +580,14 @@ func handleEC2DescribeSecurityGroups(ctx context.Context, args map[string]any) (
 }
 
 func handleLambdaListFunctions(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	input := &lambda.ListFunctionsInput{
-		MaxItems: aws.Int32(50),
+	v := validate.NewArgs(args)
+	maxItems := v.IntRange("max_items", 50, 1, 1000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	if maxItems, ok := args["max_items"].(float64); ok && maxItems > 0 {
-		if maxItems > 1000 {
-			maxItems = 1000
-		}
-		input.MaxItems = aws.Int32(int32(maxItems))
+	input := &lambda.ListFunctionsInput{
+		MaxItems: aws.Int32(int32(maxItems)),
 	}
 
 	result, err := lmdClient.ListFunctions(ctx, input)
@@ -637,9 +616,10 @@ func handleLambdaListFunctions(ctx context.Context, args map[string]any) (*mcp.C
 }
 
 func handleLambdaGetFunction(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	functionName, ok := args["function_name"].(string)
-	if !ok || functionName == "" {
-		return mcp.ErrorResult(fmt.Errorf("function_name is required")), nil
+	v := validate.NewArgs(args)
+	functionName := v.Required("function_name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := lmdClient.GetFunction(ctx, &lambda.GetFunctionInput{
@@ -674,15 +654,18 @@ func handleLambdaGetFunction(ctx context.Context, args map[string]any) (*mcp.Cal
 }
 
 func handleLambdaInvoke(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	functionName, ok := args["function_name"].(string)
-	if !ok || functionName == "" {
-		return mcp.ErrorResult(fmt.Errorf("function_name is required")), nil
+	v := validate.NewArgs(args)
+	functionName := v.Required("function_name")
+	invocationType := v.String("invocation_type", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	input := &lambda.InvokeInput{
 		FunctionName: aws.String(functionName),
 	}
 
+	// Handle payload separately as it needs custom processing
 	if payload, ok := args["payload"].(map[string]any); ok {
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {
@@ -691,7 +674,7 @@ func handleLambdaInvoke(ctx context.Context, args map[string]any) (*mcp.CallTool
 		input.Payload = payloadBytes
 	}
 
-	if invocationType, ok := args["invocation_type"].(string); ok {
+	if invocationType != "" {
 		input.InvocationType = lambdatypes.InvocationType(invocationType)
 	}
 

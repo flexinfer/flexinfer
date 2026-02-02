@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var execCommand = exec.CommandContext
@@ -23,31 +25,22 @@ var (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-k8s-ops", "version", version)
 
 	server := mcp.NewServer("mcp-k8s-ops", version)
 	server.SetInstructions("Kubernetes operations via kubectl")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -274,54 +267,23 @@ func withTimeoutSecondsArg(ctx context.Context, args map[string]any) (context.Co
 	if _, hasDeadline := ctx.Deadline(); hasDeadline {
 		return ctx, func() {}
 	}
-	timeoutSeconds := timeoutSecondsFromArgs(args, "timeoutSeconds", 0)
+	v := validate.NewArgs(args)
+	timeoutSeconds := v.Int("timeoutSeconds", 0)
 	if timeoutSeconds <= 0 {
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 }
 
-func timeoutSecondsFromArgs(args map[string]any, key string, fallback int) int {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return fallback
-	}
-
-	switch v := raw.(type) {
-	case int:
-		if v > 0 {
-			return v
-		}
-	case int32:
-		if v > 0 {
-			return int(v)
-		}
-	case int64:
-		if v > 0 {
-			return int(v)
-		}
-	case float64:
-		iv := int(v)
-		if iv > 0 {
-			return iv
-		}
-	case string:
-		var parsed int
-		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &parsed); err == nil && parsed > 0 {
-			return parsed
-		}
-	}
-
-	return fallback
-}
-
 // Handlers
 
 func handleApply(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	file, _ := args["file"].(string)
-	if file == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'file'")), nil
+	v := validate.NewArgs(args)
+	file := v.Required("file")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
+
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
@@ -333,13 +295,13 @@ func handleApply(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleGetPods(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	sel, _ := args["selector"].(string)
-	format, _ := args["format"].(string)
-	contextName, _ := args["context"].(string)
-
-	if ns == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'namespace'")), nil
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	sel := v.String("selector", "")
+	format := v.String("format", "wide")
+	contextName := v.String("context", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
@@ -349,11 +311,7 @@ func handleGetPods(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	if sel != "" {
 		cmdArgs = append(cmdArgs, "-l", sel)
 	}
-	if format != "" {
-		cmdArgs = append(cmdArgs, "-o", format)
-	} else {
-		cmdArgs = append(cmdArgs, "-o", "wide")
-	}
+	cmdArgs = append(cmdArgs, "-o", format)
 
 	out, err := runKubectl(ctx, contextName, cmdArgs...)
 	if err != nil {
@@ -363,15 +321,15 @@ func handleGetPods(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	target, _ := args["target"].(string)
-	container, _ := args["container"].(string)
-	tail, _ := args["tail"].(float64)
-	previous, _ := args["previous"].(bool)
-	contextName, _ := args["context"].(string)
-
-	if ns == "" || target == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'namespace' or 'target'")), nil
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	target := v.Required("target")
+	container := v.String("container", "")
+	tail := v.Int("tail", 0)
+	previous := v.Bool("previous", false)
+	contextName := v.String("context", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
@@ -385,7 +343,7 @@ func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 		cmdArgs = append(cmdArgs, "--previous")
 	}
 	if tail > 0 {
-		cmdArgs = append(cmdArgs, "--tail", fmt.Sprintf("%d", int(tail)))
+		cmdArgs = append(cmdArgs, "--tail", fmt.Sprintf("%d", tail))
 	}
 
 	out, err := runKubectl(ctx, contextName, cmdArgs...)
@@ -396,16 +354,16 @@ func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	kind, _ := args["kind"].(string)
-	name, _ := args["name"].(string)
-	ns, _ := args["namespace"].(string)
-	sel, _ := args["selector"].(string)
-	output, _ := args["output"].(string)
-	allNs, _ := args["allNamespaces"].(bool)
-	contextName, _ := args["context"].(string)
-
-	if kind == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'kind'")), nil
+	v := validate.NewArgs(args)
+	kind := v.Required("kind")
+	name := v.String("name", "")
+	ns := v.String("namespace", "")
+	sel := v.String("selector", "")
+	output := v.String("output", "")
+	allNs := v.Bool("allNamespaces", false)
+	contextName := v.String("context", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
@@ -437,13 +395,13 @@ func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 }
 
 func handleDescribe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	kind, _ := args["kind"].(string)
-	name, _ := args["name"].(string)
-	contextName, _ := args["context"].(string)
-
-	if ns == "" || kind == "" || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'namespace', 'kind', or 'name'")), nil
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	kind := v.Required("kind")
+	name := v.Required("name")
+	contextName := v.String("context", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
@@ -457,19 +415,15 @@ func handleDescribe(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	pod, _ := args["pod"].(string)
-	container, _ := args["container"].(string)
-	command, _ := args["command"].([]any)
-	contextName, _ := args["context"].(string)
-
-	if ns == "" || pod == "" || len(command) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("missing 'namespace', 'pod', or 'command'")), nil
-	}
-
-	cmdList := make([]string, len(command))
-	for i, c := range command {
-		cmdList[i] = fmt.Sprint(c)
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	pod := v.Required("pod")
+	cmdList := v.RequiredStringSlice("command")
+	container := v.String("container", "")
+	contextName := v.String("context", "")
+	timeoutSeconds := v.Int("timeoutSeconds", 55)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	cmdArgs := []string{"-n", ns, "exec", pod}
@@ -479,7 +433,6 @@ func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 	cmdArgs = append(cmdArgs, "--")
 	cmdArgs = append(cmdArgs, cmdList...)
 
-	timeoutSeconds := timeoutSecondsFromArgs(args, "timeoutSeconds", 55)
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -494,7 +447,13 @@ func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleListNamespaces(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	contextName, _ := args["context"].(string)
+	v := validate.NewArgs(args)
+	contextName := v.String("context", "")
+	// No required fields, but keep pattern consistent
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
@@ -514,6 +473,12 @@ func handleListNamespaces(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleListContexts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	// No required fields, but keep pattern consistent
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 

@@ -3,19 +3,20 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -24,7 +25,7 @@ var (
 	argocdURL   = getEnv("ARGOCD_SERVER", "https://argocd.local")
 	argocdToken = os.Getenv("ARGOCD_AUTH_TOKEN")
 
-	httpClient *http.Client
+	httpClient *httpclient.Client
 )
 
 func getEnv(key, fallback string) string {
@@ -35,31 +36,24 @@ func getEnv(key, fallback string) string {
 }
 
 func init() {
-	transport := &http.Transport{}
+	cfg := httpclient.DefaultConfig()
+	// Check ARGOCD_INSECURE env var (in addition to TLS_SKIP_VERIFY)
 	if skipVerify := os.Getenv("ARGOCD_INSECURE"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		cfg.TLSSkipVerify = true
 	}
-	httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
-	}
+	httpClient = httpclient.New(cfg)
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-argocd", "version", version, "url", argocdURL)
 
 	server := mcp.NewServer("mcp-argocd", version)
 	server.SetInstructions("ArgoCD GitOps application management tools. Configure with ARGOCD_SERVER and ARGOCD_AUTH_TOKEN. Set ARGOCD_INSECURE=true to skip TLS verification.")
@@ -302,10 +296,7 @@ func main() {
 		},
 	}, handleVersion)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // argocdRequest makes an authenticated request to ArgoCD API
@@ -355,18 +346,24 @@ func argocdRequest(ctx context.Context, method, path string, query url.Values) (
 }
 
 func handleListApps(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	project := v.String("project", "")
+	selector := v.String("selector", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
-	if project, ok := args["project"].(string); ok && project != "" {
+	query := url.Values{}
+	if project != "" {
 		query.Set("projects", project)
 	}
-	if selector, ok := args["selector"].(string); ok && selector != "" {
+	if selector != "" {
 		query.Set("selector", selector)
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/applications", query)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	apps := []map[string]any{}
@@ -385,28 +382,30 @@ func handleListApps(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleGetApp(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(formatAppDetailed(result))
 }
 
 func handleAppResources(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name)+"/resource-tree", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	resources := []map[string]any{}
@@ -425,34 +424,37 @@ func handleAppResources(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleAppManifests(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	revision := v.String("revision", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-	if revision, ok := args["revision"].(string); ok && revision != "" {
+	if revision != "" {
 		query.Set("revision", revision)
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name)+"/manifests", query)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func handleAppDiff(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get application to check status
 	app, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	status, _ := app["status"].(map[string]any)
@@ -482,25 +484,29 @@ func handleAppDiff(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleSyncApp(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	revision := v.String("revision", "")
+	prune := v.Bool("prune", false)
+	dryRun := v.Bool("dry_run", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-	if revision, ok := args["revision"].(string); ok && revision != "" {
+	if revision != "" {
 		query.Set("revision", revision)
 	}
-	if prune, ok := args["prune"].(bool); ok && prune {
+	if prune {
 		query.Set("prune", "true")
 	}
-	if dryRun, ok := args["dry_run"].(bool); ok && dryRun {
+	if dryRun {
 		query.Set("dryRun", "true")
 	}
 
 	result, err := argocdRequest(ctx, "POST", "/applications/"+url.PathEscape(name)+"/sync", query)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -510,13 +516,15 @@ func handleSyncApp(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleRefreshApp(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	hard := v.Bool("hard", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-	if hard, ok := args["hard"].(bool); ok && hard {
+	if hard {
 		query.Set("refresh", "hard")
 	} else {
 		query.Set("refresh", "normal")
@@ -524,7 +532,7 @@ func handleRefreshApp(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 
 	result, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name), query)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -534,14 +542,15 @@ func handleRefreshApp(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleAppHistory(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	app, err := argocdRequest(ctx, "GET", "/applications/"+url.PathEscape(name), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	history := []map[string]any{}
@@ -569,7 +578,7 @@ func handleAppHistory(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	result, err := argocdRequest(ctx, "GET", "/projects", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	projects := []map[string]any{}
@@ -588,14 +597,15 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/projects/"+url.PathEscape(name), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(formatProjectDetailed(result))
@@ -604,7 +614,7 @@ func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 func handleListRepos(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	result, err := argocdRequest(ctx, "GET", "/repositories", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	repos := []map[string]any{}
@@ -623,14 +633,15 @@ func handleListRepos(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGetRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repo, ok := args["repo"].(string)
-	if !ok || repo == "" {
-		return mcp.ErrorResult(fmt.Errorf("repo is required")), nil
+	v := validate.NewArgs(args)
+	repo := v.Required("repo")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/repositories/"+url.PathEscape(repo), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(formatRepo(result))
@@ -639,7 +650,7 @@ func handleGetRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 func handleListClusters(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	result, err := argocdRequest(ctx, "GET", "/clusters", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	clusters := []map[string]any{}
@@ -658,14 +669,15 @@ func handleListClusters(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleGetCluster(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	server, ok := args["server"].(string)
-	if !ok || server == "" {
-		return mcp.ErrorResult(fmt.Errorf("server is required")), nil
+	v := validate.NewArgs(args)
+	server := v.Required("server")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := argocdRequest(ctx, "GET", "/clusters/"+url.PathEscape(server), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(formatClusterDetailed(result))
@@ -674,7 +686,7 @@ func handleGetCluster(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 func handleSettings(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	result, err := argocdRequest(ctx, "GET", "/settings", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
@@ -683,7 +695,7 @@ func handleSettings(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 func handleVersion(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	result, err := argocdRequest(ctx, "GET", "/version", nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)

@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "dev"
@@ -50,21 +52,14 @@ type ThinkingState struct {
 var state *ThinkingState
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	// Initialize state
 	persistPath := os.Getenv("THINKING_PERSIST_PATH")
@@ -81,8 +76,10 @@ func main() {
 
 	// Load existing state
 	if err := state.load(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load state: %v\n", err)
+		logger.Warn("could not load state", "error", err)
 	}
+
+	logger.Info("starting server", "name", "mcp-sequentialthinking", "version", version, "path", persistPath)
 
 	server := mcp.NewServer("mcp-sequentialthinking", version)
 	server.SetInstructions("Sequential thinking server for structured reasoning. Use start_thinking to begin, add_thought to continue, and complete_chain to finish.")
@@ -266,10 +263,7 @@ func main() {
 		},
 	}, handleSummarizeChain)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *ThinkingState) load() error {
@@ -339,13 +333,13 @@ func (s *ThinkingState) getNextStepID() int {
 }
 
 func handleStartThinking(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	title, _ := args["title"].(string)
-	if title == "" {
-		title = fmt.Sprintf("Thought Chain %s", time.Now().Format("2006-01-02 15:04:05"))
+	v := validate.NewArgs(args)
+	title := v.String("title", fmt.Sprintf("Thought Chain %s", time.Now().Format("2006-01-02 15:04:05")))
+	description := v.String("description", "")
+	initialThought := v.String("initial_thought", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	description, _ := args["description"].(string)
-	initialThought, _ := args["initial_thought"].(string)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -365,10 +359,7 @@ func handleStartThinking(ctx context.Context, args map[string]any) (*mcp.CallToo
 
 	// Add initial thought if provided
 	if initialThought != "" {
-		thoughtType, _ := args["thought_type"].(string)
-		if thoughtType == "" {
-			thoughtType = "observation"
-		}
+		thoughtType := v.String("thought_type", "observation")
 
 		chain.Steps = append(chain.Steps, ThoughtStep{
 			ID:          state.getNextStepID(),
@@ -395,14 +386,14 @@ func handleStartThinking(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleAddThought(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	thought, _ := args["thought"].(string)
-	if thought == "" {
-		return nil, fmt.Errorf("thought is required")
+	v := validate.NewArgs(args)
+	thought := v.Required("thought")
+	chainID := v.String("chain_id", "")
+	thoughtType := v.String("thought_type", "")
+	confidence := v.Float("confidence", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	chainID, _ := args["chain_id"].(string)
-	thoughtType, _ := args["thought_type"].(string)
-	confidence, _ := args["confidence"].(float64)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -412,16 +403,16 @@ func handleAddThought(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		chainID = state.ActiveChain
 	}
 	if chainID == "" {
-		return nil, fmt.Errorf("no active chain. Use start_thinking first or specify chain_id")
+		return mcp.ErrorResult(fmt.Errorf("no active chain. Use start_thinking first or specify chain_id")), nil
 	}
 
 	chain, exists := state.Chains[chainID]
 	if !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	if chain.Status != "active" {
-		return nil, fmt.Errorf("chain is %s, cannot add thoughts", chain.Status)
+		return mcp.ErrorResult(fmt.Errorf("chain is %s, cannot add thoughts", chain.Status)), nil
 	}
 
 	if thoughtType == "" {
@@ -454,7 +445,11 @@ func handleAddThought(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleGetChain(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID, _ := args["chain_id"].(string)
+	v := validate.NewArgs(args)
+	chainID := v.String("chain_id", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	state.mu.RLock()
 	defer state.mu.RUnlock()
@@ -463,19 +458,23 @@ func handleGetChain(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		chainID = state.ActiveChain
 	}
 	if chainID == "" {
-		return nil, fmt.Errorf("no active chain")
+		return mcp.ErrorResult(fmt.Errorf("no active chain")), nil
 	}
 
 	chain, exists := state.Chains[chainID]
 	if !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	return mcp.JSONResult(chain)
 }
 
 func handleListChains(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	statusFilter, _ := args["status"].(string)
+	v := validate.NewArgs(args)
+	statusFilter := v.String("status", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	state.mu.RLock()
 	defer state.mu.RUnlock()
@@ -505,16 +504,17 @@ func handleListChains(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleSetActiveChain(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID, _ := args["chain_id"].(string)
-	if chainID == "" {
-		return nil, fmt.Errorf("chain_id is required")
+	v := validate.NewArgs(args)
+	chainID := v.Required("chain_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if _, exists := state.Chains[chainID]; !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	state.ActiveChain = chainID
@@ -530,8 +530,12 @@ func handleSetActiveChain(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleCompleteChain(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID, _ := args["chain_id"].(string)
-	conclusion, _ := args["conclusion"].(string)
+	v := validate.NewArgs(args)
+	chainID := v.String("chain_id", "")
+	conclusion := v.String("conclusion", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -540,12 +544,12 @@ func handleCompleteChain(ctx context.Context, args map[string]any) (*mcp.CallToo
 		chainID = state.ActiveChain
 	}
 	if chainID == "" {
-		return nil, fmt.Errorf("no active chain")
+		return mcp.ErrorResult(fmt.Errorf("no active chain")), nil
 	}
 
 	chain, exists := state.Chains[chainID]
 	if !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	// Add conclusion as final step if provided
@@ -581,18 +585,14 @@ func handleCompleteChain(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleBranchThought(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	parentStepID, ok := args["parent_step_id"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("parent_step_id is required")
+	v := validate.NewArgs(args)
+	parentID := v.RequiredInt("parent_step_id")
+	thought := v.Required("thought")
+	chainID := v.String("chain_id", "")
+	thoughtType := v.String("thought_type", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	thought, _ := args["thought"].(string)
-	if thought == "" {
-		return nil, fmt.Errorf("thought is required")
-	}
-
-	chainID, _ := args["chain_id"].(string)
-	thoughtType, _ := args["thought_type"].(string)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -601,16 +601,15 @@ func handleBranchThought(ctx context.Context, args map[string]any) (*mcp.CallToo
 		chainID = state.ActiveChain
 	}
 	if chainID == "" {
-		return nil, fmt.Errorf("no active chain")
+		return mcp.ErrorResult(fmt.Errorf("no active chain")), nil
 	}
 
 	chain, exists := state.Chains[chainID]
 	if !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	// Verify parent step exists
-	parentID := int(parentStepID)
 	found := false
 	for _, step := range chain.Steps {
 		if step.ID == parentID {
@@ -619,7 +618,7 @@ func handleBranchThought(ctx context.Context, args map[string]any) (*mcp.CallToo
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("parent step not found: %d", parentID)
+		return mcp.ErrorResult(fmt.Errorf("parent step not found: %d", parentID)), nil
 	}
 
 	if thoughtType == "" {
@@ -651,16 +650,17 @@ func handleBranchThought(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleDeleteChain(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID, _ := args["chain_id"].(string)
-	if chainID == "" {
-		return nil, fmt.Errorf("chain_id is required")
+	v := validate.NewArgs(args)
+	chainID := v.Required("chain_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if _, exists := state.Chains[chainID]; !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	delete(state.Chains, chainID)
@@ -680,7 +680,11 @@ func handleDeleteChain(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleSummarizeChain(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	chainID, _ := args["chain_id"].(string)
+	v := validate.NewArgs(args)
+	chainID := v.String("chain_id", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	state.mu.RLock()
 	defer state.mu.RUnlock()
@@ -689,12 +693,12 @@ func handleSummarizeChain(ctx context.Context, args map[string]any) (*mcp.CallTo
 		chainID = state.ActiveChain
 	}
 	if chainID == "" {
-		return nil, fmt.Errorf("no active chain")
+		return mcp.ErrorResult(fmt.Errorf("no active chain")), nil
 	}
 
 	chain, exists := state.Chains[chainID]
 	if !exists {
-		return nil, fmt.Errorf("chain not found: %s", chainID)
+		return mcp.ErrorResult(fmt.Errorf("chain not found: %s", chainID)), nil
 	}
 
 	// Count thought types

@@ -10,46 +10,35 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 type githubServer struct {
 	token      string
-	httpClient *http.Client
-}
-
-type apiError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *apiError) Error() string {
-	return fmt.Sprintf("GitHub API error %d: %s", e.StatusCode, e.Body)
+	httpClient *httpclient.Client
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 	if token == "" {
@@ -57,11 +46,11 @@ func main() {
 	}
 
 	gh := &githubServer{
-		token: token,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		token:      token,
+		httpClient: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-github", "version", version)
 
 	server := mcp.NewServer("mcp-github", version)
 	server.SetInstructions("Fast Go-native GitHub MCP server. Supports repos, issues, PRs, and more.")
@@ -375,10 +364,7 @@ func main() {
 		},
 	}, gh.handleGetFileContents)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (g *githubServer) request(ctx context.Context, method, path string, body any) (map[string]any, error) {
@@ -419,11 +405,6 @@ func (g *githubServer) request(ctx context.Context, method, path string, body an
 	return result, nil
 }
 
-func (g *githubServer) requestList(ctx context.Context, path string) ([]any, error) {
-	items, _, err := g.requestListWithMeta(ctx, path)
-	return items, err
-}
-
 func (g *githubServer) requestListWithMeta(ctx context.Context, path string) ([]any, map[string]any, error) {
 	reqURL := "https://api.github.com" + path
 	respBody, resp, err := g.doRequest(ctx, "GET", reqURL, nil, map[string]string{
@@ -440,20 +421,6 @@ func (g *githubServer) requestListWithMeta(ctx context.Context, path string) ([]
 	}
 
 	return result, parseGitHubPagination(resp), nil
-}
-
-func getStringArg(args map[string]any, key, defaultVal string) string {
-	if v, ok := args[key].(string); ok && v != "" {
-		return v
-	}
-	return defaultVal
-}
-
-func getIntArg(args map[string]any, key string, defaultVal int) int {
-	if v, ok := args[key].(float64); ok {
-		return int(v)
-	}
-	return defaultVal
 }
 
 func normalizePerPage(perPage int, defaultVal int) int {
@@ -504,7 +471,7 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 			req.Header.Set("Authorization", "Bearer "+g.token)
 		}
 
-		resp, err := g.httpClient.Do(req)
+		resp, err := g.httpClient.HTTP().Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
 				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
@@ -554,7 +521,7 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 			if resp.StatusCode == 403 && strings.Contains(strings.ToLower(bodyText), "rate limit") {
 				bodyText = fmt.Sprintf("%s (rate_limit_remaining=%s reset=%s)", bodyText, resp.Header.Get("X-RateLimit-Remaining"), resp.Header.Get("X-RateLimit-Reset"))
 			}
-			return nil, resp, &apiError{StatusCode: resp.StatusCode, Body: bodyText}
+			return nil, resp, mcperror.APIError("GitHub", resp.StatusCode, bodyText)
 		}
 
 		return respBody, resp, nil
@@ -687,10 +654,15 @@ func extractPage(rawURL string) (int, bool) {
 }
 
 func (g *githubServer) handleListRepos(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repoType := getStringArg(args, "type", "owner")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	owner := v.String("owner", "")
+	repoType := v.String("type", "owner")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	var path string
 	if owner != "" {
@@ -701,38 +673,40 @@ func (g *githubServer) handleListRepos(ctx context.Context, args map[string]any)
 
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"repositories": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
 
-	if owner == "" || repo == "" {
-		return nil, fmt.Errorf("owner and repo are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := g.request(ctx, "GET", fmt.Sprintf("/repos/%s/%s", owner, repo), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	state := getStringArg(args, "state", "open")
-	labels := getStringArg(args, "labels", "")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	state := v.String("state", "open")
+	labels := v.String("labels", "")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
 
-	if owner == "" || repo == "" {
-		return nil, fmt.Errorf("owner and repo are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/issues?state=%s&per_page=%d&page=%d", owner, repo, state, perPage, page)
@@ -742,105 +716,112 @@ func (g *githubServer) handleListIssues(ctx context.Context, args map[string]any
 
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	number := getIntArg(args, "number", 0)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	number := v.RequiredInt("number")
 
-	if owner == "" || repo == "" || number == 0 {
-		return nil, fmt.Errorf("owner, repo, and number are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := g.request(ctx, "GET", fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleCreateIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	title := getStringArg(args, "title", "")
-	body := getStringArg(args, "body", "")
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	title := v.Required("title")
+	body := v.String("body", "")
+	labels := v.StringSlice("labels")
+	assignees := v.StringSlice("assignees")
 
-	if owner == "" || repo == "" || title == "" {
-		return nil, fmt.Errorf("owner, repo, and title are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	payload := map[string]any{"title": title}
 	if body != "" {
 		payload["body"] = body
 	}
-	if labels, ok := args["labels"].([]any); ok {
+	if len(labels) > 0 {
 		payload["labels"] = labels
 	}
-	if assignees, ok := args["assignees"].([]any); ok {
+	if len(assignees) > 0 {
 		payload["assignees"] = assignees
 	}
 
 	result, err := g.request(ctx, "POST", fmt.Sprintf("/repos/%s/%s/issues", owner, repo), payload)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleListPRs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	state := getStringArg(args, "state", "open")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	state := v.String("state", "open")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
 
-	if owner == "" || repo == "" {
-		return nil, fmt.Errorf("owner and repo are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&per_page=%d&page=%d", owner, repo, state, perPage, page)
 
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"pull_requests": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleGetPR(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	number := getIntArg(args, "number", 0)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	number := v.RequiredInt("number")
 
-	if owner == "" || repo == "" || number == 0 {
-		return nil, fmt.Errorf("owner, repo, and number are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := g.request(ctx, "GET", fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleListCommits(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	sha := getStringArg(args, "sha", "")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	sha := v.String("sha", "")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
 
-	if owner == "" || repo == "" {
-		return nil, fmt.Errorf("owner and repo are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d&page=%d", owner, repo, perPage, page)
@@ -850,58 +831,61 @@ func (g *githubServer) handleListCommits(ctx context.Context, args map[string]an
 
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"commits": result, "count": len(result), "pagination": meta})
 }
 
 func (g *githubServer) handleSearchRepos(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
 
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/search/repositories?q=%s&per_page=%d&page=%d", url.QueryEscape(query), perPage, page)
 
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleSearchCode(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	perPage := normalizePerPage(getIntArg(args, "per_page", 30), 30)
-	page := normalizePage(getIntArg(args, "page", 1))
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	perPage := normalizePerPage(v.Int("per_page", 30), 30)
+	page := normalizePage(v.Int("page", 1))
 
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/search/code?q=%s&per_page=%d&page=%d", url.QueryEscape(query), perPage, page)
 
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (g *githubServer) handleGetFileContents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner := getStringArg(args, "owner", "")
-	repo := getStringArg(args, "repo", "")
-	filePath := getStringArg(args, "path", "")
-	ref := getStringArg(args, "ref", "")
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	filePath := v.Required("path")
+	ref := v.String("ref", "")
 
-	if owner == "" || repo == "" || filePath == "" {
-		return nil, fmt.Errorf("owner, repo, and path are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, filePath)
@@ -911,7 +895,7 @@ func (g *githubServer) handleGetFileContents(ctx context.Context, args map[strin
 
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)

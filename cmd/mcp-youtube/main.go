@@ -5,14 +5,16 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/kkdai/youtube/v2"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "dev"
@@ -31,21 +33,15 @@ func getYouTubeClient() *youtube.Client {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-youtube", "version", version)
 
 	server := mcp.NewServer("mcp-youtube", version)
 	server.SetInstructions("YouTube transcript server. Use get_transcript to extract video transcripts.")
@@ -90,10 +86,7 @@ func main() {
 		},
 	}, handleGetVideoInfo)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // extractVideoID extracts the video ID from various YouTube URL formats
@@ -114,17 +107,14 @@ func extractVideoID(input string) string {
 }
 
 func handleGetTranscript(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	urlStr, _ := args["url"].(string)
-	if urlStr == "" {
-		return nil, fmt.Errorf("url is required")
-	}
+	v := validate.NewArgs(args)
+	urlStr := v.Required("url")
+	language := v.String("language", "en")
+	includeTimestamps := v.Bool("include_timestamps", false)
 
-	language, _ := args["language"].(string)
-	if language == "" {
-		language = "en"
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	includeTimestamps, _ := args["include_timestamps"].(bool)
 
 	videoID := extractVideoID(urlStr)
 
@@ -165,9 +155,11 @@ func handleGetTranscript(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	urlStr, _ := args["url"].(string)
-	if urlStr == "" {
-		return nil, fmt.Errorf("url is required")
+	v := validate.NewArgs(args)
+	urlStr := v.Required("url")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	videoID := extractVideoID(urlStr)

@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/pathsec"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
@@ -40,20 +41,15 @@ func init() {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-filesystem", "version", version, "root", allowedRoot)
 
 	server := mcp.NewServer("mcp-filesystem", version)
 	server.SetInstructions("Safe filesystem access. Tools: list_directory, read_file, search_files")
@@ -110,31 +106,29 @@ func main() {
 		},
 	}, handleSearchFiles)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func handleListDirectory(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return nil, fmt.Errorf("path is required")
+	v := validate.NewArgs(args)
+	path := v.Required("path")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Clean and validate path
 	absPath, err := pathsec.CleanPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("invalid path: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("invalid path: %w", err)), nil
 	}
 
 	if err := pathsec.ValidatePath(absPath, allowedRoot); err != nil {
-		return nil, fmt.Errorf("access denied: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("access denied: %w", err)), nil
 	}
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("read dir: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("read dir: %w", err)), nil
 	}
 
 	var result []map[string]any
@@ -158,29 +152,30 @@ func handleListDirectory(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleReadFile(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return nil, fmt.Errorf("path is required")
+	v := validate.NewArgs(args)
+	path := v.Required("path")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Clean and validate path
 	absPath, err := pathsec.CleanPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("invalid path: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("invalid path: %w", err)), nil
 	}
 
 	if err := pathsec.ValidatePath(absPath, allowedRoot); err != nil {
-		return nil, fmt.Errorf("access denied: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("access denied: %w", err)), nil
 	}
 
 	// Check file size before reading
 	if err := pathsec.ValidateFileSize(absPath, maxReadSize); err != nil {
-		return nil, fmt.Errorf("file too large: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("file too large: %w", err)), nil
 	}
 
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("read file: %w", err)), nil
 	}
 
 	// Detect if binary? For now assume text or return base64 if needed.
@@ -193,24 +188,21 @@ func handleReadFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleSearchFiles(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	root, _ := args["root"].(string)
-	pattern, _ := args["pattern"].(string)
-
-	if root == "" {
-		root = "."
-	}
-	if pattern == "" {
-		return nil, fmt.Errorf("pattern is required")
+	v := validate.NewArgs(args)
+	root := v.String("root", ".")
+	pattern := v.Required("pattern")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Clean and validate search root
 	absRoot, err := pathsec.CleanPath(root)
 	if err != nil {
-		return nil, fmt.Errorf("invalid root: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("invalid root: %w", err)), nil
 	}
 
 	if err := pathsec.ValidatePath(absRoot, allowedRoot); err != nil {
-		return nil, fmt.Errorf("search root denied: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("search root denied: %w", err)), nil
 	}
 
 	var matches []string
@@ -245,7 +237,7 @@ func handleSearchFiles(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	})
 
 	if err != nil && err != filepath.SkipAll {
-		return nil, fmt.Errorf("walk dir: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("walk dir: %w", err)), nil
 	}
 
 	truncated := len(matches) >= maxResults

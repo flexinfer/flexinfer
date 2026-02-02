@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -752,5 +753,251 @@ func TestExpandVarsWithRegistry_UnterminatedVar(t *testing.T) {
 	// Loop should break without infinite loop
 	if result != "${env:UNTERMINATED" {
 		t.Errorf("expandVarsWithRegistry() = %q, want original", result)
+	}
+}
+
+// =============================================================================
+// Config File Tests
+// =============================================================================
+
+func TestLoadConfigFile_Default(t *testing.T) {
+	// Create a temp directory and set a temp home
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	// LoadConfigFile should return defaults when file doesn't exist
+	cfg, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile failed: %v", err)
+	}
+
+	// Check default values
+	if cfg.Hub.URL != "wss://mcp.flexinfer.ai/ws" {
+		t.Errorf("Hub.URL = %q, want default", cfg.Hub.URL)
+	}
+	if !cfg.Hub.Enabled {
+		t.Error("Hub.Enabled should be true by default")
+	}
+	if cfg.Hub.Profile != "codex" {
+		t.Errorf("Hub.Profile = %q, want codex", cfg.Hub.Profile)
+	}
+}
+
+func TestSaveAndLoadConfigFile(t *testing.T) {
+	// Create a temp directory and set a temp home
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	// Create config with custom values
+	cfg := FileConfig{
+		Hub: HubConfig{
+			URL:                      "wss://custom.example.com/ws",
+			Enabled:                  true,
+			Profile:                  "claude",
+			ReconnectIntervalSeconds: 10,
+		},
+		Resources: ResourceConfig{
+			MaxProcesses:       5,
+			IdleTimeoutMinutes: 10,
+		},
+		Debug: true,
+	}
+
+	// Save
+	if err := SaveConfigFile(cfg); err != nil {
+		t.Fatalf("SaveConfigFile failed: %v", err)
+	}
+
+	// Load
+	loaded, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile failed: %v", err)
+	}
+
+	// Verify
+	if loaded.Hub.URL != cfg.Hub.URL {
+		t.Errorf("Hub.URL = %q, want %q", loaded.Hub.URL, cfg.Hub.URL)
+	}
+	if loaded.Hub.Profile != cfg.Hub.Profile {
+		t.Errorf("Hub.Profile = %q, want %q", loaded.Hub.Profile, cfg.Hub.Profile)
+	}
+	if loaded.Resources.MaxProcesses != cfg.Resources.MaxProcesses {
+		t.Errorf("Resources.MaxProcesses = %d, want %d", loaded.Resources.MaxProcesses, cfg.Resources.MaxProcesses)
+	}
+	if !loaded.Debug {
+		t.Error("Debug should be true")
+	}
+}
+
+func TestLoadConfigFile_InvalidYAML(t *testing.T) {
+	// Create a temp directory and set a temp home
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	// Write invalid YAML
+	configDir := filepath.Join(tmpDir, ".config", "loom")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("invalid: yaml: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// LoadConfigFile should return an error
+	_, err := LoadConfigFile()
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestLoadConfigFile_AppliesDefaults(t *testing.T) {
+	// Create a temp directory and set a temp home
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	// Write minimal YAML (no URL or profile)
+	configDir := filepath.Join(tmpDir, ".config", "loom")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("debug: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile failed: %v", err)
+	}
+
+	// Should have defaults applied
+	if cfg.Hub.URL != "wss://mcp.flexinfer.ai/ws" {
+		t.Errorf("Hub.URL = %q, want default", cfg.Hub.URL)
+	}
+	if cfg.Hub.Profile != "codex" {
+		t.Errorf("Hub.Profile = %q, want codex", cfg.Hub.Profile)
+	}
+	if !cfg.Debug {
+		t.Error("Debug should be true (from file)")
+	}
+}
+
+// =============================================================================
+// HubConfig Tests
+// =============================================================================
+
+func TestHubConfig_Defaults(t *testing.T) {
+	cfg := DefaultFileConfig()
+
+	if cfg.Hub.ReconnectIntervalSeconds != 5 {
+		t.Errorf("ReconnectIntervalSeconds = %d, want 5", cfg.Hub.ReconnectIntervalSeconds)
+	}
+	if cfg.Hub.PingIntervalSeconds != 30 {
+		t.Errorf("PingIntervalSeconds = %d, want 30", cfg.Hub.PingIntervalSeconds)
+	}
+	if cfg.Hub.MaxRetries != 3 {
+		t.Errorf("MaxRetries = %d, want 3", cfg.Hub.MaxRetries)
+	}
+}
+
+// =============================================================================
+// ContextConfig Tests
+// =============================================================================
+
+func TestContextConfig_Defaults(t *testing.T) {
+	cfg := DefaultFileConfig()
+
+	if cfg.Context.ActiveProfile != "full" {
+		t.Errorf("ActiveProfile = %q, want full", cfg.Context.ActiveProfile)
+	}
+	if cfg.Context.AutoDetect {
+		t.Error("AutoDetect should be false by default")
+	}
+	if cfg.Context.EnrichDescriptions {
+		t.Error("EnrichDescriptions should be false by default")
+	}
+}
+
+// =============================================================================
+// callParams Tests
+// =============================================================================
+
+func TestCallParams_ParseServerTool(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		server string
+		result string
+	}{
+		{
+			name:   "simple tool",
+			tool:   "list_files",
+			server: "",
+			result: "list_files",
+		},
+		{
+			name:   "prefixed tool",
+			tool:   "github__list_repos",
+			server: "",
+			result: "list_repos", // Should split
+		},
+		{
+			name:   "explicit server",
+			tool:   "list_repos",
+			server: "github",
+			result: "list_repos",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := callParams{
+				Tool:   tt.tool,
+				Server: tt.server,
+			}
+
+			// Simulate the parsing logic from handleCall
+			serverName := params.Server
+			toolName := params.Tool
+
+			if serverName == "" && strings.Contains(toolName, "__") {
+				parts := strings.SplitN(toolName, "__", 2)
+				if len(parts) == 2 {
+					serverName = parts[0]
+					toolName = parts[1]
+				}
+			}
+
+			if toolName != tt.result {
+				t.Errorf("toolName = %q, want %q", toolName, tt.result)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Daemon Structure Tests
+// =============================================================================
+
+func TestDaemon_EmptyState(t *testing.T) {
+	d := &Daemon{}
+
+	// callLock should work on empty daemon
+	lock := d.callLock("test")
+	if lock == nil {
+		t.Error("expected non-nil lock")
+	}
+
+	// Multiple calls for same server should return same lock
+	lock2 := d.callLock("test")
+	if lock != lock2 {
+		t.Error("expected same lock for same server")
 	}
 }

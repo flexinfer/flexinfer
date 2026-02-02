@@ -9,13 +9,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -57,20 +59,15 @@ func init() {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-vault", "version", version, "addr", vaultAddr)
 
 	server := mcp.NewServer("mcp-vault", version)
 	server.SetInstructions("HashiCorp Vault secrets management tools. Configure with VAULT_ADDR and VAULT_TOKEN. Optionally set VAULT_NAMESPACE for enterprise namespaces.")
@@ -209,10 +206,7 @@ func main() {
 		},
 	}, handlePolicyRead)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // vaultRequest makes an authenticated request to Vault
@@ -317,14 +311,11 @@ func handleStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleRead(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	mount := "secret"
-	if m, ok := args["mount"].(string); ok && m != "" {
-		mount = m
-	}
-
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return mcp.ErrorResult(fmt.Errorf("path is required")), nil
+	v := validate.NewArgs(args)
+	mount := v.String("mount", "secret")
+	path := v.Required("path")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build KV v2 data path
@@ -358,15 +349,9 @@ func handleRead(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	mount := "secret"
-	if m, ok := args["mount"].(string); ok && m != "" {
-		mount = m
-	}
-
-	path := ""
-	if p, ok := args["path"].(string); ok {
-		path = p
-	}
+	v := validate.NewArgs(args)
+	mount := v.String("mount", "secret")
+	path := v.String("path", "")
 
 	// Build KV v2 metadata list path
 	apiPath := mount + "/metadata/" + strings.TrimPrefix(path, "/")
@@ -391,14 +376,11 @@ func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleMetadata(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	mount := "secret"
-	if m, ok := args["mount"].(string); ok && m != "" {
-		mount = m
-	}
-
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return mcp.ErrorResult(fmt.Errorf("path is required")), nil
+	v := validate.NewArgs(args)
+	mount := v.String("mount", "secret")
+	path := v.Required("path")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build KV v2 metadata path
@@ -531,9 +513,10 @@ func handlePolicies(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handlePolicyRead(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := vaultRequest(ctx, "GET", "sys/policies/acl/"+name)

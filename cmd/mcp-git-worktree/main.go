@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -19,28 +21,21 @@ var (
 )
 
 func main() {
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
 	var err error
 	repoPath, err = filepath.Abs(getEnv("REPO_PATH", "."))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving REPO_PATH: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("resolving REPO_PATH: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-git-worktree", "version", version, "repo", repoPath)
 
 	server := mcp.NewServer("mcp-git-worktree", version)
 	server.SetInstructions("Git worktree management")
@@ -92,10 +87,7 @@ func main() {
 		},
 	}, handlePrune)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func getEnv(key, fallback string) string {
@@ -154,14 +146,14 @@ func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path, _ := args["path"].(string)
-	branch, _ := args["branch"].(string)
-	createBranch, _ := args["create_branch"].(bool)
-	startPoint, _ := args["start_point"].(string)
-	detach, _ := args["detach"].(bool)
-
-	if path == "" {
-		return mcp.ErrorResult(fmt.Errorf("path is required")), nil
+	v := validate.NewArgs(args)
+	path := v.Required("path")
+	branch := v.String("branch", "")
+	createBranch := v.Bool("create_branch", false)
+	startPoint := v.String("start_point", "")
+	detach := v.Bool("detach", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Validate path is inside repo
@@ -212,11 +204,11 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 }
 
 func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path, _ := args["path"].(string)
-	force, _ := args["force"].(bool)
-
-	if path == "" {
-		return mcp.ErrorResult(fmt.Errorf("path is required")), nil
+	v := validate.NewArgs(args)
+	path := v.Required("path")
+	force := v.Bool("force", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	absPath := filepath.Join(repoPath, path)
@@ -242,7 +234,12 @@ func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handlePrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dryRun, _ := args["dry_run"].(bool)
+	v := validate.NewArgs(args)
+	dryRun := v.Bool("dry_run", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	gitArgs := []string{"worktree", "prune"}
 	if dryRun {
 		gitArgs = append(gitArgs, "--dry-run")

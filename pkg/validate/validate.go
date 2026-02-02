@@ -120,6 +120,50 @@ func (a *Args) StringSlice(field string) []string {
 	return nil
 }
 
+// RequiredStringSlice checks that a string slice field is present and non-empty.
+func (a *Args) RequiredStringSlice(field string) []string {
+	v := a.StringSlice(field)
+	if len(v) == 0 {
+		a.errors = append(a.errors, Error{Field: field, Message: "is required"})
+		return nil
+	}
+	return v
+}
+
+// Float gets an optional float64 field with a default value.
+func (a *Args) Float(field string, defaultVal float64) float64 {
+	if v, ok := a.args[field].(float64); ok {
+		return v
+	}
+	return defaultVal
+}
+
+// RequiredBool checks that a boolean field is present and true.
+// Useful for confirmation flags that must be explicitly set to true.
+func (a *Args) RequiredBool(field string) bool {
+	v, ok := a.args[field].(bool)
+	if !ok {
+		a.errors = append(a.errors, Error{Field: field, Message: "is required"})
+		return false
+	}
+	return v
+}
+
+// Any gets a raw field value (useful for arrays and objects that need custom processing).
+func (a *Args) Any(field string) any {
+	return a.args[field]
+}
+
+// RequiredAny checks that a field is present (any type).
+func (a *Args) RequiredAny(field string) any {
+	v, ok := a.args[field]
+	if !ok || v == nil {
+		a.errors = append(a.errors, Error{Field: field, Message: "is required"})
+		return nil
+	}
+	return v
+}
+
 // Enum validates a string is one of the allowed values.
 func (a *Args) Enum(field string, defaultVal string, allowed ...string) string {
 	v := a.String(field, defaultVal)

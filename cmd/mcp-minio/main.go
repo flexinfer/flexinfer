@@ -7,14 +7,16 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -43,33 +45,24 @@ func getEnvBool(key string, fallback bool) bool {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	defer cleanup()
+
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-minio", "version", version, "endpoint", endpoint)
 
 	server := mcp.NewServer("mcp-minio", version)
 	server.SetInstructions("MinIO/S3 file management")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanup()
+	return server.Run(ctx)
 }
 
 func cleanup() {
@@ -257,12 +250,13 @@ func handleListBuckets(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleListObjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, _ := args["bucket"].(string)
-	prefix, _ := args["prefix"].(string)
-	recursive, _ := args["recursive"].(bool)
-	maxKeys, _ := args["max_keys"].(float64)
-	if maxKeys == 0 {
-		maxKeys = 1000
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	prefix := v.String("prefix", "")
+	recursive := v.Bool("recursive", false)
+	maxKeys := v.Int("max_keys", 1000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	client, err := getClient()
@@ -273,7 +267,7 @@ func handleListObjects(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	opts := minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: recursive,
-		MaxKeys:   int(maxKeys),
+		MaxKeys:   maxKeys,
 	}
 
 	var objects []map[string]any
@@ -300,11 +294,12 @@ func handleListObjects(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleGetObjectText(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, _ := args["bucket"].(string)
-	key, _ := args["key"].(string)
-	bytesLimit, _ := args["bytes_limit"].(float64)
-	if bytesLimit == 0 {
-		bytesLimit = 1024 * 1024 // 1MB
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	bytesLimit := v.Int("bytes_limit", 1024*1024) // 1MB default
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	client, err := getClient()
@@ -318,7 +313,7 @@ func handleGetObjectText(ctx context.Context, args map[string]any) (*mcp.CallToo
 	}
 	defer obj.Close()
 
-	buf := make([]byte, int(bytesLimit))
+	buf := make([]byte, bytesLimit)
 	n, err := obj.Read(buf)
 	if err != nil && err != io.EOF {
 		return mcp.ErrorResult(err), nil
@@ -342,8 +337,12 @@ func handleGetObjectText(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleStatObject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, _ := args["bucket"].(string)
-	key, _ := args["key"].(string)
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	client, err := getClient()
 	if err != nil {
@@ -370,11 +369,12 @@ func handleStatObject(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handlePresignGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, _ := args["bucket"].(string)
-	key, _ := args["key"].(string)
-	expires, _ := args["expires_seconds"].(float64)
-	if expires == 0 {
-		expires = 3600
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	expires := v.Int("expires_seconds", 3600)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	client, err := getClient()
@@ -390,16 +390,17 @@ func handlePresignGet(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 	return mcp.JSONResult(map[string]any{
 		"ok":        true,
 		"url":       u.String(),
-		"expiresIn": expires,
+		"expiresIn": int64(expires),
 	})
 }
 
 func handlePresignPut(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, _ := args["bucket"].(string)
-	key, _ := args["key"].(string)
-	expires, _ := args["expires_seconds"].(float64)
-	if expires == 0 {
-		expires = 3600
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	key := v.Required("key")
+	expires := v.Int("expires_seconds", 3600)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	client, err := getClient()
@@ -415,6 +416,6 @@ func handlePresignPut(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 	return mcp.JSONResult(map[string]any{
 		"ok":        true,
 		"url":       u.String(),
-		"expiresIn": expires,
+		"expiresIn": int64(expires),
 	})
 }

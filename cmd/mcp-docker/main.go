@@ -9,14 +9,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -32,30 +34,22 @@ var (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-docker", "version", version)
 
 	server := mcp.NewServer("mcp-docker", version)
 	server.SetInstructions("Docker CLI operations. Tools: docker_version, docker_info, docker_ps, docker_images, docker_inspect, docker_logs, docker_exec")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -223,9 +217,10 @@ func handleDockerInfo(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleDockerPs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	all := argsBool(args, "all", false)
-	limit := argsInt(args, "limit", 50)
-	filters := argsStringSlice(args, "filters")
+	v := validate.NewArgs(args)
+	all := v.Bool("all", false)
+	limit := v.Int("limit", 50)
+	filters := v.StringSlice("filters")
 
 	cmdArgs := []string{"ps", "--no-trunc", "--format", "{{json .}}"}
 	if all {
@@ -255,8 +250,9 @@ func handleDockerPs(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleDockerImages(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	all := argsBool(args, "all", false)
-	filters := argsStringSlice(args, "filters")
+	v := validate.NewArgs(args)
+	all := v.Bool("all", false)
+	filters := v.StringSlice("filters")
 
 	cmdArgs := []string{"images", "--no-trunc", "--format", "{{json .}}"}
 	if all {
@@ -283,12 +279,14 @@ func handleDockerImages(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleDockerInspect(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	targets := argsStringSlice(args, "targets")
+	v := validate.NewArgs(args)
+	targets := v.StringSlice("targets")
+	timeoutSec := v.Int("timeoutSeconds", 0)
 	if len(targets) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("missing 'targets'")), nil
+		return mcp.ErrorResult(fmt.Errorf("targets: is required")), nil
 	}
 
-	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	ctx, cancel := withTimeoutSeconds(ctx, timeoutSec)
 	defer cancel()
 
 	cmdArgs := append([]string{"inspect"}, targets...)
@@ -305,28 +303,30 @@ func handleDockerInspect(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleDockerLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	container, _ := args["container"].(string)
-	if strings.TrimSpace(container) == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'container'")), nil
+	v := validate.NewArgs(args)
+	container := v.Required("container")
+	tail := v.Int("tail", 200)
+	since := v.String("since", "")
+	until := v.String("until", "")
+	timestamps := v.Bool("timestamps", true)
+	timeoutSec := v.Int("timeoutSeconds", 0)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	tail := argsInt(args, "tail", 200)
-	since, _ := args["since"].(string)
-	until, _ := args["until"].(string)
-	timestamps := argsBool(args, "timestamps", true)
-
-	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	ctx, cancel := withTimeoutSeconds(ctx, timeoutSec)
 	defer cancel()
 
 	cmdArgs := []string{"logs"}
 	if tail > 0 {
 		cmdArgs = append(cmdArgs, "--tail", fmt.Sprintf("%d", tail))
 	}
-	if strings.TrimSpace(since) != "" {
-		cmdArgs = append(cmdArgs, "--since", strings.TrimSpace(since))
+	if since != "" {
+		cmdArgs = append(cmdArgs, "--since", since)
 	}
-	if strings.TrimSpace(until) != "" {
-		cmdArgs = append(cmdArgs, "--until", strings.TrimSpace(until))
+	if until != "" {
+		cmdArgs = append(cmdArgs, "--until", until)
 	}
 	if timestamps {
 		cmdArgs = append(cmdArgs, "--timestamps")
@@ -341,30 +341,30 @@ func handleDockerLogs(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleDockerExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	container, _ := args["container"].(string)
-	container = strings.TrimSpace(container)
-	if container == "" {
-		return mcp.ErrorResult(fmt.Errorf("missing 'container'")), nil
-	}
+	v := validate.NewArgs(args)
+	container := v.Required("container")
+	command := v.StringSlice("command")
+	user := v.String("user", "")
+	workdir := v.String("workdir", "")
+	env := v.StringSlice("env")
+	timeoutSec := v.Int("timeoutSeconds", 0)
 
-	command := argsStringSlice(args, "command")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	if len(command) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("missing 'command'")), nil
+		return mcp.ErrorResult(fmt.Errorf("command: is required")), nil
 	}
 
-	user, _ := args["user"].(string)
-	workdir, _ := args["workdir"].(string)
-	env := argsStringSlice(args, "env")
-
-	ctx, cancel := withTimeoutSecondsArg(ctx, args)
+	ctx, cancel := withTimeoutSeconds(ctx, timeoutSec)
 	defer cancel()
 
 	cmdArgs := []string{"exec"}
-	if strings.TrimSpace(user) != "" {
-		cmdArgs = append(cmdArgs, "-u", strings.TrimSpace(user))
+	if user != "" {
+		cmdArgs = append(cmdArgs, "-u", user)
 	}
-	if strings.TrimSpace(workdir) != "" {
-		cmdArgs = append(cmdArgs, "-w", strings.TrimSpace(workdir))
+	if workdir != "" {
+		cmdArgs = append(cmdArgs, "-w", workdir)
 	}
 	for _, kv := range env {
 		kv = strings.TrimSpace(kv)
@@ -515,112 +515,12 @@ func envInt(key string, fallback int) int {
 	return parsed
 }
 
-func withTimeoutSecondsArg(ctx context.Context, args map[string]any) (context.Context, context.CancelFunc) {
+func withTimeoutSeconds(ctx context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {
 	if _, hasDeadline := ctx.Deadline(); hasDeadline {
 		return ctx, func() {}
 	}
-	timeoutSeconds := timeoutSecondsFromArgs(args, "timeoutSeconds", 0)
 	if timeoutSeconds <= 0 {
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-}
-
-func timeoutSecondsFromArgs(args map[string]any, key string, fallback int) int {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return fallback
-	}
-
-	switch v := raw.(type) {
-	case int:
-		if v > 0 {
-			return v
-		}
-	case int32:
-		if v > 0 {
-			return int(v)
-		}
-	case int64:
-		if v > 0 {
-			return int(v)
-		}
-	case float64:
-		iv := int(v)
-		if iv > 0 {
-			return iv
-		}
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(v))
-		if err == nil && parsed > 0 {
-			return parsed
-		}
-	}
-
-	return fallback
-}
-
-func argsBool(args map[string]any, key string, fallback bool) bool {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return fallback
-	}
-	switch v := raw.(type) {
-	case bool:
-		return v
-	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true", "1", "yes", "y":
-			return true
-		case "false", "0", "no", "n":
-			return false
-		}
-	}
-	return fallback
-}
-
-func argsInt(args map[string]any, key string, fallback int) int {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return fallback
-	}
-	switch v := raw.(type) {
-	case int:
-		return v
-	case int32:
-		return int(v)
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(v))
-		if err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func argsStringSlice(args map[string]any, key string) []string {
-	raw, ok := args[key]
-	if !ok || raw == nil {
-		return nil
-	}
-	switch v := raw.(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			s, ok := item.(string)
-			if !ok {
-				continue
-			}
-			out = append(out, s)
-		}
-		return out
-	default:
-		return nil
-	}
 }

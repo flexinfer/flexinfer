@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -27,20 +27,14 @@ type helmServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	kubeconfig := os.Getenv("HELM_KUBECONFIG")
 	if kubeconfig == "" {
@@ -64,6 +58,8 @@ func main() {
 		namespace:  namespace,
 		timeout:    timeout,
 	}
+
+	logger.Info("starting server", "name", "mcp-helm", "version", version, "namespace", namespace)
 
 	server := mcp.NewServer("mcp-helm", version)
 	server.SetInstructions("Helm MCP server. Manage Helm releases and charts.")
@@ -265,10 +261,7 @@ func main() {
 		},
 	}, h.handleRepoList)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (h *helmServer) runHelm(ctx context.Context, args ...string) ([]byte, error) {

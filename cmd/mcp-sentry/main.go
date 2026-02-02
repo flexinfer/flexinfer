@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -25,7 +26,7 @@ var (
 	sentryToken = os.Getenv("SENTRY_AUTH_TOKEN")
 	sentryOrg   = os.Getenv("SENTRY_ORG")
 
-	httpClient *http.Client
+	httpClient *httpclient.Client
 )
 
 func getEnv(key, fallback string) string {
@@ -35,37 +36,20 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
 func init() {
-	httpClient = &http.Client{
-		Timeout: time.Duration(getEnvInt("SENTRY_TIMEOUT", 30)) * time.Second,
-	}
+	httpClient = httpclient.NewDefault()
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-sentry", "version", version, "url", sentryURL)
 
 	server := mcp.NewServer("mcp-sentry", version)
 	server.SetInstructions("Sentry error tracking tools. Configure with SENTRY_AUTH_TOKEN and SENTRY_ORG. Optionally set SENTRY_URL for self-hosted instances.")
@@ -249,17 +233,7 @@ func main() {
 		},
 	}, handleListReleases)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func getOrg(args map[string]any) string {
-	if org, ok := args["org"].(string); ok && org != "" {
-		return org
-	}
-	return sentryOrg
+	return server.Run(ctx)
 }
 
 func sentryRequest(ctx context.Context, method, path string, query url.Values) (any, error) {
@@ -302,7 +276,8 @@ func sentryRequest(ctx context.Context, method, path string, query url.Values) (
 }
 
 func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required (set SENTRY_ORG env or pass org parameter)")), nil
 	}
@@ -340,14 +315,14 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
+	project := v.Required("project")
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
 	}
-
-	project, ok := args["project"].(string)
-	if !ok || project == "" {
-		return mcp.ErrorResult(fmt.Errorf("project is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("projects/%s/%s/", org, project), nil)
@@ -359,33 +334,29 @@ func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
+	project := v.Required("project")
+	queryStr := v.String("query", "")
+	status := v.String("status", "")
+	limit := v.IntRange("limit", 25, 1, 100)
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
 	}
-
-	project, ok := args["project"].(string)
-	if !ok || project == "" {
-		return mcp.ErrorResult(fmt.Errorf("project is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
 	query.Set("project", project)
 
-	if q, ok := args["query"].(string); ok && q != "" {
-		query.Set("query", q)
+	if queryStr != "" {
+		query.Set("query", queryStr)
 	}
-	if status, ok := args["status"].(string); ok && status != "" {
+	if status != "" {
 		query.Set("query", fmt.Sprintf("is:%s", status))
 	}
 
-	limit := 25
-	if l, ok := args["limit"].(float64); ok && l > 0 {
-		limit = int(l)
-		if limit > 100 {
-			limit = 100
-		}
-	}
 	query.Set("limit", strconv.Itoa(limit))
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("projects/%s/%s/issues/", org, project), query)
@@ -427,9 +398,10 @@ func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	issueID, ok := args["issue_id"].(string)
-	if !ok || issueID == "" {
-		return mcp.ErrorResult(fmt.Errorf("issue_id is required")), nil
+	v := validate.NewArgs(args)
+	issueID := v.Required("issue_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("issues/%s/", issueID), nil)
@@ -441,19 +413,14 @@ func handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleListIssueEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	issueID, ok := args["issue_id"].(string)
-	if !ok || issueID == "" {
-		return mcp.ErrorResult(fmt.Errorf("issue_id is required")), nil
+	v := validate.NewArgs(args)
+	issueID := v.Required("issue_id")
+	limit := v.IntRange("limit", 25, 1, 100)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-	limit := 25
-	if l, ok := args["limit"].(float64); ok && l > 0 {
-		limit = int(l)
-		if limit > 100 {
-			limit = 100
-		}
-	}
 	query.Set("limit", strconv.Itoa(limit))
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("issues/%s/events/", issueID), query)
@@ -489,19 +456,15 @@ func handleListIssueEvents(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleGetEvent(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
+	project := v.Required("project")
+	eventID := v.Required("event_id")
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
 	}
-
-	project, ok := args["project"].(string)
-	if !ok || project == "" {
-		return mcp.ErrorResult(fmt.Errorf("project is required")), nil
-	}
-
-	eventID, ok := args["event_id"].(string)
-	if !ok || eventID == "" {
-		return mcp.ErrorResult(fmt.Errorf("event_id is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("projects/%s/%s/events/%s/", org, project, eventID), nil)
@@ -513,28 +476,20 @@ func handleGetEvent(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleProjectStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
+	project := v.Required("project")
+	stat := v.Enum("stat", "received", "received", "rejected", "blacklisted")
+	resolution := v.Enum("resolution", "1h", "10s", "1h", "1d")
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
 	}
-
-	project, ok := args["project"].(string)
-	if !ok || project == "" {
-		return mcp.ErrorResult(fmt.Errorf("project is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-
-	stat := "received"
-	if s, ok := args["stat"].(string); ok && s != "" {
-		stat = s
-	}
 	query.Set("stat", stat)
-
-	resolution := "1h"
-	if r, ok := args["resolution"].(string); ok && r != "" {
-		resolution = r
-	}
 	query.Set("resolution", resolution)
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("projects/%s/%s/stats/", org, project), query)
@@ -552,26 +507,19 @@ func handleProjectStats(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleListReleases(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	org := getOrg(args)
+	v := validate.NewArgs(args)
+	org := v.String("org", sentryOrg)
+	project := v.Required("project")
+	limit := v.IntRange("limit", 25, 1, 100)
 	if org == "" {
 		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
 	}
-
-	project, ok := args["project"].(string)
-	if !ok || project == "" {
-		return mcp.ErrorResult(fmt.Errorf("project is required")), nil
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
 	query.Set("project", project)
-
-	limit := 25
-	if l, ok := args["limit"].(float64); ok && l > 0 {
-		limit = int(l)
-		if limit > 100 {
-			limit = 100
-		}
-	}
 	query.Set("per_page", strconv.Itoa(limit))
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("organizations/%s/releases/", org), query)

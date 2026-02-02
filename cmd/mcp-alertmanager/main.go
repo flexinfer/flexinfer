@@ -9,15 +9,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -29,20 +29,14 @@ type alertmanagerServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	amURL := os.Getenv("ALERTMANAGER_URL")
 	if amURL == "" {
@@ -54,6 +48,8 @@ func main() {
 		url:    amURL,
 		client: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-alertmanager", "version", version, "url", amURL)
 
 	server := mcp.NewServer("mcp-alertmanager", version)
 	server.SetInstructions("Alertmanager MCP server. Manage alerts and silences.")
@@ -159,10 +155,7 @@ func main() {
 		},
 	}, am.handleStatus)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // API request helper

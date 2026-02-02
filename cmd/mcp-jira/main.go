@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 
 	"github.com/andygrunwald/go-jira"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -26,21 +28,14 @@ type jiraServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	srv := &jiraServer{
 		jiraURL:  os.Getenv("JIRA_URL"),
@@ -48,15 +43,14 @@ func main() {
 		apiToken: os.Getenv("JIRA_API_TOKEN"),
 	}
 
+	logger.Info("starting server", "name", "mcp-jira", "version", version, "url", srv.jiraURL)
+
 	server := mcp.NewServer("mcp-jira", version)
 	server.SetInstructions("Interact with Jira (get issues, search, transition, comment). Requires JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN.")
 
 	registerTools(server, srv)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *jiraServer) getClient() (*jira.Client, error) {
@@ -96,14 +90,15 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			Required: []string{"issue_key"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		client, err := srv.getClient()
-		if err != nil {
+		v := validate.NewArgs(args)
+		key := v.Required("issue_key")
+		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 
-		key, _ := args["issue_key"].(string)
-		if key == "" {
-			return mcp.ErrorResult(fmt.Errorf("missing issue_key")), nil
+		client, err := srv.getClient()
+		if err != nil {
+			return mcp.ErrorResult(err), nil
 		}
 
 		issue, _, err := client.Issue.Get(key, nil)
@@ -126,19 +121,20 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			Required: []string{"jql"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		jql := v.Required("jql")
+		limit := v.Int("limit", 50)
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		client, err := srv.getClient()
 		if err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 
-		jql, _ := args["jql"].(string)
-		limit, _ := args["limit"].(float64)
-		if limit == 0 {
-			limit = 50
-		}
-
 		opt := &jira.SearchOptions{
-			MaxResults: int(limit),
+			MaxResults: limit,
 		}
 
 		issues, _, err := client.Issue.Search(jql, opt)
@@ -173,13 +169,17 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			Required: []string{"issue_key", "body"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		key := v.Required("issue_key")
+		body := v.Required("body")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		client, err := srv.getClient()
 		if err != nil {
 			return mcp.ErrorResult(err), nil
 		}
-
-		key, _ := args["issue_key"].(string)
-		body, _ := args["body"].(string)
 
 		comment := &jira.Comment{
 			Body: body,
@@ -204,12 +204,16 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			Required: []string{"issue_key"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		key := v.Required("issue_key")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		client, err := srv.getClient()
 		if err != nil {
 			return mcp.ErrorResult(err), nil
 		}
-
-		key, _ := args["issue_key"].(string)
 
 		transitions, _, err := client.Issue.GetTransitions(key)
 		if err != nil {
@@ -231,13 +235,17 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			Required: []string{"issue_key", "transition_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		key := v.Required("issue_key")
+		transID := v.Required("transition_id")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+
 		client, err := srv.getClient()
 		if err != nil {
 			return mcp.ErrorResult(err), nil
 		}
-
-		key, _ := args["issue_key"].(string)
-		transID, _ := args["transition_id"].(string)
 
 		_, err = client.Issue.DoTransition(key, transID)
 		if err != nil {

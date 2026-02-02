@@ -160,7 +160,8 @@ func (e *WorkflowEngine) StartWorkflow(ctx context.Context, definitionID, sessio
 	return wf, nil
 }
 
-// GetWorkflow retrieves a workflow by ID
+// GetWorkflow retrieves a workflow by ID.
+// Returns a snapshot copy to avoid data races with concurrent modifications.
 func (e *WorkflowEngine) GetWorkflow(id string) (*Workflow, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -169,7 +170,7 @@ func (e *WorkflowEngine) GetWorkflow(id string) (*Workflow, error) {
 	if !ok {
 		return nil, fmt.Errorf("workflow not found: %s", id)
 	}
-	return wf, nil
+	return wf.clone(), nil
 }
 
 // ListWorkflows lists workflows with optional filtering

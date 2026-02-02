@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -40,21 +42,15 @@ func getEnvInt(key string, fallback int) int {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-asus-router", "version", version, "host", hostAlias)
 
 	server := mcp.NewServer("mcp-asus-router", version)
 	server.SetInstructions("ASUS Router management via SSH")
@@ -62,10 +58,7 @@ func main() {
 	// Register tools
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -207,9 +200,10 @@ func handleStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleLogread(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	lines := 200
-	if v, ok := args["lines"].(float64); ok {
-		lines = int(v)
+	v := validate.NewArgs(args)
+	lines := v.IntRange("lines", 200, 10, 2000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 	out, err := runRemote(ctx, fmt.Sprintf("logread -n %d", lines))
 	if err != nil {
@@ -219,9 +213,10 @@ func handleLogread(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleKernelTail(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	lines := 200
-	if v, ok := args["lines"].(float64); ok {
-		lines = int(v)
+	v := validate.NewArgs(args)
+	lines := v.IntRange("lines", 200, 10, 500)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 	out, err := runRemote(ctx, fmt.Sprintf("dmesg | tail -n %d", lines))
 	if err != nil {
@@ -240,7 +235,11 @@ var whitelistCommands = map[string]string{
 }
 
 func handleExecCommand(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	cmdName, _ := args["command"].(string)
+	v := validate.NewArgs(args)
+	cmdName := v.Required("command")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	cmd, ok := whitelistCommands[cmdName]
 	if !ok {
 		return mcp.ErrorResult(fmt.Errorf("command not permitted")), nil
@@ -253,7 +252,11 @@ func handleExecCommand(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleReboot(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	confirm, _ := args["confirm"].(bool)
+	v := validate.NewArgs(args)
+	confirm := v.RequiredBool("confirm")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	if !confirm {
 		return mcp.ErrorResult(fmt.Errorf("confirm=true required")), nil
 	}

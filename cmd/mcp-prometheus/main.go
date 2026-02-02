@@ -3,65 +3,53 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 type promServer struct {
 	url        string
-	httpClient *http.Client
+	httpClient *httpclient.Client
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	promURL := os.Getenv("PROMETHEUS_URL")
 	if promURL == "" {
 		promURL = "http://prometheus.monitoring.svc.cluster.local:9090"
 	}
 
-	// Configure HTTP client with optional TLS skip verify
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	if skipVerify := os.Getenv("TLS_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-
 	prom := &promServer{
 		url:        promURL,
-		httpClient: httpClient,
+		httpClient: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-prometheus", "version", version, "url", promURL)
 
 	server := mcp.NewServer("mcp-prometheus", version)
 	server.SetInstructions("Fast Go-native Prometheus MCP server. Query metrics, alerts, and targets.")
@@ -205,10 +193,7 @@ func main() {
 		},
 	}, prom.handleRuntimeInfo)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (p *promServer) request(ctx context.Context, path string, params url.Values) (map[string]any, error) {
@@ -222,7 +207,7 @@ func (p *promServer) request(ctx context.Context, path string, params url.Values
 		return nil, err
 	}
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -247,13 +232,6 @@ func (p *promServer) request(ctx context.Context, path string, params url.Values
 	}
 
 	return result, nil
-}
-
-func getStringArg(args map[string]any, key, defaultVal string) string {
-	if v, ok := args[key].(string); ok && v != "" {
-		return v
-	}
-	return defaultVal
 }
 
 func getEnvInt(key string, fallback int) int {
@@ -300,11 +278,12 @@ func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
 }
 
 func (p *promServer) handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	evalTime := getStringArg(args, "time", "")
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	evalTime := v.String("time", "")
 
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	params := url.Values{}
@@ -315,20 +294,21 @@ func (p *promServer) handleQuery(ctx context.Context, args map[string]any) (*mcp
 
 	result, err := p.request(ctx, "/api/v1/query", params)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (p *promServer) handleQueryRange(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	start := getStringArg(args, "start", "")
-	end := getStringArg(args, "end", "")
-	step := getStringArg(args, "step", "1m")
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	start := v.Required("start")
+	end := v.String("end", "")
+	step := v.String("step", "1m")
 
-	if query == "" || start == "" {
-		return nil, fmt.Errorf("query and start are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	params := url.Values{}
@@ -343,14 +323,15 @@ func (p *promServer) handleQueryRange(ctx context.Context, args map[string]any) 
 
 	result, err := p.request(ctx, "/api/v1/query_range", params)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (p *promServer) handleListMetrics(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	matchPattern := getStringArg(args, "match", "")
+	v := validate.NewArgs(args)
+	matchPattern := v.String("match", "")
 
 	// Fetch all metric names (no server-side filter - Prometheus match[] expects
 	// series selectors like {job="prometheus"}, not regex patterns)
@@ -389,22 +370,28 @@ func (p *promServer) handleListLabels(ctx context.Context, args map[string]any) 
 }
 
 func (p *promServer) handleLabelValues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	label := getStringArg(args, "label", "")
+	v := validate.NewArgs(args)
+	label := v.Required("label")
 
-	if label == "" {
-		return nil, fmt.Errorf("label is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := p.request(ctx, fmt.Sprintf("/api/v1/label/%s/values", label), nil)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
 }
 
 func (p *promServer) handleListTargets(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	state := getStringArg(args, "state", "active")
+	v := validate.NewArgs(args)
+	state := v.Enum("state", "active", "active", "dropped", "any")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	if state != "any" {
@@ -413,7 +400,7 @@ func (p *promServer) handleListTargets(ctx context.Context, args map[string]any)
 
 	result, err := p.request(ctx, "/api/v1/targets", params)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)
@@ -429,7 +416,8 @@ func (p *promServer) handleListAlerts(ctx context.Context, args map[string]any) 
 }
 
 func (p *promServer) handleListRules(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ruleType := getStringArg(args, "type", "")
+	v := validate.NewArgs(args)
+	ruleType := v.String("type", "")
 
 	params := url.Values{}
 	if ruleType != "" {
@@ -438,7 +426,7 @@ func (p *promServer) handleListRules(ctx context.Context, args map[string]any) (
 
 	result, err := p.request(ctx, "/api/v1/rules", params)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	return mcp.JSONResult(result)

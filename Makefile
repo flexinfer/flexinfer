@@ -1,4 +1,8 @@
-.PHONY: all build clean test install servers lint fmt vet check setup hooks dev help
+.PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
+	ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
+	docker-build docker-build-loom-core docker-build-custom-server \
+	docker-push docker-push-loom-core docker-push-custom-server \
+	deploy deploy-status
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -6,6 +10,19 @@ GOPATH := $(shell go env GOPATH)
 GOLANGCI_LINT := $(GOPATH)/bin/golangci-lint
 GOIMPORTS := $(GOPATH)/bin/goimports
 GOSEC := $(GOPATH)/bin/gosec
+
+# Docker settings
+REGISTRY ?= registry.harbor.lan
+LOOM_CORE_IMAGE := $(REGISTRY)/mcp/loom-core
+CUSTOM_SERVER_IMAGE := $(REGISTRY)/mcp/custom-server
+IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
+
+# Workspace root (for local Docker builds that need libs/)
+WORKSPACE_ROOT ?= $(shell realpath ../.. 2>/dev/null || echo "$(HOME)/workspace")
+
+# GitOps settings
+GITOPS_DIR ?= $(shell realpath ../../platform/gitops 2>/dev/null || echo "$(HOME)/workspace/platform/gitops")
+LOOM_HUB_DIR := $(GITOPS_DIR)/k3s/loom-hub
 
 # MCP server binaries
 MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence
@@ -40,6 +57,28 @@ help:
 	@echo "  make test       - Run tests"
 	@echo "  make test-cover - Run tests with coverage report"
 	@echo "  make test-race  - Run tests with race detector"
+	@echo ""
+	@echo "CI (local):"
+	@echo "  make ci              - Run full CI pipeline locally"
+	@echo "  make ci-lint         - Run CI lint stage (fmt, vet, lint - warnings only)"
+	@echo "  make ci-lint-strict  - Run lint stage (fails on any issue)"
+	@echo "  make ci-build        - Run CI build stage"
+	@echo "  make ci-test         - Run CI test stage (unit + integration)"
+	@echo "  make ci-test-unit    - Run unit tests with coverage threshold"
+	@echo "  make ci-test-integration - Run integration tests"
+	@echo "  make ci-benchmark    - Run benchmarks"
+	@echo ""
+	@echo "Docker:"
+	@echo "  make docker-build              - Build all Docker images"
+	@echo "  make docker-build-loom-core    - Build loom-core image"
+	@echo "  make docker-build-custom-server - Build custom-server image"
+	@echo "  make docker-push               - Push all images to registry"
+	@echo "  make docker-push-loom-core     - Push loom-core image"
+	@echo "  make docker-push-custom-server - Push custom-server image"
+	@echo ""
+	@echo "Deploy:"
+	@echo "  make deploy         - Build, push, and deploy to k8s"
+	@echo "  make deploy-status  - Show deployment status"
 	@echo ""
 	@echo "Other:"
 	@echo "  make install    - Install binaries to ~/.local/bin"
@@ -227,9 +266,10 @@ setup: tools hooks
 # Install development tools
 tools:
 	@echo "Installing development tools..."
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	go install github.com/boumenot/gocover-cobertura@v1.4.0
 	@echo "Tools installed to $(GOPATH)/bin"
 
 # Install git hooks
@@ -278,3 +318,228 @@ mod-verify:
 mod-update:
 	go get -u ./...
 	go mod tidy
+
+# =============================================================================
+# CI TARGETS - Mimic GitLab CI pipeline locally
+# =============================================================================
+
+COVERAGE_THRESHOLD ?= 24
+
+# Full CI pipeline
+ci: ci-lint ci-build ci-test
+	@echo ""
+	@echo "✓ CI pipeline passed!"
+
+# Lint stage (mirrors GitLab CI lint stage - lint allows failure in CI)
+ci-lint: fmt-check vet ci-lint-soft
+	@echo "✓ Lint stage passed (lint issues are warnings only, matching CI)"
+
+# Lint soft - matches CI behavior (allow_failure: true)
+ci-lint-soft:
+	@echo "Running golangci-lint (warnings only, matches CI)..."
+	-$(GOLANGCI_LINT) run --timeout 5m ./...
+
+# Lint strict - fails on any lint issue
+ci-lint-strict: fmt-check vet
+	@echo "Running golangci-lint (strict)..."
+	$(GOLANGCI_LINT) run --timeout 5m ./...
+	@echo "✓ Lint stage passed (strict)"
+
+# Build stage (mirrors GitLab CI build:binaries)
+ci-build: clean
+	@echo "Building all binaries..."
+	@mkdir -p bin
+	@VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo "dev"); \
+	LDFLAGS="-s -w -X main.version=$$VERSION"; \
+	echo "Version: $$VERSION"; \
+	CGO_ENABLED=0 go build -ldflags="$$LDFLAGS" -o bin/loom ./cmd/loom && \
+	CGO_ENABLED=0 go build -ldflags="$$LDFLAGS" -o bin/loomd ./cmd/loomd && \
+	failures=0; \
+	for pkg in $$(ls cmd/ | grep '^mcp-'); do \
+		echo "Building $$pkg..."; \
+		if ! CGO_ENABLED=0 go build -ldflags="$$LDFLAGS" -o "bin/$$pkg" "./cmd/$$pkg"; then \
+			echo "ERROR: Failed to build $$pkg"; \
+			failures=$$((failures + 1)); \
+		fi; \
+	done; \
+	if [ "$$failures" -ne 0 ]; then \
+		echo "ERROR: $$failures MCP server(s) failed to build"; \
+		exit 1; \
+	fi
+	@echo "Built binaries:"
+	@ls -la bin/
+	@echo "✓ Build stage passed"
+
+# Test stage (mirrors GitLab CI test stage)
+ci-test: ci-test-unit ci-test-integration
+	@echo "✓ Test stage passed"
+
+# Unit tests with coverage (mirrors GitLab CI test:unit)
+ci-test-unit:
+	@echo "Running unit tests with race detector and coverage..."
+	@PKGS=$$(go list -f '{{if or (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... | sed '/^$$/d'); \
+	if [ -z "$$PKGS" ]; then \
+		echo "No packages with tests found"; \
+		exit 0; \
+	fi; \
+	go test -race -coverprofile=coverage.out -covermode=atomic $$PKGS
+	@echo ""
+	@echo "Coverage Summary:"
+	@go tool cover -func=coverage.out | tail -20
+	@TOTAL=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	echo ""; \
+	echo "Total Coverage: $${TOTAL}%"; \
+	TOTAL_INT=$$(echo "$$TOTAL" | cut -d. -f1); \
+	if [ "$$TOTAL_INT" -lt "$(COVERAGE_THRESHOLD)" ]; then \
+		echo "ERROR: Coverage $${TOTAL}% is below threshold $(COVERAGE_THRESHOLD)%"; \
+		exit 1; \
+	fi; \
+	echo "✓ Coverage threshold met (>= $(COVERAGE_THRESHOLD)%)"
+
+# Integration tests (mirrors GitLab CI test:integration)
+ci-test-integration: ci-build
+	@echo "Running integration tests..."
+	@export LOOM_REPO_ROOT="$$(pwd)"; \
+	export LOOM_RUN_MCP_SMOKE="1"; \
+	export PATH="$$(pwd)/bin:$$PATH"; \
+	echo "Available MCP servers:"; \
+	ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"; \
+	echo ""; \
+	go test -v -race ./internal/integration/...
+
+# Race detection tests (mirrors GitLab CI test:race)
+ci-test-race:
+	@echo "Running race detection tests..."
+	go test -race -short ./...
+	@echo "✓ Race tests passed"
+
+# Benchmarks (mirrors GitLab CI test:benchmark)
+ci-benchmark: ci-build
+	@echo "Running benchmarks..."
+	@export LOOM_REPO_ROOT="$$(pwd)"; \
+	export PATH="$$(pwd)/bin:$$PATH"; \
+	go test -bench=. -benchmem -run=^$$ ./internal/... ./pkg/... 2>&1 | tee benchmark.txt
+	@echo "Benchmark results saved to benchmark.txt"
+
+# =============================================================================
+# DOCKER TARGETS
+# =============================================================================
+
+# Build all Docker images (uses local Dockerfiles with workspace context)
+docker-build: docker-build-loom-core docker-build-custom-server
+	@echo "✓ All Docker images built"
+
+# Build loom-core image (local build using workspace root context)
+docker-build-loom-core:
+	@echo "Building loom-core image..."
+	@echo "Image: $(LOOM_CORE_IMAGE):$(IMAGE_TAG)"
+	@echo "Context: $(WORKSPACE_ROOT)"
+	cd $(WORKSPACE_ROOT) && docker build \
+		--build-arg VERSION=$(VERSION) \
+		-t $(LOOM_CORE_IMAGE):$(IMAGE_TAG) \
+		-t $(LOOM_CORE_IMAGE):latest \
+		-f services/loom-core/Dockerfile.local .
+	@echo "✓ loom-core image built"
+
+# Build custom-server image (local build using workspace root context)
+docker-build-custom-server:
+	@echo "Building custom-server image..."
+	@echo "Image: $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
+	@echo "Context: $(WORKSPACE_ROOT)"
+	cd $(WORKSPACE_ROOT) && docker build \
+		-t $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG) \
+		-t $(CUSTOM_SERVER_IMAGE):latest \
+		-f services/loom-core/Dockerfile.custom-server.local .
+	@echo "✓ custom-server image built"
+
+# Push all images
+docker-push: docker-push-loom-core docker-push-custom-server
+	@echo "✓ All images pushed to $(REGISTRY)"
+
+# Push loom-core image
+docker-push-loom-core: docker-build-loom-core
+	@echo "Pushing loom-core image..."
+	docker push $(LOOM_CORE_IMAGE):$(IMAGE_TAG)
+	docker push $(LOOM_CORE_IMAGE):latest
+	@echo "✓ loom-core pushed"
+
+# Push custom-server image
+docker-push-custom-server: docker-build-custom-server
+	@echo "Pushing custom-server image..."
+	docker push $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)
+	docker push $(CUSTOM_SERVER_IMAGE):latest
+	@echo "✓ custom-server pushed"
+
+# =============================================================================
+# DEPLOY TARGETS
+# =============================================================================
+
+# Full deploy: build, push, update gitops, reconcile
+deploy: docker-push deploy-update-images deploy-reconcile
+	@echo ""
+	@echo "✓ Deployment complete!"
+	@echo "  Image tag: $(IMAGE_TAG)"
+	@echo "  Registry:  $(REGISTRY)"
+
+# Update image tags in gitops repo (only loom-hub/servers deployments)
+deploy-update-images:
+	@echo "Updating image tags in gitops repo..."
+	@if [ ! -d "$(LOOM_HUB_DIR)/servers" ]; then \
+		echo "ERROR: GitOps directory not found: $(LOOM_HUB_DIR)/servers"; \
+		echo "Set GITOPS_DIR to override"; \
+		exit 1; \
+	fi
+	@echo "Updating deployments to use $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
+	@for f in $(LOOM_HUB_DIR)/servers/*/deployment.yaml; do \
+		if [ -f "$$f" ]; then \
+			sed -i '' 's|$(REGISTRY)/mcp/custom-server:[a-zA-Z0-9._-]*|$(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
+		fi; \
+	done
+	@echo "✓ Image tags updated"
+	@echo ""
+	@echo "Changed files:"
+	@cd $(GITOPS_DIR) && git diff --name-only k3s/loom-hub/
+
+# Reconcile Flux
+deploy-reconcile:
+	@echo "Reconciling Flux..."
+	@if command -v flux >/dev/null 2>&1; then \
+		flux reconcile kustomization loom-hub -n flux-system --with-source; \
+	else \
+		echo "Warning: flux CLI not found, skipping reconcile"; \
+		echo "Run manually: flux reconcile kustomization loom-hub -n flux-system --with-source"; \
+	fi
+
+# Commit gitops changes
+deploy-commit:
+	@echo "Committing gitops changes..."
+	@cd $(GITOPS_DIR) && \
+		git add k3s/loom-hub && \
+		git commit -m "chore(loom-hub): update custom-server to $(IMAGE_TAG)" && \
+		git push
+	@echo "✓ GitOps changes committed and pushed"
+
+# Show deployment status
+deploy-status:
+	@echo "=== Deployment Status ==="
+	@echo ""
+	@echo "Local:"
+	@echo "  Version:   $(VERSION)"
+	@echo "  Image tag: $(IMAGE_TAG)"
+	@echo "  Registry:  $(REGISTRY)"
+	@echo ""
+	@echo "GitOps ($(LOOM_HUB_DIR)):"
+	@if [ -d "$(LOOM_HUB_DIR)" ]; then \
+		echo "  Current image tags:"; \
+		grep -r "$(REGISTRY)/mcp/custom-server:" $(LOOM_HUB_DIR)/servers/*/deployment.yaml 2>/dev/null | \
+			sed 's|.*/servers/||' | sed 's|/deployment.yaml:.*image: | -> |' | sort -u | head -10; \
+	else \
+		echo "  Directory not found"; \
+	fi
+	@echo ""
+	@echo "Kubernetes:"
+	@if command -v kubectl >/dev/null 2>&1; then \
+		kubectl get pods -n loom-hub -o wide 2>/dev/null | head -15 || echo "  Unable to connect to cluster"; \
+	else \
+		echo "  kubectl not found"; \
+	fi

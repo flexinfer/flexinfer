@@ -9,15 +9,17 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "dev"
@@ -262,21 +264,14 @@ var (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals with proper cleanup
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	// Load config from environment
 	host := os.Getenv("GODOT_HOST")
@@ -307,15 +302,14 @@ func main() {
 	defer godotClient.Close()
 	logReader = NewLogReader(logPath)
 
+	logger.Info("starting server", "name", "mcp-godot", "version", version, "host", host, "port", port)
+
 	server := mcp.NewServer("mcp-godot", version)
 	server.SetInstructions("Godot debugging server. Requires Godot plugin running on localhost:6550.")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -492,9 +486,10 @@ func registerTools(server *mcp.Server) {
 }
 
 func handleSceneTree(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path, _ := args["path"].(string)
-	if path == "" {
-		path = "/root"
+	v := validate.NewArgs(args)
+	path := v.String("path", "/root")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	resp, err := godotClient.CallCommand(map[string]any{
@@ -509,9 +504,10 @@ func handleSceneTree(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleInspect(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	nodePath, _ := args["node_path"].(string)
-	if nodePath == "" {
-		return nil, fmt.Errorf("node_path is required")
+	v := validate.NewArgs(args)
+	nodePath := v.Required("node_path")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	resp, err := godotClient.CallCommand(map[string]any{
@@ -526,14 +522,14 @@ func handleInspect(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleCall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	nodePath, _ := args["node_path"].(string)
-	method, _ := args["method"].(string)
-	callArgs, _ := args["args"].([]any)
-
-	if nodePath == "" || method == "" {
-		return nil, fmt.Errorf("node_path and method are required")
+	v := validate.NewArgs(args)
+	nodePath := v.Required("node_path")
+	method := v.Required("method")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
+	callArgs, _ := args["args"].([]any)
 	if callArgs == nil {
 		callArgs = []any{}
 	}
@@ -552,14 +548,14 @@ func handleCall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleSignal(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	nodePath, _ := args["node_path"].(string)
-	signalName, _ := args["signal"].(string)
-	signalArgs, _ := args["args"].([]any)
-
-	if nodePath == "" || signalName == "" {
-		return nil, fmt.Errorf("node_path and signal are required")
+	v := validate.NewArgs(args)
+	nodePath := v.Required("node_path")
+	signalName := v.Required("signal")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
+	signalArgs, _ := args["args"].([]any)
 	if signalArgs == nil {
 		signalArgs = []any{}
 	}
@@ -578,9 +574,10 @@ func handleSignal(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleEval(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	expr, _ := args["expression"].(string)
-	if expr == "" {
-		return nil, fmt.Errorf("expression is required")
+	v := validate.NewArgs(args)
+	expr := v.Required("expression")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	resp, err := godotClient.CallCommand(map[string]any{
@@ -595,12 +592,12 @@ func handleEval(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleSet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	nodePath, _ := args["node_path"].(string)
-	prop, _ := args["property"].(string)
-	value := args["value"]
-
-	if nodePath == "" || prop == "" {
-		return nil, fmt.Errorf("node_path and property are required")
+	v := validate.NewArgs(args)
+	nodePath := v.Required("node_path")
+	prop := v.Required("property")
+	value := v.RequiredAny("value")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	resp, err := godotClient.CallCommand(map[string]any{
@@ -617,7 +614,11 @@ func handleSet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 }
 
 func handleScreenshot(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	savePath, _ := args["save_path"].(string)
+	v := validate.NewArgs(args)
+	savePath := v.String("save_path", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	cmd := map[string]any{"cmd": "screenshot"}
 	if savePath != "" {
@@ -633,30 +634,24 @@ func handleScreenshot(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	lines := 50
-	if l, ok := args["lines"].(float64); ok && l > 0 {
-		lines = int(l)
-		if lines > 500 {
-			lines = 500
-		}
+	v := validate.NewArgs(args)
+	lines := v.IntRange("lines", 50, 1, 500)
+	filter := v.String("filter", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	filter, _ := args["filter"].(string)
 
 	logLines := logReader.ReadRecent(lines, filter)
 	return mcp.TextResult(strings.Join(logLines, "\n")), nil
 }
 
 func handleLogsStream(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	duration := 60
-	if d, ok := args["duration"].(float64); ok && d > 0 {
-		duration = int(d)
-		if duration > 300 {
-			duration = 300
-		}
+	v := validate.NewArgs(args)
+	duration := v.IntRange("duration", 60, 1, 300)
+	filter := v.String("filter", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-
-	filter, _ := args["filter"].(string)
 
 	logLines := logReader.TailStream(ctx, duration*1000, filter)
 	return mcp.TextResult(strings.Join(logLines, "\n")), nil

@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var execCommand = exec.CommandContext
@@ -59,31 +61,22 @@ func withDefaultTimeout(ctx context.Context, envKey string, fallbackSeconds int)
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-ops", "version", version)
 
 	server := mcp.NewServer("mcp-ops", version)
 	server.SetInstructions("Operations MCP server for k3s and Harvester operations")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -311,36 +304,38 @@ func formatResult(output string, err error) (*mcp.CallToolResult, error) {
 // Handlers
 
 func handleGetNodes(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	kc, _ := args["kubeconfig"].(string)
+	v := validate.NewArgs(args)
+	kc := v.String("kubeconfig", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	out, err := runKubectl(ctx, kc, "get", "nodes", "-o", "wide")
 	return formatResult(out, err)
 }
 
 func handleScaleDeploy(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	name, _ := args["name"].(string)
-	replicas, _ := args["replicas"].(float64)
-	kc, _ := args["kubeconfig"].(string)
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	name := v.Required("name")
+	replicas := v.RequiredInt("replicas")
+	kc := v.String("kubeconfig", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
-	out, err := runKubectl(ctx, kc, "-n", ns, "scale", fmt.Sprintf("deploy/%s", name), fmt.Sprintf("--replicas=%d", int(replicas)))
+	out, err := runKubectl(ctx, kc, "-n", ns, "scale", fmt.Sprintf("deploy/%s", name), fmt.Sprintf("--replicas=%d", replicas))
 	return formatResult(out, err)
 }
 
 func handleDeletePodsByPhase(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	phasesRaw, _ := args["phases"].([]any)
-	selector, _ := args["labelSelector"].(string)
-	kc, _ := args["kubeconfig"].(string)
-
-	var phases []string
-	for _, p := range phasesRaw {
-		if s, ok := p.(string); ok {
-			phases = append(phases, s)
-		}
-	}
-
-	if len(phases) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("phases must be a non-empty list")), nil
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	phases := v.RequiredStringSlice("phases")
+	selector := v.String("labelSelector", "")
+	kc := v.String("kubeconfig", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get pods
@@ -392,9 +387,13 @@ func handleDeletePodsByPhase(ctx context.Context, args map[string]any) (*mcp.Cal
 }
 
 func handleVipLabelNode(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	node, _ := args["node"].(string)
-	eligible, _ := args["eligible"].(bool)
-	kc, _ := args["kubeconfig"].(string)
+	v := validate.NewArgs(args)
+	node := v.Required("node")
+	eligible := v.RequiredBool("eligible")
+	kc := v.String("kubeconfig", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	val := "false"
 	if eligible {
@@ -405,14 +404,18 @@ func handleVipLabelNode(ctx context.Context, args map[string]any) (*mcp.CallTool
 	return formatResult(out, err)
 }
 
-func handleHarvesterVMsList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func handleHarvesterVMsList(ctx context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 	out, err := runKubectl(ctx, rke2Kubeconfig, "get", "vm", "-A")
 	return formatResult(out, err)
 }
 
 func handleHarvesterVMRestart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	ns, _ := args["namespace"].(string)
-	name, _ := args["name"].(string)
+	v := validate.NewArgs(args)
+	ns := v.Required("namespace")
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	// Stop
 	out1, err := runKubectl(ctx, rke2Kubeconfig, "-n", ns, "patch", "vm", name, "--type", "merge", "-p", `{"spec":{"running":false}}`)
@@ -432,25 +435,27 @@ func handleHarvesterVMRestart(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func handleK3sServiceLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	host, _ := args["host"].(string)
-	unit, _ := args["unit"].(string)
-	if unit == "" {
-		unit = "k3s"
+	v := validate.NewArgs(args)
+	host := v.Required("host")
+	unit := v.String("unit", "k3s")
+	lines := v.Int("lines", 200)
+	user := v.String("user", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	lines, _ := args["lines"].(float64)
-	if lines == 0 {
-		lines = 200
-	}
-	user, _ := args["user"].(string)
 
-	cmd := fmt.Sprintf("journalctl -u %s -n %d --no-pager", unit, int(lines))
+	cmd := fmt.Sprintf("journalctl -u %s -n %d --no-pager", unit, lines)
 	out, err := runSSH(ctx, host, cmd, user)
 	return formatResult(out, err)
 }
 
 func handleK3sRepairServer(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	host, _ := args["host"].(string)
-	user, _ := args["user"].(string)
+	v := validate.NewArgs(args)
+	host := v.Required("host")
+	user := v.String("user", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	repairCmd := `systemctl stop k3s || true; sleep 2; pkill -f 'containerd( |-) .*k3s' 2>/dev/null || true; pkill -f 'containerd-shim.*k3s' -KILL 2>/dev/null || true; rm -rf /run/k3s/* 2>/dev/null || true; test -f /var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt && mv /var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt{,.bak-$(date +%s)}; systemctl start k3s; journalctl -u k3s -n 80 --no-pager`
 
@@ -459,30 +464,20 @@ func handleK3sRepairServer(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleStabilizeCluster(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	nodesToLabel, _ := args["nodes_to_label"].([]any)
-	ns, _ := args["namespace"].(string)
-	if ns == "" {
-		ns = "ai"
+	v := validate.NewArgs(args)
+	nodesToLabel := v.StringSlice("nodes_to_label")
+	ns := v.String("namespace", "ai")
+	deploy := v.String("deployment", "comfyui")
+	selector := v.String("delete_label_selector", "app=comfyui")
+	kc := v.String("kubeconfig", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	deploy, _ := args["deployment"].(string)
-	if deploy == "" {
-		deploy = "comfyui"
-	}
-	selector, _ := args["delete_label_selector"].(string)
-	if selector == "" {
-		selector = "app=comfyui"
-	}
-	kc, _ := args["kubeconfig"].(string)
 
 	var outputs []string
 
 	// 1. Auto-select control-plane node if none provided
-	var selectedNodes []string
-	for _, n := range nodesToLabel {
-		if s, ok := n.(string); ok {
-			selectedNodes = append(selectedNodes, s)
-		}
-	}
+	selectedNodes := nodesToLabel
 
 	if len(selectedNodes) == 0 {
 		out, err := runKubectl(ctx, kc, "get", "nodes", "-o", "json")
@@ -587,20 +582,14 @@ func handleStabilizeCluster(ctx context.Context, args map[string]any) (*mcp.Call
 }
 
 func handleRunRepoScript(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	scriptPath, _ := args["script_path"].(string)
-	scriptArgsRaw, _ := args["args"].([]any)
-	mode, _ := args["mode"].(string)
-	if mode == "" {
-		mode = "local"
-	}
-	host, _ := args["host"].(string)
-	user, _ := args["user"].(string)
-
-	var scriptArgs []string
-	for _, a := range scriptArgsRaw {
-		if s, ok := a.(string); ok {
-			scriptArgs = append(scriptArgs, s)
-		}
+	v := validate.NewArgs(args)
+	scriptPath := v.Required("script_path")
+	scriptArgs := v.StringSlice("args")
+	mode := v.Enum("mode", "local", "local", "ssh")
+	host := v.String("host", "")
+	user := v.String("user", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Validate path

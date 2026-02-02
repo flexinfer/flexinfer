@@ -8,19 +8,22 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
-	version   = "0.1.0"
-	qdrantURL = strings.TrimRight(getEnv("QDRANT_URL", "http://localhost:6333"), "/")
-	apiKey    = getEnv("QDRANT_API_KEY", "")
+	version    = "0.1.0"
+	qdrantURL  = strings.TrimRight(getEnv("QDRANT_URL", "http://localhost:6333"), "/")
+	apiKey     = getEnv("QDRANT_API_KEY", "")
+	httpClient = httpclient.NewDefault()
 )
 
 func getEnv(key, fallback string) string {
@@ -41,31 +44,22 @@ func getEnvInt(key string, fallback int) int {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-qdrant", "version", version, "url", qdrantURL)
 
 	server := mcp.NewServer("mcp-qdrant", version)
 	server.SetInstructions("Qdrant vector database operations")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -210,8 +204,7 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 		req.Header.Set("api-key", apiKey)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -290,16 +283,17 @@ func handleListCollections(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleCreateCollection(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
-	size, _ := args["vector_size"].(float64)
-	distance, _ := args["distance"].(string)
-	if distance == "" {
-		distance = "Cosine"
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	size := v.RequiredInt("vector_size")
+	distance := v.Enum("distance", "Cosine", "Cosine", "Euclid", "Dot")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	body := map[string]any{
 		"vectors": map[string]any{
-			"size":     int(size),
+			"size":     size,
 			"distance": distance,
 		},
 	}
@@ -312,7 +306,12 @@ func handleCreateCollection(ctx context.Context, args map[string]any) (*mcp.Call
 }
 
 func handleDeleteCollection(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	res, err := qdrantRequest("DELETE", "collections/"+name, nil)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -321,7 +320,12 @@ func handleDeleteCollection(ctx context.Context, args map[string]any) (*mcp.Call
 }
 
 func handleGetCollection(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	res, err := qdrantRequest("GET", "collections/"+name, nil)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -330,26 +334,27 @@ func handleGetCollection(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
-	vector, _ := args["vector"].([]any)
-	limit, _ := args["limit"].(float64)
-	if limit == 0 {
-		limit = 10
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	vector := v.RequiredAny("vector")
+	limit := v.Int("limit", 10)
+	scoreThreshold := v.Float("score_threshold", 0)
+	filter := v.Any("filter")
+	withPayload := v.Bool("with_payload", true)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	body := map[string]any{
 		"vector":       vector,
-		"limit":        int(limit),
-		"with_payload": true,
+		"limit":        limit,
+		"with_payload": withPayload,
 	}
-	if v, ok := args["score_threshold"].(float64); ok {
-		body["score_threshold"] = v
+	if scoreThreshold > 0 {
+		body["score_threshold"] = scoreThreshold
 	}
-	if v, ok := args["filter"].(map[string]any); ok {
-		body["filter"] = v
-	}
-	if v, ok := args["with_payload"].(bool); ok {
-		body["with_payload"] = v
+	if filter != nil {
+		body["filter"] = filter
 	}
 
 	res, err := qdrantRequest("POST", fmt.Sprintf("collections/%s/points/search", name), body)
@@ -360,26 +365,31 @@ func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleScroll(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
-	limit, _ := args["limit"].(float64)
-	if limit == 0 {
-		limit = 10
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	limit := v.Int("limit", 10)
+	offset := v.String("offset", "")
+	filter := v.Any("filter")
+	withPayload := v.Bool("with_payload", false)
+	withVector := v.Bool("with_vector", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	body := map[string]any{
-		"limit": int(limit),
+		"limit": limit,
 	}
-	if v, ok := args["offset"].(string); ok {
-		body["offset"] = v
+	if offset != "" {
+		body["offset"] = offset
 	}
-	if v, ok := args["filter"].(map[string]any); ok {
-		body["filter"] = v
+	if filter != nil {
+		body["filter"] = filter
 	}
-	if v, ok := args["with_payload"].(bool); ok {
-		body["with_payload"] = v
+	if withPayload {
+		body["with_payload"] = withPayload
 	}
-	if v, ok := args["with_vector"].(bool); ok {
-		body["with_vector"] = v
+	if withVector {
+		body["with_vector"] = withVector
 	}
 
 	res, err := qdrantRequest("POST", fmt.Sprintf("collections/%s/points/scroll", name), body)
@@ -390,9 +400,13 @@ func handleScroll(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleUpsert(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
-	points, _ := args["points"].([]any)
-	wait, _ := args["wait"].(bool)
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	points := v.RequiredAny("points")
+	wait := v.Bool("wait", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	body := map[string]any{
 		"points": points,
@@ -411,13 +425,19 @@ func handleUpsert(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["collection"].(string)
-	wait, _ := args["wait"].(bool)
+	v := validate.NewArgs(args)
+	name := v.Required("collection")
+	points := v.Any("points")
+	filter := v.Any("filter")
+	wait := v.Bool("wait", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	body := map[string]any{}
-	if points, ok := args["points"].([]any); ok {
+	if points != nil {
 		body["points"] = points
-	} else if filter, ok := args["filter"].(map[string]any); ok {
+	} else if filter != nil {
 		body["filter"] = filter
 	} else {
 		return mcp.ErrorResult(fmt.Errorf("provide 'points' or 'filter'")), nil

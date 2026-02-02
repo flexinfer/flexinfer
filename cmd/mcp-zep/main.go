@@ -10,12 +10,14 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "dev"
@@ -24,21 +26,15 @@ var version = "dev"
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-zep", "version", version)
 
 	server := mcp.NewServer("mcp-zep", version)
 	server.SetInstructions("Zep Cloud memory server. Tools: zep_health, zep_add_messages, zep_get_messages")
@@ -99,10 +95,7 @@ func main() {
 		},
 	}, handleGetMessages)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func getConfig() (apiURL, apiKey string, err error) {
@@ -200,34 +193,22 @@ type ZepMessage struct {
 }
 
 func handleAddMessages(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	messagesRaw := v.RequiredStringSlice("messages")
+	roles := v.StringSlice("roles")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	apiURL, apiKey, err := getConfig()
 	if err != nil {
-		return nil, err
-	}
-
-	sessionID, _ := args["session_id"].(string)
-	if sessionID == "" {
-		return nil, fmt.Errorf("session_id is required")
-	}
-
-	messagesRaw, _ := args["messages"].([]any)
-	if len(messagesRaw) == 0 {
-		return nil, fmt.Errorf("messages is required")
-	}
-
-	var roles []string
-	if rolesRaw, ok := args["roles"].([]any); ok {
-		for _, r := range rolesRaw {
-			if s, ok := r.(string); ok {
-				roles = append(roles, s)
-			}
-		}
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build Zep messages
 	var messages []ZepMessage
-	for i, msgRaw := range messagesRaw {
-		content, _ := msgRaw.(string)
+	for i, content := range messagesRaw {
 		if content == "" {
 			continue
 		}
@@ -288,22 +269,16 @@ func handleAddMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleGetMessages(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+	lastK := v.IntRange("last_k", 10, 1, 200)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	apiURL, apiKey, err := getConfig()
 	if err != nil {
-		return nil, err
-	}
-
-	sessionID, _ := args["session_id"].(string)
-	if sessionID == "" {
-		return nil, fmt.Errorf("session_id is required")
-	}
-
-	lastK := 10
-	if k, ok := args["last_k"].(float64); ok && k > 0 {
-		lastK = int(k)
-		if lastK > 200 {
-			lastK = 200
-		}
+		return mcp.ErrorResult(err), nil
 	}
 
 	url := fmt.Sprintf("%s/v2/sessions/%s/memory?lastK=%d", apiURL, sessionID, lastK)

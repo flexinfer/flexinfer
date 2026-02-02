@@ -8,13 +8,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -26,6 +28,7 @@ var (
 	qdrantAPIKey      = getEnv("MORPH_QDRANT_API_KEY", os.Getenv("QDRANT_API_KEY"))
 	defaultCollection = getEnv("MORPH_QDRANT_COLLECTION", getEnv("COLLECTION_NAME", "codex"))
 	defaultDistance   = getEnv("MORPH_QDRANT_DISTANCE", "Cosine")
+	httpClient        = httpclient.NewDefault()
 )
 
 func getEnv(key, fallback string) string {
@@ -36,31 +39,22 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-morph-embeddings", "version", version)
 
 	server := mcp.NewServer("mcp-morph-embeddings", version)
 	server.SetInstructions("Morph embeddings and Qdrant vector search")
 
 	registerTools(server)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func registerTools(server *mcp.Server) {
@@ -152,8 +146,7 @@ func morphEmbeddings(input []string, model string) (map[string]any, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+morphAPIKey)
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +208,7 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 		req.Header.Set("api-key", qdrantAPIKey)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -263,22 +255,27 @@ func ensureCollection(collection string, vectorSize int) error {
 // Handlers
 
 func handleEmbed(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	inputRaw := v.RequiredAny("input")
+	model := v.String("model", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	var inputList []string
-	if v, ok := args["input"].(string); ok {
-		inputList = []string{v}
-	} else if v, ok := args["input"].([]any); ok {
-		for _, s := range v {
-			if str, ok := s.(string); ok {
+	if s, ok := inputRaw.(string); ok {
+		inputList = []string{s}
+	} else if arr, ok := inputRaw.([]any); ok {
+		for _, item := range arr {
+			if str, ok := item.(string); ok {
 				inputList = append(inputList, str)
 			}
 		}
 	}
-
 	if len(inputList) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("'input' is required")), nil
+		return mcp.ErrorResult(fmt.Errorf("input: must be a string or array of strings")), nil
 	}
 
-	model, _ := args["model"].(string)
 	res, err := morphEmbeddings(inputList, model)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -298,24 +295,29 @@ func handleEmbed(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleUpsert(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	collection, _ := args["collection"].(string)
-	if collection == "" {
-		collection = defaultCollection
+	v := validate.NewArgs(args)
+	collection := v.String("collection", defaultCollection)
+	model := v.String("model", "")
+	recordsRaw := v.Any("records")
+	text := v.String("text", "")
+	id := v.String("id", "")
+	metadataRaw := v.Any("metadata")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	var records []map[string]any
-	if v, ok := args["records"].([]any); ok {
-		for _, r := range v {
+	if arr, ok := recordsRaw.([]any); ok {
+		for _, r := range arr {
 			if rec, ok := r.(map[string]any); ok {
 				records = append(records, rec)
 			}
 		}
-	} else if text, ok := args["text"].(string); ok {
-		id, _ := args["id"].(string)
+	} else if text != "" {
 		if id == "" {
 			id = uuid.New().String()
 		}
-		meta, _ := args["metadata"].(map[string]any)
+		meta, _ := metadataRaw.(map[string]any)
 		records = append(records, map[string]any{
 			"id":       id,
 			"text":     text,
@@ -331,28 +333,27 @@ func handleUpsert(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	var normalized []map[string]any
 
 	for _, rec := range records {
-		text, _ := rec["text"].(string)
-		if text == "" {
+		recText, _ := rec["text"].(string)
+		if recText == "" {
 			return mcp.ErrorResult(fmt.Errorf("record missing 'text'")), nil
 		}
-		id, _ := rec["id"].(string)
-		if id == "" {
-			id = uuid.New().String()
+		recID, _ := rec["id"].(string)
+		if recID == "" {
+			recID = uuid.New().String()
 		}
 		meta, _ := rec["metadata"].(map[string]any)
 		if meta == nil {
 			meta = make(map[string]any)
 		}
 
-		texts = append(texts, text)
+		texts = append(texts, recText)
 		normalized = append(normalized, map[string]any{
-			"id":       id,
-			"text":     text,
+			"id":       recID,
+			"text":     recText,
 			"metadata": meta,
 		})
 	}
 
-	model, _ := args["model"].(string)
 	embedRes, err := morphEmbeddings(texts, model)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -397,20 +398,19 @@ func handleUpsert(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	collection, _ := args["collection"].(string)
-	if collection == "" {
-		collection = defaultCollection
-	}
-	query, _ := args["query"].(string)
-	if query == "" {
-		return mcp.ErrorResult(fmt.Errorf("'query' is required")), nil
-	}
-	limit, _ := args["top_k"].(float64)
-	if limit == 0 {
-		limit = 5
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	collection := v.String("collection", defaultCollection)
+	limit := v.Int("top_k", 5)
+	model := v.String("model", "")
+	withPayload := v.Bool("with_payload", true)
+	withVectors := v.Bool("with_vectors", false)
+	scoreThreshold := v.Float("score_threshold", 0)
+	filterRaw := v.Any("filter")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	model, _ := args["model"].(string)
 	embedRes, err := morphEmbeddings([]string{query}, model)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -423,21 +423,15 @@ func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 
 	body := map[string]any{
 		"vector":       embeddings[0],
-		"limit":        int(limit),
-		"with_payload": true,
-		"with_vectors": false,
+		"limit":        limit,
+		"with_payload": withPayload,
+		"with_vectors": withVectors,
 	}
-	if v, ok := args["with_payload"].(bool); ok {
-		body["with_payload"] = v
+	if scoreThreshold > 0 {
+		body["score_threshold"] = scoreThreshold
 	}
-	if v, ok := args["with_vectors"].(bool); ok {
-		body["with_vectors"] = v
-	}
-	if v, ok := args["score_threshold"].(float64); ok {
-		body["score_threshold"] = v
-	}
-	if v, ok := args["filter"].(map[string]any); ok {
-		body["filter"] = v
+	if filter, ok := filterRaw.(map[string]any); ok {
+		body["filter"] = filter
 	}
 
 	searchRes, err := qdrantRequest("POST", fmt.Sprintf("collections/%s/points/search", collection), body)

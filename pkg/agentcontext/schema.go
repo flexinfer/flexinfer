@@ -524,6 +524,82 @@ type Workflow struct {
 	FailedSteps    int `json:"failed_steps"`
 }
 
+// clone returns a deep copy of the workflow.
+// Used to provide thread-safe snapshots from GetWorkflow.
+func (w *Workflow) clone() *Workflow {
+	if w == nil {
+		return nil
+	}
+	cp := *w // shallow copy
+
+	// Deep copy time pointers
+	if w.StartedAt != nil {
+		t := *w.StartedAt
+		cp.StartedAt = &t
+	}
+	if w.CompletedAt != nil {
+		t := *w.CompletedAt
+		cp.CompletedAt = &t
+	}
+
+	// Deep copy maps
+	if w.StepStates != nil {
+		cp.StepStates = make(map[string]*WorkflowStep, len(w.StepStates))
+		for k, v := range w.StepStates {
+			if v != nil {
+				stepCopy := *v
+				// Deep copy nested pointers in WorkflowStep
+				if v.StartedAt != nil {
+					t := *v.StartedAt
+					stepCopy.StartedAt = &t
+				}
+				if v.CompletedAt != nil {
+					t := *v.CompletedAt
+					stepCopy.CompletedAt = &t
+				}
+				if v.ToolArgs != nil {
+					stepCopy.ToolArgs = copyMap(v.ToolArgs)
+				}
+				if v.Result != nil {
+					stepCopy.Result = copyMap(v.Result)
+				}
+				if v.ApprovalInfo != nil {
+					ai := *v.ApprovalInfo
+					if v.ApprovalInfo.DecidedAt != nil {
+						t := *v.ApprovalInfo.DecidedAt
+						ai.DecidedAt = &t
+					}
+					stepCopy.ApprovalInfo = &ai
+				}
+				cp.StepStates[k] = &stepCopy
+			}
+		}
+	}
+	if w.Input != nil {
+		cp.Input = copyMap(w.Input)
+	}
+	if w.Output != nil {
+		cp.Output = copyMap(w.Output)
+	}
+	if w.Context != nil {
+		cp.Context = copyMap(w.Context)
+	}
+
+	return &cp
+}
+
+// copyMap creates a shallow copy of a map[string]any.
+func copyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	cp := make(map[string]any, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}
+
 // WorkflowEvent represents an event in workflow execution
 type WorkflowEvent struct {
 	ID         string         `json:"id"`

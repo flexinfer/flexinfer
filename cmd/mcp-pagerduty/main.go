@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -23,9 +25,7 @@ var (
 	pdAPIKey  = os.Getenv("PAGERDUTY_API_KEY")
 	pdBaseURL = getEnv("PAGERDUTY_BASE_URL", "https://api.pagerduty.com")
 
-	httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	httpClient = httpclient.NewDefault()
 )
 
 func getEnv(key, fallback string) string {
@@ -36,20 +36,15 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-pagerduty", "version", version)
 
 	server := mcp.NewServer("mcp-pagerduty", version)
 	server.SetInstructions("PagerDuty incident management tools. Configure with PAGERDUTY_API_KEY.")
@@ -292,10 +287,7 @@ func main() {
 		},
 	}, handleGetUser)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // pdRequest makes an authenticated request to PagerDuty API
@@ -346,32 +338,35 @@ func pdRequest(ctx context.Context, method, path string, query url.Values) (map[
 }
 
 func handleListIncidents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	status := v.String("status", "")
+	urgency := v.String("urgency", "")
+	serviceIDs := v.StringSlice("service_ids")
+	since := v.String("since", "")
+	until := v.String("until", "")
+	limit := v.Int("limit", 25)
 
-	if status, ok := args["status"].(string); ok && status != "" {
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	query := url.Values{}
+	if status != "" {
 		query.Add("statuses[]", status)
 	}
-	if urgency, ok := args["urgency"].(string); ok && urgency != "" {
+	if urgency != "" {
 		query.Set("urgencies[]", urgency)
 	}
-	if serviceIDs, ok := args["service_ids"].([]any); ok {
-		for _, id := range serviceIDs {
-			if s, ok := id.(string); ok {
-				query.Add("service_ids[]", s)
-			}
-		}
+	for _, id := range serviceIDs {
+		query.Add("service_ids[]", id)
 	}
-	if since, ok := args["since"].(string); ok && since != "" {
+	if since != "" {
 		query.Set("since", since)
 	}
-	if until, ok := args["until"].(string); ok && until != "" {
+	if until != "" {
 		query.Set("until", until)
 	}
-	if limit, ok := args["limit"].(float64); ok {
-		query.Set("limit", strconv.Itoa(int(limit)))
-	} else {
-		query.Set("limit", "25")
-	}
+	query.Set("limit", strconv.Itoa(limit))
 
 	result, err := pdRequest(ctx, "GET", "/incidents", query)
 	if err != nil {
@@ -420,9 +415,11 @@ func handleListIncidents(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleGetIncident(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/incidents/"+id, nil)
@@ -434,9 +431,11 @@ func handleGetIncident(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleListIncidentAlerts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/incidents/"+id+"/alerts", nil)
@@ -450,9 +449,11 @@ func handleListIncidentAlerts(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func handleListIncidentNotes(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/incidents/"+id+"/notes", nil)
@@ -466,9 +467,11 @@ func handleListIncidentNotes(ctx context.Context, args map[string]any) (*mcp.Cal
 }
 
 func handleListIncidentLogEntries(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/incidents/"+id+"/log_entries", nil)
@@ -482,13 +485,20 @@ func handleListIncidentLogEntries(ctx context.Context, args map[string]any) (*mc
 }
 
 func handleListServices(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	queryStr := v.String("query", "")
+	limit := v.Int("limit", 0)
 
-	if q, ok := args["query"].(string); ok && q != "" {
-		query.Set("query", q)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	if limit, ok := args["limit"].(float64); ok {
-		query.Set("limit", strconv.Itoa(int(limit)))
+
+	query := url.Values{}
+	if queryStr != "" {
+		query.Set("query", queryStr)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
 	}
 
 	result, err := pdRequest(ctx, "GET", "/services", query)
@@ -523,9 +533,11 @@ func handleListServices(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleGetService(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/services/"+id, nil)
@@ -537,21 +549,20 @@ func handleGetService(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleListOnCalls(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	scheduleIDs := v.StringSlice("schedule_ids")
+	epIDs := v.StringSlice("escalation_policy_ids")
 
-	if scheduleIDs, ok := args["schedule_ids"].([]any); ok {
-		for _, id := range scheduleIDs {
-			if s, ok := id.(string); ok {
-				query.Add("schedule_ids[]", s)
-			}
-		}
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	if epIDs, ok := args["escalation_policy_ids"].([]any); ok {
-		for _, id := range epIDs {
-			if s, ok := id.(string); ok {
-				query.Add("escalation_policy_ids[]", s)
-			}
-		}
+
+	query := url.Values{}
+	for _, id := range scheduleIDs {
+		query.Add("schedule_ids[]", id)
+	}
+	for _, id := range epIDs {
+		query.Add("escalation_policy_ids[]", id)
 	}
 
 	result, err := pdRequest(ctx, "GET", "/oncalls", query)
@@ -594,10 +605,16 @@ func handleListOnCalls(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleListSchedules(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	queryStr := v.String("query", "")
 
-	if q, ok := args["query"].(string); ok && q != "" {
-		query.Set("query", q)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	query := url.Values{}
+	if queryStr != "" {
+		query.Set("query", queryStr)
 	}
 
 	result, err := pdRequest(ctx, "GET", "/schedules", query)
@@ -629,16 +646,20 @@ func handleListSchedules(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleGetSchedule(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+	since := v.String("since", "")
+	until := v.String("until", "")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := url.Values{}
-	if since, ok := args["since"].(string); ok && since != "" {
+	if since != "" {
 		query.Set("since", since)
 	}
-	if until, ok := args["until"].(string); ok && until != "" {
+	if until != "" {
 		query.Set("until", until)
 	}
 
@@ -651,10 +672,16 @@ func handleGetSchedule(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleListEscalationPolicies(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	queryStr := v.String("query", "")
 
-	if q, ok := args["query"].(string); ok && q != "" {
-		query.Set("query", q)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	query := url.Values{}
+	if queryStr != "" {
+		query.Set("query", queryStr)
 	}
 
 	result, err := pdRequest(ctx, "GET", "/escalation_policies", query)
@@ -689,13 +716,20 @@ func handleListEscalationPolicies(ctx context.Context, args map[string]any) (*mc
 }
 
 func handleListUsers(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := url.Values{}
+	v := validate.NewArgs(args)
+	queryStr := v.String("query", "")
+	limit := v.Int("limit", 0)
 
-	if q, ok := args["query"].(string); ok && q != "" {
-		query.Set("query", q)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	if limit, ok := args["limit"].(float64); ok {
-		query.Set("limit", strconv.Itoa(int(limit)))
+
+	query := url.Values{}
+	if queryStr != "" {
+		query.Set("query", queryStr)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
 	}
 
 	result, err := pdRequest(ctx, "GET", "/users", query)
@@ -727,9 +761,11 @@ func handleListUsers(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGetUser(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := pdRequest(ctx, "GET", "/users/"+id, nil)

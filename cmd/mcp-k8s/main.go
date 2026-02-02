@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -21,6 +19,10 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
@@ -29,16 +31,6 @@ type k8sServer struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	kubeconfig    string
-}
-
-func clampInt(v, min, max int) int {
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
 }
 
 func boundedEventListResult(events []map[string]any, maxBytes int) (*mcp.CallToolResult, error) {
@@ -92,20 +84,14 @@ func boundedEventListResult(events []map[string]any, maxBytes int) (*mcp.CallToo
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	// Get kubeconfig from env or default
 	kubeconfig := os.Getenv("KUBECONFIG")
@@ -121,8 +107,10 @@ func main() {
 
 	k8s := &k8sServer{kubeconfig: kubeconfig}
 	if err := k8s.connect(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to connect to cluster: %v\n", err)
+		logger.Warn("failed to connect to cluster", "error", err)
 	}
+
+	logger.Info("starting server", "name", "mcp-k8s", "version", version, "kubeconfig", kubeconfig)
 
 	server := mcp.NewServer("mcp-k8s", version)
 	server.SetInstructions("Fast Go-native Kubernetes MCP server. Supports pods, deployments, services, logs, and more.")
@@ -412,10 +400,7 @@ func main() {
 		},
 	}, k8s.handleDescribeResource)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (k *k8sServer) connect() error {
@@ -448,11 +433,12 @@ func (k *k8sServer) ensureConnected() error {
 
 func (k *k8sServer) handleListPods(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	ns := getStringArg(args, "namespace", "default")
-	selector := getStringArg(args, "label_selector", "")
+	v := validate.NewArgs(args)
+	ns := v.String("namespace", "default")
+	selector := v.String("label_selector", "")
 
 	opts := metav1.ListOptions{LabelSelector: selector}
 
@@ -494,14 +480,15 @@ func (k *k8sServer) handleListPods(ctx context.Context, args map[string]any) (*m
 
 func (k *k8sServer) handleGetPod(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	pod, err := k.clientset.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
@@ -514,17 +501,18 @@ func (k *k8sServer) handleGetPod(ctx context.Context, args map[string]any) (*mcp
 
 func (k *k8sServer) handleGetLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
-	container := getStringArg(args, "container", "")
-	tail := getIntArg(args, "tail", 100)
-	previous := getBoolArg(args, "previous", false)
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
+	container := v.String("container", "")
+	tail := v.Int("tail", 100)
+	previous := v.Bool("previous", false)
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	tailLines := int64(tail)
@@ -545,10 +533,11 @@ func (k *k8sServer) handleGetLogs(ctx context.Context, args map[string]any) (*mc
 
 func (k *k8sServer) handleListDeployments(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	ns := v.String("namespace", "default")
 
 	var deployments *unstructured.UnstructuredList
 	var err error
@@ -587,10 +576,11 @@ func (k *k8sServer) handleListDeployments(ctx context.Context, args map[string]a
 
 func (k *k8sServer) handleListServices(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	ns := v.String("namespace", "default")
 
 	var services *corev1.ServiceList
 	var err error
@@ -627,20 +617,21 @@ func (k *k8sServer) handleListServices(ctx context.Context, args map[string]any)
 
 func (k *k8sServer) handleGetResource(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	kind := strings.ToLower(getStringArg(args, "kind", ""))
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	kind := strings.ToLower(v.Required("kind"))
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
 
-	if kind == "" || name == "" {
-		return nil, fmt.Errorf("kind and name are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	gvr := kindToGVR(kind)
 	if gvr.Resource == "" {
-		return nil, fmt.Errorf("unknown kind: %s", kind)
+		return mcp.ErrorResult(fmt.Errorf("unknown kind: %s", kind)), nil
 	}
 
 	var obj *unstructured.Unstructured
@@ -660,7 +651,7 @@ func (k *k8sServer) handleGetResource(ctx context.Context, args map[string]any) 
 
 func (k *k8sServer) handleListNamespaces(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	nsList, err := k.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -682,18 +673,16 @@ func (k *k8sServer) handleListNamespaces(ctx context.Context, args map[string]an
 
 func (k *k8sServer) handleScaleDeployment(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
-	replicas := getIntArg(args, "replicas", -1)
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
+	replicas := v.RequiredInt("replicas")
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
-	}
-	if replicas < 0 {
-		return nil, fmt.Errorf("replicas is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	scale, err := k.clientset.AppsV1().Deployments(ns).GetScale(ctx, name, metav1.GetOptions{})
@@ -720,14 +709,15 @@ func (k *k8sServer) handleScaleDeployment(ctx context.Context, args map[string]a
 
 func (k *k8sServer) handleRestartDeployment(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	deployment, err := k.clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
@@ -754,13 +744,6 @@ func (k *k8sServer) handleRestartDeployment(ctx context.Context, args map[string
 }
 
 // Helper functions
-func getStringArg(args map[string]any, key, defaultVal string) string {
-	if v, ok := args[key].(string); ok && v != "" {
-		return v
-	}
-	return defaultVal
-}
-
 func getEnvInt(key string, fallback int) int {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -771,23 +754,6 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
-}
-
-func getIntArg(args map[string]any, key string, defaultVal int) int {
-	if v, ok := args[key].(float64); ok {
-		return int(v)
-	}
-	if v, ok := args[key].(int); ok {
-		return v
-	}
-	return defaultVal
-}
-
-func getBoolArg(args map[string]any, key string, defaultVal bool) bool {
-	if v, ok := args[key].(bool); ok {
-		return v
-	}
-	return defaultVal
 }
 
 func getRestarts(containers []corev1.ContainerStatus) int32 {
@@ -901,14 +867,14 @@ func canonicalKindForEvents(kind string) string {
 // Event handler
 func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	ns := getStringArg(args, "namespace", "default")
-	fieldSelector := getStringArg(args, "field_selector", "")
-	limit := getIntArg(args, "limit", 50)
+	v := validate.NewArgs(args)
+	ns := v.String("namespace", "default")
+	fieldSelector := v.String("field_selector", "")
 	maxEvents := getEnvInt("MCP_K8S_MAX_EVENTS", 500)
-	limit = clampInt(limit, 1, maxEvents)
+	limit := v.IntRange("limit", 50, 1, maxEvents)
 
 	opts := metav1.ListOptions{
 		FieldSelector: fieldSelector,
@@ -957,14 +923,15 @@ func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (
 // ConfigMap handler
 func (k *k8sServer) handleGetConfigMap(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	cm, err := k.clientset.CoreV1().ConfigMaps(ns).Get(ctx, name, metav1.GetOptions{})
@@ -984,15 +951,16 @@ func (k *k8sServer) handleGetConfigMap(ctx context.Context, args map[string]any)
 // Secret handler
 func (k *k8sServer) handleGetSecret(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
-	decode := getBoolArg(args, "decode", true)
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
+	decode := v.Bool("decode", true)
 
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	secret, err := k.clientset.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
@@ -1021,10 +989,11 @@ func (k *k8sServer) handleGetSecret(ctx context.Context, args map[string]any) (*
 // Ingress handler
 func (k *k8sServer) handleListIngresses(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	ns := v.String("namespace", "default")
 
 	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}
 
@@ -1068,20 +1037,21 @@ func (k *k8sServer) handleListIngresses(ctx context.Context, args map[string]any
 // Describe resource handler
 func (k *k8sServer) handleDescribeResource(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if err := k.ensureConnected(); err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
-	kind := strings.ToLower(getStringArg(args, "kind", ""))
-	name := getStringArg(args, "name", "")
-	ns := getStringArg(args, "namespace", "default")
+	v := validate.NewArgs(args)
+	kind := strings.ToLower(v.Required("kind"))
+	name := v.Required("name")
+	ns := v.String("namespace", "default")
 
-	if kind == "" || name == "" {
-		return nil, fmt.Errorf("kind and name are required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	gvr := kindToGVR(kind)
 	if gvr.Resource == "" {
-		return nil, fmt.Errorf("unknown kind: %s", kind)
+		return mcp.ErrorResult(fmt.Errorf("unknown kind: %s", kind)), nil
 	}
 
 	// Get the resource

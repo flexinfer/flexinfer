@@ -6,14 +6,14 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"os/signal"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 
 	_ "github.com/lib/pq"
@@ -27,25 +27,18 @@ type postgresServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	pgURL := os.Getenv("POSTGRES_URL")
 	if pgURL == "" {
-		fmt.Fprintln(os.Stderr, "POSTGRES_URL environment variable is required")
-		os.Exit(1)
+		return fmt.Errorf("POSTGRES_URL environment variable is required")
 	}
 
 	queryTimeout := 30 * time.Second
@@ -57,8 +50,7 @@ func main() {
 
 	db, err := sql.Open("postgres", pgURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer db.Close()
 
@@ -69,14 +61,15 @@ func main() {
 
 	// Test connection
 	if err := db.PingContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to ping database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	pg := &postgresServer{
 		db:           db,
 		queryTimeout: queryTimeout,
 	}
+
+	logger.Info("starting server", "name", "mcp-postgres", "version", version)
 
 	server := mcp.NewServer("mcp-postgres", version)
 	server.SetInstructions("PostgreSQL MCP server. Inspect schemas and run read-only queries.")
@@ -205,10 +198,7 @@ func main() {
 		},
 	}, pg.handleTableStats)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *postgresServer) handleListDatabases(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

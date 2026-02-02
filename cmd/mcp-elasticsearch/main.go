@@ -4,20 +4,21 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -28,7 +29,7 @@ var (
 	esPassword = os.Getenv("ELASTICSEARCH_PASSWORD")
 	esAPIKey   = os.Getenv("ELASTICSEARCH_API_KEY")
 
-	httpClient *http.Client
+	httpClient *httpclient.Client
 )
 
 func getEnv(key, fallback string) string {
@@ -49,31 +50,19 @@ func getEnvInt(key string, fallback int) int {
 }
 
 func init() {
-	transport := &http.Transport{}
-	if skipVerify := os.Getenv("TLS_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	httpClient = &http.Client{
-		Timeout:   time.Duration(getEnvInt("ELASTICSEARCH_TIMEOUT", 30)) * time.Second,
-		Transport: transport,
-	}
+	httpClient = httpclient.NewDefault()
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-elasticsearch", "version", version, "url", esURL)
 
 	server := mcp.NewServer("mcp-elasticsearch", version)
 	server.SetInstructions("Elasticsearch search and cluster management tools. Configure with ELASTICSEARCH_URL, ELASTICSEARCH_USERNAME/PASSWORD or ELASTICSEARCH_API_KEY.")
@@ -306,10 +295,7 @@ func main() {
 		},
 	}, handleStats)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // HTTP helpers
@@ -344,7 +330,7 @@ func esRequest(ctx context.Context, method, path string, body any) (map[string]a
 		req.SetBasicAuth(esUsername, esPassword)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -397,7 +383,7 @@ func esRequestRaw(ctx context.Context, method, path string, body any) ([]byte, e
 		req.SetBasicAuth(esUsername, esPassword)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -432,55 +418,45 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
-func clampInt(v, min, max int) int {
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
-}
-
 // Handlers
 
 func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	index, _ := args["index"].(string)
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	size := v.IntRange("size", 10, 0, 10000)
+	from := v.Int("from", 0)
+	trackTotal := v.Bool("track_total_hits", true)
+	source := v.StringSlice("_source")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	// Build search body
 	body := make(map[string]any)
 
-	if q, ok := args["query"].(map[string]any); ok {
+	if q, ok := v.Any("query").(map[string]any); ok {
 		body["query"] = q
 	}
 
-	if size, ok := args["size"].(float64); ok {
-		body["size"] = clampInt(int(size), 0, 10000)
-	} else {
-		body["size"] = 10
+	body["size"] = size
+
+	if from > 0 {
+		body["from"] = from
 	}
 
-	if from, ok := args["from"].(float64); ok {
-		body["from"] = int(from)
-	}
-
-	if sort, ok := args["sort"].([]any); ok {
+	if sort, ok := v.Any("sort").([]any); ok {
 		body["sort"] = sort
 	}
 
-	if source, ok := args["_source"].([]any); ok {
+	if len(source) > 0 {
 		body["_source"] = source
 	}
 
-	if aggs, ok := args["aggs"].(map[string]any); ok {
+	if aggs, ok := v.Any("aggs").(map[string]any); ok {
 		body["aggs"] = aggs
 	}
 
-	if trackTotal, ok := args["track_total_hits"].(bool); ok {
-		body["track_total_hits"] = trackTotal
-	} else {
-		body["track_total_hits"] = true
-	}
+	body["track_total_hits"] = trackTotal
 
 	// Build path
 	path := "_search"
@@ -532,27 +508,27 @@ func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleSimpleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	index, _ := args["index"].(string)
-	q, _ := args["q"].(string)
-
-	if q == "" {
-		return mcp.ErrorResult(fmt.Errorf("q is required")), nil
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	q := v.Required("q")
+	size := v.IntRange("size", 10, 1, 10000)
+	sort := v.String("sort", "")
+	defaultField := v.String("default_field", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build query params
 	params := url.Values{}
 	params.Set("q", q)
+	params.Set("size", fmt.Sprintf("%d", size))
 
-	if size, ok := args["size"].(float64); ok {
-		params.Set("size", fmt.Sprintf("%d", clampInt(int(size), 1, 10000)))
-	}
-
-	if sort, ok := args["sort"].(string); ok && sort != "" {
+	if sort != "" {
 		params.Set("sort", sort)
 	}
 
-	if df, ok := args["default_field"].(string); ok && df != "" {
-		params.Set("df", df)
+	if defaultField != "" {
+		params.Set("df", defaultField)
 	}
 
 	// Build path
@@ -600,23 +576,18 @@ func handleSimpleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	index, _ := args["index"].(string)
-	id, _ := args["id"].(string)
-
-	if index == "" || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("index and id are required")), nil
+	v := validate.NewArgs(args)
+	index := v.Required("index")
+	id := v.Required("id")
+	source := v.StringSlice("_source")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("%s/_doc/%s", url.PathEscape(index), url.PathEscape(id))
 
-	if source, ok := args["_source"].([]any); ok && len(source) > 0 {
-		fields := make([]string, 0, len(source))
-		for _, f := range source {
-			if s, ok := f.(string); ok {
-				fields = append(fields, s)
-			}
-		}
-		path += "?_source=" + url.QueryEscape(strings.Join(fields, ","))
+	if len(source) > 0 {
+		path += "?_source=" + url.QueryEscape(strings.Join(source, ","))
 	}
 
 	result, err := esRequest(ctx, "GET", path, nil)
@@ -633,7 +604,11 @@ func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 }
 
 func handleCount(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	index, _ := args["index"].(string)
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := "_count"
 	if index != "" {
@@ -641,7 +616,7 @@ func handleCount(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 	}
 
 	var body any
-	if query, ok := args["query"].(map[string]any); ok {
+	if query, ok := v.Any("query").(map[string]any); ok {
 		body = map[string]any{"query": query}
 	}
 
@@ -657,7 +632,13 @@ func handleCount(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleIndices(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	pattern, _ := args["pattern"].(string)
+	v := validate.NewArgs(args)
+	pattern := v.String("pattern", "")
+	health := v.Enum("health", "", "green", "yellow", "red")
+	includeHidden := v.Bool("include_hidden", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := "_cat/indices"
 	if pattern != "" {
@@ -669,11 +650,11 @@ func handleIndices(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	params.Set("h", "index,health,status,pri,rep,docs.count,store.size,creation.date.string")
 	params.Set("s", "index")
 
-	if health, ok := args["health"].(string); ok && health != "" {
+	if health != "" {
 		params.Set("health", health)
 	}
 
-	if hidden, ok := args["include_hidden"].(bool); ok && hidden {
+	if includeHidden {
 		params.Set("expand_wildcards", "all")
 	}
 
@@ -697,9 +678,10 @@ func handleIndices(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleMapping(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	index, _ := args["index"].(string)
-	if index == "" {
-		return mcp.ErrorResult(fmt.Errorf("index is required")), nil
+	v := validate.NewArgs(args)
+	index := v.Required("index")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := url.PathEscape(index) + "/_mapping"
@@ -716,6 +698,13 @@ func handleMapping(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleAliases(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	alias := v.String("alias", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "_cat/aliases"
 
 	params := url.Values{}
@@ -723,9 +712,9 @@ func handleAliases(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	params.Set("h", "alias,index,filter,routing.index,routing.search")
 	params.Set("s", "alias")
 
-	if index, ok := args["index"].(string); ok && index != "" {
+	if index != "" {
 		path = url.PathEscape(index) + "/_alias"
-		if alias, ok := args["alias"].(string); ok && alias != "" {
+		if alias != "" {
 			path += "/" + url.PathEscape(alias)
 		}
 		// Use _alias endpoint for specific index, returns different format
@@ -739,7 +728,7 @@ func handleAliases(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 		})
 	}
 
-	if alias, ok := args["alias"].(string); ok && alias != "" {
+	if alias != "" {
 		path = "_alias/" + url.PathEscape(alias)
 		result, err := esRequest(ctx, "GET", path, nil)
 		if err != nil {
@@ -771,14 +760,21 @@ func handleAliases(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	level := v.Enum("level", "", "cluster", "indices", "shards")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "_cluster/health"
 
-	if index, ok := args["index"].(string); ok && index != "" {
+	if index != "" {
 		path += "/" + url.PathEscape(index)
 	}
 
 	params := url.Values{}
-	if level, ok := args["level"].(string); ok && level != "" {
+	if level != "" {
 		params.Set("level", level)
 	}
 
@@ -798,6 +794,11 @@ func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	result, err := esRequest(ctx, "GET", "", nil)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -810,13 +811,20 @@ func handleInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	index := v.String("index", "")
+	metric := v.String("metric", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "_stats"
 
-	if index, ok := args["index"].(string); ok && index != "" {
+	if index != "" {
 		path = url.PathEscape(index) + "/_stats"
 	}
 
-	if metric, ok := args["metric"].(string); ok && metric != "" {
+	if metric != "" {
 		path += "/" + url.PathEscape(metric)
 	}
 

@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -27,29 +27,22 @@ type confluenceServer struct {
 	baseURL    string
 	email      string
 	apiToken   string
-	httpClient *http.Client
+	httpClient *httpclient.Client
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	baseURL := os.Getenv("CONFLUENCE_URL")
 	if baseURL == "" {
-		fmt.Fprintf(os.Stderr, "CONFLUENCE_URL environment variable is required\n")
-		os.Exit(1)
+		return fmt.Errorf("CONFLUENCE_URL environment variable is required")
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
@@ -57,18 +50,17 @@ func main() {
 	apiToken := os.Getenv("CONFLUENCE_API_TOKEN")
 
 	if email == "" || apiToken == "" {
-		fmt.Fprintf(os.Stderr, "CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN are required\n")
-		os.Exit(1)
+		return fmt.Errorf("CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN are required")
 	}
 
 	cs := &confluenceServer{
-		baseURL:  baseURL,
-		email:    email,
-		apiToken: apiToken,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		baseURL:    baseURL,
+		email:      email,
+		apiToken:   apiToken,
+		httpClient: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-confluence", "version", version, "url", baseURL)
 
 	server := mcp.NewServer("mcp-confluence", version)
 	server.SetInstructions("Confluence wiki MCP server. Search and access wiki pages, spaces, and content.")
@@ -300,10 +292,7 @@ func main() {
 		},
 	}, cs.handleUpdatePage)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *confluenceServer) request(ctx context.Context, method, path string, body any) (map[string]any, error) {

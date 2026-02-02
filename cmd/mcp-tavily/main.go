@@ -9,49 +9,48 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 type tavilyServer struct {
 	apiKey     string
-	httpClient *http.Client
+	httpClient *httpclient.Client
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	apiKey := os.Getenv("TAVILY_API_KEY")
 	if apiKey == "" {
 		fmt.Fprintf(os.Stderr, "Warning: TAVILY_API_KEY not set\n")
 	}
 
+	cfg := httpclient.DefaultConfig()
+	cfg.Timeout = 60 * time.Second
 	tav := &tavilyServer{
-		apiKey: apiKey,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		apiKey:     apiKey,
+		httpClient: httpclient.New(cfg),
 	}
+
+	logger.Info("starting server", "name", "mcp-tavily", "version", version)
 
 	server := mcp.NewServer("mcp-tavily", version)
 	server.SetInstructions("Fast Go-native Tavily AI search MCP server. Web search, news search, and content extraction.")
@@ -163,10 +162,7 @@ func main() {
 		},
 	}, tav.handleSearchContext)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
@@ -213,27 +209,6 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 	}
 
 	return result, nil
-}
-
-func getStringArg(args map[string]any, key, defaultVal string) string {
-	if v, ok := args[key].(string); ok && v != "" {
-		return v
-	}
-	return defaultVal
-}
-
-func getIntArg(args map[string]any, key string, defaultVal int) int {
-	if v, ok := args[key].(float64); ok {
-		return int(v)
-	}
-	return defaultVal
-}
-
-func getBoolArg(args map[string]any, key string, defaultVal bool) bool {
-	if v, ok := args[key].(bool); ok {
-		return v
-	}
-	return defaultVal
 }
 
 func getEnvInt(key string, fallback int) int {
@@ -289,38 +264,33 @@ func clampInt(v, min, max int) int {
 	return v
 }
 
-func getStringSliceArg(args map[string]any, key string) []string {
-	if v, ok := args[key].([]any); ok {
-		var result []string
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				result = append(result, s)
-			}
-		}
-		return result
-	}
-	return nil
-}
-
 func (t *tavilyServer) handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	searchDepth := v.String("search_depth", "basic")
+	includeAnswer := v.Bool("include_answer", true)
+	includeRawContent := v.Bool("include_raw_content", false)
+	maxResults := clampInt(v.Int("max_results", 5), 1, 10)
+	includeDomains := v.StringSlice("include_domains")
+	excludeDomains := v.StringSlice("exclude_domains")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	payload := map[string]any{
 		"query":               query,
-		"search_depth":        getStringArg(args, "search_depth", "basic"),
-		"include_answer":      getBoolArg(args, "include_answer", true),
-		"include_raw_content": getBoolArg(args, "include_raw_content", false),
-		"max_results":         clampInt(getIntArg(args, "max_results", 5), 1, 10),
+		"search_depth":        searchDepth,
+		"include_answer":      includeAnswer,
+		"include_raw_content": includeRawContent,
+		"max_results":         maxResults,
 	}
 
-	if domains := getStringSliceArg(args, "include_domains"); len(domains) > 0 {
-		payload["include_domains"] = domains
+	if len(includeDomains) > 0 {
+		payload["include_domains"] = includeDomains
 	}
-	if domains := getStringSliceArg(args, "exclude_domains"); len(domains) > 0 {
-		payload["exclude_domains"] = domains
+	if len(excludeDomains) > 0 {
+		payload["exclude_domains"] = excludeDomains
 	}
 
 	result, err := t.request(ctx, "/search", payload)
@@ -332,16 +302,20 @@ func (t *tavilyServer) handleSearch(ctx context.Context, args map[string]any) (*
 }
 
 func (t *tavilyServer) handleSearchNews(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	days := clampInt(v.Int("days", 3), 1, 30)
+	maxResults := clampInt(v.Int("max_results", 5), 1, 10)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	payload := map[string]any{
 		"query":       query,
 		"topic":       "news",
-		"days":        clampInt(getIntArg(args, "days", 3), 1, 30),
-		"max_results": clampInt(getIntArg(args, "max_results", 5), 1, 10),
+		"days":        days,
+		"max_results": maxResults,
 	}
 
 	result, err := t.request(ctx, "/search", payload)
@@ -353,9 +327,11 @@ func (t *tavilyServer) handleSearchNews(ctx context.Context, args map[string]any
 }
 
 func (t *tavilyServer) handleExtract(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	urls := getStringSliceArg(args, "urls")
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("urls is required")
+	v := validate.NewArgs(args)
+	urls := v.RequiredStringSlice("urls")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	payload := map[string]any{
@@ -371,20 +347,22 @@ func (t *tavilyServer) handleExtract(ctx context.Context, args map[string]any) (
 }
 
 func (t *tavilyServer) handleSearchContext(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query := getStringArg(args, "query", "")
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	searchDepth := v.String("search_depth", "advanced")
+	maxTokens := clampInt(v.Int("max_tokens", 4000), 256, 16000)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	payload := map[string]any{
 		"query":               query,
-		"search_depth":        getStringArg(args, "search_depth", "advanced"),
+		"search_depth":        searchDepth,
 		"include_answer":      true,
 		"include_raw_content": true,
 		"max_results":         10,
 	}
-
-	maxTokens := clampInt(getIntArg(args, "max_tokens", 4000), 256, 16000)
 
 	result, err := t.request(ctx, "/search", payload)
 	if err != nil {

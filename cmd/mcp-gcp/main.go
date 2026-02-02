@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	compute "cloud.google.com/go/compute/apiv1"
@@ -19,6 +17,10 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -69,28 +71,24 @@ func initGCP(ctx context.Context) error {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	if err := initGCP(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "GCP init error: %v\n", err)
-		os.Exit(1)
+		logger.Error("GCP init error", "error", err)
+		return err
 	}
 	defer storageClient.Close()
 	defer instancesClient.Close()
 	defer functionsClient.Close()
+
+	logger.Info("starting server", "name", "mcp-gcp", "version", version, "project", gcpProject, "region", gcpRegion)
 
 	server := mcp.NewServer("mcp-gcp", version)
 	server.SetInstructions("Google Cloud Platform tools. Uses Application Default Credentials or GOOGLE_APPLICATION_CREDENTIALS. Set GCP_PROJECT for project-scoped operations.")
@@ -271,35 +269,12 @@ func main() {
 		},
 	}, handleFunctionsGet)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func getProject(args map[string]any) string {
-	if p, ok := args["project"].(string); ok && p != "" {
-		return p
-	}
-	return gcpProject
-}
-
-func getRegion(args map[string]any) string {
-	if r, ok := args["region"].(string); ok && r != "" {
-		return r
-	}
-	return gcpRegion
-}
-
-func getZone(args map[string]any) string {
-	if z, ok := args["zone"].(string); ok && z != "" {
-		return z
-	}
-	return gcpZone
+	return server.Run(ctx)
 }
 
 func handleStorageListBuckets(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	project := getProject(args)
+	v := validate.NewArgs(args)
+	project := v.String("project", gcpProject)
 	if project == "" {
 		return mcp.ErrorResult(fmt.Errorf("project is required (set GCP_PROJECT env or pass project parameter)")), nil
 	}
@@ -332,22 +307,17 @@ func handleStorageListBuckets(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func handleStorageListObjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	prefix := v.String("prefix", "")
+	maxResults := v.IntRange("max_results", 100, 1, 1000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := &storage.Query{}
-	if prefix, ok := args["prefix"].(string); ok && prefix != "" {
+	if prefix != "" {
 		query.Prefix = prefix
-	}
-
-	maxResults := 100
-	if mr, ok := args["max_results"].(float64); ok && mr > 0 {
-		maxResults = int(mr)
-		if maxResults > 1000 {
-			maxResults = 1000
-		}
 	}
 
 	it := storageClient.Bucket(bucket).Objects(ctx, query)
@@ -380,18 +350,12 @@ func handleStorageListObjects(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func handleStorageGetObject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
-	}
-	object, ok := args["object"].(string)
-	if !ok || object == "" {
-		return mcp.ErrorResult(fmt.Errorf("object is required")), nil
-	}
-
-	maxSize := int64(1024 * 1024) // 1MB default
-	if ms, ok := args["max_size"].(float64); ok && ms > 0 {
-		maxSize = int64(ms)
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	object := v.Required("object")
+	maxSize := int64(v.Int("max_size", 1024*1024)) // 1MB default
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	obj := storageClient.Bucket(bucket).Object(object)
@@ -440,13 +404,11 @@ func handleStorageGetObject(ctx context.Context, args map[string]any) (*mcp.Call
 }
 
 func handleStorageObjectMetadata(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	bucket, ok := args["bucket"].(string)
-	if !ok || bucket == "" {
-		return mcp.ErrorResult(fmt.Errorf("bucket is required")), nil
-	}
-	object, ok := args["object"].(string)
-	if !ok || object == "" {
-		return mcp.ErrorResult(fmt.Errorf("object is required")), nil
+	v := validate.NewArgs(args)
+	bucket := v.Required("bucket")
+	object := v.Required("object")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	attrs, err := storageClient.Bucket(bucket).Object(object).Attrs(ctx)
@@ -472,27 +434,25 @@ func handleStorageObjectMetadata(ctx context.Context, args map[string]any) (*mcp
 }
 
 func handleComputeListInstances(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	project := getProject(args)
+	v := validate.NewArgs(args)
+	project := v.String("project", gcpProject)
 	if project == "" {
 		return mcp.ErrorResult(fmt.Errorf("project is required (set GCP_PROJECT env or pass project parameter)")), nil
 	}
-	zone := getZone(args)
+	zone := v.String("zone", gcpZone)
+	filter := v.String("filter", "")
+	maxResults := uint32(v.IntRange("max_results", 100, 1, 500))
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	req := &computepb.ListInstancesRequest{
 		Project: project,
 		Zone:    zone,
 	}
 
-	if filter, ok := args["filter"].(string); ok && filter != "" {
+	if filter != "" {
 		req.Filter = &filter
-	}
-
-	maxResults := uint32(100)
-	if mr, ok := args["max_results"].(float64); ok && mr > 0 {
-		maxResults = uint32(mr)
-		if maxResults > 500 {
-			maxResults = 500
-		}
 	}
 	req.MaxResults = &maxResults
 
@@ -541,14 +501,15 @@ func handleComputeListInstances(ctx context.Context, args map[string]any) (*mcp.
 }
 
 func handleComputeGetInstance(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	project := getProject(args)
+	v := validate.NewArgs(args)
+	project := v.String("project", gcpProject)
 	if project == "" {
 		return mcp.ErrorResult(fmt.Errorf("project is required (set GCP_PROJECT env or pass project parameter)")), nil
 	}
-	zone := getZone(args)
-	instanceName, ok := args["instance"].(string)
-	if !ok || instanceName == "" {
-		return mcp.ErrorResult(fmt.Errorf("instance is required")), nil
+	zone := v.String("zone", gcpZone)
+	instanceName := v.Required("instance")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	instance, err := instancesClient.Get(ctx, &computepb.GetInstanceRequest{
@@ -617,26 +578,23 @@ func handleComputeGetInstance(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func handleFunctionsList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	project := getProject(args)
+	v := validate.NewArgs(args)
+	project := v.String("project", gcpProject)
 	if project == "" {
 		return mcp.ErrorResult(fmt.Errorf("project is required (set GCP_PROJECT env or pass project parameter)")), nil
 	}
-	region := getRegion(args)
+	region := v.String("region", gcpRegion)
+	maxResults := v.IntRange("max_results", 50, 1, 500)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	parent := fmt.Sprintf("projects/%s/locations/%s", project, region)
 
 	req := &functionspb.ListFunctionsRequest{
-		Parent: parent,
+		Parent:   parent,
+		PageSize: int32(maxResults),
 	}
-
-	maxResults := 50
-	if mr, ok := args["max_results"].(float64); ok && mr > 0 {
-		maxResults = int(mr)
-		if maxResults > 500 {
-			maxResults = 500
-		}
-	}
-	req.PageSize = int32(maxResults)
 
 	it := functionsClient.ListFunctions(ctx, req)
 	functions := []map[string]any{}
@@ -681,14 +639,15 @@ func handleFunctionsList(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleFunctionsGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	project := getProject(args)
+	v := validate.NewArgs(args)
+	project := v.String("project", gcpProject)
 	if project == "" {
 		return mcp.ErrorResult(fmt.Errorf("project is required (set GCP_PROJECT env or pass project parameter)")), nil
 	}
-	region := getRegion(args)
-	functionName, ok := args["function"].(string)
-	if !ok || functionName == "" {
-		return mcp.ErrorResult(fmt.Errorf("function is required")), nil
+	region := v.String("region", gcpRegion)
+	functionName := v.Required("function")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	name := fmt.Sprintf("projects/%s/locations/%s/functions/%s", project, region, functionName)

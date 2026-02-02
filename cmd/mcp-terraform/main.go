@@ -3,19 +3,21 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -26,7 +28,7 @@ var (
 	tfcToken = os.Getenv("TFC_TOKEN")
 	tfcOrg   = os.Getenv("TFC_ORGANIZATION")
 
-	httpClient *http.Client
+	httpClient *httpclient.Client
 )
 
 func getEnv(key, fallback string) string {
@@ -37,31 +39,25 @@ func getEnv(key, fallback string) string {
 }
 
 func init() {
-	transport := &http.Transport{}
+	cfg := httpclient.DefaultConfig()
+	cfg.Timeout = 60 * time.Second
+	// Support TFC_SKIP_VERIFY in addition to the standard TLS_SKIP_VERIFY
 	if skipVerify := os.Getenv("TFC_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		cfg.TLSSkipVerify = true
 	}
-	httpClient = &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: transport,
-	}
+	httpClient = httpclient.New(cfg)
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-terraform", "version", version, "host", tfcHost)
 
 	server := mcp.NewServer("mcp-terraform", version)
 	server.SetInstructions("Terraform Cloud/Enterprise state and plan management tools. Configure with TFC_TOKEN and TFC_ORGANIZATION. Optionally set TFC_HOST for Enterprise.")
@@ -289,10 +285,7 @@ func main() {
 		},
 	}, handleListModules)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // tfcRequest makes an authenticated request to Terraform Cloud API
@@ -341,17 +334,25 @@ func tfcRequest(ctx context.Context, method, path string) (map[string]any, error
 }
 
 func handleListWorkspaces(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	search := v.String("search", "")
+	pageSize := v.Int("page_size", 20)
+	page := v.Int("page", 1)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "/organizations/" + tfcOrg + "/workspaces"
 	params := []string{}
 
-	if search, ok := args["search"].(string); ok && search != "" {
+	if search != "" {
 		params = append(params, "search[name]="+search)
 	}
-	if pageSize, ok := args["page_size"].(float64); ok {
-		params = append(params, "page[size]="+strconv.Itoa(int(pageSize)))
+	if pageSize != 20 {
+		params = append(params, "page[size]="+strconv.Itoa(pageSize))
 	}
-	if page, ok := args["page"].(float64); ok {
-		params = append(params, "page[number]="+strconv.Itoa(int(page)))
+	if page != 1 {
+		params = append(params, "page[number]="+strconv.Itoa(page))
 	}
 
 	if len(params) > 0 {
@@ -379,9 +380,10 @@ func handleListWorkspaces(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleGetWorkspace(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return mcp.ErrorResult(fmt.Errorf("name is required")), nil
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := tfcRequest(ctx, "GET", "/organizations/"+tfcOrg+"/workspaces/"+name)
@@ -397,9 +399,10 @@ func handleGetWorkspace(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleCurrentState(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workspace, ok := args["workspace"].(string)
-	if !ok || workspace == "" {
-		return mcp.ErrorResult(fmt.Errorf("workspace is required")), nil
+	v := validate.NewArgs(args)
+	workspace := v.Required("workspace")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get workspace ID first
@@ -430,9 +433,11 @@ func handleCurrentState(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleStateResources(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workspace, ok := args["workspace"].(string)
-	if !ok || workspace == "" {
-		return mcp.ErrorResult(fmt.Errorf("workspace is required")), nil
+	v := validate.NewArgs(args)
+	workspace := v.Required("workspace")
+	filterType := v.String("filter_type", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get workspace ID
@@ -452,8 +457,6 @@ func handleStateResources(ctx context.Context, args map[string]any) (*mcp.CallTo
 	if err != nil {
 		return nil, err
 	}
-
-	filterType, _ := args["filter_type"].(string)
 
 	resources := []map[string]any{}
 	if data, ok := result["data"].([]any); ok {
@@ -484,9 +487,10 @@ func handleStateResources(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleStateOutputs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workspace, ok := args["workspace"].(string)
-	if !ok || workspace == "" {
-		return mcp.ErrorResult(fmt.Errorf("workspace is required")), nil
+	v := validate.NewArgs(args)
+	workspace := v.Required("workspace")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get workspace ID
@@ -531,9 +535,12 @@ func handleStateOutputs(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleListRuns(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workspace, ok := args["workspace"].(string)
-	if !ok || workspace == "" {
-		return mcp.ErrorResult(fmt.Errorf("workspace is required")), nil
+	v := validate.NewArgs(args)
+	workspace := v.Required("workspace")
+	status := v.String("status", "")
+	pageSize := v.Int("page_size", 20)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get workspace ID
@@ -551,11 +558,11 @@ func handleListRuns(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	path := "/workspaces/" + wsID + "/runs"
 	params := []string{}
 
-	if status, ok := args["status"].(string); ok && status != "" {
+	if status != "" {
 		params = append(params, "filter[status]="+status)
 	}
-	if pageSize, ok := args["page_size"].(float64); ok {
-		params = append(params, "page[size]="+strconv.Itoa(int(pageSize)))
+	if pageSize != 20 {
+		params = append(params, "page[size]="+strconv.Itoa(pageSize))
 	}
 
 	if len(params) > 0 {
@@ -583,9 +590,10 @@ func handleListRuns(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleGetRun(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	runID, ok := args["run_id"].(string)
-	if !ok || runID == "" {
-		return mcp.ErrorResult(fmt.Errorf("run_id is required")), nil
+	v := validate.NewArgs(args)
+	runID := v.Required("run_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := tfcRequest(ctx, "GET", "/runs/"+runID)
@@ -601,9 +609,10 @@ func handleGetRun(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleRunPlan(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	runID, ok := args["run_id"].(string)
-	if !ok || runID == "" {
-		return mcp.ErrorResult(fmt.Errorf("run_id is required")), nil
+	v := validate.NewArgs(args)
+	runID := v.Required("run_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get run to find plan ID
@@ -649,9 +658,10 @@ func handleRunPlan(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleListVariables(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	workspace, ok := args["workspace"].(string)
-	if !ok || workspace == "" {
-		return mcp.ErrorResult(fmt.Errorf("workspace is required")), nil
+	v := validate.NewArgs(args)
+	workspace := v.Required("workspace")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Get workspace ID
@@ -728,9 +738,10 @@ func handleListVarsets(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleGetVarset(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	varsetID, ok := args["varset_id"].(string)
-	if !ok || varsetID == "" {
-		return mcp.ErrorResult(fmt.Errorf("varset_id is required")), nil
+	v := validate.NewArgs(args)
+	varsetID := v.Required("varset_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := tfcRequest(ctx, "GET", "/varsets/"+varsetID+"?include=vars")
@@ -802,9 +813,15 @@ func handleGetOrganization(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleListPolicies(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	pageSize := v.Int("page_size", 20)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "/organizations/" + tfcOrg + "/policies"
-	if pageSize, ok := args["page_size"].(float64); ok {
-		path += "?page[size]=" + strconv.Itoa(int(pageSize))
+	if pageSize != 20 {
+		path += "?page[size]=" + strconv.Itoa(pageSize)
 	}
 
 	result, err := tfcRequest(ctx, "GET", path)
@@ -835,8 +852,14 @@ func handleListPolicies(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleListModules(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	provider := v.String("provider", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	path := "/organizations/" + tfcOrg + "/registry-modules"
-	if provider, ok := args["provider"].(string); ok && provider != "" {
+	if provider != "" {
 		path += "?filter[provider]=" + provider
 	}
 

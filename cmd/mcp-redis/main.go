@@ -5,14 +5,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -23,20 +23,14 @@ type redisServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
@@ -45,8 +39,7 @@ func main() {
 
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse REDIS_URL: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to parse REDIS_URL: %w", err)
 	}
 
 	client := redis.NewClient(opts)
@@ -54,11 +47,12 @@ func main() {
 
 	// Test connection
 	if err := client.Ping(ctx).Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to Redis: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
 	rs := &redisServer{client: client}
+
+	logger.Info("starting server", "name", "mcp-redis", "version", version)
 
 	server := mcp.NewServer("mcp-redis", version)
 	server.SetInstructions("Redis MCP server. Inspect cache data, monitor connections, and analyze performance.")
@@ -226,10 +220,7 @@ func main() {
 		},
 	}, rs.handleConfigGet)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *redisServer) handleInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

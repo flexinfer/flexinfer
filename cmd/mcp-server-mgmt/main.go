@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "0.1.0"
@@ -43,21 +45,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-server-mgmt", "version", version)
 
 	server := mcp.NewServer("server-mgmt", version)
 	server.SetInstructions("SSH-based Linux server management")
@@ -116,10 +112,7 @@ func main() {
 		},
 	}, handleExecSafe)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func loadHosts() error {
@@ -271,7 +264,12 @@ func handleListHosts(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGetHost(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["name"].(string)
+	v := validate.NewArgs(args)
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	h, err := getHost(name)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -280,7 +278,12 @@ func handleGetHost(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleDetectOS(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["host"].(string)
+	v := validate.NewArgs(args)
+	name := v.Required("host")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	h, err := getHost(name)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
@@ -315,8 +318,12 @@ func handleDetectOS(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleSSHCommand(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	name, _ := args["host"].(string)
-	command, _ := args["command"].(string)
+	v := validate.NewArgs(args)
+	name := v.Required("host")
+	command := v.Required("command")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	h, err := getHost(name)
 	if err != nil {
@@ -342,9 +349,13 @@ var safeCommands = map[string][]string{
 }
 
 func handleExecSafe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	hostName, _ := args["host"].(string)
-	cmdName, _ := args["name"].(string)
-	cmdArgs, _ := args["args"].([]any)
+	v := validate.NewArgs(args)
+	hostName := v.Required("host")
+	cmdName := v.Required("name")
+	cmdArgs := v.StringSlice("args")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	h, err := getHost(hostName)
 	if err != nil {
@@ -358,12 +369,7 @@ func handleExecSafe(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 
 	fullCmd := make([]string, len(baseCmd))
 	copy(fullCmd, baseCmd)
-
-	for _, a := range cmdArgs {
-		if s, ok := a.(string); ok {
-			fullCmd = append(fullCmd, s)
-		}
-	}
+	fullCmd = append(fullCmd, cmdArgs...)
 
 	stdout, stderr, err := runSSH(ctx, h, fullCmd, 60*time.Second)
 

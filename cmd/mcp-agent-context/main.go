@@ -4,37 +4,33 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/agentcontext"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 )
 
 var version = "1.0.0"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	svc, err := agentcontext.NewServiceFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize service: %v\n", err)
-		os.Exit(1)
+		logger.Error("Failed to initialize service", "error", err)
+		return err
 	}
+
+	logger.Info("starting server", "name", "mcp-agent-context", "version", version)
 
 	server := mcp.NewServer("mcp-agent-context", version)
 	server.SetInstructions(`Agent Context Management MCP Server
@@ -61,8 +57,5 @@ Typical workflow:
 
 	registerTools(server, svc)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }

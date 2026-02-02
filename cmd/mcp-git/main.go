@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -28,20 +30,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-git", "version", version, "repo", defaultRepo)
 
 	server := mcp.NewServer("mcp-git", version)
 	server.SetInstructions("Fast Go-native Git MCP server. Supports status, diff, log, branch operations.")
@@ -322,10 +319,7 @@ func main() {
 		},
 	}, handleGitShow)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func runGit(repoPath string, args ...string) (string, error) {
@@ -345,40 +339,6 @@ func runGit(repoPath string, args ...string) (string, error) {
 	return string(output), nil
 }
 
-func getStringArg(args map[string]any, key, defaultVal string) string {
-	if v, ok := args[key].(string); ok && v != "" {
-		return v
-	}
-	return defaultVal
-}
-
-func getIntArg(args map[string]any, key string, defaultVal int) int {
-	if v, ok := args[key].(float64); ok {
-		return int(v)
-	}
-	return defaultVal
-}
-
-func getBoolArg(args map[string]any, key string, defaultVal bool) bool {
-	if v, ok := args[key].(bool); ok {
-		return v
-	}
-	return defaultVal
-}
-
-func getStringSliceArg(args map[string]any, key string) []string {
-	if v, ok := args[key].([]any); ok {
-		var result []string
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				result = append(result, s)
-			}
-		}
-		return result
-	}
-	return nil
-}
-
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -387,7 +347,11 @@ func getEnv(key, fallback string) string {
 }
 
 func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	output, err := runGit(path, "status", "--porcelain", "-b")
 	if err != nil {
@@ -433,10 +397,14 @@ func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGitDiff(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	staged := getBoolArg(args, "staged", false)
-	commit := getStringArg(args, "commit", "")
-	file := getStringArg(args, "file", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	staged := v.Bool("staged", false)
+	commit := v.String("commit", "")
+	file := v.String("file", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"diff", "--color=never"}
 
@@ -463,12 +431,16 @@ func handleGitDiff(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleGitLog(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	count := getIntArg(args, "count", 10)
-	oneline := getBoolArg(args, "oneline", false)
-	author := getStringArg(args, "author", "")
-	since := getStringArg(args, "since", "")
-	file := getStringArg(args, "file", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	count := v.Int("count", 10)
+	oneline := v.Bool("oneline", false)
+	author := v.String("author", "")
+	since := v.String("since", "")
+	file := v.String("file", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"log", fmt.Sprintf("-n%d", count)}
 
@@ -518,10 +490,14 @@ func handleGitLog(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleGitBranch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	all := getBoolArg(args, "all", false)
-	create := getStringArg(args, "create", "")
-	delete := getStringArg(args, "delete", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	all := v.Bool("all", false)
+	create := v.String("create", "")
+	delete := v.String("delete", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	if create != "" {
 		output, err := runGit(path, "branch", create)
@@ -578,13 +554,17 @@ func handleGitBranch(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGitCheckout(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	branch := getStringArg(args, "branch", "")
-	create := getBoolArg(args, "create", false)
-	file := getStringArg(args, "file", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	branch := v.String("branch", "")
+	create := v.Bool("create", false)
+	file := v.String("file", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	if branch == "" && file == "" {
-		return nil, fmt.Errorf("branch or file is required")
+		return mcp.ErrorResult(fmt.Errorf("branch or file is required")), nil
 	}
 
 	gitArgs := []string{"checkout"}
@@ -607,11 +587,11 @@ func handleGitCheckout(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleGitAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	files := getStringSliceArg(args, "files")
-
-	if len(files) == 0 {
-		return nil, fmt.Errorf("files is required")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	files := v.RequiredStringSlice("files")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	gitArgs := append([]string{"add"}, files...)
@@ -624,12 +604,12 @@ func handleGitAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleGitCommit(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	message := getStringArg(args, "message", "")
-	all := getBoolArg(args, "all", false)
-
-	if message == "" {
-		return nil, fmt.Errorf("message is required")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	message := v.Required("message")
+	all := v.Bool("all", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	gitArgs := []string{"commit", "-m", message}
@@ -646,10 +626,14 @@ func handleGitCommit(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGitPush(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	remote := getStringArg(args, "remote", "origin")
-	branch := getStringArg(args, "branch", "")
-	setUpstream := getBoolArg(args, "set_upstream", false)
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	remote := v.String("remote", "origin")
+	branch := v.String("branch", "")
+	setUpstream := v.Bool("set_upstream", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"push"}
 	if setUpstream {
@@ -669,10 +653,14 @@ func handleGitPush(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleGitPull(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	remote := getStringArg(args, "remote", "origin")
-	branch := getStringArg(args, "branch", "")
-	rebase := getBoolArg(args, "rebase", false)
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	remote := v.String("remote", "origin")
+	branch := v.String("branch", "")
+	rebase := v.Bool("rebase", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"pull"}
 	if rebase {
@@ -692,9 +680,13 @@ func handleGitPull(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleGitStash(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	action := getStringArg(args, "action", "push")
-	message := getStringArg(args, "message", "")
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	action := v.String("action", "push")
+	message := v.String("message", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"stash", action}
 	if action == "push" && message != "" {
@@ -710,9 +702,13 @@ func handleGitStash(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleGitShow(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	path := getStringArg(args, "path", "")
-	commit := getStringArg(args, "commit", "HEAD")
-	stat := getBoolArg(args, "stat", false)
+	v := validate.NewArgs(args)
+	path := v.String("path", "")
+	commit := v.String("commit", "HEAD")
+	stat := v.Bool("stat", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	gitArgs := []string{"show", "--color=never"}
 	if stat {

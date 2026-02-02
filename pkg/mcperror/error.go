@@ -158,3 +158,116 @@ func (r *Result) JSON() map[string]any {
 	}
 	return result
 }
+
+// =============================================================================
+// MCP-Specific Helpers
+// =============================================================================
+
+// RequiredParam returns an error for a missing required parameter.
+func RequiredParam(param string) *Error {
+	return &Error{
+		Code:    CodeInvalidInput,
+		Message: fmt.Sprintf("missing required parameter: %s", param),
+		Details: map[string]string{"parameter": param},
+	}
+}
+
+// InvalidParam returns an error for an invalid parameter value.
+func InvalidParam(param, reason string) *Error {
+	return &Error{
+		Code:    CodeInvalidInput,
+		Message: fmt.Sprintf("invalid parameter '%s': %s", param, reason),
+		Details: map[string]string{"parameter": param, "reason": reason},
+	}
+}
+
+// APIError returns an error for external API failures.
+func APIError(service string, statusCode int, body string) *Error {
+	msg := fmt.Sprintf("%s API error (HTTP %d)", service, statusCode)
+	// Add helpful context for common errors
+	switch statusCode {
+	case 401:
+		msg = fmt.Sprintf("%s: authentication failed - check your API token", service)
+	case 403:
+		msg = fmt.Sprintf("%s: access forbidden - check permissions", service)
+	case 404:
+		msg = fmt.Sprintf("%s: resource not found", service)
+	case 429:
+		msg = fmt.Sprintf("%s: rate limit exceeded - try again later", service)
+	case 500, 502, 503, 504:
+		msg = fmt.Sprintf("%s: service unavailable - try again later", service)
+	}
+	return &Error{
+		Code:    CodeServerError,
+		Message: msg,
+		Details: map[string]any{
+			"service":     service,
+			"status_code": statusCode,
+			"body":        truncateString(body, 500),
+		},
+	}
+}
+
+// WrapAPI wraps an API error with context.
+func WrapAPI(service string, err error) *Error {
+	if err == nil {
+		return nil
+	}
+	return &Error{
+		Code:    CodeConnectionError,
+		Message: fmt.Sprintf("%s: %s", service, err.Error()),
+		Details: map[string]string{"service": service},
+	}
+}
+
+// ServiceUnavailable returns an error when a required service is not available.
+func ServiceUnavailable(service, reason string) *Error {
+	return &Error{
+		Code:    CodeServerError,
+		Message: fmt.Sprintf("%s is unavailable: %s", service, reason),
+		Details: map[string]string{"service": service},
+	}
+}
+
+// NotConfigured returns an error when required configuration is missing.
+func NotConfigured(configItem, hint string) *Error {
+	msg := fmt.Sprintf("%s is not configured", configItem)
+	if hint != "" {
+		msg = msg + ": " + hint
+	}
+	return &Error{
+		Code:    CodeServerError,
+		Message: msg,
+		Details: map[string]string{"config": configItem, "hint": hint},
+	}
+}
+
+// OperationFailed returns an error when an operation fails.
+func OperationFailed(operation string, err error) *Error {
+	if err == nil {
+		return nil
+	}
+	return &Error{
+		Code:    CodeServerError,
+		Message: fmt.Sprintf("%s failed: %s", operation, err.Error()),
+	}
+}
+
+// ParseError returns an error for parsing failures.
+func ParseError(what string, err error) *Error {
+	return &Error{
+		Code:    CodeInvalidInput,
+		Message: fmt.Sprintf("failed to parse %s: %s", what, err.Error()),
+	}
+}
+
+// truncateString truncates a string to maxLen, adding "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}

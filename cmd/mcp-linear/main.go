@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -22,26 +24,19 @@ var (
 	linearAPIKey = os.Getenv("LINEAR_API_KEY")
 	linearURL    = "https://api.linear.app/graphql"
 
-	httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	httpClient = httpclient.NewDefault()
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-linear", "version", version)
 
 	server := mcp.NewServer("mcp-linear", version)
 	server.SetInstructions("Linear issue tracking tools. Configure with LINEAR_API_KEY.")
@@ -242,10 +237,7 @@ func main() {
 		},
 	}, handleListStates)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // graphqlRequest executes a GraphQL query against Linear API
@@ -304,27 +296,33 @@ func graphqlRequest(ctx context.Context, query string, variables map[string]any)
 }
 
 func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	limit := 50
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
+	v := validate.NewArgs(args)
+	teamKey := v.String("team_key", "")
+	state := v.String("state", "")
+	assignee := v.String("assignee", "")
+	label := v.String("label", "")
+	priority := v.Int("priority", -1) // -1 means not set
+	limit := v.Int("limit", 50)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Build filter
 	filters := []string{}
-	if teamKey, ok := args["team_key"].(string); ok && teamKey != "" {
+	if teamKey != "" {
 		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
 	}
-	if state, ok := args["state"].(string); ok && state != "" {
+	if state != "" {
 		filters = append(filters, fmt.Sprintf(`state: { name: { eq: "%s" } }`, state))
 	}
-	if assignee, ok := args["assignee"].(string); ok && assignee != "" {
+	if assignee != "" {
 		filters = append(filters, fmt.Sprintf(`assignee: { or: [{ email: { eq: "%s" } }, { name: { containsIgnoreCase: "%s" } }] }`, assignee, assignee))
 	}
-	if label, ok := args["label"].(string); ok && label != "" {
+	if label != "" {
 		filters = append(filters, fmt.Sprintf(`labels: { some: { name: { eq: "%s" } } }`, label))
 	}
-	if priority, ok := args["priority"].(float64); ok {
-		filters = append(filters, fmt.Sprintf(`priority: { eq: %d }`, int(priority)))
+	if priority >= 0 {
+		filters = append(filters, fmt.Sprintf(`priority: { eq: %d }`, priority))
 	}
 
 	filterClause := ""
@@ -380,9 +378,10 @@ func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := `
@@ -427,14 +426,11 @@ func handleGetIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleSearchIssues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	queryStr, ok := args["query"].(string)
-	if !ok || queryStr == "" {
-		return mcp.ErrorResult(fmt.Errorf("query is required")), nil
-	}
-
-	limit := 25
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
+	v := validate.NewArgs(args)
+	queryStr := v.Required("query")
+	limit := v.Int("limit", 25)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := `
@@ -517,9 +513,10 @@ func handleListTeams(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGetTeam(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	key, ok := args["key"].(string)
-	if !ok || key == "" {
-		return mcp.ErrorResult(fmt.Errorf("key is required")), nil
+	v := validate.NewArgs(args)
+	key := v.Required("key")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := `
@@ -556,11 +553,18 @@ func handleGetTeam(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	teamKey := v.String("team_key", "")
+	state := v.String("state", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	filters := []string{}
-	if teamKey, ok := args["team_key"].(string); ok && teamKey != "" {
+	if teamKey != "" {
 		filters = append(filters, fmt.Sprintf(`accessibleTeams: { some: { key: { eq: "%s" } } }`, teamKey))
 	}
-	if state, ok := args["state"].(string); ok && state != "" {
+	if state != "" {
 		filters = append(filters, fmt.Sprintf(`state: { eq: "%s" }`, state))
 	}
 
@@ -606,9 +610,10 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	id, ok := args["id"].(string)
-	if !ok || id == "" {
-		return mcp.ErrorResult(fmt.Errorf("id is required")), nil
+	v := validate.NewArgs(args)
+	id := v.Required("id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	query := `
@@ -642,11 +647,18 @@ func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleListCycles(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	teamKey := v.String("team_key", "")
+	isActive := v.Bool("is_active", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	filters := []string{}
-	if teamKey, ok := args["team_key"].(string); ok && teamKey != "" {
+	if teamKey != "" {
 		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
 	}
-	if isActive, ok := args["is_active"].(bool); ok && isActive {
+	if isActive {
 		filters = append(filters, "isActive: { eq: true }")
 	}
 
@@ -756,8 +768,14 @@ func handleMe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, er
 }
 
 func handleListLabels(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	teamKey := v.String("team_key", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	filters := []string{}
-	if teamKey, ok := args["team_key"].(string); ok && teamKey != "" {
+	if teamKey != "" {
 		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
 	}
 
@@ -799,8 +817,14 @@ func handleListLabels(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleListStates(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	teamKey := v.String("team_key", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	filters := []string{}
-	if teamKey, ok := args["team_key"].(string); ok && teamKey != "" {
+	if teamKey != "" {
 		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
 	}
 

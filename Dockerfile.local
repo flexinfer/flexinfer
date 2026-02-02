@@ -1,0 +1,54 @@
+# Local-only Dockerfile for building loom-core without cloning deps over the network.
+# Build context must be the workspace root (so `libs/*` is available).
+#
+# Example:
+#   docker build -f services/loom-core/Dockerfile.local -t registry.harbor.lan/mcp/loom-core:<tag> .
+#
+# CI should continue to use `services/loom-core/Dockerfile`.
+
+FROM golang:1.25.5-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+
+# This repo uses local `replace` directives to `../../libs/*`.
+# When building from the workspace root, ensure those are present at /src/libs/*.
+RUN mkdir -p /src/libs
+COPY libs/mcp-go /src/libs/mcp-go
+COPY libs/fi-mcp-kit /src/libs/fi-mcp-kit
+
+WORKDIR /src/services/loom-core
+
+COPY services/loom-core/go.mod services/loom-core/go.sum ./
+RUN go mod download
+
+COPY services/loom-core/ ./
+
+# Build all binaries
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
+
+# Build all MCP servers
+RUN mkdir -p /bin && \
+    for d in cmd/mcp-*; do \
+      name="$(basename "$d")"; \
+      CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "/bin/$name" "./$d"; \
+    done
+
+# Runtime stage - minimal image
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates git
+
+# Create non-root user
+RUN adduser -D -u 1000 mcp
+USER mcp
+
+# Copy binaries
+COPY --from=builder /bin/loomd /bin/loom /bin/mcp-* /usr/local/bin/
+
+# Default to running the daemon
+ENTRYPOINT ["/usr/local/bin/loomd"]
+CMD ["--registry", "/etc/loom/registry.yaml"]

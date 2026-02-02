@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -22,20 +22,14 @@ type neo4jServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	uri := os.Getenv("NEO4J_URI")
 	if uri == "" {
@@ -54,18 +48,18 @@ func main() {
 
 	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(username, password, ""))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create Neo4j driver: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create Neo4j driver: %w", err)
 	}
 	defer driver.Close(ctx)
 
 	// Verify connectivity
 	if err := driver.VerifyConnectivity(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to Neo4j: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to Neo4j: %w", err)
 	}
 
 	ns := &neo4jServer{driver: driver}
+
+	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", uri)
 
 	server := mcp.NewServer("mcp-neo4j", version)
 	server.SetInstructions("Neo4j graph database MCP server. Execute Cypher queries, inspect schema, and explore graph data.")
@@ -245,10 +239,7 @@ func main() {
 		},
 	}, ns.handleDatabases)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *neo4jServer) getSession(ctx context.Context, database string, accessMode neo4j.AccessMode) neo4j.SessionWithContext {

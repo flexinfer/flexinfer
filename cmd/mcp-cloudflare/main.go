@@ -9,23 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
-	version       = "0.1.0"
-	cfAPIToken    = os.Getenv("CF_API_TOKEN")
-	cfAccountID   = os.Getenv("CF_ACCOUNT_ID")
-	cfAPIBase     = getEnv("CF_API_BASE", "https://api.cloudflare.com")
-	cfHTTPTimeout = getEnvDuration("CF_HTTP_TIMEOUT", 30*time.Second)
+	version     = "0.1.0"
+	cfAPIToken  = os.Getenv("CF_API_TOKEN")
+	cfAccountID = os.Getenv("CF_ACCOUNT_ID")
+	cfAPIBase   = getEnv("CF_API_BASE", "https://api.cloudflare.com")
+	httpClient  = httpclient.NewDefault()
 )
 
 func getEnv(key, fallback string) string {
@@ -35,34 +34,16 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return time.Duration(f * float64(time.Second))
-		}
+func main() {
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
-	return fallback
 }
 
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-cloudflare", "version", version)
 
 	server := mcp.NewServer("mcp-cloudflare", version)
 	server.SetInstructions("Cloudflare API tools")
@@ -178,10 +159,7 @@ func main() {
 		},
 	}, handlePurgeCache)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // Cloudflare Client
@@ -226,8 +204,7 @@ func cfRequestWithBody(method, path string, params map[string]string, body any) 
 	req.Header.Set("Authorization", "Bearer "+cfAPIToken)
 	req.Header.Set("User-Agent", "mcp-cloudflare/0.1")
 
-	client := &http.Client{Timeout: cfHTTPTimeout}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

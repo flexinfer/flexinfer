@@ -11,30 +11,27 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/google/uuid"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-crypto", "version", version)
 
 	server := mcp.NewServer("mcp-crypto", version)
 	server.SetInstructions("Cryptographic and encoding utilities. Tools: random_string, uuid_v4, hash_string, base64_encode, base64_decode")
@@ -121,27 +118,17 @@ func main() {
 		},
 	}, handleBase64Decode)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func handleRandomString(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	length := 16
-	if l, ok := args["length"].(float64); ok {
-		length = int(l)
-	}
+	v := validate.NewArgs(args)
+	length := v.IntRange("length", 16, 1, 10000)
+	charsetType := v.String("charset", "alphanumeric")
 
-	// Validate length to prevent DoS
-	if length <= 0 {
-		return nil, fmt.Errorf("length must be positive")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	if length > 10000 {
-		return nil, fmt.Errorf("length exceeds maximum of 10000")
-	}
-
-	charsetType, _ := args["charset"].(string)
 
 	const (
 		alphaOps    = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -186,22 +173,22 @@ func handleUUID(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleHashString(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	text, _ := args["text"].(string)
-	algo, _ := args["algorithm"].(string)
+	v := validate.NewArgs(args)
+	text := v.Required("text")
+	algo := v.Enum("algorithm", "sha256", "md5", "sha256")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	var hash string
 	switch algo {
 	case "md5":
 		sum := md5.Sum([]byte(text))
 		hash = hex.EncodeToString(sum[:])
-	case "sha256":
+	default: // sha256
 		sum := sha256.Sum256([]byte(text))
 		hash = hex.EncodeToString(sum[:])
-	default:
-		// Default to sha256
-		sum := sha256.Sum256([]byte(text))
-		hash = hex.EncodeToString(sum[:])
-		algo = "sha256"
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -212,7 +199,13 @@ func handleHashString(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 func handleBase64Encode(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	text, _ := args["text"].(string)
+	v := validate.NewArgs(args)
+	text := v.Required("text")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
 	return mcp.JSONResult(map[string]any{
 		"original": text,
@@ -221,10 +214,16 @@ func handleBase64Encode(ctx context.Context, args map[string]any) (*mcp.CallTool
 }
 
 func handleBase64Decode(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	text, _ := args["text"].(string)
+	v := validate.NewArgs(args)
+	text := v.Required("text")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	decoded, err := base64.StdEncoding.DecodeString(text)
 	if err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("decode: %w", err)), nil
 	}
 	return mcp.JSONResult(map[string]any{
 		"encoded": text,

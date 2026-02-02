@@ -3,21 +3,15 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	stdsync "sync"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gitlab.flexinfer.ai/libs/mcp-go"
 	"golang.org/x/term"
 
 	loomcontext "github.com/crb2nu/loom/pkg/context"
@@ -29,7 +23,7 @@ import (
 	"github.com/crb2nu/loom/pkg/sync"
 )
 
-var version = "0.2.0"
+var version = "0.9.0"
 
 func main() {
 	var socketPath string
@@ -203,8 +197,161 @@ Example mcp.json:
 		Short: "Generate configurations and manifests",
 	}
 
-	// Generate Manifests
-	genManifestsCmd := &cobra.Command{
+	generateCmd.AddCommand(
+		newGenerateManifestsCmd(),
+		newGenerateConfigsCmd(),
+		newGenerateSkillsCmd(),
+	)
+
+	// Sync Command
+	syncCmd := newSyncCmd()
+
+	// Pull Command
+	pullCmd := &cobra.Command{
+		Use:   "pull [profile]",
+		Short: "Pull configuration from home to repo",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profile := args[0]
+			cwd, _ := os.Getwd()
+			mgr, err := sync.NewManager(cwd)
+			if err != nil {
+				return err
+			}
+			return mgr.PullFromHome(profile, true)
+		},
+	}
+
+	// Backup Command
+	backupCmd := &cobra.Command{
+		Use:   "backup [profile]",
+		Short: "Backup configuration",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profile := args[0]
+			cwd, _ := os.Getwd()
+			mgr, err := sync.NewManager(cwd)
+			if err != nil {
+				return err
+			}
+			return mgr.Backup(profile, "home")
+		},
+	}
+
+	// Validate Command
+	validateCmd := newValidateCmd()
+
+	// Profile commands
+	profileCmd := newProfileCmd()
+
+	// Context command
+	contextCmd := newContextCmd()
+
+	// Tools command
+	toolsCmd := newToolsCmd(socketPath)
+
+	// Reload command
+	reloadCmd := &cobra.Command{
+		Use:   "reload",
+		Short: "Reload daemon configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := call(socketPath, "loom/reload", nil)
+			if err != nil {
+				return err
+			}
+			fmt.Println("Reload result:", string(result))
+			return nil
+		},
+	}
+
+	// Secrets commands
+	secretsCmd := newSecretsCmd()
+
+	// Tunnel command group - SSH tunnel management
+	tunnelCmd := &cobra.Command{
+		Use:   "tunnel",
+		Short: "Manage SSH tunnels for remote MCP servers",
+	}
+
+	// Tunnel status subcommand
+	var tunnelJSON bool
+	tunnelStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show SSH tunnel status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return showTunnelStatus(socketPath, tunnelJSON)
+		},
+	}
+	tunnelStatusCmd.Flags().BoolVar(&tunnelJSON, "json", false, "Output in JSON format")
+
+	tunnelCmd.AddCommand(tunnelStatusCmd)
+
+	// Cache command group - response cache management
+	cacheCmd := &cobra.Command{
+		Use:   "cache",
+		Short: "Manage response cache for read-only tools",
+	}
+
+	// Cache stats subcommand
+	var cacheJSON bool
+	cacheStatsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show cache statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return showCacheStats(socketPath, cacheJSON)
+		},
+	}
+	cacheStatsCmd.Flags().BoolVar(&cacheJSON, "json", false, "Output in JSON format")
+
+	// Cache clear subcommand
+	cacheClearCmd := &cobra.Command{
+		Use:   "clear [server]",
+		Short: "Clear the response cache",
+		Long:  "Clear the response cache. Optionally specify a server name to clear only that server's cached responses.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var server string
+			if len(args) > 0 {
+				server = args[0]
+			}
+			return clearCache(socketPath, server)
+		},
+	}
+
+	cacheCmd.AddCommand(cacheStatsCmd, cacheClearCmd)
+
+	// REPL command - interactive tool exploration
+	replCmd := &cobra.Command{
+		Use:   "repl",
+		Short: "Interactive REPL for exploring and calling MCP tools",
+		Long: `Start an interactive REPL for exploring MCP tools.
+
+Commands:
+  list [pattern]     - List tools (optionally filtered by pattern)
+  call <tool> <json> - Call a tool with JSON arguments
+  help <tool>        - Show tool description and schema
+  servers            - List available servers
+  exit               - Exit the REPL
+
+Example session:
+  loom> list memory
+  loom> help memory__search_nodes
+  loom> call memory__search_nodes {"query": "authentication"}
+  loom> exit`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRepl(socketPath)
+		},
+	}
+
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newGenerateManifestsCmd creates the generate manifests subcommand.
+func newGenerateManifestsCmd() *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "manifests",
 		Short: "Generate Kubernetes manifests for MCP Hub",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -247,18 +394,21 @@ Example mcp.json:
 			})
 		},
 	}
-	genManifestsCmd.Flags().String("output-dir", "k3s/mcp-hub/servers", "Output directory")
-	genManifestsCmd.Flags().String("namespace", "mcp-hub", "Kubernetes namespace")
-	genManifestsCmd.Flags().String("image-registry", "registry.harbor.lan/mcp", "Container image registry")
-	genManifestsCmd.Flags().String("registry", "", "Path to registry.yaml")
-	genManifestsCmd.Flags().Bool("gateway", true, "Include gateway manifests")
-	genManifestsCmd.Flags().String("gateway-host", "mcp.flexinfer.ai", "Gateway ingress host")
-	genManifestsCmd.Flags().String("gateway-ingress-class", "", "Gateway ingress class")
-	genManifestsCmd.Flags().String("gateway-tls-secret", "", "Gateway TLS secret")
-	genManifestsCmd.Flags().String("gateway-image", "", "Gateway container image")
+	cmd.Flags().String("output-dir", "k3s/mcp-hub/servers", "Output directory")
+	cmd.Flags().String("namespace", "mcp-hub", "Kubernetes namespace")
+	cmd.Flags().String("image-registry", "registry.harbor.lan/mcp", "Container image registry")
+	cmd.Flags().String("registry", "", "Path to registry.yaml")
+	cmd.Flags().Bool("gateway", true, "Include gateway manifests")
+	cmd.Flags().String("gateway-host", "mcp.flexinfer.ai", "Gateway ingress host")
+	cmd.Flags().String("gateway-ingress-class", "", "Gateway ingress class")
+	cmd.Flags().String("gateway-tls-secret", "", "Gateway TLS secret")
+	cmd.Flags().String("gateway-image", "", "Gateway container image")
+	return cmd
+}
 
-	// Generate Configs
-	genConfigsCmd := &cobra.Command{
+// newGenerateConfigsCmd creates the generate configs subcommand.
+func newGenerateConfigsCmd() *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "configs",
 		Short: "Generate client configurations (VS Code, Claude, etc.)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -317,17 +467,20 @@ Example mcp.json:
 			return generator.GenerateConfigsWithPath(reg, registryPath, outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
 		},
 	}
-	genConfigsCmd.Flags().String("output-dir", "generated/mcp", "Output directory")
-	genConfigsCmd.Flags().String("target", "all", "Target config (all, vscode, codex, etc.)")
-	genConfigsCmd.Flags().Bool("hub-mode", false, "Generate configs for MCP Hub")
-	genConfigsCmd.Flags().String("hub-url", "wss://mcp.flexinfer.ai/ws", "MCP Hub WebSocket URL")
-	genConfigsCmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
-	genConfigsCmd.Flags().String("loom-binary", "", "Path to loom binary")
-	genConfigsCmd.Flags().String("registry", "", "Path to registry.yaml")
-	genConfigsCmd.Flags().Bool("emit", true, "Emit generated files (always true)")
+	cmd.Flags().String("output-dir", "generated/mcp", "Output directory")
+	cmd.Flags().String("target", "all", "Target config (all, vscode, codex, etc.)")
+	cmd.Flags().Bool("hub-mode", false, "Generate configs for MCP Hub")
+	cmd.Flags().String("hub-url", "wss://mcp.flexinfer.ai/ws", "MCP Hub WebSocket URL")
+	cmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
+	cmd.Flags().String("loom-binary", "", "Path to loom binary")
+	cmd.Flags().String("registry", "", "Path to registry.yaml")
+	cmd.Flags().Bool("emit", true, "Emit generated files (always true)")
+	return cmd
+}
 
-	// Generate Skills
-	genSkillsCmd := &cobra.Command{
+// newGenerateSkillsCmd creates the generate skills subcommand.
+func newGenerateSkillsCmd() *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "skills",
 		Short: "Generate skill configurations for Codex, Claude, etc.",
 		Long: `Generate skill configurations from the unified skills registry.
@@ -412,18 +565,19 @@ Example:
 			return gen.Generate()
 		},
 	}
-	genSkillsCmd.Flags().String("target", "all", "Target platform (all, codex, claude)")
-	genSkillsCmd.Flags().String("output-dir", "", "Output directory (default: platform-specific)")
-	genSkillsCmd.Flags().String("registry", "", "Path to skills-registry.yaml")
-	genSkillsCmd.Flags().String("codex-home", "", "Codex home directory (default: ~/.codex)")
-	genSkillsCmd.Flags().String("workspace", "", "Workspace root for Claude skills")
-	genSkillsCmd.Flags().Bool("dry-run", false, "Show what would be generated without writing")
-	genSkillsCmd.Flags().Bool("verbose", false, "Verbose output")
-	genSkillsCmd.Flags().Bool("validate", false, "Only validate the registry, don't generate")
+	cmd.Flags().String("target", "all", "Target platform (all, codex, claude)")
+	cmd.Flags().String("output-dir", "", "Output directory (default: platform-specific)")
+	cmd.Flags().String("registry", "", "Path to skills-registry.yaml")
+	cmd.Flags().String("codex-home", "", "Codex home directory (default: ~/.codex)")
+	cmd.Flags().String("workspace", "", "Workspace root for Claude skills")
+	cmd.Flags().Bool("dry-run", false, "Show what would be generated without writing")
+	cmd.Flags().Bool("verbose", false, "Verbose output")
+	cmd.Flags().Bool("validate", false, "Only validate the registry, don't generate")
+	return cmd
+}
 
-	generateCmd.AddCommand(genManifestsCmd, genConfigsCmd, genSkillsCmd)
-
-	// Sync Command
+// newSyncCmd creates the sync command and its subcommands.
+func newSyncCmd() *cobra.Command {
 	syncCmd := &cobra.Command{
 		Use:   "sync [profile]",
 		Short: "Sync configuration from repo to home",
@@ -463,39 +617,57 @@ Example:
 	syncCmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
 	syncCmd.Flags().String("loom-binary", "", "Path to loom binary")
 
-	// Pull Command
-	pullCmd := &cobra.Command{
-		Use:   "pull [profile]",
-		Short: "Pull configuration from home to repo",
-		Args:  cobra.ExactArgs(1),
+	// Sync status subcommand
+	syncStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show sync status for all profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			profile := args[0]
 			cwd, _ := os.Getwd()
 			mgr, err := sync.NewManager(cwd)
 			if err != nil {
 				return err
 			}
-			return mgr.PullFromHome(profile, true)
-		},
-	}
 
-	// Backup Command
-	backupCmd := &cobra.Command{
-		Use:   "backup [profile]",
-		Short: "Backup configuration",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			profile := args[0]
-			cwd, _ := os.Getwd()
-			mgr, err := sync.NewManager(cwd)
+			statuses, err := mgr.GetAllSyncStatus()
 			if err != nil {
 				return err
 			}
-			return mgr.Backup(profile, "home")
+
+			fmt.Printf("%-16s %-8s %-8s %s\n", "Profile", "Repo", "Home", "Status")
+			fmt.Printf("%-16s %-8s %-8s %s\n", "-------", "----", "----", "------")
+
+			names := make([]string, 0, len(statuses))
+			for name := range statuses {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+
+			for _, name := range names {
+				s := statuses[name]
+				repoStatus := "missing"
+				if s.RepoExists {
+					repoStatus = "ok"
+				}
+				homeStatus := "missing"
+				if s.HomeExists {
+					homeStatus = "ok"
+				}
+				syncStatus := "in-sync"
+				if !s.InSync {
+					syncStatus = "drift"
+				}
+				fmt.Printf("%-16s %-8s %-8s %s\n", name, repoStatus, homeStatus, syncStatus)
+			}
+			return nil
 		},
 	}
+	syncCmd.AddCommand(syncStatusCmd)
 
-	// Validate Command
+	return syncCmd
+}
+
+// newValidateCmd creates the validate command and its subcommands.
+func newValidateCmd() *cobra.Command {
 	validateCmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate configurations",
@@ -625,8 +797,11 @@ Example:
 	validateConfigsCmd.Flags().Bool("all", false, "Also scan home directory config locations")
 
 	validateCmd.AddCommand(validateProfileCmd, validateConfigsCmd)
+	return validateCmd
+}
 
-	// Profile commands
+// newProfileCmd creates the profile command and its subcommands.
+func newProfileCmd() *cobra.Command {
 	profileCmd := &cobra.Command{
 		Use:   "profile",
 		Short: "Manage tool profiles",
@@ -676,8 +851,11 @@ Example:
 	}
 
 	profileCmd.AddCommand(profileListCmd, profileShowCmd)
+	return profileCmd
+}
 
-	// Context command
+// newContextCmd creates the context command and its subcommands.
+func newContextCmd() *cobra.Command {
 	contextCmd := &cobra.Command{
 		Use:   "context",
 		Short: "Workspace context detection",
@@ -709,8 +887,11 @@ Example:
 	}
 
 	contextCmd.AddCommand(contextDetectCmd)
+	return contextCmd
+}
 
-	// Tools command
+// newToolsCmd creates the tools command and its subcommands.
+func newToolsCmd(socketPath string) *cobra.Command {
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
 		Short: "List and search aggregated tools",
@@ -861,68 +1042,11 @@ Examples:
 	toolsCallCmd.Flags().StringVar(&toolsCallArgs, "args", "", "Tool arguments as JSON")
 
 	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd, toolsCallCmd)
+	return toolsCmd
+}
 
-	// Reload command
-	reloadCmd := &cobra.Command{
-		Use:   "reload",
-		Short: "Reload daemon configuration",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := call(socketPath, "loom/reload", nil)
-			if err != nil {
-				return err
-			}
-			fmt.Println("Reload result:", string(result))
-			return nil
-		},
-	}
-
-	// Sync status subcommand
-	syncStatusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show sync status for all profiles",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, _ := os.Getwd()
-			mgr, err := sync.NewManager(cwd)
-			if err != nil {
-				return err
-			}
-
-			statuses, err := mgr.GetAllSyncStatus()
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf("%-16s %-8s %-8s %s\n", "Profile", "Repo", "Home", "Status")
-			fmt.Printf("%-16s %-8s %-8s %s\n", "-------", "----", "----", "------")
-
-			names := make([]string, 0, len(statuses))
-			for name := range statuses {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-
-			for _, name := range names {
-				s := statuses[name]
-				repoStatus := "missing"
-				if s.RepoExists {
-					repoStatus = "ok"
-				}
-				homeStatus := "missing"
-				if s.HomeExists {
-					homeStatus = "ok"
-				}
-				syncStatus := "in-sync"
-				if !s.InSync {
-					syncStatus = "drift"
-				}
-				fmt.Printf("%-16s %-8s %-8s %s\n", name, repoStatus, homeStatus, syncStatus)
-			}
-			return nil
-		},
-	}
-	syncCmd.AddCommand(syncStatusCmd)
-
-	// Secrets commands
+// newSecretsCmd creates the secrets command and its subcommands.
+func newSecretsCmd() *cobra.Command {
 	secretsCmd := &cobra.Command{
 		Use:   "secrets",
 		Short: "Manage secrets for MCP servers",
@@ -1179,1706 +1303,5 @@ Example:
 	secretsImportCmd.Flags().Bool("dry-run", false, "Show what would be imported without storing")
 
 	secretsCmd.AddCommand(secretsSetCmd, secretsGetCmd, secretsListCmd, secretsDeleteCmd, secretsImportCmd)
-
-	// Tunnel command group - SSH tunnel management
-	tunnelCmd := &cobra.Command{
-		Use:   "tunnel",
-		Short: "Manage SSH tunnels for remote MCP servers",
-	}
-
-	// Tunnel status subcommand
-	var tunnelJSON bool
-	tunnelStatusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show SSH tunnel status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return showTunnelStatus(socketPath, tunnelJSON)
-		},
-	}
-	tunnelStatusCmd.Flags().BoolVar(&tunnelJSON, "json", false, "Output in JSON format")
-
-	tunnelCmd.AddCommand(tunnelStatusCmd)
-
-	// Cache command group - response cache management
-	cacheCmd := &cobra.Command{
-		Use:   "cache",
-		Short: "Manage response cache for read-only tools",
-	}
-
-	// Cache stats subcommand
-	var cacheJSON bool
-	cacheStatsCmd := &cobra.Command{
-		Use:   "stats",
-		Short: "Show cache statistics",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return showCacheStats(socketPath, cacheJSON)
-		},
-	}
-	cacheStatsCmd.Flags().BoolVar(&cacheJSON, "json", false, "Output in JSON format")
-
-	// Cache clear subcommand
-	cacheClearCmd := &cobra.Command{
-		Use:   "clear [server]",
-		Short: "Clear the response cache",
-		Long:  "Clear the response cache. Optionally specify a server name to clear only that server's cached responses.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var server string
-			if len(args) > 0 {
-				server = args[0]
-			}
-			return clearCache(socketPath, server)
-		},
-	}
-
-	cacheCmd.AddCommand(cacheStatsCmd, cacheClearCmd)
-
-	// REPL command - interactive tool exploration
-	replCmd := &cobra.Command{
-		Use:   "repl",
-		Short: "Interactive REPL for exploring and calling MCP tools",
-		Long: `Start an interactive REPL for exploring MCP tools.
-
-Commands:
-  list [pattern]     - List tools (optionally filtered by pattern)
-  call <tool> <json> - Call a tool with JSON arguments
-  help <tool>        - Show tool description and schema
-  servers            - List available servers
-  exit               - Exit the REPL
-
-Example session:
-  loom> list memory
-  loom> help memory__search_nodes
-  loom> call memory__search_nodes {"query": "authentication"}
-  loom> exit`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRepl(socketPath)
-		},
-	}
-
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
-}
-
-func dial(socketPath string) (net.Conn, error) {
-	return net.DialTimeout("unix", socketPath, 5*time.Second)
-}
-
-func call(socketPath string, method string, params any) (json.RawMessage, error) {
-	conn, err := dial(socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("connect to daemon: %w", err)
-	}
-	defer conn.Close()
-
-	transport := mcp.NewStdioTransport(conn, conn)
-	ctx := context.Background()
-
-	req, err := mcp.NewRequest(1, method, params)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	if err := transport.Send(ctx, req); err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-
-	resp, err := transport.Recv(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("receive response: %w", err)
-	}
-
-	if resp.Error != nil {
-		return nil, fmt.Errorf("daemon error: %s", resp.Error.Message)
-	}
-
-	return resp.Result, nil
-}
-
-func showStatus(socketPath string) error {
-	result, err := call(socketPath, "loom/status", nil)
-	if err != nil {
-		fmt.Println("Daemon: not running")
-		return nil
-	}
-
-	var status struct {
-		Running     bool     `json:"running"`
-		Servers     int      `json:"servers"`
-		ActiveConns int      `json:"activeConns"`
-		IdleConns   int      `json:"idleConns"`
-		Processes   []string `json:"processes"`
-	}
-
-	if err := json.Unmarshal(result, &status); err != nil {
-		return fmt.Errorf("parse status: %w", err)
-	}
-
-	fmt.Println("Daemon: running")
-	fmt.Printf("Socket: %s\n", socketPath)
-	fmt.Printf("Servers: %d registered\n", status.Servers)
-	fmt.Printf("Connections: %d active, %d idle\n", status.ActiveConns, status.IdleConns)
-	if len(status.Processes) > 0 {
-		fmt.Printf("Processes: %v\n", status.Processes)
-	}
-
-	return nil
-}
-
-func showTunnelStatus(socketPath string, jsonOutput bool) error {
-	result, err := call(socketPath, "loom/tunnels", nil)
-	if err != nil {
-		return fmt.Errorf("get tunnel status: %w", err)
-	}
-
-	var status struct {
-		Tunnels   map[string]any `json:"tunnels"`
-		Total     int            `json:"total"`
-		Connected int            `json:"connected"`
-	}
-
-	if err := json.Unmarshal(result, &status); err != nil {
-		return fmt.Errorf("parse tunnel status: %w", err)
-	}
-
-	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(status)
-	}
-
-	if status.Total == 0 {
-		fmt.Println("No SSH tunnels configured")
-		fmt.Println("\nTo configure tunnels, add 'ssh' section to server definitions in registry.yaml:")
-		fmt.Println(`
-servers:
-  - name: remote_k8s
-    targets:
-      vscode:
-        ssh:
-          host: "jump.example.com"
-          user: "admin"
-        command: "kubectl"
-        env:
-          KUBECONFIG_REMOTE_HOST: "k8s-api.internal:6443"`)
-		return nil
-	}
-
-	fmt.Printf("SSH Tunnels: %d total, %d connected\n\n", status.Total, status.Connected)
-
-	for name, tunnel := range status.Tunnels {
-		t, ok := tunnel.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		state := t["state"]
-		localAddr := t["localAddr"]
-		remoteHost := t["remoteHost"]
-		lastError := t["lastError"]
-		reconnectCount := t["reconnectCount"]
-
-		stateStr := fmt.Sprintf("%v", state)
-		statusIcon := "?"
-		switch stateStr {
-		case "connected":
-			statusIcon = "✓"
-		case "connecting", "reconnecting":
-			statusIcon = "⟳"
-		case "disconnected":
-			statusIcon = "○"
-		case "failed":
-			statusIcon = "✗"
-		}
-
-		fmt.Printf("  %s %s\n", statusIcon, name)
-		fmt.Printf("      State: %s\n", stateStr)
-		if localAddr != nil && localAddr != "" {
-			fmt.Printf("      Local: %s\n", localAddr)
-		}
-		if remoteHost != nil && remoteHost != "" {
-			fmt.Printf("      Remote: %s\n", remoteHost)
-		}
-		if reconnectCount != nil && reconnectCount.(float64) > 0 {
-			fmt.Printf("      Reconnects: %.0f\n", reconnectCount.(float64))
-		}
-		if lastError != nil && lastError != "" {
-			fmt.Printf("      Error: %s\n", lastError)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
-
-func showCacheStats(socketPath string, jsonOutput bool) error {
-	result, err := call(socketPath, "loom/cache/stats", nil)
-	if err != nil {
-		return fmt.Errorf("get cache stats: %w", err)
-	}
-
-	var stats struct {
-		Enabled   bool  `json:"enabled"`
-		Entries   int   `json:"entries"`
-		SizeBytes int64 `json:"size_bytes"`
-		MaxBytes  int64 `json:"max_bytes"`
-		TotalHits int64 `json:"total_hits"`
-	}
-
-	if err := json.Unmarshal(result, &stats); err != nil {
-		return fmt.Errorf("parse cache stats: %w", err)
-	}
-
-	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(stats)
-	}
-
-	if !stats.Enabled {
-		fmt.Println("Response caching is disabled")
-		fmt.Println("\nTo enable, add to ~/.config/loom/config.yaml:")
-		fmt.Println(`
-cache:
-  enabled: true
-  default_ttl_seconds: 60
-  max_size_mb: 100`)
-		return nil
-	}
-
-	fmt.Println("Response Cache Statistics")
-	fmt.Println("─────────────────────────")
-	fmt.Printf("  Status:     enabled\n")
-	fmt.Printf("  Entries:    %d\n", stats.Entries)
-	fmt.Printf("  Size:       %s / %s\n", formatBytes(stats.SizeBytes), formatBytes(stats.MaxBytes))
-	fmt.Printf("  Total Hits: %d\n", stats.TotalHits)
-
-	if stats.MaxBytes > 0 {
-		pct := float64(stats.SizeBytes) / float64(stats.MaxBytes) * 100
-		fmt.Printf("  Usage:      %.1f%%\n", pct)
-	}
-
-	return nil
-}
-
-func clearCache(socketPath string, server string) error {
-	params := map[string]any{}
-	if server != "" {
-		params["server"] = server
-	}
-
-	result, err := call(socketPath, "loom/cache/clear", params)
-	if err != nil {
-		return fmt.Errorf("clear cache: %w", err)
-	}
-
-	var resp struct {
-		Cleared bool   `json:"cleared"`
-		Server  string `json:"server,omitempty"`
-		Reason  string `json:"reason,omitempty"`
-	}
-
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return fmt.Errorf("parse response: %w", err)
-	}
-
-	if !resp.Cleared {
-		fmt.Printf("Cache not cleared: %s\n", resp.Reason)
-		return nil
-	}
-
-	if resp.Server != "" {
-		fmt.Printf("Cache cleared for server: %s\n", resp.Server)
-	} else {
-		fmt.Println("Cache cleared")
-	}
-
-	return nil
-}
-
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
-const launchdLabel = "com.loom.daemon"
-
-func startDaemon(socketPath, registryPath string) error {
-	// Check if already running
-	if conn, err := dial(socketPath); err == nil {
-		conn.Close()
-		fmt.Println("Daemon is already running")
-		return nil
-	}
-
-	// Auto-detect registry if not provided
-	if registryPath == "" {
-		var found bool
-		registryPath, found = registry.FindRegistry()
-		if !found {
-			return fmt.Errorf("registry not found (pass --registry or place at ~/.config/loom/registry.yaml)")
-		}
-	}
-
-	// Try launchctl first (if installed)
-	home, _ := os.UserHomeDir()
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-	if _, err := os.Stat(plistPath); err == nil {
-		cmd := exec.Command("launchctl", "start", launchdLabel)
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("launchctl start failed: %v, falling back to direct start\n", err)
-		} else {
-			// Wait for daemon to be ready
-			for i := 0; i < 50; i++ {
-				time.Sleep(100 * time.Millisecond)
-				if conn, err := dial(socketPath); err == nil {
-					conn.Close()
-					fmt.Println("Daemon started via launchctl")
-					return nil
-				}
-			}
-		}
-	}
-
-	// Fallback: direct start
-	loomd, err := exec.LookPath("loomd")
-	if err != nil {
-		// Try next to executable
-		exe, _ := os.Executable()
-		loomdPath := filepath.Join(filepath.Dir(exe), "loomd")
-		if _, err := os.Stat(loomdPath); err == nil {
-			loomd = loomdPath
-		} else {
-			// Try relative path
-			loomd = "./bin/loomd"
-		}
-	}
-
-	args := []string{"--socket", socketPath}
-	if registryPath != "" {
-		args = append(args, "--registry", registryPath)
-	}
-
-	cmd := exec.Command(loomd, args...)
-	cmd.Stdout = nil
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start daemon: %w", err)
-	}
-
-	// Wait for daemon to be ready
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		if conn, err := dial(socketPath); err == nil {
-			conn.Close()
-			fmt.Println("Daemon started")
-			return nil
-		}
-	}
-
-	return fmt.Errorf("daemon failed to start: %s", stderr.String())
-}
-
-func stopDaemon(socketPath string) error {
-	// Try launchctl first
-	home, _ := os.UserHomeDir()
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-	if _, err := os.Stat(plistPath); err == nil {
-		cmd := exec.Command("launchctl", "stop", launchdLabel)
-		if err := cmd.Run(); err == nil {
-			// Wait for daemon to stop
-			for i := 0; i < 30; i++ {
-				time.Sleep(100 * time.Millisecond)
-				if c, err := dial(socketPath); err != nil {
-					fmt.Println("Daemon stopped via launchctl")
-					return nil
-				} else {
-					c.Close()
-				}
-			}
-		}
-	}
-
-	// Fallback: remove socket to signal shutdown
-	conn, err := dial(socketPath)
-	if err != nil {
-		fmt.Println("Daemon is not running")
-		return nil
-	}
-	conn.Close()
-
-	os.Remove(socketPath)
-	fmt.Println("Daemon stopped")
-	return nil
-}
-
-func installService() error {
-	home, _ := os.UserHomeDir()
-	launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
-	plistDest := filepath.Join(launchAgentsDir, launchdLabel+".plist")
-	logsDir := filepath.Join(home, ".config", "loom", "logs")
-
-	// Create directories
-	if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
-		return fmt.Errorf("create LaunchAgents dir: %w", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		return fmt.Errorf("create logs dir: %w", err)
-	}
-
-	// Find the plist source
-	exe, _ := os.Executable()
-	exeDir := filepath.Dir(exe)
-
-	// Try multiple locations for the plist
-	plistSources := []string{
-		filepath.Join(exeDir, "..", "launchd", launchdLabel+".plist"),
-		filepath.Join(exeDir, "launchd", launchdLabel+".plist"),
-		filepath.Join(home, "workspace", "services", "loom-core", "launchd", launchdLabel+".plist"),
-		filepath.Join(home, "workspace", "gitops", "services", "loom-core", "launchd", launchdLabel+".plist"),
-	}
-
-	var plistSrc string
-	for _, src := range plistSources {
-		if _, err := os.Stat(src); err == nil {
-			plistSrc = src
-			break
-		}
-	}
-
-	if plistSrc == "" {
-		return fmt.Errorf("plist not found in any of: %v", plistSources)
-	}
-
-	// Copy plist
-	data, err := os.ReadFile(plistSrc)
-	if err != nil {
-		return fmt.Errorf("read plist: %w", err)
-	}
-	if err := os.WriteFile(plistDest, data, 0644); err != nil {
-		return fmt.Errorf("write plist: %w", err)
-	}
-
-	// Load the service
-	cmd := exec.Command("launchctl", "load", plistDest)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("launchctl load: %w", err)
-	}
-
-	fmt.Printf("Installed launchd service: %s\n", plistDest)
-	fmt.Println("Daemon will start automatically on login")
-	fmt.Println("Start now with: loom start")
-	return nil
-}
-
-func uninstallService() error {
-	home, _ := os.UserHomeDir()
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-
-	// Unload first
-	cmd := exec.Command("launchctl", "unload", plistPath)
-	_ = cmd.Run() // Ignore error if not loaded
-
-	// Remove plist
-	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove plist: %w", err)
-	}
-
-	fmt.Println("Uninstalled launchd service")
-	return nil
-}
-
-func listServers(socketPath string, outputJSON bool) error {
-	result, err := call(socketPath, "loom/servers", nil)
-	if err != nil {
-		return err
-	}
-
-	var resp struct {
-		Servers []struct {
-			Name        string   `json:"name"`
-			Categories  []string `json:"categories,omitempty"`
-			Description string   `json:"description,omitempty"`
-			Running     bool     `json:"running"`
-		} `json:"servers"`
-	}
-
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return fmt.Errorf("parse servers: %w", err)
-	}
-
-	if outputJSON {
-		// Output JSON format for programmatic consumption
-		out, err := json.MarshalIndent(resp, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal json: %w", err)
-		}
-		fmt.Println(string(out))
-		return nil
-	}
-
-	fmt.Printf("%-20s %-8s %s\n", "NAME", "STATUS", "DESCRIPTION")
-	fmt.Printf("%-20s %-8s %s\n", "----", "------", "-----------")
-
-	for _, s := range resp.Servers {
-		status := "idle"
-		if s.Running {
-			status = "running"
-		}
-		desc := s.Description
-		if len(desc) > 50 {
-			desc = desc[:47] + "..."
-		}
-		fmt.Printf("%-20s %-8s %s\n", s.Name, status, desc)
-	}
-
-	return nil
-}
-
-type checkResult struct {
-	Name     string `json:"name"`
-	OK       bool   `json:"ok"`
-	Severity string `json:"severity,omitempty"` // "error" or "warn"
-	Message  string `json:"message,omitempty"`
-	Fix      string `json:"fix,omitempty"`
-}
-
-type checkReport struct {
-	OK     bool          `json:"ok"`
-	Checks []checkResult `json:"checks"`
-}
-
-func findWorkspaceRootForChecks() string {
-	cwd, _ := os.Getwd()
-	try := func(dir string) bool {
-		if dir == "" {
-			return false
-		}
-		if _, err := os.Stat(filepath.Join(dir, "platform", "gitops", "mcp", "context", "registry.yaml")); err == nil {
-			return true
-		}
-		if _, err := os.Stat(filepath.Join(dir, ".codex", "config.toml")); err == nil {
-			return true
-		}
-		if _, err := os.Stat(filepath.Join(dir, "services", "loom-core")); err == nil {
-			return true
-		}
-		return false
-	}
-	if try(cwd) {
-		return cwd
-	}
-	dir := cwd
-	for range 10 {
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-		if try(dir) {
-			return dir
-		}
-	}
-	return ""
-}
-
-func runCheck(socketPath string, outputJSON bool) error {
-	checks := make([]checkResult, 0)
-
-	// Daemon connectivity
-	if conn, err := dial(socketPath); err == nil {
-		_ = conn.Close()
-		checks = append(checks, checkResult{
-			Name:    "daemon",
-			OK:      true,
-			Message: "daemon reachable",
-		})
-	} else {
-		checks = append(checks, checkResult{
-			Name:     "daemon",
-			OK:       false,
-			Severity: "error",
-			Message:  "cannot connect to daemon socket: " + err.Error(),
-			Fix:      "Run: loom start (or: loom install && loom start)",
-		})
-	}
-
-	// Registry discovery + parse
-	regPath, found := registry.FindRegistry()
-	if !found {
-		if root := findWorkspaceRootForChecks(); root != "" {
-			candidate := filepath.Join(root, "platform", "gitops", "mcp", "context", "registry.yaml")
-			if _, err := os.Stat(candidate); err == nil {
-				regPath = candidate
-				found = true
-			}
-		}
-	}
-	if !found {
-		checks = append(checks, checkResult{
-			Name:     "registry",
-			OK:       false,
-			Severity: "error",
-			Message:  "registry.yaml not found",
-			Fix:      "Set up registry at ~/.config/loom/registry.yaml or run from a repo with platform/gitops/mcp/context/registry.yaml",
-		})
-	} else {
-		if _, err := registry.Load(regPath); err != nil {
-			checks = append(checks, checkResult{
-				Name:     "registry",
-				OK:       false,
-				Severity: "error",
-				Message:  "failed to parse registry: " + err.Error(),
-				Fix:      "Fix YAML at: " + regPath,
-			})
-		} else {
-			checks = append(checks, checkResult{
-				Name:    "registry",
-				OK:      true,
-				Message: "registry OK: " + regPath,
-			})
-		}
-	}
-
-	// Codex config sanity (best-effort, workspace-only)
-	if root := findWorkspaceRootForChecks(); root != "" {
-		codexCfg := filepath.Join(root, ".codex", "config.toml")
-		if b, err := os.ReadFile(codexCfg); err == nil {
-			if strings.Contains(string(b), "${keychain:") || strings.Contains(string(b), "${secret:") || strings.Contains(string(b), "${env:") {
-				checks = append(checks, checkResult{
-					Name:     "codex_config_placeholders",
-					OK:       false,
-					Severity: "warn",
-					Message:  "codex config contains unexpanded template tokens (may be fine if your client expands them, but Codex typically expects concrete values)",
-					Fix:      "Regenerate configs with: loom generate configs --target codex (and sync if needed: loom sync codex --regen)",
-				})
-			}
-			checks = append(checks, checkResult{
-				Name:    "codex_config",
-				OK:      true,
-				Message: "found: " + codexCfg,
-			})
-		} else {
-			checks = append(checks, checkResult{
-				Name:     "codex_config",
-				OK:       false,
-				Severity: "warn",
-				Message:  "missing: " + codexCfg,
-				Fix:      "Generate configs with: loom generate configs --target codex (then sync: loom sync codex --regen)",
-			})
-		}
-	}
-
-	// Flux CLI presence (optional; mcp-flux can fall back, but CLI is still useful)
-	if p, err := exec.LookPath("flux"); err == nil {
-		checks = append(checks, checkResult{
-			Name:    "flux_cli",
-			OK:      true,
-			Message: "flux CLI found: " + p,
-		})
-	} else {
-		checks = append(checks, checkResult{
-			Name:     "flux_cli",
-			OK:       false,
-			Severity: "warn",
-			Message:  "flux CLI not found in PATH (mcp-flux falls back to Kubernetes API for many operations)",
-			Fix:      "Install flux CLI (macOS): brew install fluxcd/tap/flux",
-		})
-	}
-
-	// Kubeconfig presence (optional)
-	kubeconfig := os.Getenv("FLUX_KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = os.Getenv("KUBECONFIG")
-	}
-	if kubeconfig != "" {
-		if _, err := os.Stat(kubeconfig); err == nil {
-			checks = append(checks, checkResult{
-				Name:    "kubeconfig",
-				OK:      true,
-				Message: "kubeconfig: " + kubeconfig,
-			})
-		} else {
-			checks = append(checks, checkResult{
-				Name:     "kubeconfig",
-				OK:       false,
-				Severity: "warn",
-				Message:  "kubeconfig path is set but not readable: " + kubeconfig,
-				Fix:      "Fix FLUX_KUBECONFIG/KUBECONFIG to point at a readable kubeconfig file",
-			})
-		}
-	} else {
-		checks = append(checks, checkResult{
-			Name:     "kubeconfig",
-			OK:       false,
-			Severity: "warn",
-			Message:  "FLUX_KUBECONFIG/KUBECONFIG not set (required for mcp-flux/k8s tools unless using in-cluster config)",
-			Fix:      "Export KUBECONFIG=/path/to/kubeconfig (or FLUX_KUBECONFIG for mcp-flux specifically)",
-		})
-	}
-
-	// Summarize
-	ok := true
-	for _, c := range checks {
-		if !c.OK && c.Severity == "error" {
-			ok = false
-		}
-	}
-
-	report := checkReport{OK: ok, Checks: checks}
-	if outputJSON {
-		out, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal json: %w", err)
-		}
-		fmt.Println(string(out))
-		if !ok {
-			return fmt.Errorf("checks failed")
-		}
-		return nil
-	}
-
-	fmt.Println("Loom Check")
-	fmt.Println("=========")
-	fmt.Printf("Socket: %s\n\n", socketPath)
-	for _, c := range checks {
-		status := "OK"
-		if !c.OK {
-			if c.Severity == "" {
-				c.Severity = "warn"
-			}
-			status = strings.ToUpper(c.Severity)
-		}
-		fmt.Printf("[%s] %s: %s\n", status, c.Name, c.Message)
-		if !c.OK && c.Fix != "" {
-			fmt.Printf("      Fix: %s\n", c.Fix)
-		}
-	}
-
-	if !ok {
-		return fmt.Errorf("one or more checks failed")
-	}
-	return nil
-}
-
-// runRepl runs an interactive REPL for exploring MCP tools
-func runRepl(socketPath string) error {
-	// Check if daemon is running
-	if _, err := call(socketPath, "loom/status", nil); err != nil {
-		return fmt.Errorf("daemon not running (start with: loom start)")
-	}
-
-	fmt.Println("Loom REPL - Interactive MCP Tool Explorer")
-	fmt.Println("Type 'help' for commands, 'exit' to quit")
-	fmt.Println()
-
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Print("loom> ")
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return nil // EOF or error, exit gracefully
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		parts := strings.Fields(line)
-		cmd := parts[0]
-		args := parts[1:]
-
-		switch cmd {
-		case "exit", "quit", "q":
-			fmt.Println("Goodbye!")
-			return nil
-
-		case "help", "h", "?":
-			if len(args) > 0 {
-				// Show help for specific tool
-				if err := replShowToolHelp(socketPath, args[0]); err != nil {
-					fmt.Printf("Error: %v\n", err)
-				}
-			} else {
-				fmt.Println("Commands:")
-				fmt.Println("  list [pattern]     - List tools (optionally filtered)")
-				fmt.Println("  call <tool> <json> - Call a tool with JSON arguments")
-				fmt.Println("  help <tool>        - Show tool description and schema")
-				fmt.Println("  servers            - List available servers")
-				fmt.Println("  status             - Show daemon status")
-				fmt.Println("  exit               - Exit the REPL")
-			}
-
-		case "list", "ls", "l":
-			pattern := ""
-			if len(args) > 0 {
-				pattern = args[0]
-			}
-			if err := replListTools(socketPath, pattern); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-
-		case "call", "c":
-			if len(args) < 1 {
-				fmt.Println("Usage: call <tool-name> [json-args]")
-				continue
-			}
-			toolName := args[0]
-			jsonArgs := "{}"
-			if len(args) > 1 {
-				jsonArgs = strings.Join(args[1:], " ")
-			}
-			if err := replCallTool(socketPath, toolName, jsonArgs); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-
-		case "servers", "s":
-			if err := replListServers(socketPath); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-
-		case "status":
-			if err := showStatus(socketPath); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-
-		default:
-			fmt.Printf("Unknown command: %s (type 'help' for commands)\n", cmd)
-		}
-	}
-}
-
-func replListTools(socketPath, pattern string) error {
-	result, err := call(socketPath, "loom/tools", nil)
-	if err != nil {
-		return err
-	}
-
-	var tools struct {
-		Tools []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"tools"`
-	}
-
-	if err := json.Unmarshal(result, &tools); err != nil {
-		return err
-	}
-
-	patternLower := strings.ToLower(pattern)
-	count := 0
-	for _, t := range tools.Tools {
-		if pattern == "" || strings.Contains(strings.ToLower(t.Name), patternLower) ||
-			strings.Contains(strings.ToLower(t.Description), patternLower) {
-			desc := t.Description
-			if len(desc) > 50 {
-				desc = desc[:47] + "..."
-			}
-			fmt.Printf("  %-40s %s\n", t.Name, desc)
-			count++
-		}
-	}
-	fmt.Printf("\n%d tools\n", count)
-	return nil
-}
-
-func replShowToolHelp(socketPath, toolName string) error {
-	result, err := call(socketPath, "loom/tools", nil)
-	if err != nil {
-		return err
-	}
-
-	var tools struct {
-		Tools []struct {
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			InputSchema json.RawMessage `json:"inputSchema,omitempty"`
-		} `json:"tools"`
-	}
-
-	if err := json.Unmarshal(result, &tools); err != nil {
-		return err
-	}
-
-	for _, t := range tools.Tools {
-		if t.Name == toolName {
-			fmt.Printf("Tool: %s\n", t.Name)
-			fmt.Printf("Description: %s\n", t.Description)
-			if len(t.InputSchema) > 0 {
-				fmt.Println("\nInput Schema:")
-				var schema interface{}
-				if err := json.Unmarshal(t.InputSchema, &schema); err == nil {
-					pretty, _ := json.MarshalIndent(schema, "  ", "  ")
-					fmt.Println("  " + string(pretty))
-				}
-			}
-			return nil
-		}
-	}
-
-	return fmt.Errorf("tool not found: %s", toolName)
-}
-
-func replCallTool(socketPath, toolName, jsonArgs string) error {
-	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonArgs), &args); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-
-	result, err := call(socketPath, "tools/call", map[string]interface{}{
-		"name":      toolName,
-		"arguments": args,
-	})
-	if err != nil {
-		return err
-	}
-
-	var prettyResult interface{}
-	if err := json.Unmarshal(result, &prettyResult); err == nil {
-		prettyBytes, _ := json.MarshalIndent(prettyResult, "", "  ")
-		fmt.Println(string(prettyBytes))
-	} else {
-		fmt.Println(string(result))
-	}
-	return nil
-}
-
-func replListServers(socketPath string) error {
-	result, err := call(socketPath, "loom/servers", nil)
-	if err != nil {
-		return err
-	}
-
-	var resp struct {
-		Servers []struct {
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-			Running     bool   `json:"running"`
-		} `json:"servers"`
-	}
-
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return err
-	}
-
-	fmt.Printf("%-20s %-8s %s\n", "NAME", "STATUS", "DESCRIPTION")
-	for _, s := range resp.Servers {
-		status := "idle"
-		if s.Running {
-			status = "running"
-		}
-		desc := s.Description
-		if len(desc) > 50 {
-			desc = desc[:47] + "..."
-		}
-		fmt.Printf("%-20s %-8s %s\n", s.Name, status, desc)
-	}
-	return nil
-}
-
-// runProxy runs loom as an MCP server, bridging stdio to the daemon
-func runProxy(socketPath string) error {
-	ctx := context.Background()
-
-	// Create stdio transport for client communication
-	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
-
-	var daemon *mcp.StdioTransport
-	var daemonConn net.Conn
-
-	var autostartOnce stdsync.Once
-	autostart := func() {
-		autostartOnce.Do(func() {
-			// Never write to stdout in proxy mode (it would corrupt the MCP stream).
-			if err := startDaemonInBackground(socketPath); err != nil {
-				fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed: %v\n", err)
-			}
-		})
-	}
-
-	dialWithTimeout := func(timeout time.Duration) (net.Conn, error) {
-		return net.DialTimeout("unix", socketPath, timeout)
-	}
-
-	ensureDaemon := func() error {
-		if daemonConn != nil {
-			return nil
-		}
-		// Keep proxy responsive during MCP startup: try a fast connect first,
-		// then attempt an autostart and retry briefly.
-		conn, err := dialWithTimeout(250 * time.Millisecond)
-		if err != nil {
-			autostart()
-			deadline := time.Now().Add(3 * time.Second)
-			var lastErr error
-			for time.Now().Before(deadline) {
-				conn, lastErr = dialWithTimeout(250 * time.Millisecond)
-				if lastErr == nil {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			if lastErr != nil {
-				return lastErr
-			}
-		}
-		daemonConn = conn
-		daemon = mcp.NewStdioTransport(daemonConn, daemonConn)
-
-		// Must initialize the daemon connection
-		initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
-			ProtocolVersion: mcp.ProtocolVersion,
-			Capabilities:    mcp.Capabilities{},
-			ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
-		})
-		if err := daemon.Send(ctx, initReq); err != nil {
-			return err
-		}
-		if _, err := daemon.Recv(ctx); err != nil {
-			return err
-		}
-		// Send initialized notification
-		daemon.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
-
-		return nil
-	}
-
-	// Main message loop
-	for {
-		msg, err := stdio.Recv(ctx)
-		if err != nil {
-			return nil // Client disconnected
-		}
-
-		var resp *mcp.Message
-
-		switch msg.Method {
-		case "initialize":
-			// Some clients treat an initialize failure as a hard crash. Respond even if the daemon
-			// is temporarily unavailable; we can connect (or autostart) lazily on the first call.
-			autostart()
-			resp = handleProxyInitialize(msg)
-
-		case "notifications/initialized":
-			// No response needed for notifications
-			autostart()
-			continue
-
-		case "resources/templates/list":
-			// No daemon needed - returns static proxy-native templates
-			resp, err = handleProxyResourceTemplatesList(ctx, nil, msg)
-
-		case "resources/list":
-			// Try daemon first for full resource list, fallback to built-in only
-			if derr := ensureDaemon(); derr != nil {
-				// Fallback: return built-in loom:// resources only
-				resp = handleProxyResourcesListBuiltinOnly(msg)
-			} else {
-				resp, err = handleProxyResourcesList(ctx, daemon, msg)
-			}
-
-		default:
-			if err := ensureDaemon(); err != nil {
-				stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
-				continue
-			}
-
-			switch msg.Method {
-			case "tools/list":
-				resp, err = handleProxyToolsList(ctx, daemon, msg)
-
-			case "tools/call":
-				resp, err = handleProxyToolsCall(ctx, daemon, msg)
-
-			case "resources/read":
-				resp, err = handleProxyResourcesRead(ctx, daemon, msg)
-
-			case "prompts/list":
-				resp, err = handleProxyPromptsList(ctx, daemon, msg)
-
-			case "prompts/get":
-				resp, err = handleProxyPromptsGet(ctx, daemon, msg)
-
-			default:
-				// Forward unknown methods to daemon
-				resp, err = forwardToDaemon(ctx, daemon, msg)
-			}
-		}
-
-		if err != nil {
-			// If it was a connection error, clear daemon so we reconnect next time
-			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
-				daemonConn.Close()
-				daemonConn = nil
-				daemon = nil
-			}
-			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
-		}
-
-		if resp != nil {
-			if err := stdio.Send(ctx, resp); err != nil {
-				return fmt.Errorf("send response: %w", err)
-			}
-		}
-	}
-}
-
-func startDaemonInBackground(socketPath string) error {
-	// Prefer an existing launchctl-managed daemon; if one isn't installed or isn't running,
-	// start a best-effort loomd process with stdout/stderr redirected away from the MCP stream.
-	if conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond); err == nil {
-		_ = conn.Close()
-		return nil
-	}
-
-	loomdPath := ""
-	if p, err := exec.LookPath("loomd"); err == nil {
-		loomdPath = p
-	} else if exe, err := os.Executable(); err == nil {
-		sibling := filepath.Join(filepath.Dir(exe), "loomd")
-		if _, statErr := os.Stat(sibling); statErr == nil {
-			loomdPath = sibling
-		}
-	}
-	if loomdPath == "" {
-		return fmt.Errorf("loomd not found in PATH (or alongside loom)")
-	}
-
-	home, _ := os.UserHomeDir()
-	logDir := filepath.Join(home, ".config", "loom", "logs")
-	_ = os.MkdirAll(logDir, 0755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "loomd-proxy.out"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		// If we can't open a log file, don't start the daemon (it would inherit stdout).
-		return fmt.Errorf("open daemon log file: %w", err)
-	}
-
-	args := []string{"--socket", socketPath}
-	if regPath, found := registry.FindRegistry(); found {
-		args = append(args, "--registry", regPath)
-	}
-
-	cmd := exec.Command(loomdPath, args...)
-	cmd.Stdin = nil
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return fmt.Errorf("start loomd: %w", err)
-	}
-
-	// Detach so we don't have to Wait() (proxy is long-lived and should not leak zombies).
-	if err := cmd.Process.Release(); err != nil {
-		_ = logFile.Close()
-		return fmt.Errorf("release loomd process: %w", err)
-	}
-
-	_ = logFile.Close()
-	return nil
-}
-
-func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
-	result := mcp.InitializeResult{
-		ProtocolVersion: mcp.ProtocolVersion,
-		Capabilities: mcp.Capabilities{
-			Tools:     &mcp.ToolsCapability{},
-			Resources: &mcp.ResourcesCapability{},
-			Prompts:   &mcp.PromptsCapability{},
-		},
-		ServerInfo: mcp.ServerInfo{
-			Name:    "loom",
-			Version: version,
-		},
-		Instructions: "Loom MCP proxy - aggregates tools from multiple servers. Tool names are namespaced as server__toolname.",
-	}
-	resp, _ := mcp.NewResponse(msg.ID, result)
-	return resp
-}
-
-func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	// Use the daemon's cached tool aggregation endpoint
-	toolsReq, _ := mcp.NewRequest(1, "loom/tools", nil)
-	if err := daemon.Send(ctx, toolsReq); err != nil {
-		return nil, err
-	}
-	toolsResp, err := daemon.Recv(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if toolsResp.Error != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, toolsResp.Error.Message), nil
-	}
-
-	// Extract just the tools array for the MCP response
-	var cachedResult struct {
-		Tools []mcp.Tool `json:"tools"`
-	}
-	if err := json.Unmarshal(toolsResp.Result, &cachedResult); err != nil {
-		return nil, err
-	}
-
-	result := struct {
-		Tools []mcp.Tool `json:"tools"`
-	}{Tools: cachedResult.Tools}
-
-	return mcp.NewResponse(msg.ID, result)
-}
-
-func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments,omitempty"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
-	}
-
-	// Parse server__toolname format
-	parts := splitToolName(params.Name)
-	var serverName, toolName string
-
-	if len(parts) == 2 {
-		serverName, toolName = parts[0], parts[1]
-	} else {
-		// Smart Routing: Let the daemon resolve it
-		toolName = params.Name
-	}
-
-	// Forward to appropriate server via daemon
-	toolCallParams := map[string]any{
-		"name": toolName,
-	}
-	if len(params.Arguments) > 0 {
-		var args map[string]any
-		_ = json.Unmarshal(params.Arguments, &args)
-		toolCallParams["arguments"] = args
-	}
-	paramsJSON, _ := json.Marshal(toolCallParams)
-
-	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
-		"server":    serverName,
-		"tool":      toolName,
-		"method":    "tools/call",
-		"params":    json.RawMessage(paramsJSON),
-		"arguments": params.Arguments,
-	})
-
-	if err := daemon.Send(ctx, callReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := daemon.Recv(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Guardrail: prevent oversized tool responses from breaking MCP clients.
-	// Some clients impose line/response size limits; large logs can cause parse failures.
-	if resp.Error == nil && len(resp.Result) > 0 {
-		var result mcp.CallToolResult
-		if err := json.Unmarshal(resp.Result, &result); err == nil {
-			if truncateCallToolResult(&result, proxyMaxToolResultBytes()) {
-				return mcp.NewResponse(resp.ID, result)
-			}
-		}
-	}
-
-	return resp, nil
-}
-
-func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	// Similar to tools/list - aggregate resources from all servers
-	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
-	if err := daemon.Send(ctx, serversReq); err != nil {
-		return nil, err
-	}
-	serversResp, err := daemon.Recv(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var serversResult struct {
-		Servers []struct {
-			Name string `json:"name"`
-		} `json:"servers"`
-	}
-	if err := json.Unmarshal(serversResp.Result, &serversResult); err != nil {
-		return nil, err
-	}
-
-	allResources := []mcp.Resource{
-		{
-			URI:         "loom://servers",
-			Name:        "Loom servers",
-			Description: "List MCP servers managed by the loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://tools",
-			Name:        "Loom tools",
-			Description: "Cached aggregated tools from loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://health",
-			Name:        "Loom health",
-			Description: "Health summary for all servers (local/hub) managed by loom",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://config",
-			Name:        "Loom config",
-			Description: "Active profile and daemon configuration summary",
-			MimeType:    "application/json",
-		},
-	}
-	for _, server := range serversResult.Servers {
-		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
-			"server": server.Name,
-			"method": "resources/list",
-		})
-		if err := daemon.Send(ctx, req); err != nil {
-			continue
-		}
-		resp, err := daemon.Recv(ctx)
-		if err != nil || resp.Error != nil {
-			continue
-		}
-
-		var result struct {
-			Resources []mcp.Resource `json:"resources"`
-		}
-		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			continue
-		}
-
-		for _, r := range result.Resources {
-			r.URI = server.Name + "__" + r.URI
-			allResources = append(allResources, r)
-		}
-	}
-
-	result := struct {
-		Resources []mcp.Resource `json:"resources"`
-	}{Resources: allResources}
-
-	return mcp.NewResponse(msg.ID, result)
-}
-
-// handleProxyResourcesListBuiltinOnly returns only the built-in loom:// resources
-// without requiring a daemon connection. Used as fallback when daemon is unavailable.
-func handleProxyResourcesListBuiltinOnly(msg *mcp.Message) *mcp.Message {
-	allResources := []mcp.Resource{
-		{
-			URI:         "loom://servers",
-			Name:        "Loom servers",
-			Description: "List MCP servers managed by the loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://tools",
-			Name:        "Loom tools",
-			Description: "Cached aggregated tools from loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://health",
-			Name:        "Loom health",
-			Description: "Health summary for all servers (local/hub) managed by loom",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://config",
-			Name:        "Loom config",
-			Description: "Active profile and daemon configuration summary",
-			MimeType:    "application/json",
-		},
-	}
-
-	result := struct {
-		Resources []mcp.Resource `json:"resources"`
-	}{Resources: allResources}
-
-	resp, _ := mcp.NewResponse(msg.ID, result)
-	return resp
-}
-
-func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	var params struct {
-		URI string `json:"uri"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
-	}
-
-	nextID := 1
-	callDaemon := func(method string, callParams any) (*mcp.Message, error) {
-		req, err := mcp.NewRequest(nextID, method, callParams)
-		if err != nil {
-			return nil, err
-		}
-		nextID++
-		if err := daemon.Send(ctx, req); err != nil {
-			return nil, err
-		}
-		return daemon.Recv(ctx)
-	}
-
-	renderJSON := func(v any) (string, error) {
-		b, err := json.MarshalIndent(v, "", "  ")
-		if err != nil {
-			return "", err
-		}
-		return truncateResourceText(string(b), proxyMaxResourceBytes()), nil
-	}
-
-	if strings.HasPrefix(params.URI, "loom://") {
-		var payload any
-		switch params.URI {
-		case "loom://servers":
-			resp, err := callDaemon("loom/servers", nil)
-			if err != nil {
-				return nil, err
-			}
-			if resp.Error != nil {
-				return resp, nil
-			}
-			if err := json.Unmarshal(resp.Result, &payload); err != nil {
-				payload = map[string]any{"ok": false, "error": "unmarshal loom/servers response: " + err.Error()}
-			}
-
-		case "loom://tools":
-			resp, err := callDaemon("loom/tools", nil)
-			if err != nil {
-				return nil, err
-			}
-			if resp.Error != nil {
-				return resp, nil
-			}
-			if err := json.Unmarshal(resp.Result, &payload); err != nil {
-				payload = map[string]any{"ok": false, "error": "unmarshal loom/tools response: " + err.Error()}
-			}
-
-		case "loom://health":
-			resp, err := callDaemon("loom/health", nil)
-			if err != nil {
-				return nil, err
-			}
-			if resp.Error != nil {
-				return resp, nil
-			}
-			if err := json.Unmarshal(resp.Result, &payload); err != nil {
-				payload = map[string]any{"ok": false, "error": "unmarshal loom/health response: " + err.Error()}
-			}
-
-		case "loom://config":
-			payload = make(map[string]any)
-			for _, m := range []string{"loom/status", "loom/profile", "loom/config-hash"} {
-				resp, err := callDaemon(m, nil)
-				if err != nil {
-					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": err.Error()}
-					continue
-				}
-				if resp.Error != nil {
-					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": resp.Error.Message}
-					continue
-				}
-				var v any
-				if err := json.Unmarshal(resp.Result, &v); err != nil {
-					payload.(map[string]any)[m] = map[string]any{"ok": false, "error": "unmarshal response: " + err.Error()}
-					continue
-				}
-				payload.(map[string]any)[m] = v
-			}
-
-		default:
-			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "unknown loom resource URI"), nil
-		}
-
-		text, err := renderJSON(payload)
-		if err != nil {
-			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-		}
-
-		return mcp.NewResponse(msg.ID, map[string]any{
-			"contents": []any{
-				map[string]any{
-					"uri":      params.URI,
-					"mimeType": "application/json",
-					"text":     text,
-				},
-			},
-		})
-	}
-
-	parts := splitToolName(params.URI)
-	if len(parts) != 2 {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "URI must be in format server__uri"), nil
-	}
-	serverName, uri := parts[0], parts[1]
-
-	req, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
-		"server": serverName,
-		"method": "resources/read",
-		"params": map[string]any{"uri": uri},
-	})
-
-	if err := daemon.Send(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return daemon.Recv(ctx)
-}
-
-func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	// Some MCP clients (e.g., Codex CLI) probe for resource templates on startup.
-	// Our underlying MCP servers are primarily tool-oriented and many do not
-	// implement templates. Broadcasting this request to all servers can hang if a
-	// server fails to respond to unknown methods.
-	//
-	// Instead, return proxy-native templates that don't require downstream calls.
-	return mcp.NewResponse(msg.ID, map[string]any{
-		"resourceTemplates": []any{
-			map[string]any{
-				"name":        "loom_servers",
-				"description": "List MCP servers managed by the loom daemon",
-				"mimeType":    "application/json",
-				"uriTemplate": "loom://servers",
-			},
-			map[string]any{
-				"name":        "loom_tools",
-				"description": "Cached aggregated tools from loom daemon",
-				"mimeType":    "application/json",
-				"uriTemplate": "loom://tools",
-			},
-			map[string]any{
-				"name":        "loom_health",
-				"description": "Health summary for all servers (local/hub) managed by loom",
-				"mimeType":    "application/json",
-				"uriTemplate": "loom://health",
-			},
-			map[string]any{
-				"name":        "loom_config",
-				"description": "Active profile and daemon configuration summary",
-				"mimeType":    "application/json",
-				"uriTemplate": "loom://config",
-			},
-		},
-	})
-}
-
-func handleProxyPromptsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
-	if err := daemon.Send(ctx, serversReq); err != nil {
-		return nil, err
-	}
-	serversResp, err := daemon.Recv(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var serversResult struct {
-		Servers []struct {
-			Name string `json:"name"`
-		} `json:"servers"`
-	}
-	if err := json.Unmarshal(serversResp.Result, &serversResult); err != nil {
-		return nil, err
-	}
-
-	allPrompts := make([]mcp.Prompt, 0)
-	for _, server := range serversResult.Servers {
-		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
-			"server": server.Name,
-			"method": "prompts/list",
-		})
-		if err := daemon.Send(ctx, req); err != nil {
-			continue
-		}
-		resp, err := daemon.Recv(ctx)
-		if err != nil || resp.Error != nil {
-			continue
-		}
-
-		var result struct {
-			Prompts []mcp.Prompt `json:"prompts"`
-		}
-		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			continue
-		}
-
-		for _, p := range result.Prompts {
-			p.Name = server.Name + "__" + p.Name
-			allPrompts = append(allPrompts, p)
-		}
-	}
-
-	result := struct {
-		Prompts []mcp.Prompt `json:"prompts"`
-	}{Prompts: allPrompts}
-
-	return mcp.NewResponse(msg.ID, result)
-}
-
-func handleProxyPromptsGet(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments,omitempty"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
-	}
-
-	parts := splitToolName(params.Name)
-	if len(parts) != 2 {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "prompt name must be in format server__promptname"), nil
-	}
-	serverName, promptName := parts[0], parts[1]
-
-	req, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
-		"server": serverName,
-		"method": "prompts/get",
-		"params": map[string]any{
-			"name":      promptName,
-			"arguments": params.Arguments,
-		},
-	})
-
-	if err := daemon.Send(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return daemon.Recv(ctx)
-}
-
-func forwardToDaemon(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	if err := daemon.Send(ctx, msg); err != nil {
-		return nil, err
-	}
-	return daemon.Recv(ctx)
-}
-
-func splitToolName(name string) []string {
-	// Split on first "__" occurrence
-	for i := 0; i < len(name)-1; i++ {
-		if name[i] == '_' && name[i+1] == '_' {
-			return []string{name[:i], name[i+2:]}
-		}
-	}
-	return []string{name}
+	return secretsCmd
 }

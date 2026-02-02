@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,14 +10,15 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -28,6 +28,7 @@ var (
 	grafanaToken   = os.Getenv("GRAFANA_API_TOKEN")
 	portForward    = getEnvBool("GRAFANA_PORT_FORWARD", true)
 	portForwardCmd *exec.Cmd
+	httpClient     = httpclient.NewDefault()
 )
 
 func getEnv(key, fallback string) string {
@@ -56,21 +57,17 @@ func getEnvInt(key string, fallback int) int {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	defer cleanup()
+
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-grafana", "version", version, "url", grafanaURL)
 
 	server := mcp.NewServer("mcp-grafana", version)
 	server.SetInstructions("Grafana dashboard search and retrieval")
@@ -186,12 +183,7 @@ func main() {
 		},
 	}, handleListFolders)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-	cleanup()
+	return server.Run(ctx)
 }
 
 func cleanup() {
@@ -277,13 +269,7 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 		req.Header.Set("Authorization", "Bearer "+grafanaToken)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	if skipVerify := os.Getenv("TLS_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

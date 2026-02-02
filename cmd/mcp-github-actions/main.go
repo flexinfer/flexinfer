@@ -9,20 +9,21 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 type actionsServer struct {
 	token      string
-	httpClient *http.Client
+	httpClient *httpclient.Client
 }
 
 type apiError struct {
@@ -35,20 +36,14 @@ func (e *apiError) Error() string {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 	if token == "" {
@@ -56,11 +51,11 @@ func main() {
 	}
 
 	srv := &actionsServer{
-		token: token,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		token:      token,
+		httpClient: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-github-actions", "version", version)
 
 	server := mcp.NewServer("mcp-github-actions", version)
 	server.SetInstructions("GitHub Actions MCP server. Manage workflows, runs, and jobs. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN.")
@@ -341,10 +336,7 @@ func main() {
 		},
 	}, srv.handleListArtifacts)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *actionsServer) request(ctx context.Context, method, path string, body any) ([]byte, error) {
@@ -372,7 +364,7 @@ func (s *actionsServer) request(ctx context.Context, method, path string, body a
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -391,9 +383,13 @@ func (s *actionsServer) request(ctx context.Context, method, path string, body a
 }
 
 func (s *actionsServer) handleListWorkflows(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	perPage := intArg(args, "per_page", 30)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	perPage := v.Int("per_page", 30)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/workflows?per_page=%d", owner, repo, perPage)
 	data, err := s.request(ctx, "GET", path, nil)
@@ -427,9 +423,13 @@ func (s *actionsServer) handleListWorkflows(ctx context.Context, args map[string
 }
 
 func (s *actionsServer) handleGetWorkflow(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	workflowID, _ := args["workflow_id"].(string)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	workflowID := v.Required("workflow_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s", owner, repo, workflowID)
 	data, err := s.request(ctx, "GET", path, nil)
@@ -447,13 +447,17 @@ func (s *actionsServer) handleGetWorkflow(ctx context.Context, args map[string]a
 }
 
 func (s *actionsServer) handleListWorkflowRuns(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	workflowID, _ := args["workflow_id"].(string)
-	branch, _ := args["branch"].(string)
-	status, _ := args["status"].(string)
-	conclusion, _ := args["conclusion"].(string)
-	perPage := intArg(args, "per_page", 30)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	workflowID := v.String("workflow_id", "")
+	branch := v.String("branch", "")
+	status := v.String("status", "")
+	conclusion := v.String("conclusion", "")
+	perPage := v.Int("per_page", 30)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	var path string
 	if workflowID != "" {
@@ -517,9 +521,13 @@ func (s *actionsServer) handleListWorkflowRuns(ctx context.Context, args map[str
 }
 
 func (s *actionsServer) handleGetWorkflowRun(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	runID := int64(intArg(args, "run_id", 0))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	runID := int64(v.RequiredInt("run_id"))
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs/%d", owner, repo, runID)
 	data, err := s.request(ctx, "GET", path, nil)
@@ -546,11 +554,15 @@ func (s *actionsServer) handleGetWorkflowRun(ctx context.Context, args map[strin
 }
 
 func (s *actionsServer) handleTriggerWorkflow(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	workflowID, _ := args["workflow_id"].(string)
-	ref, _ := args["ref"].(string)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	workflowID := v.Required("workflow_id")
+	ref := v.Required("ref")
 	inputs, _ := args["inputs"].(map[string]any)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	body := map[string]any{"ref": ref}
 	if inputs != nil {
@@ -567,9 +579,13 @@ func (s *actionsServer) handleTriggerWorkflow(ctx context.Context, args map[stri
 }
 
 func (s *actionsServer) handleCancelWorkflowRun(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	runID := int64(intArg(args, "run_id", 0))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	runID := int64(v.RequiredInt("run_id"))
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/cancel", owner, repo, runID)
 	_, err := s.request(ctx, "POST", path, nil)
@@ -581,10 +597,14 @@ func (s *actionsServer) handleCancelWorkflowRun(ctx context.Context, args map[st
 }
 
 func (s *actionsServer) handleRerunWorkflow(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	runID := int64(intArg(args, "run_id", 0))
-	failedOnly, _ := args["failed_only"].(bool)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	runID := int64(v.RequiredInt("run_id"))
+	failedOnly := v.Bool("failed_only", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	var path string
 	if failedOnly {
@@ -606,12 +626,13 @@ func (s *actionsServer) handleRerunWorkflow(ctx context.Context, args map[string
 }
 
 func (s *actionsServer) handleListWorkflowJobs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	runID := int64(intArg(args, "run_id", 0))
-	filter, _ := args["filter"].(string)
-	if filter == "" {
-		filter = "latest"
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	runID := int64(v.RequiredInt("run_id"))
+	filter := v.String("filter", "latest")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs?filter=%s", owner, repo, runID, filter)
@@ -669,10 +690,14 @@ func (s *actionsServer) handleListWorkflowJobs(ctx context.Context, args map[str
 }
 
 func (s *actionsServer) handleGetJobLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	jobID := int64(intArg(args, "job_id", 0))
-	tailLines := intArg(args, "tail_lines", 0)
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	jobID := int64(v.RequiredInt("job_id"))
+	tailLines := v.Int("tail_lines", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/actions/jobs/%d/logs", owner, repo, jobID)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -686,7 +711,7 @@ func (s *actionsServer) handleGetJobLogs(ctx context.Context, args map[string]an
 		req.Header.Set("Authorization", "Bearer "+s.token)
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.HTTP().Do(req)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("request failed: %w", err)), nil
 	}
@@ -721,9 +746,13 @@ func (s *actionsServer) handleGetJobLogs(ctx context.Context, args map[string]an
 }
 
 func (s *actionsServer) handleListArtifacts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	owner, _ := args["owner"].(string)
-	repo, _ := args["repo"].(string)
-	runID := int64(intArg(args, "run_id", 0))
+	v := validate.NewArgs(args)
+	owner := v.Required("owner")
+	repo := v.Required("repo")
+	runID := int64(v.RequiredInt("run_id"))
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts", owner, repo, runID)
 	data, err := s.request(ctx, "GET", path, nil)
@@ -759,24 +788,6 @@ func (s *actionsServer) handleListArtifacts(ctx context.Context, args map[string
 	}
 
 	return mcp.TextResult(sb.String()), nil
-}
-
-func intArg(args map[string]any, key string, def int) int {
-	if v, ok := args[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return int(n)
-		case int:
-			return n
-		case int64:
-			return int(n)
-		case string:
-			if i, err := strconv.Atoi(n); err == nil {
-				return i
-			}
-		}
-	}
-	return def
 }
 
 func truncate(s string, maxLen int) string {

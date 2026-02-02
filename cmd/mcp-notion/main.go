@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -22,26 +24,19 @@ var (
 	notionAPIKey = os.Getenv("NOTION_API_KEY")
 	notionURL    = "https://api.notion.com/v1"
 
-	httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	httpClient = httpclient.NewDefault()
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-notion", "version", version)
 
 	server := mcp.NewServer("mcp-notion", version)
 	server.SetInstructions("Notion pages and databases tools. Configure with NOTION_API_KEY (integration token).")
@@ -237,10 +232,7 @@ func main() {
 		},
 	}, handleListComments)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 // notionRequest makes an authenticated request to Notion API
@@ -263,7 +255,7 @@ func notionRequest(ctx context.Context, method, path string, body any) (map[stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Notion-Version", "2022-06-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -295,21 +287,25 @@ func notionRequest(ctx context.Context, method, path string, body any) (map[stri
 }
 
 func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	body := map[string]any{}
+	v := validate.NewArgs(args)
+	query := v.String("query", "")
+	filter := v.String("filter", "")
+	pageSize := v.Int("page_size", 25)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
-	if query, ok := args["query"].(string); ok && query != "" {
+	body := map[string]any{
+		"page_size": pageSize,
+	}
+	if query != "" {
 		body["query"] = query
 	}
-	if filter, ok := args["filter"].(string); ok && filter != "" {
+	if filter != "" {
 		body["filter"] = map[string]any{
 			"value":    filter,
 			"property": "object",
 		}
-	}
-	if pageSize, ok := args["page_size"].(float64); ok {
-		body["page_size"] = int(pageSize)
-	} else {
-		body["page_size"] = 25
 	}
 
 	result, err := notionRequest(ctx, "POST", "/search", body)
@@ -335,9 +331,10 @@ func handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 }
 
 func handleGetPage(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	pageID, ok := args["page_id"].(string)
-	if !ok || pageID == "" {
-		return mcp.ErrorResult(fmt.Errorf("page_id is required")), nil
+	v := validate.NewArgs(args)
+	pageID := v.Required("page_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := notionRequest(ctx, "GET", "/pages/"+pageID, nil)
@@ -349,14 +346,16 @@ func handleGetPage(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleGetPageContent(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	blockID, ok := args["block_id"].(string)
-	if !ok || blockID == "" {
-		return mcp.ErrorResult(fmt.Errorf("block_id is required")), nil
+	v := validate.NewArgs(args)
+	blockID := v.Required("block_id")
+	pageSize := v.Int("page_size", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := "/blocks/" + blockID + "/children"
-	if pageSize, ok := args["page_size"].(float64); ok {
-		path += fmt.Sprintf("?page_size=%d", int(pageSize))
+	if pageSize > 0 {
+		path += fmt.Sprintf("?page_size=%d", pageSize)
 	}
 
 	result, err := notionRequest(ctx, "GET", path, nil)
@@ -382,9 +381,10 @@ func handleGetPageContent(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleGetDatabase(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	databaseID, ok := args["database_id"].(string)
-	if !ok || databaseID == "" {
-		return mcp.ErrorResult(fmt.Errorf("database_id is required")), nil
+	v := validate.NewArgs(args)
+	databaseID := v.Required("database_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := notionRequest(ctx, "GET", "/databases/"+databaseID, nil)
@@ -396,22 +396,23 @@ func handleGetDatabase(ctx context.Context, args map[string]any) (*mcp.CallToolR
 }
 
 func handleQueryDatabase(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	databaseID, ok := args["database_id"].(string)
-	if !ok || databaseID == "" {
-		return mcp.ErrorResult(fmt.Errorf("database_id is required")), nil
+	v := validate.NewArgs(args)
+	databaseID := v.Required("database_id")
+	pageSize := v.Int("page_size", 100)
+	filter := v.Any("filter")
+	sorts := v.Any("sorts")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	body := map[string]any{}
-	if filter, ok := args["filter"].(map[string]any); ok {
-		body["filter"] = filter
+	body := map[string]any{
+		"page_size": pageSize,
 	}
-	if sorts, ok := args["sorts"].([]any); ok {
-		body["sorts"] = sorts
+	if filterMap, ok := filter.(map[string]any); ok {
+		body["filter"] = filterMap
 	}
-	if pageSize, ok := args["page_size"].(float64); ok {
-		body["page_size"] = int(pageSize)
-	} else {
-		body["page_size"] = 100
+	if sortsArr, ok := sorts.([]any); ok {
+		body["sorts"] = sortsArr
 	}
 
 	result, err := notionRequest(ctx, "POST", "/databases/"+databaseID+"/query", body)
@@ -437,9 +438,10 @@ func handleQueryDatabase(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleGetBlock(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	blockID, ok := args["block_id"].(string)
-	if !ok || blockID == "" {
-		return mcp.ErrorResult(fmt.Errorf("block_id is required")), nil
+	v := validate.NewArgs(args)
+	blockID := v.Required("block_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := notionRequest(ctx, "GET", "/blocks/"+blockID, nil)
@@ -451,14 +453,16 @@ func handleGetBlock(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleGetBlockChildren(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	blockID, ok := args["block_id"].(string)
-	if !ok || blockID == "" {
-		return mcp.ErrorResult(fmt.Errorf("block_id is required")), nil
+	v := validate.NewArgs(args)
+	blockID := v.Required("block_id")
+	pageSize := v.Int("page_size", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := "/blocks/" + blockID + "/children"
-	if pageSize, ok := args["page_size"].(float64); ok {
-		path += fmt.Sprintf("?page_size=%d", int(pageSize))
+	if pageSize > 0 {
+		path += fmt.Sprintf("?page_size=%d", pageSize)
 	}
 
 	result, err := notionRequest(ctx, "GET", path, nil)
@@ -482,7 +486,7 @@ func handleGetBlockChildren(ctx context.Context, args map[string]any) (*mcp.Call
 	})
 }
 
-func handleListUsers(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func handleListUsers(ctx context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 	result, err := notionRequest(ctx, "GET", "/users", nil)
 	if err != nil {
 		return nil, err
@@ -504,9 +508,10 @@ func handleListUsers(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleGetUser(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	userID, ok := args["user_id"].(string)
-	if !ok || userID == "" {
-		return mcp.ErrorResult(fmt.Errorf("user_id is required")), nil
+	v := validate.NewArgs(args)
+	userID := v.Required("user_id")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	result, err := notionRequest(ctx, "GET", "/users/"+userID, nil)
@@ -517,7 +522,7 @@ func handleGetUser(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	return mcp.JSONResult(formatUser(result))
 }
 
-func handleMe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func handleMe(ctx context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 	result, err := notionRequest(ctx, "GET", "/users/me", nil)
 	if err != nil {
 		return nil, err
@@ -527,14 +532,16 @@ func handleMe(ctx context.Context, args map[string]any) (*mcp.CallToolResult, er
 }
 
 func handleListComments(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	blockID, ok := args["block_id"].(string)
-	if !ok || blockID == "" {
-		return mcp.ErrorResult(fmt.Errorf("block_id is required")), nil
+	v := validate.NewArgs(args)
+	blockID := v.Required("block_id")
+	pageSize := v.Int("page_size", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	path := "/comments?block_id=" + blockID
-	if pageSize, ok := args["page_size"].(float64); ok {
-		path += fmt.Sprintf("&page_size=%d", int(pageSize))
+	if pageSize > 0 {
+		path += fmt.Sprintf("&page_size=%d", pageSize)
 	}
 
 	result, err := notionRequest(ctx, "GET", path, nil)

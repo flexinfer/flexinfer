@@ -5,33 +5,29 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.1.0"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-time", "version", version)
 
 	server := mcp.NewServer("mcp-time", version)
 	server.SetInstructions("Fast Go-native time server. Tools: get_current_time, convert_timezone, add_duration, list_timezones, wait")
@@ -125,10 +121,7 @@ func main() {
 		},
 	}, handleWait)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func parseDurationWithDays(durationStr string) (time.Duration, error) {
@@ -151,14 +144,12 @@ func parseDurationWithDays(durationStr string) (time.Duration, error) {
 }
 
 func handleGetCurrentTime(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	tzName := "UTC"
-	if tz, ok := args["timezone"].(string); ok && tz != "" {
-		tzName = tz
-	}
+	v := validate.NewArgs(args)
+	tzName := v.String("timezone", "UTC")
 
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
-		return nil, fmt.Errorf("invalid timezone %q: %w", tzName, err)
+		return mcp.ErrorResult(fmt.Errorf("invalid timezone %q: %w", tzName, err)), nil
 	}
 
 	now := time.Now().In(loc)
@@ -174,15 +165,13 @@ func handleGetCurrentTime(ctx context.Context, args map[string]any) (*mcp.CallTo
 }
 
 func handleConvertTimezone(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	timeStr, _ := args["time"].(string)
-	fromTZ, _ := args["from_timezone"].(string)
-	toTZ, _ := args["to_timezone"].(string)
+	v := validate.NewArgs(args)
+	timeStr := v.Required("time")
+	toTZ := v.Required("to_timezone")
+	fromTZ := v.String("from_timezone", "")
 
-	if timeStr == "" {
-		return nil, fmt.Errorf("time is required")
-	}
-	if toTZ == "" {
-		return nil, fmt.Errorf("to_timezone is required")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Parse time
@@ -191,7 +180,7 @@ func handleConvertTimezone(ctx context.Context, args map[string]any) (*mcp.CallT
 		// Try other formats
 		t, err = time.Parse("2006-01-02 15:04:05", timeStr)
 		if err != nil {
-			return nil, fmt.Errorf("cannot parse time %q: use RFC3339 format", timeStr)
+			return mcp.ErrorResult(fmt.Errorf("cannot parse time %q: use RFC3339 format", timeStr)), nil
 		}
 	}
 
@@ -199,7 +188,7 @@ func handleConvertTimezone(ctx context.Context, args map[string]any) (*mcp.CallT
 	if fromTZ != "" {
 		loc, err := time.LoadLocation(fromTZ)
 		if err != nil {
-			return nil, fmt.Errorf("invalid from_timezone %q: %w", fromTZ, err)
+			return mcp.ErrorResult(fmt.Errorf("invalid from_timezone %q: %w", fromTZ, err)), nil
 		}
 		t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc)
 	}
@@ -207,7 +196,7 @@ func handleConvertTimezone(ctx context.Context, args map[string]any) (*mcp.CallT
 	// Convert to target timezone
 	toLoc, err := time.LoadLocation(toTZ)
 	if err != nil {
-		return nil, fmt.Errorf("invalid to_timezone %q: %w", toTZ, err)
+		return mcp.ErrorResult(fmt.Errorf("invalid to_timezone %q: %w", toTZ, err)), nil
 	}
 
 	converted := t.In(toLoc)
@@ -221,13 +210,18 @@ func handleConvertTimezone(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleAddDuration(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	durationStr, _ := args["duration"].(string)
-	timeStr, _ := args["time"].(string)
-	tzName, _ := args["timezone"].(string)
+	v := validate.NewArgs(args)
+	durationStr := v.Required("duration")
+	timeStr := v.String("time", "")
+	tzName := v.String("timezone", "UTC")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	d, err := parseDurationWithDays(durationStr)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Parse base time or use now
@@ -235,19 +229,16 @@ func handleAddDuration(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	if timeStr != "" {
 		t, err = time.Parse(time.RFC3339, timeStr)
 		if err != nil {
-			return nil, fmt.Errorf("cannot parse time %q: use RFC3339 format", timeStr)
+			return mcp.ErrorResult(fmt.Errorf("cannot parse time %q: use RFC3339 format", timeStr)), nil
 		}
 	} else {
 		t = time.Now()
 	}
 
 	// Apply timezone
-	if tzName == "" {
-		tzName = "UTC"
-	}
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
-		return nil, fmt.Errorf("invalid timezone %q: %w", tzName, err)
+		return mcp.ErrorResult(fmt.Errorf("invalid timezone %q: %w", tzName, err)), nil
 	}
 
 	result := t.Add(d).In(loc)
@@ -300,20 +291,26 @@ func handleListTimezones(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleWait(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	durationStr, _ := args["duration"].(string)
+	v := validate.NewArgs(args)
+	durationStr := v.Required("duration")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	d, err := parseDurationWithDays(durationStr)
 	if err != nil {
-		return nil, err
+		return mcp.ErrorResult(err), nil
 	}
 	if d < 0 {
-		return nil, fmt.Errorf("duration must be non-negative")
+		return mcp.ErrorResult(fmt.Errorf("duration must be non-negative")), nil
 	}
 
 	start := time.Now()
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline) - 100*time.Millisecond
 		if d > remaining {
-			return nil, fmt.Errorf("requested duration %s exceeds time remaining %s; increase the server timeout or use a shorter wait", d, remaining)
+			return mcp.ErrorResult(fmt.Errorf("requested duration %s exceeds time remaining %s; increase the server timeout or use a shorter wait", d, remaining)), nil
 		}
 	}
 

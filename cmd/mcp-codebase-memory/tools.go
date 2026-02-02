@@ -6,6 +6,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/codebase"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 func registerTools(server *mcp.Server, svc *codebase.Service) {
@@ -32,6 +33,13 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "")      // optional
+		_ = v.StringSlice("languages")   // optional
+		_ = v.StringSlice("chunk_types") // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleStats(ctx, args)
 	})
 
@@ -51,6 +59,16 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"repo_id", "confirm"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.Required("repo_id")
+		_ = v.RequiredBool("confirm")
+		_ = v.Bool("dry_run", false) // optional
+		_ = v.String("reason", "")   // optional
+		_ = v.String("comment", "")  // optional
+		_ = v.String("operator", "") // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleDeleteRepo(ctx, args)
 	})
 
@@ -93,6 +111,17 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("root", ".")         // optional with default
+		_ = v.String("repo_id", "")       // optional
+		_ = v.StringSlice("languages")    // optional
+		_ = v.StringSlice("exclude")      // optional
+		_ = v.Bool("full_refresh", true)  // optional with default
+		_ = v.Bool("git_metadata", false) // optional
+		_ = v.Bool("embeddings", true)    // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleIndexStart(ctx, args)
 	})
 
@@ -135,6 +164,17 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("root", ".")         // optional with default
+		_ = v.String("repo_id", "")       // optional
+		_ = v.StringSlice("languages")    // optional
+		_ = v.StringSlice("exclude")      // optional
+		_ = v.Int("debounce_ms", 750)     // optional with default
+		_ = v.Bool("git_metadata", false) // optional
+		_ = v.Bool("embeddings", true)    // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleWatchStart(ctx, args)
 	})
 
@@ -149,6 +189,11 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"watch_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.Required("watch_id")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleWatchPoll(ctx, args)
 	})
 
@@ -163,6 +208,11 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"watch_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.Required("watch_id")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleWatchStop(ctx, args)
 	})
 
@@ -177,6 +227,11 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"job_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.Required("job_id")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleIndexPoll(ctx, args)
 	})
 
@@ -191,6 +246,11 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"job_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.Required("job_id")
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleIndexCancel(ctx, args)
 	})
 
@@ -230,6 +290,18 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"query"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("query")
+		_ = v.Int("limit", 10)               // optional with default
+		_ = v.StringSlice("languages")       // optional
+		_ = v.StringSlice("chunk_types")     // optional
+		_ = v.String("rerank", "")           // optional
+		_ = v.Float("lexical_weight", 0.15)  // optional with default
+		_ = v.Bool("include_content", false) // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleSearch(ctx, args)
 	})
 
@@ -281,6 +353,19 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"query"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("query")
+		_ = v.String("file_path", "")        // optional
+		_ = v.StringSlice("languages")       // optional
+		_ = v.StringSlice("chunk_types")     // optional
+		_ = v.Int("limit", 10)               // optional with default
+		_ = v.Int("max_scan", 2000)          // optional with default
+		_ = v.Bool("case_sensitive", false)  // optional
+		_ = v.Bool("include_content", false) // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleTextSearch(ctx, args)
 	})
 
@@ -313,6 +398,16 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"symbol"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("symbol")
+		_ = v.String("file_path", "")        // optional
+		_ = v.StringSlice("languages")       // optional
+		_ = v.Int("limit", 10)               // optional with default
+		_ = v.Bool("include_content", false) // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleGetDefinition(ctx, args)
 	})
 
@@ -357,6 +452,19 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"symbol"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("symbol")
+		_ = v.String("file_path", "")           // optional
+		_ = v.StringSlice("languages")          // optional
+		_ = v.Int("limit", 10)                  // optional with default
+		_ = v.Bool("include_definitions", true) // optional
+		_ = v.Bool("include_callers", true)     // optional
+		_ = v.Bool("include_modules", false)    // optional
+		_ = v.Bool("include_content", false)    // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleGetReferences(ctx, args)
 	})
 
@@ -395,6 +503,17 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"file_path", "line_number"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("file_path")
+		_ = v.RequiredInt("line_number")
+		_ = v.Bool("include_callers", false) // optional
+		_ = v.Bool("include_callees", false) // optional
+		_ = v.Int("related_limit", 5)        // optional with default
+		_ = v.Bool("include_content", false) // optional
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleGetContext(ctx, args)
 	})
 
@@ -418,6 +537,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"symbol"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("symbol")
+		_ = v.String("file_path", "") // optional
+		_ = v.Int("limit", 10)        // optional with default
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleFindCallers(ctx, args)
 	})
 
@@ -441,6 +568,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"symbol"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("symbol")
+		_ = v.String("file_path", "") // optional
+		_ = v.Int("limit", 10)        // optional with default
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleFindCallees(ctx, args)
 	})
 
@@ -495,6 +630,20 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			Required: []string{"symbol"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "") // optional
+		_ = v.Required("symbol")
+		_ = v.String("file_path", "")        // optional
+		_ = v.StringSlice("languages")       // optional
+		_ = v.String("direction", "both")    // optional with default
+		_ = v.Int("depth", 2)                // optional with default
+		_ = v.Int("limit", 100)              // optional with default
+		_ = v.Int("max_nodes", 200)          // optional with default
+		_ = v.Bool("include_external", true) // optional
+		_ = v.String("render", "none")       // optional with default
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleCallGraph(ctx, args)
 	})
 
@@ -532,6 +681,16 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		v := validate.NewArgs(args)
+		_ = v.String("repo_id", "")          // optional
+		_ = v.StringSlice("languages")       // optional
+		_ = v.Int("max_files", 512)          // optional with default
+		_ = v.Int("max_edges", 4000)         // optional with default
+		_ = v.Bool("include_external", true) // optional
+		_ = v.String("render", "none")       // optional with default
+		if err := v.Validate(); err != nil {
+			return mcp.ErrorResult(err), nil
+		}
 		return svc.HandleModuleGraph(ctx, args)
 	})
 }

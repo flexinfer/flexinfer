@@ -10,20 +10,23 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
 
 type slackServer struct {
 	token      string
-	httpClient *http.Client
+	httpClient *httpclient.Client
 }
 
 type slackError struct {
@@ -32,20 +35,14 @@ type slackError struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	token := os.Getenv("SLACK_BOT_TOKEN")
 	if token == "" {
@@ -53,11 +50,11 @@ func main() {
 	}
 
 	srv := &slackServer{
-		token: token,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		token:      token,
+		httpClient: httpclient.NewDefault(),
 	}
+
+	logger.Info("starting server", "name", "mcp-slack", "version", version)
 
 	server := mcp.NewServer("mcp-slack", version)
 	server.SetInstructions("Slack MCP server. Search messages, list channels, post messages. Requires SLACK_BOT_TOKEN with appropriate scopes.")
@@ -268,10 +265,7 @@ func main() {
 		},
 	}, srv.handleGetPermalink)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (s *slackServer) request(ctx context.Context, method, endpoint string, params url.Values, jsonBody any) ([]byte, error) {
@@ -312,7 +306,7 @@ func (s *slackServer) request(ctx context.Context, method, endpoint string, para
 
 	req.Header.Set("Authorization", "Bearer "+s.token)
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.HTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -333,10 +327,14 @@ func (s *slackServer) request(ctx context.Context, method, endpoint string, para
 }
 
 func (s *slackServer) handleSearchMessages(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query, _ := args["query"].(string)
-	count := intArg(args, "count", 20)
-	sort, _ := args["sort"].(string)
-	sortDir, _ := args["sort_dir"].(string)
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	count := v.Int("count", 20)
+	sort := v.String("sort", "")
+	sortDir := v.String("sort_dir", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("query", query)
@@ -387,15 +385,13 @@ func (s *slackServer) handleSearchMessages(ctx context.Context, args map[string]
 }
 
 func (s *slackServer) handleListChannels(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	types, _ := args["types"].(string)
-	if types == "" {
-		types = "public_channel"
+	v := validate.NewArgs(args)
+	types := v.String("types", "public_channel")
+	excludeArchived := v.Bool("exclude_archived", true)
+	limit := v.Int("limit", 100)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
-	excludeArchived := true
-	if v, ok := args["exclude_archived"].(bool); ok {
-		excludeArchived = v
-	}
-	limit := intArg(args, "limit", 100)
 
 	params := url.Values{}
 	params.Set("types", types)
@@ -450,10 +446,14 @@ func (s *slackServer) handleListChannels(ctx context.Context, args map[string]an
 }
 
 func (s *slackServer) handleGetChannelHistory(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	channel, _ := args["channel"].(string)
-	limit := intArg(args, "limit", 100)
-	oldest, _ := args["oldest"].(string)
-	latest, _ := args["latest"].(string)
+	v := validate.NewArgs(args)
+	channel := v.Required("channel")
+	limit := v.Int("limit", 100)
+	oldest := v.String("oldest", "")
+	latest := v.String("latest", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("channel", channel)
@@ -516,16 +516,14 @@ func (s *slackServer) handleGetChannelHistory(ctx context.Context, args map[stri
 }
 
 func (s *slackServer) handlePostMessage(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	channel, _ := args["channel"].(string)
-	text, _ := args["text"].(string)
-	threadTs, _ := args["thread_ts"].(string)
-	unfurlLinks := true
-	if v, ok := args["unfurl_links"].(bool); ok {
-		unfurlLinks = v
-	}
-	unfurlMedia := true
-	if v, ok := args["unfurl_media"].(bool); ok {
-		unfurlMedia = v
+	v := validate.NewArgs(args)
+	channel := v.Required("channel")
+	text := v.Required("text")
+	threadTs := v.String("thread_ts", "")
+	unfurlLinks := v.Bool("unfurl_links", true)
+	unfurlMedia := v.Bool("unfurl_media", true)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	body := map[string]any{
@@ -559,8 +557,12 @@ func (s *slackServer) handlePostMessage(ctx context.Context, args map[string]any
 }
 
 func (s *slackServer) handleListUsers(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	limit := intArg(args, "limit", 100)
-	includeLocale, _ := args["include_locale"].(bool)
+	v := validate.NewArgs(args)
+	limit := v.Int("limit", 100)
+	includeLocale := v.Bool("include_locale", false)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("limit", strconv.Itoa(limit))
@@ -624,7 +626,11 @@ func (s *slackServer) handleListUsers(ctx context.Context, args map[string]any) 
 }
 
 func (s *slackServer) handleGetUserInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	user, _ := args["user"].(string)
+	v := validate.NewArgs(args)
+	user := v.Required("user")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("user", user)
@@ -689,7 +695,11 @@ func (s *slackServer) handleGetUserInfo(ctx context.Context, args map[string]any
 }
 
 func (s *slackServer) handleGetChannelInfo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	channel, _ := args["channel"].(string)
+	v := validate.NewArgs(args)
+	channel := v.Required("channel")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("channel", channel)
@@ -748,9 +758,13 @@ func (s *slackServer) handleGetChannelInfo(ctx context.Context, args map[string]
 }
 
 func (s *slackServer) handleAddReaction(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	channel, _ := args["channel"].(string)
-	timestamp, _ := args["timestamp"].(string)
-	name, _ := args["name"].(string)
+	v := validate.NewArgs(args)
+	channel := v.Required("channel")
+	timestamp := v.Required("timestamp")
+	name := v.Required("name")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	body := map[string]any{
 		"channel":   channel,
@@ -767,8 +781,12 @@ func (s *slackServer) handleAddReaction(ctx context.Context, args map[string]any
 }
 
 func (s *slackServer) handleGetPermalink(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	channel, _ := args["channel"].(string)
-	messageTs, _ := args["message_ts"].(string)
+	v := validate.NewArgs(args)
+	channel := v.Required("channel")
+	messageTs := v.Required("message_ts")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 
 	params := url.Values{}
 	params.Set("channel", channel)
@@ -789,24 +807,6 @@ func (s *slackServer) handleGetPermalink(ctx context.Context, args map[string]an
 	}
 
 	return mcp.TextResult(result.Permalink), nil
-}
-
-func intArg(args map[string]any, key string, def int) int {
-	if v, ok := args[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return int(n)
-		case int:
-			return n
-		case int64:
-			return int(n)
-		case string:
-			if i, err := strconv.Atoi(n); err == nil {
-				return i
-			}
-		}
-	}
-	return def
 }
 
 func truncateText(s string, maxLen int) string {

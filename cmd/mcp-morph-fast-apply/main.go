@@ -10,15 +10,17 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/pathsec"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 const (
@@ -27,26 +29,22 @@ const (
 )
 
 // Shared HTTP client for connection reuse
-var httpClient = &http.Client{Timeout: 90 * time.Second}
+var httpClient = httpclient.New(httpclient.Config{
+	Timeout: 90 * time.Second,
+})
 
 var version = "dev"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+	logger.Info("starting server", "name", "mcp-morph-fast-apply", "version", version)
 
 	server := mcp.NewServer("mcp-morph-fast-apply", version)
 	server.SetInstructions("Morph Fast Apply server for intelligent code editing. Use edit_file to apply code changes.")
@@ -99,10 +97,7 @@ func main() {
 		},
 	}, handleEditFile)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func getConfig() (baseURL, apiKey, model string, err error) {
@@ -167,41 +162,36 @@ func resolvePath(path string) (string, error) {
 }
 
 func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	// Validate arguments
+	v := validate.NewArgs(args)
+	path := v.Required("path")
+	instruction := v.Required("instruction")
+	update := v.Required("update")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	baseURL, apiKey, model, err := getConfig()
 	if err != nil {
-		return nil, err
-	}
-
-	path, _ := args["path"].(string)
-	if path == "" {
-		return nil, fmt.Errorf("path is required")
-	}
-
-	instruction, _ := args["instruction"].(string)
-	if instruction == "" {
-		return nil, fmt.Errorf("instruction is required")
-	}
-
-	update, _ := args["update"].(string)
-	if update == "" {
-		return nil, fmt.Errorf("update is required")
+		return mcp.ErrorResult(err), nil
 	}
 
 	// Resolve and validate path
 	absPath, err := resolvePath(path)
 	if err != nil {
-		return nil, fmt.Errorf("invalid path: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("invalid path: %w", err)), nil
 	}
 
 	// Validate file size before reading
 	if err := pathsec.ValidateFileSize(absPath, maxFileSize); err != nil {
-		return nil, fmt.Errorf("file validation: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("file validation: %w", err)), nil
 	}
 
 	// Read original file
 	originalCode, err := os.ReadFile(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", absPath, err)
+		return mcp.ErrorResult(fmt.Errorf("failed to read file %s: %w", absPath, err)), nil
 	}
 
 	// Build Morph API request
@@ -222,20 +212,20 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 
 	body, err := json.Marshal(requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("marshal request: %w", err)), nil
 	}
 
 	url := baseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("create request: %w", err)), nil
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Morph API: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("failed to call Morph API: %w", err)), nil
 	}
 	defer resp.Body.Close()
 
@@ -243,14 +233,14 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	limitedReader := io.LimitReader(resp.Body, maxResponseSize+1)
 	respBody, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("read response: %w", err)), nil
 	}
 	if len(respBody) > maxResponseSize {
-		return nil, fmt.Errorf("response too large: exceeds %d bytes", maxResponseSize)
+		return mcp.ErrorResult(fmt.Errorf("response too large: exceeds %d bytes", maxResponseSize)), nil
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("morph API error %d: %s", resp.StatusCode, string(respBody))
+		return mcp.ErrorResult(fmt.Errorf("morph API error %d: %s", resp.StatusCode, string(respBody))), nil
 	}
 
 	// Parse response
@@ -268,23 +258,23 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	}
 
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("failed to parse response: %w", err)), nil
 	}
 
 	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("no response from Morph API")
+		return mcp.ErrorResult(fmt.Errorf("no response from Morph API")), nil
 	}
 
 	newCode := result.Choices[0].Message.Content
 
 	// Validate response size before writing
 	if len(newCode) > maxResponseSize {
-		return nil, fmt.Errorf("edited content too large: %d bytes", len(newCode))
+		return mcp.ErrorResult(fmt.Errorf("edited content too large: %d bytes", len(newCode))), nil
 	}
 
 	// Write the updated file
 	if err := os.WriteFile(absPath, []byte(newCode), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write file: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("failed to write file: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{

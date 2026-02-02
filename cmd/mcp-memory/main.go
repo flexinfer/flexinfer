@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var version = "1.0.0"
@@ -45,20 +47,14 @@ type memoryServer struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
 
 	// Get persist path from env or default
 	persistPath := os.Getenv("MEMORY_PERSIST_PATH")
@@ -80,8 +76,10 @@ func main() {
 
 	// Load existing graph if available
 	if err := mem.load(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load existing graph: %v\n", err)
+		logger.Warn("could not load existing graph", "error", err)
 	}
+
+	logger.Info("starting server", "name", "mcp-memory", "version", version, "path", persistPath)
 
 	server := mcp.NewServer("mcp-memory", version)
 	server.SetInstructions("Knowledge graph memory for persistent context. Store entities, relations, and observations.")
@@ -269,10 +267,7 @@ func main() {
 		},
 	}, mem.handleOpenNodes)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
 func (m *memoryServer) load() error {
@@ -312,10 +307,15 @@ func (m *memoryServer) save() error {
 	return os.WriteFile(m.filePath, data, 0644)
 }
 
-func (m *memoryServer) handleCreateEntities(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	entities, ok := args["entities"].([]any)
+func (m *memoryServer) handleCreateEntities(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	entitiesRaw := v.RequiredAny("entities")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	entities, ok := entitiesRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("entities must be an array")
+		return mcp.ErrorResult(fmt.Errorf("entities must be an array")), nil
 	}
 
 	m.mu.Lock()
@@ -358,16 +358,21 @@ func (m *memoryServer) handleCreateEntities(ctx context.Context, args map[string
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"created": created, "count": len(created)})
 }
 
-func (m *memoryServer) handleCreateRelations(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	relations, ok := args["relations"].([]any)
+func (m *memoryServer) handleCreateRelations(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	relationsRaw := v.RequiredAny("relations")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	relations, ok := relationsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("relations must be an array")
+		return mcp.ErrorResult(fmt.Errorf("relations must be an array")), nil
 	}
 
 	m.mu.Lock()
@@ -408,16 +413,21 @@ func (m *memoryServer) handleCreateRelations(ctx context.Context, args map[strin
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"created": created})
 }
 
-func (m *memoryServer) handleAddObservations(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	observations, ok := args["observations"].([]any)
+func (m *memoryServer) handleAddObservations(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	observationsRaw := v.RequiredAny("observations")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	observations, ok := observationsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("observations must be an array")
+		return mcp.ErrorResult(fmt.Errorf("observations must be an array")), nil
 	}
 
 	m.mu.Lock()
@@ -447,25 +457,25 @@ func (m *memoryServer) handleAddObservations(ctx context.Context, args map[strin
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"added": added})
 }
 
-func (m *memoryServer) handleDeleteEntities(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	names, ok := args["names"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("names must be an array")
+func (m *memoryServer) handleDeleteEntities(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	names := v.RequiredStringSlice("names")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	deleted := 0
-	for _, n := range names {
-		name, ok := n.(string)
-		if !ok || name == "" {
+	for _, name := range names {
+		if name == "" {
 			continue
 		}
 
@@ -485,16 +495,21 @@ func (m *memoryServer) handleDeleteEntities(ctx context.Context, args map[string
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"deleted": deleted})
 }
 
-func (m *memoryServer) handleDeleteRelations(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	relations, ok := args["relations"].([]any)
+func (m *memoryServer) handleDeleteRelations(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	relationsRaw := v.RequiredAny("relations")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	relations, ok := relationsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("relations must be an array")
+		return mcp.ErrorResult(fmt.Errorf("relations must be an array")), nil
 	}
 
 	m.mu.Lock()
@@ -523,16 +538,21 @@ func (m *memoryServer) handleDeleteRelations(ctx context.Context, args map[strin
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"deleted": deleted})
 }
 
-func (m *memoryServer) handleDeleteObservations(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	deletions, ok := args["deletions"].([]any)
+func (m *memoryServer) handleDeleteObservations(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	deletionsRaw := v.RequiredAny("deletions")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	deletions, ok := deletionsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("deletions must be an array")
+		return mcp.ErrorResult(fmt.Errorf("deletions must be an array")), nil
 	}
 
 	m.mu.Lock()
@@ -569,13 +589,13 @@ func (m *memoryServer) handleDeleteObservations(ctx context.Context, args map[st
 	}
 
 	if err := m.save(); err != nil {
-		return nil, fmt.Errorf("save graph: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("save graph: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{"deleted": deleted})
 }
 
-func (m *memoryServer) handleReadGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (m *memoryServer) handleReadGraph(_ context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -606,10 +626,11 @@ func (m *memoryServer) handleReadGraph(ctx context.Context, args map[string]any)
 	})
 }
 
-func (m *memoryServer) handleSearchNodes(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	query, _ := args["query"].(string)
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
+func (m *memoryServer) handleSearchNodes(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	m.mu.RLock()
@@ -655,19 +676,19 @@ func (m *memoryServer) handleSearchNodes(ctx context.Context, args map[string]an
 	return mcp.JSONResult(map[string]any{"results": matches, "count": len(matches)})
 }
 
-func (m *memoryServer) handleOpenNodes(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	names, ok := args["names"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("names must be an array")
+func (m *memoryServer) handleOpenNodes(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	names := v.RequiredStringSlice("names")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	results := make([]map[string]any, 0)
-	for _, n := range names {
-		name, ok := n.(string)
-		if !ok || name == "" {
+	for _, name := range names {
+		if name == "" {
 			continue
 		}
 

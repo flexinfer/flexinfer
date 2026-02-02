@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -14,6 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
@@ -52,26 +54,22 @@ func initMongo(ctx context.Context) error {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-			return
-		}
-	}()
-
-	if err := initMongo(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "MongoDB init error: %v\n", err)
+	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func run(ctx context.Context) error {
+	logger := mcplog.NewDefault()
+
+	if err := initMongo(ctx); err != nil {
+		logger.Error("MongoDB init error", "error", err)
+		return err
+	}
 	defer client.Disconnect(context.Background())
+
+	logger.Info("starting server", "name", "mcp-mongodb", "version", version, "uri", mongoURI)
 
 	server := mcp.NewServer("mcp-mongodb", version)
 	server.SetInstructions("MongoDB database tools. Configure with MONGODB_URI and optionally MONGODB_DATABASE for default database.")
@@ -278,17 +276,27 @@ func main() {
 		},
 	}, handleIndexes)
 
-	if err := server.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+	return server.Run(ctx)
 }
 
-func getDatabase(args map[string]any) string {
-	if db, ok := args["database"].(string); ok && db != "" {
-		return db
+// getDatabase returns the database name from args or falls back to mongoDB env var.
+func getDatabase(v *validate.Args) string {
+	dbName := v.String("database", mongoDB)
+	if dbName == "" {
+		// Add custom error for missing database
+		v.Required("database") // This will add the error
 	}
-	return mongoDB
+	return dbName
+}
+
+// getOptionalObject returns a map[string]any from args, or nil if not present.
+func getOptionalObject(v *validate.Args, field string) map[string]any {
+	if val := v.Any(field); val != nil {
+		if m, ok := val.(map[string]any); ok {
+			return m
+		}
+	}
+	return nil
 }
 
 func handleListDatabases(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -314,9 +322,10 @@ func handleListDatabases(ctx context.Context, args map[string]any) (*mcp.CallToo
 }
 
 func handleListCollections(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	db := client.Database(dbName)
@@ -333,14 +342,11 @@ func handleListCollections(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleCollectionStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
-	}
-
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	db := client.Database(dbName)
@@ -363,46 +369,49 @@ func handleCollectionStats(ctx context.Context, args map[string]any) (*mcp.CallT
 }
 
 func handleFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	filter := getOptionalObject(v, "filter")
+	projection := getOptionalObject(v, "projection")
+	sort := getOptionalObject(v, "sort")
+	limit := v.Int("limit", 20)
+	skip := v.Int("skip", 0)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	// Apply limit constraints
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 
-	filter := bson.M{}
-	if f, ok := args["filter"].(map[string]any); ok {
-		filter = toBsonM(f)
+	filterBson := bson.M{}
+	if filter != nil {
+		filterBson = toBsonM(filter)
 	}
 
 	opts := options.Find()
 
-	if projection, ok := args["projection"].(map[string]any); ok {
+	if projection != nil {
 		opts.SetProjection(toBsonM(projection))
 	}
 
-	if sort, ok := args["sort"].(map[string]any); ok {
+	if sort != nil {
 		opts.SetSort(toBsonM(sort))
 	}
 
-	limit := int64(20)
-	if l, ok := args["limit"].(float64); ok && l > 0 {
-		limit = int64(l)
-		if limit > 1000 {
-			limit = 1000
-		}
-	}
-	opts.SetLimit(limit)
+	opts.SetLimit(int64(limit))
 
-	if skip, ok := args["skip"].(float64); ok && skip > 0 {
+	if skip > 0 {
 		opts.SetSkip(int64(skip))
 	}
 
 	coll := client.Database(dbName).Collection(collName)
-	cursor, err := coll.Find(ctx, filter, opts)
+	cursor, err := coll.Find(ctx, filterBson, opts)
 	if err != nil {
 		return nil, fmt.Errorf("find: %w", err)
 	}
@@ -428,25 +437,24 @@ func handleFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 }
 
 func handleFindOne(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
-	}
-
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	id := v.String("id", "")
+	filterArg := getOptionalObject(v, "filter")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	filter := bson.M{}
-	if id, ok := args["id"].(string); ok && id != "" {
+	if id != "" {
 		oid, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Errorf("invalid ObjectId: %w", err)), nil
 		}
 		filter["_id"] = oid
-	} else if f, ok := args["filter"].(map[string]any); ok {
-		filter = toBsonM(f)
+	} else if filterArg != nil {
+		filter = toBsonM(filterArg)
 	}
 
 	coll := client.Database(dbName).Collection(collName)
@@ -472,19 +480,17 @@ func handleFindOne(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 }
 
 func handleCount(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
-	}
-
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	filterArg := getOptionalObject(v, "filter")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	filter := bson.M{}
-	if f, ok := args["filter"].(map[string]any); ok {
-		filter = toBsonM(f)
+	if filterArg != nil {
+		filter = toBsonM(filterArg)
 	}
 
 	coll := client.Database(dbName).Collection(collName)
@@ -501,23 +507,21 @@ func handleCount(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 }
 
 func handleAggregate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	pipelineArg := v.RequiredAny("pipeline")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	pipelineSlice, ok := pipelineArg.([]any)
+	if !ok || len(pipelineSlice) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("pipeline must be a non-empty array")), nil
 	}
 
-	pipelineArg, ok := args["pipeline"].([]any)
-	if !ok || len(pipelineArg) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("pipeline is required")), nil
-	}
-
-	pipeline := make([]bson.M, 0, len(pipelineArg))
-	for _, stage := range pipelineArg {
+	pipeline := make([]bson.M, 0, len(pipelineSlice))
+	for _, stage := range pipelineSlice {
 		if stageMap, ok := stage.(map[string]any); ok {
 			pipeline = append(pipeline, toBsonM(stageMap))
 		}
@@ -549,24 +553,18 @@ func handleAggregate(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 }
 
 func handleDistinct(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
-	}
-
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
-	}
-
-	field, ok := args["field"].(string)
-	if !ok || field == "" {
-		return mcp.ErrorResult(fmt.Errorf("field is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	field := v.Required("field")
+	filterArg := getOptionalObject(v, "filter")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	filter := bson.M{}
-	if f, ok := args["filter"].(map[string]any); ok {
-		filter = toBsonM(f)
+	if filterArg != nil {
+		filter = toBsonM(filterArg)
 	}
 
 	coll := client.Database(dbName).Collection(collName)
@@ -585,14 +583,11 @@ func handleDistinct(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 }
 
 func handleIndexes(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	dbName := getDatabase(args)
-	if dbName == "" {
-		return mcp.ErrorResult(fmt.Errorf("database is required")), nil
-	}
-
-	collName, ok := args["collection"].(string)
-	if !ok || collName == "" {
-		return mcp.ErrorResult(fmt.Errorf("collection is required")), nil
+	v := validate.NewArgs(args)
+	dbName := getDatabase(v)
+	collName := v.Required("collection")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
 	}
 
 	coll := client.Database(dbName).Collection(collName)

@@ -43,24 +43,7 @@ func TestGetEnvInt(t *testing.T) {
 	}
 }
 
-func TestClampInt(t *testing.T) {
-	tests := []struct {
-		v, min, max, want int
-	}{
-		{5, 0, 10, 5},
-		{-1, 0, 10, 0},
-		{15, 0, 10, 10},
-		{0, 0, 10, 0},
-		{10, 0, 10, 10},
-	}
-
-	for _, tt := range tests {
-		got := clampInt(tt.v, tt.min, tt.max)
-		if got != tt.want {
-			t.Errorf("clampInt(%d, %d, %d) = %d, want %d", tt.v, tt.min, tt.max, got, tt.want)
-		}
-	}
-}
+// TestClampInt removed - clampInt was replaced by validate.IntRange()
 
 func TestTruncate(t *testing.T) {
 	tests := []struct {

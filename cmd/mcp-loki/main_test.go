@@ -4,9 +4,12 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/crb2nu/loom/pkg/httpclient"
 )
 
 func TestLokiAPIURL_NormalizesBasePath(t *testing.T) {
@@ -35,35 +38,26 @@ func TestLokiAPIURL_NormalizesBasePath(t *testing.T) {
 }
 
 func TestLokiRequest_NonJSONBodyIncludesSnippet(t *testing.T) {
-	prevHTTPClientFactory := httpClientFactory
+	// Create test server that returns non-JSON response
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "permission denied")
+	}))
+	defer ts.Close()
+
+	prevPortForward := portForward
+	prevLokiURL := lokiURL
+	prevHTTPClient := httpClient
 	t.Cleanup(func() {
-		portForward = getEnvBool("LOKI_PORT_FORWARD", true)
-		lokiURL = getEnv("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
-		httpClientFactory = prevHTTPClientFactory
+		portForward = prevPortForward
+		lokiURL = prevLokiURL
+		httpClient = prevHTTPClient
 	})
 
 	portForward = false
-	lokiURL = "http://loki.example"
-	httpClientFactory = func() *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Path != "/loki/api/v1/query_range" {
-					return &http.Response{
-						StatusCode: http.StatusNotFound,
-						Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
-						Body:       io.NopCloser(strings.NewReader("not found")),
-						Request:    r,
-					}, nil
-				}
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
-					Body:       io.NopCloser(strings.NewReader("permission denied")),
-					Request:    r,
-				}, nil
-			}),
-		}
-	}
+	lokiURL = ts.URL
+	httpClient = httpclient.NewDefault()
 
 	_, err := lokiRequest(context.Background(), "query_range", url.Values{"query": []string{"{job=\"test\"}"}})
 	if err == nil {
@@ -80,27 +74,26 @@ func TestLokiRequest_NonJSONBodyIncludesSnippet(t *testing.T) {
 }
 
 func TestLokiRequest_HTTPErrorIncludesSnippet(t *testing.T) {
-	prevHTTPClientFactory := httpClientFactory
+	// Create test server that returns HTTP error
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		io.WriteString(w, "permission denied")
+	}))
+	defer ts.Close()
+
+	prevPortForward := portForward
+	prevLokiURL := lokiURL
+	prevHTTPClient := httpClient
 	t.Cleanup(func() {
-		portForward = getEnvBool("LOKI_PORT_FORWARD", true)
-		lokiURL = getEnv("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
-		httpClientFactory = prevHTTPClientFactory
+		portForward = prevPortForward
+		lokiURL = prevLokiURL
+		httpClient = prevHTTPClient
 	})
 
 	portForward = false
-	lokiURL = "http://loki.example"
-	httpClientFactory = func() *http.Client {
-		return &http.Client{
-			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				return &http.Response{
-					StatusCode: http.StatusForbidden,
-					Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
-					Body:       io.NopCloser(strings.NewReader("permission denied")),
-					Request:    r,
-				}, nil
-			}),
-		}
-	}
+	lokiURL = ts.URL
+	httpClient = httpclient.NewDefault()
 
 	_, err := lokiRequest(context.Background(), "query", url.Values{"query": []string{"{job=\"test\"}"}})
 	if err == nil {
@@ -115,7 +108,3 @@ func TestLokiRequest_HTTPErrorIncludesSnippet(t *testing.T) {
 		t.Fatalf("error did not include body snippet: %q", msg)
 	}
 }
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
