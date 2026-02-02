@@ -91,9 +91,9 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [ ] **TD-7**: E2E tests for GPU scenarios (currently skipped)
 
 ### Tech Debt (Low Priority)
-- [ ] **TD-8**: Logging consistency (fmt.Print vs slog) in CLI commands
-- [ ] **TD-9**: Deprecated benchmark flag cleanup
-- [ ] **TD-10**: Namespace "default" fallback handling
+- [x] **TD-8**: Logging consistency - servers use slog, CLI uses fmt.Print (correct pattern)
+- [x] **TD-9**: Deprecated benchmark flag cleanup - added warning for --max-tokens
+- [x] **TD-10**: Namespace "default" fallback - added warning when POD_NAMESPACE not set
 
 ### Low Priority (Advanced Features)
 - [ ] **KV-Cache tiering** - Advanced memory management

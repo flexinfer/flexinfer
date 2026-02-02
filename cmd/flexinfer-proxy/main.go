@@ -288,6 +288,7 @@ func main() {
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
 		namespace = "default"
+		slog.Warn("POD_NAMESPACE not set, using 'default' namespace (set POD_NAMESPACE env var in production)")
 	}
 
 	cfg, err := config.GetConfig()

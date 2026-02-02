@@ -47,6 +47,7 @@ func main() {
 	setupLog.Info("Starting benchmark", "model", *model, "modelName", *modelName, "backend", *backend)
 
 	if *maxTokensAlias > 0 {
+		setupLog.Info("WARNING: --max-tokens is deprecated, use --batch-size instead")
 		*batchSize = *maxTokensAlias
 	}
 
