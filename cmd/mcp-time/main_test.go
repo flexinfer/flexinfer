@@ -49,9 +49,13 @@ func TestHandleWaitRespectsDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 
-	_, err := handleWait(ctx, map[string]any{"duration": "200ms"})
-	if err == nil {
-		t.Fatalf("expected deadline-related error")
+	result, err := handleWait(ctx, map[string]any{"duration": "200ms"})
+	if err != nil {
+		// Context cancellation returns a Go error
+		return
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("expected deadline-related error result")
 	}
 }
 
@@ -75,12 +79,15 @@ func TestHandleWait_NegativeDuration(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	_, err := handleWait(ctx, map[string]any{"duration": "-1s"})
-	if err == nil {
-		t.Fatal("expected error for negative duration")
+	result, err := handleWait(ctx, map[string]any{"duration": "-1s"})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "non-negative") {
-		t.Errorf("error should mention non-negative, got: %v", err)
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for negative duration")
+	}
+	if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "non-negative") {
+		t.Errorf("error should mention non-negative, got: %v", result.Content)
 	}
 }
 
@@ -88,9 +95,12 @@ func TestHandleWait_MissingDuration(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	_, err := handleWait(ctx, map[string]any{})
-	if err == nil {
-		t.Fatal("expected error for missing duration")
+	result, err := handleWait(ctx, map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for missing duration")
 	}
 }
 
@@ -98,9 +108,9 @@ func TestHandleGetCurrentTime(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		timezone string
-		wantErr  bool
+		name      string
+		timezone  string
+		wantIsErr bool
 	}{
 		{"default UTC", "", false},
 		{"explicit UTC", "UTC", false},
@@ -117,14 +127,15 @@ func TestHandleGetCurrentTime(t *testing.T) {
 			}
 
 			result, err := handleGetCurrentTime(context.Background(), args)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("handleGetCurrentTime() error = %v, wantErr %v", err, tt.wantErr)
+			if err != nil {
+				t.Errorf("handleGetCurrentTime() unexpected Go error = %v", err)
 				return
 			}
-			if !tt.wantErr && result == nil {
-				t.Error("expected non-nil result")
+			if result.IsError != tt.wantIsErr {
+				t.Errorf("handleGetCurrentTime() IsError = %v, want %v", result.IsError, tt.wantIsErr)
+				return
 			}
-			if !tt.wantErr && len(result.Content) == 0 {
+			if !tt.wantIsErr && len(result.Content) == 0 {
 				t.Error("expected content in result")
 			}
 		})
@@ -160,7 +171,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 	tests := []struct {
 		name         string
 		args         map[string]any
-		wantErr      bool
+		wantIsErr    bool
 		errSubstring string
 	}{
 		{
@@ -169,7 +180,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"time":        "2024-01-15T14:30:00Z",
 				"to_timezone": "America/New_York",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "with from_timezone",
@@ -178,7 +189,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"from_timezone": "UTC",
 				"to_timezone":   "Asia/Tokyo",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "alternative date format",
@@ -186,23 +197,23 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"time":        "2024-01-15 14:30:00",
 				"to_timezone": "UTC",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "missing time",
 			args: map[string]any{
 				"to_timezone": "UTC",
 			},
-			wantErr:      true,
-			errSubstring: "time is required",
+			wantIsErr:    true,
+			errSubstring: "time",
 		},
 		{
 			name: "missing to_timezone",
 			args: map[string]any{
 				"time": "2024-01-15T14:30:00Z",
 			},
-			wantErr:      true,
-			errSubstring: "to_timezone is required",
+			wantIsErr:    true,
+			errSubstring: "to_timezone",
 		},
 		{
 			name: "invalid time format",
@@ -210,7 +221,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"time":        "invalid",
 				"to_timezone": "UTC",
 			},
-			wantErr:      true,
+			wantIsErr:    true,
 			errSubstring: "cannot parse time",
 		},
 		{
@@ -220,7 +231,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"from_timezone": "Invalid/Zone",
 				"to_timezone":   "UTC",
 			},
-			wantErr:      true,
+			wantIsErr:    true,
 			errSubstring: "invalid from_timezone",
 		},
 		{
@@ -229,7 +240,7 @@ func TestHandleConvertTimezone(t *testing.T) {
 				"time":        "2024-01-15T14:30:00Z",
 				"to_timezone": "Invalid/Zone",
 			},
-			wantErr:      true,
+			wantIsErr:    true,
 			errSubstring: "invalid to_timezone",
 		},
 	}
@@ -237,16 +248,20 @@ func TestHandleConvertTimezone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := handleConvertTimezone(context.Background(), tt.args)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("handleConvertTimezone() error = %v, wantErr %v", err, tt.wantErr)
+			if err != nil {
+				t.Errorf("handleConvertTimezone() unexpected Go error = %v", err)
 				return
 			}
-			if tt.wantErr && tt.errSubstring != "" {
-				if !strings.Contains(err.Error(), tt.errSubstring) {
-					t.Errorf("error should contain %q, got: %v", tt.errSubstring, err)
+			if result.IsError != tt.wantIsErr {
+				t.Errorf("handleConvertTimezone() IsError = %v, want %v", result.IsError, tt.wantIsErr)
+				return
+			}
+			if tt.wantIsErr && tt.errSubstring != "" {
+				if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, tt.errSubstring) {
+					t.Errorf("error should contain %q, got: %v", tt.errSubstring, result.Content)
 				}
 			}
-			if !tt.wantErr && result == nil {
+			if !tt.wantIsErr && result == nil {
 				t.Error("expected non-nil result")
 			}
 		})
@@ -259,7 +274,7 @@ func TestHandleAddDuration(t *testing.T) {
 	tests := []struct {
 		name         string
 		args         map[string]any
-		wantErr      bool
+		wantIsErr    bool
 		errSubstring string
 	}{
 		{
@@ -267,7 +282,7 @@ func TestHandleAddDuration(t *testing.T) {
 			args: map[string]any{
 				"duration": "1h",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "add to specific time",
@@ -275,7 +290,7 @@ func TestHandleAddDuration(t *testing.T) {
 				"time":     "2024-01-15T14:30:00Z",
 				"duration": "2h30m",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "subtract duration",
@@ -283,7 +298,7 @@ func TestHandleAddDuration(t *testing.T) {
 				"time":     "2024-01-15T14:30:00Z",
 				"duration": "-1h",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "with timezone",
@@ -292,7 +307,7 @@ func TestHandleAddDuration(t *testing.T) {
 				"duration": "3h",
 				"timezone": "America/New_York",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "add days",
@@ -300,15 +315,15 @@ func TestHandleAddDuration(t *testing.T) {
 				"time":     "2024-01-15T14:30:00Z",
 				"duration": "7d",
 			},
-			wantErr: false,
+			wantIsErr: false,
 		},
 		{
 			name: "missing duration",
 			args: map[string]any{
 				"time": "2024-01-15T14:30:00Z",
 			},
-			wantErr:      true,
-			errSubstring: "duration is required",
+			wantIsErr:    true,
+			errSubstring: "duration",
 		},
 		{
 			name: "invalid time format",
@@ -316,7 +331,7 @@ func TestHandleAddDuration(t *testing.T) {
 				"time":     "invalid",
 				"duration": "1h",
 			},
-			wantErr:      true,
+			wantIsErr:    true,
 			errSubstring: "cannot parse time",
 		},
 		{
@@ -325,7 +340,7 @@ func TestHandleAddDuration(t *testing.T) {
 				"duration": "1h",
 				"timezone": "Invalid/Zone",
 			},
-			wantErr:      true,
+			wantIsErr:    true,
 			errSubstring: "invalid timezone",
 		},
 		{
@@ -333,24 +348,28 @@ func TestHandleAddDuration(t *testing.T) {
 			args: map[string]any{
 				"duration": "invalid",
 			},
-			wantErr:      true,
-			errSubstring: "invalid", // error message may vary
+			wantIsErr:    true,
+			errSubstring: "invalid",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := handleAddDuration(context.Background(), tt.args)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("handleAddDuration() error = %v, wantErr %v", err, tt.wantErr)
+			if err != nil {
+				t.Errorf("handleAddDuration() unexpected Go error = %v", err)
 				return
 			}
-			if tt.wantErr && tt.errSubstring != "" {
-				if !strings.Contains(err.Error(), tt.errSubstring) {
-					t.Errorf("error should contain %q, got: %v", tt.errSubstring, err)
+			if result.IsError != tt.wantIsErr {
+				t.Errorf("handleAddDuration() IsError = %v, want %v", result.IsError, tt.wantIsErr)
+				return
+			}
+			if tt.wantIsErr && tt.errSubstring != "" {
+				if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, tt.errSubstring) {
+					t.Errorf("error should contain %q, got: %v", tt.errSubstring, result.Content)
 				}
 			}
-			if !tt.wantErr && result == nil {
+			if !tt.wantIsErr && result == nil {
 				t.Error("expected non-nil result")
 			}
 		})
