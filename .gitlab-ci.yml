@@ -134,11 +134,17 @@ build:binaries:
   <<: *go-template
   stage: build
   cache:
-    key: ${CI_COMMIT_REF_SLUG}
-    paths:
-      - .go/pkg/mod/
-      - .go-build/
-    policy: pull-push
+    # Keep Go module/build caches shared per-branch, but keep compiled binaries
+    # scoped per-commit to avoid stale/incorrect reuse.
+    - key: ${CI_COMMIT_REF_SLUG}
+      paths:
+        - .go/pkg/mod/
+        - .go-build/
+      policy: pull-push
+    - key: ${CI_COMMIT_SHA}-bin
+      paths:
+        - bin/
+      policy: push
   script:
     - |
       VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
@@ -167,10 +173,8 @@ build:binaries:
 
       echo "Built binaries:"
       ls -la bin/
-  artifacts:
-    paths:
-      - bin/
-    expire_in: 1 day
+  # NOTE: GitLab instance currently rejects large artifact uploads (HTTP 413).
+  # Use the runner cache (MinIO) for passing binaries to downstream jobs instead.
 
 # =============================================================================
 # TEST STAGE
@@ -226,6 +230,11 @@ test:integration:
   stage: test
   needs:
     - build:binaries
+  cache:
+    - key: ${CI_COMMIT_SHA}-bin
+      paths:
+        - bin/
+      policy: pull
   script:
     - |
       echo "Setting up integration test environment..."
