@@ -2,6 +2,7 @@
 package validate
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -62,12 +63,12 @@ func (a *Args) Required(field string) string {
 
 // RequiredInt checks that an integer field is present.
 func (a *Args) RequiredInt(field string) int {
-	v, ok := a.args[field].(float64) // JSON numbers are float64
+	v, ok := asInt(a.args[field])
 	if !ok {
 		a.errors = append(a.errors, Error{Field: field, Message: "is required"})
 		return 0
 	}
-	return int(v)
+	return v
 }
 
 // String gets an optional string field with a default value.
@@ -80,10 +81,39 @@ func (a *Args) String(field, defaultVal string) string {
 
 // Int gets an optional integer field with a default value.
 func (a *Args) Int(field string, defaultVal int) int {
-	if v, ok := a.args[field].(float64); ok {
-		return int(v)
+	if v, ok := asInt(a.args[field]); ok {
+		return v
 	}
 	return defaultVal
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case uint:
+		return int(n), true
+	case uint64:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
+	}
 }
 
 // IntRange validates an integer is within a range.

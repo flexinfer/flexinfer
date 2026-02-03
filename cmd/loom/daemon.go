@@ -13,7 +13,11 @@ import (
 
 // dial connects to the loom daemon socket with a timeout.
 func dial(socketPath string) (net.Conn, error) {
-	return net.DialTimeout("unix", socketPath, 5*time.Second)
+	timeout := 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	d := net.Dialer{Timeout: timeout}
+	return d.DialContext(ctx, "unix", socketPath)
 }
 
 // call makes a JSON-RPC request to the loom daemon and returns the result.

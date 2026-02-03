@@ -97,8 +97,8 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
+func runGit(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s failed: %v, output: %s", args[0], err, string(out))
@@ -109,7 +109,7 @@ func runGit(args ...string) (string, error) {
 // Handlers
 
 func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	out, err := runGit("worktree", "list", "--porcelain")
+	out, err := runGit(ctx, "worktree", "list", "--porcelain")
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -190,7 +190,7 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 		gitArgs = append(gitArgs, absPath, branch)
 	}
 
-	_, err := runGit(gitArgs...)
+	_, err := runGit(ctx, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -225,7 +225,7 @@ func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 	gitArgs = append(gitArgs, absPath)
 
-	_, err := runGit(gitArgs...)
+	_, err := runGit(ctx, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -245,7 +245,7 @@ func handlePrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 		gitArgs = append(gitArgs, "--dry-run")
 	}
 
-	out, err := runGit(gitArgs...)
+	out, err := runGit(ctx, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}

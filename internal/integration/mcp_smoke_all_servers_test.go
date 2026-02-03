@@ -58,11 +58,15 @@ func TestMCP_AllServers_InitializeAndToolsList(t *testing.T) {
 
 	// Map of servers that require external services and their env vars
 	requiredEnvVars := map[string]string{
-		"mcp-postgres":   "POSTGRES_URL",
-		"mcp-neo4j":      "NEO4J_URI",
-		"mcp-redis":      "REDIS_URL",
+		"mcp-postgres": "POSTGRES_URL",
+		"mcp-neo4j":    "NEO4J_URI",
+		"mcp-redis":    "REDIS_URL",
+		// mcp-mongodb eagerly connects at startup; avoid failing CI unless explicitly configured.
+		"mcp-mongodb":    "MONGODB_URI",
 		"mcp-confluence": "CONFLUENCE_URL",
 		"mcp-jira":       "JIRA_URL",
+		// mcp-gcp uses ADC and will fail/hang in CI without credentials.
+		"mcp-gcp": "GOOGLE_APPLICATION_CREDENTIALS",
 	}
 
 	ran := false

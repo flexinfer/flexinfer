@@ -949,7 +949,7 @@ func (g *gitlabServer) requestList(ctx context.Context, path string) ([]any, err
 func (g *gitlabServer) requestListWithMeta(ctx context.Context, path string) ([]any, map[string]any, error) {
 	reqURL := g.apiURL + path
 
-	respBody, resp, err := g.doRequest(ctx, "GET", reqURL, nil, map[string]string{"Accept": "application/json"})
+	respBody, respHeaders, err := g.doRequest(ctx, "GET", reqURL, nil, map[string]string{"Accept": "application/json"})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -959,10 +959,10 @@ func (g *gitlabServer) requestListWithMeta(ctx context.Context, path string) ([]
 		return nil, nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	return result, parsePaginationHeaders(resp), nil
+	return result, parsePaginationHeaders(respHeaders), nil
 }
 
-func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, body []byte, headers map[string]string) ([]byte, *http.Response, error) {
+func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, body []byte, headers map[string]string) ([]byte, http.Header, error) {
 	const (
 		maxAttempts       = 3
 		maxErrorBodyBytes = 8192
@@ -1004,18 +1004,19 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		respHeaders := resp.Header.Clone()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
 				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
-					return nil, resp, sleepErr
+					return nil, respHeaders, sleepErr
 				}
 				continue
 			}
-			return nil, resp, readErr
+			return nil, respHeaders, readErr
 		}
 
 		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
+			delay := parseRetryAfter(respHeaders.Get("Retry-After"))
 			if delay <= 0 {
 				delay = backoffDelay(attempt, maxRetryDelay)
 			}
@@ -1023,23 +1024,23 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 				delay = maxRetryDelay
 			}
 			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
-				return nil, resp, sleepErr
+				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
 			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
-				return nil, resp, sleepErr
+				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, resp, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(respBody, maxErrorBodyBytes))}
+			return nil, respHeaders, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(respBody, maxErrorBodyBytes))}
 		}
 
-		return respBody, resp, nil
+		return respBody, respHeaders, nil
 	}
 
 	return nil, nil, fmt.Errorf("request failed after retries")
@@ -1298,11 +1299,10 @@ func trimTo(b []byte, max int) []byte {
 	return out
 }
 
-func parsePaginationHeaders(resp *http.Response) map[string]any {
-	if resp == nil {
+func parsePaginationHeaders(headers http.Header) map[string]any {
+	if headers == nil {
 		return nil
 	}
-	h := resp.Header
 	out := map[string]any{}
 	for _, kv := range []struct {
 		key string
@@ -1315,7 +1315,7 @@ func parsePaginationHeaders(resp *http.Response) map[string]any {
 		{"X-Total-Pages", "total_pages"},
 		{"X-Total", "total"},
 	} {
-		v := strings.TrimSpace(h.Get(kv.key))
+		v := strings.TrimSpace(headers.Get(kv.key))
 		if v == "" {
 			continue
 		}

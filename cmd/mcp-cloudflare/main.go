@@ -195,7 +195,7 @@ func cfRequestWithBody(method, path string, params map[string]string, body any) 
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
-	req, err := http.NewRequest(method, u.String(), bodyReader)
+	req, err := http.NewRequestWithContext(context.Background(), method, u.String(), bodyReader)
 	if err != nil {
 		return nil, err
 	}

@@ -39,7 +39,10 @@ func runProxy(socketPath string) error {
 	}
 
 	dialWithTimeout := func(timeout time.Duration) (net.Conn, error) {
-		return net.DialTimeout("unix", socketPath, timeout)
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		d := net.Dialer{Timeout: timeout}
+		return d.DialContext(ctxWithTimeout, "unix", socketPath)
 	}
 
 	ensureDaemon := func() error {
@@ -168,9 +171,15 @@ func runProxy(socketPath string) error {
 func startDaemonInBackground(socketPath string) error {
 	// Prefer an existing launchctl-managed daemon; if one isn't installed or isn't running,
 	// start a best-effort loomd process with stdout/stderr redirected away from the MCP stream.
-	if conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond); err == nil {
-		_ = conn.Close()
-		return nil
+	{
+		timeout := 200 * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		d := net.Dialer{Timeout: timeout}
+		if conn, err := d.DialContext(ctx, "unix", socketPath); err == nil {
+			_ = conn.Close()
+			return nil
+		}
 	}
 
 	loomdPath := ""

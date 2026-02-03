@@ -322,14 +322,14 @@ func run(ctx context.Context) error {
 	return server.Run(ctx)
 }
 
-func runGit(repoPath string, args ...string) (string, error) {
+func runGit(ctx context.Context, repoPath string, args ...string) (string, error) {
 	if repoPath == "" {
 		repoPath = defaultRepo
 	} else if !filepath.IsAbs(repoPath) {
 		repoPath = filepath.Join(defaultRepo, repoPath)
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 
 	output, err := cmd.CombinedOutput()
@@ -353,7 +353,7 @@ func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 		return mcp.ErrorResult(err), nil
 	}
 
-	output, err := runGit(path, "status", "--porcelain", "-b")
+	output, err := runGit(ctx, path, "status", "--porcelain", "-b")
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +418,7 @@ func handleGitDiff(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 		gitArgs = append(gitArgs, "--", file)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +460,7 @@ func handleGitLog(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 		gitArgs = append(gitArgs, "--", file)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +500,7 @@ func handleGitBranch(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 	}
 
 	if create != "" {
-		output, err := runGit(path, "branch", create)
+		output, err := runGit(ctx, path, "branch", create)
 		if err != nil {
 			return nil, err
 		}
@@ -508,7 +508,7 @@ func handleGitBranch(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 	}
 
 	if delete != "" {
-		output, err := runGit(path, "branch", "-d", delete)
+		output, err := runGit(ctx, path, "branch", "-d", delete)
 		if err != nil {
 			return nil, err
 		}
@@ -520,7 +520,7 @@ func handleGitBranch(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 		gitArgs = append(gitArgs, "-a")
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +578,7 @@ func handleGitCheckout(ctx context.Context, args map[string]any) (*mcp.CallToolR
 		gitArgs = append(gitArgs, "--", file)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,7 @@ func handleGitAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 
 	gitArgs := append([]string{"add"}, files...)
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +617,7 @@ func handleGitCommit(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 		gitArgs = append(gitArgs, "-a")
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -644,7 +644,7 @@ func handleGitPush(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 		gitArgs = append(gitArgs, branch)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +671,7 @@ func handleGitPull(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 		gitArgs = append(gitArgs, branch)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +693,7 @@ func handleGitStash(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 		gitArgs = append(gitArgs, "-m", message)
 	}
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +716,7 @@ func handleGitShow(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	}
 	gitArgs = append(gitArgs, commit)
 
-	output, err := runGit(path, gitArgs...)
+	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
