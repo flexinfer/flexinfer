@@ -19,7 +19,7 @@ type RealCommandExecutor struct{}
 
 // Run executes a command and returns its output.
 func (r *RealCommandExecutor) Run(name string, args ...string) (stdout, stderr []byte, err error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) //nolint:noctx // interface doesn't support context
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

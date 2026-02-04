@@ -1987,13 +1987,13 @@ func deriveRepoID(root string) (string, error) {
 	}
 
 	gitRoot := absRoot
-	if out, err := exec.Command("git", "-C", absRoot, "rev-parse", "--show-toplevel").Output(); err == nil {
+	if out, err := exec.Command("git", "-C", absRoot, "rev-parse", "--show-toplevel").Output(); err == nil { //nolint:noctx // quick git command, no context needed
 		if s := strings.TrimSpace(string(out)); s != "" {
 			gitRoot = s
 		}
 	}
 
-	if out, err := exec.Command("git", "-C", gitRoot, "config", "--get", "remote.origin.url").Output(); err == nil {
+	if out, err := exec.Command("git", "-C", gitRoot, "config", "--get", "remote.origin.url").Output(); err == nil { //nolint:noctx // quick git command, no context needed
 		remote := strings.TrimSpace(string(out))
 		if remote != "" {
 			remote = strings.TrimSuffix(remote, ".git")
