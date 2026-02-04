@@ -44,7 +44,7 @@ func (svp *SourceVersionProvider) GetSourceVersion(filePath string) (*SourceVers
 
 // getGitCommitHash gets the last commit hash that modified a file
 func (svp *SourceVersionProvider) getGitCommitHash(filePath string) (string, error) {
-	cmd := exec.Command("git", "log", "-1", "--format=%H", "--", filePath)
+	cmd := exec.Command("git", "log", "-1", "--format=%H", "--", filePath) //nolint:noctx // quick git command
 	cmd.Dir = svp.workingDir
 	output, err := cmd.Output()
 	if err != nil {

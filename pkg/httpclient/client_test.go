@@ -197,7 +197,7 @@ func TestClient_Do(t *testing.T) {
 			MaxRetries:     1,
 			RetryBaseDelay: 1 * time.Millisecond,
 		})
-		req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:1", nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:1", nil)
 		resp, err := client.Do(req)
 		if resp != nil {
 			resp.Body.Close()
@@ -445,7 +445,7 @@ func TestHeaderTransport(t *testing.T) {
 		defer server.Close()
 
 		client := &http.Client{Transport: transport}
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		req.Header.Set("X-Custom", "override")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -466,7 +466,7 @@ func TestHeaderTransport(t *testing.T) {
 		}))
 		defer server.Close()
 
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		resp, err := transport.RoundTrip(req)
 		if err != nil {
 			t.Fatalf("RoundTrip() error = %v", err)

@@ -195,7 +195,7 @@ func maybeStartPortForward() {
 
 	// Start port-forward
 	// kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
-	cmd := exec.Command("kubectl", "-n", "monitoring", "port-forward", "svc/kube-prometheus-stack-grafana", "3000:80")
+	cmd := exec.Command("kubectl", "-n", "monitoring", "port-forward", "svc/kube-prometheus-stack-grafana", "3000:80") //nolint:noctx // background port-forward managed separately
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err == nil {

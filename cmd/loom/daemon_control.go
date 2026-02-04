@@ -70,7 +70,7 @@ func startDaemon(socketPath, registryPath string) error {
 		args = append(args, "--registry", registryPath)
 	}
 
-	cmd := exec.Command(loomd, args...)
+	cmd := exec.Command(loomd, args...) //nolint:noctx // daemon runs in background, context not needed
 	cmd.Stdout = nil
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
