@@ -97,7 +97,7 @@ func stopDaemon(socketPath string) error {
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 	if _, err := os.Stat(plistPath); err == nil {
-		cmd := exec.Command("launchctl", "stop", launchdLabel)
+		cmd := exec.Command("launchctl", "stop", launchdLabel) //nolint:noctx // launchctl is a quick fire-and-forget call
 		if err := cmd.Run(); err == nil {
 			// Wait for daemon to stop
 			for i := 0; i < 30; i++ {
@@ -173,7 +173,7 @@ func installService() error {
 	}
 
 	// Load the service
-	cmd := exec.Command("launchctl", "load", plistDest)
+	cmd := exec.Command("launchctl", "load", plistDest) //nolint:noctx // launchctl is a quick fire-and-forget call
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("launchctl load: %w", err)
 	}
@@ -189,8 +189,8 @@ func uninstallService() error {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 
 	// Unload first
-	cmd := exec.Command("launchctl", "unload", plistPath)
-	_ = cmd.Run() // Ignore error if not loaded
+	cmd := exec.Command("launchctl", "unload", plistPath) //nolint:noctx // launchctl is a quick fire-and-forget call
+	_ = cmd.Run()                                         // Ignore error if not loaded
 
 	// Remove plist
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {

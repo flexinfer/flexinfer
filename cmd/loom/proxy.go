@@ -209,7 +209,7 @@ func startDaemonInBackground(socketPath string) error {
 		args = append(args, "--registry", regPath)
 	}
 
-	cmd := exec.Command(loomdPath, args...)
+	cmd := exec.Command(loomdPath, args...) //nolint:noctx // daemon runs in background
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
