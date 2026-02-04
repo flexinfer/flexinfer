@@ -385,22 +385,14 @@ build:image:loom-core:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  # This repo sets GIT_STRATEGY=none globally; Kaniko jobs need a checked-out
+  # working tree, and the GitLab archive API has been returning 404.
+  variables:
+    GIT_STRATEGY: fetch
   script:
-    - |
-      echo "Fetching repository sources (archive)..."
-      URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
-      if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
-      elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --header="JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
-      else
-        echo "ERROR: neither curl nor wget is available to fetch sources"
-        exit 1
-      fi
     - mkdir -p "$DOCKER_CONFIG"
-    - >
-      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
-      "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
+    - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
+    - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
     - export IMAGE="$IMAGE_REGISTRY/mcp/loom-core"
     - |
       DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
@@ -426,22 +418,12 @@ build:image:custom-server:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  variables:
+    GIT_STRATEGY: fetch
   script:
-    - |
-      echo "Fetching repository sources (archive)..."
-      URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
-      if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
-      elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --header="JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1
-      else
-        echo "ERROR: neither curl nor wget is available to fetch sources"
-        exit 1
-      fi
     - mkdir -p "$DOCKER_CONFIG"
-    - >
-      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}'
-      "$IMAGE_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_PASSWORD" > "$DOCKER_CONFIG/config.json"
+    - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
+    - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
     - export IMAGE="$IMAGE_REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
     - |
       DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
