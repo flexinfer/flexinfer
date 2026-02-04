@@ -302,7 +302,7 @@ func (g *Generator) generateClaudeSkillMD(skill *Skill) string {
 	sb.WriteString(instructions)
 
 	// Add script references section if there are scripts
-	if skill.Common.Scripts != nil && len(skill.Common.Scripts) > 0 {
+	if len(skill.Common.Scripts) > 0 {
 		sb.WriteString("\n## Scripts\n\n")
 		for _, script := range skill.Common.Scripts {
 			scriptPath := filepath.Join(sourceSkillDir, script.Path)

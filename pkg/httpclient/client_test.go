@@ -120,7 +120,7 @@ func TestClient_Do(t *testing.T) {
 		defer server.Close()
 
 		client := New(Config{Timeout: 5 * time.Second})
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Do() error = %v", err)
@@ -150,7 +150,7 @@ func TestClient_Do(t *testing.T) {
 			RetryBaseDelay: 1 * time.Millisecond,
 			RetryMaxDelay:  10 * time.Millisecond,
 		})
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Do() error = %v", err)
@@ -177,7 +177,7 @@ func TestClient_Do(t *testing.T) {
 			MaxRetries:     2,
 			RetryBaseDelay: 1 * time.Millisecond,
 		})
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Do() error = %v", err)
@@ -421,9 +421,10 @@ func TestHeaderTransport(t *testing.T) {
 		defer server.Close()
 
 		client := &http.Client{Transport: transport}
-		resp, err := client.Get(server.URL)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+		resp, err := client.Do(req)
 		if err != nil {
-			t.Fatalf("Get() error = %v", err)
+			t.Fatalf("Do() error = %v", err)
 		}
 		resp.Body.Close()
 	})

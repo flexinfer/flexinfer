@@ -1217,7 +1217,7 @@ func (g *gitlabServer) fetchJobTraceTail(ctx context.Context, project string, jo
 	path := fmt.Sprintf("/projects/%s/jobs/%d/trace", encodeProject(project), jobID)
 	reqURL := g.apiURL + path
 
-	b, resp, totalRead, err := g.doRequestTail(ctx, "GET", reqURL, map[string]string{"Accept": "text/plain"}, maxBytes)
+	b, resp, totalRead, err := g.doRequestTail(ctx, "GET", reqURL, map[string]string{"Accept": "text/plain"}, maxBytes) //nolint:bodyclose // body closed inside doRequestTail
 	if err != nil {
 		return "", "", false, err
 	}

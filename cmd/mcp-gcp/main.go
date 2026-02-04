@@ -47,7 +47,7 @@ func initGCP(ctx context.Context) error {
 
 	// Use credentials file if specified
 	if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-		opts = append(opts, option.WithCredentialsFile(credFile))
+		opts = append(opts, option.WithCredentialsFile(credFile)) //nolint:staticcheck // TODO: migrate to workload identity or ADC
 	}
 
 	var err error

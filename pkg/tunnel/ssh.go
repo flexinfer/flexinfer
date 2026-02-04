@@ -193,7 +193,8 @@ func (t *SSHTunnel) ForwardLocalPort(ctx context.Context, localAddr, remoteAddr 
 		return nil, fmt.Errorf("ssh tunnel not connected")
 	}
 
-	listener, err := net.Listen("tcp", localAddr)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(context.Background(), "tcp", localAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen local: %w", err)
 	}
@@ -229,7 +230,8 @@ func (t *SSHTunnel) buildAuthMethods() ([]ssh.AuthMethod, error) {
 
 	// Try SSH agent first
 	if t.cfg.UseAgent {
-		if agentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
+		dialer := net.Dialer{}
+		if agentConn, err := dialer.DialContext(context.Background(), "unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
 			agentClient := agent.NewClient(agentConn)
 			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
 		}

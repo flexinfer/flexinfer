@@ -195,7 +195,7 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 		bodyReader = bytes.NewBuffer(b)
 	}
 
-	req, err := http.NewRequest(method, url, bodyReader)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}

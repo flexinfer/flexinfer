@@ -34,8 +34,6 @@ type sseSession struct {
 	cancel context.CancelFunc
 
 	cmd       *exec.Cmd
-	stdin     any
-	stdout    any
 	transport *mcp.StdioTransport
 
 	sendMu sync.Mutex

@@ -378,7 +378,7 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 	// If specific file requested, fetch that file
 	if artifactPath != "" {
 		path := fmt.Sprintf("/projects/%s/jobs/%d/artifacts/%s", encodeProject(project), jobID, artifactPath)
-		data, resp, truncated, err := g.doRequestLimited(ctx, "GET", g.apiURL+path, nil, nil, maxSizeBytes)
+		data, resp, truncated, err := g.doRequestLimited(ctx, "GET", g.apiURL+path, nil, nil, maxSizeBytes) //nolint:bodyclose // body closed inside doRequestLimited
 		if err != nil {
 			return nil, err
 		}

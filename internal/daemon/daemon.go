@@ -327,7 +327,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 	os.Remove(d.cfg.SocketPath)
 
 	// Listen on Unix socket
-	listener, err := net.Listen("unix", d.cfg.SocketPath)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, "unix", d.cfg.SocketPath)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}

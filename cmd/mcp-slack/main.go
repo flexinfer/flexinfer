@@ -320,7 +320,7 @@ func (s *slackServer) request(ctx context.Context, method, endpoint string, para
 	// Check for Slack API error
 	var slackErr slackError
 	if err := json.Unmarshal(body, &slackErr); err == nil && !slackErr.OK {
-		return nil, fmt.Errorf("Slack API error: %s", slackErr.Error)
+		return nil, fmt.Errorf("slack API error: %s", slackErr.Error)
 	}
 
 	return body, nil

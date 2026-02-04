@@ -606,7 +606,7 @@ func TestCallLock_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			serverName := "server"
+			var serverName string
 			if id%2 == 0 {
 				serverName = "server1"
 			} else {
@@ -614,7 +614,7 @@ func TestCallLock_ConcurrentAccess(t *testing.T) {
 			}
 			lock := d.callLock(serverName)
 			lock.Lock()
-			// Simulate some work
+			_ = serverName // use variable in critical section
 			lock.Unlock()
 		}(i)
 	}
@@ -970,10 +970,11 @@ func TestCallParams_ParseServerTool(t *testing.T) {
 			if serverName == "" && strings.Contains(toolName, "__") {
 				parts := strings.SplitN(toolName, "__", 2)
 				if len(parts) == 2 {
-					serverName = parts[0]
+					_ = parts[0] // serverName parsed but not checked in this test
 					toolName = parts[1]
 				}
 			}
+			_ = serverName // only toolName is tested here
 
 			if toolName != tt.result {
 				t.Errorf("toolName = %q, want %q", toolName, tt.result)

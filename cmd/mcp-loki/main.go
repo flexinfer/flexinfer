@@ -245,7 +245,7 @@ func maybeStartPortForward() {
 	}
 
 	// Start port-forward: kubectl -n logging port-forward svc/loki 3100:3100
-	cmd := exec.Command("kubectl", "-n", "logging", "port-forward", "svc/loki", "3100:3100")
+	cmd := exec.Command("kubectl", "-n", "logging", "port-forward", "svc/loki", "3100:3100") //nolint:noctx // background port-forward managed separately
 	cmd.Stdout = io.Discard
 	pfStderr = &limitedBuffer{MaxBytes: 8 * 1024}
 	cmd.Stderr = pfStderr

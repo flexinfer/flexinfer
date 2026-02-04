@@ -210,7 +210,7 @@ func maybeStartPortForward() {
 
 	// Start port-forward
 	// kubectl -n news-analyzer port-forward svc/minio-service 9000:80
-	cmd := exec.Command("kubectl", "-n", "news-analyzer", "port-forward", "svc/minio-service", "9000:80")
+	cmd := exec.Command("kubectl", "-n", "news-analyzer", "port-forward", "svc/minio-service", "9000:80") //nolint:noctx // background port-forward managed separately
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err == nil {

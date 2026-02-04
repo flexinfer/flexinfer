@@ -35,7 +35,7 @@ func startDaemon(socketPath, registryPath string) error {
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 	if _, err := os.Stat(plistPath); err == nil {
-		cmd := exec.Command("launchctl", "start", launchdLabel)
+		cmd := exec.Command("launchctl", "start", launchdLabel) //nolint:noctx // launchctl is a quick fire-and-forget call
 		if err := cmd.Run(); err != nil {
 			fmt.Printf("launchctl start failed: %v, falling back to direct start\n", err)
 		} else {

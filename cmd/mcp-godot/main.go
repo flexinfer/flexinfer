@@ -58,7 +58,7 @@ func (c *GodotClient) Connect() error {
 	}
 
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second) //nolint:noctx // Connect() doesn't take context; refactor needed
 	if err != nil {
 		return fmt.Errorf("failed to connect to Godot at %s: %w", addr, err)
 	}
