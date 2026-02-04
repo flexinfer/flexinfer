@@ -16,10 +16,13 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/poll"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -40,10 +43,7 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
-	token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
-	}
+	token := env.StringWithFallbacks("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")
 
 	gh := &githubServer{
 		token:      token,
@@ -424,20 +424,11 @@ func (g *githubServer) requestListWithMeta(ctx context.Context, path string) ([]
 }
 
 func normalizePerPage(perPage int, defaultVal int) int {
-	if perPage <= 0 {
-		return defaultVal
-	}
-	if perPage > 100 {
-		return 100
-	}
-	return perPage
+	return validate.NormalizePerPage(perPage, defaultVal, 100)
 }
 
 func normalizePage(page int) int {
-	if page <= 0 {
-		return 1
-	}
-	return page
+	return validate.NormalizePage(page)
 }
 
 func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, body []byte, headers map[string]string) ([]byte, http.Header, error) {
@@ -474,7 +465,7 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 		resp, err := g.httpClient.HTTP().Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, nil, sleepErr
 				}
 				continue
@@ -487,7 +478,7 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 		respHeaders := resp.Header.Clone()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, respHeaders, sleepErr
 				}
 				continue
@@ -503,21 +494,21 @@ func (g *githubServer) doRequest(ctx context.Context, method, reqURL string, bod
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
 				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
-			bodyText := string(trimTo(respBody, maxErrorBodyBytes))
+			bodyText := trimTo(respBody, maxErrorBodyBytes)
 			// Add helpful rate limit context when possible.
 			if resp.StatusCode == 403 && strings.Contains(strings.ToLower(bodyText), "rate limit") {
 				bodyText = fmt.Sprintf("%s (rate_limit_remaining=%s reset=%s)", bodyText, respHeaders.Get("X-RateLimit-Remaining"), respHeaders.Get("X-RateLimit-Reset"))
@@ -551,19 +542,6 @@ func backoffDelay(attempt int, max time.Duration) time.Duration {
 	return delay
 }
 
-// sleepWithContext waits for the specified duration or until context is cancelled.
-// Returns ctx.Err() if context is cancelled, nil otherwise.
-func sleepWithContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func isTransientError(err error) bool {
 	if err == nil {
 		return false
@@ -575,14 +553,8 @@ func isTransientError(err error) bool {
 		strings.Contains(errStr, "EOF")
 }
 
-func trimTo(b []byte, max int) []byte {
-	if max <= 0 || len(b) <= max {
-		return b
-	}
-	out := make([]byte, 0, max+32)
-	out = append(out, b[:max]...)
-	out = append(out, []byte("\n... (truncated)")...)
-	return out
+func trimTo(b []byte, max int) string {
+	return strutil.TruncateNoEllipsis(string(b), max)
 }
 
 func parseGitHubPagination(headers http.Header) map[string]any {

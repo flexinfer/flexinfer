@@ -81,7 +81,7 @@ func (g *gitlabServer) handleCreateOrUpdateFile(ctx context.Context, args map[st
 	result, err := g.request(ctx, "PUT", path, payload)
 	if err != nil {
 		// Only fall back to create when the file doesn't exist.
-		if ae, ok := err.(*apiError); !ok || ae.StatusCode != 404 {
+		if !mcperror.IsNotFound(err) {
 			return nil, err
 		}
 		result, err = g.request(ctx, "POST", path, payload)

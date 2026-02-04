@@ -10,6 +10,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -624,7 +625,7 @@ func (g *gitlabServer) fetchTestReport(ctx context.Context, project string, pipe
 	report, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
 		// Test report may not exist
-		if ae, ok := err.(*apiError); ok && ae.StatusCode == 404 {
+		if mcperror.IsNotFound(err) {
 			return nil, nil
 		}
 		return nil, err

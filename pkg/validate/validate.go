@@ -286,3 +286,67 @@ var (
 	// DNSNamePattern matches valid DNS names
 	DNSNamePattern = `^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`
 )
+
+// Pagination provides standard pagination parameter handling for APIs.
+// Most APIs default to 20-30 results per page with a max of 100.
+type Pagination struct {
+	Page    int
+	PerPage int
+}
+
+// DefaultPagination is the default pagination configuration.
+var DefaultPagination = PaginationConfig{
+	DefaultPerPage: 30,
+	MaxPerPage:     100,
+	DefaultPage:    1,
+}
+
+// PaginationConfig allows customizing pagination defaults.
+type PaginationConfig struct {
+	DefaultPerPage int
+	MaxPerPage     int
+	DefaultPage    int
+}
+
+// GetPagination extracts and normalizes pagination parameters from args.
+// Uses DefaultPagination config (30 per page, max 100).
+func (a *Args) GetPagination() Pagination {
+	return a.GetPaginationWithConfig(DefaultPagination)
+}
+
+// GetPaginationWithConfig extracts pagination parameters using custom config.
+func (a *Args) GetPaginationWithConfig(cfg PaginationConfig) Pagination {
+	page := a.Int("page", cfg.DefaultPage)
+	if page <= 0 {
+		page = cfg.DefaultPage
+	}
+
+	perPage := a.Int("per_page", cfg.DefaultPerPage)
+	if perPage <= 0 {
+		perPage = cfg.DefaultPerPage
+	}
+	if perPage > cfg.MaxPerPage {
+		perPage = cfg.MaxPerPage
+	}
+
+	return Pagination{Page: page, PerPage: perPage}
+}
+
+// NormalizePage returns the page number, defaulting to 1 for invalid values.
+func NormalizePage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+	return page
+}
+
+// NormalizePerPage returns the per_page value, clamped to valid bounds.
+func NormalizePerPage(perPage, defaultVal, maxVal int) int {
+	if perPage <= 0 {
+		return defaultVal
+	}
+	if perPage > maxVal {
+		return maxVal
+	}
+	return perPage
+}

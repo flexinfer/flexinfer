@@ -9,15 +9,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -38,11 +39,7 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
-	amURL := os.Getenv("ALERTMANAGER_URL")
-	if amURL == "" {
-		amURL = "http://alertmanager.monitoring.svc.cluster.local:9093"
-	}
-	amURL = strings.TrimSuffix(amURL, "/")
+	amURL := strings.TrimSuffix(env.String("ALERTMANAGER_URL", "http://alertmanager.monitoring.svc.cluster.local:9093"), "/")
 
 	am := &alertmanagerServer{
 		url:    amURL,
@@ -176,7 +173,7 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("ALERTMANAGER_MAX_RESPONSE_BYTES", 5*1024*1024)
+	maxBytes := env.Int("ALERTMANAGER_MAX_RESPONSE_BYTES", 5*1024*1024)
 	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
@@ -210,31 +207,13 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	return map[string]any{"data": result}, nil
 }
 
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
 func bodySnippet(body []byte) string {
 	const max = 4 * 1024
-	truncated := false
-	if len(body) > max {
-		body = body[:max]
-		truncated = true
-	}
 	s := strings.TrimSpace(string(body))
 	if s == "" {
 		return "<empty response body>"
 	}
-	if truncated {
-		return s + "…"
-	}
-	return s
+	return strutil.Truncate(s, max)
 }
 
 func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {

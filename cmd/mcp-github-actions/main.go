@@ -13,9 +13,12 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -24,15 +27,6 @@ var version = "1.0.0"
 type actionsServer struct {
 	token      string
 	httpClient *httpclient.Client
-}
-
-type apiError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *apiError) Error() string {
-	return fmt.Sprintf("GitHub API error %d: %s", e.StatusCode, e.Body)
 }
 
 func main() {
@@ -45,10 +39,7 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
-	token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
-	}
+	token := env.StringWithFallbacks("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")
 
 	srv := &actionsServer{
 		token:      token,
@@ -376,7 +367,7 @@ func (s *actionsServer) request(ctx context.Context, method, path string, body a
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, &apiError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		return nil, mcperror.APIError("GitHub", resp.StatusCode, string(respBody))
 	}
 
 	return respBody, nil
@@ -791,8 +782,5 @@ func (s *actionsServer) handleListArtifacts(ctx context.Context, args map[string
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen]
+	return strutil.TruncateNoEllipsis(s, maxLen)
 }

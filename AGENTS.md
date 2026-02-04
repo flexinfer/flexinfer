@@ -213,6 +213,144 @@ Code Style
 - Keep MCP server implementations in `cmd/mcp-*/main.go`
 - Shared non-server utilities live under `pkg/` (configs, registry, profiles, sync, validation)
 
+## Shared Packages
+
+Use these packages to reduce duplication across MCP servers:
+
+### `pkg/env` - Environment Variables
+```go
+import "github.com/crb2nu/loom/pkg/env"
+
+// Get string with fallback
+url := env.String("API_URL", "http://localhost:8080")
+
+// Get int with fallback (only positive values)
+port := env.Int("PORT", 8080)
+
+// Get bool (accepts "1", "true", "yes", "on")
+debug := env.Bool("DEBUG", false)
+
+// Get duration
+timeout := env.Duration("TIMEOUT", 30*time.Second)
+
+// Token fallback chains (e.g., GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_TOKEN)
+token := env.StringWithFallbacks("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")
+
+// Required values (returns error if missing)
+token, err := env.MustString("API_TOKEN")
+```
+
+### `pkg/mcperror` - Structured Errors
+```go
+import "github.com/crb2nu/loom/pkg/mcperror"
+
+// API errors (sets appropriate code based on HTTP status)
+return nil, mcperror.APIError("GitLab", resp.StatusCode, bodyText)
+
+// Check error types
+if mcperror.IsNotFound(err) { ... }
+if mcperror.IsServerError(err) { ... }
+
+// Configuration errors
+return nil, mcperror.NotConfigured("GITHUB_TOKEN", "set via environment variable")
+
+// Parameter validation
+return mcp.ErrorResult(mcperror.RequiredParam("project")), nil
+return mcp.ErrorResult(mcperror.InvalidParam("format", "must be json or yaml")), nil
+```
+
+### `pkg/poll` - Polling and Retry
+```go
+import "github.com/crb2nu/loom/pkg/poll"
+
+// Context-aware sleep (respects cancellation)
+if err := poll.WaitWithContext(ctx, 5*time.Second); err != nil {
+    return err // context cancelled
+}
+
+// Retry with exponential backoff
+err := poll.RetryWithBackoff(ctx, 3, time.Second, 10*time.Second, func(ctx context.Context) error {
+    return doRequest(ctx)
+})
+```
+
+### `pkg/strutil` - String Utilities
+```go
+import "github.com/crb2nu/loom/pkg/strutil"
+
+// Truncate with ellipsis ("..." included in max length)
+strutil.Truncate(s, 100)  // "very long text..." (100 chars total)
+
+// Truncate without ellipsis
+strutil.TruncateNoEllipsis(s, 100)
+
+// Truncate multiline to single line
+strutil.TruncateSingleLine(s, 100)
+
+// UTF-8 aware byte truncation
+strutil.TruncateBytes(s, 1024)
+```
+
+### `pkg/validate` - Input Validation
+```go
+import "github.com/crb2nu/loom/pkg/validate"
+
+v := validate.NewArgs(args)
+project := v.Required("project")
+perPage := v.Int("per_page", 30)
+labels := v.StringSlice("labels")
+
+if err := v.Validate(); err != nil {
+    return mcp.ErrorResult(err), nil
+}
+
+// Pagination helpers
+page := validate.NormalizePage(v.Int("page", 1))      // Defaults to 1, min 1
+perPage := validate.NormalizePerPage(v.Int("per_page", 30), 30, 100)  // default, max
+
+// Or use the integrated method
+p := v.GetPagination()  // Returns Pagination{Page, PerPage}
+```
+
+### `pkg/httpclient` - HTTP Client
+```go
+import "github.com/crb2nu/loom/pkg/httpclient"
+
+client := httpclient.NewDefault()  // With retry, timeouts from env vars
+resp, err := client.Do(req)
+
+// Or with custom config
+client := httpclient.New(httpclient.Config{
+    Timeout:     30 * time.Second,
+    MaxRetries:  3,
+})
+```
+
+### `pkg/lifecycle` - Signal Handling
+```go
+import "github.com/crb2nu/loom/pkg/lifecycle"
+
+func main() {
+    if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
+        fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+        os.Exit(1)
+    }
+}
+
+func run(ctx context.Context) error {
+    // ctx is cancelled on SIGINT/SIGTERM
+    return server.Run(ctx)
+}
+```
+
+### `pkg/mcplog` - Logging
+```go
+import "github.com/crb2nu/loom/pkg/mcplog"
+
+logger := mcplog.NewDefault()  // Respects MCP_DEBUG env var
+logger.Info("starting server", "name", serverName, "version", version)
+```
+
 Agent Tips
 
 - Tool-call deadlines: many clients time out around ~60s; prefer bounded operations and use `tail` for logs.

@@ -16,10 +16,13 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/poll"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -29,15 +32,6 @@ type gitlabServer struct {
 	token      string
 	apiURL     string
 	httpClient *httpclient.Client
-}
-
-type apiError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *apiError) Error() string {
-	return fmt.Sprintf("GitLab API error %d: %s", e.StatusCode, e.Body)
 }
 
 func main() {
@@ -50,17 +44,8 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
-	token := os.Getenv("GITLAB_PERSONAL_ACCESS_TOKEN")
-	if token == "" {
-		token = os.Getenv("GITLAB_TOKEN")
-	}
-
-	apiURL := os.Getenv("GITLAB_API_URL")
-	if apiURL == "" {
-		apiURL = "https://gitlab.com/api/v4"
-	}
-	// Ensure no trailing slash
-	apiURL = strings.TrimSuffix(apiURL, "/")
+	token := env.StringWithFallbacks("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN")
+	apiURL := strings.TrimSuffix(env.String("GITLAB_API_URL", "https://gitlab.com/api/v4"), "/")
 
 	gl := &gitlabServer{
 		token:      token,
@@ -886,7 +871,7 @@ func (g *gitlabServer) handleVerifyToken(ctx context.Context, args map[string]an
 		delete(tok, "token")
 		result["personal_access_token"] = tok
 	} else if err != nil {
-		if ae, ok := err.(*apiError); ok && ae.StatusCode == 404 {
+		if mcpErr, ok := err.(*mcperror.Error); ok && mcpErr.Code == mcperror.CodeNotFound {
 			// Older GitLab instances may not support this endpoint; fall back to /user.
 		} else {
 			// If it's not a 404, bubble up (401/403/5xx/etc).
@@ -994,7 +979,7 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 		resp, err := g.httpClient.HTTP().Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, nil, sleepErr
 				}
 				continue
@@ -1007,7 +992,7 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 		respHeaders := resp.Header.Clone()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, respHeaders, sleepErr
 				}
 				continue
@@ -1023,21 +1008,21 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
 				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 				return nil, respHeaders, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, respHeaders, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(respBody, maxErrorBodyBytes))}
+			return nil, respHeaders, mcperror.APIError("GitLab", resp.StatusCode, strutil.TruncateNoEllipsis(string(respBody), maxErrorBodyBytes))
 		}
 
 		return respBody, respHeaders, nil
@@ -1082,7 +1067,7 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		resp, err := g.httpClient.HTTP().Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, nil, false, sleepErr
 				}
 				continue
@@ -1094,7 +1079,7 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, resp, false, sleepErr
 				}
 				continue
@@ -1110,14 +1095,14 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
 				return nil, resp, false, sleepErr
 			}
 			continue
 		}
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
-			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 				return nil, resp, false, sleepErr
 			}
 			continue
@@ -1129,7 +1114,7 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, resp, truncated, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(limited, maxErrorBodyBytes))}
+			return nil, resp, truncated, mcperror.APIError("GitLab", resp.StatusCode, strutil.TruncateNoEllipsis(string(limited), maxErrorBodyBytes))
 		}
 
 		return limited, resp, truncated, nil
@@ -1168,7 +1153,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 		resp, err := g.httpClient.HTTP().Do(req)
 		if err != nil {
 			if attempt < maxAttempts-1 && isTransientError(err) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, nil, 0, sleepErr
 				}
 				continue
@@ -1185,7 +1170,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
-			if sleepErr := sleepWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
 				return nil, nil, 0, sleepErr
 			}
 			continue
@@ -1193,7 +1178,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 && attempt < maxAttempts-1 {
 			_ = resp.Body.Close()
-			if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+			if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 				return nil, nil, 0, sleepErr
 			}
 			continue
@@ -1203,7 +1188,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 		_ = resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxAttempts-1 && isTransientError(readErr) {
-				if sleepErr := sleepWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
+				if sleepErr := poll.WaitWithContext(ctx, backoffDelay(attempt, maxRetryDelay)); sleepErr != nil {
 					return nil, resp, totalRead, sleepErr
 				}
 				continue
@@ -1212,7 +1197,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, resp, totalRead, &apiError{StatusCode: resp.StatusCode, Body: string(trimTo(tail, 8192))}
+			return nil, resp, totalRead, mcperror.APIError("GitLab", resp.StatusCode, strutil.TruncateNoEllipsis(string(tail), 8192))
 		}
 
 		return tail, resp, totalRead, nil
@@ -1274,29 +1259,6 @@ func backoffDelay(attempt int, max time.Duration) time.Duration {
 		return max
 	}
 	return delay
-}
-
-// sleepWithContext waits for the specified duration or until context is cancelled.
-// Returns ctx.Err() if context is cancelled, nil otherwise.
-func sleepWithContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func trimTo(b []byte, max int) []byte {
-	if max <= 0 || len(b) <= max {
-		return b
-	}
-	out := make([]byte, 0, max+32)
-	out = append(out, b[:max]...)
-	out = append(out, []byte("\n... (truncated)")...)
-	return out
 }
 
 func parsePaginationHeaders(headers http.Header) map[string]any {
@@ -1397,29 +1359,20 @@ func encodeProject(project string) string {
 }
 
 func normalizePerPage(perPage int, defaultVal int) int {
-	if perPage <= 0 {
-		return defaultVal
-	}
-	if perPage > 100 {
-		return 100
-	}
-	return perPage
+	return validate.NormalizePerPage(perPage, defaultVal, 100)
 }
 
 func normalizePage(page int) int {
-	if page <= 0 {
-		return 1
-	}
-	return page
+	return validate.NormalizePage(page)
 }
 
 func isTransientError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if ae, ok := err.(*apiError); ok {
-		// 5xx errors are transient
-		return ae.StatusCode >= 500 && ae.StatusCode < 600
+	// Server errors (5xx) are transient
+	if mcperror.IsServerError(err) {
+		return true
 	}
 	// Network errors could be transient
 	errStr := err.Error()

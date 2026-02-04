@@ -182,23 +182,36 @@ func InvalidParam(param, reason string) *Error {
 }
 
 // APIError returns an error for external API failures.
+// The error code is set based on the HTTP status code:
+//   - 401: CodeUnauthorized
+//   - 403: CodeForbidden
+//   - 404: CodeNotFound
+//   - 429: CodeRateLimited
+//   - 5xx: CodeServerError
+//   - others: CodeServerError
 func APIError(service string, statusCode int, body string) *Error {
 	msg := fmt.Sprintf("%s API error (HTTP %d)", service, statusCode)
+	code := CodeServerError
 	// Add helpful context for common errors
 	switch statusCode {
 	case 401:
 		msg = fmt.Sprintf("%s: authentication failed - check your API token", service)
+		code = CodeUnauthorized
 	case 403:
 		msg = fmt.Sprintf("%s: access forbidden - check permissions", service)
+		code = CodeForbidden
 	case 404:
 		msg = fmt.Sprintf("%s: resource not found", service)
+		code = CodeNotFound
 	case 429:
 		msg = fmt.Sprintf("%s: rate limit exceeded - try again later", service)
+		code = CodeRateLimited
 	case 500, 502, 503, 504:
 		msg = fmt.Sprintf("%s: service unavailable - try again later", service)
+		code = CodeServerError
 	}
 	return &Error{
-		Code:    CodeServerError,
+		Code:    code,
 		Message: msg,
 		Details: map[string]any{
 			"service":     service,
@@ -206,6 +219,22 @@ func APIError(service string, statusCode int, body string) *Error {
 			"body":        truncateString(body, 500),
 		},
 	}
+}
+
+// IsNotFound returns true if the error is a not found error (HTTP 404).
+func IsNotFound(err error) bool {
+	if mcpErr, ok := err.(*Error); ok {
+		return mcpErr.Code == CodeNotFound
+	}
+	return false
+}
+
+// IsServerError returns true if the error is a server error (HTTP 5xx).
+func IsServerError(err error) bool {
+	if mcpErr, ok := err.(*Error); ok {
+		return mcpErr.Code == CodeServerError
+	}
+	return false
 }
 
 // WrapAPI wraps an API error with context.
