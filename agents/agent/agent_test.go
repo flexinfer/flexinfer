@@ -55,6 +55,8 @@ func TestDetectGPUAMD(t *testing.T) {
 
 func TestDetectGPUNone(t *testing.T) {
 	a := &Agent{labelPrefix: "flexinfer.ai/"}
+	// Keep sysfs probing hermetic on linux CI runners.
+	a.sysfsRoot = t.TempDir()
 	a.runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return nil, exec.ErrNotFound
 	}

@@ -27,7 +27,10 @@ type Agent struct {
 	kubeClient  kubernetes.Interface
 	nodeName    string
 	labelPrefix string
-	runCmd      func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// sysfsRoot is the sysfs mount root (Linux). Default: /sys.
+	// This is overridable for tests to keep sysfs probing hermetic.
+	sysfsRoot string
+	runCmd    func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 // NodeMetrics represents the aggregated metrics from all pods on a node
@@ -68,6 +71,7 @@ func NewAgent(labelPrefix string) (*Agent, error) {
 		kubeClient:  clientset,
 		nodeName:    nodeName,
 		labelPrefix: labelPrefix,
+		sysfsRoot:   "/sys",
 		runCmd: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},

@@ -30,8 +30,12 @@ type AMDGPUSysfs struct {
 // This is a fallback when rocm-smi is not available.
 // Reads from /sys/class/drm/card*/device/mem_info_vram_*.
 func (a *Agent) detectAMDVRAMSysfs() ([]VRAMInfo, error) {
+	root := a.sysfsRoot
+	if root == "" {
+		root = "/sys"
+	}
 	// Find all DRM cards
-	cards, err := filepath.Glob("/sys/class/drm/card[0-9]*/device/mem_info_vram_total")
+	cards, err := filepath.Glob(filepath.Join(root, "class/drm/card[0-9]*/device/mem_info_vram_total"))
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +90,12 @@ func parseBytes(s string) uint64 {
 // detectAMDGPUSysfs reads comprehensive AMD GPU metrics from sysfs.
 // This is the fallback when rocm-smi (Python) is not available.
 func (a *Agent) detectAMDGPUSysfs() []AMDGPUSysfs {
+	root := a.sysfsRoot
+	if root == "" {
+		root = "/sys"
+	}
 	// Find all DRM cards
-	cardPaths, err := filepath.Glob("/sys/class/drm/card[0-9]*")
+	cardPaths, err := filepath.Glob(filepath.Join(root, "class/drm/card[0-9]*"))
 	if err != nil {
 		return nil
 	}
