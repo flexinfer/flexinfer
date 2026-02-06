@@ -77,6 +77,8 @@ spec:
               value: "{{ .Values.scheduler.weights.cost }}"
             - name: SCHED_CACHE_WEIGHT
               value: "{{ .Values.scheduler.weights.cache }}"
+            - name: SCHED_VRAM_FREE_WEIGHT
+              value: "{{ .Values.scheduler.weights.vramFree }}"
         - name: kube-scheduler
           image: "{{ .Values.scheduler.kubeScheduler.image.repository }}:{{ .Values.scheduler.kubeScheduler.image.tag }}"
           imagePullPolicy: {{ .Values.scheduler.kubeScheduler.image.pullPolicy }}

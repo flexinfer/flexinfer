@@ -197,6 +197,9 @@ scheduler:
     util: 0.2
     cost: 0.1
     cache: 0.3
+    # Bonus term for scheduling headroom: (free_vram / total_vram) * vramFree.
+    # Keep this in the same magnitude as util/cache penalties.
+    vramFree: 10.0
 
 benchmarker:
   enabled: true

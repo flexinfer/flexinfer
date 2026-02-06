@@ -34,6 +34,7 @@ type Agent struct {
 type NodeMetrics struct {
 	TotalKVCacheUsage float64 // 0.0 to 1.0 (average or max)
 	FreeVRAMMB        uint64  // Available VRAM in MB
+	GPUUtilization    float64 // 0.0 to 100.0 (avg across GPUs)
 }
 
 // GPUMetrics represents per-GPU metrics for Prometheus export
@@ -88,6 +89,7 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 	metrics := a.collectNodeMetrics(ctx)
 	annotations[a.labelPrefix+"kv-cache-usage"] = fmt.Sprintf("%.4f", metrics.TotalKVCacheUsage)
 	annotations[a.labelPrefix+"gpu-free-memory"] = fmt.Sprintf("%d", metrics.FreeVRAMMB)
+	annotations[a.labelPrefix+"gpu.util"] = fmt.Sprintf("%.2f", metrics.GPUUtilization)
 
 	log.Info("Applying labels and annotations", "labels", labels, "annotations", annotations)
 
@@ -157,6 +159,13 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		if sysfsGPUs[0].TotalMB > 0 {
 			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", sysfsGPUs[0].TotalMB/1024)
 		}
+		// Try to infer arch (gfx*) via rocminfo when available. This is important
+		// for selecting gfx1100-optimized images even when rocm-smi is missing.
+		if infoOut, err := a.runCmd(ctx, "rocminfo"); err == nil {
+			if arch := extractAMDArch(string(infoOut)); arch != "" {
+				labels[a.labelPrefix+"gpu.arch"] = arch
+			}
+		}
 		return
 	}
 
@@ -166,6 +175,11 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 // detectCPU populates the label map with CPU-related features.
 func (a *Agent) detectCPU(labels map[string]string) {
 	labels[a.labelPrefix+"cpu.avx512"] = strconv.FormatBool(cpu.X86.HasAVX512)
+}
+
+func extractAMDArch(infoOut string) string {
+	re := regexp.MustCompile(`gfx[0-9a-z]+`)
+	return re.FindString(infoOut)
 }
 
 // parseNvidia parses output from nvidia-smi and fills the GPU labels.
@@ -234,9 +248,8 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 		break // Only need first GPU for total VRAM label
 	}
 
-	re := regexp.MustCompile(`gfx[0-9a-z]+`)
-	if match := re.FindString(infoOut); match != "" {
-		labels[a.labelPrefix+"gpu.arch"] = match
+	if arch := extractAMDArch(infoOut); arch != "" {
+		labels[a.labelPrefix+"gpu.arch"] = arch
 	}
 
 	labels[a.labelPrefix+"gpu.int4"] = "true"
@@ -273,12 +286,28 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 		avgCache = totalCache / float64(count)
 	}
 
-	// Get free VRAM from GPU tools
-	freeVRAM := a.detectFreeVRAM(ctx)
+	var freeVRAM uint64
+	var gpuUtil float64
+
+	// Prefer a single "full" GPU query (gives both free VRAM and util).
+	gpuMetrics := a.DetectGPUMetrics(ctx)
+	if len(gpuMetrics) > 0 {
+		var utilSum float64
+		for _, m := range gpuMetrics {
+			freeVRAM += m.FreeVRAMMB
+			utilSum += m.Utilization
+		}
+		gpuUtil = utilSum / float64(len(gpuMetrics))
+	} else {
+		// Get free VRAM from GPU tools (fallback query)
+		freeVRAM = a.detectFreeVRAM(ctx)
+		gpuUtil = 0
+	}
 
 	return NodeMetrics{
 		TotalKVCacheUsage: avgCache,
 		FreeVRAMMB:        freeVRAM,
+		GPUUtilization:    gpuUtil,
 	}
 }
 

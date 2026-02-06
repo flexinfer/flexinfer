@@ -36,6 +36,7 @@ These influence scoring (see `services/flexinfer/scheduler/scheduler.go`):
 - `SCHED_UTIL_WEIGHT` (default `0.2`)
 - `SCHED_COST_WEIGHT` (default `0.1`)
 - `SCHED_CACHE_WEIGHT` (default `0.3`)
+- `SCHED_VRAM_FREE_WEIGHT` (default `10.0`)
 
 ## Inputs used for scoring
 
@@ -47,4 +48,4 @@ These influence scoring (see `services/flexinfer/scheduler/scheduler.go`):
   - `flexinfer.ai/gpu.util`
   - `flexinfer.ai/cost`
   - `flexinfer.ai/kv-cache-usage`
-
+  - `flexinfer.ai/gpu-free-memory` (MB, summed across GPUs)

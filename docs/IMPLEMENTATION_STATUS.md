@@ -1,10 +1,16 @@
 # FlexInfer Implementation Status
 
-This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of December 2025.
+This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-06.
 
 ## Executive Summary
 
-**FlexInfer is functionally complete and deployment-ready.** The project has moved from a code-complete state to a deployment-ready state with the completion of the Helm charts, real benchmarking integration (Ollama & vLLM), custom scheduler integration, and observability dashboards. CI/CD pipelines have been migrated to GitLab for robust automation.
+**FlexInfer is production-ready (85-95% complete).** Phases 1-4 have been completed, delivering:
+- Hardened controller reconciliation with immutable field handling
+- Production-grade serverless/activator with OpenAI API compatibility
+- KV-cache-aware routing with session affinity and least-loaded strategies
+- Comprehensive E2E testing and documentation
+
+The project has moved from code-complete to production-ready with the completion of Helm charts, real benchmarking integration, custom scheduler integration, observability dashboards, and comprehensive user documentation. CI/CD pipelines run on GitLab.
 
 ## ✅ Fully Implemented and Working
 
@@ -14,6 +20,7 @@ This document provides a comprehensive overview of the current implementation st
 
   - GPU vendor, architecture, VRAM, and capability detection
   - Automatic node labeling with configurable prefixes
+  - Node annotations for heuristic scheduling signals (GPU util, free VRAM, KV-cache usage)
   - Comprehensive error handling and logging
   - Full test coverage (`agent_test.go`)
 
@@ -22,7 +29,7 @@ This document provides a comprehensive overview of the current implementation st
   - Complete `ModelDeployment` lifecycle management
   - **Dynamic Backend Support**: Supports `ollama`, `vllm`, `mlc-llm`, and `llama.cpp` with automatic sidecar injection.
   - **Benchmarking Integration**: Automatically injects benchmark jobs with sidecars to measure token generation speed.
-  - **Resources**: GPU resource requests automatically injected (`nvidia.com/gpu`).
+  - **Resources**: GPU resource requests automatically injected based on vendor (`nvidia.com/gpu`, `amd.com/gpu`).
   - Detailed status tracking and event recording.
 
 - **Scheduler Extender (`scheduler/`)**: Advanced filtering and scoring
@@ -30,6 +37,7 @@ This document provides a comprehensive overview of the current implementation st
   - **Secondary Scheduler Pattern**: Implemented as a sidecar to `kube-scheduler` for non-intrusive integration.
   - Multi-phase scheduling algorithm (filter + score) based on benchmark results (`tokensPerSecond`).
   - Configurable weighted scoring system.
+  - Heuristic signals: KV-cache usage, GPU utilization, and free-VRAM ratio (headroom).
 
 - **Benchmarker (`agents/benchmarker/`)**: Performance measurement framework
 
@@ -68,69 +76,122 @@ This document provides a comprehensive overview of the current implementation st
   - **Grafana**: Dashboard visualizing `flexinfer_tokens_per_second`, `flexinfer_model_load_seconds`, and GPU temperatures.
   - **Prometheus**: Metrics exported by the Custom Controller.
 
+## ✅ Recently Completed (Phases 1-4)
+
+### Phase 1: Controller & API Hardening ✅
+- Service reconciliation preserves immutable fields (clusterIP)
+- Deployment reconciliation handles selector immutability
+- Multi-replica placement with anti-affinity and topology spread
+- NVIDIA runtime requirements codified
+- Status clarity with actionable conditions (NoMatchingNodes, CacheNotReady, etc.)
+
+### Phase 2: Serverless/Activator Hardening ✅
+- OpenAI API compatibility documented (`docs/user/api-compatibility.md`)
+- Streaming (SSE) behavior documented
+- Cold start budget configuration
+- Concurrency caps during activation (queue depth, rejection)
+- Activation metrics (10 metric families at `/metrics`)
+
+### Phase 3: Routing & Performance ✅
+- Session affinity via consistent hashing (`internal/routing/`)
+- Prefix-based routing (opt-in via `flexinfer.ai/routing: prefix`)
+- Endpoint discovery for multi-replica models
+- Least-loaded routing (opt-in via `flexinfer.ai/routing: least-loaded`)
+- Routing documentation (`docs/user/routing.md`)
+
+### Phase 4: Operational Polish ✅
+- E2E test harness (`e2e/e2e_test.go`, `make test-e2e`)
+- INSTALL.md refresh with troubleshooting
+- User quickstart guide (`docs/user/quickstart.md`)
+- GPU/backend quirks runbook (`docs/user/operations.md`)
+- Documentation index (`docs/README.md`)
+
+### Scale-to-Zero (Serverless) Infrastructure ✅
+
+- **Activator Pattern (Proxy)**:
+  - `flexinfer-proxy`: Lightweight Go reverse proxy with request holding and OpenAI API body inspection
+  - Queue-based cold start handling with bounded concurrency
+  - 10 Prometheus metrics for observability
+- **Idler (Controller)**:
+  - Automatic scale-down implemented (proxy updates `LastAccessTime`)
+
 ## 🔄 Partially Implemented
 
 ### Integration Testing
 
-- **End-to-End Simulation**:
-  - `job_creation_test.go` verifies Controller logic (Job creation, sidecar injection).
-  - _Pending_: Full cluster e2e test (requiring a running Kind/Minikube cluster with GPUs).
+- **E2E Tests**: `e2e/e2e_test.go` covers basic Model lifecycle and serverless scenarios
+- **GPU Tests**: Real GPU scenarios skipped in CI (need hardware)
 
-## ❌ Missing/TODO
+### Backend Images
 
-### Fully Implemented Components
+- **ROCm GFX1100**: Build recipes exist (ROCm 6.4 source build + gfx1100-optimized images). Remaining gaps are mostly distribution ergonomics (publishing, digest pinning, and cluster-specific verification).
+- **Maxwell**: Supported via CUDA 11.8 builds + FP32-only quantizations; docs exist but the “what models fit” list needs expansion.
 
-#### 5. Scale-to-Zero (Serverless) Infrastructure
+## ❌ Known Gaps / Tech Debt
 
-- **Activator Pattern (Proxy) [WORKING]**:
-  - `flexinfer-proxy`: Lightweight Go reverse proxy with request holding (singleflight) and OpenAI API body inspection.
-  - **Note**: Uses polling (1s) for readiness check, valid for v1.
-- **Idler (Controller)**:
-  - Automatic scale-down implemented (logic present and proxy updates `LastAccessTime`).
+### High Priority Tech Debt
 
-### Known Gaps (Immediate Fixes)
+| ID | Issue | Location |
+|----|-------|----------|
+| TD-1 | Ignored error returns (13+ locations) | `cmd/flexinfer-proxy/main.go`, `scheduler/scheduler.go` |
+| TD-2 | ROCm 6.4 MLC-LLM image not built | Build pipeline |
+| TD-3 | CLI test coverage at 7% | `cmd/flexinfer/commands/` |
+| TD-11 | E2E test names violate RFC 1123 (uppercase in names) | `e2e/*_test.go` |
+| TD-12 | GPUGroup v1alpha1 not registered in e2e scheme | `e2e/e2e_test.go` |
 
-1.  **L7 Routing Missing**: Scheduler places Pods, but we miss a Router for Requests to optimize KV-cache reuse.
+### Medium Priority Tech Debt
 
-### Innovation Roadmap (New)
+| ID | Issue | Location |
+|----|-------|----------|
+| TD-4 | Panic on backend registration | `backend/registry.go:51` |
+| TD-5 | v1alpha1 deprecation without migration guide | `api/v1alpha1/` |
+| TD-6 | Hardcoded URLs/ConfigMap names | Multiple cmd files |
 
-#### Phase 5: Advanced Model Management
+### Innovation Roadmap
 
-- [x] **ModelCache CRD**: Extract model artifacts into first-class Citizens.
-- [x] **Real Downloader Implementation**: Supports `huggingface-cli` with `HF_TOKEN` from Secrets.
-- [ ] **Dynamic Multi-LoRA**: Support hot-swapping adapters without restarting pods.
+#### Phase 5: Multi-Cluster (Proposed)
 
-#### Phase 6: Next-Gen Scheduling & Routing
+See `docs/design/multi-cluster.md` for full design.
 
-- [ ] **Context-Aware Router**: L7 Ingress that routes based on prompt prefix (KV-cache locality).
-- [ ] **"Flash-Loader"**: RDMA/P2P model weight distribution.
-- [ ] **Spot Resilience**: Proactive draining on termination.
+- [ ] **Cluster Registry**: Register and health-check clusters
+- [ ] **FederatedModel CRD**: Deploy models across clusters
+- [ ] **Global Proxy**: Route to cluster-local proxies
+- [ ] **Advanced Routing**: Latency-based, weighted, GPU-aware
 
-#### Phase 7: Reliability & Observability
+#### Future Phases
 
-- **Proxy Hardening**: Singleflight pattern for request coalescing and Prometheus metrics.
-- **Deep Observability**: Cold start tracking and GPU temperature alerting.
+- [ ] **Dynamic Multi-LoRA**: Hot-swap adapters without pod restart
+- [ ] **"Flash-Loader"**: RDMA/P2P model weight distribution
+- [ ] **Spot Resilience**: Proactive draining on termination
 
 ## Quality Assessment
 
 ### Code Quality: **Excellent**
 
-- Well-structured Go code.
-- Functional Sidecar patterns for modularity.
+- Well-structured Go code
+- Functional Sidecar patterns for modularity
+- Comprehensive status condition handling
 
 ### Test Coverage: **Good**
 
-- Unit tests cover core logic.
-- Integration tests cover Controller reconciliation.
-- E2E tests need real hardware/cluster environment.
+- Unit tests cover core logic (controllers, routing, scheduling)
+- Integration tests cover Controller reconciliation
+- E2E tests cover basic lifecycle and serverless flows
+- CLI commands need more coverage (currently 7%)
 
 ### Deployment Readiness Assessment
 
-### Current State: **95% Ready**
+### Current State: **85-95% Ready**
 
 **Remaining Steps for Production:**
 
-1.  **End-to-End Verification**: Deploy to the physical cluster and verify real GPU scheduling.
-2.  **Documentation**: Finalize "Getting Started" guide.
+1. **Backend Images**: Build ROCm 6.4 MLC-LLM image for quality models (32B, 14B)
+2. **Tech Debt**: Address high-priority error handling issues
+3. **Security**: RBAC review and hardening
 
-**Estimated Time to First Deployment: Immediate (Pending physical test)**
+**What's Ready:**
+- ✅ Helm charts complete
+- ✅ E2E test harness operational
+- ✅ User documentation complete
+- ✅ Routing strategies implemented
+- ✅ Observability metrics available

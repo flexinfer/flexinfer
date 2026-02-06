@@ -52,6 +52,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | [Phase 2](planning/phase-2-serverless-activator-hardening.md) | Serverless hardening |
 | [Phase 3](planning/phase-3-routing-performance.md) | Routing & performance |
 | [Phase 4](planning/phase-4-operational-polish.md) | Operational polish |
+| [Phase 5](planning/phase-5-multi-cluster.md) | Multi-cluster (future) |
 
 ## Quick Links
 

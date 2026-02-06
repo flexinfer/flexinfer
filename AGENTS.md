@@ -28,12 +28,25 @@ The node agent performs comprehensive hardware discovery and applies labels to n
 | `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
 | `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
 
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
 ### Implementation Details
 
 - **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
 - **Label Management**: Automatically applies and updates node labels based on detected capabilities
 - **Error Handling**: Robust error handling for hardware detection failures
 - **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) provides compute capability (`sm_52` for Maxwell) and VRAM.
+- **AMD**: prefers `rocm-smi` + `rocminfo`; falls back to sysfs VRAM detection if `rocm-smi` is unavailable. When falling back, it will still try `rocminfo` (if present) to infer `gfx*` for image selection (e.g., `gfx1100`).
 
 ### Config flags
 
@@ -145,7 +158,7 @@ Eliminates nodes that cannot satisfy the workload requirements:
 Ranks suitable nodes using a weighted scoring algorithm:
 
 ```go
-score = (TPS_normalized × TPS_weight) - (GPU_util × Util_weight) - (Cost × Cost_weight)
+score = (TPS_normalized × TPS_weight) - (GPU_util × Util_weight) - (Cost × Cost_weight) - (KV_cache × Cache_weight) + (FreeVRAMRatio × VRAMFree_weight)
 ```
 
 ### Scoring Factors
@@ -155,6 +168,7 @@ score = (TPS_normalized × TPS_weight) - (GPU_util × Util_weight) - (Cost × Co
 | Tokens/Second | 0.7 | Benchmarked performance for model-device pair |
 | GPU Utilization | 0.2 | Current GPU resource usage |
 | Node Cost | 0.1 | Cost per hour (from node annotations) |
+| Free VRAM Ratio | 10.0 | Bonus: `free_vram / total_vram` headroom (uses agent labels + annotations) |
 
 ### Configuration
 
@@ -370,7 +384,7 @@ kubectl logs -n kube-system deployment/flexinfer-scheduler
 - **Discussions**: [GitHub Discussions](https://github.com/flexinfer/flexinfer/discussions)
 - **Discord**: #flexinfer channel on Llama.cpp Discord
 
-Happy hacking! 🚀
+Happy hacking!
 
 ## 6. Model CRDs for Deployment
 

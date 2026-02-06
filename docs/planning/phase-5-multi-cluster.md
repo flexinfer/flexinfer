@@ -1,0 +1,201 @@
+---
+title: Phase 5: Multi-Cluster
+description: Concrete checklist for multi-cluster federation support.
+---
+
+# Phase 5: Multi-Cluster
+
+> Last updated: 2026-02-01
+
+This is the checklist for Phase 5: enable **multi-cluster federation** for FlexInfer deployments.
+
+See `docs/design/multi-cluster.md` for the full design document.
+
+## Goals
+
+- Register and manage multiple Kubernetes clusters from a hub cluster.
+- Deploy models across clusters with unified management.
+- Route requests to appropriate clusters based on latency, load, or availability.
+
+## Non-Goals
+
+- Full Kubernetes federation (we focus on inference-specific needs).
+- Automatic cross-cluster KV-cache migration.
+
+## Prerequisites
+
+- Stable single-cluster baseline (controller hardening, serverless, routing, operational polish)
+- Network connectivity between clusters (VPN, service mesh, or direct)
+- Cluster credentials management strategy
+
+## Work items (PR-sized)
+
+### Phase 5.1: Cluster Registry (MVP)
+
+#### 1) Cluster CRD
+
+- [ ] Define `Cluster` CRD (`api/v1alpha2/cluster_types.go`):
+  - `spec.apiEndpoint` - Kubernetes API server URL
+  - `spec.secretRef` - Reference to kubeconfig Secret
+  - `spec.labels` - Cluster metadata (region, gpu-vendor, tier)
+- [ ] Add `status` fields:
+  - `phase` (Pending, Ready, NotReady, Unknown)
+  - `capacity` (GPU counts by type)
+  - `available` (free GPU counts)
+  - `models` (list of deployed models with status)
+- [ ] Add unit tests for CRD validation
+
+**Acceptance**
+- `kubectl apply` of Cluster resource creates/updates correctly.
+- Status fields are populated by controller.
+
+**Primary files**
+- `api/v1alpha2/cluster_types.go` (new)
+- `controllers/cluster_controller.go` (new)
+
+#### 2) Cluster health checking
+
+- [ ] Implement cluster connectivity check (API server reachable)
+- [ ] Implement periodic health probe (configurable interval)
+- [ ] Update `Cluster.status.phase` based on health
+- [ ] Add metrics:
+  - `flexinfer_cluster_health{cluster, region}` (gauge: 0/1)
+  - `flexinfer_cluster_probe_latency_seconds{cluster}` (histogram)
+
+**Acceptance**
+- Unhealthy clusters are marked `NotReady` within configured timeout.
+- Metrics available for alerting.
+
+**Primary files**
+- `controllers/cluster_controller.go`
+- `internal/cluster/health.go` (new)
+
+#### 3) Cluster inventory aggregation
+
+- [ ] Watch FlexInfer resources in remote clusters via client
+- [ ] Aggregate GPU capacity from remote node labels
+- [ ] Aggregate model inventory from remote Model resources
+- [ ] Update `Cluster.status.models` with remote model list
+
+**Acceptance**
+- `kubectl get cluster us-west -o yaml` shows current GPU availability and model list.
+
+**Primary files**
+- `controllers/cluster_controller.go`
+- `internal/cluster/inventory.go` (new)
+
+### Phase 5.2: Cross-Cluster Model Sync
+
+#### 4) FederatedModel CRD
+
+- [ ] Define `FederatedModel` CRD:
+  - `spec.template` - Model spec to deploy
+  - `spec.placement.clusterSelector` - Label selector for target clusters
+  - `spec.placement.clusters` - Explicit cluster list
+  - `spec.placement.replicasPerCluster` - Replicas per cluster
+  - `spec.routing` - Cross-cluster routing strategy
+- [ ] Add `status` aggregation:
+  - Per-cluster deployment status
+  - Overall ready/total counts
+
+**Acceptance**
+- FederatedModel creates Model resources in matching clusters.
+
+**Primary files**
+- `api/v1alpha2/federatedmodel_types.go` (new)
+- `controllers/federatedmodel_controller.go` (new)
+
+#### 5) Model propagation
+
+- [ ] Watch FederatedModel resources
+- [ ] Create/update/delete Model resources in target clusters
+- [ ] Handle cluster membership changes (add/remove clusters)
+- [ ] Aggregate status from remote Models
+
+**Acceptance**
+- Model appears in all selected clusters within reconcile interval.
+- Status reflects actual state across clusters.
+
+**Primary files**
+- `controllers/federatedmodel_controller.go`
+- `internal/cluster/client.go` (new)
+
+### Phase 5.3: Global Routing
+
+#### 6) GlobalProxy component
+
+- [ ] Create `cmd/flexinfer-global-proxy/` binary
+- [ ] Implement cluster endpoint registry
+- [ ] Implement round-robin routing as default
+- [ ] Implement failover routing (primary/backup)
+
+**Acceptance**
+- Requests to global proxy reach healthy cluster proxies.
+- Failover triggers on cluster unavailability.
+
+**Primary files**
+- `cmd/flexinfer-global-proxy/main.go` (new)
+- `internal/globalrouting/router.go` (new)
+
+#### 7) GlobalProxy CRD
+
+- [ ] Define `GlobalProxy` CRD:
+  - `spec.externalEndpoint` - External hostname
+  - `spec.tls` - TLS configuration
+  - `spec.clusters` - Cluster endpoints with weights
+
+**Acceptance**
+- GlobalProxy CRD configures routing behavior.
+
+**Primary files**
+- `api/v1alpha2/globalproxy_types.go` (new)
+
+#### 8) Latency-based routing
+
+- [ ] Implement latency probing to cluster endpoints
+- [ ] Route to lowest-latency healthy cluster
+- [ ] Add metrics for routing decisions
+
+**Acceptance**
+- Traffic shifts to lower-latency clusters automatically.
+
+**Primary files**
+- `cmd/flexinfer-global-proxy/main.go`
+- `internal/globalrouting/latency.go` (new)
+
+### Phase 5.4: Advanced Features (Optional)
+
+#### 9) Weighted routing
+
+- [ ] Implement weighted distribution based on cluster weights
+- [ ] Support dynamic weight adjustment via CRD
+
+#### 10) GPU-aware routing
+
+- [ ] Route based on GPU availability
+- [ ] Match model requirements to cluster capabilities
+
+#### 11) Cross-cluster metrics aggregation
+
+- [ ] Aggregate metrics from all clusters
+- [ ] Provide unified Grafana dashboard
+
+## Security Considerations
+
+- Kubeconfig secrets must be encrypted at rest
+- RBAC in remote clusters scoped to FlexInfer resources only
+- mTLS for cross-cluster traffic recommended
+- Audit logging for cross-cluster operations
+
+## Rollout Strategy
+
+1. Deploy Cluster Registry to hub cluster
+2. Register existing clusters with kubeconfig secrets
+3. Test FederatedModel with non-critical model
+4. Deploy GlobalProxy for unified entry point
+5. Migrate traffic gradually to global endpoint
+
+## Tracking
+
+- This checklist is the source-of-truth for Phase 5 items.
+- When a PR lands, add a checkbox + link to the PR/commit in this doc.

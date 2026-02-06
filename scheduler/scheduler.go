@@ -34,6 +34,7 @@ type Scheduler struct {
 	utilWeight                float64
 	costWeight                float64
 	cacheWeight               float64
+	vramFreeWeight            float64
 }
 
 const defaultBenchmarkResultsConfigMap = "flexinfer-benchmark-results"
@@ -58,6 +59,9 @@ func NewScheduler() (*Scheduler, error) {
 	s.utilWeight = parseWeight("SCHED_UTIL_WEIGHT", 0.2)
 	s.costWeight = parseWeight("SCHED_COST_WEIGHT", 0.1)
 	s.cacheWeight = parseWeight("SCHED_CACHE_WEIGHT", 0.3)
+	// This is a 0..1 ratio (free VRAM / total VRAM) multiplied by this weight.
+	// Keep the default in the same magnitude as util/cache penalties.
+	s.vramFreeWeight = parseWeight("SCHED_VRAM_FREE_WEIGHT", 10.0)
 	return s, nil
 }
 
@@ -86,6 +90,21 @@ func parseWeight(env string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+func parseGiLabel(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if strings.HasSuffix(s, "Gi") {
+		s = strings.TrimSuffix(s, "Gi")
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || f <= 0 {
+		return 0, false
+	}
+	return f, true
 }
 
 // Filter is the handler for the /filter endpoint.
@@ -183,6 +202,8 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		cost, _ := strconv.ParseFloat(costStr, 64)
 		cacheStr := node.Annotations["flexinfer.ai/kv-cache-usage"]
 		cacheUsage, _ := strconv.ParseFloat(cacheStr, 64)
+		freeVRAMStr := node.Annotations["flexinfer.ai/gpu-free-memory"] // MB, sum across GPUs
+		freeVRAMMB, _ := strconv.ParseFloat(freeVRAMStr, 64)
 
 		tps := fallbackTPS
 		if globalCM != nil {
@@ -194,10 +215,33 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Optional bonus: prefer nodes with more free VRAM headroom.
+		// This uses labels set by flexinfer-agent (per-GPU VRAM and GPU count) plus
+		// the free VRAM annotation (sum across GPUs).
+		freeRatio := 0.0
+		if perGi, ok := parseGiLabel(node.Labels["flexinfer.ai/gpu.vram"]); ok {
+			cnt := 1.0
+			if cStr := node.Labels["flexinfer.ai/gpu.count"]; cStr != "" {
+				if c, err := strconv.ParseFloat(strings.TrimSpace(cStr), 64); err == nil && c > 0 {
+					cnt = c
+				}
+			}
+			totalMB := perGi * 1024.0 * cnt
+			if totalMB > 0 && freeVRAMMB > 0 {
+				freeRatio = freeVRAMMB / totalMB
+				if freeRatio < 0 {
+					freeRatio = 0
+				}
+				if freeRatio > 1 {
+					freeRatio = 1
+				}
+			}
+		}
+
 		// Higher score is better.
 		// We subtract penalties for utilization, cost, and cache usage.
 		// Use tps as base reward.
-		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight
+		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight + freeRatio*s.vramFreeWeight
 
 		scores[i] = extenderv1.HostPriority{
 			Host:  nodeName,

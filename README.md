@@ -19,7 +19,7 @@ FlexInfer is **functional and working** with comprehensive implementations of al
 - ✅ **Backend Plugin System**: Centralized backend configuration (ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui)
 - ✅ **Model v1alpha2**: Simplified single-resource API for homelab users
 
-The project is ready for deployment but needs **deployment tooling** (Helm templates, installation guides) to make it accessible to end users.
+The project is ready for homelab deployment via the included Helm chart and the `docs/` guides (install, quickstart, operations).
 
 ## Features
 
@@ -37,11 +37,10 @@ The project is ready for deployment but needs **deployment tooling** (Helm templ
 
 ### 🔄 **Partially Implemented**
 
-- **Deployment Tooling**: Basic Helm chart structure exists but needs completion
 - **Integration Testing**: Framework exists but needs more comprehensive scenarios
 - **ModelCache Downloader**: Supports `huggingface-cli` in the controller; OCI-based sources are still TODO.
-- **Scale-to-Zero Proxy**: Basic skeleton exists. Needs robust "Activator" pattern (request buffering, API compatibility).
-- **Smart Routing (L7)**: Current scheduler is L4 (Pods). Missing L7 Router for KV-Cache locality (requests).
+- **Scale-to-Zero Proxy**: Implemented and working; needs more real-world burn-in across backends and streaming clients.
+- **Smart Routing (L7)**: Routing strategies exist (session affinity, prefix routing, least-loaded); needs more test coverage and performance validation under load.
 
 ### 📋 **Planned Features / Innovation Roadmap**
 
@@ -97,9 +96,17 @@ FlexInfer supports multiple GPU architectures with backend-specific consideratio
 ### Special GPU Documentation
 
 - **[Maxwell GPUs (GTX 980 Ti, etc.)](build/README-maxwell.md)** - Running MLC-LLM on older NVIDIA GPUs without FP16 support
+- **[Maxwell Backend Guide](docs/user/backends-maxwell.md)** - Maxwell-specific constraints and working model formats
+- **[ROCm GFX1100 Backend Guide](docs/user/backends-rocm-gfx1100.md)** - ROCm 6.4+ tuning for RX 7900 (gfx1100)
 - **[Deployment Runbook](docs/DEPLOYMENT_RUNBOOK.md#11-sdxl-vae-fp16-nan-on-rocm-gfx1100-amd-rdna3)** - SDXL VAE fp16 fix for AMD RDNA3 GPUs
 
 **\*\*SDXL on AMD RDNA3**: Requires `madebyollin/sdxl-vae-fp16-fix` VAE due to NaN issues in standard VAE on gfx1100
+
+### Mixed-Vendor k3s Notes (gfx1100 + Maxwell)
+
+- Prefer setting `spec.gpu.vendor` explicitly in `ai.flexinfer/v1alpha2` Models when your cluster has both AMD and NVIDIA nodes.
+- NVIDIA GPU workloads typically require `runtimeClassName: nvidia` (containerd + NVIDIA runtime) to get `/dev/nvidia*` injected reliably.
+- AMD ROCm workloads require `/dev/kfd` + `/dev/dri` access; if `rocm-smi` is not available inside the agent container, FlexInfer falls back to sysfs and will use `rocminfo` (if present) to infer `gfx*` for image selection.
 
 ## Quick Start
 
