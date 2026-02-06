@@ -268,9 +268,9 @@ func (h *helmServer) runHelm(ctx context.Context, args ...string) ([]byte, error
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
 
-	// Add kubeconfig if set
+	// Add kubeconfig after subcommand (helm rejects flags before the command name)
 	if h.kubeconfig != "" {
-		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
+		args = append(args, "--kubeconfig", h.kubeconfig)
 	}
 
 	cmd := exec.CommandContext(ctx, "helm", args...)

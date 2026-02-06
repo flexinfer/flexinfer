@@ -391,7 +391,7 @@ func (f *fluxServer) runFluxCLI(ctx context.Context, args ...string) (string, er
 
 	cmdArgs := args
 	if f.kubeconfig != "" {
-		cmdArgs = append([]string{"--kubeconfig", f.kubeconfig}, cmdArgs...)
+		cmdArgs = append(cmdArgs, "--kubeconfig", f.kubeconfig)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
