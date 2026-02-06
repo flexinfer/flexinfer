@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+//nolint:staticcheck // CLI keeps legacy v1alpha1 ModelDeployment support while v1alpha2 tooling is stabilized.
 package commands
 
 import (

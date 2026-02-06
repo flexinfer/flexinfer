@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+//nolint:staticcheck // Test fixtures intentionally use deprecated v1alpha1 types while legacy controllers still exist.
 package testutil
 
 import (
@@ -166,11 +167,16 @@ func ApplyGPUGroupOptions(g *aiv1alpha1.GPUGroup, opts ...GPUGroupOption) *aiv1a
 }
 
 // ModelDeploymentOption is a functional option for ModelDeployment
+//
+//nolint:staticcheck // v1alpha1 ModelDeployment is legacy but still used by GPUGroup controller tests.
 type ModelDeploymentOption func(*aiv1alpha1.ModelDeployment)
 
 // NewTestModelDeployment creates a ModelDeployment with sensible defaults
+//
+//nolint:staticcheck // v1alpha1 ModelDeployment is legacy but still used by GPUGroup controller tests.
 func NewTestModelDeployment(name string, opts ...ModelDeploymentOption) *aiv1alpha1.ModelDeployment {
 	replicas := int32(0)
+	//nolint:staticcheck // v1alpha1 ModelDeployment is legacy but still used by GPUGroup controller tests.
 	md := &aiv1alpha1.ModelDeployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

@@ -1,0 +1,8 @@
+linters-settings:
+  staticcheck:
+    # Deprecation warnings are too noisy while v1alpha1 resources/CLI still exist.
+    # Re-enable when v1alpha1 is fully removed.
+    checks:
+      - all
+      - -SA1019
+

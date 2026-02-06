@@ -97,9 +97,7 @@ func parseGiLabel(s string) (float64, bool) {
 	if s == "" {
 		return 0, false
 	}
-	if strings.HasSuffix(s, "Gi") {
-		s = strings.TrimSuffix(s, "Gi")
-	}
+	s = strings.TrimSuffix(s, "Gi")
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil || f <= 0 {
 		return 0, false

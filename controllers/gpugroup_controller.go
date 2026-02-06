@@ -173,9 +173,10 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Info("Swap blocked by anti-thrashing rules",
 				"current", currentActive, "desired", desiredActive, "reason", blockReason)
 			// Record blocked swap metrics
-			if blockReason == "minimum_run_time" {
+			switch blockReason {
+			case "minimum_run_time":
 				gpuGroupSwapBlockedAntithrashing.WithLabelValues(gpuGroup.Name, gpuGroup.Namespace).Inc()
-			} else if blockReason == "cooldown" {
+			case "cooldown":
 				gpuGroupSwapBlockedCooldown.WithLabelValues(gpuGroup.Name, gpuGroup.Namespace).Inc()
 			}
 			// Update metrics before returning
