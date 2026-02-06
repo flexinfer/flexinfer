@@ -382,6 +382,8 @@ deploy:homebrew:
 
 build:image:loom-core:
   stage: deploy
+  # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
+  resource_group: kaniko
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
@@ -407,6 +409,7 @@ build:image:loom-core:
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
         $DESTINATIONS \
+        --cleanup \
         --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
         --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
@@ -415,6 +418,8 @@ build:image:loom-core:
 
 build:image:custom-server:
   stage: deploy
+  # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
+  resource_group: kaniko
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
@@ -438,6 +443,7 @@ build:image:custom-server:
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
         $DESTINATIONS \
+        --cleanup \
         --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
     - if: '$CI_COMMIT_BRANCH'
