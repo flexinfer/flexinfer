@@ -65,6 +65,7 @@ Notes:
 - If you omit `spec.gpu`, the model runs CPU-only.
 - If you set `spec.gpu.vendor: cpu`, the controller will not request GPU resources even if `count` is set.
 - If you set `spec.gpu.vendor: nvidia` or `amd`, the controller will only schedule on matching GPU nodes (it will not auto-fallback to the other vendor).
+- `vramEstimateMB` is optional but strongly recommended on mixed GPU clusters (e.g., Maxwell 6GB + gfx1100 24GB). The scheduler extender uses it, along with the node agent's `flexinfer.ai/gpu-free-memory` annotation, to avoid placing large models onto low-VRAM nodes.
 
 ### `spec.serverless` (optional)
 

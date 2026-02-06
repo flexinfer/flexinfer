@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 )
@@ -197,6 +198,90 @@ func TestScore_UsesGlobalBenchmarkResultsByDeviceClass(t *testing.T) {
 	scoreH100 := getScore(result, "h100")
 	if scoreH100 <= scoreA100 {
 		t.Fatalf("expected h100 score (%d) > a100 score (%d)", scoreH100, scoreA100)
+	}
+}
+
+func TestFilter_FiltersByVRAMEstimateWhenFreeVRAMAvailable(t *testing.T) {
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"node-low": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-low",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "NVIDIA",
+					},
+					Annotations: map[string]string{
+						"flexinfer.ai/gpu-free-memory": "4000",
+					},
+				},
+			},
+			"node-high": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-high",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "NVIDIA",
+					},
+					Annotations: map[string]string{
+						"flexinfer.ai/gpu-free-memory": "8000",
+					},
+				},
+			},
+		},
+		configMaps: map[string]*corev1.ConfigMap{},
+	}
+
+	sched := &Scheduler{cache: cache}
+
+	args := extenderv1.ExtenderArgs{
+		Pod: &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "p",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"flexinfer.ai/gpu.vram-estimate-mb": "5000",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name: "c",
+						Resources: corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{
+								"nvidia.com/gpu": resource.MustParse("1"),
+							},
+						},
+					},
+				},
+			},
+		},
+		NodeNames: &[]string{"node-low", "node-high"},
+	}
+
+	body, _ := json.Marshal(args)
+	req := httptest.NewRequest("POST", "/filter", bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+
+	sched.Filter(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+
+	var result extenderv1.ExtenderFilterResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if result.NodeNames == nil {
+		t.Fatalf("expected NodeNames not nil")
+	}
+
+	// node-low should be filtered out; node-high should remain.
+	if len(*result.NodeNames) != 1 || (*result.NodeNames)[0] != "node-high" {
+		t.Fatalf("expected only node-high, got %v", *result.NodeNames)
+	}
+	if _, ok := result.FailedNodes["node-low"]; !ok {
+		t.Fatalf("expected node-low to be in FailedNodes")
 	}
 }
 

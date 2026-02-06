@@ -119,6 +119,12 @@ var managedModelAnnotations = []string{
 	"flexinfer.ai/service-labels",
 }
 
+var managedModelPodAnnotations = []string{
+	"flexinfer.ai/model",
+	"flexinfer.ai/backend",
+	"flexinfer.ai/gpu.vram-estimate-mb",
+}
+
 func applyManagedAnnotations(existing map[string]string, desired map[string]string, managedKeys []string) map[string]string {
 	out := make(map[string]string, len(existing)+len(desired))
 	for k, v := range existing {
@@ -618,7 +624,8 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: r.labelsForModel(model),
+					Labels:      r.labelsForModel(model),
+					Annotations: r.podAnnotationsForModel(model),
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
@@ -696,6 +703,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	// Update deployment
+	existingPodAnnotations := deployment.Spec.Template.Annotations
 	desiredSpec := desiredDeployment.Spec
 	// Deployment selectors are immutable. Preserve the existing selector on updates to avoid
 	// deadlocking reconciliation when labels change (e.g., shared GPU group assignment).
@@ -708,6 +716,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	deployment.Spec = desiredSpec
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
+	deployment.Spec.Template.Annotations = applyManagedAnnotations(existingPodAnnotations, desiredDeployment.Spec.Template.Annotations, managedModelPodAnnotations)
 	return r.Update(ctx, deployment)
 }
 
@@ -1554,6 +1563,17 @@ func (r *ModelReconciler) selectorLabelsForModel(model *aiv1alpha2.Model) map[st
 		"flexinfer.ai/model":           model.Name,
 		"flexinfer.ai/backend":         model.Spec.Backend,
 	}
+}
+
+func (r *ModelReconciler) podAnnotationsForModel(model *aiv1alpha2.Model) map[string]string {
+	ann := map[string]string{
+		"flexinfer.ai/model":   model.Name,
+		"flexinfer.ai/backend": model.Spec.Backend,
+	}
+	if model.Spec.GPU != nil && model.Spec.GPU.VRAMEstimateMB != nil && *model.Spec.GPU.VRAMEstimateMB > 0 {
+		ann["flexinfer.ai/gpu.vram-estimate-mb"] = fmt.Sprintf("%d", *model.Spec.GPU.VRAMEstimateMB)
+	}
+	return ann
 }
 
 // shouldScaleToZero checks if the model should be scaled to zero.

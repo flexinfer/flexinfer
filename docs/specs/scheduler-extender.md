@@ -43,6 +43,7 @@ These influence scoring (see `services/flexinfer/scheduler/scheduler.go`):
 - Pod annotations:
   - `flexinfer.ai/model`
   - `flexinfer.ai/backend`
+  - `flexinfer.ai/gpu.vram-estimate-mb` (optional, MB): if set, the extender will filter out nodes that report insufficient free VRAM
 - Benchmark results (ConfigMap data)
 - Optional node annotations (if present):
   - `flexinfer.ai/gpu.util`

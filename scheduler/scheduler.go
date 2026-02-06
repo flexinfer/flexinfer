@@ -105,6 +105,34 @@ func parseGiLabel(s string) (float64, bool) {
 	return f, true
 }
 
+func podRequestedGPUCount(pod *corev1.Pod) int64 {
+	if pod == nil {
+		return 0
+	}
+
+	var total int64
+	// Extended resources are typically specified in limits; requests must equal limits
+	// but many manifests omit requests entirely.
+	resourceNames := []corev1.ResourceName{
+		"nvidia.com/gpu",
+		"amd.com/gpu",
+		"gpu.intel.com/i915",
+	}
+
+	for _, c := range pod.Spec.Containers {
+		for _, rn := range resourceNames {
+			if q, ok := c.Resources.Limits[rn]; ok {
+				total += q.Value()
+				continue
+			}
+			if q, ok := c.Resources.Requests[rn]; ok {
+				total += q.Value()
+			}
+		}
+	}
+	return total
+}
+
 // Filter is the handler for the /filter endpoint.
 func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 	log := log.FromContext(r.Context())
@@ -121,7 +149,18 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("Filtering for Pod", "pod", args.Pod.Name)
 
+	// Optional filter: if the pod declares an estimated VRAM footprint, prefer nodes
+	// that have enough free VRAM according to the node agent.
+	var vramEstimateMB float64
+	if args.Pod.Annotations != nil {
+		if est := strings.TrimSpace(args.Pod.Annotations["flexinfer.ai/gpu.vram-estimate-mb"]); est != "" {
+			vramEstimateMB, _ = strconv.ParseFloat(est, 64)
+		}
+	}
+	gpuCount := podRequestedGPUCount(args.Pod)
+
 	filteredNodes := make([]string, 0)
+	failed := make(map[string]string)
 	for _, nodeName := range *args.NodeNames {
 		node, err := s.cache.GetNode(nodeName)
 		if err != nil {
@@ -129,13 +168,28 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, ok := node.Labels["flexinfer.ai/gpu.vendor"]; ok {
+			// If we have an estimate and the node agent reports free VRAM, enforce it.
+			if vramEstimateMB > 0 && gpuCount > 0 {
+				freeVRAMStr := strings.TrimSpace(node.Annotations["flexinfer.ai/gpu-free-memory"])
+				if freeVRAMStr != "" {
+					if freeMB, err := strconv.ParseFloat(freeVRAMStr, 64); err == nil && freeMB > 0 {
+						required := vramEstimateMB * float64(gpuCount)
+						if freeMB < required {
+							failed[nodeName] = fmt.Sprintf("insufficient free VRAM: have %.0fMB need %.0fMB", freeMB, required)
+							continue
+						}
+					}
+				}
+			}
 			filteredNodes = append(filteredNodes, nodeName)
+		} else {
+			failed[nodeName] = "no flexinfer.ai/gpu.vendor label"
 		}
 	}
 
 	result := extenderv1.ExtenderFilterResult{
 		NodeNames:   &filteredNodes,
-		FailedNodes: make(map[string]string),
+		FailedNodes: failed,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
