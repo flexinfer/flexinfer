@@ -63,20 +63,6 @@ func (a *Agent) detectAMDVRAMSysfs() ([]VRAMInfo, error) {
 	return infos, nil
 }
 
-// getTotalAMDVRAMSysfs returns total VRAM in MB across all AMD GPUs via sysfs.
-func (a *Agent) getTotalAMDVRAMSysfs() uint64 {
-	infos, err := a.detectAMDVRAMSysfs()
-	if err != nil || len(infos) == 0 {
-		return 0
-	}
-
-	var totalMB uint64
-	for _, info := range infos {
-		totalMB += info.TotalBytes / (1024 * 1024)
-	}
-	return totalMB
-}
-
 // getFreeAMDVRAMSysfs returns free VRAM in MB across all AMD GPUs via sysfs.
 func (a *Agent) getFreeAMDVRAMSysfs() uint64 {
 	infos, err := a.detectAMDVRAMSysfs()
@@ -95,16 +81,6 @@ func (a *Agent) getFreeAMDVRAMSysfs() uint64 {
 func parseBytes(s string) uint64 {
 	val, _ := strconv.ParseUint(s, 10, 64)
 	return val
-}
-
-// detectNVIDIAVRAMSysfs attempts to read NVIDIA GPU VRAM from sysfs.
-// This is less reliable than nvidia-smi but can work as a fallback.
-// Returns 0 if not available.
-func (a *Agent) detectNVIDIAVRAMSysfs() uint64 {
-	// NVIDIA doesn't expose VRAM in sysfs in a standard way.
-	// The /proc/driver/nvidia/gpus/*/information file exists but requires parsing.
-	// For now, return 0 as nvidia-smi is the reliable option.
-	return 0
 }
 
 // detectAMDGPUSysfs reads comprehensive AMD GPU metrics from sysfs.
