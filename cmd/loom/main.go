@@ -342,7 +342,7 @@ Example session:
 		},
 	}
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd)
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, newHudCmd(socketPath))
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -482,26 +482,28 @@ func newGenerateConfigsCmd() *cobra.Command {
 func newGenerateSkillsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skills",
-		Short: "Generate skill configurations for Codex, Claude, etc.",
+		Short: "Generate skill configurations for all AI coding platforms",
 		Long: `Generate skill configurations from the unified skills registry.
 
 This command reads skills-registry.yaml and generates platform-specific
-skill configurations for AI coding assistants like Codex CLI and Claude Code.
+skill configurations for AI coding assistants.
 
-Codex skills are generated as:
-  ~/.codex/skills/<skill-name>/
-    SKILL.md        # Main skill file with YAML frontmatter
-    scripts/        # Bundled scripts
-    references/     # Reference documentation
-    assets/         # Templates and other assets
+Platform output formats:
 
-Claude skills are generated as:
-  .agents/skills/<skill-name>.md  # Simple markdown file
+  Codex:    ~/.codex/skills/<name>/SKILL.md + scripts/ + references/ + assets/
+  Claude:   .claude/commands/<name>.md (slash commands with frontmatter)
+            .claude/rules/<name>.md (rules without frontmatter)
+  Kilocode: .kilocode/rules/<name>.md (rules)
+            .kilocode/workflows/<name>.yaml (workflows)
+  Gemini:   .gemini/instructions.md (composite from instruction-type skills)
+
+Skills with type=instruction are assembled into a composite instructions.md.
 
 Example:
+  loom generate skills --target all
   loom generate skills --target codex
-  loom generate skills --target claude --output-dir .agents/skills
-  loom generate skills --target all --dry-run`,
+  loom generate skills --target kilocode --dry-run
+  loom generate skills --target gemini --verbose`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, _ := cmd.Flags().GetString("target")
 			outputDir, _ := cmd.Flags().GetString("output-dir")
@@ -565,7 +567,7 @@ Example:
 			return gen.Generate()
 		},
 	}
-	cmd.Flags().String("target", "all", "Target platform (all, codex, claude)")
+	cmd.Flags().String("target", "all", "Target platform (all, codex, claude, kilocode, gemini)")
 	cmd.Flags().String("output-dir", "", "Output directory (default: platform-specific)")
 	cmd.Flags().String("registry", "", "Path to skills-registry.yaml")
 	cmd.Flags().String("codex-home", "", "Codex home directory (default: ~/.codex)")
@@ -597,11 +599,14 @@ func newSyncCmd() *cobra.Command {
 				}
 			}
 
+			skipSkills, _ := cmd.Flags().GetBool("skip-skills")
+
 			cwd, _ := os.Getwd()
 			mgr, err := sync.NewManager(cwd)
 			if err != nil {
 				return err
 			}
+			mgr.SkipSkills = skipSkills
 
 			if profile == "all" {
 				return mgr.SyncAll(true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary)
@@ -616,6 +621,44 @@ func newSyncCmd() *cobra.Command {
 	syncCmd.Flags().String("hub-url", "wss://mcp.flexinfer.ai/ws", "MCP Hub WebSocket URL")
 	syncCmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
 	syncCmd.Flags().String("loom-binary", "", "Path to loom binary")
+	syncCmd.Flags().Bool("skip-skills", false, "Skip skills generation during --regen")
+
+	// Sync skills subcommand
+	syncSkillsCmd := &cobra.Command{
+		Use:   "skills [profile]",
+		Short: "Generate and sync skills for a profile (or all profiles)",
+		Long: `Generate skill files from skills-registry.yaml and sync them to home directories.
+
+Example:
+  loom sync skills claude     # Generate + sync skills for Claude
+  loom sync skills all        # Generate + sync skills for all profiles`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profile := args[0]
+
+			cwd, _ := os.Getwd()
+			mgr, err := sync.NewManager(cwd)
+			if err != nil {
+				return err
+			}
+
+			if profile == "all" {
+				for _, name := range mgr.List() {
+					p, _ := mgr.GetProfile(name)
+					if p.SkillsTarget == "" {
+						continue
+					}
+					fmt.Printf("=== %s ===\n", name)
+					if err := mgr.SyncSkills(name); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: skills sync failed for %s: %v\n", name, err)
+					}
+				}
+				return nil
+			}
+			return mgr.SyncSkills(profile)
+		},
+	}
+	syncCmd.AddCommand(syncSkillsCmd)
 
 	// Sync status subcommand
 	syncStatusCmd := &cobra.Command{

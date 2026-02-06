@@ -12,8 +12,9 @@ import (
 type Generator struct {
 	Registry      *Registry
 	SourceDir     string // Where skill source files live (mcp/skills/)
-	Target        string // "codex" | "claude" | "all"
-	OutputDir     string // Where to generate skills
+	Target        string // "codex" | "claude" | "kilocode" | "gemini" | "all"
+	OutputDir     string // Where to generate skills (overrides platform defaults)
+	RepoRoot      string // Base directory containing .claude/, .codex/, .kilocode/, .gemini/
 	CodexHome     string // ~/.codex
 	WorkspaceRoot string // For Claude: workspace root for .agents/skills/
 	DryRun        bool
@@ -25,11 +26,15 @@ type GeneratorOptions struct {
 	RegistryPath  string
 	Target        string
 	OutputDir     string
+	RepoRoot      string
 	CodexHome     string
 	WorkspaceRoot string
 	DryRun        bool
 	Verbose       bool
 }
+
+// AllTargets lists all supported skill generation targets.
+var AllTargets = []string{"codex", "claude", "kilocode", "gemini"}
 
 // NewGenerator creates a new skill generator.
 func NewGenerator(opts GeneratorOptions) (*Generator, error) {
@@ -51,11 +56,17 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 		workspaceRoot, _ = os.Getwd()
 	}
 
+	repoRoot := opts.RepoRoot
+	if repoRoot == "" {
+		repoRoot = workspaceRoot
+	}
+
 	return &Generator{
 		Registry:      reg,
 		SourceDir:     sourceDir,
 		Target:        opts.Target,
 		OutputDir:     opts.OutputDir,
+		RepoRoot:      repoRoot,
 		CodexHome:     codexHome,
 		WorkspaceRoot: workspaceRoot,
 		DryRun:        opts.DryRun,
@@ -67,7 +78,7 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 func (g *Generator) Generate() error {
 	targets := []string{g.Target}
 	if g.Target == "all" {
-		targets = []string{"codex", "claude"}
+		targets = AllTargets
 	}
 
 	for _, target := range targets {
@@ -80,6 +91,9 @@ func (g *Generator) Generate() error {
 }
 
 func (g *Generator) generateForTarget(target string) error {
+	var generatedFiles []string
+	var instructionSkills []*Skill
+
 	for _, skill := range g.Registry.Skills {
 		if !skill.IsEnabled(target) {
 			if g.Verbose {
@@ -88,22 +102,90 @@ func (g *Generator) generateForTarget(target string) error {
 			continue
 		}
 
+		skillType := skill.GetType(target)
+
+		// Collect instruction-type skills for composite instructions.md
+		if skillType == "instruction" {
+			instructionSkills = append(instructionSkills, skill)
+			continue
+		}
+
+		var files []string
+		var err error
+
 		switch target {
 		case "codex":
-			if err := g.generateCodexSkill(skill); err != nil {
-				return fmt.Errorf("generate codex skill %s: %w", skill.Name, err)
+			err = g.generateCodexSkill(skill)
+			if err == nil {
+				files = append(files, filepath.Join("skills", skill.Name, "SKILL.md"))
 			}
 		case "claude":
-			if err := g.generateClaudeSkill(skill); err != nil {
-				return fmt.Errorf("generate claude skill %s: %w", skill.Name, err)
+			files, err = g.generateClaudeSkillByType(skill)
+		case "kilocode":
+			files, err = g.generateKilocodeSkill(skill)
+		case "gemini":
+			// Gemini only supports instructions — non-instruction types are skipped
+			if g.Verbose {
+				fmt.Printf("Skipping %s for gemini (type=%s, only instruction supported)\n", skill.Name, skillType)
 			}
+			continue
 		default:
 			return fmt.Errorf("unknown target: %s", target)
+		}
+
+		if err != nil {
+			return fmt.Errorf("generate %s skill %s: %w", target, skill.Name, err)
+		}
+		generatedFiles = append(generatedFiles, files...)
+	}
+
+	// Generate composite instructions.md for platforms that support it
+	if len(instructionSkills) > 0 {
+		files, err := g.generateInstructionsFile(target, instructionSkills)
+		if err != nil {
+			return fmt.Errorf("generate %s instructions.md: %w", target, err)
+		}
+		generatedFiles = append(generatedFiles, files...)
+	}
+
+	// Write manifest
+	if !g.DryRun && len(generatedFiles) > 0 {
+		manifestDir := g.resolveTargetDir(target)
+		if manifestDir != "" {
+			if err := WriteManifest(manifestDir, target, generatedFiles); err != nil {
+				if g.Verbose {
+					fmt.Printf("Warning: could not write manifest for %s: %v\n", target, err)
+				}
+			}
 		}
 	}
 
 	return nil
 }
+
+// resolveTargetDir returns the platform repo directory for writing generated files.
+func (g *Generator) resolveTargetDir(target string) string {
+	if g.OutputDir != "" {
+		return g.OutputDir
+	}
+	if g.RepoRoot != "" {
+		switch target {
+		case "claude":
+			return filepath.Join(g.RepoRoot, ".claude")
+		case "codex":
+			return filepath.Join(g.RepoRoot, ".codex")
+		case "kilocode":
+			return filepath.Join(g.RepoRoot, ".kilocode")
+		case "gemini":
+			return filepath.Join(g.RepoRoot, ".gemini")
+		}
+	}
+	return ""
+}
+
+// =========================================================================
+// Codex Generator
+// =========================================================================
 
 // generateCodexSkill generates a Codex skill in SKILL.md + scripts/ + references/ + assets/ format.
 func (g *Generator) generateCodexSkill(skill *Skill) error {
@@ -232,8 +314,116 @@ func (g *Generator) generateCodexSkillMD(skill *Skill) string {
 	return sb.String()
 }
 
-// generateClaudeSkill generates a Claude Code skill as a simple markdown file.
-func (g *Generator) generateClaudeSkill(skill *Skill) error {
+// =========================================================================
+// Claude Generator
+// =========================================================================
+
+// generateClaudeSkillByType routes to the appropriate Claude generator based on skill type.
+func (g *Generator) generateClaudeSkillByType(skill *Skill) ([]string, error) {
+	skillType := skill.GetType("claude")
+
+	switch skillType {
+	case "command":
+		return g.generateClaudeCommand(skill)
+	case "rule":
+		return g.generateClaudeRule(skill)
+	default:
+		// Fall back to legacy .agents/skills/ format
+		return g.generateClaudeSkill(skill)
+	}
+}
+
+// generateClaudeCommand writes a Claude slash command to .claude/commands/<name>.md.
+func (g *Generator) generateClaudeCommand(skill *Skill) ([]string, error) {
+	baseDir := g.resolveTargetDir("claude")
+	if baseDir == "" {
+		baseDir = filepath.Join(g.WorkspaceRoot, ".claude")
+	}
+	outputDir := filepath.Join(baseDir, "commands")
+
+	if g.Verbose {
+		fmt.Printf("Generating Claude command: %s -> %s\n", skill.Name, outputDir)
+	}
+
+	if g.DryRun {
+		fmt.Printf("[dry-run] Would create Claude command: %s/%s.md\n", outputDir, skill.Name)
+		return []string{filepath.Join("commands", skill.Name+".md")}, nil
+	}
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create commands dir: %w", err)
+	}
+
+	var sb strings.Builder
+
+	// YAML frontmatter with description
+	desc := strings.TrimSpace(skill.Common.Description)
+	desc = strings.ReplaceAll(desc, "\n", " ")
+	sb.WriteString("---\n")
+	sb.WriteString(fmt.Sprintf("description: %s\n", desc))
+	sb.WriteString("---\n\n")
+
+	// Title and instructions
+	title := toTitleCase(skill.Name)
+	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+	instructions := skill.ResolveInstructions("claude", g.CodexHome, sourceSkillDir)
+
+	// Strip the first header since we already have the title
+	instructions = stripFirstHeader(instructions)
+	sb.WriteString(instructions)
+
+	outputPath := filepath.Join(outputDir, skill.Name+".md")
+	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write command markdown: %w", err)
+	}
+
+	return []string{filepath.Join("commands", skill.Name+".md")}, nil
+}
+
+// generateClaudeRule writes a Claude rule to .claude/rules/<name>.md.
+func (g *Generator) generateClaudeRule(skill *Skill) ([]string, error) {
+	baseDir := g.resolveTargetDir("claude")
+	if baseDir == "" {
+		baseDir = filepath.Join(g.WorkspaceRoot, ".claude")
+	}
+	outputDir := filepath.Join(baseDir, "rules")
+
+	if g.Verbose {
+		fmt.Printf("Generating Claude rule: %s -> %s\n", skill.Name, outputDir)
+	}
+
+	if g.DryRun {
+		fmt.Printf("[dry-run] Would create Claude rule: %s/%s.md\n", outputDir, skill.Name)
+		return []string{filepath.Join("rules", skill.Name+".md")}, nil
+	}
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create rules dir: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<!-- Generated by loom from skills-registry.yaml -->\n")
+
+	title := toTitleCase(skill.Name)
+	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+	instructions := skill.ResolveInstructions("claude", g.CodexHome, sourceSkillDir)
+	instructions = stripFirstHeader(instructions)
+	sb.WriteString(instructions)
+
+	outputPath := filepath.Join(outputDir, skill.Name+".md")
+	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write rule markdown: %w", err)
+	}
+
+	return []string{filepath.Join("rules", skill.Name+".md")}, nil
+}
+
+// generateClaudeSkill generates a Claude Code skill as a simple markdown file (legacy .agents/skills/ format).
+func (g *Generator) generateClaudeSkill(skill *Skill) ([]string, error) {
 	outputDir := g.OutputDir
 	if outputDir == "" {
 		outputDir = filepath.Join(g.WorkspaceRoot, ".agents", "skills")
@@ -245,22 +435,22 @@ func (g *Generator) generateClaudeSkill(skill *Skill) error {
 
 	if g.DryRun {
 		fmt.Printf("[dry-run] Would create Claude skill: %s/%s.md\n", outputDir, skill.Name)
-		return nil
+		return nil, nil
 	}
 
 	// Create output directory
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("create output dir: %w", err)
+		return nil, fmt.Errorf("create output dir: %w", err)
 	}
 
 	// Generate markdown file
 	content := g.generateClaudeSkillMD(skill)
 	outputPath := filepath.Join(outputDir, skill.Name+".md")
 	if err := os.WriteFile(outputPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write skill markdown: %w", err)
+		return nil, fmt.Errorf("write skill markdown: %w", err)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // generateClaudeSkillMD generates the markdown content for a Claude skill.
@@ -281,24 +471,7 @@ func (g *Generator) generateClaudeSkillMD(skill *Skill) string {
 	instructions := skill.ResolveInstructions("claude", g.CodexHome, sourceSkillDir)
 
 	// For Claude, we strip the first header since we already have the title
-	lines := strings.Split(instructions, "\n")
-	startIdx := 0
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
-			startIdx = i + 1
-			break
-		}
-	}
-
-	// Find first non-empty line after header
-	for startIdx < len(lines) && strings.TrimSpace(lines[startIdx]) == "" {
-		startIdx++
-	}
-
-	if startIdx > 0 && startIdx < len(lines) {
-		instructions = strings.Join(lines[startIdx:], "\n")
-	}
-
+	instructions = stripFirstHeader(instructions)
 	sb.WriteString(instructions)
 
 	// Add script references section if there are scripts
@@ -319,6 +492,210 @@ func (g *Generator) generateClaudeSkillMD(skill *Skill) string {
 	sb.WriteString(fmt.Sprintf("Skill source: `%s`\n", sourceSkillDir))
 
 	return sb.String()
+}
+
+// =========================================================================
+// Kilocode Generator
+// =========================================================================
+
+// generateKilocodeSkill generates a Kilocode skill based on its type.
+func (g *Generator) generateKilocodeSkill(skill *Skill) ([]string, error) {
+	skillType := skill.GetType("kilocode")
+
+	switch skillType {
+	case "workflow":
+		return g.generateKilocodeWorkflow(skill)
+	case "rule":
+		return g.generateKilocodeRule(skill)
+	default:
+		// Default to rule format
+		return g.generateKilocodeRule(skill)
+	}
+}
+
+// generateKilocodeRule writes a Kilocode rule to .kilocode/rules/<name>.md.
+func (g *Generator) generateKilocodeRule(skill *Skill) ([]string, error) {
+	baseDir := g.resolveTargetDir("kilocode")
+	if baseDir == "" {
+		baseDir = filepath.Join(g.RepoRoot, ".kilocode")
+	}
+	outputDir := filepath.Join(baseDir, "rules")
+
+	if g.Verbose {
+		fmt.Printf("Generating Kilocode rule: %s -> %s\n", skill.Name, outputDir)
+	}
+
+	if g.DryRun {
+		fmt.Printf("[dry-run] Would create Kilocode rule: %s/%s.md\n", outputDir, skill.Name)
+		return []string{filepath.Join("rules", skill.Name+".md")}, nil
+	}
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create rules dir: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<!-- Generated by loom from skills-registry.yaml -->\n")
+
+	title := toTitleCase(skill.Name)
+	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+	instructions := skill.ResolveInstructions("kilocode", g.CodexHome, sourceSkillDir)
+	instructions = stripFirstHeader(instructions)
+	sb.WriteString(instructions)
+
+	outputPath := filepath.Join(outputDir, skill.Name+".md")
+	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write rule markdown: %w", err)
+	}
+
+	return []string{filepath.Join("rules", skill.Name+".md")}, nil
+}
+
+// generateKilocodeWorkflow writes a Kilocode workflow to .kilocode/workflows/<name>.yaml.
+func (g *Generator) generateKilocodeWorkflow(skill *Skill) ([]string, error) {
+	baseDir := g.resolveTargetDir("kilocode")
+	if baseDir == "" {
+		baseDir = filepath.Join(g.RepoRoot, ".kilocode")
+	}
+	outputDir := filepath.Join(baseDir, "workflows")
+
+	if g.Verbose {
+		fmt.Printf("Generating Kilocode workflow: %s -> %s\n", skill.Name, outputDir)
+	}
+
+	if g.DryRun {
+		fmt.Printf("[dry-run] Would create Kilocode workflow: %s/%s.yaml\n", outputDir, skill.Name)
+		return []string{filepath.Join("workflows", skill.Name+".yaml")}, nil
+	}
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create workflows dir: %w", err)
+	}
+
+	sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+	instructions := skill.ResolveInstructions("kilocode", g.CodexHome, sourceSkillDir)
+
+	desc := strings.TrimSpace(skill.Common.Description)
+	desc = strings.ReplaceAll(desc, "\n", " ")
+
+	var sb strings.Builder
+	sb.WriteString("# Generated by loom from skills-registry.yaml\n")
+	sb.WriteString("version: 1\n")
+	sb.WriteString(fmt.Sprintf("name: \"%s\"\n", toTitleCase(skill.Name)))
+	sb.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(desc)))
+	sb.WriteString("on:\n")
+	sb.WriteString(fmt.Sprintf("  slash_command: \"/%s\"\n", skill.Name))
+	sb.WriteString("steps:\n")
+	sb.WriteString("  - id: execute\n")
+	sb.WriteString("    prompt:\n")
+	sb.WriteString("      content: |\n")
+
+	// Indent instructions for YAML block scalar
+	for _, line := range strings.Split(instructions, "\n") {
+		if line == "" {
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString("        " + line + "\n")
+		}
+	}
+
+	outputPath := filepath.Join(outputDir, skill.Name+".yaml")
+	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write workflow yaml: %w", err)
+	}
+
+	return []string{filepath.Join("workflows", skill.Name+".yaml")}, nil
+}
+
+// =========================================================================
+// Composite instructions.md Generation
+// =========================================================================
+
+// generateInstructionsFile assembles instructions.md from all instruction-type skills for a platform.
+func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]string, error) {
+	baseDir := g.resolveTargetDir(target)
+	if baseDir == "" {
+		return nil, nil
+	}
+
+	if g.Verbose {
+		fmt.Printf("Generating %s instructions.md from %d skills\n", target, len(skills))
+	}
+
+	if g.DryRun {
+		fmt.Printf("[dry-run] Would create %s/instructions.md from %d skills\n", baseDir, len(skills))
+		return []string{"instructions.md"}, nil
+	}
+
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, fmt.Errorf("create dir: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<!-- Generated by loom from skills-registry.yaml. Do not edit manually. -->\n")
+	sb.WriteString("<!-- To customize, add content to _custom_instructions.md -->\n")
+	sb.WriteString("# Agent Instructions\n\n")
+
+	for _, skill := range skills {
+		title := toTitleCase(skill.Name)
+		sb.WriteString(fmt.Sprintf("## %s\n\n", title))
+
+		sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+		instructions := skill.ResolveInstructions(target, g.CodexHome, sourceSkillDir)
+		instructions = stripFirstHeader(instructions)
+		sb.WriteString(strings.TrimSpace(instructions))
+		sb.WriteString("\n\n")
+	}
+
+	// Append custom instructions sidecar if it exists
+	customPath := filepath.Join(baseDir, "_custom_instructions.md")
+	if data, err := os.ReadFile(customPath); err == nil {
+		sb.WriteString("<!-- Custom instructions appended below -->\n")
+		sb.WriteString(string(data))
+		sb.WriteString("\n")
+	}
+
+	outputPath := filepath.Join(baseDir, "instructions.md")
+	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write instructions.md: %w", err)
+	}
+
+	return []string{"instructions.md"}, nil
+}
+
+// =========================================================================
+// Helpers
+// =========================================================================
+
+// stripFirstHeader removes the first # header and any immediately following blank lines.
+func stripFirstHeader(instructions string) string {
+	lines := strings.Split(instructions, "\n")
+	startIdx := 0
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+			startIdx = i + 1
+			break
+		}
+	}
+
+	// Skip blank lines after header
+	for startIdx < len(lines) && strings.TrimSpace(lines[startIdx]) == "" {
+		startIdx++
+	}
+
+	if startIdx > 0 && startIdx < len(lines) {
+		return strings.Join(lines[startIdx:], "\n")
+	}
+	return instructions
+}
+
+// escapeYAMLString escapes a string for use as a YAML double-quoted scalar value.
+func escapeYAMLString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }
 
 // copyFile copies a file from src to dst.

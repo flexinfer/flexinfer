@@ -20,13 +20,16 @@ type Profile struct {
 	// This is important for profiles whose HomeDir points at large application
 	// directories (e.g. VS Code/Claude Desktop) where we only manage mcp.json.
 	SyncGeneratedOnly bool
+	SkillsTarget      string // Target name for skills generator (mirrors GeneratorTarget)
+	SkillsManifest    string // Filename of skills manifest (e.g., ".loom-skills-manifest.json")
 }
 
 // Manager handles synchronization operations.
 type Manager struct {
-	RepoRoot string
-	HomeDir  string
-	Profiles map[string]*Profile
+	RepoRoot   string
+	HomeDir    string
+	Profiles   map[string]*Profile
+	SkipSkills bool // When true, skip skills generation during Regenerate
 }
 
 // NewManager creates a new sync manager.
@@ -58,6 +61,8 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "codex",
 		GeneratedFile:     "config.toml",
 		SyncGeneratedOnly: true,
+		SkillsTarget:      "codex",
+		SkillsManifest:    ".loom-skills-manifest.json",
 	}
 
 	m.Profiles["kilocode"] = &Profile{
@@ -69,6 +74,8 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "kilocode",
 		GeneratedFile:     "config.toml",
 		SyncGeneratedOnly: true,
+		SkillsTarget:      "kilocode",
+		SkillsManifest:    ".loom-skills-manifest.json",
 	}
 
 	m.Profiles["claude"] = &Profile{
@@ -80,6 +87,8 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "claude", // Uses mcp.json format (same as vscode)
 		GeneratedFile:     "mcp.json",
 		SyncGeneratedOnly: true,
+		SkillsTarget:      "claude",
+		SkillsManifest:    ".loom-skills-manifest.json",
 	}
 
 	m.Profiles["claude_desktop"] = &Profile{
@@ -102,6 +111,8 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "gemini",
 		GeneratedFile:     "config.toml",
 		SyncGeneratedOnly: true,
+		SkillsTarget:      "gemini",
+		SkillsManifest:    ".loom-skills-manifest.json",
 	}
 
 	m.Profiles["antigravity"] = &Profile{

@@ -9,6 +9,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/skills"
 	"github.com/crb2nu/loom/pkg/validator"
 )
 
@@ -103,6 +104,32 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
+	// Sync skill files from manifest
+	if p.SkillsManifest != "" {
+		manifest, _ := skills.ReadManifest(repoPath)
+		if manifest != nil && len(manifest.Generated) > 0 {
+			for _, relPath := range manifest.Generated {
+				srcFile := filepath.Join(repoPath, relPath)
+				dstFile := filepath.Join(homePath, relPath)
+				if Exists(srcFile) {
+					if err := os.MkdirAll(filepath.Dir(dstFile), 0755); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: could not create dir for skill file %s: %v\n", relPath, err)
+						continue
+					}
+					if err := CopyFile(srcFile, dstFile); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: could not sync skill file %s: %v\n", relPath, err)
+					}
+				}
+			}
+			// Also copy the manifest itself
+			manifestSrc := filepath.Join(repoPath, skills.ManifestFilename)
+			if Exists(manifestSrc) {
+				CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename))
+			}
+			fmt.Printf("Synced %d skill files for %s\n", len(manifest.Generated), p.Name)
+		}
+	}
+
 	// Also copy to workspace directory if specified (e.g., .vscode/ for local MCP config)
 	if p.WorkspaceDir != "" {
 		workspacePath := filepath.Join(m.RepoRoot, p.WorkspaceDir)
@@ -186,7 +213,115 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 	}
 
 	fmt.Printf("Updated %s\n", destFile)
+
+	// Generate skills if the profile has a skills target (unless SkipSkills is set)
+	if p.SkillsTarget != "" && !m.SkipSkills {
+		if err := m.regenerateSkills(p); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skills generation failed for %s: %v\n", p.Name, err)
+		}
+	}
+
 	return nil
+}
+
+// regenerateSkills generates skill files for a profile from the skills registry.
+func (m *Manager) regenerateSkills(p *Profile) error {
+	skillsRegPath := discoverSkillsRegistryPath(m.RepoRoot)
+	if skillsRegPath == "" {
+		return nil // No skills registry found, skip silently
+	}
+
+	repoPath := m.ResolveRepoPath(p)
+	fmt.Printf("Generating skills for %s from %s...\n", p.Name, skillsRegPath)
+
+	gen, err := skills.NewGenerator(skills.GeneratorOptions{
+		RegistryPath:  skillsRegPath,
+		Target:        p.SkillsTarget,
+		RepoRoot:      m.RepoRoot,
+		WorkspaceRoot: m.RepoRoot,
+	})
+	if err != nil {
+		return fmt.Errorf("create skills generator: %w", err)
+	}
+
+	if err := gen.Generate(); err != nil {
+		return fmt.Errorf("generate skills: %w", err)
+	}
+
+	// Count generated files from manifest
+	manifest, _ := skills.ReadManifest(repoPath)
+	if manifest != nil {
+		fmt.Printf("Generated %d skill files for %s\n", len(manifest.Generated), p.Name)
+	}
+
+	return nil
+}
+
+// SyncSkills generates and syncs skill files for a profile.
+func (m *Manager) SyncSkills(profileName string) error {
+	p, err := m.GetProfile(profileName)
+	if err != nil {
+		return err
+	}
+	if p.SkillsTarget == "" {
+		return fmt.Errorf("profile %s does not have a skills target", profileName)
+	}
+
+	// Generate skills
+	if err := m.regenerateSkills(p); err != nil {
+		return err
+	}
+
+	// Sync skill files from repo to home
+	repoPath := m.ResolveRepoPath(p)
+	homePath := m.ResolveHomePath(p)
+
+	manifest, _ := skills.ReadManifest(repoPath)
+	if manifest == nil || len(manifest.Generated) == 0 {
+		fmt.Println("No skill files to sync")
+		return nil
+	}
+
+	for _, relPath := range manifest.Generated {
+		srcFile := filepath.Join(repoPath, relPath)
+		dstFile := filepath.Join(homePath, relPath)
+		if Exists(srcFile) {
+			if err := os.MkdirAll(filepath.Dir(dstFile), 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not create dir for %s: %v\n", relPath, err)
+				continue
+			}
+			if err := CopyFile(srcFile, dstFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not sync %s: %v\n", relPath, err)
+			}
+		}
+	}
+
+	// Copy manifest
+	manifestSrc := filepath.Join(repoPath, skills.ManifestFilename)
+	if Exists(manifestSrc) {
+		CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename))
+	}
+
+	fmt.Printf("Synced %d skill files for %s\n", len(manifest.Generated), profileName)
+	return nil
+}
+
+// discoverSkillsRegistryPath locates the skills-registry.yaml file.
+func discoverSkillsRegistryPath(repoRoot string) string {
+	candidates := []string{
+		filepath.Join(repoRoot, "mcp", "context", "skills-registry.yaml"),
+		filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "skills-registry.yaml"),
+	}
+	for _, candidate := range candidates {
+		if Exists(candidate) {
+			return candidate
+		}
+	}
+	// Try the skills package finder as fallback
+	if path, found := skills.FindRegistry(); found {
+		return path
+	}
+	return ""
 }
 
 // PullFromHome pulls configuration from home directory to repo.

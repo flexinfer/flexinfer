@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/skills"
 )
 
 // DriftStatus indicates the sync state of a file.
@@ -96,6 +98,17 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 		if item.Status != DriftInSync {
 			status.InSync = false
 			break
+		}
+	}
+
+	// Check skill files for drift via manifest
+	if profile.SkillsManifest != "" {
+		skillDrift := compareSkillFiles(repoPath, homePath, profile)
+		status.DriftDetails = append(status.DriftDetails, skillDrift...)
+		for _, item := range skillDrift {
+			if item.Status != DriftInSync {
+				status.InSync = false
+			}
 		}
 	}
 
@@ -232,6 +245,42 @@ func hashFile(path string) (string, error) {
 	}
 
 	return hex.EncodeToString(h.Sum(nil)[:8]), nil
+}
+
+// compareSkillFiles checks drift for all files listed in the skills manifest.
+func compareSkillFiles(repoPath, homePath string, profile *Profile) []DriftItem {
+	manifest, _ := skills.ReadManifest(repoPath)
+	if manifest == nil || len(manifest.Generated) == 0 {
+		return nil
+	}
+
+	var items []DriftItem
+	for _, relPath := range manifest.Generated {
+		repoFile := filepath.Join(repoPath, relPath)
+		homeFile := filepath.Join(homePath, relPath)
+
+		repoExists := Exists(repoFile)
+		homeExists := Exists(homeFile)
+
+		switch {
+		case repoExists && !homeExists:
+			repoHash, _ := hashFile(repoFile)
+			items = append(items, DriftItem{File: relPath, RepoHash: repoHash, Status: DriftMissing})
+		case !repoExists && homeExists:
+			homeHash, _ := hashFile(homeFile)
+			items = append(items, DriftItem{File: relPath, HomeHash: homeHash, Status: DriftExtra})
+		case repoExists && homeExists:
+			repoHash, _ := hashFile(repoFile)
+			homeHash, _ := hashFile(homeFile)
+			if repoHash != homeHash {
+				items = append(items, DriftItem{File: relPath, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync})
+			} else {
+				items = append(items, DriftItem{File: relPath, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
+			}
+		}
+	}
+
+	return items
 }
 
 func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftItem {

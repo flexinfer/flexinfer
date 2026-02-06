@@ -46,6 +46,7 @@ type Script struct {
 type TargetSpec struct {
 	Enabled      *bool  `yaml:"enabled,omitempty"`
 	OutputFormat string `yaml:"output_format,omitempty"` // "markdown" for Claude
+	Type         string `yaml:"type,omitempty"`          // "command", "skill", "rule", "instruction", "workflow"
 }
 
 // Load reads and parses a skills registry YAML file.
@@ -130,6 +131,30 @@ func (s *Skill) GetOutputFormat(target string) string {
 	return spec.OutputFormat
 }
 
+// GetType returns the output type for a target, using platform-specific defaults.
+// Default types: claude → "command", codex → "skill", kilocode → "rule", gemini → "instruction".
+func (s *Skill) GetType(target string) string {
+	if s.Targets != nil {
+		if spec, ok := s.Targets[target]; ok && spec.Type != "" {
+			return spec.Type
+		}
+	}
+
+	// Platform-specific defaults
+	switch target {
+	case "claude":
+		return "command"
+	case "codex":
+		return "skill"
+	case "kilocode":
+		return "rule"
+	case "gemini":
+		return "instruction"
+	default:
+		return "skill"
+	}
+}
+
 // ResolveInstructions replaces template variables in instructions.
 // Supported variables:
 // - ${SKILL_PATH}: Path to skill directory (Codex: $CODEX_HOME/skills/<name>, Claude: direct paths)
@@ -146,6 +171,12 @@ func (s *Skill) ResolveInstructions(target, codexHome, skillSourceDir string) st
 		instructions = strings.ReplaceAll(instructions, "${CODEX_HOME}", "$CODEX_HOME")
 	case "claude":
 		// For Claude, use actual paths since it doesn't have a skill home concept
+		instructions = strings.ReplaceAll(instructions, "${SKILL_PATH}", skillSourceDir)
+	case "kilocode":
+		// For Kilocode, use actual paths (similar to Claude)
+		instructions = strings.ReplaceAll(instructions, "${SKILL_PATH}", skillSourceDir)
+	case "gemini":
+		// For Gemini, use actual paths (similar to Claude)
 		instructions = strings.ReplaceAll(instructions, "${SKILL_PATH}", skillSourceDir)
 	}
 
