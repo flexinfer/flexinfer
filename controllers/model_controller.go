@@ -793,8 +793,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 						}
 						return nil
 					}(),
-					RestartPolicy:      corev1.RestartPolicyAlways,
-					ServiceAccountName: "default",
+					// Model pods do not need to talk to the Kubernetes API. Avoid mounting a service
+					// account token by default to reduce blast radius if a backend container is compromised.
+					AutomountServiceAccountToken: ptr.To(false),
+					RestartPolicy:                corev1.RestartPolicyAlways,
+					ServiceAccountName:           "default",
 				},
 			},
 		},
@@ -1875,9 +1878,10 @@ echo "Download complete."
 			BackoffLimit: ptr.To(int32(3)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					NodeSelector:  nodeSelector,
-					Tolerations:   tolerations,
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
 					Containers: []corev1.Container{{
 						Name:    "downloader",
 						Image:   image,
@@ -1976,9 +1980,10 @@ echo "Artifact present at file $TARGET"
 			BackoffLimit: ptr.To(int32(0)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					NodeSelector:  nodeSelector,
-					Tolerations:   tolerations,
+					RestartPolicy:                corev1.RestartPolicyNever,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
 					Containers: []corev1.Container{{
 						Name:    "checker",
 						Image:   "alpine:3.19",
@@ -2088,9 +2093,10 @@ echo "Copy complete."
 			BackoffLimit: ptr.To(int32(1)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					NodeSelector:  nodeSelector,
-					Tolerations:   tolerations,
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
 					Containers: []corev1.Container{{
 						Name:    "copier",
 						Image:   "alpine:3.20",

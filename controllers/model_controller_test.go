@@ -345,6 +345,9 @@ func TestEnsureDeploymentCPUDoesNotRequestGPU(t *testing.T) {
 	if podSpec.RuntimeClassName != nil {
 		t.Fatalf("RuntimeClassName = %v, want nil", *podSpec.RuntimeClassName)
 	}
+	if podSpec.AutomountServiceAccountToken == nil || *podSpec.AutomountServiceAccountToken {
+		t.Fatalf("AutomountServiceAccountToken = %v, want false", podSpec.AutomountServiceAccountToken)
+	}
 	for _, tol := range podSpec.Tolerations {
 		if tol.Key == "dedicated" && tol.Value == "gpu" {
 			t.Fatalf("unexpected GPU toleration: %#v", tol)
