@@ -186,6 +186,7 @@ build_benchmarker:
 publish:
   stage: publish
   image: moby/buildkit:v0.12.5
+  timeout: 2h
   before_script:
     - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
   script:
