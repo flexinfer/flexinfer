@@ -44,6 +44,53 @@ cp -f bin/loomd ~/.local/bin/loomd
    - `./bin/loom generate configs --target all`
    - `./bin/loom sync all --regen`
 
+## Observability
+
+### Tracing
+
+MCP servers use `pkg/mcpotel` for OpenTelemetry tracing. To enable locally:
+
+```bash
+# Start a local Jaeger instance
+docker run -d --name jaeger -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
+
+# Set the OTLP endpoint before starting the daemon
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# Start daemon — traces appear at http://localhost:16686
+./bin/loomd --debug
+```
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, tracing is a noop with zero overhead.
+
+Servers with tracing: `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, `mcp-prometheus`.
+
+### Adding tracing to a new MCP server
+
+```go
+import "github.com/crb2nu/loom/pkg/mcpotel"
+
+// After logger creation:
+tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-myserver", logger)
+if err != nil { logger.Warn("OTel tracer init failed", "error", err) }
+defer func() { _ = shutdownTracer(ctx) }()
+tracer := mcpotel.Tracer(tp, "mcp-myserver")
+
+// Wrap each tool handler:
+server.AddTool(tool, mcpotel.TracedToolHandler(tracer, "tool_name", handler))
+```
+
+### Metrics (agent-context)
+
+`mcp-agent-context` exposes internal metrics via the `agent_context_stats` tool. Counters track sessions, embedding calls, recall hit rates, graph operations, workflows, and per-tier memory usage.
+
+### Running observability tests
+
+```bash
+go test ./pkg/mcpotel/... -v -count=1 -race
+go test ./pkg/agentcontext/... -v -count=1 -run TestMetrics
+```
+
 ## Debugging
 
 - Run daemon in foreground for interactive debugging: `./bin/loomd --debug`

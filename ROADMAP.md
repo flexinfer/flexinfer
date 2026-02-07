@@ -31,6 +31,9 @@ Production hardening and remote access:
 - [x] **SSH Tunnel Manager**: TunnelManager for remote K8s access via SSH tunnels.
 - [x] **CLI Tunnel Commands**: `loom tunnel status` for monitoring tunnel health.
 - [x] **Enhanced Health Endpoint**: `/health` returns detailed JSON with per-server status.
+- [x] **OpenTelemetry Tracing**: `pkg/mcpotel` middleware across `mcp-agent-context`, `mcp-git`, `mcp-prometheus`, `mcp-gitlab`.
+- [x] **Metrics Wiring**: Agent-context atomic counters (sessions, recall, embeddings, graph, workflows, memory tiers) wired into handlers.
+- [x] **Error Visibility**: ~20 silent error drops replaced with structured `logger.Warn()` calls.
 - [ ] **Response Caching**: TTL-based caching for read-only tool results.
 - [ ] **Test Coverage**: Target 60%+ on critical paths.
 - [ ] **Platform Expansion**: Core servers on all platforms (Claude, Gemini, Codex).

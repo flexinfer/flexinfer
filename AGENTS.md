@@ -351,6 +351,26 @@ logger := mcplog.NewDefault()  // Respects MCP_DEBUG env var
 logger.Info("starting server", "name", serverName, "version", version)
 ```
 
+### `pkg/mcpotel` - OpenTelemetry Tracing
+```go
+import "github.com/crb2nu/loom/pkg/mcpotel"
+
+// Initialize tracer (noop when OTEL_EXPORTER_OTLP_ENDPOINT is unset)
+tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-myserver", logger)
+if err != nil { logger.Warn("OTel tracer init failed", "error", err) }
+defer func() { _ = shutdownTracer(ctx) }()
+tracer := mcpotel.Tracer(tp, "mcp-myserver")
+
+// Wrap tool handlers with tracing middleware
+server.AddTool(tool, mcpotel.TracedToolHandler(tracer, "tool_name", handler))
+```
+
+The middleware automatically:
+- Creates a span per tool call with tool name and arguments
+- Extracts `agent_id`, `session_id`, `namespace` from args as span attributes
+- Records errors and sets span status on failure
+- Compatible with Jaeger, Langfuse, and any OTLP-compatible collector
+
 Agent Tips
 
 - Tool-call deadlines: many clients time out around ~60s; prefer bounded operations and use `tail` for logs.

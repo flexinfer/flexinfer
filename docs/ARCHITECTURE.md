@@ -103,11 +103,55 @@ flowchart TB
   Sync --> Reload --> Daemon
 ```
 
+## Observability
+
+```mermaid
+flowchart LR
+  subgraph MCPServers[MCP Servers]
+    Git["mcp-git"]
+    GL["mcp-gitlab"]
+    Prom["mcp-prometheus"]
+    AC["mcp-agent-context"]
+    Others["mcp-*"]
+  end
+
+  subgraph Observability
+    Logs["Structured Logs<br/>(slog/JSON)"]
+    Traces["OTel Traces<br/>(pkg/mcpotel)"]
+    Metrics["Prometheus Metrics<br/>(atomic counters)"]
+  end
+
+  subgraph Backends
+    Loki["Loki"]
+    Jaeger["Jaeger / Langfuse"]
+    PromBE["Prometheus"]
+  end
+
+  Git & GL & Prom & AC & Others -->|slog| Logs --> Loki
+  Git & GL & Prom & AC & Others -->|OTLP gRPC| Traces --> Jaeger
+  AC -->|/metrics| Metrics --> PromBE
+```
+
+### Tracing (`pkg/mcpotel`)
+
+All MCP servers use `TracedToolHandler` middleware to create per-tool-call spans. The tracer initializes as a noop when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so tracing adds zero overhead by default. Spans include `agent_id`, `session_id`, and `namespace` attributes when present in tool arguments.
+
+Servers with tracing: `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, `mcp-prometheus`.
+
+### Metrics (`pkg/agentcontext`)
+
+`mcp-agent-context` maintains atomic counters for sessions, embedding calls, recall hit/miss rates, graph operations, workflows, compression, and per-tier memory items. The `agent_context_stats` tool returns a live snapshot. Prometheus-format export is available via `PrometheusFormat()`.
+
+### Logging (`pkg/mcplog`)
+
+All servers use `slog`-based structured logging. Error paths log warnings with contextual fields (IDs, operation names, error details) rather than silently discarding errors.
+
 ## Reliability and safety design notes
 
 - **Stdio concurrency**: requests to local stdio-backed MCP servers are serialized per-server in `loomd` to avoid transport corruption (stdio is a single shared byte stream).
 - **Pagination + bounded output**: list/search tools in API-backed MCPs expose `page`/`per_page` and return pagination metadata; large responses are capped to avoid client timeouts and OOMs.
 - **Secrets hygiene**: generated configs are validated for plaintext secrets (`loom validate configs`); registry values should use `${env:...}` / `${secret:...}` indirections.
+- **Best-effort error handling**: Internal cleanup operations (compaction, TTL sweeps, rollbacks) log failures as warnings but do not abort the parent operation. This prevents cascading failures while keeping errors visible.
 
 ## Diagram sources
 

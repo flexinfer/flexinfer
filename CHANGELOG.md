@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - API stability documentation in `docs/API_STABILITY.md`
+- **OpenTelemetry tracing** across `mcp-git`, `mcp-prometheus`, and `mcp-gitlab` via `pkg/mcpotel` (noop when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset)
+- Test suites for `pkg/mcpotel` (tracer init, middleware, span attributes)
+- Metrics unit tests for `pkg/agentcontext` (counters, histogram, Prometheus format)
+- Metrics wiring in `mcp-agent-context`: sessions, recall, embeddings, graph, workflows, and memory tier counters now increment; `agent_context_stats` includes metrics snapshot
+
+### Fixed
+- ~20 silent error drops (`_ = err`) replaced with `logger.Warn()` across agent-context subsystems (compaction, workflow rollback, file claims, codebase sync, memory export, worktree prune)
 
 ## [0.9.0] - 2026-02-01
 
