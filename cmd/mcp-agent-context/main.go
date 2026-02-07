@@ -10,6 +10,7 @@ import (
 	"github.com/crb2nu/loom/pkg/agentcontext"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 var version = "1.0.0"
@@ -24,7 +25,17 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
-	svc, err := agentcontext.NewServiceFromEnv()
+	// Initialize OTel tracing (noop when OTEL_EXPORTER_OTLP_ENDPOINT is unset).
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-agent-context", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed, continuing without tracing", "error", err)
+	}
+	defer shutdownTracer(ctx)
+
+	svc, err := agentcontext.NewServiceFromEnv(
+		agentcontext.WithLogger(logger),
+		agentcontext.WithTracer(tp),
+	)
 	if err != nil {
 		logger.Error("Failed to initialize service", "error", err)
 		return err
@@ -72,7 +83,8 @@ Typical workflow:
 
 Heartbeat interval: Send heartbeats every 30-60 seconds. Agents are marked offline after 120s of no heartbeat.`)
 
-	registerTools(server, svc)
+	tracer := mcpotel.Tracer(tp, "mcp-agent-context")
+	registerTools(server, svc, tracer)
 
 	return server.Run(ctx)
 }

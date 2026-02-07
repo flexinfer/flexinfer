@@ -3,6 +3,8 @@ package agentcontext
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,18 @@ import (
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 )
+
+// toPointID converts an arbitrary string ID to a valid qdrant point ID (UUID format).
+// Qdrant only accepts unsigned integers or UUIDs as point IDs, but our internal IDs
+// are 16-char hex strings (from GenerateID) or prefixed strings like "rc_...".
+// This deterministic conversion ensures the same input always maps to the same UUID.
+func toPointID(id string) string {
+	h := sha256.Sum256([]byte(id))
+	h[6] = (h[6] & 0x0f) | 0x50 // UUID version 5
+	h[8] = (h[8] & 0x3f) | 0x80 // RFC 4122 variant
+	s := hex.EncodeToString(h[:16])
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}
 
 // dummyRelationsVector is used for relations that don't need embeddings
 var dummyRelationsVector = []float64{0, 0, 0, 0}
@@ -189,8 +203,12 @@ func (c *QdrantClient) Delete(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	uuids := make([]string, len(ids))
+	for i, id := range ids {
+		uuids[i] = toPointID(id)
+	}
 	path := fmt.Sprintf("/collections/%s/points/delete", c.collection)
-	body := map[string]any{"points": ids}
+	body := map[string]any{"points": uuids}
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
 
@@ -204,10 +222,14 @@ func (c *QdrantClient) SetPayload(ctx context.Context, ids []string, payload map
 	if len(ids) == 0 {
 		return nil
 	}
+	uuids := make([]string, len(ids))
+	for i, id := range ids {
+		uuids[i] = toPointID(id)
+	}
 	path := fmt.Sprintf("/collections/%s/points/payload?wait=%v", c.collection, wait)
 	body := map[string]any{
 		"payload": payload,
-		"points":  ids,
+		"points":  uuids,
 	}
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
@@ -217,7 +239,7 @@ func (c *QdrantClient) GetPoint(ctx context.Context, id string, withVector bool)
 		return RawPoint{}, fmt.Errorf("id is required")
 	}
 
-	path := fmt.Sprintf("/collections/%s/points/%s?with_payload=true&with_vector=%v", c.collection, id, withVector)
+	path := fmt.Sprintf("/collections/%s/points/%s?with_payload=true&with_vector=%v", c.collection, toPointID(id), withVector)
 	var resp struct {
 		Result struct {
 			ID      string         `json:"id"`
@@ -631,7 +653,7 @@ func pointsToJSON(points []Point) []map[string]any {
 	out := make([]map[string]any, 0, len(points))
 	for _, p := range points {
 		out = append(out, map[string]any{
-			"id":      p.ID,
+			"id":      toPointID(p.ID),
 			"vector":  p.Vector,
 			"payload": p.Payload,
 		})

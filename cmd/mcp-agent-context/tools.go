@@ -6,9 +6,17 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/agentcontext"
+	"github.com/crb2nu/loom/pkg/mcpotel"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
-func registerTools(server *mcp.Server, svc *agentcontext.Service) {
+// traced wraps a handler with OTel tracing. The span is named after the tool.
+func traced(tracer trace.Tracer, name string, h mcp.ToolHandler) mcp.ToolHandler {
+	return mcpotel.TracedToolHandler(tracer, name, h)
+}
+
+func registerTools(server *mcp.Server, svc *agentcontext.Service, tracer trace.Tracer) {
 	// Session Management Tools
 
 	server.AddTool(mcp.Tool{
@@ -39,9 +47,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_session_start", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleSessionStart(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_session_end",
@@ -64,19 +72,19 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"session_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_session_end", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleSessionEnd(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_session_list",
-		Description: "List sessions for an agent, optionally filtered by namespace or status.",
+		Description: "List sessions, optionally filtered by agent, namespace, or status. Omit agent_id to list sessions from all agents.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
 				"agent_id": map[string]any{
 					"type":        "string",
-					"description": "Agent ID to list sessions for.",
+					"description": "Agent ID to filter by. Omit to list all agents' sessions.",
 				},
 				"namespace": map[string]any{
 					"type":        "string",
@@ -92,7 +100,6 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 					"description": "Maximum sessions to return (default: 20).",
 				},
 			},
-			Required: []string{"agent_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleSessionList(ctx, args)
@@ -167,9 +174,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"session_id", "entries"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_context_add", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleContextAdd(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_context_get",
@@ -260,9 +267,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"query"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_context_search", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleContextSearch(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_context_recall",
@@ -301,9 +308,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"query"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_context_recall", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleContextRecall(ctx, args)
-	})
+	}))
 
 	// Cross-Agent Coordination Tools
 
@@ -388,9 +395,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"session_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_context_summarize", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleContextSummarize(ctx, args)
-	})
+	}))
 
 	// Codebase Integration Tool
 
@@ -705,9 +712,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"session_id", "target_agent_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_handoff_create", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleHandoffCreate(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_handoff_accept",
@@ -730,9 +737,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"handoff_id", "session_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_handoff_accept", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleHandoffAccept(ctx, args)
-	})
+	}))
 
 	// =========================================================================
 	// Session Template Tools
@@ -849,9 +856,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"query"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_context_recall_enhanced", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleEnhancedRecall(ctx, args)
-	})
+	}))
 
 	// =========================================================================
 	// Workflow Orchestration Tools
@@ -999,9 +1006,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"definition_id", "session_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_workflow_start", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleWorkflowStart(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_workflow_status",
@@ -1234,9 +1241,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"entities"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_entity_add", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleEntityAdd(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_entity_get",
@@ -1470,9 +1477,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_graph_query", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleGraphQuery(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_graph_find_path",
@@ -1689,9 +1696,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			},
 			Required: []string{"items"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_memory_add", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleMemoryAdd(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_memory_get",
@@ -1762,9 +1769,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_memory_recall", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleMemoryRecall(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_memory_delete",
@@ -2428,9 +2435,9 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, traced(tracer, "agent_compaction_trigger", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleCompactionTrigger(ctx, args)
-	})
+	}))
 
 	// =========================================================================
 	// Handoff Inbox Tools

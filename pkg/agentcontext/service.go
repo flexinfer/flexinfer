@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -15,12 +15,30 @@ import (
 	"github.com/crb2nu/loom/pkg/codebase/embed"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/validate"
+
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const sessionsVectorSize = 4
 
+// ServiceOption configures a Service.
+type ServiceOption func(*Service)
+
+// WithLogger sets the structured logger for the service.
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) { s.logger = logger }
+}
+
+// WithTracer sets the OpenTelemetry TracerProvider for the service.
+func WithTracer(tp trace.TracerProvider) ServiceOption {
+	return func(s *Service) { s.tracer = tp.Tracer("agentcontext") }
+}
+
 type Service struct {
-	cfg Config
+	cfg    Config
+	logger *slog.Logger
+	tracer trace.Tracer
 
 	contextQdrant     *QdrantClient
 	sessionsQdrant    *QdrantClient
@@ -80,7 +98,12 @@ type Service struct {
 	bgCancel            context.CancelFunc
 }
 
-func NewServiceFromEnv() (*Service, error) {
+// Tracer returns the service's OTel tracer. Returns a noop tracer if none was configured.
+func (s *Service) Tracer() trace.Tracer {
+	return s.tracer
+}
+
+func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		return nil, err
@@ -149,13 +172,24 @@ func NewServiceFromEnv() (*Service, error) {
 		WorkflowDefsQdrant: svc.workflowDefsQdrant,
 	})
 
+	// Apply functional options and set defaults.
+	for _, opt := range opts {
+		opt(svc)
+	}
+	if svc.logger == nil {
+		svc.logger = slog.Default()
+	}
+	if svc.tracer == nil {
+		svc.tracer = noop.NewTracerProvider().Tracer("agentcontext")
+	}
+
 	// Initialize compaction scheduler
 	compactionConfig := DefaultCompactionConfig()
 	compactionConfig.Enabled = cfg.CompactionEnabled
 	if cfg.CompactionCheckInterval > 0 {
 		compactionConfig.CheckInterval = time.Duration(cfg.CompactionCheckInterval) * time.Second
 	}
-	svc.compactionScheduler = NewCompactionScheduler(compactionConfig, svc.memoryHierarchy, nil)
+	svc.compactionScheduler = NewCompactionScheduler(compactionConfig, svc.memoryHierarchy, nil, svc.logger)
 
 	// Initialize memory exporter/importer
 	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
@@ -164,7 +198,7 @@ func NewServiceFromEnv() (*Service, error) {
 	// Load persisted state on startup (best-effort)
 	ctx := context.Background()
 	if err := svc.loadPersistedState(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load persisted state: %v\n", err)
+		svc.logger.Warn("failed to load persisted state", "error", err)
 	}
 
 	return svc, nil
@@ -174,43 +208,43 @@ func NewServiceFromEnv() (*Service, error) {
 func (s *Service) loadPersistedState(ctx context.Context) error {
 	// Load sessions
 	if err := s.loadSessionsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load sessions: %v\n", err)
+		s.logger.Warn("failed to load sessions", "error", err)
 	}
 
 	// Load knowledge graph
 	if err := s.persistedKnowledgeGraph.LoadGraphFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load knowledge graph: %v\n", err)
+		s.logger.Warn("failed to load knowledge graph", "error", err)
 	}
 	if err := s.persistedKnowledgeGraph.LoadReasoningChainsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load reasoning chains: %v\n", err)
+		s.logger.Warn("failed to load reasoning chains", "error", err)
 	}
 
 	// Load memory hierarchy
 	if err := s.persistedMemoryHierarchy.LoadMemoryFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load memory hierarchy: %v\n", err)
+		s.logger.Warn("failed to load memory hierarchy", "error", err)
 	}
 
 	// Load workflows and definitions
 	if err := s.persistedWorkflowEngine.LoadWorkflowsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load workflows: %v\n", err)
+		s.logger.Warn("failed to load workflows", "error", err)
 	}
 	if err := s.persistedWorkflowEngine.LoadDefinitionsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load workflow definitions: %v\n", err)
+		s.logger.Warn("failed to load workflow definitions", "error", err)
 	}
 
 	// Load presence registry
 	if err := s.loadPresenceFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load presence: %v\n", err)
+		s.logger.Warn("failed to load presence", "error", err)
 	}
 
 	// Load file claims
 	if err := s.loadFileClaimsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load file claims: %v\n", err)
+		s.logger.Warn("failed to load file claims", "error", err)
 	}
 
 	// Load worktree assignments
 	if err := s.loadWorktreeAssignmentsFromQdrant(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load worktree assignments: %v\n", err)
+		s.logger.Warn("failed to load worktree assignments", "error", err)
 	}
 
 	return nil
@@ -237,7 +271,7 @@ func (s *Service) loadSessionsFromQdrant(ctx context.Context) error {
 	}
 
 	if loaded > 0 {
-		fmt.Fprintf(os.Stderr, "info: restored %d active sessions from Qdrant\n", loaded)
+		s.logger.Info("restored active sessions", "count", loaded)
 	}
 	return nil
 }
@@ -246,6 +280,11 @@ func (s *Service) loadSessionsFromQdrant(ctx context.Context) error {
 func (s *Service) StartBackgroundServices(ctx context.Context) {
 	bgCtx, cancel := context.WithCancel(ctx)
 	s.bgCancel = cancel
+
+	s.logger.Info("starting background services",
+		"compaction_enabled", s.cfg.CompactionEnabled,
+		"presence_cleanup_interval_s", s.cfg.PresenceCleanupInterval,
+	)
 
 	// Start compaction scheduler
 	if s.compactionScheduler != nil && s.cfg.CompactionEnabled {
@@ -258,6 +297,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 
 // StopBackgroundServices stops all background goroutines
 func (s *Service) StopBackgroundServices() {
+	s.logger.Info("stopping background services")
 	if s.compactionScheduler != nil {
 		s.compactionScheduler.Stop()
 	}
@@ -652,7 +692,7 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 	// Best-effort persist - don't fail the add operation
 	if err := s.persistSession(ctx, session); err != nil {
 		// Log to stderr since we can't add to the result at this point
-		fmt.Fprintf(os.Stderr, "warning: persist session stats failed: %v\n", err)
+		s.logger.Warn("persist session stats failed", "error", err)
 	}
 
 	// Check for auto-summarization
@@ -1354,7 +1394,12 @@ func (s *Service) maybeAutoSummarize(ctx context.Context, session *Session) {
 		go func() {
 			bg, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
-			_ = s.generateSummary(bg, session)
+			if err := s.generateSummary(bg, session); err != nil {
+				s.logger.Warn("auto-summarize failed",
+					"session_id", session.ID,
+					"error", err,
+				)
+			}
 		}()
 	}
 }

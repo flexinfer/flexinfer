@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	mcp "gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // AgentBridge wraps agent-context tool calls, routing them through the daemon's
@@ -80,8 +82,8 @@ type WorkflowDetail struct {
 
 // MemoryTierStats describes statistics for a single memory tier.
 type MemoryTierStats struct {
-	Items  int `json:"items"`
-	Tokens int `json:"tokens"`
+	Items  int `json:"item_count"`
+	Tokens int `json:"token_count"`
 }
 
 // MemoryStatsResult holds the full memory hierarchy statistics.
@@ -104,10 +106,10 @@ type MemoryItem struct {
 
 // GraphStatsResult holds knowledge graph statistics.
 type GraphStatsResult struct {
-	EntityCount   int            `json:"entity_count"`
-	RelationCount int            `json:"relation_count"`
-	EntityTypes   map[string]int `json:"entity_types"`
-	RelationTypes map[string]int `json:"relation_types"`
+	EntityCount   int            `json:"total_entities"`
+	RelationCount int            `json:"total_relations"`
+	EntityTypes   map[string]int `json:"entities_by_type"`
+	RelationTypes map[string]int `json:"relations_by_type"`
 }
 
 // EntityInfo describes an entity in the knowledge graph.
@@ -136,17 +138,53 @@ type ContextEntry struct {
 
 // --- Helper to call an agent tool and unmarshal ---
 
-// callAgentTool invokes an agent_context tool and unmarshals the JSON response
-// into the provided target.
+// mcpContent represents an item in an MCP CallToolResult's content array.
+type mcpContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// mcpCallToolResult is the MCP envelope returned by tools/call.
+type mcpCallToolResult struct {
+	Content []mcpContent `json:"content"`
+}
+
+// callAgentTool invokes an agent_context tool and unmarshals the response
+// into the provided target. It unwraps the MCP CallToolResult envelope and
+// supports both JSON and TOON (Token-Optimized Object Notation) text payloads.
 func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target any) error {
 	raw, err := a.client.CallTool("agent_context__"+toolName, args)
 	if err != nil {
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
-	if target != nil {
-		if err := json.Unmarshal(raw, target); err != nil {
-			return fmt.Errorf("unmarshal %s result: %w", toolName, err)
+	if target == nil {
+		return nil
+	}
+
+	// Try to unwrap MCP content envelope first.
+	var envelope mcpCallToolResult
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Content) > 0 {
+		// Extract the text payload from the first content item.
+		for _, c := range envelope.Content {
+			if c.Type == "text" && c.Text != "" {
+				// Try JSON first, fall back to TOON.
+				if err := json.Unmarshal([]byte(c.Text), target); err != nil {
+					jsonBytes, toonErr := mcp.DecodeTOONToJSON(c.Text)
+					if toonErr != nil {
+						return fmt.Errorf("unmarshal %s text (json: %v, toon: %v)", toolName, err, toonErr)
+					}
+					if err := json.Unmarshal(jsonBytes, target); err != nil {
+						return fmt.Errorf("unmarshal %s decoded toon: %w", toolName, err)
+					}
+				}
+				return nil
+			}
 		}
+	}
+
+	// Fallback: try direct unmarshal (in case the daemon returns unwrapped JSON).
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
 	}
 	return nil
 }

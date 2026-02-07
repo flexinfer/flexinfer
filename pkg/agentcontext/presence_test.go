@@ -1,8 +1,11 @@
 package agentcontext
 
 import (
+	"log/slog"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func newTestPresence(agentID string, ttl int) *AgentPresence {
@@ -23,6 +26,8 @@ func newTestService() *Service {
 			PresenceHeartbeatTTL:    120,
 			PresenceCleanupInterval: 60,
 		},
+		logger:        slog.Default(),
+		tracer:        noop.NewTracerProvider().Tracer("test"),
 		presenceMap:   make(map[string]*AgentPresence),
 		fileClaims:    make(map[string]map[string]*FileClaim),
 		worktreeAssns: make(map[string]*WorktreeAssignment),

@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -58,6 +59,7 @@ type CompactionScheduler struct {
 	config    CompactionConfig
 	hierarchy *MemoryHierarchy
 	metrics   *Metrics
+	logger    *slog.Logger
 
 	// Compression function (LLM or fallback)
 	compressFunc func(ctx context.Context, content string) (string, error)
@@ -105,12 +107,17 @@ func NewCompactionScheduler(
 	config CompactionConfig,
 	hierarchy *MemoryHierarchy,
 	compressFunc func(ctx context.Context, content string) (string, error),
+	logger *slog.Logger,
 ) *CompactionScheduler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &CompactionScheduler{
 		config:       config,
 		hierarchy:    hierarchy,
 		compressFunc: compressFunc,
 		metrics:      GetMetrics(),
+		logger:       logger,
 		stopCh:       make(chan struct{}),
 	}
 }
@@ -175,7 +182,19 @@ func (cs *CompactionScheduler) runLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if cs.shouldCompact() {
-				_, _ = cs.runCompaction(ctx)
+				stats, err := cs.runCompaction(ctx)
+				if err != nil {
+					cs.logger.Warn("compaction run failed", "error", err)
+				} else if stats != nil {
+					cs.logger.Info("compaction run completed",
+						"items_processed", stats.ItemsProcessed,
+						"items_compressed", stats.ItemsCompressed,
+						"items_demoted", stats.ItemsDemoted,
+						"tokens_saved", stats.TokensSaved,
+						"errors", stats.Errors,
+						"duration", stats.Duration,
+					)
+				}
 			}
 		}
 	}

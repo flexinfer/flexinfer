@@ -301,6 +301,8 @@ func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 	s.presenceMu.RUnlock()
 
 	for _, agentID := range expired {
+		s.logger.Info("cleaning up expired agent presence", "agent_id", agentID)
+
 		s.presenceMu.Lock()
 		delete(s.presenceMap, agentID)
 		s.presenceMu.Unlock()
@@ -314,7 +316,9 @@ func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 		}
 
 		// Clean from Qdrant
-		_ = s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+		if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+			s.logger.Warn("failed to delete expired presence from Qdrant", "agent_id", agentID, "error", err)
+		}
 	}
 }
 
