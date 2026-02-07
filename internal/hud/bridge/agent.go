@@ -459,6 +459,346 @@ func (a *AgentBridge) CompactionStatus() (*CompactionInfo, error) {
 	return &result, nil
 }
 
+// --- CRUD methods (v2) ---
+
+// CreateTask creates a new task in a session.
+func (a *AgentBridge) CreateTask(sessionID, title, priority string, tags []string) error {
+	args := map[string]any{
+		"title":    title,
+		"priority": priority,
+	}
+	if sessionID != "" {
+		args["session_id"] = sessionID
+	}
+	if len(tags) > 0 {
+		args["tags"] = tags
+	}
+	return a.callAgentTool("agent_task_add", args, nil)
+}
+
+// UpdateTask updates a task's status and/or priority.
+func (a *AgentBridge) UpdateTask(id, status, priority string) error {
+	args := map[string]any{"task_id": id}
+	if status != "" {
+		args["status"] = status
+	}
+	if priority != "" {
+		args["priority"] = priority
+	}
+	return a.callAgentTool("agent_task_update", args, nil)
+}
+
+// MemoryAdd adds a new memory item.
+func (a *AgentBridge) MemoryAdd(title, content, tier, importance, category string) error {
+	args := map[string]any{
+		"title":   title,
+		"content": content,
+	}
+	if tier != "" {
+		args["tier"] = tier
+	}
+	if importance != "" {
+		args["importance"] = importance
+	}
+	if category != "" {
+		args["category"] = category
+	}
+	return a.callAgentTool("agent_memory_add", args, nil)
+}
+
+// MemoryDelete deletes a memory item by ID.
+func (a *AgentBridge) MemoryDelete(id string) error {
+	args := map[string]any{"id": id}
+	return a.callAgentTool("agent_memory_delete", args, nil)
+}
+
+// EntityAdd creates a new entity in the knowledge graph.
+func (a *AgentBridge) EntityAdd(name, entityType, namespace string, props map[string]any) error {
+	args := map[string]any{
+		"name":        name,
+		"entity_type": entityType,
+	}
+	if namespace != "" {
+		args["namespace"] = namespace
+	}
+	if len(props) > 0 {
+		args["properties"] = props
+	}
+	return a.callAgentTool("agent_entity_add", args, nil)
+}
+
+// EntityDelete deletes an entity by ID.
+func (a *AgentBridge) EntityDelete(id string) error {
+	args := map[string]any{"id": id}
+	return a.callAgentTool("agent_entity_delete", args, nil)
+}
+
+// EntityDetail describes a single entity with its relations.
+type EntityDetail struct {
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	EntityType        string         `json:"entity_type"`
+	Namespace         string         `json:"namespace,omitempty"`
+	Properties        map[string]any `json:"properties,omitempty"`
+	InboundRelations  []RelationInfo `json:"inbound_relations,omitempty"`
+	OutboundRelations []RelationInfo `json:"outbound_relations,omitempty"`
+}
+
+// RelationInfo describes a relation in the knowledge graph.
+type RelationInfo struct {
+	ID           string `json:"id"`
+	Source       string `json:"source"`
+	SourceName   string `json:"source_name,omitempty"`
+	Target       string `json:"target"`
+	TargetName   string `json:"target_name,omitempty"`
+	RelationType string `json:"relation_type"`
+}
+
+// EntityGet retrieves a single entity with its relations.
+func (a *AgentBridge) EntityGet(id string) (*EntityDetail, error) {
+	args := map[string]any{"id": id}
+	var result EntityDetail
+	if err := a.callAgentTool("agent_entity_get", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RelationAdd creates a relation between two entities.
+func (a *AgentBridge) RelationAdd(sourceID, targetID, relationType string) error {
+	args := map[string]any{
+		"source_id":     sourceID,
+		"target_id":     targetID,
+		"relation_type": relationType,
+	}
+	return a.callAgentTool("agent_relation_add", args, nil)
+}
+
+// RelationDelete deletes a relation by ID.
+func (a *AgentBridge) RelationDelete(id string) error {
+	args := map[string]any{"id": id}
+	return a.callAgentTool("agent_relation_delete", args, nil)
+}
+
+// GraphFindPath finds the shortest path between two entities.
+func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]EntityInfo, error) {
+	args := map[string]any{
+		"from_id": fromID,
+		"to_id":   toID,
+	}
+	if maxDepth > 0 {
+		args["max_depth"] = maxDepth
+	}
+	var result struct {
+		Path []EntityInfo `json:"path"`
+	}
+	if err := a.callAgentTool("agent_graph_find_path", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Path, nil
+}
+
+// SessionEntries returns context entries for a specific session.
+func (a *AgentBridge) SessionEntries(sessionID string, limit int) ([]ContextEntryInfo, error) {
+	args := map[string]any{
+		"session_id": sessionID,
+	}
+	if limit > 0 {
+		args["limit"] = limit
+	}
+	var result struct {
+		Results []ContextEntryInfo `json:"results"`
+	}
+	if err := a.callAgentTool("agent_context_search", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+// --- Reasoning chain methods ---
+
+// ReasoningChainInfo describes a reasoning chain.
+type ReasoningChainInfo struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Status      string  `json:"status"`
+	StepCount   int     `json:"step_count"`
+	Confidence  float64 `json:"confidence,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	CompletedAt string  `json:"completed_at,omitempty"`
+}
+
+// ReasoningStepInfo describes a step in a reasoning chain.
+type ReasoningStepInfo struct {
+	ID          string  `json:"id"`
+	Description string  `json:"description"`
+	Confidence  float64 `json:"confidence"`
+	Evidence    string  `json:"evidence,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+}
+
+// ReasoningChainDetail is a chain with its steps.
+type ReasoningChainDetail struct {
+	ReasoningChainInfo
+	Steps []ReasoningStepInfo `json:"steps"`
+}
+
+// ReasoningChainList returns all reasoning chains.
+func (a *AgentBridge) ReasoningChainList() ([]ReasoningChainInfo, error) {
+	var result struct {
+		Chains []ReasoningChainInfo `json:"chains"`
+	}
+	if err := a.callAgentTool("agent_reasoning_chain_list", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Chains, nil
+}
+
+// ReasoningChainGet returns a chain with its steps.
+func (a *AgentBridge) ReasoningChainGet(id string) (*ReasoningChainDetail, error) {
+	args := map[string]any{"chain_id": id}
+	var result ReasoningChainDetail
+	if err := a.callAgentTool("agent_reasoning_chain_get", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ReasoningChainAdd creates a new reasoning chain.
+func (a *AgentBridge) ReasoningChainAdd(title, description string) error {
+	args := map[string]any{
+		"title":       title,
+		"description": description,
+	}
+	return a.callAgentTool("agent_reasoning_chain_add", args, nil)
+}
+
+// --- Handoff methods ---
+
+// HandoffInfo describes a handoff between agents.
+type HandoffInfo struct {
+	ID         string `json:"id"`
+	FromAgent  string `json:"from_agent"`
+	ToAgent    string `json:"to_agent,omitempty"`
+	Status     string `json:"status"`
+	Summary    string `json:"summary"`
+	Context    string `json:"context,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	AcceptedAt string `json:"accepted_at,omitempty"`
+}
+
+// HandoffList returns pending handoffs.
+func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
+	var result struct {
+		Handoffs []HandoffInfo `json:"handoffs"`
+	}
+	if err := a.callAgentTool("agent_handoff_list", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Handoffs, nil
+}
+
+// HandoffCreate creates a new handoff.
+func (a *AgentBridge) HandoffCreate(toAgent, summary, context string) error {
+	args := map[string]any{
+		"summary": summary,
+	}
+	if toAgent != "" {
+		args["to_agent"] = toAgent
+	}
+	if context != "" {
+		args["context"] = context
+	}
+	return a.callAgentTool("agent_handoff_create", args, nil)
+}
+
+// HandoffAccept accepts a handoff.
+func (a *AgentBridge) HandoffAccept(id string) error {
+	args := map[string]any{"handoff_id": id}
+	return a.callAgentTool("agent_handoff_accept", args, nil)
+}
+
+// --- Template methods ---
+
+// TemplateInfo describes a session template.
+type TemplateInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// TemplateList returns all session templates.
+func (a *AgentBridge) TemplateList() ([]TemplateInfo, error) {
+	var result struct {
+		Templates []TemplateInfo `json:"templates"`
+	}
+	if err := a.callAgentTool("agent_template_list", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Templates, nil
+}
+
+// --- Annotation methods ---
+
+// AnnotationInfo describes a code annotation.
+type AnnotationInfo struct {
+	ID       string `json:"id"`
+	FilePath string `json:"file_path"`
+	Line     int    `json:"line,omitempty"`
+	AgentID  string `json:"agent_id"`
+	Content  string `json:"content"`
+	Category string `json:"category,omitempty"`
+}
+
+// AnnotationGet retrieves code annotations, optionally filtered by file.
+func (a *AgentBridge) AnnotationGet(filePath string) ([]AnnotationInfo, error) {
+	args := map[string]any{}
+	if filePath != "" {
+		args["file_path"] = filePath
+	}
+	var result struct {
+		Annotations []AnnotationInfo `json:"annotations"`
+	}
+	if err := a.callAgentTool("agent_code_annotations_get", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Annotations, nil
+}
+
+// AnnotationAdd creates a code annotation.
+func (a *AgentBridge) AnnotationAdd(filePath, content, category string, line int) error {
+	args := map[string]any{
+		"file_path": filePath,
+		"content":   content,
+	}
+	if category != "" {
+		args["category"] = category
+	}
+	if line > 0 {
+		args["line"] = line
+	}
+	return a.callAgentTool("agent_code_annotate", args, nil)
+}
+
+// --- Tunnel/cache methods ---
+
+// TunnelInfo describes an SSH tunnel status.
+type TunnelInfo struct {
+	Name       string `json:"name"`
+	State      string `json:"state"`
+	RemoteHost string `json:"remote_host"`
+	Uptime     string `json:"uptime,omitempty"`
+	Reconnects int    `json:"reconnects"`
+}
+
+// CacheStatsInfo describes the response cache statistics.
+type CacheStatsInfo struct {
+	Entries int     `json:"entries"`
+	Size    string  `json:"size"`
+	HitRate float64 `json:"hit_rate"`
+}
+
 // ContextStream returns context entries since a given time, up to limit.
 func (a *AgentBridge) ContextStream(since time.Time, limit int) ([]ContextEntryInfo, error) {
 	args := map[string]any{}

@@ -56,3 +56,13 @@ func (c *Cache) InvalidateAll() {
 		return true
 	})
 }
+
+// Len returns the number of entries in the cache (including expired ones).
+func (c *Cache) Len() int {
+	count := 0
+	c.entries.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
+}

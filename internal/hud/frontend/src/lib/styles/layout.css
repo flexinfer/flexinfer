@@ -221,6 +221,11 @@ tbody tr:last-child td {
   background: rgba(248, 81, 73, 0.25);
 }
 
+.btn-sm {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 /* Empty state */
 .empty-state {
   display: flex;
@@ -292,4 +297,94 @@ tbody tr:last-child td {
 .filter-chip.active {
   background: rgba(88, 166, 255, 0.15);
   color: var(--info);
+}
+
+/* ---- Animations (v2) ---- */
+
+/* Panel slide-in on tab switch */
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.panel-enter {
+  animation: panelSlideIn 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Row slide-in for new items in live lists */
+@keyframes rowSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.row-enter {
+  animation: rowSlideIn 0.15s ease-out;
+}
+
+/* Card hover glow (terminal aesthetic) */
+.card-glow:hover {
+  border-color: rgba(188, 140, 255, 0.3);
+  box-shadow: 0 0 12px var(--glow-accent);
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+/* Metric value count-up transition */
+.metric-value {
+  transition: color var(--transition-normal);
+}
+
+/* Agent type color classes */
+.agent-color-claude  { color: var(--agent-claude); }
+.agent-color-codex   { color: var(--agent-codex); }
+.agent-color-gemini  { color: var(--agent-gemini); }
+.agent-color-copilot { color: var(--agent-copilot); }
+
+.agent-dot-claude  { background: var(--agent-claude); }
+.agent-dot-codex   { background: var(--agent-codex); }
+.agent-dot-gemini  { background: var(--agent-gemini); }
+.agent-dot-copilot { background: var(--agent-copilot); }
+
+/* CRT scanline overlay (optional, toggled via class) */
+.scanlines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    rgba(0, 0, 0, var(--scanline-opacity)) 1px,
+    rgba(0, 0, 0, var(--scanline-opacity)) 2px
+  );
+  z-index: 9999;
+}
+
+/* Modal form field styles */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.form-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }

@@ -1,6 +1,8 @@
 <script>
   import { taskStore } from '../stores/tasks.svelte.ts';
+  import { toastStore } from '../stores/toasts.svelte.ts';
   import Badge from '../widgets/Badge.svelte';
+  import Modal from '../widgets/Modal.svelte';
 
   $effect(() => {
     taskStore.startPolling(5000);
@@ -15,6 +17,14 @@
   let statusFilter = $state('all');
   let viewMode = $state('flat'); // 'flat' | 'grouped'
   let collapsedGroups = $state(new Set());
+
+  // Create task modal
+  let showCreateModal = $state(false);
+  let newTitle = $state('');
+  let newPriority = $state('medium');
+  let newSessionId = $state('');
+  let newTags = $state('');
+  let creating = $state(false);
 
   // Counts
   let pendingCt = $derived(tasks.filter(t => t.status === 'pending').length);
@@ -102,6 +112,58 @@
     return map[priority] ?? 'info';
   }
 
+  const PRIORITY_CYCLE = ['low', 'medium', 'high', 'critical'];
+  const STATUS_OPTIONS = ['pending', 'in_progress', 'blocked', 'completed', 'cancelled'];
+
+  function cyclePriority(task) {
+    const idx = PRIORITY_CYCLE.indexOf(task.priority ?? 'medium');
+    const next = PRIORITY_CYCLE[(idx + 1) % PRIORITY_CYCLE.length];
+    taskStore.setPriority(task.id, next);
+    toastStore.info(`Priority → ${next}`);
+  }
+
+  async function changeStatus(task, newStatus) {
+    await taskStore.updateStatus(task.id, newStatus);
+    toastStore.info(`Status → ${newStatus.replaceAll('_', ' ')}`);
+  }
+
+  function resetCreateForm() {
+    newTitle = '';
+    newPriority = 'medium';
+    newSessionId = '';
+    newTags = '';
+    creating = false;
+  }
+
+  function openCreateModal() {
+    resetCreateForm();
+    showCreateModal = true;
+  }
+
+  function closeCreateModal() {
+    showCreateModal = false;
+    resetCreateForm();
+  }
+
+  async function submitCreateTask() {
+    if (!newTitle.trim()) return;
+    creating = true;
+    const tags = newTags.trim() ? newTags.split(',').map(t => t.trim()).filter(Boolean) : undefined;
+    const ok = await taskStore.createTask(
+      newTitle.trim(),
+      newPriority,
+      newSessionId.trim() || undefined,
+      tags,
+    );
+    if (ok) {
+      toastStore.success('Task created');
+      closeCreateModal();
+    } else {
+      toastStore.error(taskStore.error ?? 'Failed to create task');
+      creating = false;
+    }
+  }
+
   function relativeTime(ts) {
     if (!ts) return '---';
     const now = Date.now();
@@ -128,17 +190,20 @@
       <Badge text="{blockedCt} blocked" variant="error" />
       <Badge text="{completedCt} completed" variant="success" />
     </div>
-    <div class="view-toggle">
-      <button
-        class="btn btn-ghost"
-        class:active-toggle={viewMode === 'flat'}
-        onclick={() => viewMode = 'flat'}
-      >Flat</button>
-      <button
-        class="btn btn-ghost"
-        class:active-toggle={viewMode === 'grouped'}
-        onclick={() => viewMode = 'grouped'}
-      >By Status</button>
+    <div class="header-actions">
+      <button class="btn btn-success" onclick={openCreateModal}>+ New Task</button>
+      <div class="view-toggle">
+        <button
+          class="btn btn-ghost"
+          class:active-toggle={viewMode === 'flat'}
+          onclick={() => viewMode = 'flat'}
+        >Flat</button>
+        <button
+          class="btn btn-ghost"
+          class:active-toggle={viewMode === 'grouped'}
+          onclick={() => viewMode = 'grouped'}
+        >By Status</button>
+      </div>
     </div>
   </div>
 
@@ -190,14 +255,24 @@
           </thead>
           <tbody>
             {#each filtered as task (task.id)}
-              <tr>
+              <tr class="row-enter">
                 <td class="task-title">{task.title ?? '---'}</td>
                 <td class="text-mono text-muted">{task.agent ?? '---'}</td>
                 <td>
-                  <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                  <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
+                    <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                  </button>
                 </td>
                 <td>
-                  <Badge text={task.status ?? 'pending'} variant={statusVariant(task.status)} />
+                  <select
+                    class="status-select"
+                    value={task.status ?? 'pending'}
+                    onchange={(e) => changeStatus(task, e.target.value)}
+                  >
+                    {#each STATUS_OPTIONS as s}
+                      <option value={s}>{s.replaceAll('_', ' ')}</option>
+                    {/each}
+                  </select>
                 </td>
                 <td class="text-mono blocked-col">
                   {#if task.blocked_by?.length}
@@ -239,6 +314,7 @@
                         <th>Title</th>
                         <th>Agent</th>
                         <th>Priority</th>
+                        <th>Status</th>
                         <th>Blocked By</th>
                         <th>Created</th>
                       </tr>
@@ -249,7 +325,20 @@
                           <td class="task-title">{task.title ?? '---'}</td>
                           <td class="text-mono text-muted">{task.agent ?? '---'}</td>
                           <td>
-                            <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                            <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
+                              <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                            </button>
+                          </td>
+                          <td>
+                            <select
+                              class="status-select"
+                              value={task.status ?? 'pending'}
+                              onchange={(e) => changeStatus(task, e.target.value)}
+                            >
+                              {#each STATUS_OPTIONS as s}
+                                <option value={s}>{s.replaceAll('_', ' ')}</option>
+                              {/each}
+                            </select>
                           </td>
                           <td class="text-mono blocked-col">
                             {#if task.blocked_by?.length}
@@ -281,6 +370,39 @@
   </div>
 </div>
 
+<!-- Create Task Modal -->
+<Modal open={showCreateModal} title="New Task" onClose={closeCreateModal}>
+  <form class="create-form" onsubmit={(e) => { e.preventDefault(); submitCreateTask(); }}>
+    <div class="form-field">
+      <label class="form-label" for="task-title">Title</label>
+      <input id="task-title" type="text" bind:value={newTitle} placeholder="What needs to be done?" required />
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="task-priority">Priority</label>
+      <select id="task-priority" bind:value={newPriority}>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="critical">Critical</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="task-session">Session ID (optional)</label>
+      <input id="task-session" type="text" bind:value={newSessionId} placeholder="Link to session..." />
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="task-tags">Tags (comma-separated)</label>
+      <input id="task-tags" type="text" bind:value={newTags} placeholder="bug, frontend, urgent..." />
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick={closeCreateModal}>Cancel</button>
+      <button type="submit" class="btn btn-success" disabled={creating || !newTitle.trim()}>
+        {creating ? 'Creating...' : 'Create Task'}
+      </button>
+    </div>
+  </form>
+</Modal>
+
 <style>
   .tasks-panel {
     display: flex;
@@ -308,6 +430,12 @@
   .header-total {
     font-weight: 600;
     color: var(--fg-primary);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .view-toggle {
@@ -368,6 +496,45 @@
     text-align: center;
     color: var(--fg-muted);
     padding: 32px 10px !important;
+  }
+
+  /* Inline status dropdown */
+  .status-select {
+    font-size: 10px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--fg-secondary);
+    cursor: pointer;
+    text-transform: capitalize;
+  }
+
+  .status-select:focus {
+    border-color: var(--border-focus);
+  }
+
+  /* Clickable priority badge */
+  .priority-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.1s ease;
+  }
+
+  .priority-btn:hover {
+    transform: scale(1.1);
+  }
+
+  .priority-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* Create form */
+  .create-form {
+    display: flex;
+    flex-direction: column;
   }
 
   /* Grouped view */

@@ -30,8 +30,16 @@ type WorkflowMonitor struct {
 	workflows []bridge.WorkflowInfo
 	details   map[string]*cachedDetail // workflow ID -> cached detail
 
+	onRefresh func([]bridge.WorkflowInfo)
+
 	stopCh   chan struct{}
 	stopOnce sync.Once
+}
+
+// OnRefresh registers a callback that fires after each successful refresh
+// with the new workflow list. Used to broadcast data via SSE.
+func (m *WorkflowMonitor) OnRefresh(fn func([]bridge.WorkflowInfo)) {
+	m.onRefresh = fn
 }
 
 // NewWorkflowMonitor creates a WorkflowMonitor backed by the given agent bridge.
@@ -150,8 +158,6 @@ func (m *WorkflowMonitor) Refresh() error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.workflows = workflows
 
 	// Prune cached details for workflows that are no longer in the list.
@@ -159,6 +165,14 @@ func (m *WorkflowMonitor) Refresh() error {
 		if _, exists := currentIDs[id]; !exists {
 			delete(m.details, id)
 		}
+	}
+	m.mu.Unlock()
+
+	// Notify listeners (e.g., SSE hub) with the fresh workflow list (outside lock).
+	if m.onRefresh != nil {
+		out := make([]bridge.WorkflowInfo, len(workflows))
+		copy(out, workflows)
+		m.onRefresh(out)
 	}
 
 	return nil

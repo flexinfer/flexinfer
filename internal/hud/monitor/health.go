@@ -110,8 +110,16 @@ type HealthMonitor struct {
 	summary HealthSummary
 	history map[string]*RingBuffer // server name -> latency ring buffer
 
+	onRefresh func([]ServerHealthEntry)
+
 	stopCh   chan struct{}
 	stopOnce sync.Once
+}
+
+// OnRefresh registers a callback that fires after each successful refresh
+// with the new server health entries. Used to broadcast data via SSE.
+func (m *HealthMonitor) OnRefresh(fn func([]ServerHealthEntry)) {
+	m.onRefresh = fn
 }
 
 // NewHealthMonitor creates a HealthMonitor backed by the given daemon client.
@@ -205,7 +213,6 @@ func (m *HealthMonitor) Refresh() error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	entries := make([]ServerHealthEntry, 0, len(nameSet))
 	summary := HealthSummary{TotalServers: len(nameSet)}
@@ -273,6 +280,14 @@ func (m *HealthMonitor) Refresh() error {
 
 	m.servers = entries
 	m.summary = summary
+	m.mu.Unlock()
+
+	// Notify listeners (e.g., SSE hub) with the fresh entries (outside lock).
+	if m.onRefresh != nil {
+		out := make([]ServerHealthEntry, len(entries))
+		copy(out, entries)
+		m.onRefresh(out)
+	}
 
 	return nil
 }

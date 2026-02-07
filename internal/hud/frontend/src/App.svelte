@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { router } from './lib/stores/router.svelte.ts';
   import { fleetStore } from './lib/stores/fleet.svelte.ts';
   import { healthStore } from './lib/stores/health.svelte.ts';
   import { streamStore } from './lib/stores/stream.svelte.ts';
@@ -12,7 +13,9 @@
   import GraphPanel from './lib/components/GraphPanel.svelte';
   import StreamPanel from './lib/components/StreamPanel.svelte';
   import PresencePanel from './lib/components/PresencePanel.svelte';
+  import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
+  import Toast from './lib/widgets/Toast.svelte';
 
   const panels = [
     { id: 'fleet',     label: 'Fleet',     key: '1', icon: '\u25C8' },
@@ -23,25 +26,22 @@
     { id: 'graph',     label: 'Graph',     key: '6', icon: '\u2B21' },
     { id: 'stream',    label: 'Stream',    key: '7', icon: '\u2261' },
     { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
+    { id: 'reasoning', label: 'Reasoning', key: '0', icon: '\u2726' },
   ];
 
-  let activePanel = $state('fleet');
   let showCommandPalette = $state(false);
 
-  // Lightweight status polling for the status bar
-  let statusPollTimer = null;
   onMount(() => {
+    // Initialize hash-based router.
+    router.init();
+
+    // Connect SSE and start stores with 30s fallback polling.
     eventStore.connect();
     fleetStore.fetch();
     healthStore.fetch();
-    statusPollTimer = setInterval(() => {
-      fleetStore.fetch();
-      healthStore.fetch();
-    }, 8000);
   });
   onDestroy(() => {
     eventStore.disconnect();
-    if (statusPollTimer) clearInterval(statusPollTimer);
   });
 
   // Keyboard shortcuts (number keys for panel switching)
@@ -49,11 +49,15 @@
     const tag = e.target?.tagName;
     const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-    // Number keys 1-7 for panel switching (only when not in an input)
+    // Number keys 1-8 + 0 for panel switching (only when not in an input)
     if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === '0') {
+        router.navigate('reasoning');
+        return;
+      }
       const num = parseInt(e.key);
       if (num >= 1 && num <= 8) {
-        activePanel = panels[num - 1].id;
+        router.navigate(panels[num - 1].id);
         return;
       }
     }
@@ -64,7 +68,7 @@
     // Panel navigation
     const panelIds = panels.map(p => p.id);
     if (panelIds.includes(item.id)) {
-      activePanel = item.id;
+      router.navigate(item.id);
       return;
     }
 
@@ -77,17 +81,32 @@
       case 'pause-stream':
         streamStore.togglePause();
         break;
+      case 'create-task':
+        router.navigate('tasks');
+        break;
+      case 'seed-entity':
+        router.navigate('graph');
+        break;
+      case 'create-handoff':
+        router.navigate('presence');
+        break;
       case 'approve-workflow':
-        activePanel = 'workflows';
+        router.navigate('workflows');
         break;
       case 'reject-workflow':
-        activePanel = 'workflows';
+        router.navigate('workflows');
         break;
       case 'promote-memory':
-        activePanel = 'memory';
+        router.navigate('memory');
         break;
       case 'demote-memory':
-        activePanel = 'memory';
+        router.navigate('memory');
+        break;
+      case 'add-memory':
+        router.navigate('memory');
+        break;
+      case 'toggle-scanlines':
+        document.body.classList.toggle('scanlines');
         break;
     }
   }
@@ -121,8 +140,8 @@
       {#each panels as panel}
         <button
           class="nav-tab"
-          class:active={activePanel === panel.id}
-          onclick={() => { activePanel = panel.id; }}
+          class:active={router.panel === panel.id}
+          onclick={() => { router.navigate(panel.id); }}
           title="{panel.label} ({panel.key})"
         >
           <span class="nav-tab-icon">{panel.icon}</span>
@@ -143,25 +162,31 @@
     </div>
   </header>
 
-  <!-- Panel content area -->
+  <!-- Panel content area (keyed block triggers slide-in animation on panel switch) -->
   <main class="panel-area">
-    {#if activePanel === 'fleet'}
-      <FleetPanel />
-    {:else if activePanel === 'servers'}
-      <ServersPanel />
-    {:else if activePanel === 'tasks'}
-      <TasksPanel />
-    {:else if activePanel === 'workflows'}
-      <WorkflowsPanel />
-    {:else if activePanel === 'memory'}
-      <MemoryPanel />
-    {:else if activePanel === 'graph'}
-      <GraphPanel />
-    {:else if activePanel === 'stream'}
-      <StreamPanel />
-    {:else if activePanel === 'presence'}
-      <PresencePanel />
-    {/if}
+    {#key router.panel}
+      <div class="panel-enter">
+        {#if router.panel === 'fleet'}
+          <FleetPanel />
+        {:else if router.panel === 'servers'}
+          <ServersPanel />
+        {:else if router.panel === 'tasks'}
+          <TasksPanel />
+        {:else if router.panel === 'workflows'}
+          <WorkflowsPanel />
+        {:else if router.panel === 'memory'}
+          <MemoryPanel />
+        {:else if router.panel === 'graph'}
+          <GraphPanel />
+        {:else if router.panel === 'stream'}
+          <StreamPanel />
+        {:else if router.panel === 'presence'}
+          <PresencePanel />
+        {:else if router.panel === 'reasoning'}
+          <ReasoningPanel />
+        {/if}
+      </div>
+    {/key}
   </main>
 
   <!-- Status bar -->
@@ -189,6 +214,9 @@
 
   <!-- Command Palette (standalone component with fuzzy search, grouping, arrow-key nav) -->
   <CommandPalette bind:open={showCommandPalette} onselect={handleCommand} />
+
+  <!-- Toast notifications overlay -->
+  <Toast />
 </div>
 
 <style>
@@ -248,7 +276,7 @@
     border-radius: 4px;
     font-size: 12px;
     color: var(--fg-secondary);
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--transition-fast, 0.12s), color var(--transition-fast, 0.12s);
     position: relative;
   }
 

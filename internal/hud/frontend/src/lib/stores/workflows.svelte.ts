@@ -1,4 +1,5 @@
 // Workflows store - workflow orchestration
+// v2: SSE-first with 30s fallback poll. Applies hud.workflows snapshots directly.
 import { eventStore } from './events.svelte.ts';
 
 export interface WorkflowSummary {
@@ -100,6 +101,26 @@ class WorkflowStore {
     }
   }
 
+  /** Apply workflow list directly from SSE hud.workflows event. */
+  applySnapshot(data: Record<string, unknown>): void {
+    const workflows = data.workflows as Array<Record<string, unknown>> | undefined;
+    if (!workflows) return;
+
+    // Map MCP field names (workflow_id, created_at) to frontend field names (id, started_at).
+    this.workflows = workflows.map((wf) => ({
+      id: (wf.workflow_id as string) ?? (wf.id as string) ?? '',
+      definition_id: (wf.definition_id as string) ?? '',
+      name: wf.name as string | undefined,
+      status: (wf.status as string) ?? '',
+      current_step: (wf.current_step as string) ?? '',
+      started_at: (wf.created_at as string) ?? (wf.started_at as string) ?? '',
+      completed_at: wf.completed_at as string | undefined,
+      progress: wf.progress as number | undefined,
+    })) as WorkflowSummary[];
+    this.lastUpdated = new Date();
+    this.error = null;
+  }
+
   async fetchDetail(workflowId: string): Promise<void> {
     this.loading = true;
     this.error = null;
@@ -144,13 +165,16 @@ class WorkflowStore {
     }
   }
 
-  startPolling(intervalMs = 5000): void {
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
+    // 30s fallback poll (SSE is the primary data source).
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
 
-    // Subscribe to SSE events for immediate refresh.
+    // Subscribe to SSE events: apply data directly from hud.workflows snapshots.
     this.eventUnsubs.push(
+      eventStore.on('hud.workflows', (e) => this.applySnapshot(e.data)),
+      // Legacy daemon events still trigger a full refresh as fallback.
       eventStore.on('workflow.step', () => this.fetch()),
     );
   }

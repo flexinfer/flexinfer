@@ -127,6 +127,88 @@ class GraphStore {
     }
   }
 
+  async addEntity(name: string, entityType: string, namespace: string, props?: Record<string, unknown>): Promise<boolean> {
+    try {
+      const body: Record<string, unknown> = { name, entity_type: entityType, namespace };
+      if (props && Object.keys(props).length > 0) body.properties = props;
+      const res = await globalThis.fetch('/api/graph/entities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Add entity: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async deleteEntity(id: string): Promise<boolean> {
+    try {
+      const res = await globalThis.fetch(`/api/graph/entities/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete entity: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async getEntityDetail(id: string): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await globalThis.fetch(`/api/graph/entities/${id}`);
+      if (!res.ok) throw new Error(`Entity detail: ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return null;
+    }
+  }
+
+  async addRelation(sourceId: string, targetId: string, relationType: string): Promise<boolean> {
+    try {
+      const res = await globalThis.fetch('/api/graph/relations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId, target_id: targetId, relation_type: relationType }),
+      });
+      if (!res.ok) throw new Error(`Add relation: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async deleteRelation(id: string): Promise<boolean> {
+    try {
+      const res = await globalThis.fetch(`/api/graph/relations/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete relation: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async findPath(fromId: string, toId: string, maxDepth = 5): Promise<Entity[] | null> {
+    try {
+      const params = new URLSearchParams({ from: fromId, to: toId, max_depth: String(maxDepth) });
+      const res = await globalThis.fetch(`/api/graph/path?${params.toString()}`);
+      if (!res.ok) throw new Error(`Find path: ${res.status}`);
+      const data = await res.json();
+      return data.path ?? data.entities ?? [];
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return null;
+    }
+  }
+
   startPolling(intervalMs = 15000): void {
     this.stopPolling();
     this.fetch();

@@ -18,8 +18,16 @@ type MemoryMonitor struct {
 	mu    sync.RWMutex
 	stats *bridge.MemoryStatsResult
 
+	onRefresh func(*bridge.MemoryStatsResult)
+
 	stopCh   chan struct{}
 	stopOnce sync.Once
+}
+
+// OnRefresh registers a callback that fires after each successful refresh
+// with the new memory stats. Used to broadcast data via SSE.
+func (m *MemoryMonitor) OnRefresh(fn func(*bridge.MemoryStatsResult)) {
+	m.onRefresh = fn
 }
 
 // NewMemoryMonitor creates a MemoryMonitor backed by the given agent bridge.
@@ -110,6 +118,12 @@ func (m *MemoryMonitor) Refresh() error {
 	m.mu.Lock()
 	m.stats = stats
 	m.mu.Unlock()
+
+	// Notify listeners (e.g., SSE hub) with the fresh stats (outside lock).
+	if m.onRefresh != nil {
+		cp := *stats
+		m.onRefresh(&cp)
+	}
 
 	return nil
 }

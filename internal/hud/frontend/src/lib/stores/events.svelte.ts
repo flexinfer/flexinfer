@@ -3,9 +3,12 @@
  * incoming daemon events to registered listeners. Stores can subscribe to
  * specific event types to trigger immediate data refreshes instead of
  * waiting for the next poll tick.
+ *
+ * v2: Supports HUD-specific events (hud.fleet, hud.health, hud.memory,
+ * hud.workflows) that carry full data snapshots for SSE-first data flow.
  */
 
-type SSEEvent = {
+export type SSEEvent = {
   id: string;
   type: string;
   timestamp: string;
@@ -74,7 +77,12 @@ class EventStore {
     };
 
     // Listen for known daemon event types.
-    for (const type of ['server.health', 'config.reload', 'process.start', 'process.stop', 'workflow.step']) {
+    const knownTypes = [
+      'server.health', 'config.reload', 'process.start', 'process.stop', 'workflow.step',
+      // HUD-specific snapshot events (SSE-first data flow).
+      'hud.fleet', 'hud.health', 'hud.memory', 'hud.workflows', 'hud.stream',
+    ];
+    for (const type of knownTypes) {
       this.source.addEventListener(type, (e: MessageEvent) => {
         this.handleEvent(e.data, type);
       });
@@ -108,6 +116,13 @@ class EventStore {
       const event: SSEEvent = JSON.parse(raw);
       if (!event.type && fallbackType) {
         event.type = fallbackType;
+      }
+      // For HUD events, the data payload is nested inside the event's top-level
+      // "data" field. Parse it if it's a string (from json.RawMessage).
+      if (event.type?.startsWith('hud.') && typeof event.data === 'string') {
+        try {
+          event.data = JSON.parse(event.data as unknown as string);
+        } catch { /* keep as-is */ }
       }
       this.eventCount++;
       this.lastEvent = event;

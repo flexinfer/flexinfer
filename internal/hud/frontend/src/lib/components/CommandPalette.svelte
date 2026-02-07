@@ -13,14 +13,21 @@
     { id: 'workflows', label: 'Workflow DAG Monitor', category: 'Panels', icon: '\u2699' },
     { id: 'memory', label: 'Memory Inspector', category: 'Panels', icon: '\u29BF' },
     { id: 'graph', label: 'Knowledge Graph', category: 'Panels', icon: '\u25C9' },
+    { id: 'presence', label: 'Agent Presence', category: 'Panels', icon: '\u25C9' },
+    { id: 'reasoning', label: 'Reasoning Chains', category: 'Panels', icon: '\u2726' },
   ];
 
   const actions = [
+    { id: 'create-task', label: 'Create Task...', category: 'Actions', icon: '\u2795' },
+    { id: 'seed-entity', label: 'Seed Entity...', category: 'Actions', icon: '\u2B21' },
+    { id: 'create-handoff', label: 'Create Handoff...', category: 'Actions', icon: '\u21C6' },
     { id: 'approve-workflow', label: 'Approve Workflow Step...', category: 'Actions', icon: '\u2713' },
     { id: 'reject-workflow', label: 'Reject Workflow Step...', category: 'Actions', icon: '\u2717' },
     { id: 'promote-memory', label: 'Promote Memory Item...', category: 'Actions', icon: '\u2191' },
     { id: 'demote-memory', label: 'Demote Memory Item...', category: 'Actions', icon: '\u2193' },
+    { id: 'add-memory', label: 'Add Memory Item...', category: 'Actions', icon: '\u29BE' },
     { id: 'pause-stream', label: 'Toggle Stream Pause', category: 'Actions', icon: '\u23F8' },
+    { id: 'toggle-scanlines', label: 'Toggle CRT Scanlines', category: 'Actions', icon: '\u2588' },
     { id: 'refresh-all', label: 'Refresh All Data', category: 'Actions', icon: '\u21BB' },
   ];
 

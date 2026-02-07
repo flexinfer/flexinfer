@@ -1,7 +1,10 @@
 <script>
   import { graphStore } from '../stores/graph.svelte.ts';
+  import { toastStore } from '../stores/toasts.svelte.ts';
   import Badge from '../widgets/Badge.svelte';
   import EntityGraph from '../widgets/EntityGraph.svelte';
+  import Modal from '../widgets/Modal.svelte';
+  import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
 
   $effect(() => {
     graphStore.startPolling(10000);
@@ -16,6 +19,36 @@
   let searchResults = $state([]);
   let selectedEntity = $state(null);
   let expandedEntities = $state(new Set());
+
+  // Entity detail (fetched on expand)
+  let entityDetails = $state({});
+
+  // Add entity modal
+  let showAddEntityModal = $state(false);
+  let newEntityName = $state('');
+  let newEntityType = $state('service');
+  let newEntityNamespace = $state('');
+  let newEntityProps = $state('');
+  let addingEntity = $state(false);
+
+  // Add relation modal
+  let showAddRelationModal = $state(false);
+  let relSourceId = $state('');
+  let relTargetId = $state('');
+  let relType = $state('');
+  let addingRelation = $state(false);
+
+  // Delete confirm
+  let showDeleteConfirm = $state(false);
+  let deleteTarget = $state(null);
+  let deleteType = $state('entity'); // 'entity' | 'relation'
+
+  // Path finder
+  let showPathFinder = $state(false);
+  let pathFromId = $state('');
+  let pathToId = $state('');
+  let pathResult = $state(null);
+  let findingPath = $state(false);
 
   // Statistics
   let entityTypes = $derived.by(() => {
@@ -52,18 +85,24 @@
     if (e.key === 'Enter') doSearch();
   }
 
-  // Display results: use searchResults if search was performed, else entities
   let displayEntities = $derived.by(() => {
     if (searchResults.length > 0) return searchResults;
     return entities;
   });
 
-  function toggleExpand(entityId) {
+  async function toggleExpand(entityId) {
     const next = new Set(expandedEntities);
     if (next.has(entityId)) {
       next.delete(entityId);
     } else {
       next.add(entityId);
+      // Fetch detail if not cached
+      if (!entityDetails[entityId]) {
+        const detail = await graphStore.getEntityDetail(entityId);
+        if (detail) {
+          entityDetails = { ...entityDetails, [entityId]: detail };
+        }
+      }
     }
     expandedEntities = next;
   }
@@ -72,45 +111,154 @@
     selectedEntity = selectedEntity?.id === entity.id ? null : entity;
   }
 
+  // --- CRUD ---
+  function openAddEntityModal() {
+    newEntityName = '';
+    newEntityType = 'service';
+    newEntityNamespace = '';
+    newEntityProps = '';
+    addingEntity = false;
+    showAddEntityModal = true;
+  }
+
+  async function submitAddEntity() {
+    if (!newEntityName.trim()) return;
+    addingEntity = true;
+    let props = undefined;
+    if (newEntityProps.trim()) {
+      try {
+        props = JSON.parse(newEntityProps);
+      } catch {
+        toastStore.error('Invalid JSON for properties');
+        addingEntity = false;
+        return;
+      }
+    }
+    const ok = await graphStore.addEntity(
+      newEntityName.trim(),
+      newEntityType.trim(),
+      newEntityNamespace.trim(),
+      props,
+    );
+    if (ok) {
+      toastStore.success('Entity created');
+      showAddEntityModal = false;
+    } else {
+      toastStore.error(graphStore.error ?? 'Failed to create entity');
+    }
+    addingEntity = false;
+  }
+
+  function openAddRelationModal() {
+    relSourceId = '';
+    relTargetId = '';
+    relType = '';
+    addingRelation = false;
+    showAddRelationModal = true;
+  }
+
+  async function submitAddRelation() {
+    if (!relSourceId.trim() || !relTargetId.trim() || !relType.trim()) return;
+    addingRelation = true;
+    const ok = await graphStore.addRelation(relSourceId.trim(), relTargetId.trim(), relType.trim());
+    if (ok) {
+      toastStore.success('Relation created');
+      showAddRelationModal = false;
+    } else {
+      toastStore.error(graphStore.error ?? 'Failed to create relation');
+    }
+    addingRelation = false;
+  }
+
+  function confirmDeleteEntity(entity) {
+    deleteTarget = entity;
+    deleteType = 'entity';
+    showDeleteConfirm = true;
+  }
+
+  function confirmDeleteRelation(rel) {
+    deleteTarget = rel;
+    deleteType = 'relation';
+    showDeleteConfirm = true;
+  }
+
+  async function executeDelete() {
+    if (!deleteTarget) return;
+    let ok;
+    if (deleteType === 'entity') {
+      ok = await graphStore.deleteEntity(deleteTarget.id);
+    } else {
+      ok = await graphStore.deleteRelation(deleteTarget.id ?? deleteTarget.relation_id);
+    }
+    if (ok) {
+      toastStore.success(`${deleteType === 'entity' ? 'Entity' : 'Relation'} deleted`);
+    } else {
+      toastStore.error(graphStore.error ?? 'Failed to delete');
+    }
+    showDeleteConfirm = false;
+    deleteTarget = null;
+  }
+
+  // Path finder
+  function openPathFinder() {
+    pathFromId = '';
+    pathToId = '';
+    pathResult = null;
+    findingPath = false;
+    showPathFinder = true;
+  }
+
+  async function submitFindPath() {
+    if (!pathFromId.trim() || !pathToId.trim()) return;
+    findingPath = true;
+    pathResult = await graphStore.findPath(pathFromId.trim(), pathToId.trim());
+    findingPath = false;
+    if (pathResult === null) {
+      toastStore.error(graphStore.error ?? 'Path search failed');
+    }
+  }
+
   function typeVariant(type) {
     const map = {
-      service: 'info',
-      file: 'accent',
-      function: 'success',
-      variable: 'warning',
-      class: 'accent',
-      module: 'info',
-      config: 'warning',
-      person: 'success',
+      service: 'info', file: 'accent', function: 'success', variable: 'warning',
+      class: 'accent', module: 'info', config: 'warning', person: 'success',
     };
     return map[type?.toLowerCase()] ?? 'info';
   }
 
   function typeBarColor(type) {
     const map = {
-      service: 'var(--info)',
-      file: 'var(--accent)',
-      function: 'var(--success)',
-      variable: 'var(--warning)',
-      class: 'var(--accent)',
-      module: 'var(--info)',
+      service: 'var(--info)', file: 'var(--accent)', function: 'var(--success)',
+      variable: 'var(--warning)', class: 'var(--accent)', module: 'var(--info)',
     };
     return map[type?.toLowerCase()] ?? 'var(--fg-muted)';
   }
 
-  // Entity inbound/outbound relations
+  function getDetail(entity) {
+    return entityDetails[entity.id] ?? entity;
+  }
+
   function inboundRelations(entity) {
-    return entity.inbound_relations ?? entity.relations?.filter(r => r.target === entity.id) ?? [];
+    const d = getDetail(entity);
+    return d.inbound_relations ?? d.relations?.filter(r => r.target === entity.id) ?? [];
   }
 
   function outboundRelations(entity) {
-    return entity.outbound_relations ?? entity.relations?.filter(r => r.source === entity.id) ?? [];
+    const d = getDetail(entity);
+    return d.outbound_relations ?? d.relations?.filter(r => r.source === entity.id) ?? [];
   }
 </script>
 
 <div class="panel graph-panel">
   <!-- Left column: Statistics -->
   <div class="stats-column">
+    <!-- Action buttons -->
+    <div class="graph-actions">
+      <button class="btn btn-success" onclick={openAddEntityModal}>+ Entity</button>
+      <button class="btn btn-primary" onclick={openAddRelationModal}>+ Relation</button>
+      <button class="btn btn-ghost" onclick={openPathFinder}>Find Path</button>
+    </div>
+
     <!-- Entity type histogram -->
     <div class="stats-section">
       <div class="section-header">
@@ -205,11 +353,11 @@
           {#if expandedEntities.has(entity.id)}
             <div class="entity-detail">
               <!-- Properties -->
-              {#if entity.properties && Object.keys(entity.properties).length > 0}
+              {#if getDetail(entity).properties && Object.keys(getDetail(entity).properties).length > 0}
                 <div class="detail-group">
                   <div class="detail-group-title">Properties</div>
                   <div class="props-table">
-                    {#each Object.entries(entity.properties) as [key, value] (key)}
+                    {#each Object.entries(getDetail(entity).properties) as [key, value] (key)}
                       <div class="prop-row">
                         <span class="prop-key text-mono">{key}</span>
                         <span class="prop-value text-mono">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
@@ -227,9 +375,10 @@
                     <div class="rel-detail-row">
                       <span class="text-mono text-muted">{rel.source_name ?? rel.source ?? '?'}</span>
                       <span class="rel-arrow">&#8594;</span>
-                      <Badge text={rel.type ?? 'related'} variant="info" />
+                      <Badge text={rel.type ?? rel.relation_type ?? 'related'} variant="info" />
                       <span class="rel-arrow">&#8594;</span>
                       <span class="text-mono">{entity.name ?? entity.id}</span>
+                      <button class="action-btn delete-btn-sm" onclick={() => confirmDeleteRelation(rel)} title="Delete relation">&#10005;</button>
                     </div>
                   {/each}
                 </div>
@@ -243,13 +392,19 @@
                     <div class="rel-detail-row">
                       <span class="text-mono">{entity.name ?? entity.id}</span>
                       <span class="rel-arrow">&#8594;</span>
-                      <Badge text={rel.type ?? 'related'} variant="accent" />
+                      <Badge text={rel.type ?? rel.relation_type ?? 'related'} variant="accent" />
                       <span class="rel-arrow">&#8594;</span>
                       <span class="text-mono text-muted">{rel.target_name ?? rel.target ?? '?'}</span>
+                      <button class="action-btn delete-btn-sm" onclick={() => confirmDeleteRelation(rel)} title="Delete relation">&#10005;</button>
                     </div>
                   {/each}
                 </div>
               {/if}
+
+              <!-- Entity actions -->
+              <div class="entity-actions">
+                <button class="btn btn-danger" onclick={() => confirmDeleteEntity(entity)}>Delete Entity</button>
+              </div>
             </div>
           {/if}
         </div>
@@ -267,11 +422,125 @@
   </div>
 </div>
 
+<!-- Add Entity Modal -->
+<Modal open={showAddEntityModal} title="Seed Entity" onClose={() => showAddEntityModal = false}>
+  <form class="modal-form" onsubmit={(e) => { e.preventDefault(); submitAddEntity(); }}>
+    <div class="form-field">
+      <label class="form-label" for="ent-name">Name</label>
+      <input id="ent-name" type="text" bind:value={newEntityName} placeholder="e.g. HUD Server" required />
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label class="form-label" for="ent-type">Type</label>
+        <input id="ent-type" type="text" bind:value={newEntityType} placeholder="service, file, function..." />
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="ent-ns">Namespace</label>
+        <input id="ent-ns" type="text" bind:value={newEntityNamespace} placeholder="project/module" />
+      </div>
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="ent-props">Properties (JSON, optional)</label>
+      <textarea id="ent-props" bind:value={newEntityProps} placeholder={'{"language": "go", "version": "1.22"}'} rows="3"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick={() => showAddEntityModal = false}>Cancel</button>
+      <button type="submit" class="btn btn-success" disabled={addingEntity || !newEntityName.trim()}>
+        {addingEntity ? 'Creating...' : 'Create Entity'}
+      </button>
+    </div>
+  </form>
+</Modal>
+
+<!-- Add Relation Modal -->
+<Modal open={showAddRelationModal} title="Add Relation" onClose={() => showAddRelationModal = false}>
+  <form class="modal-form" onsubmit={(e) => { e.preventDefault(); submitAddRelation(); }}>
+    <div class="form-field">
+      <label class="form-label" for="rel-source">Source Entity ID</label>
+      <input id="rel-source" type="text" bind:value={relSourceId} placeholder="Entity ID or name..." required />
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="rel-target">Target Entity ID</label>
+      <input id="rel-target" type="text" bind:value={relTargetId} placeholder="Entity ID or name..." required />
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="rel-type">Relation Type</label>
+      <input id="rel-type" type="text" bind:value={relType} placeholder="depends_on, contains, calls..." required />
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick={() => showAddRelationModal = false}>Cancel</button>
+      <button type="submit" class="btn btn-primary" disabled={addingRelation || !relSourceId.trim() || !relTargetId.trim() || !relType.trim()}>
+        {addingRelation ? 'Creating...' : 'Create Relation'}
+      </button>
+    </div>
+  </form>
+</Modal>
+
+<!-- Path Finder Modal -->
+<Modal open={showPathFinder} title="Find Path" onClose={() => showPathFinder = false}>
+  <form class="modal-form" onsubmit={(e) => { e.preventDefault(); submitFindPath(); }}>
+    <div class="form-field">
+      <label class="form-label" for="path-from">From Entity ID</label>
+      <input id="path-from" type="text" bind:value={pathFromId} placeholder="Start entity..." required />
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="path-to">To Entity ID</label>
+      <input id="path-to" type="text" bind:value={pathToId} placeholder="End entity..." required />
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick={() => showPathFinder = false}>Close</button>
+      <button type="submit" class="btn btn-primary" disabled={findingPath || !pathFromId.trim() || !pathToId.trim()}>
+        {findingPath ? 'Searching...' : 'Find Path'}
+      </button>
+    </div>
+  </form>
+
+  {#if pathResult !== null}
+    <div class="path-result">
+      <div class="detail-group-title" style="margin-top: 12px">Path ({pathResult.length} hops)</div>
+      {#if pathResult.length === 0}
+        <div class="text-muted text-sm" style="padding: 8px 0">No path found</div>
+      {:else}
+        <div class="path-steps">
+          {#each pathResult as node, i}
+            <div class="path-step">
+              <Badge text={node.type ?? node.entity_type ?? 'entity'} variant={typeVariant(node.type ?? node.entity_type)} />
+              <span class="text-mono">{node.name ?? node.id}</span>
+            </div>
+            {#if i < pathResult.length - 1}
+              <span class="path-arrow">&#8594;</span>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</Modal>
+
+<!-- Delete Confirm -->
+<ConfirmDialog
+  open={showDeleteConfirm}
+  title="Delete {deleteType === 'entity' ? 'Entity' : 'Relation'}"
+  message={deleteTarget ? `Delete ${deleteType} "${deleteTarget.name ?? deleteTarget.id}"? This cannot be undone.` : ''}
+  confirmLabel="Delete"
+  destructive={true}
+  onConfirm={executeDelete}
+  onCancel={() => { showDeleteConfirm = false; deleteTarget = null; }}
+/>
+
 <style>
   .graph-panel {
     display: flex;
     overflow: hidden;
     gap: 0;
+  }
+
+  /* Action buttons */
+  .graph-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
   }
 
   /* Stats column */
@@ -493,6 +762,35 @@
     font-size: 10px;
   }
 
+  .entity-actions {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* Delete button in relation rows */
+  .delete-btn-sm {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    font-size: 10px;
+    color: var(--error);
+    opacity: 0.5;
+    transition: opacity 0.15s, background 0.15s;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .delete-btn-sm:hover {
+    opacity: 1;
+    background: rgba(248, 81, 73, 0.15);
+  }
+
   /* Graph viz */
   .graph-viz {
     height: 300px;
@@ -500,5 +798,64 @@
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
     overflow: hidden;
+  }
+
+  /* Modal form */
+  .modal-form {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-form textarea {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-primary);
+    color: var(--fg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 8px;
+    resize: vertical;
+    outline: none;
+  }
+
+  .modal-form textarea:focus {
+    border-color: var(--border-focus);
+  }
+
+  .form-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .form-row .form-field {
+    flex: 1;
+  }
+
+  /* Path result */
+  .path-result {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  .path-steps {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+
+  .path-step {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-tertiary);
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .path-arrow {
+    color: var(--fg-muted);
+    font-size: 14px;
   }
 </style>

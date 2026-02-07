@@ -143,6 +143,25 @@ class TaskStore {
     }
   }
 
+  async createTask(title: string, priority: string, sessionId?: string, tags?: string[]): Promise<boolean> {
+    try {
+      const body: Record<string, unknown> = { title, priority };
+      if (sessionId) body.session_id = sessionId;
+      if (tags?.length) body.tags = tags;
+      const res = await globalThis.fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Create task: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
   startPolling(intervalMs = 5000): void {
     this.stopPolling();
     this.fetch();

@@ -24,6 +24,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/hud/window"
 )
 
 //go:embed frontend/dist
@@ -35,6 +36,7 @@ type Config struct {
 	Dev         bool   // Development mode: enables CORS, skips embed.
 	Port        int    // Port to listen on. 0 means pick a random available port.
 	MetricsAddr string // Daemon metrics/events HTTP address (e.g., "localhost:9090").
+	Overlay     bool   // Enable macOS native overlay (NSPanel + Cmd+Shift+L hotkey).
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -101,6 +103,58 @@ func Run(cfg Config) error {
 	// Initialize SSE fan-out hub for browser clients.
 	app.sseHub = NewSSEHub(logger)
 
+	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
+	// This enables "SSE-first" data flow: stores apply data directly from
+	// these events rather than re-fetching via HTTP after receiving a signal.
+	app.fleetMonitor.OnRefresh(func(snap monitor.FleetSnapshot) {
+		data, err := json.Marshal(snap)
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-fleet-%d", time.Now().UnixMilli()),
+			Type:      "hud.fleet",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+	app.healthMonitor.OnRefresh(func(servers []monitor.ServerHealthEntry) {
+		data, err := json.Marshal(map[string]any{"servers": servers})
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-health-%d", time.Now().UnixMilli()),
+			Type:      "hud.health",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+	app.memoryMonitor.OnRefresh(func(stats *bridge.MemoryStatsResult) {
+		data, err := json.Marshal(stats)
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-memory-%d", time.Now().UnixMilli()),
+			Type:      "hud.memory",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+	app.workflowMonitor.OnRefresh(func(workflows []bridge.WorkflowInfo) {
+		data, err := json.Marshal(map[string]any{"workflows": workflows})
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-workflows-%d", time.Now().UnixMilli()),
+			Type:      "hud.workflows",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+
 	// Connect to daemon's SSE event stream if metrics address is configured.
 	if cfg.MetricsAddr != "" {
 		eventsURL := "http://" + cfg.MetricsAddr
@@ -145,6 +199,22 @@ func Run(cfg Config) error {
 	fmt.Printf("Agent HUD running at %s\n", url)
 
 	openBrowser(url)
+
+	// Native macOS overlay: create NSPanel pointing at the HUD URL and
+	// register Cmd+Shift+L as a global hotkey to toggle it.
+	if cfg.Overlay {
+		// Default panel size: 1200x800, positioned at (100, 100).
+		window.CreatePanel(100, 100, 1200, 800, url)
+		defer window.Destroy()
+
+		if err := window.RegisterHotkey(window.Toggle); err != nil {
+			logger.Warn("failed to register Cmd+Shift+L hotkey", "error", err)
+		} else {
+			logger.Info("native overlay enabled — press Cmd+Shift+L to toggle")
+			fmt.Println("Native overlay: press Cmd+Shift+L to toggle")
+		}
+		defer window.UnregisterHotkey()
+	}
 
 	// WriteTimeout must be 0 to support SSE (Server-Sent Events) connections
 	// which are long-lived. A non-zero WriteTimeout would forcibly close SSE
@@ -200,11 +270,34 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 
 	// API routes — direct bridge calls (parameterized queries).
 	mux.HandleFunc("GET /api/sessions", a.withCORS(a.handleSessions))
+	mux.HandleFunc("GET /api/sessions/{id}/entries", a.withCORS(a.handleSessionEntries))
 	mux.HandleFunc("GET /api/tasks", a.withCORS(a.handleTasks))
+	mux.HandleFunc("POST /api/tasks", a.withCORS(a.handleCreateTask))
+	mux.HandleFunc("PATCH /api/tasks/{id}", a.withCORS(a.handleUpdateTask))
 	mux.HandleFunc("GET /api/memory/items", a.withCORS(a.handleMemoryItems))
+	mux.HandleFunc("POST /api/memory", a.withCORS(a.handleMemoryAdd))
+	mux.HandleFunc("DELETE /api/memory/{id}", a.withCORS(a.handleMemoryDelete))
+	mux.HandleFunc("GET /api/memory/compaction", a.withCORS(a.handleMemoryCompaction))
 	mux.HandleFunc("GET /api/graph/stats", a.withCORS(a.handleGraphStats))
 	mux.HandleFunc("GET /api/graph/entities", a.withCORS(a.handleGraphEntities))
+	mux.HandleFunc("GET /api/graph/entities/{id}", a.withCORS(a.handleGraphEntityDetail))
+	mux.HandleFunc("POST /api/graph/entities", a.withCORS(a.handleGraphEntityCreate))
+	mux.HandleFunc("DELETE /api/graph/entities/{id}", a.withCORS(a.handleGraphEntityDelete))
+	mux.HandleFunc("POST /api/graph/relations", a.withCORS(a.handleGraphRelationCreate))
+	mux.HandleFunc("DELETE /api/graph/relations/{id}", a.withCORS(a.handleGraphRelationDelete))
+	mux.HandleFunc("GET /api/graph/path", a.withCORS(a.handleGraphFindPath))
 	mux.HandleFunc("GET /api/stream", a.withCORS(a.handleContextStream))
+	mux.HandleFunc("GET /api/tunnels", a.withCORS(a.handleTunnels))
+	mux.HandleFunc("GET /api/cache", a.withCORS(a.handleCacheStats))
+	mux.HandleFunc("GET /api/reasoning/chains", a.withCORS(a.handleReasoningChainList))
+	mux.HandleFunc("GET /api/reasoning/chains/{id}", a.withCORS(a.handleReasoningChainDetail))
+	mux.HandleFunc("POST /api/reasoning/chains", a.withCORS(a.handleReasoningChainCreate))
+	mux.HandleFunc("GET /api/handoffs", a.withCORS(a.handleHandoffList))
+	mux.HandleFunc("POST /api/handoffs", a.withCORS(a.handleHandoffCreate))
+	mux.HandleFunc("POST /api/handoffs/{id}/accept", a.withCORS(a.handleHandoffAccept))
+	mux.HandleFunc("GET /api/templates", a.withCORS(a.handleTemplateList))
+	mux.HandleFunc("GET /api/annotations", a.withCORS(a.handleAnnotationList))
+	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// CORS preflight for all API routes.
@@ -687,6 +780,378 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// --- API handlers: CRUD operations (v2) ---
+
+func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SessionID string   `json:"session_id"`
+		Title     string   `json:"title"`
+		Priority  string   `json:"priority"`
+		Tags      []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Title == "" {
+		a.writeError(w, http.StatusBadRequest, "title is required", nil)
+		return
+	}
+	if body.Priority == "" {
+		body.Priority = "medium"
+	}
+	if err := a.agent.CreateTask(body.SessionID, body.Title, body.Priority, body.Tags); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create task", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing task id", nil)
+		return
+	}
+	var body struct {
+		Status   string `json:"status"`
+		Priority string `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if err := a.agent.UpdateTask(id, body.Status, body.Priority); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to update task", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (a *App) handleMemoryAdd(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		Tier       string `json:"tier"`
+		Importance string `json:"importance"`
+		Category   string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Title == "" || body.Content == "" {
+		a.writeError(w, http.StatusBadRequest, "title and content are required", nil)
+		return
+	}
+	if err := a.agent.MemoryAdd(body.Title, body.Content, body.Tier, body.Importance, body.Category); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to add memory", err)
+		return
+	}
+	// Refresh stats after adding.
+	a.memoryMonitor.Refresh()
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing memory item id", nil)
+		return
+	}
+	if err := a.agent.MemoryDelete(id); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to delete memory", err)
+		return
+	}
+	a.memoryMonitor.Refresh()
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (a *App) handleMemoryCompaction(w http.ResponseWriter, _ *http.Request) {
+	info, err := a.agent.CompactionStatus()
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to get compaction status", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, info)
+}
+
+func (a *App) handleSessionEntries(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing session id", nil)
+		return
+	}
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	entries, err := a.agent.SessionEntries(id, limit)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to get session entries", err)
+		return
+	}
+	flat := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		flat[i] = map[string]any{
+			"id":         e.Entry.ID,
+			"entry_type": e.Entry.EntryType,
+			"agent_id":   e.Entry.AgentID,
+			"namespace":  e.Entry.Namespace,
+			"title":      e.Entry.Title,
+			"content":    e.Entry.Content,
+			"timestamp":  e.Entry.Timestamp,
+			"score":      e.Score,
+		}
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"entries": flat})
+}
+
+func (a *App) handleGraphEntityDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing entity id", nil)
+		return
+	}
+	detail, err := a.agent.EntityGet(id)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to get entity", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, detail)
+}
+
+func (a *App) handleGraphEntityCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name       string         `json:"name"`
+		EntityType string         `json:"entity_type"`
+		Namespace  string         `json:"namespace"`
+		Properties map[string]any `json:"properties"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Name == "" || body.EntityType == "" {
+		a.writeError(w, http.StatusBadRequest, "name and entity_type are required", nil)
+		return
+	}
+	if err := a.agent.EntityAdd(body.Name, body.EntityType, body.Namespace, body.Properties); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create entity", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleGraphEntityDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing entity id", nil)
+		return
+	}
+	if err := a.agent.EntityDelete(id); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to delete entity", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (a *App) handleGraphRelationCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SourceID     string `json:"source_id"`
+		TargetID     string `json:"target_id"`
+		RelationType string `json:"relation_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.SourceID == "" || body.TargetID == "" || body.RelationType == "" {
+		a.writeError(w, http.StatusBadRequest, "source_id, target_id, and relation_type are required", nil)
+		return
+	}
+	if err := a.agent.RelationAdd(body.SourceID, body.TargetID, body.RelationType); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create relation", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleGraphRelationDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing relation id", nil)
+		return
+	}
+	if err := a.agent.RelationDelete(id); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to delete relation", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (a *App) handleGraphFindPath(w http.ResponseWriter, r *http.Request) {
+	fromID := r.URL.Query().Get("from")
+	toID := r.URL.Query().Get("to")
+	if fromID == "" || toID == "" {
+		a.writeError(w, http.StatusBadRequest, "from and to query params are required", nil)
+		return
+	}
+	maxDepth := 5
+	if d := r.URL.Query().Get("depth"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+			maxDepth = parsed
+		}
+	}
+	path, err := a.agent.GraphFindPath(fromID, toID, maxDepth)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to find path", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"path": path})
+}
+
+func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
+	// Tunnel status from daemon client — placeholder since tunnels are daemon-level.
+	a.writeJSON(w, http.StatusOK, map[string]any{"tunnels": []any{}, "count": 0})
+}
+
+func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"entries":  a.cache.Len(),
+		"hit_rate": 0.0,
+	})
+}
+
+func (a *App) handleReasoningChainList(w http.ResponseWriter, _ *http.Request) {
+	chains, err := a.agent.ReasoningChainList()
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list reasoning chains", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"chains": chains})
+}
+
+func (a *App) handleReasoningChainDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing chain id", nil)
+		return
+	}
+	detail, err := a.agent.ReasoningChainGet(id)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to get reasoning chain", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, detail)
+}
+
+func (a *App) handleReasoningChainCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Title == "" {
+		a.writeError(w, http.StatusBadRequest, "title is required", nil)
+		return
+	}
+	if err := a.agent.ReasoningChainAdd(body.Title, body.Description); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create reasoning chain", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleHandoffList(w http.ResponseWriter, _ *http.Request) {
+	handoffs, err := a.agent.HandoffList()
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list handoffs", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"handoffs": handoffs})
+}
+
+func (a *App) handleHandoffCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ToAgent string `json:"to_agent"`
+		Summary string `json:"summary"`
+		Context string `json:"context"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Summary == "" {
+		a.writeError(w, http.StatusBadRequest, "summary is required", nil)
+		return
+	}
+	if err := a.agent.HandoffCreate(body.ToAgent, body.Summary, body.Context); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create handoff", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (a *App) handleHandoffAccept(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing handoff id", nil)
+		return
+	}
+	if err := a.agent.HandoffAccept(id); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to accept handoff", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+func (a *App) handleTemplateList(w http.ResponseWriter, _ *http.Request) {
+	templates, err := a.agent.TemplateList()
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list templates", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"templates": templates})
+}
+
+func (a *App) handleAnnotationList(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("file")
+	annotations, err := a.agent.AnnotationGet(filePath)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list annotations", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"annotations": annotations})
+}
+
+func (a *App) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FilePath string `json:"file_path"`
+		Content  string `json:"content"`
+		Category string `json:"category"`
+		Line     int    `json:"line"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.FilePath == "" || body.Content == "" {
+		a.writeError(w, http.StatusBadRequest, "file_path and content are required", nil)
+		return
+	}
+	if err := a.agent.AnnotationAdd(body.FilePath, body.Content, body.Category, body.Line); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to create annotation", err)
+		return
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
 // --- Middleware and helpers ---
 
 // withCORS wraps a handler to add CORS headers when in dev mode.
@@ -694,7 +1159,7 @@ func (a *App) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.config.Dev {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		}
 		next(w, r)
@@ -705,7 +1170,7 @@ func (a *App) withCORS(next http.HandlerFunc) http.HandlerFunc {
 func (a *App) handlePreflight(w http.ResponseWriter, _ *http.Request) {
 	if a.config.Dev {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	}
 	w.WriteHeader(http.StatusNoContent)

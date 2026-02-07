@@ -71,8 +71,16 @@ type FleetMonitor struct {
 	mu       sync.RWMutex
 	snapshot FleetSnapshot
 
+	onRefresh func(FleetSnapshot)
+
 	stopCh   chan struct{}
 	stopOnce sync.Once
+}
+
+// OnRefresh registers a callback that fires after each successful refresh
+// with the new snapshot. Used to broadcast data via SSE.
+func (m *FleetMonitor) OnRefresh(fn func(FleetSnapshot)) {
+	m.onRefresh = fn
 }
 
 // NewFleetMonitor creates a FleetMonitor backed by the given client and agent bridge.
@@ -225,6 +233,11 @@ func (m *FleetMonitor) Refresh() error {
 	m.mu.Lock()
 	m.snapshot = snap
 	m.mu.Unlock()
+
+	// Notify listeners (e.g., SSE hub) with the fresh snapshot.
+	if m.onRefresh != nil {
+		m.onRefresh(snap)
+	}
 
 	return nil
 }

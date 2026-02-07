@@ -1,4 +1,6 @@
 // Memory store - tiered memory management
+// v2: SSE-first for stats with 30s fallback. Items still fetched on demand.
+import { eventStore } from './events.svelte.ts';
 
 export interface TierStats {
   items: number;
@@ -61,6 +63,7 @@ class MemoryStore {
   searchQuery = $state<string>('');
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventUnsubs: Array<() => void> = [];
 
   get filteredItems(): MemoryItem[] {
     let result = [...this.items];
@@ -104,6 +107,27 @@ class MemoryStore {
     }
   }
 
+  /** Apply stats directly from SSE hud.memory event. */
+  applyStats(data: Record<string, unknown>): void {
+    // The hud.memory event carries MemoryStatsResult from the monitor.
+    // Bridge uses item_count/token_count, but frontend expects items/tokens.
+    const mapTier = (raw: Record<string, unknown> | undefined): TierStats => ({
+      items: (raw?.item_count as number) ?? (raw?.items as number) ?? 0,
+      tokens: (raw?.token_count as number) ?? (raw?.tokens as number) ?? 0,
+    });
+
+    this.stats = {
+      ...this.stats,
+      working_memory: mapTier(data.working_memory as Record<string, unknown>),
+      short_term_memory: mapTier(data.short_term_memory as Record<string, unknown>),
+      long_term_memory: mapTier(data.long_term_memory as Record<string, unknown>),
+      total_items: (data.total_items as number) ?? this.stats.total_items,
+      total_tokens: (data.total_tokens as number) ?? this.stats.total_tokens,
+    };
+    this.lastUpdated = new Date();
+    this.error = null;
+  }
+
   async promote(itemId: string): Promise<void> {
     try {
       const res = await globalThis.fetch(`/api/memory/${itemId}/promote`, {
@@ -125,6 +149,49 @@ class MemoryStore {
       await this.fetch();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async addItem(title: string, content: string, tier: string, importance: string, category?: string): Promise<boolean> {
+    try {
+      const body: Record<string, unknown> = { title, content, tier, importance };
+      if (category) body.category = category;
+      const res = await globalThis.fetch('/api/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Add memory: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async deleteItem(id: string): Promise<boolean> {
+    try {
+      const res = await globalThis.fetch(`/api/memory/${id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(`Delete memory: ${res.status}`);
+      await this.fetch();
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async fetchCompaction(): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await globalThis.fetch('/api/memory/compaction');
+      if (!res.ok) throw new Error(`Compaction status: ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return null;
     }
   }
 
@@ -158,10 +225,16 @@ class MemoryStore {
     }
   }
 
-  startPolling(intervalMs = 10000): void {
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
+    // 30s fallback poll (SSE is the primary data source for stats).
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+
+    // Subscribe to SSE events: apply stats directly from hud.memory snapshots.
+    this.eventUnsubs.push(
+      eventStore.on('hud.memory', (e) => this.applyStats(e.data)),
+    );
   }
 
   stopPolling(): void {
@@ -169,6 +242,8 @@ class MemoryStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) unsub();
+    this.eventUnsubs = [];
   }
 }
 

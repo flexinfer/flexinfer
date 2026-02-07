@@ -1,4 +1,5 @@
 // Fleet store - daemon status and sessions overview
+// v2: SSE-first with 30s fallback poll. Applies hud.fleet snapshots directly.
 import { eventStore } from './events.svelte.ts';
 
 export interface Process {
@@ -86,13 +87,48 @@ class FleetStore {
     }
   }
 
-  startPolling(intervalMs = 5000): void {
+  /** Apply a fleet snapshot directly from SSE, avoiding an HTTP round-trip. */
+  applySnapshot(data: Record<string, unknown>): void {
+    // The hud.fleet event carries the full FleetSnapshot from the monitor.
+    if (data.daemon_running !== undefined) {
+      this.status = {
+        running: data.daemon_running as boolean,
+        servers: (data.server_count as number) ?? 0,
+        activeConns: (data.active_conns as number) ?? 0,
+        idleConns: 0,
+        processes: (data.processes as string[]) ?? [],
+      };
+    }
+    if (data.sessions) {
+      this.sessions = data.sessions as Session[];
+    }
+    this.lastUpdated = new Date();
+    this.error = null;
+  }
+
+  async fetchSessionEntries(sessionId: string, limit = 50): Promise<Record<string, unknown>[] | null> {
+    try {
+      const params = new URLSearchParams({ limit: String(limit) });
+      const res = await globalThis.fetch(`/api/sessions/${sessionId}/entries?${params.toString()}`);
+      if (!res.ok) throw new Error(`Session entries: ${res.status}`);
+      const data = await res.json();
+      return data.entries ?? [];
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      return null;
+    }
+  }
+
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
+    // 30s fallback poll (SSE is the primary data source).
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
 
-    // Subscribe to SSE events for immediate refresh.
+    // Subscribe to SSE events: apply data directly from hud.fleet snapshots.
     this.eventUnsubs.push(
+      eventStore.on('hud.fleet', (e) => this.applySnapshot(e.data)),
+      // Legacy daemon events still trigger a full refresh as fallback.
       eventStore.on('config.reload', () => this.fetch()),
       eventStore.on('process.start', () => this.fetch()),
       eventStore.on('process.stop', () => this.fetch()),

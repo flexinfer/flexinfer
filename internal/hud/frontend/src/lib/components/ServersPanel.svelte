@@ -2,6 +2,7 @@
   import { healthStore } from '../stores/health.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
+  import Badge from '../widgets/Badge.svelte';
 
   $effect(() => {
     healthStore.startPolling(5000);
@@ -10,6 +11,29 @@
 
   let servers = $derived(healthStore.servers ?? []);
 
+  // --- Tunnel + Cache state ---
+  let tunnels = $state([]);
+  let cacheStats = $state(null);
+  let infraLoading = $state(false);
+
+  async function fetchInfraStats() {
+    infraLoading = true;
+    const [t, c] = await Promise.all([
+      healthStore.fetchTunnels(),
+      healthStore.fetchCacheStats(),
+    ]);
+    tunnels = t;
+    cacheStats = c;
+    infraLoading = false;
+  }
+
+  $effect(() => {
+    fetchInfraStats();
+    const timer = setInterval(fetchInfraStats, 30000);
+    return () => clearInterval(timer);
+  });
+
+  // --- Filters & Sort ---
   let searchQuery = $state('');
   let categoryFilter = $state('all');
   let statusFilter = $state('all');
@@ -29,6 +53,7 @@
   let idleCt = $derived(servers.filter(s => s.status === 'idle').length);
   let degradedCt = $derived(servers.filter(s => s.status === 'degraded').length);
   let downCt = $derived(servers.filter(s => s.status === 'down').length);
+  let totalTools = $derived(servers.reduce((sum, s) => sum + (s.tool_count ?? 0), 0));
 
   let filtered = $derived.by(() => {
     let result = servers;
@@ -76,7 +101,7 @@
 
   function sortIndicator(col) {
     if (sortColumn !== col) return '';
-    return sortAsc ? ' \u25B2' : ' \u25BC';
+    return sortAsc ? ' ▲' : ' ▼';
   }
 
   function selectServer(server) {
@@ -89,21 +114,10 @@
     return ms.toFixed(0) + 'ms';
   }
 
-  function formatRate(rate) {
-    if (rate == null) return '---';
-    return rate.toFixed(1);
-  }
-
-  function formatPct(pct) {
-    if (pct == null) return '---';
-    return pct.toFixed(2) + '%';
-  }
-
-  function errColor(pct) {
-    if (pct == null) return 'var(--fg-muted)';
-    if (pct >= 5) return 'var(--error)';
-    if (pct >= 1) return 'var(--warning)';
-    return 'var(--success)';
+  function tunnelStateVariant(state) {
+    if (state === 'connected') return 'success';
+    if (state === 'connecting' || state === 'reconnecting') return 'warning';
+    return 'error';
   }
 </script>
 
@@ -132,6 +146,10 @@
           {downCt} down
         </span>
       {/if}
+      <span class="header-stat tools-stat">
+        <span class="tools-icon">⚙</span>
+        {totalTools} tools
+      </span>
     </div>
   </div>
 
@@ -174,12 +192,6 @@
             <th class="sortable" onclick={() => toggleSort('latency')}>
               Latency{sortIndicator('latency')}
             </th>
-            <th class="sortable" onclick={() => toggleSort('req_rate')}>
-              Req/s{sortIndicator('req_rate')}
-            </th>
-            <th class="sortable" onclick={() => toggleSort('error_rate')}>
-              Err%{sortIndicator('error_rate')}
-            </th>
             <th class="sortable" onclick={() => toggleSort('tool_count')}>
               Tools{sortIndicator('tool_count')}
             </th>
@@ -199,12 +211,8 @@
                 <StatusDot status={server.status ?? 'unknown'} />
               </td>
               <td class="text-mono">{formatLatency(server.latency)}</td>
-              <td class="text-mono">{formatRate(server.req_rate)}</td>
-              <td class="text-mono" style="color: {errColor(server.error_rate)}">
-                {formatPct(server.error_rate)}
-              </td>
               <td class="text-mono">{server.tool_count ?? 0}</td>
-              <td class="text-mono text-muted">{server.target ?? '---'}</td>
+              <td class="text-mono text-muted target-cell">{server.target ?? '---'}</td>
               <td class="sparkline-cell">
                 {#if server.latencyHistory?.length}
                   <SparkLine
@@ -220,11 +228,82 @@
             </tr>
           {:else}
             <tr>
-              <td colspan="8" class="empty-cell">No servers match filters</td>
+              <td colspan="6" class="empty-cell">No servers match filters</td>
             </tr>
           {/each}
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Infrastructure cards row: Tunnels + Cache -->
+  <div class="infra-cards">
+    <!-- Tunnels Card -->
+    <div class="infra-card">
+      <div class="infra-card-header">
+        <span class="infra-card-title">SSH Tunnels</span>
+        {#if tunnels.length > 0}
+          <Badge text="{tunnels.length} active" variant="info" />
+        {:else}
+          <Badge text="none" variant="info" />
+        {/if}
+      </div>
+      <div class="infra-card-body">
+        {#if tunnels.length > 0}
+          <div class="tunnel-list">
+            {#each tunnels as tunnel}
+              <div class="tunnel-row">
+                <StatusDot status={tunnel.state === 'connected' ? 'healthy' : tunnel.state === 'connecting' ? 'degraded' : 'down'} />
+                <span class="text-mono tunnel-name">{tunnel.name}</span>
+                <span class="text-muted text-xs">{tunnel.remote_host}</span>
+                <Badge text={tunnel.state} variant={tunnelStateVariant(tunnel.state)} />
+                {#if tunnel.uptime}
+                  <span class="text-muted text-xs">up {tunnel.uptime}</span>
+                {/if}
+                {#if tunnel.reconnects > 0}
+                  <span class="text-xs reconnect-count">↻ {tunnel.reconnects}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <span class="text-muted text-xs">No active tunnels</span>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Cache Stats Card -->
+    <div class="infra-card">
+      <div class="infra-card-header">
+        <span class="infra-card-title">Response Cache</span>
+        {#if cacheStats}
+          <Badge text="{cacheStats.entries} entries" variant="info" />
+        {/if}
+      </div>
+      <div class="infra-card-body">
+        {#if cacheStats}
+          <div class="cache-grid">
+            <div class="cache-stat">
+              <span class="cache-stat-value text-mono">{cacheStats.entries}</span>
+              <span class="cache-stat-label">Entries</span>
+            </div>
+            {#if cacheStats.size}
+              <div class="cache-stat">
+                <span class="cache-stat-value text-mono">{cacheStats.size}</span>
+                <span class="cache-stat-label">Size</span>
+              </div>
+            {/if}
+            <div class="cache-stat">
+              <span class="cache-stat-value text-mono" style:color={cacheStats.hit_rate > 0.5 ? 'var(--success)' : 'var(--fg-secondary)'}>{(cacheStats.hit_rate * 100).toFixed(1)}%</span>
+              <span class="cache-stat-label">Hit Rate</span>
+            </div>
+          </div>
+        {:else if infraLoading}
+          <span class="text-muted text-xs">Loading...</span>
+        {:else}
+          <span class="text-muted text-xs">Unavailable</span>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -234,6 +313,9 @@
       <div class="detail-header">
         <span class="detail-name text-mono">{selectedServer.name}</span>
         <StatusDot status={selectedServer.status ?? 'unknown'} />
+        {#if selectedServer.tool_count > 0}
+          <Badge text="{selectedServer.tool_count} tools" variant="accent" />
+        {/if}
       </div>
       {#if selectedServer.description}
         <p class="detail-description">{selectedServer.description}</p>
@@ -297,6 +379,10 @@
   .dot-degraded { background: var(--warning); }
   .dot-down { background: var(--error); }
 
+  .tools-icon {
+    font-size: 11px;
+  }
+
   .search-input {
     width: 200px;
   }
@@ -333,6 +419,13 @@
     font-weight: 500;
   }
 
+  .target-cell {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .sparkline-cell {
     width: 130px;
     padding: 4px 10px;
@@ -343,6 +436,91 @@
     color: var(--fg-muted);
     padding: 32px 10px !important;
   }
+
+  /* --- Infrastructure Cards --- */
+
+  .infra-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .infra-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 12px 16px;
+  }
+
+  .infra-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .infra-card-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+  }
+
+  .infra-card-body {
+    font-size: 12px;
+  }
+
+  .tunnel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .tunnel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tunnel-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-primary);
+  }
+
+  .reconnect-count {
+    color: var(--warning);
+    font-family: var(--font-mono);
+  }
+
+  .cache-grid {
+    display: flex;
+    gap: 24px;
+  }
+
+  .cache-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .cache-stat-value {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .cache-stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--fg-muted);
+  }
+
+  /* --- Detail Footer --- */
 
   .detail-footer {
     background: var(--bg-secondary);
