@@ -77,7 +77,7 @@ The benchmarker runs as a Kubernetes Job, executed once per unique `ModelDeploym
 
 ### Implementation Features
 
-- **Mock Benchmarking**: Currently implements simulated performance metrics
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
 - **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
 - **Resource Management**: Proper cleanup of test resources after completion
 - **Error Recovery**: Robust error handling and retry logic

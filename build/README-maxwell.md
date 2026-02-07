@@ -170,13 +170,11 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ## Kubernetes Deployment
 
-### Node Labels
-
-Label Maxwell GPU nodes for targeting:
+FlexInfer deployments should not rely on ad-hoc `kubectl label node ...` for GPU targeting.
+The `flexinfer-agent` DaemonSet discovers GPU hardware and applies stable node labels:
 
 ```bash
-kubectl label node <node-name> nvidia.com/gpu.arch=Maxwell
-kubectl label node <node-name> nvidia.com/gpu.compute.major=5
+kubectl get nodes -L flexinfer.ai/gpu.vendor -L flexinfer.ai/gpu.arch -L flexinfer.ai/gpu.vram
 ```
 
 ### Example Pod
@@ -297,7 +295,34 @@ mlc_llm convert_weight Qwen3-0.6B \
 
 FlexInfer automatically detects Maxwell GPUs via the node agent and applies appropriate settings.
 
-### Example ModelDeployment for Maxwell
+### v1alpha2 `Model` (recommended)
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-0-6b-maxwell
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-0.6B-q0f32-MLC
+  gpu:
+    vendor: nvidia
+    vramEstimateMB: 5200
+  cache:
+    strategy: SharedPVC
+    storageClass: longhorn
+    size: 6Gi
+  config:
+    jitPolicy: READONLY
+    # Option A (recommended): compile to /models/<modelName>/maxwell-lib.so and omit modelLibPath
+    # Option B: set modelLibPath explicitly
+    # modelLibPath: /models/qwen3-0-6b-maxwell/maxwell-lib.so
+```
+
+Compile once into the cache PVC using the Job example in `docs/user/backends-maxwell.md`.
+
+### v1alpha1 `ModelDeployment` (legacy)
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
@@ -309,11 +334,11 @@ spec:
   model: Qwen3-0.6B-q0f32-MLC
   modelCacheRef: qwen3-0.6b-maxwell  # Pre-cached model with compiled lib
   nodeSelector:
-    nvidia.com/gpu.compute.major: "5"  # Target Maxwell GPUs only
+    flexinfer.ai/gpu.arch: sm_52  # Target Maxwell GPUs only
   mlcllm:
     mode: local
     modelLibPath: /models/maxwell-lib.so  # Pre-compiled for sm_52
-    jitPolicy: "OFF"  # Disable JIT, use pre-compiled library
+    jitPolicy: "READONLY"  # Use pre-compiled library (avoid JIT on Maxwell)
     gpuMemoryBytes: 5000000000  # ~5GB for GTX 980 Ti
     compileOptions:
       useCutlass: false      # Disabled - requires FP16

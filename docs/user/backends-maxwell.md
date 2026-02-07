@@ -43,33 +43,83 @@ Models verified to work on Maxwell GPUs with 6GB VRAM:
 
 ## FlexInfer Configuration
 
-### ModelCache with Pre-compiled Library
+FlexInfer supports Maxwell via `ai.flexinfer/v1alpha2` (recommended). `v1alpha1` resources still work, but the docs below focus on v1alpha2 because it matches how the controller enforces compatibility.
 
-Maxwell requires pre-compiled model libraries to avoid JIT compilation failures:
+### v1alpha2 `Model` (recommended)
 
 ```yaml
-apiVersion: ai.flexinfer/v1alpha1
-kind: ModelCache
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
 metadata:
-  name: qwen3-maxwell
+  name: qwen3-0-6b-maxwell
+  namespace: flexinfer-system
 spec:
-  source:
-    type: huggingface
-    repository: mlc-ai/Qwen3-0.6B-q0f32-MLC
-  storageStrategy: SharedPVC
-  storageClassName: longhorn
-  storageSize: 5Gi
-  # Pre-compile for Maxwell during cache provisioning
-  precompile:
-    enabled: true
-    targetArch: sm_52
-    compileOptions:
-      useCutlass: false
-      useFlashInfer: false
-      useCublasGemm: true
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-0.6B-q0f32-MLC
+  gpu:
+    vendor: nvidia
+    vramEstimateMB: 5200
+  cache:
+    strategy: SharedPVC
+    storageClass: longhorn
+    size: 6Gi
+  # Maxwell requires a pre-compiled model library (no FP16).
+  # If you compile to /models/<modelName>/maxwell-lib.so, you can omit modelLibPath.
+  config:
+    jitPolicy: READONLY
+    # modelLibPath: /models/qwen3-0-6b-maxwell/maxwell-lib.so
 ```
 
-### ModelDeployment
+#### Compile `maxwell-lib.so` into the cache PVC
+
+FlexInfer will prefetch the HuggingFace repo into the cache PVC under `/models/<modelName>/`.
+For the example above, that directory is `/models/qwen3-0-6b-maxwell/`.
+
+Run a one-time compile Job on the Maxwell node (GTX 980 Ti, `sm_52`) to generate `maxwell-lib.so`:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-0-6b-maxwell-compile
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      runtimeClassName: nvidia
+      nodeSelector:
+        flexinfer.ai/gpu.arch: sm_52
+      containers:
+        - name: compile
+          image: registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              model_dir="/models/qwen3-0-6b-maxwell"
+              out="${model_dir}/maxwell-lib.so"
+              python3 -m mlc_llm compile \
+                "${model_dir}" \
+                --device cuda:0 \
+                --opt "cutlass=0;cublas_gemm=1;cudagraph=0;flashinfer=0" \
+                --output "${out}"
+              ls -lh "${out}"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: qwen3-0-6b-maxwell-cache
+```
+
+If you used a different `metadata.name`, update `model_dir` and the PVC name (`<modelName>-cache` by default).
+
+After `maxwell-lib.so` exists, the controller will start the deployment (MLC defaults to `jitPolicy=READONLY` on Maxwell).
+
+### v1alpha1 (legacy) `ModelDeployment`
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
@@ -79,7 +129,7 @@ metadata:
 spec:
   backend: mlc-llm
   model: Qwen3-0.6B-q0f32-MLC
-  modelCacheRef: qwen3-maxwell
+  modelCacheRef: qwen3-0.6b-maxwell
 
   # Target Maxwell GPUs specifically
   nodeSelector:
@@ -89,7 +139,7 @@ spec:
     mode: local
     # Use pre-compiled library (avoids JIT compilation)
     modelLibPath: /models/maxwell-lib.so
-    jitPolicy: "OFF"
+    jitPolicy: "READONLY"
     gpuMemoryBytes: 5000000000  # ~5GB for GTX 980 Ti
     compileOptions:
       useCutlass: false      # Requires FP16 - disabled
@@ -183,6 +233,14 @@ Maxwell GPUs are significantly slower than modern GPUs. Expect:
 For better performance, consider upgrading to Pascal (10-series) or newer GPUs.
 
 ## Troubleshooting
+
+### Model shows `ValidationFailed` / "requires config.modelLibPath"
+
+**Cause:** For v1alpha2, FlexInfer blocks Maxwell deployments unless it can find a pre-compiled library.
+
+**Fix options:**
+1. Compile `maxwell-lib.so` into `/models/<modelName>/maxwell-lib.so` (recommended), or
+2. Set `spec.config.modelLibPath` to the full path of your pre-compiled library.
 
 ### "identifier __half is undefined"
 

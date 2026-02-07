@@ -28,6 +28,12 @@ If you’re looking for “what exists today” docs, start here instead:
   - ROCm gfx1100 guide: `docs/user/backends-rocm-gfx1100.md`
   - Maxwell guide: `docs/user/backends-maxwell.md` and `build/README-maxwell.md`
 
+Reference homelab topology used while hardening these paths:
+
+- `cblevins-7900xtx`: AMD RX 7900 XTX (ROCm `gfx1100`)
+- `cblevins-5930k`: AMD RX 7900 XTX (ROCm `gfx1100`)
+- `cblevins-gtx980ti`: NVIDIA GTX 980 Ti (Maxwell `sm_52`)
+
 ## Loom context pack
 
 For deeper “planning artifacts” (product spec, implementation plan, decisions/worklog), see:

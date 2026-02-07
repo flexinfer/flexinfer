@@ -91,7 +91,7 @@ FlexInfer supports multiple GPU architectures with backend-specific consideratio
 | Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | ❌ | *FP32 only, see [Maxwell Guide](build/README-maxwell.md) |
 | Pascal (GTX 1080) | 6.x | ✅ | ✅ | ✅ | ✅ | Full support |
 | Volta+ (RTX 20xx+) | 7.0+ | ✅ | ✅ | ✅ | ✅ | Full support with Tensor Cores |
-| AMD RDNA3 (RX 7900) | ROCm gfx1100 | ✅ | ✅ | ✅ | ✅** | ROCm 6.0+ required |
+| AMD RDNA3 (RX 7900) | ROCm gfx1100 | ✅ | ✅ | ✅ | ✅** | ROCm 6.4+ recommended (stable baseline) |
 
 ### Special GPU Documentation
 

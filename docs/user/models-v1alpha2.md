@@ -100,6 +100,26 @@ spec:
     maxNumSequence: 4
 ```
 
+#### Maxwell (sm_5x) notes
+
+On NVIDIA Maxwell GPUs (compute capability 5.x, e.g. GTX 980 Ti `sm_52`), FlexInfer enforces backend compatibility:
+
+- `vllm`, `vllm-omni`, and `diffusers` are rejected on Maxwell.
+- `mlc-llm` requires a pre-compiled library (FP32 quantization only). Prefer compiling to `/models/<modelName>/maxwell-lib.so` and setting `jitPolicy: READONLY`.
+
+Example:
+
+```yaml
+spec:
+  backend: mlc-llm
+  gpu:
+    vendor: nvidia
+  config:
+    jitPolicy: READONLY
+    # Optional if you compile to /models/<modelName>/maxwell-lib.so:
+    # modelLibPath: /models/<modelName>/maxwell-lib.so
+```
+
 ### `spec.resources` / `spec.nodeSelector` (optional)
 
 Pod resources and node selection. If you omit `nodeSelector`, the controller picks GPU nodes automatically.

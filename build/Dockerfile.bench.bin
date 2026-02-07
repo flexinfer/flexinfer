@@ -1,0 +1,7 @@
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates procps
+WORKDIR /
+COPY bin/benchmarker /flexinfer-bench
+USER 65532:65532
+ENTRYPOINT ["/flexinfer-bench"]
+

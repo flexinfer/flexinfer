@@ -1,0 +1,7 @@
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+WORKDIR /
+COPY bin/scheduler /sched
+USER 65532:65532
+ENTRYPOINT ["/sched"]
+
