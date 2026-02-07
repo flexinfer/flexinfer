@@ -160,12 +160,24 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		}
 	}
 
-	// Try AMD rocm-smi
-	out, err := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
-	if err == nil {
-		archOut, _ := a.runCmd(ctx, "rocminfo")
-		a.parseRocm(string(out), string(archOut), labels)
-		return
+	// Try AMD rocm-smi (direct, then via chroot to host).
+	rocmQueries := []struct {
+		cmd  string
+		args []string
+	}{
+		{"rocm-smi", []string{"--showmeminfo", "vram", "--json"}},
+		{"chroot", []string{"/host", "rocm-smi", "--showmeminfo", "vram", "--json"}},
+	}
+	for _, q := range rocmQueries {
+		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		if err == nil {
+			archOut, err := a.runCmd(ctx, "rocminfo")
+			if err != nil {
+				archOut, _ = a.runCmd(ctx, "chroot", "/host", "rocminfo")
+			}
+			a.parseRocm(string(out), string(archOut), labels)
+			return
+		}
 	}
 
 	// Fallback to sysfs for AMD GPUs (when rocm-smi unavailable)
@@ -173,15 +185,23 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 	if len(sysfsGPUs) > 0 {
 		labels[a.labelPrefix+"gpu.vendor"] = "AMD"
 		labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(sysfsGPUs))
-		if sysfsGPUs[0].TotalMB > 0 {
-			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", sysfsGPUs[0].TotalMB/1024)
+		var maxTotalMB uint64
+		for _, g := range sysfsGPUs {
+			if g.TotalMB > maxTotalMB {
+				maxTotalMB = g.TotalMB
+			}
+		}
+		if maxTotalMB > 0 {
+			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxTotalMB/1024)
 		}
 		// Try to infer arch (gfx*) via rocminfo when available. This is important
 		// for selecting gfx1100-optimized images even when rocm-smi is missing.
-		if infoOut, err := a.runCmd(ctx, "rocminfo"); err == nil {
-			if arch := extractAMDArch(string(infoOut)); arch != "" {
-				labels[a.labelPrefix+"gpu.arch"] = arch
-			}
+		infoOut, err := a.runCmd(ctx, "rocminfo")
+		if err != nil {
+			infoOut, _ = a.runCmd(ctx, "chroot", "/host", "rocminfo")
+		}
+		if arch := extractAMDArch(string(infoOut)); arch != "" {
+			labels[a.labelPrefix+"gpu.arch"] = arch
 		}
 		return
 	}
@@ -196,7 +216,62 @@ func (a *Agent) detectCPU(labels map[string]string) {
 
 func extractAMDArch(infoOut string) string {
 	re := regexp.MustCompile(`gfx[0-9a-z]+`)
-	return re.FindString(infoOut)
+	matches := re.FindAllString(infoOut, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+
+	// Prefer the highest "major" arch generation, since some nodes expose both an
+	// iGPU (e.g. gfx10xx) and a dGPU (e.g. gfx11xx). Within a major generation,
+	// fall back to the highest numeric value seen.
+	best := matches[0]
+	bestMajor := amdArchMajor(best)
+	bestNum := amdArchNumeric(best)
+	for _, m := range matches[1:] {
+		maj := amdArchMajor(m)
+		if maj > bestMajor {
+			best, bestMajor, bestNum = m, maj, amdArchNumeric(m)
+			continue
+		}
+		if maj < bestMajor {
+			continue
+		}
+		if n := amdArchNumeric(m); n > bestNum {
+			best, bestNum = m, n
+		}
+	}
+	return best
+}
+
+func amdArchMajor(arch string) int {
+	s := strings.TrimPrefix(arch, "gfx")
+	if s == "" {
+		return 0
+	}
+	// ROCm naming is inconsistent: gfx90a, gfx906, gfx1100, etc.
+	// This coarse major picks 11, 10, 9, ...
+	if s[0] == '9' {
+		return 9
+	}
+	if len(s) < 2 {
+		return 0
+	}
+	if s[0] < '0' || s[0] > '9' || s[1] < '0' || s[1] > '9' {
+		return 0
+	}
+	return int(s[0]-'0')*10 + int(s[1]-'0')
+}
+
+func amdArchNumeric(arch string) int {
+	s := strings.TrimPrefix(arch, "gfx")
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			break
+		}
+		n = n*10 + int(s[i]-'0')
+	}
+	return n
 }
 
 // parseNvidia parses output from nvidia-smi and fills the GPU labels.
@@ -245,7 +320,8 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 	labels[a.labelPrefix+"gpu.vendor"] = "AMD"
 	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(data))
 
-	// Extract total VRAM from first GPU
+	// Prefer the max VRAM across detected GPUs. Some nodes expose both iGPU and dGPU.
+	var maxTotalMB uint64
 	for _, gpu := range data {
 		totalMB := a.extractMemoryValue(gpu, []string{
 			// ROCm 6.4+ (in MB)
@@ -259,10 +335,12 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 			"VRAM Total",
 			"vram total",
 		})
-		if totalMB > 0 {
-			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", totalMB/1024)
+		if totalMB > maxTotalMB {
+			maxTotalMB = totalMB
 		}
-		break // Only need first GPU for total VRAM label
+	}
+	if maxTotalMB > 0 {
+		labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxTotalMB/1024)
 	}
 
 	if arch := extractAMDArch(infoOut); arch != "" {

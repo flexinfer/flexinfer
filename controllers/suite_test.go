@@ -42,9 +42,30 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 
+func envtestAssetsDir() string {
+	if d := os.Getenv("KUBEBUILDER_ASSETS"); d != "" {
+		return d
+	}
+	return "/usr/local/kubebuilder/bin"
+}
+
+func envtestAssetsPresent() bool {
+	d := envtestAssetsDir()
+	if _, err := os.Stat(filepath.Join(d, "etcd")); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(d, "kube-apiserver")); err != nil {
+		return false
+	}
+	return true
+}
+
 func TestAPIs(t *testing.T) {
 	if testing.Short() || os.Getenv("SKIP_ENVTEST") == "1" {
 		t.Skip("skipping envtest suite")
+	}
+	if !envtestAssetsPresent() {
+		t.Skip("skipping envtest suite (envtest assets not found; set KUBEBUILDER_ASSETS or install kubebuilder assets)")
 	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Controller Suite")

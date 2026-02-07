@@ -205,6 +205,15 @@ func TestParseRocm_ROCm64(t *testing.T) {
 	assert.Equal(t, "gfx1100", labels["flexinfer.ai/gpu.arch"])
 }
 
+func TestExtractAMDArch_PrefersHigherMajor(t *testing.T) {
+	out := `
+Agents:
+  Name: gfx1036
+  Name: gfx1100
+`
+	assert.Equal(t, "gfx1100", extractAMDArch(out))
+}
+
 // TestParseMemoryString tests the memory string parser.
 func TestParseMemoryString(t *testing.T) {
 	a := &Agent{}
