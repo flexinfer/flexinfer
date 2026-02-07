@@ -9,6 +9,7 @@ import (
 func newHudCmd(socketPath string) *cobra.Command {
 	var dev bool
 	var port int
+	var metricsAddr string
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -21,18 +22,23 @@ monitoring and control of the entire agent ecosystem.
 
 By default the HUD picks a random available port and opens a browser.
 Use --port to specify a fixed port, and --dev to enable CORS for the
-Vite dev server running on :5173.`,
+Vite dev server running on :5173.
+
+Use --metrics-addr to connect to the daemon's SSE event stream for
+real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return hud.Run(hud.Config{
-				SocketPath: socketPath,
-				Dev:        dev,
-				Port:       port,
+				SocketPath:  socketPath,
+				Dev:         dev,
+				Port:        port,
+				MetricsAddr: metricsAddr,
 			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&dev, "dev", false, "Development mode (CORS enabled, no embed)")
 	cmd.Flags().IntVar(&port, "port", 0, "Port to listen on (0 = random)")
+	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "Daemon metrics/events address (e.g., 127.0.0.1:9090)")
 
 	return cmd
 }
