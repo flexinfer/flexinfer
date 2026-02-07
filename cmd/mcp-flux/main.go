@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,18 +35,6 @@ type fluxServer struct {
 
 	dynamicClient dynamic.Interface
 	kubeClient    kubernetes.Interface
-}
-
-func getEnvInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func clampInt(v, min, max int) int {

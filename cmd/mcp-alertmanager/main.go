@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -174,7 +175,7 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	defer resp.Body.Close()
 
 	maxBytes := env.Int("ALERTMANAGER_MAX_RESPONSE_BYTES", 5*1024*1024)
-	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	respBody, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +184,7 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return nil, mcperror.APIError("Alertmanager", resp.StatusCode, strutil.BodySnippet(respBody, 4096))
 	}
 
 	// Handle empty responses
@@ -205,31 +206,6 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 		return m, nil
 	}
 	return map[string]any{"data": result}, nil
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	return strutil.Truncate(s, max)
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 func (s *alertmanagerServer) handleListAlerts(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -320,7 +296,7 @@ func (s *alertmanagerServer) handleCreateSilence(ctx context.Context, args map[s
 	// Get matchers
 	matchers, ok := args["matchers"].([]any)
 	if !ok || len(matchers) == 0 {
-		return mcp.ErrorResult(fmt.Errorf("matchers is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("matchers")), nil
 	}
 
 	// Build silence payload

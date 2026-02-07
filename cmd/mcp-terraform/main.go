@@ -14,8 +14,10 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -24,19 +26,12 @@ var (
 	version = "0.1.0"
 
 	// Terraform Cloud/Enterprise settings
-	tfcHost  = getEnv("TFC_HOST", "https://app.terraform.io")
+	tfcHost  = env.String("TFC_HOST", "https://app.terraform.io")
 	tfcToken = os.Getenv("TFC_TOKEN")
 	tfcOrg   = os.Getenv("TFC_ORGANIZATION")
 
 	httpClient *httpclient.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func init() {
 	cfg := httpclient.DefaultConfig()
@@ -316,11 +311,11 @@ func tfcRequest(ctx context.Context, method, path string) (map[string]any, error
 		if json.Unmarshal(body, &errResp) == nil {
 			if errors, ok := errResp["errors"].([]any); ok && len(errors) > 0 {
 				if errObj, ok := errors[0].(map[string]any); ok {
-					return nil, fmt.Errorf("TFC error (%d): %v", resp.StatusCode, errObj["detail"])
+					return nil, mcperror.APIError("Terraform Cloud", resp.StatusCode, fmt.Sprintf("%v", errObj["detail"]))
 				}
 			}
 		}
-		return nil, fmt.Errorf("TFC error (%d): %s", resp.StatusCode, string(body))
+		return nil, mcperror.APIError("Terraform Cloud", resp.StatusCode, string(body))
 	}
 
 	var result map[string]any

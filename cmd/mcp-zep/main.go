@@ -16,6 +16,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -107,7 +108,7 @@ func getConfig() (apiURL, apiKey string, err error) {
 	apiURL = strings.TrimSuffix(apiURL, "/")
 
 	if apiKey == "" {
-		return "", "", fmt.Errorf("ZEP_API_KEY not set")
+		return "", "", mcperror.NotConfigured("ZEP_API_KEY", "set ZEP_API_KEY environment variable")
 	}
 	return apiURL, apiKey, nil
 }
@@ -259,7 +260,7 @@ func handleAddMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("zep API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, mcperror.APIError("Zep", resp.StatusCode, string(respBody))
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -297,7 +298,7 @@ func handleGetMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("zep API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, mcperror.APIError("Zep", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {

@@ -10,44 +10,29 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
 	version = "0.1.0"
 
-	esURL      = getEnv("ELASTICSEARCH_URL", "http://localhost:9200")
+	esURL      = env.String("ELASTICSEARCH_URL", "http://localhost:9200")
 	esUsername = os.Getenv("ELASTICSEARCH_USERNAME")
 	esPassword = os.Getenv("ELASTICSEARCH_PASSWORD")
 	esAPIKey   = os.Getenv("ELASTICSEARCH_API_KEY")
 
 	httpClient *httpclient.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
 
 func init() {
 	httpClient = httpclient.NewDefault()
@@ -336,19 +321,19 @@ func esRequest(ctx context.Context, method, path string, body any) (map[string]a
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("ELASTICSEARCH_MAX_RESPONSE_BYTES", 10*1024*1024)
+	maxBytes := env.Int("ELASTICSEARCH_MAX_RESPONSE_BYTES", 10*1024*1024)
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("elasticsearch error %d: %s", resp.StatusCode, truncate(string(respBody), 1000))
+		return nil, mcperror.APIError("Elasticsearch", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parse response: %w (body: %s)", err, truncate(string(respBody), 500))
+		return nil, fmt.Errorf("parse response: %w (body: %s)", err, strutil.Truncate(string(respBody), 500))
 	}
 
 	return result, nil
@@ -389,14 +374,14 @@ func esRequestRaw(ctx context.Context, method, path string, body any) ([]byte, e
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("ELASTICSEARCH_MAX_RESPONSE_BYTES", 10*1024*1024)
+	maxBytes := env.Int("ELASTICSEARCH_MAX_RESPONSE_BYTES", 10*1024*1024)
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("elasticsearch error %d: %s", resp.StatusCode, truncate(string(respBody), 1000))
+		return nil, mcperror.APIError("Elasticsearch", resp.StatusCode, string(respBody))
 	}
 
 	return respBody, nil
@@ -409,13 +394,6 @@ func buildURL(path string) (string, error) {
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(path, "/")
 	return base.String(), nil
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }
 
 // Handlers

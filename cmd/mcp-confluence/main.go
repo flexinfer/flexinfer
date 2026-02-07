@@ -10,14 +10,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -42,7 +44,7 @@ func run(ctx context.Context) error {
 
 	baseURL := os.Getenv("CONFLUENCE_URL")
 	if baseURL == "" {
-		return fmt.Errorf("CONFLUENCE_URL environment variable is required")
+		return mcperror.NotConfigured("CONFLUENCE_URL", "set CONFLUENCE_URL environment variable")
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
@@ -50,7 +52,7 @@ func run(ctx context.Context) error {
 	apiToken := os.Getenv("CONFLUENCE_API_TOKEN")
 
 	if email == "" || apiToken == "" {
-		return fmt.Errorf("CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN are required")
+		return mcperror.NotConfigured("CONFLUENCE_EMAIL/CONFLUENCE_API_TOKEN", "set CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN environment variables")
 	}
 
 	cs := &confluenceServer{
@@ -324,8 +326,8 @@ func (s *confluenceServer) request(ctx context.Context, method, path string, bod
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("CONFLUENCE_MAX_RESPONSE_BYTES", 10*1024*1024)
-	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	maxBytes := env.Int("CONFLUENCE_MAX_RESPONSE_BYTES", 10*1024*1024)
+	respBody, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -334,7 +336,7 @@ func (s *confluenceServer) request(ctx context.Context, method, path string, bod
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("confluence API error %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return nil, mcperror.APIError("Confluence", resp.StatusCode, strutil.BodySnippet(respBody, 4096))
 	}
 
 	var result map[string]any
@@ -343,49 +345,6 @@ func (s *confluenceServer) request(ctx context.Context, method, path string, bod
 	}
 
 	return result, nil
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	truncated := false
-	if len(body) > max {
-		body = body[:max]
-		truncated = true
-	}
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	if truncated {
-		return s + "…"
-	}
-	return s
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 func (s *confluenceServer) handleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

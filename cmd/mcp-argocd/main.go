@@ -13,8 +13,10 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -22,18 +24,11 @@ import (
 var (
 	version = "0.1.0"
 
-	argocdURL   = getEnv("ARGOCD_SERVER", "https://argocd.local")
+	argocdURL   = env.String("ARGOCD_SERVER", "https://argocd.local")
 	argocdToken = os.Getenv("ARGOCD_AUTH_TOKEN")
 
 	httpClient *httpclient.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func init() {
 	cfg := httpclient.DefaultConfig()
@@ -329,10 +324,10 @@ func argocdRequest(ctx context.Context, method, path string, query url.Values) (
 		var errResp map[string]any
 		if json.Unmarshal(body, &errResp) == nil {
 			if msg, ok := errResp["message"].(string); ok {
-				return nil, fmt.Errorf("ArgoCD error (%d): %s", resp.StatusCode, msg)
+				return nil, mcperror.APIError("ArgoCD", resp.StatusCode, msg)
 			}
 		}
-		return nil, fmt.Errorf("ArgoCD error (%d): %s", resp.StatusCode, string(body))
+		return nil, mcperror.APIError("ArgoCD", resp.StatusCode, string(body))
 	}
 
 	var result map[string]any

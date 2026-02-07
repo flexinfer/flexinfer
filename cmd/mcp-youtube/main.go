@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -175,7 +176,7 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 		"title":       video.Title,
 		"author":      video.Author,
 		"duration":    video.Duration.String(),
-		"description": truncateString(video.Description, 500),
+		"description": strutil.Truncate(video.Description, 500),
 		"views":       video.Views,
 		"publish_date": func() string {
 			if video.PublishDate.IsZero() {
@@ -184,11 +185,4 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 			return video.PublishDate.Format("2006-01-02")
 		}(),
 	})
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

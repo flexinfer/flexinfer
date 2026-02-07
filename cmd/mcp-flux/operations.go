@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -613,8 +614,8 @@ func (f *fluxServer) handleEvents(ctx context.Context, args map[string]any) (*mc
 	allNs := v.Bool("all_namespaces", false)
 	forResource := v.String("for", "")
 	limit := v.Int("limit", 200)
-	limit = clampInt(limit, 1, getEnvInt("FLUX_EVENTS_MAX_ITEMS", 1000))
-	maxBytes := getEnvInt("FLUX_MAX_RESPONSE_BYTES", 1024*1024)
+	limit = clampInt(limit, 1, env.Int("FLUX_EVENTS_MAX_ITEMS", 1000))
+	maxBytes := env.Int("FLUX_MAX_RESPONSE_BYTES", 1024*1024)
 
 	if f.fluxBin != "" {
 		cmdArgs := []string{"events"}

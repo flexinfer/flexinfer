@@ -9,13 +9,14 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -23,29 +24,12 @@ import (
 var (
 	version = "0.1.0"
 
-	vaultAddr  = getEnv("VAULT_ADDR", "http://127.0.0.1:8200")
+	vaultAddr  = env.String("VAULT_ADDR", "http://127.0.0.1:8200")
 	vaultToken = os.Getenv("VAULT_TOKEN")
 	vaultNS    = os.Getenv("VAULT_NAMESPACE")
 
 	httpClient *http.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
 
 func init() {
 	transport := &http.Transport{}
@@ -53,7 +37,7 @@ func init() {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	httpClient = &http.Client{
-		Timeout:   time.Duration(getEnvInt("VAULT_TIMEOUT", 30)) * time.Second,
+		Timeout:   time.Duration(env.Int("VAULT_TIMEOUT", 30)) * time.Second,
 		Transport: transport,
 	}
 }
@@ -241,10 +225,10 @@ func vaultRequest(ctx context.Context, method, path string) (map[string]any, err
 		var errResp map[string]any
 		if json.Unmarshal(body, &errResp) == nil {
 			if errors, ok := errResp["errors"].([]any); ok && len(errors) > 0 {
-				return nil, fmt.Errorf("vault error (%d): %v", resp.StatusCode, errors)
+				return nil, mcperror.APIError("Vault", resp.StatusCode, fmt.Sprintf("%v", errors))
 			}
 		}
-		return nil, fmt.Errorf("vault error (%d): %s", resp.StatusCode, string(body))
+		return nil, mcperror.APIError("Vault", resp.StatusCode, string(body))
 	}
 
 	var result map[string]any

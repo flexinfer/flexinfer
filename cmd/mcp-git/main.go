@@ -12,6 +12,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -24,7 +25,7 @@ var (
 
 func main() {
 	var err error
-	defaultRepo, err = filepath.Abs(getEnv("GIT_REPO_PATH", "."))
+	defaultRepo, err = filepath.Abs(env.String("GIT_REPO_PATH", "."))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving GIT_REPO_PATH: %v\n", err)
 		os.Exit(1)
@@ -337,13 +338,6 @@ func runGit(ctx context.Context, repoPath string, args ...string) (string, error
 		return string(output), fmt.Errorf("git %s: %s", strings.Join(args, " "), string(output))
 	}
 	return string(output), nil
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

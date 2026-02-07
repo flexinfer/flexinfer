@@ -6,12 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -19,27 +19,11 @@ import (
 
 var (
 	version              = "0.1.0"
-	hostAlias            = getEnv("ASUS_ROUTER_HOST", "asus-router")
-	hostPort             = getEnvInt("ASUS_ROUTER_PORT", 22)
-	hostUser             = getEnv("ASUS_ROUTER_USER", "admin")
-	routerTimeoutSeconds = getEnvInt("ASUS_ROUTER_TIMEOUT_SECONDS", 20)
+	hostAlias            = env.String("ASUS_ROUTER_HOST", "asus-router")
+	hostPort             = env.Int("ASUS_ROUTER_PORT", 22)
+	hostUser             = env.String("ASUS_ROUTER_USER", "admin")
+	routerTimeoutSeconds = env.Int("ASUS_ROUTER_TIMEOUT_SECONDS", 20)
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {

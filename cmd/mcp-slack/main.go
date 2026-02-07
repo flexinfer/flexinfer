@@ -18,7 +18,9 @@ import (
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -320,7 +322,7 @@ func (s *slackServer) request(ctx context.Context, method, endpoint string, para
 	// Check for Slack API error
 	var slackErr slackError
 	if err := json.Unmarshal(body, &slackErr); err == nil && !slackErr.OK {
-		return nil, fmt.Errorf("slack API error: %s", slackErr.Error)
+		return nil, mcperror.New(mcperror.CodeServerError, fmt.Sprintf("Slack API error: %s", slackErr.Error))
 	}
 
 	return body, nil
@@ -377,7 +379,7 @@ func (s *slackServer) handleSearchMessages(ctx context.Context, args map[string]
 	sb.WriteString(fmt.Sprintf("Found %d messages:\n\n", result.Messages.Total))
 	for _, m := range result.Messages.Matches {
 		sb.WriteString(fmt.Sprintf("- #%s | @%s | %s\n", m.Channel.Name, m.Username, formatTimestamp(m.Ts)))
-		sb.WriteString(fmt.Sprintf("  %s\n", truncateText(m.Text, 200)))
+		sb.WriteString(fmt.Sprintf("  %s\n", strutil.TruncateSingleLine(m.Text, 200)))
 		sb.WriteString(fmt.Sprintf("  %s\n\n", m.Permalink))
 	}
 
@@ -437,7 +439,7 @@ func (s *slackServer) handleListChannels(ctx context.Context, args map[string]an
 		sb.WriteString(fmt.Sprintf("- #%s (ID: %s)%s%s\n", c.Name, c.ID, private, archived))
 		sb.WriteString(fmt.Sprintf("  members: %d\n", c.NumMembers))
 		if c.Purpose.Value != "" {
-			sb.WriteString(fmt.Sprintf("  purpose: %s\n", truncateText(c.Purpose.Value, 100)))
+			sb.WriteString(fmt.Sprintf("  purpose: %s\n", strutil.TruncateSingleLine(c.Purpose.Value, 100)))
 		}
 		sb.WriteString("\n")
 	}
@@ -498,7 +500,7 @@ func (s *slackServer) handleGetChannelHistory(ctx context.Context, args map[stri
 			isThread = " [thread reply]"
 		}
 		sb.WriteString(fmt.Sprintf("- %s | %s%s\n", m.User, formatTimestamp(m.Ts), isThread))
-		sb.WriteString(fmt.Sprintf("  %s\n", truncateText(m.Text, 300)))
+		sb.WriteString(fmt.Sprintf("  %s\n", strutil.TruncateSingleLine(m.Text, 300)))
 		if len(m.Reactions) > 0 {
 			reactions := []string{}
 			for _, r := range m.Reactions {
@@ -807,14 +809,6 @@ func (s *slackServer) handleGetPermalink(ctx context.Context, args map[string]an
 	}
 
 	return mcp.TextResult(result.Permalink), nil
-}
-
-func truncateText(s string, maxLen int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 func formatTimestamp(ts string) string {

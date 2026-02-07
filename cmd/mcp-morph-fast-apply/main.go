@@ -18,6 +18,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -115,7 +116,7 @@ func getConfig() (baseURL, apiKey, model string, err error) {
 	}
 
 	if apiKey == "" {
-		return "", "", "", fmt.Errorf("MORPH_API_KEY not set")
+		return "", "", "", mcperror.NotConfigured("MORPH_API_KEY", "set MORPH_API_KEY environment variable")
 	}
 
 	return baseURL, apiKey, model, nil
@@ -240,7 +241,7 @@ func handleEditFile(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	}
 
 	if resp.StatusCode >= 400 {
-		return mcp.ErrorResult(fmt.Errorf("morph API error %d: %s", resp.StatusCode, string(respBody))), nil
+		return mcp.ErrorResult(mcperror.APIError("Morph", resp.StatusCode, string(respBody))), nil
 	}
 
 	// Parse response

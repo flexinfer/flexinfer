@@ -6,18 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -167,7 +168,7 @@ func run(ctx context.Context) error {
 
 func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
 	if t.apiKey == "" {
-		return nil, fmt.Errorf("TAVILY_API_KEY not set")
+		return nil, mcperror.NotConfigured("TAVILY_API_KEY", "set TAVILY_API_KEY environment variable")
 	}
 
 	payload["api_key"] = t.apiKey
@@ -190,8 +191,8 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("TAVILY_MAX_RESPONSE_BYTES", 5*1024*1024)
-	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	maxBytes := env.Int("TAVILY_MAX_RESPONSE_BYTES", 5*1024*1024)
+	respBody, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +201,7 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("tavily API error %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return nil, mcperror.APIError("Tavily", resp.StatusCode, strutil.BodySnippet(respBody, 4096))
 	}
 
 	var result map[string]any
@@ -209,49 +210,6 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 	}
 
 	return result, nil
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	truncated := false
-	if len(body) > max {
-		body = body[:max]
-		truncated = true
-	}
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	if truncated {
-		return s + "…"
-	}
-	return s
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 func clampInt(v, min, max int) int {

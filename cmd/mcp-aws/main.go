@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -27,20 +28,13 @@ import (
 var (
 	version = "0.1.0"
 
-	awsRegion = getEnv("AWS_REGION", "us-east-1")
+	awsRegion = env.String("AWS_REGION", "us-east-1")
 
 	s3Client  *s3.Client
 	ec2Client *ec2.Client
 	stsClient *sts.Client
 	lmdClient *lambda.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func initAWS(ctx context.Context) error {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))

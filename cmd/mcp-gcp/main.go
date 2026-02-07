@@ -18,6 +18,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -27,20 +28,13 @@ var (
 	version = "0.1.0"
 
 	gcpProject = os.Getenv("GCP_PROJECT")
-	gcpRegion  = getEnv("GCP_REGION", "us-central1")
-	gcpZone    = getEnv("GCP_ZONE", "us-central1-a")
+	gcpRegion  = env.String("GCP_REGION", "us-central1")
+	gcpZone    = env.String("GCP_ZONE", "us-central1-a")
 
 	storageClient   *storage.Client
 	instancesClient *compute.InstancesClient
 	functionsClient *functions.FunctionClient
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func initGCP(ctx context.Context) error {
 	var opts []option.ClientOption

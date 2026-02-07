@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -22,21 +24,14 @@ import (
 var (
 	version           = "0.1.0"
 	morphAPIKey       = os.Getenv("MORPH_API_KEY")
-	morphBaseURL      = strings.TrimRight(getEnv("MORPH_BASE_URL", "https://api.morphllm.com/v1"), "/")
-	defaultEmbedModel = getEnv("MORPH_EMBED_MODEL", "morph-embedding-v3")
-	qdrantURL         = strings.TrimRight(getEnv("MORPH_QDRANT_URL", getEnv("QDRANT_URL", "http://localhost:6333")), "/")
-	qdrantAPIKey      = getEnv("MORPH_QDRANT_API_KEY", os.Getenv("QDRANT_API_KEY"))
-	defaultCollection = getEnv("MORPH_QDRANT_COLLECTION", getEnv("COLLECTION_NAME", "codex"))
-	defaultDistance   = getEnv("MORPH_QDRANT_DISTANCE", "Cosine")
+	morphBaseURL      = strings.TrimRight(env.String("MORPH_BASE_URL", "https://api.morphllm.com/v1"), "/")
+	defaultEmbedModel = env.String("MORPH_EMBED_MODEL", "morph-embedding-v3")
+	qdrantURL         = strings.TrimRight(env.String("MORPH_QDRANT_URL", env.String("QDRANT_URL", "http://localhost:6333")), "/")
+	qdrantAPIKey      = env.String("MORPH_QDRANT_API_KEY", os.Getenv("QDRANT_API_KEY"))
+	defaultCollection = env.String("MORPH_QDRANT_COLLECTION", env.String("COLLECTION_NAME", "codex"))
+	defaultDistance   = env.String("MORPH_QDRANT_DISTANCE", "Cosine")
 	httpClient        = httpclient.NewDefault()
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -127,7 +122,7 @@ func registerTools(server *mcp.Server) {
 
 func morphEmbeddings(input []string, model string) (map[string]any, error) {
 	if morphAPIKey == "" {
-		return nil, fmt.Errorf("MORPH_API_KEY is not set")
+		return nil, mcperror.NotConfigured("MORPH_API_KEY", "set MORPH_API_KEY environment variable")
 	}
 	if model == "" {
 		model = defaultEmbedModel
@@ -158,7 +153,7 @@ func morphEmbeddings(input []string, model string) (map[string]any, error) {
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("morph API HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, mcperror.APIError("Morph", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]any
@@ -229,7 +224,7 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("qdrant HTTP %d: %v", resp.StatusCode, result)
+		return nil, mcperror.APIError("Qdrant", resp.StatusCode, fmt.Sprintf("%v", result))
 	}
 
 	return result, nil

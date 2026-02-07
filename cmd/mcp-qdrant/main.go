@@ -8,40 +8,25 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
 	version    = "0.1.0"
-	qdrantURL  = strings.TrimRight(getEnv("QDRANT_URL", "http://localhost:6333"), "/")
-	apiKey     = getEnv("QDRANT_API_KEY", "")
+	qdrantURL  = strings.TrimRight(env.String("QDRANT_URL", "http://localhost:6333"), "/")
+	apiKey     = env.String("QDRANT_API_KEY", "")
 	httpClient = httpclient.NewDefault()
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -210,8 +195,8 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("QDRANT_MAX_RESPONSE_BYTES", 5*1024*1024)
-	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	maxBytes := env.Int("QDRANT_MAX_RESPONSE_BYTES", 5*1024*1024)
+	respBody, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -226,9 +211,9 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	if resp.StatusCode >= 400 {
 		var apiResp any
 		if err := json.Unmarshal(respBody, &apiResp); err == nil {
-			return nil, fmt.Errorf("qdrant HTTP %d: %v", resp.StatusCode, apiResp)
+			return nil, mcperror.APIError("Qdrant", resp.StatusCode, fmt.Sprintf("%v", apiResp))
 		}
-		return nil, fmt.Errorf("qdrant HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return nil, mcperror.APIError("Qdrant", resp.StatusCode, strutil.BodySnippet(respBody, 4096))
 	}
 
 	var result map[string]any
@@ -237,39 +222,6 @@ func qdrantRequest(method, endpoint string, body any) (map[string]any, error) {
 	}
 
 	return result, nil
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	truncated := false
-	if len(body) > max {
-		body = body[:max]
-		truncated = true
-	}
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	if truncated {
-		return s + "…"
-	}
-	return s
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 // Handlers

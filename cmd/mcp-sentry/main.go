@@ -14,8 +14,10 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -23,19 +25,12 @@ import (
 var (
 	version = "0.1.0"
 
-	sentryURL   = getEnv("SENTRY_URL", "https://sentry.io")
+	sentryURL   = env.String("SENTRY_URL", "https://sentry.io")
 	sentryToken = os.Getenv("SENTRY_AUTH_TOKEN")
 	sentryOrg   = os.Getenv("SENTRY_ORG")
 
 	httpClient *httpclient.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func init() {
 	httpClient = httpclient.NewDefault()
@@ -265,7 +260,7 @@ func sentryRequest(ctx context.Context, method, path string, query url.Values) (
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("sentry error (%d): %s", resp.StatusCode, string(body))
+		return nil, mcperror.APIError("Sentry", resp.StatusCode, string(body))
 	}
 
 	var result any
@@ -280,7 +275,7 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 	v := validate.NewArgs(args)
 	org := v.String("org", sentryOrg)
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required (set SENTRY_ORG env or pass org parameter)")), nil
+		return mcp.ErrorResult(mcperror.NotConfigured("SENTRY_ORG", "set SENTRY_ORG env or pass org parameter")), nil
 	}
 
 	result, err := sentryRequest(ctx, "GET", fmt.Sprintf("organizations/%s/projects/", org), nil)
@@ -320,7 +315,7 @@ func handleGetProject(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 	org := v.String("org", sentryOrg)
 	project := v.Required("project")
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("org")), nil
 	}
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -342,7 +337,7 @@ func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 	status := v.String("status", "")
 	limit := v.IntRange("limit", 25, 1, 100)
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("org")), nil
 	}
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -462,7 +457,7 @@ func handleGetEvent(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	project := v.Required("project")
 	eventID := v.Required("event_id")
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("org")), nil
 	}
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -483,7 +478,7 @@ func handleProjectStats(ctx context.Context, args map[string]any) (*mcp.CallTool
 	stat := v.Enum("stat", "received", "received", "rejected", "blacklisted")
 	resolution := v.Enum("resolution", "1h", "10s", "1h", "1d")
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("org")), nil
 	}
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -513,7 +508,7 @@ func handleListReleases(ctx context.Context, args map[string]any) (*mcp.CallTool
 	project := v.Required("project")
 	limit := v.IntRange("limit", 25, 1, 100)
 	if org == "" {
-		return mcp.ErrorResult(fmt.Errorf("org is required")), nil
+		return mcp.ErrorResult(mcperror.RequiredParam("org")), nil
 	}
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil

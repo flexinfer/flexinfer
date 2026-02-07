@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -270,10 +271,10 @@ func notionRequest(ctx context.Context, method, path string, body any) (map[stri
 		var errResp map[string]any
 		if json.Unmarshal(respBody, &errResp) == nil {
 			if msg, ok := errResp["message"].(string); ok {
-				return nil, fmt.Errorf("notion API error (%d): %s", resp.StatusCode, msg)
+				return nil, mcperror.APIError("Notion", resp.StatusCode, msg)
 			}
 		}
-		return nil, fmt.Errorf("notion API error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, mcperror.APIError("Notion", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]any

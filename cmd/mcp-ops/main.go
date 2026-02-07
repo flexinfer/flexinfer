@@ -9,14 +9,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/poll"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -24,36 +25,17 @@ var execCommand = exec.CommandContext
 
 var (
 	version        = "0.1.0"
-	k3sKubeconfig  = getEnv("K3S_KUBECONFIG", os.ExpandEnv("$HOME/.kube/k3s.yaml"))
-	rke2Kubeconfig = getEnv("RKE2_KUBECONFIG", os.ExpandEnv("$HOME/.kube/harvester-admin.yaml"))
-	sshKey         = getEnv("SSH_KEY", os.ExpandEnv("$HOME/.ssh/id_ed25519"))
-	sshUser        = getEnv("SSH_USER", "rancher")
+	k3sKubeconfig  = env.String("K3S_KUBECONFIG", os.ExpandEnv("$HOME/.kube/k3s.yaml"))
+	rke2Kubeconfig = env.String("RKE2_KUBECONFIG", os.ExpandEnv("$HOME/.kube/harvester-admin.yaml"))
+	sshKey         = env.String("SSH_KEY", os.ExpandEnv("$HOME/.ssh/id_ed25519"))
+	sshUser        = env.String("SSH_USER", "rancher")
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
 
 func withDefaultTimeout(ctx context.Context, envKey string, fallbackSeconds int) (context.Context, context.CancelFunc) {
 	if _, hasDeadline := ctx.Deadline(); hasDeadline {
 		return ctx, func() {}
 	}
-	timeoutSeconds := getEnvInt(envKey, fallbackSeconds)
+	timeoutSeconds := env.Int(envKey, fallbackSeconds)
 	if timeoutSeconds <= 0 {
 		return ctx, func() {}
 	}
@@ -423,7 +405,7 @@ func handleHarvesterVMRestart(ctx context.Context, args map[string]any) (*mcp.Ca
 		return mcp.ErrorResult(fmt.Errorf("failed to stop vm: %w, output: %s", err, out1)), nil
 	}
 
-	time.Sleep(2 * time.Second)
+	_ = poll.WaitWithContext(ctx, 2*time.Second)
 
 	// Start
 	out2, err := runKubectl(ctx, rke2Kubeconfig, "-n", ns, "patch", "vm", name, "--type", "merge", "-p", `{"spec":{"running":true}}`)

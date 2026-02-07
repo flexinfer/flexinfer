@@ -13,8 +13,10 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -23,16 +25,9 @@ var (
 	version     = "0.1.0"
 	cfAPIToken  = os.Getenv("CF_API_TOKEN")
 	cfAccountID = os.Getenv("CF_ACCOUNT_ID")
-	cfAPIBase   = getEnv("CF_API_BASE", "https://api.cloudflare.com")
+	cfAPIBase   = env.String("CF_API_BASE", "https://api.cloudflare.com")
 	httpClient  = httpclient.NewDefault()
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -170,7 +165,7 @@ func cfRequest(method, path string, params map[string]string) (map[string]any, e
 
 func cfRequestWithBody(method, path string, params map[string]string, body any) (map[string]any, error) {
 	if cfAPIToken == "" {
-		return nil, fmt.Errorf("CF_API_TOKEN is required")
+		return nil, mcperror.NotConfigured("CF_API_TOKEN", "set CF_API_TOKEN environment variable")
 	}
 
 	u, err := url.Parse(cfAPIBase + "/client/v4" + path)
@@ -223,9 +218,9 @@ func cfRequestWithBody(method, path string, params map[string]string, body any) 
 	if success, ok := result["success"].(bool); !ok || !success {
 		// Try to extract errors
 		if errs, ok := result["errors"].([]any); ok && len(errs) > 0 {
-			return nil, fmt.Errorf("api error: %v", errs)
+			return nil, mcperror.APIError("Cloudflare", resp.StatusCode, fmt.Sprintf("%v", errs))
 		}
-		return nil, fmt.Errorf("api request failed: %s", string(respBody))
+		return nil, mcperror.APIError("Cloudflare", resp.StatusCode, string(respBody))
 	}
 
 	return result, nil
@@ -272,7 +267,7 @@ func handleListZones(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 
 func handleListTunnels(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	if cfAccountID == "" {
-		return mcp.ErrorResult(fmt.Errorf("CF_ACCOUNT_ID is required for tunnels")), nil
+		return mcp.ErrorResult(mcperror.NotConfigured("CF_ACCOUNT_ID", "required for tunnel operations")), nil
 	}
 
 	params := make(map[string]string)

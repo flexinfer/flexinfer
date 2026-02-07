@@ -6,43 +6,34 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/portforward"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
 	version   = "0.1.0"
-	endpoint  = getEnv("MINIO_ENDPOINT", "http://minio-service.news-analyzer.svc.cluster.local:80")
+	endpoint  = env.String("MINIO_ENDPOINT", "http://minio-service.news-analyzer.svc.cluster.local:80")
 	accessKey = os.Getenv("MINIO_ACCESS_KEY")
 	secretKey = os.Getenv("MINIO_SECRET_KEY")
 
-	portForward    = getEnvBool("MINIO_PORT_FORWARD", true)
-	portForwardCmd *exec.Cmd
+	portForwarder = portforward.New(portforward.Config{
+		Namespace:    "news-analyzer",
+		Service:      "svc/minio-service",
+		LocalPort:    9000,
+		RemotePort:   80,
+		HostPrefixes: []string{"minio-service"},
+	}, env.Bool("MINIO_PORT_FORWARD", true))
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if v := os.Getenv(key); v != "" {
-		v = strings.ToLower(v)
-		return v == "1" || v == "true" || v == "yes" || v == "on"
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -66,9 +57,7 @@ func run(ctx context.Context) error {
 }
 
 func cleanup() {
-	if portForwardCmd != nil && portForwardCmd.Process != nil {
-		portForwardCmd.Process.Kill()
-	}
+	portForwarder.Cleanup()
 }
 
 func registerTools(server *mcp.Server) {
@@ -160,12 +149,12 @@ func getClient() (*minio.Client, error) {
 	}
 
 	if accessKey == "" || secretKey == "" {
-		return nil, fmt.Errorf("MINIO_ACCESS_KEY / MINIO_SECRET_KEY not set")
+		return nil, mcperror.NotConfigured("MINIO_ACCESS_KEY/MINIO_SECRET_KEY", "set MINIO_ACCESS_KEY and MINIO_SECRET_KEY environment variables")
 	}
 
-	maybeStartPortForward()
+	effectiveEndpoint := portForwarder.EnsureRunning(endpoint)
 
-	u, err := url.Parse(endpoint)
+	u, err := url.Parse(effectiveEndpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -183,41 +172,6 @@ func getClient() (*minio.Client, error) {
 
 	minioClient = client
 	return minioClient, nil
-}
-
-func maybeStartPortForward() {
-	if !portForward {
-		return
-	}
-
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return
-	}
-
-	host := u.Hostname()
-	needsPF := strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc") || strings.HasPrefix(host, "minio-service")
-
-	if !needsPF {
-		return
-	}
-
-	if portForwardCmd != nil {
-		if portForwardCmd.ProcessState == nil {
-			return // Still running
-		}
-	}
-
-	// Start port-forward
-	// kubectl -n news-analyzer port-forward svc/minio-service 9000:80
-	cmd := exec.Command("kubectl", "-n", "news-analyzer", "port-forward", "svc/minio-service", "9000:80") //nolint:noctx // background port-forward managed separately
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err == nil {
-		portForwardCmd = cmd
-		endpoint = "http://127.0.0.1:9000"
-		time.Sleep(500 * time.Millisecond)
-	}
 }
 
 // Handlers

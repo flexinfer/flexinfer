@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -410,7 +410,7 @@ func (k *k8sServer) connect() error {
 	}
 
 	// Ensure requests have an upper bound, since many MCP clients also enforce tool-call deadlines.
-	timeoutSeconds := getEnvInt("MCP_K8S_TIMEOUT_SECONDS", 55)
+	timeoutSeconds := env.Int("MCP_K8S_TIMEOUT_SECONDS", 55)
 	if timeoutSeconds > 0 {
 		config.Timeout = time.Duration(timeoutSeconds) * time.Second
 	}
@@ -743,19 +743,6 @@ func (k *k8sServer) handleRestartDeployment(ctx context.Context, args map[string
 	})
 }
 
-// Helper functions
-func getEnvInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
 func getRestarts(containers []corev1.ContainerStatus) int32 {
 	var total int32
 	for _, c := range containers {
@@ -873,7 +860,7 @@ func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (
 	v := validate.NewArgs(args)
 	ns := v.String("namespace", "default")
 	fieldSelector := v.String("field_selector", "")
-	maxEvents := getEnvInt("MCP_K8S_MAX_EVENTS", 500)
+	maxEvents := env.Int("MCP_K8S_MAX_EVENTS", 500)
 	limit := v.IntRange("limit", 50, 1, maxEvents)
 
 	opts := metav1.ListOptions{
@@ -916,7 +903,7 @@ func (k *k8sServer) handleListEvents(ctx context.Context, args map[string]any) (
 		})
 	}
 
-	maxBytes := getEnvInt("MCP_K8S_MAX_RESPONSE_BYTES", 1024*1024)
+	maxBytes := env.Int("MCP_K8S_MAX_RESPONSE_BYTES", 1024*1024)
 	return boundedEventListResult(result, maxBytes)
 }
 

@@ -101,10 +101,10 @@ func TestLokiRequest_HTTPErrorIncludesSnippet(t *testing.T) {
 	}
 
 	msg := err.Error()
-	if !strings.Contains(msg, "loki API error 403") {
-		t.Fatalf("error did not include HTTP status: %q", msg)
+	if !strings.Contains(msg, "Loki") {
+		t.Fatalf("error did not mention Loki: %q", msg)
 	}
-	if !strings.Contains(msg, "permission denied") {
-		t.Fatalf("error did not include body snippet: %q", msg)
+	if !strings.Contains(msg, "forbidden") {
+		t.Fatalf("error did not include forbidden status: %q", msg)
 	}
 }

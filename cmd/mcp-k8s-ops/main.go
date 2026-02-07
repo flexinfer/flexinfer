@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -217,7 +217,7 @@ func getKubeConfig() string {
 
 func runKubectl(ctx context.Context, contextName string, args ...string) (string, error) {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeoutSeconds := envInt("MCP_K8S_OPS_TIMEOUT_SECONDS", 55)
+		timeoutSeconds := env.Int("MCP_K8S_OPS_TIMEOUT_SECONDS", 55)
 		if timeoutSeconds > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
@@ -249,18 +249,6 @@ func runKubectl(ctx context.Context, contextName string, args ...string) (string
 		return "", fmt.Errorf("kubectl failed: %w (output: %s)", err, outStr)
 	}
 	return outStr, nil
-}
-
-func envInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil || parsed < 0 {
-		return fallback
-	}
-	return parsed
 }
 
 func withTimeoutSecondsArg(ctx context.Context, args map[string]any) (context.Context, context.CancelFunc) {

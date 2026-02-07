@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -726,7 +727,7 @@ func handleSummarizeChain(ctx context.Context, args map[string]any) (*mcp.CallTo
 	var progression []string
 	for _, step := range chain.Steps {
 		if step.ParentID == nil {
-			progression = append(progression, fmt.Sprintf("[%s] %s", step.ThoughtType, truncate(step.Thought, 100)))
+			progression = append(progression, fmt.Sprintf("[%s] %s", step.ThoughtType, strutil.Truncate(step.Thought, 100)))
 		}
 	}
 
@@ -741,11 +742,4 @@ func handleSummarizeChain(ctx context.Context, args map[string]any) (*mcp.CallTo
 		"duration_minutes": chain.UpdatedAt.Sub(chain.CreatedAt).Minutes(),
 		"progression":      progression,
 	})
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

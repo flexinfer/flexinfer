@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,9 +16,13 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/portforward"
+	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -27,37 +30,12 @@ var httpClient = httpclient.NewDefault()
 
 var (
 	version        = "0.1.0"
-	lokiURL        = getEnv("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
-	portForward    = getEnvBool("LOKI_PORT_FORWARD", true)
+	lokiURL        = env.String("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
+	portForward    = env.Bool("LOKI_PORT_FORWARD", true)
 	portForwardCmd *exec.Cmd
 	pfMu           sync.Mutex
 	pfStderr       *limitedBuffer
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if v := os.Getenv(key); v != "" {
-		v = strings.ToLower(v)
-		return v == "1" || v == "true" || v == "yes" || v == "on"
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil && n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -232,7 +210,7 @@ func maybeStartPortForward() {
 	}
 
 	host := u.Hostname()
-	needsPF := needsPortForward(host)
+	needsPF := portforward.NeedsPortForward(host, nil)
 
 	if !needsPF {
 		return
@@ -303,8 +281,8 @@ func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[s
 	}
 	defer resp.Body.Close()
 
-	maxBytes := getEnvInt("LOKI_MAX_RESPONSE_BYTES", 5*1024*1024)
-	body, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	maxBytes := env.Int("LOKI_MAX_RESPONSE_BYTES", 5*1024*1024)
+	body, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +291,7 @@ func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[s
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("loki API error %d (%s): %s", resp.StatusCode, reqURL, bodySnippet(body))
+		return nil, mcperror.APIError("Loki", resp.StatusCode, strutil.BodySnippet(body, 4096))
 	}
 
 	var result map[string]any
@@ -323,7 +301,7 @@ func lokiRequest(ctx context.Context, endpoint string, params url.Values) (map[s
 			resp.StatusCode,
 			resp.Header.Get("Content-Type"),
 			reqURL,
-			bodySnippet(body),
+			strutil.BodySnippet(body, 4096),
 		)
 	}
 
@@ -656,20 +634,6 @@ func isPortForwardRunningLocked() bool {
 	return portForwardCmd.Process.Signal(syscall.Signal(0)) == nil
 }
 
-func needsPortForward(host string) bool {
-	if host == "" {
-		return false
-	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return false
-	}
-	if strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".cluster.local") {
-		return true
-	}
-	// Heuristic: a single-label host (no dots) is likely an in-cluster DNS name.
-	return !strings.Contains(host, ".")
-}
-
 func waitForLocalLokiReady(ctx context.Context, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -730,39 +694,6 @@ func lokiAPIURL(baseURL, endpoint string) (string, error) {
 
 	base.Path = p + "/" + strings.TrimLeft(endpoint, "/")
 	return base.String(), nil
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	truncated := false
-	if len(body) > max {
-		body = body[:max]
-		truncated = true
-	}
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	if truncated {
-		return s + "…"
-	}
-	return s
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 type limitedBuffer struct {

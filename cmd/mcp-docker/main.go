@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -407,7 +407,7 @@ func runDocker(ctx context.Context, args ...string) (string, error) {
 	}
 
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeoutSeconds := envInt("MCP_DOCKER_TIMEOUT_SECONDS", 55)
+		timeoutSeconds := env.Int("MCP_DOCKER_TIMEOUT_SECONDS", 55)
 		if timeoutSeconds > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
@@ -440,7 +440,7 @@ func runDockerSplit(ctx context.Context, args ...string) (string, string, int, e
 	}
 
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeoutSeconds := envInt("MCP_DOCKER_TIMEOUT_SECONDS", 55)
+		timeoutSeconds := env.Int("MCP_DOCKER_TIMEOUT_SECONDS", 55)
 		if timeoutSeconds > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
@@ -501,18 +501,6 @@ func mustJSON(s string) any {
 		return map[string]any{"raw": s}
 	}
 	return v
-}
-
-func envInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil || parsed < 0 {
-		return fallback
-	}
-	return parsed
 }
 
 func withTimeoutSeconds(ctx context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {

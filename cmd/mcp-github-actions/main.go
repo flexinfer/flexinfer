@@ -535,7 +535,7 @@ func (s *actionsServer) handleGetWorkflowRun(ctx context.Context, args map[strin
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Run #%v: %v\n", result["run_number"], result["display_title"]))
 	sb.WriteString(fmt.Sprintf("Status: %v | Conclusion: %v\n", result["status"], result["conclusion"]))
-	sb.WriteString(fmt.Sprintf("Branch: %v | SHA: %v\n", result["head_branch"], truncate(fmt.Sprintf("%v", result["head_sha"]), 7)))
+	sb.WriteString(fmt.Sprintf("Branch: %v | SHA: %v\n", result["head_branch"], strutil.TruncateNoEllipsis(fmt.Sprintf("%v", result["head_sha"]), 7)))
 	sb.WriteString(fmt.Sprintf("Event: %v | Attempt: %v\n", result["event"], result["run_attempt"]))
 	sb.WriteString(fmt.Sprintf("Created: %v\n", result["created_at"]))
 	sb.WriteString(fmt.Sprintf("Updated: %v\n", result["updated_at"]))
@@ -710,7 +710,7 @@ func (s *actionsServer) handleGetJobLogs(ctx context.Context, args map[string]an
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return mcp.ErrorResult(fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(body))), nil
+		return mcp.ErrorResult(mcperror.APIError("GitHub Actions", resp.StatusCode, string(body))), nil
 	}
 
 	logs, err := io.ReadAll(resp.Body)
@@ -779,8 +779,4 @@ func (s *actionsServer) handleListArtifacts(ctx context.Context, args map[string
 	}
 
 	return mcp.TextResult(sb.String()), nil
-}
-
-func truncate(s string, maxLen int) string {
-	return strutil.TruncateNoEllipsis(s, maxLen)
 }

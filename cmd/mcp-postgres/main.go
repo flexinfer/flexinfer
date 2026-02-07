@@ -13,6 +13,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 
@@ -38,7 +39,7 @@ func run(ctx context.Context) error {
 
 	pgURL := os.Getenv("POSTGRES_URL")
 	if pgURL == "" {
-		return fmt.Errorf("POSTGRES_URL environment variable is required")
+		return mcperror.NotConfigured("POSTGRES_URL", "set POSTGRES_URL environment variable")
 	}
 
 	queryTimeout := 30 * time.Second

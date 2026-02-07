@@ -13,8 +13,10 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -23,17 +25,10 @@ var (
 	version = "0.1.0"
 
 	pdAPIKey  = os.Getenv("PAGERDUTY_API_KEY")
-	pdBaseURL = getEnv("PAGERDUTY_BASE_URL", "https://api.pagerduty.com")
+	pdBaseURL = env.String("PAGERDUTY_BASE_URL", "https://api.pagerduty.com")
 
 	httpClient = httpclient.NewDefault()
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -321,10 +316,10 @@ func pdRequest(ctx context.Context, method, path string, query url.Values) (map[
 		var errResp map[string]any
 		if json.Unmarshal(body, &errResp) == nil {
 			if errObj, ok := errResp["error"].(map[string]any); ok {
-				return nil, fmt.Errorf("PagerDuty error (%d): %v", resp.StatusCode, errObj["message"])
+				return nil, mcperror.APIError("PagerDuty", resp.StatusCode, fmt.Sprintf("%v", errObj["message"]))
 			}
 		}
-		return nil, fmt.Errorf("PagerDuty error (%d): %s", resp.StatusCode, string(body))
+		return nil, mcperror.APIError("PagerDuty", resp.StatusCode, string(body))
 	}
 
 	var result map[string]any

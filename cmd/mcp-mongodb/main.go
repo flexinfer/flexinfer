@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -21,18 +22,11 @@ import (
 var (
 	version = "0.1.0"
 
-	mongoURI = getEnv("MONGODB_URI", "mongodb://localhost:27017")
+	mongoURI = env.String("MONGODB_URI", "mongodb://localhost:27017")
 	mongoDB  = os.Getenv("MONGODB_DATABASE")
 
 	client *mongo.Client
 )
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 func initMongo(ctx context.Context) error {
 	opts := options.Client().ApplyURI(mongoURI)

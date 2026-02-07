@@ -9,63 +9,6 @@ import (
 	"testing"
 )
 
-func TestGetEnv(t *testing.T) {
-	tests := []struct {
-		key      string
-		fallback string
-		want     string
-	}{
-		{"NONEXISTENT_VAR_12345", "default", "default"},
-	}
-
-	for _, tt := range tests {
-		got := getEnv(tt.key, tt.fallback)
-		if got != tt.want {
-			t.Errorf("getEnv(%q, %q) = %q, want %q", tt.key, tt.fallback, got, tt.want)
-		}
-	}
-}
-
-func TestGetEnvInt(t *testing.T) {
-	tests := []struct {
-		key      string
-		fallback int
-		want     int
-	}{
-		{"NONEXISTENT_VAR_12345", 42, 42},
-	}
-
-	for _, tt := range tests {
-		got := getEnvInt(tt.key, tt.fallback)
-		if got != tt.want {
-			t.Errorf("getEnvInt(%q, %d) = %d, want %d", tt.key, tt.fallback, got, tt.want)
-		}
-	}
-}
-
-// TestClampInt removed - clampInt was replaced by validate.IntRange()
-
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		s    string
-		max  int
-		want string
-	}{
-		{"hello", 10, "hello"},
-		{"hello world", 5, "hello..."},
-		{"", 5, ""},
-		{"ab", 2, "ab"},
-		{"abc", 2, "ab..."},
-	}
-
-	for _, tt := range tests {
-		got := truncate(tt.s, tt.max)
-		if got != tt.want {
-			t.Errorf("truncate(%q, %d) = %q, want %q", tt.s, tt.max, got, tt.want)
-		}
-	}
-}
-
 func TestBuildURL(t *testing.T) {
 	origURL := esURL
 	defer func() { esURL = origURL }()
@@ -142,6 +85,7 @@ func TestHandleInfo(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 
 	// Check result content
@@ -175,6 +119,7 @@ func TestHandleHealth(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 
 	text := result.Content[0].Text

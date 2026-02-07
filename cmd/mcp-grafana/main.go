@@ -9,27 +9,32 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"strings"
-	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/portforward"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
 var (
-	version        = "0.1.0"
-	grafanaURL     = env.String("GRAFANA_URL", "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local")
-	grafanaToken   = os.Getenv("GRAFANA_API_TOKEN")
-	portForward    = env.Bool("GRAFANA_PORT_FORWARD", true)
-	portForwardCmd *exec.Cmd
-	httpClient     = httpclient.NewDefault()
+	version      = "0.1.0"
+	grafanaURL   = env.String("GRAFANA_URL", "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local")
+	grafanaToken = os.Getenv("GRAFANA_API_TOKEN")
+	httpClient   = httpclient.NewDefault()
+
+	portForwarder = portforward.New(portforward.Config{
+		Namespace:    "monitoring",
+		Service:      "svc/kube-prometheus-stack-grafana",
+		LocalPort:    3000,
+		RemotePort:   80,
+		HostPrefixes: []string{"kube-prometheus-stack-grafana"},
+	}, env.Bool("GRAFANA_PORT_FORWARD", true))
 )
 
 func main() {
@@ -163,46 +168,7 @@ func run(ctx context.Context) error {
 }
 
 func cleanup() {
-	if portForwardCmd != nil && portForwardCmd.Process != nil {
-		portForwardCmd.Process.Kill()
-	}
-}
-
-// Port Forwarding
-
-func maybeStartPortForward() {
-	if !portForward {
-		return
-	}
-
-	u, err := url.Parse(grafanaURL)
-	if err != nil {
-		return
-	}
-
-	host := u.Hostname()
-	needsPF := strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc") || strings.HasPrefix(host, "kube-prometheus-stack-grafana")
-
-	if !needsPF {
-		return
-	}
-
-	if portForwardCmd != nil {
-		if portForwardCmd.ProcessState == nil {
-			return // Still running
-		}
-	}
-
-	// Start port-forward
-	// kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
-	cmd := exec.Command("kubectl", "-n", "monitoring", "port-forward", "svc/kube-prometheus-stack-grafana", "3000:80") //nolint:noctx // background port-forward managed separately
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err == nil {
-		portForwardCmd = cmd
-		grafanaURL = "http://127.0.0.1:3000"
-		time.Sleep(500 * time.Millisecond)
-	}
+	portForwarder.Cleanup()
 }
 
 // Grafana Client
@@ -212,9 +178,9 @@ func grafanaRequest(path string, params map[string]string) (map[string]any, erro
 }
 
 func grafanaRequestWithBody(method, path string, params map[string]string, body any) (map[string]any, error) {
-	maybeStartPortForward()
+	effectiveURL := portForwarder.EnsureRunning(grafanaURL)
 
-	u, err := url.Parse(grafanaURL + path)
+	u, err := url.Parse(effectiveURL + path)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +218,7 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 	defer resp.Body.Close()
 
 	maxBytes := env.Int("GRAFANA_MAX_RESPONSE_BYTES", 10*1024*1024)
-	respBody, truncated, err := readBodyWithLimit(resp.Body, maxBytes)
+	respBody, truncated, err := httpclient.ReadBodyWithLimit(resp.Body, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +227,7 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodySnippet(respBody))
+		return nil, mcperror.APIError("Grafana", resp.StatusCode, strutil.BodySnippet(respBody, 4096))
 	}
 
 	var result interface{}
@@ -277,31 +243,6 @@ func grafanaRequestWithBody(method, path string, params map[string]string, body 
 		return asMap, nil
 	}
 	return nil, fmt.Errorf("unexpected response format")
-}
-
-func bodySnippet(body []byte) string {
-	const max = 4 * 1024
-	s := strings.TrimSpace(string(body))
-	if s == "" {
-		return "<empty response body>"
-	}
-	return strutil.Truncate(s, max)
-}
-
-func readBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
-	if maxBytes <= 0 {
-		b, err := io.ReadAll(r)
-		return b, false, err
-	}
-
-	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(b) > maxBytes {
-		return b[:maxBytes], true, nil
-	}
-	return b, false, nil
 }
 
 // Handlers

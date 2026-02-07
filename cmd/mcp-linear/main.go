@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -274,7 +275,7 @@ func graphqlRequest(ctx context.Context, query string, variables map[string]any)
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("linear API error (%d): %s", resp.StatusCode, string(respBody))
+		return nil, mcperror.APIError("Linear", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]any
