@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -36,6 +37,11 @@ type Service struct {
 	workflowDefsQdrant   *QdrantClient
 	memoryQdrant         *QdrantClient
 
+	// Coordination collections
+	presenceQdrant   *QdrantClient
+	fileClaimsQdrant *QdrantClient
+	worktreeQdrant   *QdrantClient
+
 	sessionsMu sync.RWMutex
 	sessions   map[string]*Session
 
@@ -54,6 +60,24 @@ type Service struct {
 
 	// Workflow engine (with persistence)
 	persistedWorkflowEngine *persistedWorkflowEngine
+
+	// Agent presence registry
+	presenceMu  sync.RWMutex
+	presenceMap map[string]*AgentPresence
+
+	// File claims (advisory locks)
+	fileClaimsMu sync.RWMutex
+	fileClaims   map[string]map[string]*FileClaim // filePath -> agentID -> claim
+
+	// Worktree assignments
+	worktreeMu    sync.RWMutex
+	worktreeAssns map[string]*WorktreeAssignment
+
+	// Background services
+	compactionScheduler *CompactionScheduler
+	memoryExporter      *MemoryExporter
+	memoryImporter      *MemoryImporter
+	bgCancel            context.CancelFunc
 }
 
 func NewServiceFromEnv() (*Service, error) {
@@ -81,6 +105,16 @@ func NewServiceFromEnv() (*Service, error) {
 		workflowsQdrant:      NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowsCollection, cfg.QdrantDistance),
 		workflowDefsQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowDefsCollection, cfg.QdrantDistance),
 		memoryQdrant:         NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.MemoryCollection, cfg.QdrantDistance),
+
+		// Coordination collections
+		presenceQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.PresenceCollection, cfg.QdrantDistance),
+		fileClaimsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.FileClaimsCollection, cfg.QdrantDistance),
+		worktreeQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorktreeCollection, cfg.QdrantDistance),
+
+		// In-memory coordination state
+		presenceMap:   make(map[string]*AgentPresence),
+		fileClaims:    make(map[string]map[string]*FileClaim),
+		worktreeAssns: make(map[string]*WorktreeAssignment),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
@@ -115,6 +149,18 @@ func NewServiceFromEnv() (*Service, error) {
 		WorkflowDefsQdrant: svc.workflowDefsQdrant,
 	})
 
+	// Initialize compaction scheduler
+	compactionConfig := DefaultCompactionConfig()
+	compactionConfig.Enabled = cfg.CompactionEnabled
+	if cfg.CompactionCheckInterval > 0 {
+		compactionConfig.CheckInterval = time.Duration(cfg.CompactionCheckInterval) * time.Second
+	}
+	svc.compactionScheduler = NewCompactionScheduler(compactionConfig, svc.memoryHierarchy, nil)
+
+	// Initialize memory exporter/importer
+	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
+	svc.memoryImporter = NewMemoryImporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
+
 	// Load persisted state on startup (best-effort)
 	ctx := context.Background()
 	if err := svc.loadPersistedState(ctx); err != nil {
@@ -126,6 +172,11 @@ func NewServiceFromEnv() (*Service, error) {
 
 // loadPersistedState loads all persisted data from Qdrant on startup
 func (s *Service) loadPersistedState(ctx context.Context) error {
+	// Load sessions
+	if err := s.loadSessionsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load sessions: %v\n", err)
+	}
+
 	// Load knowledge graph
 	if err := s.persistedKnowledgeGraph.LoadGraphFromQdrant(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to load knowledge graph: %v\n", err)
@@ -147,7 +198,72 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "warning: failed to load workflow definitions: %v\n", err)
 	}
 
+	// Load presence registry
+	if err := s.loadPresenceFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load presence: %v\n", err)
+	}
+
+	// Load file claims
+	if err := s.loadFileClaimsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load file claims: %v\n", err)
+	}
+
+	// Load worktree assignments
+	if err := s.loadWorktreeAssignmentsFromQdrant(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load worktree assignments: %v\n", err)
+	}
+
 	return nil
+}
+
+// loadSessionsFromQdrant loads active sessions from Qdrant into memory
+func (s *Service) loadSessionsFromQdrant(ctx context.Context) error {
+	points, err := s.sessionsQdrant.ScrollPoints(ctx, FilterMust(Match("status", string(SessionStatusActive))), 500, false)
+	if err != nil {
+		return err
+	}
+
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+
+	loaded := 0
+	for _, p := range points {
+		sess, err := PayloadToSession(p.Payload)
+		if err != nil || sess == nil {
+			continue
+		}
+		s.sessions[sess.ID] = sess
+		loaded++
+	}
+
+	if loaded > 0 {
+		fmt.Fprintf(os.Stderr, "info: restored %d active sessions from Qdrant\n", loaded)
+	}
+	return nil
+}
+
+// StartBackgroundServices starts background goroutines (compaction, presence cleanup)
+func (s *Service) StartBackgroundServices(ctx context.Context) {
+	bgCtx, cancel := context.WithCancel(ctx)
+	s.bgCancel = cancel
+
+	// Start compaction scheduler
+	if s.compactionScheduler != nil && s.cfg.CompactionEnabled {
+		_ = s.compactionScheduler.Start(bgCtx)
+	}
+
+	// Start presence cleanup goroutine
+	go s.runPresenceCleanup(bgCtx)
+}
+
+// StopBackgroundServices stops all background goroutines
+func (s *Service) StopBackgroundServices() {
+	if s.compactionScheduler != nil {
+		s.compactionScheduler.Stop()
+	}
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
 }
 
 // Session Handlers
@@ -2354,6 +2470,15 @@ func handoffToPayload(h Handoff) map[string]any {
 	if h.ExpiresAt != nil {
 		payload["expires_at"] = h.ExpiresAt.Format(time.RFC3339Nano)
 	}
+	if h.ViewedAt != nil {
+		payload["viewed_at"] = h.ViewedAt.Format(time.RFC3339Nano)
+	}
+	if h.RejectedAt != nil {
+		payload["rejected_at"] = h.RejectedAt.Format(time.RFC3339Nano)
+	}
+	if h.RejectedReason != "" {
+		payload["rejected_reason"] = h.RejectedReason
+	}
 	return payload
 }
 
@@ -2390,6 +2515,17 @@ func payloadToHandoff(payload map[string]any) (*Handoff, error) {
 			h.ExpiresAt = &t
 		}
 	}
+	if ts := toString(payload["viewed_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			h.ViewedAt = &t
+		}
+	}
+	if ts := toString(payload["rejected_at"]); ts != "" {
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			h.RejectedAt = &t
+		}
+	}
+	h.RejectedReason = toString(payload["rejected_reason"])
 
 	return h, nil
 }
@@ -3937,4 +4073,299 @@ func memoryItemToMap(item *MemoryItem) map[string]any {
 	}
 
 	return m
+}
+
+// =========================================================================
+// Memory Export/Import Handlers
+// =========================================================================
+
+// HandleMemoryExport exports memory to universal JSON format
+func (s *Service) HandleMemoryExport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	agentID := v.String("agent_id", "")
+	namespace := v.String("namespace", "")
+	sessionID := v.String("session_id", "")
+	format := v.String("format", "loom")
+	includeGraph := v.Bool("include_graph", true)
+	includeWorkflows := v.Bool("include_workflows", false)
+	includeEmbeddings := v.Bool("include_embeddings", false)
+	tiers := v.StringSlice("tiers")
+	tags := v.StringSlice("tags")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	opts := ExportOptions{
+		IncludeMemories:   true,
+		IncludeGraph:      includeGraph,
+		IncludeWorkflows:  includeWorkflows,
+		IncludeEmbeddings: includeEmbeddings,
+		MemoryTiers:       tiers,
+		SessionID:         sessionID,
+		Namespace:         namespace,
+		Format:            format,
+		AgentID:           agentID,
+		Tags:              tags,
+	}
+
+	data, err := s.memoryExporter.Export(opts)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("export: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":     true,
+		"export": data,
+		"stats":  data.Stats,
+	})
+}
+
+// HandleMemoryImport imports memory from universal JSON format
+func (s *Service) HandleMemoryImport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	conflictStrategy := v.String("conflict_strategy", "skip")
+	idPrefix := v.String("id_prefix", "")
+	targetTier := v.String("target_tier", "")
+	targetNamespace := v.String("target_namespace", "")
+	importGraph := v.Bool("import_graph", true)
+	importWorkflows := v.Bool("import_workflows", false)
+	regenerateEmbeddings := v.Bool("regenerate_embeddings", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	// Get the data payload
+	dataRaw, ok := args["data"]
+	if !ok {
+		return mcp.ErrorResult(fmt.Errorf("data is required")), nil
+	}
+
+	// Marshal and unmarshal to get a proper UniversalMemoryFormat
+	dataBytes, err := json.Marshal(dataRaw)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("invalid data format: %w", err)), nil
+	}
+
+	opts := ImportOptions{
+		ImportMemories:       true,
+		ImportGraph:          importGraph,
+		ImportWorkflows:      importWorkflows,
+		ConflictStrategy:     conflictStrategy,
+		IDPrefix:             idPrefix,
+		TargetTier:           targetTier,
+		TargetNamespace:      targetNamespace,
+		RegenerateEmbeddings: regenerateEmbeddings,
+	}
+
+	result, err := s.memoryImporter.ImportFromJSON(dataBytes, opts)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("import: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":                 true,
+		"memories_imported":  result.MemoriesImported,
+		"memories_skipped":   result.MemoriesSkipped,
+		"entities_imported":  result.EntitiesImported,
+		"entities_skipped":   result.EntitiesSkipped,
+		"relations_imported": result.RelationsImported,
+		"relations_skipped":  result.RelationsSkipped,
+		"workflows_imported": result.WorkflowsImported,
+		"workflows_skipped":  result.WorkflowsSkipped,
+		"errors":             result.Errors,
+	})
+}
+
+// =========================================================================
+// Compaction Status/Trigger Handlers
+// =========================================================================
+
+// HandleCompactionStatus returns the compaction scheduler status
+func (s *Service) HandleCompactionStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if s.compactionScheduler == nil {
+		return mcp.JSONResult(map[string]any{
+			"ok":      true,
+			"enabled": false,
+			"message": "compaction scheduler not initialized",
+		})
+	}
+
+	status := s.compactionScheduler.Status()
+
+	result := map[string]any{
+		"ok":          true,
+		"running":     status.Running,
+		"run_count":   status.RunCount,
+		"error_count": status.ErrorCount,
+		"config": map[string]any{
+			"enabled":        status.Config.Enabled,
+			"check_interval": status.Config.CheckInterval.String(),
+			"max_items":      status.Config.MaxItemsPerRun,
+		},
+	}
+
+	if !status.LastRun.IsZero() {
+		result["last_run"] = status.LastRun.Format(time.RFC3339)
+	}
+	if status.NextCheckIn > 0 {
+		result["next_check_in"] = status.NextCheckIn.String()
+	}
+	if status.LastRunStats != nil {
+		result["last_run_stats"] = map[string]any{
+			"items_processed":  status.LastRunStats.ItemsProcessed,
+			"items_compressed": status.LastRunStats.ItemsCompressed,
+			"items_demoted":    status.LastRunStats.ItemsDemoted,
+			"items_promoted":   status.LastRunStats.ItemsPromoted,
+			"items_expired":    status.LastRunStats.ItemsExpired,
+			"tokens_saved":     status.LastRunStats.TokensSaved,
+			"duration":         status.LastRunStats.Duration.String(),
+		}
+	}
+
+	return mcp.JSONResult(result)
+}
+
+// HandleCompactionTrigger manually triggers a compaction cycle
+func (s *Service) HandleCompactionTrigger(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if s.compactionScheduler == nil {
+		return mcp.ErrorResult(fmt.Errorf("compaction scheduler not initialized")), nil
+	}
+
+	stats, err := s.compactionScheduler.TriggerCompaction(ctx)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("trigger compaction: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":               true,
+		"items_processed":  stats.ItemsProcessed,
+		"items_compressed": stats.ItemsCompressed,
+		"items_demoted":    stats.ItemsDemoted,
+		"items_promoted":   stats.ItemsPromoted,
+		"items_expired":    stats.ItemsExpired,
+		"tokens_saved":     stats.TokensSaved,
+		"duration":         stats.Duration.String(),
+	})
+}
+
+// =========================================================================
+// Handoff Inbox / Reject Handlers
+// =========================================================================
+
+// HandleHandoffInbox lists pending handoffs for an agent
+func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	agentID := v.Required("agent_id")
+	includeViewed := v.Bool("include_viewed", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	// Query handoffs targeted at this agent
+	conds := []any{Match("target_agent_id", agentID)}
+	if !includeViewed {
+		conds = append(conds, Match("status", string(HandoffStatusPending)))
+	}
+
+	points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("query inbox: %w", err)), nil
+	}
+
+	now := time.Now()
+	var handoffs []map[string]any
+
+	for _, p := range points {
+		h, err := payloadToHandoff(p.Payload)
+		if err != nil || h == nil {
+			continue
+		}
+
+		// Skip expired
+		if h.ExpiresAt != nil && now.After(*h.ExpiresAt) {
+			continue
+		}
+
+		// Include pending and optionally viewed
+		if h.Status != HandoffStatusPending && h.Status != HandoffStatusViewed {
+			if !includeViewed {
+				continue
+			}
+		}
+
+		entry := map[string]any{
+			"handoff_id":   h.ID,
+			"source_agent": h.SourceAgentID,
+			"status":       string(h.Status),
+			"instructions": h.Instructions,
+			"summary":      h.Summary,
+			"token_count":  h.TokenCount,
+			"entry_count":  len(h.EntryIDs),
+			"created_at":   h.CreatedAt.Format(time.RFC3339),
+		}
+		if h.ExpiresAt != nil {
+			entry["expires_at"] = h.ExpiresAt.Format(time.RFC3339)
+		}
+		handoffs = append(handoffs, entry)
+
+		// Mark as viewed if pending
+		if h.Status == HandoffStatusPending {
+			viewedAt := now.Format(time.RFC3339Nano)
+			_ = s.handoffsQdrant.SetPayload(ctx, []string{h.ID}, map[string]any{
+				"status":    string(HandoffStatusViewed),
+				"viewed_at": viewedAt,
+			}, true)
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"agent_id": agentID,
+		"handoffs": handoffs,
+		"count":    len(handoffs),
+	})
+}
+
+// HandleHandoffReject rejects a handoff with a reason
+func (s *Service) HandleHandoffReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	handoffID := v.Required("handoff_id")
+	reason := v.String("reason", "")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	// Get the handoff
+	p, err := s.handoffsQdrant.GetPoint(ctx, handoffID, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("handoff %s not found", handoffID)), nil
+	}
+
+	h, err := payloadToHandoff(p.Payload)
+	if err != nil || h == nil {
+		return mcp.ErrorResult(fmt.Errorf("invalid handoff")), nil
+	}
+
+	// Only reject if pending or viewed
+	if h.Status != HandoffStatusPending && h.Status != HandoffStatusViewed {
+		return mcp.ErrorResult(fmt.Errorf("handoff status is %s, cannot reject", h.Status)), nil
+	}
+
+	now := time.Now()
+	_ = s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
+		"status":          string(HandoffStatusRejected),
+		"rejected_at":     now.Format(time.RFC3339Nano),
+		"rejected_reason": reason,
+	}, true)
+
+	return mcp.JSONResult(map[string]any{
+		"ok":         true,
+		"handoff_id": handoffID,
+		"status":     string(HandoffStatusRejected),
+		"reason":     reason,
+	})
 }

@@ -74,6 +74,8 @@ const (
 	HandoffStatusPending  HandoffStatus = "pending"
 	HandoffStatusAccepted HandoffStatus = "accepted"
 	HandoffStatusExpired  HandoffStatus = "expired"
+	HandoffStatusViewed   HandoffStatus = "viewed"
+	HandoffStatusRejected HandoffStatus = "rejected"
 )
 
 // Visibility defines who can access a context entry
@@ -324,6 +326,11 @@ type Handoff struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+
+	// Viewed/rejected tracking
+	ViewedAt       *time.Time `json:"viewed_at,omitempty"`
+	RejectedAt     *time.Time `json:"rejected_at,omitempty"`
+	RejectedReason string     `json:"rejected_reason,omitempty"`
 }
 
 // SessionTemplate is a reusable template for starting sessions
@@ -1009,4 +1016,90 @@ type MemoryRecallResult struct {
 	TotalTokens int            `json:"total_tokens"`
 	ByTier      map[string]int `json:"by_tier"`
 	Truncated   bool           `json:"truncated"` // True if results were limited by token budget
+}
+
+// =========================================================================
+// Agent Presence Types
+// =========================================================================
+
+// PresenceStatus defines agent presence states
+type PresenceStatus string
+
+const (
+	PresenceStatusActive  PresenceStatus = "active"
+	PresenceStatusIdle    PresenceStatus = "idle"
+	PresenceStatusOffline PresenceStatus = "offline"
+)
+
+// AgentPresence represents an agent's live presence in the system
+type AgentPresence struct {
+	ID          string         `json:"id"`
+	AgentID     string         `json:"agent_id"`
+	SessionID   string         `json:"session_id,omitempty"`
+	Status      PresenceStatus `json:"status"`
+	Description string         `json:"description,omitempty"`
+	CurrentTask string         `json:"current_task,omitempty"`
+	ActiveFiles []string       `json:"active_files,omitempty"`
+	WorkingDir  string         `json:"working_dir,omitempty"`
+	Branch      string         `json:"branch,omitempty"`
+	WorktreeID  string         `json:"worktree_id,omitempty"`
+	AgentType   string         `json:"agent_type,omitempty"` // "claude-code", "codex", "gemini"
+
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	HeartbeatTTL  int       `json:"heartbeat_ttl"` // seconds, default 120
+	RegisteredAt  time.Time `json:"registered_at"`
+
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// =========================================================================
+// File Claims Types (Advisory Locks)
+// =========================================================================
+
+// ClaimType defines the type of file claim
+type ClaimType string
+
+const (
+	ClaimTypeEdit    ClaimType = "edit"
+	ClaimTypeReview  ClaimType = "review"
+	ClaimTypeReserve ClaimType = "reserve"
+)
+
+// FileClaim represents an advisory lock on a file
+type FileClaim struct {
+	ID        string     `json:"id"`
+	AgentID   string     `json:"agent_id"`
+	SessionID string     `json:"session_id"`
+	FilePath  string     `json:"file_path"`
+	ClaimType ClaimType  `json:"claim_type"`
+	Reason    string     `json:"reason,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// =========================================================================
+// Git Worktree Assignment Types
+// =========================================================================
+
+// WorktreeStatus defines worktree assignment states
+type WorktreeStatus string
+
+const (
+	WorktreeStatusActive   WorktreeStatus = "active"
+	WorktreeStatusReleased WorktreeStatus = "released"
+	WorktreeStatusOrphaned WorktreeStatus = "orphaned"
+)
+
+// WorktreeAssignment tracks a worktree assigned to an agent
+type WorktreeAssignment struct {
+	ID           string         `json:"id"`
+	AgentID      string         `json:"agent_id"`
+	SessionID    string         `json:"session_id"`
+	WorktreePath string         `json:"worktree_path"`
+	Branch       string         `json:"branch"`
+	BaseBranch   string         `json:"base_branch,omitempty"`
+	Purpose      string         `json:"purpose,omitempty"`
+	Status       WorktreeStatus `json:"status"`
+	CreatedAt    time.Time      `json:"created_at"`
+	ReleasedAt   *time.Time     `json:"released_at,omitempty"`
 }

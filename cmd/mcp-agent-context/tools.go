@@ -1958,4 +1958,519 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleMemoryPolicySet(ctx, args)
 	})
+
+	// =========================================================================
+	// Agent Presence Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_presence_register",
+		Description: "Register an agent's presence. Announces the agent is active and available for coordination.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Unique agent identifier.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Current session ID.",
+				},
+				"agent_type": map[string]any{
+					"type":        "string",
+					"description": "Agent type (e.g., 'claude-code', 'codex', 'gemini').",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "What the agent is working on.",
+				},
+				"heartbeat_ttl_seconds": map[string]any{
+					"type":        "integer",
+					"description": "Heartbeat TTL in seconds (default: 120). Agent is considered offline after this.",
+				},
+			},
+			Required: []string{"agent_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandlePresenceRegister(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_presence_heartbeat",
+		Description: "Send a heartbeat to keep presence alive. Returns file conflicts if active_files overlap with other agents.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier.",
+				},
+				"active_files": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Files currently being edited/viewed.",
+				},
+				"current_task": map[string]any{
+					"type":        "string",
+					"description": "Current task description.",
+				},
+				"branch": map[string]any{
+					"type":        "string",
+					"description": "Current git branch.",
+				},
+			},
+			Required: []string{"agent_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandlePresenceHeartbeat(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_presence_list",
+		Description: "List active agents. Discover what other agents are working on.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"include_offline": map[string]any{
+					"type":        "boolean",
+					"description": "Include agents whose heartbeat has expired (default: false).",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandlePresenceList(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_presence_deregister",
+		Description: "Deregister an agent's presence. Clean exit releasing resources.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier.",
+				},
+				"release_claims": map[string]any{
+					"type":        "boolean",
+					"description": "Release all file claims (default: true).",
+				},
+				"release_worktrees": map[string]any{
+					"type":        "boolean",
+					"description": "Mark assigned worktrees as orphaned (default: false).",
+				},
+			},
+			Required: []string{"agent_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandlePresenceDeregister(ctx, args)
+	})
+
+	// =========================================================================
+	// File Claims (Advisory Locks) Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_file_claim_acquire",
+		Description: "Claim a file for editing/review. Advisory lock — returns conflict info if other agents hold claims.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Current session ID.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "File path to claim.",
+				},
+				"claim_type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"edit", "review", "reserve"},
+					"description": "Type of claim (default: 'edit').",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Why this file is being claimed.",
+				},
+			},
+			Required: []string{"agent_id", "session_id", "file_path"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFileClaimAcquire(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_file_claim_release",
+		Description: "Release file claims. Use file_path='all' to release all claims.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier.",
+				},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "File path to release, or 'all' for all claims.",
+				},
+			},
+			Required: []string{"agent_id", "file_path"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFileClaimRelease(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_file_claim_query",
+		Description: "Check who holds claims on specific files.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"file_paths": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "File paths to check.",
+				},
+				"exclude_agent": map[string]any{
+					"type":        "string",
+					"description": "Exclude this agent from results.",
+				},
+			},
+			Required: []string{"file_paths"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFileClaimQuery(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_file_claim_list",
+		Description: "List file claims, optionally filtered by agent or claim type.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"claim_type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"edit", "review", "reserve"},
+					"description": "Filter by claim type.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleFileClaimList(ctx, args)
+	})
+
+	// =========================================================================
+	// Git Worktree Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_allocate",
+		Description: "Allocate a git worktree for an agent. Creates a new branch and worktree directory.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Current session ID.",
+				},
+				"branch_name": map[string]any{
+					"type":        "string",
+					"description": "Branch name to create.",
+				},
+				"base_branch": map[string]any{
+					"type":        "string",
+					"description": "Base branch/commit (default: HEAD).",
+				},
+				"purpose": map[string]any{
+					"type":        "string",
+					"description": "Purpose of this worktree.",
+				},
+				"worktree_path": map[string]any{
+					"type":        "string",
+					"description": "Custom worktree path (default: auto-generated).",
+				},
+			},
+			Required: []string{"agent_id", "session_id", "branch_name"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeAllocate(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_release",
+		Description: "Release a worktree assignment. Optionally removes the worktree from disk.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"assignment_id": map[string]any{
+					"type":        "string",
+					"description": "Worktree assignment ID.",
+				},
+				"remove_worktree": map[string]any{
+					"type":        "boolean",
+					"description": "Remove worktree directory from disk (default: false).",
+				},
+				"force": map[string]any{
+					"type":        "boolean",
+					"description": "Force removal even with uncommitted changes (default: false).",
+				},
+			},
+			Required: []string{"assignment_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeRelease(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_list",
+		Description: "List worktree assignments, optionally filtered by agent or status.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by agent ID.",
+				},
+				"status": map[string]any{
+					"type":        "string",
+					"enum":        []string{"active", "released", "orphaned"},
+					"description": "Filter by status.",
+				},
+				"include_git_status": map[string]any{
+					"type":        "boolean",
+					"description": "Include git status for active worktrees (default: false).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeList(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_status",
+		Description: "Get detailed status of a worktree assignment including git info.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"assignment_id": map[string]any{
+					"type":        "string",
+					"description": "Worktree assignment ID.",
+				},
+			},
+			Required: []string{"assignment_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeStatus(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_cleanup",
+		Description: "Clean up orphaned worktrees. Use dry_run=true (default) to preview.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"dry_run": map[string]any{
+					"type":        "boolean",
+					"description": "Preview what would be cleaned up (default: true).",
+				},
+				"force": map[string]any{
+					"type":        "boolean",
+					"description": "Force removal of worktrees with uncommitted changes.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeCleanup(ctx, args)
+	})
+
+	// =========================================================================
+	// Memory Export/Import Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_export",
+		Description: "Export memory to universal JSON format. Supports filtering by namespace, session, tags, and time range.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID for export metadata.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter by namespace.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Filter by session.",
+				},
+				"format": map[string]any{
+					"type":        "string",
+					"enum":        []string{"loom", "mem0", "supermemory"},
+					"description": "Export format (default: 'loom').",
+				},
+				"tiers": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by memory tiers (working, short_term, long_term).",
+				},
+				"tags": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Filter by tags.",
+				},
+				"include_graph": map[string]any{
+					"type":        "boolean",
+					"description": "Include knowledge graph (default: true).",
+				},
+				"include_workflows": map[string]any{
+					"type":        "boolean",
+					"description": "Include workflows (default: false).",
+				},
+				"include_embeddings": map[string]any{
+					"type":        "boolean",
+					"description": "Include embedding vectors (default: false).",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryExport(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_memory_import",
+		Description: "Import memory from universal JSON format.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"data": map[string]any{
+					"type":        "object",
+					"description": "Universal memory format data to import.",
+				},
+				"conflict_strategy": map[string]any{
+					"type":        "string",
+					"enum":        []string{"skip", "overwrite", "merge"},
+					"description": "How to handle ID conflicts (default: 'skip').",
+				},
+				"id_prefix": map[string]any{
+					"type":        "string",
+					"description": "Prefix for imported IDs to avoid collisions.",
+				},
+				"target_tier": map[string]any{
+					"type":        "string",
+					"description": "Override tier for imported memories.",
+				},
+				"target_namespace": map[string]any{
+					"type":        "string",
+					"description": "Override namespace for imported items.",
+				},
+				"import_graph": map[string]any{
+					"type":        "boolean",
+					"description": "Import knowledge graph (default: true).",
+				},
+				"import_workflows": map[string]any{
+					"type":        "boolean",
+					"description": "Import workflows (default: false).",
+				},
+				"regenerate_embeddings": map[string]any{
+					"type":        "boolean",
+					"description": "Regenerate embeddings for imported items (default: false).",
+				},
+			},
+			Required: []string{"data"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleMemoryImport(ctx, args)
+	})
+
+	// =========================================================================
+	// Compaction Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_compaction_status",
+		Description: "Get compaction scheduler status and last run statistics.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleCompactionStatus(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_compaction_trigger",
+		Description: "Manually trigger a compaction cycle. Returns statistics about what was processed.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleCompactionTrigger(ctx, args)
+	})
+
+	// =========================================================================
+	// Handoff Inbox Tools
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_handoff_inbox",
+		Description: "List pending handoffs for an agent. The agent's 'inbox' for receiving work from other agents.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent ID to check inbox for.",
+				},
+				"include_viewed": map[string]any{
+					"type":        "boolean",
+					"description": "Include already-viewed handoffs (default: false).",
+				},
+			},
+			Required: []string{"agent_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleHandoffInbox(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_handoff_reject",
+		Description: "Reject a handoff with an optional reason.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"handoff_id": map[string]any{
+					"type":        "string",
+					"description": "Handoff ID to reject.",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Reason for rejection.",
+				},
+			},
+			Required: []string{"handoff_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleHandoffReject(ctx, args)
+	})
 }

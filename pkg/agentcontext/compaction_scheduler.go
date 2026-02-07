@@ -81,6 +81,8 @@ type CompactionStats struct {
 	ItemsCompressed int                            `json:"items_compressed"`
 	ItemsDemoted    int                            `json:"items_demoted"`
 	ItemsArchived   int                            `json:"items_archived"`
+	ItemsPromoted   int                            `json:"items_promoted"`
+	ItemsExpired    int                            `json:"items_expired"`
 	TokensBefore    int64                          `json:"tokens_before"`
 	TokensAfter     int64                          `json:"tokens_after"`
 	TokensSaved     int64                          `json:"tokens_saved"`
@@ -210,12 +212,28 @@ func (cs *CompactionScheduler) shouldCompact() bool {
 // calculateCapacity estimates tier capacity based on item and token counts
 // Returns a value between 0.0 and 1.0
 func (cs *CompactionScheduler) calculateCapacity(itemCount, tokenCount int) float64 {
-	// Default limits (should be configurable)
-	const maxItemsPerTier = 1000
-	const maxTokensPerTier = 500000
+	return cs.calculateCapacityForTier(itemCount, tokenCount, "")
+}
 
-	itemCapacity := float64(itemCount) / float64(maxItemsPerTier)
-	tokenCapacity := float64(tokenCount) / float64(maxTokensPerTier)
+// calculateCapacityForTier estimates capacity using retention policy limits when available
+func (cs *CompactionScheduler) calculateCapacityForTier(itemCount, tokenCount int, tier MemoryTier) float64 {
+	maxItems := 1000
+	maxTokens := 500000
+
+	// Use retention policy limits if available
+	if tier != "" && cs.hierarchy != nil {
+		if policy := cs.hierarchy.GetRetentionPolicy(tier); policy != nil {
+			if policy.MaxItems > 0 {
+				maxItems = policy.MaxItems
+			}
+			if policy.MaxTokens > 0 {
+				maxTokens = policy.MaxTokens
+			}
+		}
+	}
+
+	itemCapacity := float64(itemCount) / float64(maxItems)
+	tokenCapacity := float64(tokenCount) / float64(maxTokens)
 
 	// Use the higher of the two
 	if itemCapacity > tokenCapacity {
@@ -249,6 +267,13 @@ func (cs *CompactionScheduler) runCompaction(ctx context.Context) (*CompactionSt
 		ItemsBefore:    hierStats.LongTermMemory.ItemCount,
 		CapacityBefore: cs.calculateCapacity(hierStats.LongTermMemory.ItemCount, hierStats.LongTermMemory.TokenCount),
 	}
+
+	// Phase 0: TTL expiry sweep and auto-promotion/demotion
+	expired := cs.sweepExpiredItems()
+	stats.ItemsExpired = expired
+
+	promoted := cs.runPromotionDemotion()
+	stats.ItemsPromoted = promoted
 
 	// Process each tier
 	processedCount := 0
@@ -557,6 +582,77 @@ type SchedulerStatus struct {
 	Config       CompactionConfig `json:"config"`
 	LastRunStats *CompactionStats `json:"last_run_stats,omitempty"`
 	NextCheckIn  time.Duration    `json:"next_check_in,omitempty"`
+}
+
+// sweepExpiredItems removes items that have exceeded their TTL
+func (cs *CompactionScheduler) sweepExpiredItems() int {
+	if cs.hierarchy == nil {
+		return 0
+	}
+
+	expired := 0
+	now := time.Now()
+
+	for _, tier := range []MemoryTier{MemoryTierWorking, MemoryTierShortTerm, MemoryTierLongTerm} {
+		recallReq := MemoryRecallRequest{
+			Tiers: []MemoryTier{tier},
+			Limit: 10000,
+		}
+		result, err := cs.hierarchy.Recall(recallReq)
+		if err != nil || len(result.Items) == 0 {
+			continue
+		}
+
+		for _, item := range result.Items {
+			if item.ExpiresAt != nil && now.After(*item.ExpiresAt) {
+				_ = cs.hierarchy.DeleteItem(item.ID)
+				expired++
+			}
+		}
+	}
+	return expired
+}
+
+// runPromotionDemotion auto-promotes and auto-demotes items based on access patterns
+func (cs *CompactionScheduler) runPromotionDemotion() int {
+	if cs.hierarchy == nil {
+		return 0
+	}
+
+	promoted := 0
+
+	// Auto-promote: working → short_term (access count >= 3 and importance >= 0.7)
+	workingReq := MemoryRecallRequest{
+		Tiers: []MemoryTier{MemoryTierWorking},
+		Limit: 10000,
+	}
+	workingResult, err := cs.hierarchy.Recall(workingReq)
+	if err == nil {
+		for _, item := range workingResult.Items {
+			if item.AccessCount >= 3 && item.ImportanceScore >= 0.7 {
+				if err := cs.hierarchy.PromoteItem(item.ID); err == nil {
+					promoted++
+				}
+			}
+		}
+	}
+
+	// Auto-demote: short_term → working (importance < demotion threshold and no access in 48h)
+	shortTermReq := MemoryRecallRequest{
+		Tiers: []MemoryTier{MemoryTierShortTerm},
+		Limit: 10000,
+	}
+	shortTermResult, err := cs.hierarchy.Recall(shortTermReq)
+	if err == nil {
+		demotionThreshold := 0.3
+		for _, item := range shortTermResult.Items {
+			if item.ImportanceScore < demotionThreshold && time.Since(item.LastAccessedAt) > 48*time.Hour {
+				_ = cs.hierarchy.DemoteItem(item.ID)
+			}
+		}
+	}
+
+	return promoted
 }
 
 // Status returns the current scheduler status

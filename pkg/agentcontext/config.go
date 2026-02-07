@@ -65,6 +65,24 @@ type Config struct {
 
 	// Trusted sources (Phase 2.5)
 	TrustedSources []TrustedSource
+
+	// Presence registry
+	PresenceCollection      string
+	PresenceHeartbeatTTL    int // seconds, default 120
+	PresenceCleanupInterval int // seconds, default 60
+
+	// File claims
+	FileClaimsCollection string
+
+	// Git worktree integration
+	WorktreeCollection      string
+	GitRepoPath             string
+	GitWorktreeBaseDir      string
+	GitAutoCleanupWorktrees bool
+
+	// Compaction scheduler
+	CompactionEnabled       bool
+	CompactionCheckInterval int // seconds, default 300
 }
 
 // TrustedSource defines a trusted source pattern for context weighting
@@ -132,6 +150,24 @@ func LoadConfigFromEnv() (Config, error) {
 
 		EmbedConcurrency: intEnv("AGENT_CONTEXT_EMBED_CONCURRENCY", 4),
 		DedupeSimilarity: floatEnv("AGENT_CONTEXT_DEDUPE_SIMILARITY", 0.9),
+
+		// Presence registry
+		PresenceCollection:      firstNonEmptyEnv([]string{"AGENT_CONTEXT_PRESENCE_COLLECTION"}, "agent_presence_v1"),
+		PresenceHeartbeatTTL:    intEnv("AGENT_CONTEXT_PRESENCE_HEARTBEAT_TTL", 120),
+		PresenceCleanupInterval: intEnv("AGENT_CONTEXT_PRESENCE_CLEANUP_INTERVAL", 60),
+
+		// File claims
+		FileClaimsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_FILE_CLAIMS_COLLECTION"}, "agent_file_claims_v1"),
+
+		// Git worktree
+		WorktreeCollection:      firstNonEmptyEnv([]string{"AGENT_CONTEXT_WORKTREE_COLLECTION"}, "agent_worktrees_v1"),
+		GitRepoPath:             firstNonEmptyEnv([]string{"AGENT_CONTEXT_GIT_REPO_PATH", "REPO_PATH"}, ""),
+		GitWorktreeBaseDir:      firstNonEmptyEnv([]string{"AGENT_CONTEXT_GIT_WORKTREE_BASE_DIR"}, ""),
+		GitAutoCleanupWorktrees: boolEnv("AGENT_CONTEXT_GIT_AUTO_CLEANUP_WORKTREES", true),
+
+		// Compaction scheduler
+		CompactionEnabled:       boolEnv("AGENT_CONTEXT_COMPACTION_ENABLED", true),
+		CompactionCheckInterval: intEnv("AGENT_CONTEXT_COMPACTION_CHECK_INTERVAL", 300),
 	}
 
 	// Validate visibility

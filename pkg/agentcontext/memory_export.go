@@ -1,6 +1,7 @@
 package agentcontext
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -143,15 +144,18 @@ func NewMemoryExporter(hierarchy *MemoryHierarchy, graph *KnowledgeGraph, workfl
 
 // ExportOptions configures what to export
 type ExportOptions struct {
-	IncludeMemories   bool     `json:"include_memories"`
-	IncludeGraph      bool     `json:"include_graph"`
-	IncludeWorkflows  bool     `json:"include_workflows"`
-	IncludeEmbeddings bool     `json:"include_embeddings"`
-	MemoryTiers       []string `json:"memory_tiers,omitempty"` // Filter by tier
-	SessionID         string   `json:"session_id,omitempty"`   // Filter by session
-	Namespace         string   `json:"namespace,omitempty"`    // Filter by namespace
-	Format            string   `json:"format"`                 // "mem0", "supermemory", "loom"
-	AgentID           string   `json:"agent_id,omitempty"`
+	IncludeMemories   bool       `json:"include_memories"`
+	IncludeGraph      bool       `json:"include_graph"`
+	IncludeWorkflows  bool       `json:"include_workflows"`
+	IncludeEmbeddings bool       `json:"include_embeddings"`
+	MemoryTiers       []string   `json:"memory_tiers,omitempty"` // Filter by tier
+	SessionID         string     `json:"session_id,omitempty"`   // Filter by session
+	Namespace         string     `json:"namespace,omitempty"`    // Filter by namespace
+	Format            string     `json:"format"`                 // "mem0", "supermemory", "loom"
+	AgentID           string     `json:"agent_id,omitempty"`
+	Tags              []string   `json:"tags,omitempty"`       // Filter by tags
+	TimeStart         *time.Time `json:"time_start,omitempty"` // Filter by time range
+	TimeEnd           *time.Time `json:"time_end,omitempty"`   // Filter by time range
 }
 
 // DefaultExportOptions returns default export options
@@ -242,6 +246,33 @@ func (me *MemoryExporter) exportMemories(opts ExportOptions) []UniversalMemory {
 					continue
 				}
 			}
+		}
+
+		// Filter by tags if specified
+		if len(opts.Tags) > 0 {
+			tagMatch := false
+			for _, filterTag := range opts.Tags {
+				for _, itemTag := range item.Tags {
+					if filterTag == itemTag {
+						tagMatch = true
+						break
+					}
+				}
+				if tagMatch {
+					break
+				}
+			}
+			if !tagMatch {
+				continue
+			}
+		}
+
+		// Filter by time range if specified
+		if opts.TimeStart != nil && item.CreatedAt.Before(*opts.TimeStart) {
+			continue
+		}
+		if opts.TimeEnd != nil && item.CreatedAt.After(*opts.TimeEnd) {
+			continue
 		}
 
 		memory := UniversalMemory{
@@ -391,6 +422,7 @@ type MemoryImporter struct {
 	hierarchy *MemoryHierarchy
 	graph     *KnowledgeGraph
 	workflows *WorkflowEngine
+	embedFunc func(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 // NewMemoryImporter creates a new memory importer
@@ -400,6 +432,11 @@ func NewMemoryImporter(hierarchy *MemoryHierarchy, graph *KnowledgeGraph, workfl
 		graph:     graph,
 		workflows: workflows,
 	}
+}
+
+// SetEmbedFunc sets the embedding function for re-embedding on import
+func (mi *MemoryImporter) SetEmbedFunc(fn func(ctx context.Context, texts []string) ([][]float32, error)) {
+	mi.embedFunc = fn
 }
 
 // ImportOptions configures import behavior
@@ -420,6 +457,9 @@ type ImportOptions struct {
 
 	// Namespace override
 	TargetNamespace string `json:"target_namespace,omitempty"`
+
+	// Regenerate embeddings on import
+	RegenerateEmbeddings bool `json:"regenerate_embeddings,omitempty"`
 }
 
 // DefaultImportOptions returns default import options
