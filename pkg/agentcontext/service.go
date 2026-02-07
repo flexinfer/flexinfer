@@ -355,27 +355,29 @@ func (s *Service) enrichSessionStartResult(ctx context.Context, result map[strin
 
 	// Fetch pending handoffs for this agent
 	var pendingHandoffs []map[string]any
-	conds := []any{
-		Match("target_agent_id", agentID),
-		Match("status", string(HandoffStatusPending)),
-	}
-	points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
-	if err == nil {
-		for _, p := range points {
-			h, err := payloadToHandoff(p.Payload)
-			if err != nil || h == nil {
-				continue
+	if s.handoffsQdrant != nil {
+		conds := []any{
+			Match("target_agent_id", agentID),
+			Match("status", string(HandoffStatusPending)),
+		}
+		points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
+		if err == nil {
+			for _, p := range points {
+				h, err := payloadToHandoff(p.Payload)
+				if err != nil || h == nil {
+					continue
+				}
+				if h.ExpiresAt != nil && now.After(*h.ExpiresAt) {
+					continue
+				}
+				pendingHandoffs = append(pendingHandoffs, map[string]any{
+					"handoff_id":   h.ID,
+					"source_agent": h.SourceAgentID,
+					"instructions": h.Instructions,
+					"summary":      h.Summary,
+					"created_at":   h.CreatedAt.Format(time.RFC3339),
+				})
 			}
-			if h.ExpiresAt != nil && now.After(*h.ExpiresAt) {
-				continue
-			}
-			pendingHandoffs = append(pendingHandoffs, map[string]any{
-				"handoff_id":   h.ID,
-				"source_agent": h.SourceAgentID,
-				"instructions": h.Instructions,
-				"summary":      h.Summary,
-				"created_at":   h.CreatedAt.Format(time.RFC3339),
-			})
 		}
 	}
 	result["pending_handoffs"] = pendingHandoffs
@@ -443,7 +445,7 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		s.presenceMu.Unlock()
 		cleanedUp["presence_deregistered"] = hadPresence
 
-		if hadPresence {
+		if hadPresence && s.presenceQdrant != nil {
 			_ = s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
 		}
 
@@ -459,7 +461,7 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 
 func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
-	agentID := v.Required("agent_id")
+	agentID := v.String("agent_id", "")
 	namespace := v.String("namespace", "")
 	status := v.String("status", "")
 	limit := v.Int("limit", 20)
@@ -469,7 +471,10 @@ func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*
 	}
 
 	// Build filter
-	conds := []any{Match("agent_id", agentID)}
+	var conds []any
+	if agentID != "" {
+		conds = append(conds, Match("agent_id", agentID))
+	}
 	if namespace != "" {
 		conds = append(conds, Match("namespace", namespace))
 	}
@@ -477,7 +482,11 @@ func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*
 		conds = append(conds, Match("status", status))
 	}
 
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, FilterMust(conds...), limit, false)
+	var filter map[string]any
+	if len(conds) > 0 {
+		filter = FilterMust(conds...)
+	}
+	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("list sessions: %w", err)), nil
 	}
