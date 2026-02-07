@@ -25,6 +25,11 @@ func (s *Service) HandlePresenceRegister(ctx context.Context, args map[string]an
 		return mcp.ErrorResult(err), nil
 	}
 
+	// Enforce minimum TTL floor to prevent misconfigured instant-expiry
+	if ttl < 30 {
+		ttl = 30
+	}
+
 	now := time.Now()
 	presence := &AgentPresence{
 		ID:            GenerateID(agentID, "presence", "", now),

@@ -294,12 +294,14 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 				return mcp.ErrorResult(fmt.Errorf("persist resumed session: %w", err)), nil
 			}
 		}
-		return mcp.JSONResult(map[string]any{
+		result := map[string]any{
 			"ok":         true,
 			"session_id": resumeID,
 			"resumed":    true,
 			"agent_id":   existing.AgentID,
-		})
+		}
+		s.enrichSessionStartResult(ctx, result, existing.AgentID, existing.Namespace)
+		return mcp.JSONResult(result)
 	}
 
 	// Create new session
@@ -332,13 +334,58 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 		result["_warning"] = fmt.Sprintf("failed to persist session: %v", err)
 	}
 
+	s.enrichSessionStartResult(ctx, result, agentID, namespace)
 	return mcp.JSONResult(result)
+}
+
+// enrichSessionStartResult adds coordination info (pending handoffs, active agents) to a session start result.
+func (s *Service) enrichSessionStartResult(ctx context.Context, result map[string]any, agentID, namespace string) {
+	// Count active agents in same namespace
+	activeAgents := 0
+	s.presenceMu.RLock()
+	now := time.Now()
+	for _, p := range s.presenceMap {
+		if now.After(p.LastHeartbeat.Add(time.Duration(p.HeartbeatTTL) * time.Second)) {
+			continue // expired
+		}
+		activeAgents++
+	}
+	s.presenceMu.RUnlock()
+	result["active_agents"] = activeAgents
+
+	// Fetch pending handoffs for this agent
+	var pendingHandoffs []map[string]any
+	conds := []any{
+		Match("target_agent_id", agentID),
+		Match("status", string(HandoffStatusPending)),
+	}
+	points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
+	if err == nil {
+		for _, p := range points {
+			h, err := payloadToHandoff(p.Payload)
+			if err != nil || h == nil {
+				continue
+			}
+			if h.ExpiresAt != nil && now.After(*h.ExpiresAt) {
+				continue
+			}
+			pendingHandoffs = append(pendingHandoffs, map[string]any{
+				"handoff_id":   h.ID,
+				"source_agent": h.SourceAgentID,
+				"instructions": h.Instructions,
+				"summary":      h.Summary,
+				"created_at":   h.CreatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+	result["pending_handoffs"] = pendingHandoffs
 }
 
 func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.Required("session_id")
 	summarize := v.Bool("summarize", true)
+	cleanup := v.Bool("cleanup", true)
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -378,6 +425,33 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 				result["_persist_error"] = err.Error()
 			}
 		}
+	}
+
+	// Auto-cleanup coordination resources
+	if cleanup {
+		agentID := session.AgentID
+		cleanedUp := map[string]any{}
+
+		// Release all file claims for this agent
+		released := s.releaseAllClaimsForAgent(agentID)
+		cleanedUp["file_claims_released"] = released
+
+		// Deregister presence
+		s.presenceMu.Lock()
+		_, hadPresence := s.presenceMap[agentID]
+		delete(s.presenceMap, agentID)
+		s.presenceMu.Unlock()
+		cleanedUp["presence_deregistered"] = hadPresence
+
+		if hadPresence {
+			_ = s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+		}
+
+		// Orphan worktrees
+		s.orphanWorktreesForAgent(agentID)
+		cleanedUp["worktrees_orphaned"] = true
+
+		result["cleanup"] = cleanedUp
 	}
 
 	return mcp.JSONResult(result)

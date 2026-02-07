@@ -63,16 +63,14 @@ Key concepts:
 
 Typical workflow:
 1. Register presence with agent_presence_register
-2. Start session with agent_session_start
-3. Check handoff inbox with agent_handoff_inbox
-4. Claim files before editing with agent_file_claim_acquire
-5. Add context as you work with agent_context_add
-6. Send heartbeats with agent_presence_heartbeat
-7. Recall relevant context with agent_context_recall (token-efficient)
-8. Share insights with other agents using agent_context_share
-9. Release file claims with agent_file_claim_release
-10. End session with agent_session_end (auto-summarizes)
-11. Deregister presence with agent_presence_deregister`)
+2. Start session with agent_session_start (returns pending handoffs + active agents)
+3. Claim files before editing with agent_file_claim_acquire
+4. Add context as you work with agent_context_add
+5. Send heartbeats with agent_presence_heartbeat (every 30-60s)
+6. Recall relevant context with agent_context_recall_enhanced
+7. End session with agent_session_end (auto-cleans up presence, claims, worktrees)
+
+Heartbeat interval: Send heartbeats every 30-60 seconds. Agents are marked offline after 120s of no heartbeat.`)
 
 	registerTools(server, svc)
 

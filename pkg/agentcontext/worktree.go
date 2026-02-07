@@ -300,7 +300,7 @@ func (s *Service) HandleWorktreeCleanup(ctx context.Context, args map[string]any
 	removed := 0
 	if !dryRun {
 		for _, o := range orphaned {
-			path := o["worktree_path"].(string)
+			path := toString(o["worktree_path"])
 			gitArgs := []string{"worktree", "remove"}
 			if force {
 				gitArgs = append(gitArgs, "--force")
@@ -311,7 +311,7 @@ func (s *Service) HandleWorktreeCleanup(ctx context.Context, args map[string]any
 				removed++
 				// Remove from assignments
 				s.worktreeMu.Lock()
-				delete(s.worktreeAssns, o["assignment_id"].(string))
+				delete(s.worktreeAssns, toString(o["assignment_id"]))
 				s.worktreeMu.Unlock()
 			}
 		}

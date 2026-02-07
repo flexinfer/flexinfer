@@ -13,7 +13,7 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_session_start",
-		Description: "Start a new agent context session. Returns session_id for subsequent calls. Use resume_session_id to continue an existing session.",
+		Description: "Start a new agent context session. Returns session_id for subsequent calls. Use resume_session_id to continue an existing session. After starting, check agent_handoff_inbox for pending work from other agents.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -45,7 +45,7 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_session_end",
-		Description: "End an agent session. Optionally triggers summarization of session context.",
+		Description: "End an agent session. Optionally triggers summarization of session context. Accepts cleanup=true (default) to auto-release file claims, deregister presence, and mark worktrees as orphaned.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -56,6 +56,10 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 				"summarize": map[string]any{
 					"type":        "boolean",
 					"description": "Generate session summary on end (default: true).",
+				},
+				"cleanup": map[string]any{
+					"type":        "boolean",
+					"description": "Auto-release file claims, deregister presence, and mark worktrees as orphaned (default: true).",
 				},
 			},
 			Required: []string{"session_id"},
@@ -1965,7 +1969,7 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_presence_register",
-		Description: "Register an agent's presence. Announces the agent is active and available for coordination.",
+		Description: "Register an agent's presence. Announces the agent is active and available for coordination. Call this at the start of your work session for multi-agent discovery.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -1998,7 +2002,7 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_presence_heartbeat",
-		Description: "Send a heartbeat to keep presence alive. Returns file conflicts if active_files overlap with other agents.",
+		Description: "Send a heartbeat to keep presence alive. Returns file conflicts if active_files overlap with other agents. Recommended every 30-60 seconds. Response includes file conflicts if detected.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -2111,7 +2115,7 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service) {
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_file_claim_release",
-		Description: "Release file claims. Use file_path='all' to release all claims.",
+		Description: "Release file claims. Set file_path='all' to release all claims for the agent.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
