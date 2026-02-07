@@ -27,7 +27,7 @@ variables:
   HELM_OCI_REPO: ""
 
 .go-cache: &go-cache
-  image: golang:${GO_VERSION}
+  image: registry.harbor.lan/library/golang:${GO_VERSION}
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
@@ -64,7 +64,7 @@ fmt:
 
 helm:
   stage: lint
-  image: alpine/helm:3.15.4
+  image: registry.harbor.lan/library/helm:3.15.4
   script:
     - helm lint charts/flexinfer
     - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
@@ -188,7 +188,7 @@ build_benchmarker:
 # Build via BuildKit (no Docker-in-Docker)
 publish:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 2h
   needs:
     - job: build_manager
@@ -287,7 +287,7 @@ publish:
 
 publish_binaries:
   stage: publish
-  image: alpine/helm:3.15.4
+  image: registry.harbor.lan/library/helm:3.15.4
   needs:
     - job: build_manager
       artifacts: true
@@ -323,7 +323,7 @@ publish_binaries:
 
 publish_helm_chart:
   stage: publish
-  image: alpine/helm:3.15.4
+  image: registry.harbor.lan/library/helm:3.15.4
   script:
     - apk add --no-cache curl
     - mkdir -p dist
@@ -357,7 +357,7 @@ publish_helm_chart:
 # Trigger manually when needed.
 publish_mlcllm_rocm:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 2h
   script:
     - |
@@ -386,7 +386,7 @@ publish_mlcllm_rocm:
 # Required for quality models (32B, 14B) on gfx1100 nodes
 publish_mlcllm_rocm64:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 3h  # Longer timeout - builds TVM from source
   needs: []
   script:
@@ -414,7 +414,7 @@ publish_mlcllm_rocm64:
 
 publish_mlcllm_cuda:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 2h
   script:
     - |
@@ -444,7 +444,7 @@ publish_mlcllm_cuda:
 # Required for legacy Maxwell nodes with 6GB VRAM
 publish_mlcllm_maxwell:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 2h  # Builds TVM from source
   needs: []
   script:
@@ -474,7 +474,7 @@ publish_mlcllm_maxwell:
 # OpenAI-compatible image generation API for AMD/NVIDIA GPUs
 publish_diffusers_rocm:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 1h
   needs: []
   script:
@@ -503,7 +503,7 @@ publish_diffusers_rocm:
 # vLLM OpenAI-compatible API server for AMD GPUs
 publish_vllm_rocm:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 1h
   needs: []
   script:
@@ -581,7 +581,7 @@ govulncheck:
 # Trivy filesystem scanning for go.mod vulnerabilities
 trivy_scan_deps:
   stage: security
-  image: aquasec/trivy:0.58.0
+  image: registry.harbor.lan/library/trivy:0.58.0
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_CACHE_DIR: ".trivycache/"
@@ -623,7 +623,7 @@ go_mod_outdated:
 # Fails pipeline on HIGH or CRITICAL CVEs in production images
 .trivy-scan: &trivy-scan
   stage: security
-  image: aquasec/trivy:0.58.0
+  image: registry.harbor.lan/library/trivy:0.58.0
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_CACHE_DIR: ".trivycache/"
