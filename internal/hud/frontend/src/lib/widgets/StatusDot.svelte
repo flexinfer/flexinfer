@@ -1,9 +1,10 @@
 <script>
-  /** @type {{ status: 'healthy' | 'degraded' | 'down' | 'unknown' }} */
+  /** @type {{ status: 'healthy' | 'idle' | 'degraded' | 'down' | 'unknown' }} */
   let { status = 'unknown' } = $props();
 
   const colorMap = {
     healthy: 'var(--success)',
+    idle: 'var(--fg-muted)',
     degraded: 'var(--warning)',
     down: 'var(--error)',
     unknown: 'var(--fg-muted)',

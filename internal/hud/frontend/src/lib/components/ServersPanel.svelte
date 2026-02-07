@@ -26,6 +26,7 @@
   });
 
   let healthyCt = $derived(servers.filter(s => s.status === 'healthy').length);
+  let idleCt = $derived(servers.filter(s => s.status === 'idle').length);
   let degradedCt = $derived(servers.filter(s => s.status === 'degraded').length);
   let downCt = $derived(servers.filter(s => s.status === 'down').length);
 
@@ -113,16 +114,24 @@
       <span class="header-total text-mono">{servers.length} servers</span>
       <span class="header-stat healthy-stat">
         <span class="dot dot-healthy"></span>
-        {healthyCt} healthy
+        {healthyCt} running
       </span>
-      <span class="header-stat degraded-stat">
-        <span class="dot dot-degraded"></span>
-        {degradedCt} degraded
+      <span class="header-stat idle-stat">
+        <span class="dot dot-idle"></span>
+        {idleCt} idle
       </span>
-      <span class="header-stat down-stat">
-        <span class="dot dot-down"></span>
-        {downCt} down
-      </span>
+      {#if degradedCt > 0}
+        <span class="header-stat degraded-stat">
+          <span class="dot dot-degraded"></span>
+          {degradedCt} degraded
+        </span>
+      {/if}
+      {#if downCt > 0}
+        <span class="header-stat down-stat">
+          <span class="dot dot-down"></span>
+          {downCt} down
+        </span>
+      {/if}
     </div>
   </div>
 
@@ -141,7 +150,8 @@
     </select>
     <select bind:value={statusFilter}>
       <option value="all">All Status</option>
-      <option value="healthy">Healthy</option>
+      <option value="healthy">Running</option>
+      <option value="idle">Idle</option>
       <option value="degraded">Degraded</option>
       <option value="down">Down</option>
     </select>
@@ -196,9 +206,9 @@
               <td class="text-mono">{server.tool_count ?? 0}</td>
               <td class="text-mono text-muted">{server.target ?? '---'}</td>
               <td class="sparkline-cell">
-                {#if server.latency_history?.length}
+                {#if server.latencyHistory?.length}
                   <SparkLine
-                    data={server.latency_history}
+                    data={server.latencyHistory}
                     width={120}
                     height={24}
                     color={server.status === 'healthy' ? 'var(--success)' : server.status === 'degraded' ? 'var(--warning)' : 'var(--error)'}
@@ -283,6 +293,7 @@
   }
 
   .dot-healthy { background: var(--success); }
+  .dot-idle { background: var(--fg-muted); }
   .dot-degraded { background: var(--warning); }
   .dot-down { background: var(--error); }
 

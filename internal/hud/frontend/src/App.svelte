@@ -97,7 +97,9 @@
   let serverCount = $derived(fleetStore.status.servers);
   let activeSessionCount = $derived(fleetStore.activeSessions.length);
   let healthySrv = $derived(healthStore.healthyCount);
+  let availableSrv = $derived(healthStore.availableCount);
   let degradedSrv = $derived(healthStore.degradedCount);
+  let downSrv = $derived(healthStore.downCount);
 
   function formatTime(d) {
     if (!d) return '--:--';
@@ -176,7 +178,10 @@
       <span class="status-text">{activeSessionCount} active session{activeSessionCount !== 1 ? 's' : ''}</span>
     </div>
     <div class="status-bar-right">
-      <span class="status-text text-muted">{healthySrv}/{serverCount} healthy</span>
+      <span class="status-text text-muted">{availableSrv}/{serverCount} healthy</span>
+      {#if downSrv > 0}
+        <span class="status-text" style="color: var(--error);">({downSrv} down)</span>
+      {/if}
       <span class="status-divider"></span>
       <span class="status-text text-mono">{formatTime(fleetStore.lastUpdated)}</span>
     </div>

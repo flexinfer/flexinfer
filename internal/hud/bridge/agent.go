@@ -51,13 +51,15 @@ type TaskInfo struct {
 	UpdatedAt string   `json:"updated_at"`
 }
 
-// WorkflowInfo describes a workflow summary.
+// WorkflowInfo describes a workflow summary (MCP field names for deserialization).
 type WorkflowInfo struct {
-	ID           string `json:"id"`
-	DefinitionID string `json:"definition_id"`
-	Status       string `json:"status"`
-	CurrentStep  string `json:"current_step"`
-	StartedAt    string `json:"started_at"`
+	ID          string  `json:"workflow_id"`
+	Name        string  `json:"name,omitempty"`
+	Status      string  `json:"status"`
+	Progress    float64 `json:"progress,omitempty"`
+	CurrentStep string  `json:"current_step"`
+	CreatedAt   string  `json:"created_at"`
+	Error       string  `json:"error,omitempty"`
 }
 
 // WorkflowStep describes a single step within a workflow.
@@ -66,18 +68,23 @@ type WorkflowStep struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Type   string `json:"type,omitempty"`
-	Result any    `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
-// WorkflowDetail is the full workflow status including steps.
+// WorkflowDetail is the full workflow status including steps (MCP field names).
 type WorkflowDetail struct {
-	ID           string         `json:"id"`
-	DefinitionID string         `json:"definition_id"`
-	Status       string         `json:"status"`
-	CurrentStep  string         `json:"current_step"`
-	StartedAt    string         `json:"started_at"`
-	CompletedAt  string         `json:"completed_at,omitempty"`
-	Steps        []WorkflowStep `json:"steps,omitempty"`
+	ID             string         `json:"workflow_id"`
+	Name           string         `json:"name,omitempty"`
+	Status         string         `json:"status"`
+	CurrentStep    string         `json:"current_step"`
+	Progress       float64        `json:"progress,omitempty"`
+	CompletedSteps int            `json:"completed_steps,omitempty"`
+	TotalSteps     int            `json:"total_steps,omitempty"`
+	Steps          []WorkflowStep `json:"steps,omitempty"`
+	CreatedAt      string         `json:"created_at"`
+	StartedAt      string         `json:"started_at,omitempty"`
+	CompletedAt    string         `json:"completed_at,omitempty"`
+	Error          string         `json:"error,omitempty"`
 }
 
 // MemoryTierStats describes statistics for a single memory tier.
@@ -97,11 +104,17 @@ type MemoryStatsResult struct {
 
 // MemoryItem describes a single memory item.
 type MemoryItem struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Tier       string `json:"tier"`
-	Importance int    `json:"importance"`
-	Tokens     int    `json:"tokens"`
+	ID              string  `json:"id"`
+	Title           string  `json:"title"`
+	Content         string  `json:"content,omitempty"`
+	Tier            string  `json:"tier"`
+	Importance      string  `json:"importance"`
+	ImportanceScore float64 `json:"importance_score"`
+	Tokens          int     `json:"original_tokens"`
+	Status          string  `json:"status,omitempty"`
+	Category        string  `json:"category,omitempty"`
+	AccessedAt      string  `json:"created_at,omitempty"`
+	LastAccessed    string  `json:"last_accessed_at,omitempty"`
 }
 
 // GraphStatsResult holds knowledge graph statistics.
@@ -133,6 +146,7 @@ type ContextEntry struct {
 	AgentID   string `json:"agent_id"`
 	Namespace string `json:"namespace"`
 	Title     string `json:"title"`
+	Content   string `json:"content,omitempty"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -274,7 +288,7 @@ func (a *AgentBridge) MemoryStats() (*MemoryStatsResult, error) {
 func (a *AgentBridge) MemoryRecall(tier, query string, limit int) ([]MemoryItem, error) {
 	args := map[string]any{}
 	if tier != "" {
-		args["tier"] = tier
+		args["tiers"] = []string{tier}
 	}
 	if query != "" {
 		args["query"] = query

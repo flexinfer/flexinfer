@@ -29,6 +29,8 @@ export interface ServersResponse {
   servers: ServerInfo[];
 }
 
+export type ServerStatus = 'healthy' | 'idle' | 'degraded' | 'down';
+
 export interface MergedServer {
   name: string;
   categories: string[];
@@ -36,6 +38,11 @@ export interface MergedServer {
   running: boolean;
   health: ServerHealth | null;
   latencyHistory: number[];
+  // Derived view-model fields for direct template binding.
+  status: ServerStatus;
+  latency: number;
+  target: string;
+  error_message: string;
 }
 
 const SPARKLINE_BUFFER_SIZE = 60;
@@ -51,19 +58,24 @@ class HealthStore {
   private eventUnsubs: Array<() => void> = [];
 
   get healthyCount(): number {
-    return this.servers.filter(
-      (s) => s.running && s.health?.local?.healthy
-    ).length;
+    return this.servers.filter((s) => s.status === 'healthy').length;
+  }
+
+  get idleCount(): number {
+    return this.servers.filter((s) => s.status === 'idle').length;
   }
 
   get degradedCount(): number {
-    return this.servers.filter(
-      (s) => s.running && s.health && !s.health.local.healthy
-    ).length;
+    return this.servers.filter((s) => s.status === 'degraded').length;
   }
 
   get downCount(): number {
-    return this.servers.filter((s) => !s.running).length;
+    return this.servers.filter((s) => s.status === 'down').length;
+  }
+
+  /** Running + idle = all available servers. */
+  get availableCount(): number {
+    return this.healthyCount + this.idleCount;
   }
 
   async fetch(): Promise<void> {
@@ -96,6 +108,19 @@ class HealthStore {
           buffer.shift();
         }
 
+        // Derive status from running + health state.
+        const localHealthy = health?.local?.healthy ?? false;
+        let status: ServerStatus;
+        if (srv.running && localHealthy) {
+          status = 'healthy';
+        } else if (srv.running && !localHealthy) {
+          status = 'degraded';
+        } else if (!srv.running && localHealthy) {
+          status = 'idle'; // On-demand server, available but not started.
+        } else {
+          status = 'down';
+        }
+
         return {
           name: srv.name,
           categories: srv.categories || [],
@@ -103,6 +128,10 @@ class HealthStore {
           running: srv.running,
           health,
           latencyHistory: [...buffer],
+          status,
+          latency,
+          target: health?.target ?? '',
+          error_message: health?.local?.errorMessage ?? '',
         };
       });
 

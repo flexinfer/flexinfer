@@ -345,12 +345,28 @@ func (a *App) handleWorktrees(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleWorkflowList returns the workflow list from the workflow monitor.
+// Transforms MCP field names (workflow_id, created_at) to frontend names (id, started_at).
 func (a *App) handleWorkflowList(w http.ResponseWriter, _ *http.Request) {
 	workflows := a.workflowMonitor.Workflows()
-	a.writeJSON(w, http.StatusOK, map[string]any{"workflows": workflows})
+	result := make([]map[string]any, len(workflows))
+	for i, wf := range workflows {
+		result[i] = map[string]any{
+			"id":           wf.ID,
+			"name":         wf.Name,
+			"status":       wf.Status,
+			"current_step": wf.CurrentStep,
+			"started_at":   wf.CreatedAt,
+			"progress":     wf.Progress,
+		}
+		if wf.Error != "" {
+			result[i]["error"] = wf.Error
+		}
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"workflows": result})
 }
 
 // handleWorkflowDetail returns detail for a single workflow (cached with 10s TTL).
+// Transforms MCP field names to the shape the frontend expects.
 func (a *App) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -362,7 +378,38 @@ func (a *App) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to get workflow", err)
 		return
 	}
-	a.writeJSON(w, http.StatusOK, detail)
+
+	// Build frontend-compatible step list.
+	steps := make([]map[string]any, len(detail.Steps))
+	for i, s := range detail.Steps {
+		steps[i] = map[string]any{
+			"id":     s.ID,
+			"name":   s.Name,
+			"type":   s.Type,
+			"status": s.Status,
+		}
+	}
+
+	result := map[string]any{
+		"id":           detail.ID,
+		"name":         detail.Name,
+		"status":       detail.Status,
+		"current_step": detail.CurrentStep,
+		"progress":     detail.Progress,
+		"started_at":   detail.CreatedAt,
+		"steps":        steps,
+	}
+	if detail.StartedAt != "" {
+		result["started_at"] = detail.StartedAt
+	}
+	if detail.CompletedAt != "" {
+		result["completed_at"] = detail.CompletedAt
+	}
+	if detail.Error != "" {
+		result["error"] = detail.Error
+	}
+
+	a.writeJSON(w, http.StatusOK, result)
 }
 
 // handleWorkflowApprove approves a workflow step and invalidates the cache.
@@ -416,19 +463,30 @@ func (a *App) handleWorkflowReject(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMemoryStats returns memory hierarchy stats from the memory monitor.
+// Transforms the bridge DTO (MCP field names) into the shape the frontend expects.
 func (a *App) handleMemoryStats(w http.ResponseWriter, _ *http.Request) {
 	stats := a.memoryMonitor.Stats()
 	if stats == nil {
-		// Stats not yet available — fall back to direct call.
 		directStats, err := a.agent.MemoryStats()
 		if err != nil {
 			a.writeError(w, http.StatusBadGateway, "failed to get memory stats", err)
 			return
 		}
-		a.writeJSON(w, http.StatusOK, directStats)
-		return
+		stats = directStats
 	}
-	a.writeJSON(w, http.StatusOK, stats)
+
+	// Frontend expects {items, tokens} per tier, not {item_count, token_count}.
+	tierJSON := func(t bridge.MemoryTierStats) map[string]any {
+		return map[string]any{"items": t.Items, "tokens": t.Tokens}
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"working_memory":    tierJSON(stats.WorkingMemory),
+		"short_term_memory": tierJSON(stats.ShortTermMemory),
+		"long_term_memory":  tierJSON(stats.LongTermMemory),
+		"total_items":       stats.TotalItems,
+		"total_tokens":      stats.TotalTokens,
+	})
 }
 
 // handleMemoryPromote promotes a memory item via the monitor (auto-refreshes stats).
@@ -502,7 +560,23 @@ func (a *App) handleMemoryItems(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to recall memory", err)
 		return
 	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	// Transform from bridge DTO (MCP field names) to frontend field names.
+	result := make([]map[string]any, len(items))
+	for i, it := range items {
+		result[i] = map[string]any{
+			"id":            it.ID,
+			"title":         it.Title,
+			"content":       it.Content,
+			"tier":          it.Tier,
+			"importance":    it.Importance,
+			"tokens":        it.Tokens,
+			"status":        it.Status,
+			"category":      it.Category,
+			"accessed_at":   it.AccessedAt,
+			"last_accessed": it.LastAccessed,
+		}
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"items": result})
 }
 
 func (a *App) handleGraphStats(w http.ResponseWriter, _ *http.Request) {
@@ -554,7 +628,24 @@ func (a *App) handleContextStream(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to get context stream", err)
 		return
 	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+
+	// Flatten ContextEntryInfo (score + nested entry) into the flat shape
+	// the frontend expects: {id, entry_type, agent_id, agent, namespace, title, timestamp, score}.
+	flat := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		flat[i] = map[string]any{
+			"id":         e.Entry.ID,
+			"entry_type": e.Entry.EntryType,
+			"agent_id":   e.Entry.AgentID,
+			"agent":      e.Entry.AgentID,
+			"namespace":  e.Entry.Namespace,
+			"title":      e.Entry.Title,
+			"content":    e.Entry.Content,
+			"timestamp":  e.Entry.Timestamp,
+			"score":      e.Score,
+		}
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"entries": flat})
 }
 
 // handleSSE delegates to the SSE hub to stream real-time daemon events to
