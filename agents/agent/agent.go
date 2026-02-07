@@ -808,6 +808,47 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 		metrics = append(metrics, m)
 	}
 
+	// If rocm-smi is partially available (temperature works but memory/util does not),
+	// we can end up with a non-empty metrics slice where VRAM fields are all zero.
+	// That breaks scheduler headroom scoring (gpu-free-memory=0). In that case, merge
+	// sysfs-derived VRAM/utilization as a best-effort fallback.
+	if len(metrics) > 0 {
+		missingVRAM := true
+		for _, m := range metrics {
+			if m.TotalVRAMMB > 0 && m.FreeVRAMMB > 0 {
+				missingVRAM = false
+				break
+			}
+		}
+		if missingVRAM {
+			sysfs := a.detectAMDMetricsSysfs()
+			if len(sysfs) > 0 {
+				byIdx := make(map[int]GPUMetrics, len(sysfs))
+				for _, sm := range sysfs {
+					byIdx[sm.Index] = sm
+				}
+				for i := range metrics {
+					sm, ok := byIdx[metrics[i].Index]
+					if !ok {
+						continue
+					}
+					if metrics[i].TotalVRAMMB == 0 {
+						metrics[i].TotalVRAMMB = sm.TotalVRAMMB
+					}
+					if metrics[i].UsedVRAMMB == 0 {
+						metrics[i].UsedVRAMMB = sm.UsedVRAMMB
+					}
+					if metrics[i].FreeVRAMMB == 0 {
+						metrics[i].FreeVRAMMB = sm.FreeVRAMMB
+					}
+					if metrics[i].Utilization == 0 && sm.Utilization != 0 {
+						metrics[i].Utilization = sm.Utilization
+					}
+				}
+			}
+		}
+	}
+
 	return metrics
 }
 
