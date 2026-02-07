@@ -45,8 +45,12 @@ The node agent also applies node annotations that the scheduler can use as heuri
 
 ### GPU Detection Sources (gfx1100 + Maxwell focus)
 
-- **NVIDIA**: `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) provides compute capability (`sm_52` for Maxwell) and VRAM.
-- **AMD**: prefers `rocm-smi` + `rocminfo`; falls back to sysfs VRAM detection if `rocm-smi` is unavailable. When falling back, it will still try `rocminfo` (if present) to infer `gfx*` for image selection (e.g., `gfx1100`).
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
 
 ### Config flags
 
@@ -988,6 +992,7 @@ These variables are automatically injected by the `ROCmEnvVars()` helper in `bac
 |------|-----|-----|------|------|
 | `cblevins-5930k` | Intel i7-5930K | AMD RX 7900 XTX | 24GB | Fast models (8B, 4B) |
 | `cblevins-7900xtx` | AMD Zen4 | AMD RX 7900 XTX | 24GB | Quality models (14B, 32B) + ComfyUI |
+| `cblevins-gtx980ti` | Intel i7 (legacy) | NVIDIA GTX 980 Ti (Maxwell, sm_52) | 6GB | Legacy / small models (FP32 MLC) |
 
 #### GPUGroups
 
@@ -1018,15 +1023,17 @@ All MLC model weights are pre-cached on NFS PVC (`mlc-models-nfs`):
 
 ### ROCm 6.4 MLC-LLM Build Status
 
-**Current Status: NOT BUILT**
+ROCm 6.4+ is the stable baseline for gfx1100, but you may choose between:
 
-The ROCm 6.4 driver is installed on both 7900XTX nodes, but the MLC-LLM container image for ROCm 6.4 hasn't been built yet.
+- a **gfx1100-optimized image** (`build/Dockerfile.mlc-rocm64-gfx1100`) for RX 7900 class GPUs
+- a **generic ROCm 6.4 source build** (`build/Dockerfile.mlc-rocm64-full`) when you want a "kitchen sink" build artifact to derive from
 
 #### Available Dockerfiles
 
 | Dockerfile | Purpose | CI Job | Image Tag |
 |------------|---------|--------|-----------|
-| `build/Dockerfile.mlc-rocm64-full` | ROCm 6.4 for gfx1100 | `publish_mlcllm_rocm64` | `library/mlc-llm:rocm64-src` |
+| `build/Dockerfile.mlc-rocm64-gfx1100` | ROCm 6.4 optimized for gfx1100 | (manual/local) | `flexinfer/mlc-llm:rocm64-gfx1100` |
+| `build/Dockerfile.mlc-rocm64-full` | ROCm 6.4 source build (generic) | `publish_mlcllm_rocm64` | `library/mlc-llm:rocm64-src` |
 | `build/Dockerfile.mlc-cuda-maxwell` | CUDA 11.8 for Maxwell (sm_52) | `publish_mlcllm_maxwell` | `flexinfer/mlc-llm:cuda-maxwell-v7` |
 | `build/Dockerfile.mlc-cuda` | CUDA generic backend | `publish_mlcllm_cuda` | `flexinfer/mlc-llm:cuda` |
 | `build/Dockerfile.mlc-rocm` | ROCm generic backend | `publish_mlcllm_rocm` | `flexinfer/mlc-llm:rocm` |
@@ -1051,9 +1058,13 @@ make verify-images
 
 #### Target Image
 
-```
-registry.harbor.lan/library/mlc-llm:rocm64-src
-```
+Recommended for RX 7900 (gfx1100):
+
+`registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100`
+
+Fallback / base artifact:
+
+`registry.harbor.lan/library/mlc-llm:rocm64-src`
 
 This image is referenced in `values.yaml` under `mlcllm.rocmImage` but doesn't exist yet.
 
@@ -1061,7 +1072,13 @@ This image is referenced in `values.yaml` under `mlcllm.rocmImage` but doesn't e
 
 ```bash
 cd /Users/cblevins/workspace/services/flexinfer
-docker build -f build/Dockerfile.mlc-rocm64-full -t registry.harbor.lan/library/mlc-llm:rocm64-src .
+
+# GFX1100 optimized (recommended)
+docker build -f build/Dockerfile.mlc-rocm64-gfx1100 -t registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100 build/
+docker push registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100
+
+# Generic ROCm 6.4 source build (slow, optional)
+docker build -f build/Dockerfile.mlc-rocm64-full -t registry.harbor.lan/library/mlc-llm:rocm64-src build/
 docker push registry.harbor.lan/library/mlc-llm:rocm64-src
 ```
 

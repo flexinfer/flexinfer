@@ -18,6 +18,16 @@ If you’re looking for “what exists today” docs, start here instead:
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
 - `phase-5-multi-cluster.md`: forward-looking checklist for multi-cluster federation (future).
 
+## Current Focus (February 2026)
+
+- Mixed-vendor homelab clusters (k3s) with AMD ROCm `gfx1100` (RX 7900) and NVIDIA Maxwell `sm_52` (GTX 980 Ti).
+- Making scheduling decisions "obviously correct" by keeping node labels + telemetry stable:
+  - `flexinfer.ai/gpu.vendor`, `flexinfer.ai/gpu.arch`, `flexinfer.ai/gpu.vram`
+  - `flexinfer.ai/gpu-free-memory` (scheduler headroom scoring)
+- Backend guardrails and docs for the two problem-child GPU classes:
+  - ROCm gfx1100 guide: `docs/user/backends-rocm-gfx1100.md`
+  - Maxwell guide: `docs/user/backends-maxwell.md` and `build/README-maxwell.md`
+
 ## Loom context pack
 
 For deeper “planning artifacts” (product spec, implementation plan, decisions/worklog), see:

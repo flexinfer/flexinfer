@@ -108,6 +108,26 @@ FlexInfer supports multiple GPU architectures with backend-specific consideratio
 - NVIDIA GPU workloads typically require `runtimeClassName: nvidia` (containerd + NVIDIA runtime) to get `/dev/nvidia*` injected reliably.
 - AMD ROCm workloads require `/dev/kfd` + `/dev/dri` access; if `rocm-smi` is not available inside the agent container, FlexInfer falls back to sysfs and will use `rocminfo` (if present) to infer `gfx*` for image selection.
 
+#### Quick k3s sanity checklist (recommended)
+
+```bash
+# 1) Verify the cluster actually advertises GPU resources
+kubectl describe node <node> | rg -n "nvidia.com/gpu|amd.com/gpu"
+
+# 2) Verify FlexInfer agent labeling (vendor + arch are the key selectors)
+kubectl get nodes -L flexinfer.ai/gpu.vendor -L flexinfer.ai/gpu.arch -L flexinfer.ai/gpu.vram -L flexinfer.ai/gpu.count
+
+# 3) Verify VRAM telemetry is non-zero (used for headroom scoring)
+kubectl get nodes -o custom-columns='NAME:.metadata.name,FREE_MB:.metadata.annotations.flexinfer\.ai/gpu-free-memory,UTIL:.metadata.annotations.flexinfer\.ai/gpu\.util'
+```
+
+#### Model placement tips (gfx1100 + sm_52)
+
+- For AMD RX 7900 (gfx1100), pin to `flexinfer.ai/gpu.vendor=AMD` + `flexinfer.ai/gpu.arch=gfx1100` and use the gfx1100 backend images described in `docs/user/backends-rocm-gfx1100.md`.
+- For NVIDIA Maxwell (sm_52), use MLC-LLM with FP32 quantization formats (`q0f32`, `q4f32_1`) and avoid backends that assume newer SMs (vLLM, Diffusers). See `docs/user/backends-maxwell.md` and `build/README-maxwell.md`.
+
+If scheduling looks "random" in a mixed cluster, start with `docs/user/operations.md` (it has the runtimeClass/device plugin verification steps that usually cause 90% of failures).
+
 ## Quick Start
 
 ### Prerequisites
