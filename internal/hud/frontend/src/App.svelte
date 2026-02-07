@@ -3,6 +3,7 @@
   import { fleetStore } from './lib/stores/fleet.svelte.ts';
   import { healthStore } from './lib/stores/health.svelte.ts';
   import { streamStore } from './lib/stores/stream.svelte.ts';
+  import { eventStore } from './lib/stores/events.svelte.ts';
   import FleetPanel from './lib/components/FleetPanel.svelte';
   import ServersPanel from './lib/components/ServersPanel.svelte';
   import TasksPanel from './lib/components/TasksPanel.svelte';
@@ -28,6 +29,7 @@
   // Lightweight status polling for the status bar
   let statusPollTimer = null;
   onMount(() => {
+    eventStore.connect();
     fleetStore.fetch();
     healthStore.fetch();
     statusPollTimer = setInterval(() => {
@@ -36,6 +38,7 @@
     }, 8000);
   });
   onDestroy(() => {
+    eventStore.disconnect();
     if (statusPollTimer) clearInterval(statusPollTimer);
   });
 

@@ -1,4 +1,5 @@
 // Fleet store - daemon status and sessions overview
+import { eventStore } from './events.svelte.ts';
 
 export interface Process {
   pid: number;
@@ -49,6 +50,7 @@ class FleetStore {
   lastUpdated = $state<Date | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventUnsubs: Array<() => void> = [];
 
   get activeSessions(): Session[] {
     return this.sessions.filter((s) => s.status === 'active');
@@ -88,6 +90,13 @@ class FleetStore {
     this.stopPolling();
     this.fetch();
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+
+    // Subscribe to SSE events for immediate refresh.
+    this.eventUnsubs.push(
+      eventStore.on('config.reload', () => this.fetch()),
+      eventStore.on('process.start', () => this.fetch()),
+      eventStore.on('process.stop', () => this.fetch()),
+    );
   }
 
   stopPolling(): void {
@@ -95,6 +104,8 @@ class FleetStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) unsub();
+    this.eventUnsubs = [];
   }
 }
 

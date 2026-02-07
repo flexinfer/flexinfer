@@ -65,31 +65,32 @@ type ToolCache struct {
 
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg           Config
-	fileCfg       FileConfig // File-based configuration
-	registry      *registry.Registry
-	repoRoot      string // Repository root for ${repo} expansion
-	procMgr       *process.Manager
-	pool          *pool.Pool
-	hubPool       *pool.Pool
-	router        *router.Router
-	hubClient     *mcp.WebSocketClient
-	callLocks     gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
-	listener      net.Listener
-	logger        *slog.Logger
-	toolCache     *ToolCache
-	manifest      *ManifestManager   // Persistent tool cache
-	profiles      *profiles.Manager  // Tool profile manager
-	metadata      *registry.Metadata // Tool metadata for enhanced descriptions
-	watcher       *sync.Watcher      // File watcher for hot reload
-	syncManager   *sync.Manager      // Sync manager for profile operations
-	metrics       *Metrics           // Prometheus metrics
-	healthMonitor *HealthMonitor     // Server health monitoring
-	tunnelMgr     *TunnelManager     // SSH tunnel management
-	respCache     *ResponseCache     // Response cache for read-only tools
-	eventBus      *EventBus          // Event bus for SSE streaming
-	wg            gosync.WaitGroup
-	done          chan struct{}
+	cfg            Config
+	fileCfg        FileConfig // File-based configuration
+	registry       *registry.Registry
+	repoRoot       string // Repository root for ${repo} expansion
+	procMgr        *process.Manager
+	pool           *pool.Pool
+	hubPool        *pool.Pool
+	router         *router.Router
+	hubClient      *mcp.WebSocketClient
+	callLocks      gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
+	listener       net.Listener
+	logger         *slog.Logger
+	toolCache      *ToolCache
+	manifest       *ManifestManager   // Persistent tool cache
+	profiles       *profiles.Manager  // Tool profile manager
+	metadata       *registry.Metadata // Tool metadata for enhanced descriptions
+	watcher        *sync.Watcher      // File watcher for hot reload
+	syncManager    *sync.Manager      // Sync manager for profile operations
+	metrics        *Metrics           // Prometheus metrics
+	healthMonitor  *HealthMonitor     // Server health monitoring
+	tunnelMgr      *TunnelManager     // SSH tunnel management
+	respCache      *ResponseCache     // Response cache for read-only tools
+	eventBus       *EventBus          // Event bus for SSE streaming
+	runningServers gosync.Map         // serverName -> true; tracks process starts for event emission
+	wg             gosync.WaitGroup
+	done           chan struct{}
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
@@ -181,13 +182,28 @@ func New(cfg Config) (*Daemon, error) {
 		return expandVarsWithRegistry(s, repoRoot, reg)
 	})
 
+	// d will be set once the Daemon struct is created (below). The closure
+	// captures the pointer so it can emit process.start events on first dial.
+	var d *Daemon
+
 	// Create connection pool for local servers
 	connPool := pool.New(pool.Config{
 		MaxIdle:     2,
 		MaxOpen:     10,
 		IdleTimeout: 5 * time.Minute,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
-			return procMgr.Dial(ctx, serverName)
+			_, wasRunning := d.runningServers.LoadOrStore(serverName, true)
+			transport, err := procMgr.Dial(ctx, serverName)
+			if err != nil {
+				d.runningServers.Delete(serverName)
+				return nil, err
+			}
+			if !wasRunning && d.eventBus != nil {
+				d.eventBus.Publish(EventProcessStart, map[string]any{
+					"server": serverName,
+				})
+			}
+			return transport, nil
 		},
 	})
 
@@ -264,7 +280,7 @@ func New(cfg Config) (*Daemon, error) {
 	// Determine cache TTL from config
 	cacheTTL := fileCfg.Resources.GetManifestTTL()
 
-	d := &Daemon{
+	d = &Daemon{
 		cfg:       cfg,
 		fileCfg:   fileCfg,
 		registry:  reg,
@@ -422,6 +438,15 @@ func (d *Daemon) idleReaperLoop() {
 			reaped := d.procMgr.ReapIdle(idleTimeout)
 			if len(reaped) > 0 {
 				d.logger.Info("reaped idle servers", "servers", reaped, "count", len(reaped))
+				for _, name := range reaped {
+					d.runningServers.Delete(name)
+					if d.eventBus != nil {
+						d.eventBus.Publish(EventProcessStop, map[string]any{
+							"server": name,
+							"reason": "idle_reaped",
+						})
+					}
+				}
 			}
 		}
 	}
@@ -570,6 +595,15 @@ func (d *Daemon) Stop() error {
 	}
 	if d.hubClient != nil {
 		d.hubClient.Close()
+	}
+	// Emit process.stop events for all running servers before shutdown.
+	if d.eventBus != nil {
+		for _, name := range d.procMgr.List() {
+			d.eventBus.Publish(EventProcessStop, map[string]any{
+				"server": name,
+				"reason": "daemon_shutdown",
+			})
+		}
 	}
 	d.procMgr.StopAll()
 
@@ -1676,7 +1710,14 @@ func (d *Daemon) Reload(ctx context.Context) error {
 			if !newServers[name] {
 				d.logger.Info("stopping removed server", "server", name)
 				d.procMgr.Stop(name)
+				d.runningServers.Delete(name)
 				d.manifest.RemoveServer(name)
+				if d.eventBus != nil {
+					d.eventBus.Publish(EventProcessStop, map[string]any{
+						"server": name,
+						"reason": "removed_from_config",
+					})
+				}
 			}
 		}
 

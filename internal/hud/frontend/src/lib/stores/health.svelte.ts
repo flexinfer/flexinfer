@@ -1,4 +1,5 @@
 // Health store - server health, latency sparklines
+import { eventStore } from './events.svelte.ts';
 
 export interface HealthEndpoint {
   healthy: boolean;
@@ -47,6 +48,7 @@ class HealthStore {
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private latencyBuffers: Map<string, number[]> = new Map();
+  private eventUnsubs: Array<() => void> = [];
 
   get healthyCount(): number {
     return this.servers.filter(
@@ -117,6 +119,14 @@ class HealthStore {
     this.stopPolling();
     this.fetch();
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+
+    // Subscribe to SSE events for immediate refresh.
+    this.eventUnsubs.push(
+      eventStore.on('server.health', () => this.fetch()),
+      eventStore.on('config.reload', () => this.fetch()),
+      eventStore.on('process.start', () => this.fetch()),
+      eventStore.on('process.stop', () => this.fetch()),
+    );
   }
 
   stopPolling(): void {
@@ -124,6 +134,8 @@ class HealthStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) unsub();
+    this.eventUnsubs = [];
   }
 }
 

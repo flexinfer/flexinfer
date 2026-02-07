@@ -1,4 +1,5 @@
 // Workflows store - workflow orchestration
+import { eventStore } from './events.svelte.ts';
 
 export interface WorkflowSummary {
   id: string;
@@ -69,6 +70,7 @@ class WorkflowStore {
   lastUpdated = $state<Date | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventUnsubs: Array<() => void> = [];
 
   get activeWorkflows(): WorkflowSummary[] {
     return this.workflows.filter(
@@ -146,6 +148,11 @@ class WorkflowStore {
     this.stopPolling();
     this.fetch();
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+
+    // Subscribe to SSE events for immediate refresh.
+    this.eventUnsubs.push(
+      eventStore.on('workflow.step', () => this.fetch()),
+    );
   }
 
   stopPolling(): void {
@@ -153,6 +160,8 @@ class WorkflowStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) unsub();
+    this.eventUnsubs = [];
   }
 }
 

@@ -106,26 +106,22 @@ func Run(cfg Config) error {
 		eventsURL := "http://" + cfg.MetricsAddr
 		ec := bridge.NewEventConsumer(eventsURL, logger)
 
-		// Wire daemon events to monitor refreshes + browser broadcast.
+		// Wire daemon events to monitor refreshes. The OnAny handler below is
+		// the single broadcast point for ALL events to browser clients.
 		ec.On("server.health", func(e bridge.SSEEvent) {
 			app.healthMonitor.Refresh()
-			app.sseHub.Broadcast(e)
 		})
 		ec.On("config.reload", func(e bridge.SSEEvent) {
 			app.fleetMonitor.Refresh()
 			app.healthMonitor.Refresh()
-			app.sseHub.Broadcast(e)
 		})
 		ec.On("process.start", func(e bridge.SSEEvent) {
 			app.fleetMonitor.Refresh()
-			app.sseHub.Broadcast(e)
 		})
 		ec.On("process.stop", func(e bridge.SSEEvent) {
 			app.fleetMonitor.Refresh()
-			app.sseHub.Broadcast(e)
 		})
 		ec.OnAny(func(e bridge.SSEEvent) {
-			// Broadcast all other events to browsers.
 			app.sseHub.Broadcast(e)
 		})
 
