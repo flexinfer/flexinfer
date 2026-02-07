@@ -12,7 +12,9 @@ stages:
   - security
 
 variables:
-  GO_VERSION: "1.25.5"
+  # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
+  # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
+  GO_VERSION: "1.25.7"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
