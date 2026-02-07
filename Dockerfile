@@ -38,7 +38,7 @@ RUN mkdir -p /bin && \
     done
 
 # Runtime stage - minimal image
-FROM alpine:3.21
+FROM registry.harbor.lan/dockerhub-cache/library/alpine:3.21
 
 RUN apk add --no-cache ca-certificates git
 
