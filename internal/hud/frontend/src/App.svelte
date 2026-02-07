@@ -11,6 +11,7 @@
   import MemoryPanel from './lib/components/MemoryPanel.svelte';
   import GraphPanel from './lib/components/GraphPanel.svelte';
   import StreamPanel from './lib/components/StreamPanel.svelte';
+  import PresencePanel from './lib/components/PresencePanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
 
   const panels = [
@@ -21,6 +22,7 @@
     { id: 'memory',    label: 'Memory',    key: '5', icon: '\u29BE' },
     { id: 'graph',     label: 'Graph',     key: '6', icon: '\u2B21' },
     { id: 'stream',    label: 'Stream',    key: '7', icon: '\u2261' },
+    { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
   ];
 
   let activePanel = $state('fleet');
@@ -50,7 +52,7 @@
     // Number keys 1-7 for panel switching (only when not in an input)
     if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const num = parseInt(e.key);
-      if (num >= 1 && num <= 7) {
+      if (num >= 1 && num <= 8) {
         activePanel = panels[num - 1].id;
         return;
       }
@@ -155,6 +157,8 @@
       <GraphPanel />
     {:else if activePanel === 'stream'}
       <StreamPanel />
+    {:else if activePanel === 'presence'}
+      <PresencePanel />
     {/if}
   </main>
 

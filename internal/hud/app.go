@@ -193,6 +193,11 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/{id}/promote", a.withCORS(a.handleMemoryPromote))
 	mux.HandleFunc("POST /api/memory/{id}/demote", a.withCORS(a.handleMemoryDemote))
 
+	// API routes — presence / coordination (from fleet monitor snapshot).
+	mux.HandleFunc("GET /api/presence", a.withCORS(a.handlePresence))
+	mux.HandleFunc("GET /api/claims", a.withCORS(a.handleClaims))
+	mux.HandleFunc("GET /api/worktrees", a.withCORS(a.handleWorktrees))
+
 	// API routes — direct bridge calls (parameterized queries).
 	mux.HandleFunc("GET /api/sessions", a.withCORS(a.handleSessions))
 	mux.HandleFunc("GET /api/tasks", a.withCORS(a.handleTasks))
@@ -307,6 +312,36 @@ func (a *App) handleServers(w http.ResponseWriter, _ *http.Request) {
 func (a *App) handleFleet(w http.ResponseWriter, _ *http.Request) {
 	snap := a.fleetMonitor.Snapshot()
 	a.writeJSON(w, http.StatusOK, snap)
+}
+
+// handlePresence returns agent presence data from the fleet monitor snapshot.
+func (a *App) handlePresence(w http.ResponseWriter, _ *http.Request) {
+	snap := a.fleetMonitor.Snapshot()
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"agents":         snap.Agents,
+		"active_agents":  snap.ActiveAgents,
+		"idle_agents":    snap.IdleAgents,
+		"offline_agents": snap.OfflineAgents,
+		"total":          snap.ActiveAgents + snap.IdleAgents + snap.OfflineAgents,
+	})
+}
+
+// handleClaims returns file claims from the fleet monitor snapshot.
+func (a *App) handleClaims(w http.ResponseWriter, _ *http.Request) {
+	snap := a.fleetMonitor.Snapshot()
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"claims": snap.FileClaims,
+		"count":  len(snap.FileClaims),
+	})
+}
+
+// handleWorktrees returns worktree assignments from the fleet monitor snapshot.
+func (a *App) handleWorktrees(w http.ResponseWriter, _ *http.Request) {
+	snap := a.fleetMonitor.Snapshot()
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"worktrees":        snap.Worktrees,
+		"active_worktrees": snap.ActiveWorktrees,
+	})
 }
 
 // handleWorkflowList returns the workflow list from the workflow monitor.

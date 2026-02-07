@@ -295,6 +295,118 @@ func (a *AgentBridge) EntityFind(query string, entityType string, limit int) ([]
 	return result.Entities, nil
 }
 
+// --- Presence / Coordination DTOs ---
+
+// PresenceInfo describes an agent in the presence registry.
+type PresenceInfo struct {
+	AgentID       string   `json:"agent_id"`
+	SessionID     string   `json:"session_id,omitempty"`
+	Status        string   `json:"status"`
+	AgentType     string   `json:"agent_type"`
+	Description   string   `json:"description"`
+	CurrentTask   string   `json:"current_task"`
+	ActiveFiles   []string `json:"active_files"`
+	Branch        string   `json:"branch"`
+	WorktreeID    string   `json:"worktree_id"`
+	LastHeartbeat string   `json:"last_heartbeat"`
+	RegisteredAt  string   `json:"registered_at"`
+}
+
+// FileClaimInfo describes a file claim (advisory lock).
+type FileClaimInfo struct {
+	ID        string `json:"id"`
+	AgentID   string `json:"agent_id"`
+	SessionID string `json:"session_id"`
+	FilePath  string `json:"file_path"`
+	ClaimType string `json:"claim_type"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// WorktreeInfo describes a git worktree assignment.
+type WorktreeInfo struct {
+	AssignmentID string `json:"assignment_id"`
+	AgentID      string `json:"agent_id"`
+	SessionID    string `json:"session_id"`
+	WorktreePath string `json:"worktree_path"`
+	Branch       string `json:"branch"`
+	BaseBranch   string `json:"base_branch"`
+	Purpose      string `json:"purpose"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"created_at"`
+	ReleasedAt   string `json:"released_at,omitempty"`
+	GitStatus    string `json:"git_status,omitempty"`
+}
+
+// CompactionInfo describes the compaction scheduler status.
+type CompactionInfo struct {
+	Running        bool   `json:"running"`
+	LastRun        string `json:"last_run,omitempty"`
+	ItemsCompacted int    `json:"items_compacted"`
+	ItemsPromoted  int    `json:"items_promoted"`
+	ItemsExpired   int    `json:"items_expired"`
+}
+
+// --- Presence / Coordination methods ---
+
+// PresenceList returns all active agents in the presence registry.
+func (a *AgentBridge) PresenceList(includeOffline bool) ([]PresenceInfo, error) {
+	args := map[string]any{}
+	if includeOffline {
+		args["include_offline"] = true
+	}
+	var result struct {
+		Agents []PresenceInfo `json:"agents"`
+	}
+	if err := a.callAgentTool("agent_presence_list", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Agents, nil
+}
+
+// FileClaimList returns file claims, optionally filtered by agent.
+func (a *AgentBridge) FileClaimList(agentID string) ([]FileClaimInfo, error) {
+	args := map[string]any{}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	var result struct {
+		Claims []FileClaimInfo `json:"claims"`
+	}
+	if err := a.callAgentTool("agent_file_claim_list", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Claims, nil
+}
+
+// WorktreeList returns worktree assignments, optionally filtered by agent and status.
+func (a *AgentBridge) WorktreeList(agentID, status string) ([]WorktreeInfo, error) {
+	args := map[string]any{}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	if status != "" {
+		args["status"] = status
+	}
+	var result struct {
+		Assignments []WorktreeInfo `json:"assignments"`
+	}
+	if err := a.callAgentTool("agent_worktree_list", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Assignments, nil
+}
+
+// CompactionStatus returns the compaction scheduler status.
+func (a *AgentBridge) CompactionStatus() (*CompactionInfo, error) {
+	var result CompactionInfo
+	if err := a.callAgentTool("agent_compaction_status", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ContextStream returns context entries since a given time, up to limit.
 func (a *AgentBridge) ContextStream(since time.Time, limit int) ([]ContextEntryInfo, error) {
 	args := map[string]any{}

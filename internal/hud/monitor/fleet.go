@@ -47,6 +47,15 @@ type FleetSnapshot struct {
 	RunningWorkflows int `json:"running_workflows"`
 	PendingApprovals int `json:"pending_approvals"`
 
+	// Agent presence
+	ActiveAgents    int                    `json:"active_agents"`
+	IdleAgents      int                    `json:"idle_agents"`
+	OfflineAgents   int                    `json:"offline_agents"`
+	Agents          []bridge.PresenceInfo  `json:"agents"`
+	FileClaims      []bridge.FileClaimInfo `json:"file_claims"`
+	ActiveWorktrees int                    `json:"active_worktrees"`
+	Worktrees       []bridge.WorktreeInfo  `json:"worktrees"`
+
 	// Metadata
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -178,6 +187,38 @@ func (m *FleetMonitor) Refresh() error {
 				snap.PendingApprovals++
 			}
 		}
+	}
+
+	// Fetch agent presence.
+	if agents, err := m.agent.PresenceList(true); err != nil {
+		m.logger.Warn("fleet: failed to fetch presence", "error", err)
+	} else {
+		snap.Agents = agents
+		for _, a := range agents {
+			switch a.Status {
+			case "active":
+				snap.ActiveAgents++
+			case "idle":
+				snap.IdleAgents++
+			case "offline":
+				snap.OfflineAgents++
+			}
+		}
+	}
+
+	// Fetch file claims.
+	if claims, err := m.agent.FileClaimList(""); err != nil {
+		m.logger.Warn("fleet: failed to fetch file claims", "error", err)
+	} else {
+		snap.FileClaims = claims
+	}
+
+	// Fetch worktree assignments.
+	if worktrees, err := m.agent.WorktreeList("", "active"); err != nil {
+		m.logger.Warn("fleet: failed to fetch worktrees", "error", err)
+	} else {
+		snap.Worktrees = worktrees
+		snap.ActiveWorktrees = len(worktrees)
 	}
 
 	// Commit the snapshot atomically.
