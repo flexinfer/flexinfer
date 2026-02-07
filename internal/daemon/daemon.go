@@ -87,6 +87,7 @@ type Daemon struct {
 	healthMonitor *HealthMonitor     // Server health monitoring
 	tunnelMgr     *TunnelManager     // SSH tunnel management
 	respCache     *ResponseCache     // Response cache for read-only tools
+	eventBus      *EventBus          // Event bus for SSE streaming
 	wg            gosync.WaitGroup
 	done          chan struct{}
 }
@@ -285,6 +286,9 @@ func New(cfg Config) (*Daemon, error) {
 		respCache:   NewResponseCache(fileCfg.Cache),
 		done:        make(chan struct{}),
 	}
+
+	// Initialize event bus for SSE streaming
+	d.eventBus = NewEventBus(logger)
 
 	// Initialize health monitor
 	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
@@ -1688,6 +1692,13 @@ func (d *Daemon) Reload(ctx context.Context) error {
 		d.logger.Warn("tool cache refresh failed after reload", "error", err)
 	}
 
+	// Emit config.reload event
+	if d.eventBus != nil {
+		d.eventBus.Publish(EventConfigReload, map[string]any{
+			"servers": len(d.registry.Servers),
+		})
+	}
+
 	return nil
 }
 
@@ -1844,4 +1855,9 @@ func (d *Daemon) startTunnelsForServers() {
 // TunnelManager returns the tunnel manager instance.
 func (d *Daemon) TunnelManager() *TunnelManager {
 	return d.tunnelMgr
+}
+
+// EventBus returns the daemon's event bus for SSE streaming.
+func (d *Daemon) EventBus() *EventBus {
+	return d.eventBus
 }

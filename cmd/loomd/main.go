@@ -66,6 +66,7 @@ func run(cfg daemon.Config, metricsAddr string) error {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", d.MetricsHandler())
 		mux.HandleFunc("/health", d.HealthHandler())
+		mux.HandleFunc("/events", d.EventBus().ServeSSE)
 
 		server := &http.Server{
 			Addr:    metricsAddr,

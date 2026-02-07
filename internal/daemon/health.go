@@ -214,6 +214,15 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 				"server", serverName,
 				"consecutive_failures", status.ConsecutiveFails,
 				"error", err)
+
+			// Emit health event
+			if h.daemon.eventBus != nil {
+				h.daemon.eventBus.Publish(EventServerHealth, map[string]any{
+					"server":  serverName,
+					"healthy": false,
+					"error":   err.Error(),
+				})
+			}
 		}
 
 		// Check if we should auto-restart
@@ -241,6 +250,14 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 				status.Healthy = true
 				status.AutoRestartFailed = false
 				h.logger.Info("server recovered", "server", serverName)
+
+				// Emit recovery event
+				if h.daemon.eventBus != nil {
+					h.daemon.eventBus.Publish(EventServerHealth, map[string]any{
+						"server":  serverName,
+						"healthy": true,
+					})
+				}
 			}
 		}
 	}
