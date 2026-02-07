@@ -111,3 +111,38 @@ func TestMLCLLMBackendImage_GFX1100(t *testing.T) {
 		})
 	}
 }
+
+func TestMLCLLMBackend_MaxwellDefaults(t *testing.T) {
+	b := &MLCLLMBackend{}
+
+	spec := &ModelSpec{
+		ModelPath: "/models/qwen3-0.6b",
+		GPUVendor: GPUVendorNVIDIA,
+		GPUArch:   "sm_52",
+	}
+
+	// Args should default to READONLY + conventional library path.
+	args := b.Args(spec)
+	joined := strings.Join(args, " ")
+	if want := "--model-lib /models/qwen3-0.6b/maxwell-lib.so"; !strings.Contains(joined, want) {
+		t.Fatalf("expected args to contain %q, got %#v", want, args)
+	}
+
+	// Env should default GPU memory size to ~5GB and set READONLY.
+	env := b.Env(spec)
+	var gotGPUSize, gotJIT string
+	for _, e := range env {
+		switch e.Name {
+		case "MLC_GPU_SIZE_BYTES":
+			gotGPUSize = e.Value
+		case "MLC_JIT_POLICY":
+			gotJIT = e.Value
+		}
+	}
+	if gotGPUSize != "5000000000" {
+		t.Fatalf("expected MLC_GPU_SIZE_BYTES=5000000000, got %q", gotGPUSize)
+	}
+	if gotJIT != "READONLY" {
+		t.Fatalf("expected MLC_JIT_POLICY=READONLY, got %q", gotJIT)
+	}
+}

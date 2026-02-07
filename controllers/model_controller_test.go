@@ -18,11 +18,13 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -203,6 +205,56 @@ func TestBuildBackendModelSpec(t *testing.T) {
 
 	if spec.ModelPath != "" {
 		t.Errorf("Expected empty model path for HF source, got %q", spec.ModelPath)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
+	r := &ModelReconciler{}
+
+	// vLLM should be rejected on Maxwell.
+	vllmBackend, _ := backend.Get("vllm")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://mistralai/Mistral-7B-Instruct-v0.3",
+		},
+	}
+	if err := r.validateBackendGPUCompatibility(model, vllmBackend, backend.GPUVendorNVIDIA, "sm_52"); err == nil {
+		t.Fatalf("expected vllm on Maxwell to error, got nil")
+	}
+
+	// MLC-LLM should require a modelLibPath unless we can infer /models/<name>/maxwell-lib.so.
+	mlcBackend, _ := backend.Get("mlc-llm")
+	model = &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen3-0.6b"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "HF://mlc-ai/Qwen3-0.6B-q0f32-MLC",
+		},
+	}
+	if err := r.validateBackendGPUCompatibility(model, mlcBackend, backend.GPUVendorNVIDIA, "sm_52"); err == nil {
+		t.Fatalf("expected mlc-llm on Maxwell without lib path to error, got nil")
+	}
+
+	// Explicit modelLibPath should pass.
+	cfg := map[string]interface{}{
+		"modelLibPath": "/models/qwen3-0.6b/maxwell-lib.so",
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	model.Spec.Config = &apiextensionsv1.JSON{Raw: raw}
+	if err := r.validateBackendGPUCompatibility(model, mlcBackend, backend.GPUVendorNVIDIA, "sm_52"); err != nil {
+		t.Fatalf("expected explicit modelLibPath to pass, got: %v", err)
+	}
+
+	// Conventional default under /models/<name> should pass when HF SharedPVC is materialized.
+	model.Spec.Config = nil
+	model.Status.Cache = &aiv1alpha2.CacheStatus{PVCName: "mlc-models"}
+	model.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"}
+	if err := r.validateBackendGPUCompatibility(model, mlcBackend, backend.GPUVendorNVIDIA, "sm_52"); err != nil {
+		t.Fatalf("expected /models/<name>/maxwell-lib.so default to pass, got: %v", err)
 	}
 }
 

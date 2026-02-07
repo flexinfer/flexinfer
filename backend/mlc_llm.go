@@ -92,12 +92,22 @@ func (b *MLCLLMBackend) Args(spec *ModelSpec) []string {
 	args = append(args, "--host", "0.0.0.0")
 
 	// Model library path
+	jitPolicy := spec.ConfigString("jitPolicy", "")
+	// Maxwell (sm_5x) is a special case: JIT is often unavailable (no nvcc in
+	// runtime images) and FP16 codegen is unsupported. Prefer pre-compiled libs.
+	if jitPolicy == "" && spec.GPUVendor == GPUVendorNVIDIA && strings.HasPrefix(spec.GPUArch, "sm_5") {
+		jitPolicy = "READONLY"
+	}
+
 	libPath := spec.ConfigString("modelLibPath", "")
-	if libPath == "" && strings.EqualFold(spec.ConfigString("jitPolicy", ""), "READONLY") {
+	if libPath == "" && strings.EqualFold(jitPolicy, "READONLY") {
 		// When JIT is disabled (READONLY), MLC requires a pre-compiled model library.
 		// Default to the conventional on-disk name when the model path is a mounted directory.
 		if spec.GPUVendor == GPUVendorAMD && spec.GPUArch != "" && strings.HasPrefix(modelPath, "/") {
 			libPath = fmt.Sprintf("%s/lib_rocm_%s.so", strings.TrimRight(modelPath, "/"), spec.GPUArch)
+		}
+		if spec.GPUVendor == GPUVendorNVIDIA && strings.HasPrefix(spec.GPUArch, "sm_5") && strings.HasPrefix(modelPath, "/") {
+			libPath = fmt.Sprintf("%s/maxwell-lib.so", strings.TrimRight(modelPath, "/"))
 		}
 	}
 	if libPath != "" {
@@ -169,15 +179,26 @@ func (b *MLCLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: fmt.Sprintf("%d", spec.GPUMemoryBytes),
 		})
 	} else {
-		// Default to 23GB for RX 7900 XTX / similar
-		env = append(env, corev1.EnvVar{
-			Name:  "MLC_GPU_SIZE_BYTES",
-			Value: "24696061952", // ~23GB
-		})
+		// Default to 5GB for Maxwell (6GB cards) and 23GB for RX 7900 XTX / similar.
+		if spec.GPUVendor == GPUVendorNVIDIA && strings.HasPrefix(spec.GPUArch, "sm_5") {
+			env = append(env, corev1.EnvVar{
+				Name:  "MLC_GPU_SIZE_BYTES",
+				Value: "5000000000",
+			})
+		} else {
+			env = append(env, corev1.EnvVar{
+				Name:  "MLC_GPU_SIZE_BYTES",
+				Value: "24696061952", // ~23GB
+			})
+		}
 	}
 
 	// JIT policy
-	if jitPolicy := spec.ConfigString("jitPolicy", ""); jitPolicy != "" {
+	jitPolicy := spec.ConfigString("jitPolicy", "")
+	if jitPolicy == "" && spec.GPUVendor == GPUVendorNVIDIA && strings.HasPrefix(spec.GPUArch, "sm_5") {
+		jitPolicy = "READONLY"
+	}
+	if jitPolicy != "" {
 		env = append(env, corev1.EnvVar{
 			Name:  "MLC_JIT_POLICY",
 			Value: jitPolicy,

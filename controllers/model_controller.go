@@ -68,6 +68,10 @@ func isAmbiguousGPUVendorError(err error) bool {
 	return stderrors.As(err, &e)
 }
 
+func isMaxwellGPUArch(gpuArch string) bool {
+	return strings.HasPrefix(strings.TrimSpace(gpuArch), "sm_5")
+}
+
 func litellmEnabled(model *aiv1alpha2.Model) bool {
 	if model.Spec.LiteLLM == nil {
 		return false
@@ -294,6 +298,15 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.Status().Update(ctx, model)
 	}
 
+	// Validate backend against selected GPU arch (e.g., vLLM does not support Maxwell).
+	if err := r.validateBackendGPUCompatibility(model, b, gpuVendor, gpuArch); err != nil {
+		log.Error(err, "Backend GPU compatibility validation failed")
+		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.Status().Update(ctx, model)
+	}
+
 	// GPU detection succeeded - model is schedulable
 	setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, true, aiv1alpha2.ReasonSchedulable, "Model can be scheduled on available nodes")
 
@@ -332,6 +345,49 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
+// This is primarily used for Maxwell (sm_5x), where several backends assume newer SMs.
+func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
+	if !isMaxwellGPUArch(gpuArch) {
+		return nil
+	}
+	if gpuVendor != backend.GPUVendorNVIDIA {
+		return nil
+	}
+
+	switch b.Name() {
+	case "vllm", "vllm-omni", "diffusers":
+		return fmt.Errorf("%s backend is not supported on Maxwell GPUs (compute capability 5.x). Use ollama, mlc-llm (pre-compiled), or llamacpp instead", b.Name())
+	case "mlc-llm":
+		// MLC-LLM on Maxwell should use a pre-compiled model library and avoid JIT.
+		// Prefer requiring an explicit modelLibPath unless we can infer a conventional
+		// on-disk location under /models/<modelName>.
+		cfg := model.Spec.GetConfigMap()
+		if cfg != nil {
+			if v, ok := cfg["modelLibPath"]; ok {
+				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+					return nil
+				}
+			}
+		}
+
+		spec := r.buildBackendModelSpec(model, gpuVendor)
+		modelPath := spec.ModelPath
+		if modelPath == "" {
+			modelPath = spec.Model
+		}
+		modelPath = strings.TrimRight(modelPath, "/")
+		if strings.HasPrefix(modelPath, "/models/") && modelPath != "/models" {
+			// Backend will default to <modelPath>/maxwell-lib.so.
+			return nil
+		}
+
+		return fmt.Errorf("mlc-llm on Maxwell GPUs requires config.modelLibPath (pre-compiled library). See docs/user/backends-maxwell.md")
+	default:
+		return nil
+	}
 }
 
 // desiredReplicas calculates the desired replica count for the model.
