@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -38,6 +39,13 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-prometheus", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-prometheus")
 
 	promURL := os.Getenv("PROMETHEUS_URL")
 	if promURL == "" {
@@ -72,7 +80,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, prom.handleQuery)
+	}, mcpotel.TracedToolHandler(tracer, "query", prom.handleQuery))
 
 	// query_range
 	server.AddTool(mcp.Tool{
@@ -100,7 +108,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query", "start"},
 		},
-	}, prom.handleQueryRange)
+	}, mcpotel.TracedToolHandler(tracer, "query_range", prom.handleQueryRange))
 
 	// list_metrics
 	server.AddTool(mcp.Tool{
@@ -115,7 +123,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, prom.handleListMetrics)
+	}, mcpotel.TracedToolHandler(tracer, "list_metrics", prom.handleListMetrics))
 
 	// list_labels
 	server.AddTool(mcp.Tool{
@@ -125,7 +133,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, prom.handleListLabels)
+	}, mcpotel.TracedToolHandler(tracer, "list_labels", prom.handleListLabels))
 
 	// label_values
 	server.AddTool(mcp.Tool{
@@ -141,7 +149,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"label"},
 		},
-	}, prom.handleLabelValues)
+	}, mcpotel.TracedToolHandler(tracer, "label_values", prom.handleLabelValues))
 
 	// list_targets
 	server.AddTool(mcp.Tool{
@@ -156,7 +164,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, prom.handleListTargets)
+	}, mcpotel.TracedToolHandler(tracer, "list_targets", prom.handleListTargets))
 
 	// list_alerts
 	server.AddTool(mcp.Tool{
@@ -166,7 +174,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, prom.handleListAlerts)
+	}, mcpotel.TracedToolHandler(tracer, "list_alerts", prom.handleListAlerts))
 
 	// list_rules
 	server.AddTool(mcp.Tool{
@@ -181,7 +189,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, prom.handleListRules)
+	}, mcpotel.TracedToolHandler(tracer, "list_rules", prom.handleListRules))
 
 	// runtime_info
 	server.AddTool(mcp.Tool{
@@ -191,7 +199,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, prom.handleRuntimeInfo)
+	}, mcpotel.TracedToolHandler(tracer, "runtime_info", prom.handleRuntimeInfo))
 
 	return server.Run(ctx)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -39,6 +40,14 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-git", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-git")
+
 	logger.Info("starting server", "name", "mcp-git", "version", version, "repo", defaultRepo)
 
 	server := mcp.NewServer("mcp-git", version)
@@ -57,7 +66,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitStatus)
+	}, mcpotel.TracedToolHandler(tracer, "git_status", handleGitStatus))
 
 	// git_diff
 	server.AddTool(mcp.Tool{
@@ -84,7 +93,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitDiff)
+	}, mcpotel.TracedToolHandler(tracer, "git_diff", handleGitDiff))
 
 	// git_log
 	server.AddTool(mcp.Tool{
@@ -119,7 +128,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitLog)
+	}, mcpotel.TracedToolHandler(tracer, "git_log", handleGitLog))
 
 	// git_branch
 	server.AddTool(mcp.Tool{
@@ -146,7 +155,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitBranch)
+	}, mcpotel.TracedToolHandler(tracer, "git_branch", handleGitBranch))
 
 	// git_checkout
 	server.AddTool(mcp.Tool{
@@ -173,7 +182,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitCheckout)
+	}, mcpotel.TracedToolHandler(tracer, "git_checkout", handleGitCheckout))
 
 	// git_add
 	server.AddTool(mcp.Tool{
@@ -194,7 +203,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"files"},
 		},
-	}, handleGitAdd)
+	}, mcpotel.TracedToolHandler(tracer, "git_add", handleGitAdd))
 
 	// git_commit
 	server.AddTool(mcp.Tool{
@@ -218,7 +227,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"message"},
 		},
-	}, handleGitCommit)
+	}, mcpotel.TracedToolHandler(tracer, "git_commit", handleGitCommit))
 
 	// git_push
 	server.AddTool(mcp.Tool{
@@ -245,7 +254,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitPush)
+	}, mcpotel.TracedToolHandler(tracer, "git_push", handleGitPush))
 
 	// git_pull
 	server.AddTool(mcp.Tool{
@@ -272,7 +281,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitPull)
+	}, mcpotel.TracedToolHandler(tracer, "git_pull", handleGitPull))
 
 	// git_stash
 	server.AddTool(mcp.Tool{
@@ -295,7 +304,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitStash)
+	}, mcpotel.TracedToolHandler(tracer, "git_stash", handleGitStash))
 
 	// git_show
 	server.AddTool(mcp.Tool{
@@ -318,7 +327,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGitShow)
+	}, mcpotel.TracedToolHandler(tracer, "git_show", handleGitShow))
 
 	return server.Run(ctx)
 }

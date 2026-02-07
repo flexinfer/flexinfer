@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -24,6 +25,9 @@ type WorkflowEngine struct {
 
 	// Event callbacks
 	onEvent func(event WorkflowEvent)
+
+	// Logger
+	logger *slog.Logger
 }
 
 // ToolExecutor is a function that executes an MCP tool
@@ -36,6 +40,7 @@ func NewWorkflowEngine(toolExecutor ToolExecutor) *WorkflowEngine {
 		workflows:    make(map[string]*Workflow),
 		events:       make(map[string][]WorkflowEvent),
 		toolExecutor: toolExecutor,
+		logger:       slog.Default(),
 	}
 }
 
@@ -760,7 +765,22 @@ func (e *WorkflowEngine) rollbackWorkflow(ctx context.Context, wf *Workflow) {
 		if step.Status == StepStatusCompleted && step.RollbackStepID != "" {
 			rollbackStep, ok := wf.StepStates[step.RollbackStepID]
 			if ok && rollbackStep.StepType == StepTypeTool {
-				_, _ = e.executeToolStep(ctx, wf, rollbackStep)
+				if _, err := e.executeToolStep(ctx, wf, rollbackStep); err != nil {
+					e.logger.Warn("rollback step failed",
+						"workflow_id", wf.ID,
+						"step_id", wf.Definition.Steps[i].ID,
+						"rollback_step_id", step.RollbackStepID,
+						"error", err,
+					)
+					e.emitEvent(WorkflowEvent{
+						ID:         uuid.New().String()[:8],
+						WorkflowID: wf.ID,
+						StepID:     step.RollbackStepID,
+						EventType:  "rollback_step_failed",
+						Timestamp:  time.Now().UTC(),
+						Details:    map[string]any{"error": err.Error(), "original_step_id": wf.Definition.Steps[i].ID},
+					})
+				}
 			}
 		}
 	}

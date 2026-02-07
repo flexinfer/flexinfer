@@ -116,10 +116,12 @@ func (s *Service) HandleFileClaimRelease(ctx context.Context, args map[string]an
 		s.fileClaimsMu.Unlock()
 
 		// Remove from Qdrant
-		_ = s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(
+		if err := s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(
 			Match("agent_id", agentID),
 			Match("file_path", filePath),
-		))
+		)); err != nil {
+			s.logger.Warn("failed to delete file claim from Qdrant", "agent_id", agentID, "file_path", filePath, "error", err)
+		}
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -245,7 +247,9 @@ func (s *Service) releaseAllClaimsForAgent(agentID string) int {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+			if err := s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+				s.logger.Warn("failed to delete file claims from Qdrant", "agent_id", agentID, "error", err)
+			}
 		}()
 	}
 	return released

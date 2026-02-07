@@ -36,9 +36,10 @@ func WithTracer(tp trace.TracerProvider) ServiceOption {
 }
 
 type Service struct {
-	cfg    Config
-	logger *slog.Logger
-	tracer trace.Tracer
+	cfg     Config
+	logger  *slog.Logger
+	tracer  trace.Tracer
+	metrics *Metrics
 
 	contextQdrant     *QdrantClient
 	sessionsQdrant    *QdrantClient
@@ -182,6 +183,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	if svc.tracer == nil {
 		svc.tracer = noop.NewTracerProvider().Tracer("agentcontext")
 	}
+	svc.metrics = GetMetrics()
 
 	// Initialize compaction scheduler
 	compactionConfig := DefaultCompactionConfig()
@@ -288,7 +290,9 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 
 	// Start compaction scheduler
 	if s.compactionScheduler != nil && s.cfg.CompactionEnabled {
-		_ = s.compactionScheduler.Start(bgCtx)
+		if err := s.compactionScheduler.Start(bgCtx); err != nil {
+			s.logger.Warn("failed to start compaction scheduler", "error", err)
+		}
 	}
 
 	// Start presence cleanup goroutine
@@ -374,6 +378,9 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 		result["_warning"] = fmt.Sprintf("failed to persist session: %v", err)
 	}
 
+	s.metrics.SessionsActive.Add(1)
+	s.metrics.SessionsTotal.Add(1)
+
 	s.enrichSessionStartResult(ctx, result, agentID, namespace)
 	return mcp.JSONResult(result)
 }
@@ -443,6 +450,7 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 	s.sessionsMu.Lock()
 	s.sessions[sessionID] = session
 	s.sessionsMu.Unlock()
+	s.metrics.SessionsActive.Add(-1)
 
 	result := map[string]any{
 		"ok":         true,
@@ -486,7 +494,9 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		cleanedUp["presence_deregistered"] = hadPresence
 
 		if hadPresence && s.presenceQdrant != nil {
-			_ = s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+			if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+				s.logger.Warn("failed to delete presence from Qdrant", "agent_id", agentID, "error", err)
+			}
 		}
 
 		// Orphan worktrees
@@ -808,15 +818,20 @@ func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) 
 	}
 
 	// Get embedding
+	s.metrics.EmbeddingRequests.Add(1)
 	vector, err := s.embed.EmbedQuery(ctx, query)
 	if err != nil {
+		s.metrics.EmbeddingErrors.Add(1)
 		return mcp.ErrorResult(fmt.Errorf("embedding query: %w", err)), nil
 	}
 
+	searchStart := time.Now()
 	results, err := s.contextQdrant.Search(ctx, vector, filter, limit, includeContent)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("search: %w", err)), nil
 	}
+	s.metrics.RecordSearchLatency(time.Since(searchStart).Microseconds())
+	s.metrics.RecallRequests.Add(1)
 
 	return mcp.JSONResult(map[string]any{
 		"ok":      true,
@@ -852,6 +867,13 @@ func (s *Service) HandleContextRecall(ctx context.Context, args map[string]any) 
 	entries, err := s.recallContext(ctx, opts)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("recall: %w", err)), nil
+	}
+
+	s.metrics.RecallRequests.Add(1)
+	if len(entries) > 0 {
+		s.metrics.RecallHits.Add(1)
+	} else {
+		s.metrics.RecallMisses.Add(1)
 	}
 
 	totalTokens := 0
@@ -948,8 +970,10 @@ func (s *Service) HandleContextQueryShared(ctx context.Context, args map[string]
 
 	filter := FilterMust(conds...)
 
+	s.metrics.EmbeddingRequests.Add(1)
 	vector, err := s.embed.EmbedQuery(ctx, query)
 	if err != nil {
+		s.metrics.EmbeddingErrors.Add(1)
 		return mcp.ErrorResult(fmt.Errorf("embedding query: %w", err)), nil
 	}
 
@@ -1034,6 +1058,7 @@ func (s *Service) HandleContextStats(ctx context.Context, args map[string]any) (
 		"entry_count":  count,
 		"total_tokens": totalTokens,
 		"by_type":      byType,
+		"metrics":      s.metrics.Snapshot(),
 	})
 }
 
@@ -1088,8 +1113,10 @@ func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string
 	}
 
 	// Generate embedding
+	s.metrics.EmbeddingRequests.Add(1)
 	vector, err := s.embed.EmbedQuery(ctx, entry.Title+" "+entry.Content)
 	if err != nil {
+		s.metrics.EmbeddingErrors.Add(1)
 		return mcp.ErrorResult(fmt.Errorf("embedding: %w", err)), nil
 	}
 	if len(vector) > 0 {
@@ -1170,7 +1197,11 @@ func (s *Service) recallContext(ctx context.Context, opts RecallOptions) ([]Cont
 
 	// Phase 3: Semantic search for query-relevant context
 	if remainingBudget > 500 && opts.Query != "" {
+		s.metrics.EmbeddingRequests.Add(1)
 		vector, err := s.embed.EmbedQuery(ctx, opts.Query)
+		if err != nil {
+			s.metrics.EmbeddingErrors.Add(1)
+		}
 		if err == nil {
 			var conds []any
 			if opts.AgentID != "" {
@@ -1327,8 +1358,10 @@ func (s *Service) generateSummary(ctx context.Context, session *Session) error {
 	}
 
 	// Generate embedding and store
+	s.metrics.EmbeddingRequests.Add(1)
 	vector, err := s.embed.EmbedQuery(ctx, summaryEntry.Title+" "+summaryEntry.Content)
 	if err != nil {
+		s.metrics.EmbeddingErrors.Add(1)
 		return err
 	}
 	if len(vector) > 0 {
@@ -2204,9 +2237,20 @@ func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any)
 		return mcp.ErrorResult(fmt.Errorf("recall: %w", err)), nil
 	}
 
+	s.metrics.RecallRequests.Add(1)
+	if len(entries) > 0 {
+		s.metrics.RecallHits.Add(1)
+	} else {
+		s.metrics.RecallMisses.Add(1)
+	}
+
 	totalTokens := 0
 	for _, e := range entries {
 		totalTokens += e.TokenCount
+	}
+
+	if totalTokens >= opts.TokenBudget {
+		s.metrics.RecallTruncated.Add(1)
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -2291,7 +2335,11 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 5 (ENHANCED): Semantic search with recency weighting
 	if remainingBudget > 500 && opts.Query != "" {
+		s.metrics.EmbeddingRequests.Add(1)
 		vector, err := s.embed.EmbedQuery(ctx, opts.Query)
+		if err != nil {
+			s.metrics.EmbeddingErrors.Add(1)
+		}
 		if err == nil {
 			var conds []any
 			if opts.AgentID != "" {
@@ -2847,6 +2895,7 @@ func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) 
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	s.metrics.WorkflowsStarted.Add(1)
 
 	return mcp.JSONResult(map[string]any{
 		"ok":          true,
@@ -3163,6 +3212,8 @@ func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mc
 		addedIDs = append(addedIDs, entity.ID)
 	}
 
+	s.metrics.GraphEntitiesAdded.Add(int64(len(addedIDs)))
+
 	return mcp.JSONResult(map[string]any{
 		"ok":         true,
 		"count":      len(addedIDs),
@@ -3294,6 +3345,8 @@ func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*
 		addedIDs = append(addedIDs, rel.ID)
 	}
 
+	s.metrics.GraphRelationsAdded.Add(int64(len(addedIDs)))
+
 	return mcp.JSONResult(map[string]any{
 		"ok":           true,
 		"count":        len(addedIDs),
@@ -3416,6 +3469,7 @@ func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*m
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	s.metrics.GraphQueriesExecuted.Add(1)
 
 	entities := make([]map[string]any, len(result.Entities))
 	for i, e := range result.Entities {
@@ -3753,6 +3807,24 @@ func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mc
 		}
 
 		addedIDs = append(addedIDs, item.ID)
+	}
+
+	// Update tier-specific metrics
+	for _, itemRaw := range itemsArr {
+		if im, ok := itemRaw.(map[string]any); ok {
+			tokens := int64(EstimateTokens(toString(im["content"])))
+			switch MemoryTier(toString(im["tier"])) {
+			case MemoryTierWorking:
+				s.metrics.WorkingMemoryItems.Add(1)
+				s.metrics.WorkingMemoryTokens.Add(tokens)
+			case MemoryTierLongTerm:
+				s.metrics.LongTermMemoryItems.Add(1)
+				s.metrics.LongTermMemoryTokens.Add(tokens)
+			default: // short_term or unspecified
+				s.metrics.ShortTermMemoryItems.Add(1)
+				s.metrics.ShortTermMemoryTokens.Add(tokens)
+			}
+		}
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -4447,10 +4519,12 @@ func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (
 		// Mark as viewed if pending
 		if h.Status == HandoffStatusPending {
 			viewedAt := now.Format(time.RFC3339Nano)
-			_ = s.handoffsQdrant.SetPayload(ctx, []string{h.ID}, map[string]any{
+			if err := s.handoffsQdrant.SetPayload(ctx, []string{h.ID}, map[string]any{
 				"status":    string(HandoffStatusViewed),
 				"viewed_at": viewedAt,
-			}, true)
+			}, true); err != nil {
+				s.logger.Warn("failed to mark handoff as viewed", "handoff_id", h.ID, "error", err)
+			}
 		}
 	}
 
@@ -4489,11 +4563,13 @@ func (s *Service) HandleHandoffReject(ctx context.Context, args map[string]any) 
 	}
 
 	now := time.Now()
-	_ = s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
+	if err := s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
 		"status":          string(HandoffStatusRejected),
 		"rejected_at":     now.Format(time.RFC3339Nano),
 		"rejected_reason": reason,
-	}, true)
+	}, true); err != nil {
+		s.logger.Warn("failed to persist handoff rejection", "handoff_id", handoffID, "error", err)
+	}
 
 	return mcp.JSONResult(map[string]any{
 		"ok":         true,

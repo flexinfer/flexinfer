@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -82,6 +83,7 @@ type CodebaseSynchronizer struct {
 	mu sync.RWMutex
 
 	config CodebaseSyncConfig
+	logger *slog.Logger
 
 	// Links storage
 	links          map[string]*CodebaseLink // linkID -> link
@@ -188,6 +190,7 @@ func NewCodebaseSynchronizer(
 ) *CodebaseSynchronizer {
 	return &CodebaseSynchronizer{
 		config:         config,
+		logger:         slog.Default(),
 		codebaseClient: codebaseClient,
 		contextService: contextService,
 		links:          make(map[string]*CodebaseLink),
@@ -337,7 +340,9 @@ func (cs *CodebaseSynchronizer) invalidateByFile(ctx context.Context, filePath s
 
 	// Mark context entries as stale
 	if cs.contextService != nil && len(contextIDs) > 0 {
-		_ = cs.contextService.MarkStale(ctx, contextIDs)
+		if err := cs.contextService.MarkStale(ctx, contextIDs); err != nil {
+			cs.logger.Warn("failed to mark context entries as stale by file", "file_path", filePath, "entries", len(contextIDs), "error", err)
+		}
 	}
 }
 
@@ -364,7 +369,9 @@ func (cs *CodebaseSynchronizer) invalidateBySymbol(ctx context.Context, symbolID
 
 	// Mark context entries as stale
 	if cs.contextService != nil && len(contextIDs) > 0 {
-		_ = cs.contextService.MarkStale(ctx, contextIDs)
+		if err := cs.contextService.MarkStale(ctx, contextIDs); err != nil {
+			cs.logger.Warn("failed to mark context entries as stale by symbol", "symbol_id", symbolID, "entries", len(contextIDs), "error", err)
+		}
 	}
 }
 

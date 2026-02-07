@@ -21,9 +21,12 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/poll"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 var version = "1.0.0"
@@ -44,6 +47,13 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-gitlab", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-gitlab")
+
 	token := env.StringWithFallbacks("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN")
 	apiURL := strings.TrimSuffix(env.String("GITLAB_API_URL", "https://gitlab.com/api/v4"), "/")
 
@@ -59,10 +69,10 @@ func run(ctx context.Context) error {
 	server.SetInstructions("Fast Go-native GitLab MCP server. Supports projects, issues, merge requests, and more.")
 
 	// Register all tools
-	registerRepositoryTools(server, gl)
-	registerIssueTools(server, gl)
-	registerMergeRequestTools(server, gl)
-	registerPipelineTools(server, gl)
+	registerRepositoryTools(server, gl, tracer)
+	registerIssueTools(server, gl, tracer)
+	registerMergeRequestTools(server, gl, tracer)
+	registerPipelineTools(server, gl, tracer)
 
 	// verify_token
 	server.AddTool(mcp.Tool{
@@ -72,14 +82,14 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, gl.handleVerifyToken)
+	}, mcpotel.TracedToolHandler(tracer, "verify_token", gl.handleVerifyToken))
 
 	return server.Run(ctx)
 }
 
 // Tool registration functions
 
-func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
+func registerRepositoryTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
 	// search_repositories
 	server.AddTool(mcp.Tool{
 		Name:        "search_repositories",
@@ -102,7 +112,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"search"},
 		},
-	}, gl.handleSearchRepositories)
+	}, mcpotel.TracedToolHandler(tracer, "search_repositories", gl.handleSearchRepositories))
 
 	// get_file_contents
 	server.AddTool(mcp.Tool{
@@ -126,7 +136,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "path"},
 		},
-	}, gl.handleGetFileContents)
+	}, mcpotel.TracedToolHandler(tracer, "get_file_contents", gl.handleGetFileContents))
 
 	// create_or_update_file
 	server.AddTool(mcp.Tool{
@@ -158,7 +168,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "path", "branch", "content", "commit_message"},
 		},
-	}, gl.handleCreateOrUpdateFile)
+	}, mcpotel.TracedToolHandler(tracer, "create_or_update_file", gl.handleCreateOrUpdateFile))
 
 	// push_files
 	server.AddTool(mcp.Tool{
@@ -194,7 +204,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "branch", "commit_message", "actions"},
 		},
-	}, gl.handlePushFiles)
+	}, mcpotel.TracedToolHandler(tracer, "push_files", gl.handlePushFiles))
 
 	// create_repository
 	server.AddTool(mcp.Tool{
@@ -226,7 +236,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"name"},
 		},
-	}, gl.handleCreateRepository)
+	}, mcpotel.TracedToolHandler(tracer, "create_repository", gl.handleCreateRepository))
 
 	// fork_repository
 	server.AddTool(mcp.Tool{
@@ -250,7 +260,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project"},
 		},
-	}, gl.handleForkRepository)
+	}, mcpotel.TracedToolHandler(tracer, "fork_repository", gl.handleForkRepository))
 
 	// create_branch
 	server.AddTool(mcp.Tool{
@@ -274,7 +284,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "branch", "ref"},
 		},
-	}, gl.handleCreateBranch)
+	}, mcpotel.TracedToolHandler(tracer, "create_branch", gl.handleCreateBranch))
 
 	// get_project
 	server.AddTool(mcp.Tool{
@@ -290,7 +300,7 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project"},
 		},
-	}, gl.handleGetProject)
+	}, mcpotel.TracedToolHandler(tracer, "get_project", gl.handleGetProject))
 
 	// list_projects
 	server.AddTool(mcp.Tool{
@@ -317,10 +327,10 @@ func registerRepositoryTools(server *mcp.Server, gl *gitlabServer) {
 				},
 			},
 		},
-	}, gl.handleListProjects)
+	}, mcpotel.TracedToolHandler(tracer, "list_projects", gl.handleListProjects))
 }
 
-func registerIssueTools(server *mcp.Server, gl *gitlabServer) {
+func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
 	// create_issue
 	server.AddTool(mcp.Tool{
 		Name:        "create_issue",
@@ -352,7 +362,7 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "title"},
 		},
-	}, gl.handleCreateIssue)
+	}, mcpotel.TracedToolHandler(tracer, "create_issue", gl.handleCreateIssue))
 
 	// list_issues
 	server.AddTool(mcp.Tool{
@@ -384,10 +394,10 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project"},
 		},
-	}, gl.handleListIssues)
+	}, mcpotel.TracedToolHandler(tracer, "list_issues", gl.handleListIssues))
 }
 
-func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer) {
+func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
 	// create_merge_request
 	server.AddTool(mcp.Tool{
 		Name:        "create_merge_request",
@@ -422,7 +432,7 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "source_branch", "target_branch", "title"},
 		},
-	}, gl.handleCreateMergeRequest)
+	}, mcpotel.TracedToolHandler(tracer, "create_merge_request", gl.handleCreateMergeRequest))
 
 	// list_merge_requests
 	server.AddTool(mcp.Tool{
@@ -450,10 +460,10 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project"},
 		},
-	}, gl.handleListMergeRequests)
+	}, mcpotel.TracedToolHandler(tracer, "list_merge_requests", gl.handleListMergeRequests))
 }
 
-func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
+func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
 	// list_pipelines
 	server.AddTool(mcp.Tool{
 		Name:        "list_pipelines",
@@ -484,7 +494,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project"},
 		},
-	}, gl.handleListPipelines)
+	}, mcpotel.TracedToolHandler(tracer, "list_pipelines", gl.handleListPipelines))
 
 	// get_pipeline
 	server.AddTool(mcp.Tool{
@@ -504,7 +514,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handleGetPipeline)
+	}, mcpotel.TracedToolHandler(tracer, "get_pipeline", gl.handleGetPipeline))
 
 	// create_pipeline
 	server.AddTool(mcp.Tool{
@@ -536,7 +546,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "ref"},
 		},
-	}, gl.handleCreatePipeline)
+	}, mcpotel.TracedToolHandler(tracer, "create_pipeline", gl.handleCreatePipeline))
 
 	// cancel_pipeline
 	server.AddTool(mcp.Tool{
@@ -556,7 +566,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handleCancelPipeline)
+	}, mcpotel.TracedToolHandler(tracer, "cancel_pipeline", gl.handleCancelPipeline))
 
 	// retry_pipeline
 	server.AddTool(mcp.Tool{
@@ -576,7 +586,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handleRetryPipeline)
+	}, mcpotel.TracedToolHandler(tracer, "retry_pipeline", gl.handleRetryPipeline))
 
 	// list_pipeline_jobs
 	server.AddTool(mcp.Tool{
@@ -608,7 +618,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handleListPipelineJobs)
+	}, mcpotel.TracedToolHandler(tracer, "list_pipeline_jobs", gl.handleListPipelineJobs))
 
 	// get_job
 	server.AddTool(mcp.Tool{
@@ -628,7 +638,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handleGetJob)
+	}, mcpotel.TracedToolHandler(tracer, "get_job", gl.handleGetJob))
 
 	// get_job_trace
 	server.AddTool(mcp.Tool{
@@ -656,7 +666,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handleGetJobTrace)
+	}, mcpotel.TracedToolHandler(tracer, "get_job_trace", gl.handleGetJobTrace))
 
 	// retry_job
 	server.AddTool(mcp.Tool{
@@ -676,7 +686,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handleRetryJob)
+	}, mcpotel.TracedToolHandler(tracer, "retry_job", gl.handleRetryJob))
 
 	// play_job
 	server.AddTool(mcp.Tool{
@@ -708,7 +718,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handlePlayJob)
+	}, mcpotel.TracedToolHandler(tracer, "play_job", gl.handlePlayJob))
 
 	// cancel_job
 	server.AddTool(mcp.Tool{
@@ -728,7 +738,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handleCancelJob)
+	}, mcpotel.TracedToolHandler(tracer, "cancel_job", gl.handleCancelJob))
 
 	// pipeline_summary - comprehensive view in single call
 	server.AddTool(mcp.Tool{
@@ -756,7 +766,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handlePipelineSummary)
+	}, mcpotel.TracedToolHandler(tracer, "pipeline_summary", gl.handlePipelineSummary))
 
 	// get_test_report - parse JUnit test report from pipeline
 	server.AddTool(mcp.Tool{
@@ -784,7 +794,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handleGetTestReport)
+	}, mcpotel.TracedToolHandler(tracer, "get_test_report", gl.handleGetTestReport))
 
 	// get_artifacts - download job artifacts or specific files
 	server.AddTool(mcp.Tool{
@@ -812,7 +822,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, gl.handleGetArtifacts)
+	}, mcpotel.TracedToolHandler(tracer, "get_artifacts", gl.handleGetArtifacts))
 
 	// poll_pipeline - poll pipeline until terminal state
 	server.AddTool(mcp.Tool{
@@ -844,7 +854,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer) {
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, gl.handlePollPipeline)
+	}, mcpotel.TracedToolHandler(tracer, "poll_pipeline", gl.handlePollPipeline))
 }
 
 // Token verification handler

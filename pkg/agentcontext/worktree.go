@@ -321,7 +321,9 @@ func (s *Service) HandleWorktreeCleanup(ctx context.Context, args map[string]any
 		}
 
 		// Also prune stale worktree metadata
-		_, _ = s.runGit(ctx, repoPath, "worktree", "prune")
+		if _, err := s.runGit(ctx, repoPath, "worktree", "prune"); err != nil {
+			s.logger.Warn("failed to prune git worktree metadata", "repo_path", repoPath, "error", err)
+		}
 	}
 
 	return mcp.JSONResult(map[string]any{

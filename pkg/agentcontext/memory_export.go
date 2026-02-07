@@ -532,11 +532,15 @@ func (mi *MemoryImporter) importMemories(memories []UniversalMemory, opts Import
 				for k, v := range mem.Metadata {
 					existing.Metadata[k] = v
 				}
-				_ = mi.hierarchy.UpdateItem(existing)
+				if err := mi.hierarchy.UpdateItem(existing); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("memory merge %s: %v", id, err))
+				}
 				result.MemoriesImported++
 				continue
 			case "overwrite":
-				_ = mi.hierarchy.DeleteItem(id)
+				if err := mi.hierarchy.DeleteItem(id); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("memory overwrite-delete %s: %v", id, err))
+				}
 			}
 		}
 
@@ -605,7 +609,9 @@ func (mi *MemoryImporter) importGraph(entities []UniversalEntity, relations []Un
 				result.EntitiesImported++
 				continue
 			case "overwrite":
-				_ = mi.graph.DeleteEntity(id)
+				if err := mi.graph.DeleteEntity(id); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("entity overwrite-delete %s: %v", id, err))
+				}
 			}
 		}
 
@@ -677,7 +683,9 @@ func (mi *MemoryImporter) importGraph(entities []UniversalEntity, relations []Un
 				result.RelationsSkipped++
 				continue
 			case "overwrite":
-				_ = mi.graph.DeleteRelation(id)
+				if err := mi.graph.DeleteRelation(id); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("relation overwrite-delete %s: %v", id, err))
+				}
 			}
 		}
 
