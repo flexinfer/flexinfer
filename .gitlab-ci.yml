@@ -20,6 +20,9 @@ variables:
   BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
   # Set to "1" to additionally push OCI images to the GitLab Container Registry.
   PUBLISH_GITLAB_IMAGES: "0"
+  # Default: avoid building + pushing duplicate ":latest" tags during publish
+  # (faster and keeps GitOps pinned to commit SHAs).
+  PUBLISH_LATEST_TAGS: "0"
   # Optional: OCI repo for Helm chart publishing (example: oci://registry.harbor.lan/flexinfer-charts)
   HELM_OCI_REPO: ""
 
@@ -205,34 +208,28 @@ publish:
         dockerfile="$2"
         shift 2
 
-        tags_desc="$*"
-        outputs=""
         for tag in "$@"; do
-          outputs="${outputs} --output type=image,name=${tag},push=true"
-        done
-
-        echo "Publishing ${name}: ${tags_desc}"
-        attempts=5
-        delay=2
-        for i in $(seq 1 "${attempts}"); do
-          # Intentionally rely on word splitting for $outputs to pass multiple --output flags.
-          # shellcheck disable=SC2086
-          if buildctl --addr "${BUILDKIT_HOST}" build \
-            --frontend dockerfile.v0 \
-            --local context=. \
-            --local dockerfile=build \
-            --opt filename="${dockerfile}" \
-            --opt platform=linux/amd64 \
-            ${outputs}; then
-            break
-          fi
-          if [ "${i}" -eq "${attempts}" ]; then
-            echo "ERROR: failed to publish ${name} (${tags_desc}) after ${attempts} attempts"
-            exit 1
-          fi
-          echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
-          sleep "${delay}"
-          delay=$((delay * 2))
+          echo "Publishing ${name}: ${tag}"
+          attempts=5
+          delay=2
+          for i in $(seq 1 "${attempts}"); do
+            if buildctl --addr "${BUILDKIT_HOST}" build \
+              --frontend dockerfile.v0 \
+              --local context=. \
+              --local dockerfile=build \
+              --opt filename="${dockerfile}" \
+              --opt platform=linux/amd64 \
+              --output "type=image,name=${tag},push=true"; then
+              break
+            fi
+            if [ "${i}" -eq "${attempts}" ]; then
+              echo "ERROR: failed to publish ${name} (${tag}) after ${attempts} attempts"
+              exit 1
+            fi
+            echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
+            sleep "${delay}"
+            delay=$((delay * 2))
+          done
         done
       }
 
@@ -242,7 +239,7 @@ publish:
       bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
       proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
 
-      if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
+      if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
         controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
         agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:latest"
         scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:latest"
