@@ -26,6 +26,7 @@ import (
 type Agent struct {
 	kubeClient  kubernetes.Interface
 	nodeName    string
+	namespace   string
 	labelPrefix string
 	// sysfsRoot is the sysfs mount root (Linux). Default: /sys.
 	// This is overridable for tests to keep sysfs probing hermetic.
@@ -67,9 +68,21 @@ func NewAgent(labelPrefix string) (*Agent, error) {
 		return nil, fmt.Errorf("NODE_NAME environment variable not set")
 	}
 
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		// Works in-cluster without needing a downward API env var.
+		if b, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			namespace = strings.TrimSpace(string(b))
+		}
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
 	return &Agent{
 		kubeClient:  clientset,
 		nodeName:    nodeName,
+		namespace:   namespace,
 		labelPrefix: labelPrefix,
 		sysfsRoot:   "/sys",
 		runCmd: func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -264,13 +277,14 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 	log := log.FromContext(ctx)
 
 	// List pods running on this node
-	pods, err := a.kubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+	pods, err := a.kubeClient.CoreV1().Pods(a.namespace).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + a.nodeName,
-		LabelSelector: "app=flexinfer-llm", // Assuming we label backend pods
+		// Model pods created by FlexInfer include this label.
+		LabelSelector: "app.kubernetes.io/managed-by=flexinfer",
 	})
 	if err != nil {
 		log.Error(err, "Failed to list pods on node")
-		return NodeMetrics{}
+		pods = nil
 	}
 
 	var totalCache float64
