@@ -47,20 +47,21 @@ func (s *Service) HandlePresenceRegister(ctx context.Context, args map[string]an
 	s.presenceMap[agentID] = presence
 	s.presenceMu.Unlock()
 
-	// Persist to Qdrant
-	if err := s.persistPresence(ctx, presence); err != nil {
-		// Non-fatal
-		_ = err
-	}
-
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":            true,
 		"presence_id":   presence.ID,
 		"agent_id":      agentID,
 		"status":        string(presence.Status),
 		"heartbeat_ttl": ttl,
 		"registered_at": now.Format(time.RFC3339),
-	})
+	}
+
+	// Persist to Qdrant (non-fatal)
+	if err := s.persistPresence(ctx, presence); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist presence: %v", err)
+	}
+
+	return mcp.JSONResult(result)
 }
 
 // HandlePresenceHeartbeat keeps an agent alive and updates state
@@ -93,15 +94,15 @@ func (s *Service) HandlePresenceHeartbeat(ctx context.Context, args map[string]a
 	// Check for file conflicts against other agents' active files
 	conflicts := s.detectFileConflicts(agentID, activeFiles)
 
-	// Persist update
-	if err := s.persistPresence(ctx, presence); err != nil {
-		_ = err
-	}
-
 	result := map[string]any{
 		"ok":             true,
 		"agent_id":       agentID,
 		"last_heartbeat": presence.LastHeartbeat.Format(time.RFC3339),
+	}
+
+	// Persist update (non-fatal)
+	if err := s.persistPresence(ctx, presence); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist heartbeat: %v", err)
 	}
 
 	if len(conflicts) > 0 {
@@ -196,13 +197,17 @@ func (s *Service) HandlePresenceDeregister(ctx context.Context, args map[string]
 		s.orphanWorktreesForAgent(agentID)
 	}
 
-	// Delete from Qdrant
-	_ = s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
-
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":       true,
 		"agent_id": agentID,
-	})
+	}
+
+	// Delete from Qdrant (non-fatal)
+	if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to delete presence from store: %v", err)
+	}
+
+	return mcp.JSONResult(result)
 }
 
 // detectFileConflicts checks if any files overlap with other agents' active files or claims

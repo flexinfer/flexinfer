@@ -67,16 +67,16 @@ func (s *Service) HandleFileClaimAcquire(ctx context.Context, args map[string]an
 	s.fileClaims[filePath][agentID] = claim
 	s.fileClaimsMu.Unlock()
 
-	// Persist to Qdrant
-	if err := s.persistFileClaim(ctx, claim); err != nil {
-		_ = err
-	}
-
 	result := map[string]any{
 		"ok":        true,
 		"claim_id":  claim.ID,
 		"file_path": filePath,
 		"agent_id":  agentID,
+	}
+
+	// Persist to Qdrant (non-fatal)
+	if err := s.persistFileClaim(ctx, claim); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist claim: %v", err)
 	}
 	if len(conflicts) > 0 {
 		result["has_conflicts"] = true
@@ -223,10 +223,10 @@ func (s *Service) HandleFileClaimList(ctx context.Context, args map[string]any) 
 	})
 }
 
-// releaseAllClaimsForAgent removes all claims held by an agent. Returns count released.
+// releaseAllClaimsForAgent removes all claims held by an agent from in-memory map and Qdrant.
+// Returns count released.
 func (s *Service) releaseAllClaimsForAgent(agentID string) int {
 	s.fileClaimsMu.Lock()
-	defer s.fileClaimsMu.Unlock()
 
 	released := 0
 	for filePath, agents := range s.fileClaims {
@@ -237,6 +237,16 @@ func (s *Service) releaseAllClaimsForAgent(agentID string) int {
 				delete(s.fileClaims, filePath)
 			}
 		}
+	}
+	s.fileClaimsMu.Unlock()
+
+	// Also clean up Qdrant (best-effort, non-blocking)
+	if released > 0 && s.fileClaimsQdrant != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+		}()
 	}
 	return released
 }

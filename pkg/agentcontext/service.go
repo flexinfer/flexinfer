@@ -1368,6 +1368,11 @@ func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, e
 	}
 
 	s.sessionsMu.Lock()
+	// Re-check: another goroutine may have loaded the same session concurrently
+	if existing, ok := s.sessions[sessionID]; ok {
+		s.sessionsMu.Unlock()
+		return existing, nil
+	}
 	s.sessions[sessionID] = sess
 	s.sessionsMu.Unlock()
 

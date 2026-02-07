@@ -79,19 +79,21 @@ func (s *Service) HandleWorktreeAllocate(ctx context.Context, args map[string]an
 	}
 	s.presenceMu.Unlock()
 
-	// Persist
-	if err := s.persistWorktreeAssignment(ctx, assignment); err != nil {
-		_ = err
-	}
-
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":            true,
 		"assignment_id": assignment.ID,
 		"worktree_path": absPath,
 		"branch":        branchName,
 		"base_branch":   baseBranch,
 		"agent_id":      agentID,
-	})
+	}
+
+	// Persist (non-fatal)
+	if err := s.persistWorktreeAssignment(ctx, assignment); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist worktree assignment: %v", err)
+	}
+
+	return mcp.JSONResult(result)
 }
 
 // HandleWorktreeRelease releases a worktree assignment
@@ -139,17 +141,19 @@ func (s *Service) HandleWorktreeRelease(ctx context.Context, args map[string]any
 	}
 	s.presenceMu.Unlock()
 
-	// Persist update
-	if err := s.persistWorktreeAssignment(ctx, assignment); err != nil {
-		_ = err
-	}
-
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":               true,
 		"assignment_id":    assignmentID,
 		"status":           string(assignment.Status),
 		"worktree_removed": removeWorktree,
-	})
+	}
+
+	// Persist update (non-fatal)
+	if err := s.persistWorktreeAssignment(ctx, assignment); err != nil {
+		result["_warning"] = fmt.Sprintf("failed to persist worktree release: %v", err)
+	}
+
+	return mcp.JSONResult(result)
 }
 
 // HandleWorktreeList lists worktree assignments
