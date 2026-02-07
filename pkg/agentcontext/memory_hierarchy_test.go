@@ -441,6 +441,7 @@ func TestMemoryHierarchy_RetentionPolicy(t *testing.T) {
 	policy := mh.GetRetentionPolicy(MemoryTierWorking)
 	if policy == nil {
 		t.Fatal("expected default working memory policy")
+		return
 	}
 
 	if policy.DefaultTTL != 24 {
