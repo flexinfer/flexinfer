@@ -1,0 +1,150 @@
+:root {
+  /* Base */
+  --bg-primary: #0D1117;
+  --bg-secondary: #161B22;
+  --bg-tertiary: #21262D;
+  --fg-primary: #C9D1D9;
+  --fg-secondary: #8B949E;
+  --fg-muted: #484F58;
+  --border: #30363D;
+  --border-focus: #58A6FF;
+
+  /* Semantic */
+  --success: #3FB950;
+  --warning: #D29922;
+  --error: #F85149;
+  --info: #58A6FF;
+  --accent: #BC8CFF;
+
+  /* Status */
+  --status-running: #3FB950;
+  --status-pending: #D29922;
+  --status-completed: #58A6FF;
+  --status-failed: #F85149;
+  --status-waiting: #D29922;
+
+  /* Memory tiers */
+  --tier-working: #58A6FF;
+  --tier-short: #BC8CFF;
+  --tier-long: #3FB950;
+
+  /* Typography */
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Sizing */
+  --header-height: 40px;
+  --statusbar-height: 28px;
+  --panel-padding: 16px;
+  --border-radius: 6px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--fg-primary);
+  line-height: 1.5;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--info);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--fg-primary);
+  font-size: inherit;
+}
+
+input, select, textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-primary);
+  color: var(--fg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--border-radius);
+  padding: 4px 8px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--border-focus);
+}
+
+code, pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+
+/* Selection */
+::selection {
+  background: rgba(88, 166, 255, 0.25);
+  color: var(--fg-primary);
+}
+
+/* Transition utility */
+.fade-in {
+  animation: fadeIn 0.15s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}

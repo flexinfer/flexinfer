@@ -60,3 +60,7 @@ generated/
 
 # Claude Desktop app config (local)
 claude_desktop_config/
+
+# Frontend dependencies (HUD Svelte app)
+node_modules/
+.pnpm-store/

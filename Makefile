@@ -2,7 +2,8 @@
 	ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
 	docker-build docker-build-loom-core docker-build-custom-server \
 	docker-push docker-push-loom-core docker-push-custom-server \
-	deploy deploy-status
+	deploy deploy-status \
+	hud hud-dev hud-build hud-frontend hud-clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -79,6 +80,13 @@ help:
 	@echo "Deploy:"
 	@echo "  make deploy         - Build, push, and deploy to k8s"
 	@echo "  make deploy-status  - Show deployment status"
+	@echo ""
+	@echo "HUD (Agent Command Center):"
+	@echo "  make hud           - Build frontend + Go binary, then launch HUD"
+	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + Go API)"
+	@echo "  make hud-build     - Build frontend (pnpm build) + Go binary"
+	@echo "  make hud-frontend  - Build only the Svelte frontend"
+	@echo "  make hud-clean     - Remove frontend node_modules and dist"
 	@echo ""
 	@echo "Other:"
 	@echo "  make install    - Install binaries to ~/.local/bin"
@@ -196,7 +204,7 @@ mcp-neo4j:
 mcp-confluence:
 	go build $(LDFLAGS) -o bin/mcp-confluence ./cmd/mcp-confluence
 
-clean:
+clean: hud-clean
 	rm -rf bin/
 	rm -f coverage.out coverage.html
 
@@ -420,6 +428,57 @@ ci-benchmark: ci-build
 	export PATH="$$(pwd)/bin:$$PATH"; \
 	go test -bench=. -benchmem -run=^$$ ./internal/... ./pkg/... 2>&1 | tee benchmark.txt
 	@echo "Benchmark results saved to benchmark.txt"
+
+# =============================================================================
+# HUD TARGETS - Agent Command Center (Go HTTP + Svelte 5)
+# =============================================================================
+
+HUD_FRONTEND := internal/hud/frontend
+
+# Build the Svelte frontend (requires pnpm)
+hud-frontend:
+	@echo "Building HUD frontend..."
+	@if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "ERROR: pnpm is required. Install with: npm install -g pnpm"; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(HUD_FRONTEND)/node_modules" ]; then \
+		echo "Installing frontend dependencies..."; \
+		cd $(HUD_FRONTEND) && pnpm install; \
+	fi
+	cd $(HUD_FRONTEND) && pnpm build
+	@echo "✓ Frontend built to $(HUD_FRONTEND)/dist/"
+
+# Build frontend + Go binary with HUD embedded
+hud-build: hud-frontend loom
+	@echo "✓ HUD build complete"
+	@echo "  Run: ./bin/loom hud"
+
+# Launch HUD (builds first if needed)
+hud: hud-build
+	@echo "Launching HUD..."
+	./bin/loom hud
+
+# Dev mode: start Vite dev server + Go API concurrently
+hud-dev: loom
+	@echo "Starting HUD in development mode..."
+	@echo "  Frontend: http://localhost:5173 (Vite)"
+	@echo "  API:      http://localhost:9800 (Go)"
+	@echo ""
+	@if [ ! -d "$(HUD_FRONTEND)/node_modules" ]; then \
+		echo "Installing frontend dependencies..."; \
+		cd $(HUD_FRONTEND) && pnpm install; \
+	fi
+	@trap 'kill 0' EXIT; \
+	./bin/loom hud --dev --port 9800 & \
+	cd $(HUD_FRONTEND) && pnpm dev & \
+	wait
+
+# Clean frontend artifacts
+hud-clean:
+	@echo "Cleaning HUD frontend..."
+	rm -rf $(HUD_FRONTEND)/node_modules $(HUD_FRONTEND)/dist
+	@echo "✓ HUD cleaned"
 
 # =============================================================================
 # DOCKER TARGETS
