@@ -59,6 +59,18 @@ func TruncateBytes(s string, maxBytes int) string {
 	return s[:target] + ellipsis
 }
 
+// BodySnippet converts a byte slice (typically from io.ReadAll) to a truncated string.
+// It trims whitespace, returns "<empty response body>" for empty input,
+// and truncates to max bytes using Truncate.
+// This is a convenience wrapper commonly used for HTTP response body error messages.
+func BodySnippet(body []byte, max int) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return "<empty response body>"
+	}
+	return Truncate(s, max)
+}
+
 // isUTF8Start returns true if b is the start of a UTF-8 character
 // (not a continuation byte).
 func isUTF8Start(b byte) bool {

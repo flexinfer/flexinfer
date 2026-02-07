@@ -226,3 +226,22 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	return t.base.RoundTrip(req)
 }
+
+// ReadBodyWithLimit reads up to maxBytes from r. If the response exceeds
+// maxBytes, the returned slice is truncated and truncated is true.
+// If maxBytes <= 0, the entire body is read with no limit.
+func ReadBodyWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(r)
+		return b, false, err
+	}
+
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes+1)))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(b) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}

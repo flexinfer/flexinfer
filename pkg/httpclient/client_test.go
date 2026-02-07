@@ -98,6 +98,7 @@ func TestNew(t *testing.T) {
 	client := New(cfg)
 	if client == nil {
 		t.Fatal("expected non-nil client")
+		return
 	}
 	if client.http == nil {
 		t.Error("expected http.Client to be set")
@@ -473,4 +474,80 @@ func TestHeaderTransport(t *testing.T) {
 		}
 		resp.Body.Close()
 	})
+}
+
+func TestReadBodyWithLimit(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		maxBytes      int
+		wantBody      string
+		wantTruncated bool
+	}{
+		{
+			name:          "within limit",
+			input:         "hello",
+			maxBytes:      10,
+			wantBody:      "hello",
+			wantTruncated: false,
+		},
+		{
+			name:          "exceeds limit",
+			input:         "hello world, this is a long message",
+			maxBytes:      10,
+			wantBody:      "hello worl",
+			wantTruncated: true,
+		},
+		{
+			name:          "no limit with zero",
+			input:         "hello world",
+			maxBytes:      0,
+			wantBody:      "hello world",
+			wantTruncated: false,
+		},
+		{
+			name:          "no limit with negative",
+			input:         "hello world",
+			maxBytes:      -1,
+			wantBody:      "hello world",
+			wantTruncated: false,
+		},
+		{
+			name:          "empty reader",
+			input:         "",
+			maxBytes:      10,
+			wantBody:      "",
+			wantTruncated: false,
+		},
+		{
+			name:          "exact limit",
+			input:         "12345",
+			maxBytes:      5,
+			wantBody:      "12345",
+			wantTruncated: false,
+		},
+		{
+			name:          "one byte over limit",
+			input:         "123456",
+			maxBytes:      5,
+			wantBody:      "12345",
+			wantTruncated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := strings.NewReader(tt.input)
+			got, truncated, err := ReadBodyWithLimit(r, tt.maxBytes)
+			if err != nil {
+				t.Fatalf("ReadBodyWithLimit() error = %v", err)
+			}
+			if truncated != tt.wantTruncated {
+				t.Errorf("ReadBodyWithLimit() truncated = %v, want %v", truncated, tt.wantTruncated)
+			}
+			if string(got) != tt.wantBody {
+				t.Errorf("ReadBodyWithLimit() body = %q, want %q", string(got), tt.wantBody)
+			}
+		})
+	}
 }

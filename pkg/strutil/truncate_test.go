@@ -74,6 +74,31 @@ func TestTruncateSingleLine(t *testing.T) {
 	}
 }
 
+func TestBodySnippet(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+		max  int
+		want string
+	}{
+		{"nil body", nil, 4096, "<empty response body>"},
+		{"empty body", []byte{}, 4096, "<empty response body>"},
+		{"whitespace only", []byte("  \n\t  "), 4096, "<empty response body>"},
+		{"short body", []byte(`{"error":"not found"}`), 4096, `{"error":"not found"}`},
+		{"truncated body", []byte("a]b]c]d]e]f]g]h]i]j]"), 10, "a]b]c]d..."},
+		{"exact max", []byte("hello"), 5, "hello"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BodySnippet(tt.body, tt.max)
+			if got != tt.want {
+				t.Errorf("BodySnippet(%q, %d) = %q, want %q", tt.body, tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTruncateBytes(t *testing.T) {
 	tests := []struct {
 		name     string
