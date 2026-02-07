@@ -11,6 +11,7 @@ type AMDGPUSysfs struct {
 	TotalMB     uint64
 	UsedMB      uint64
 	FreeMB      uint64
+	Utilization float64
 }
 
 // getFreeAMDVRAMSysfs is a stub for non-Linux platforms.

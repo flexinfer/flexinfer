@@ -24,6 +24,7 @@ type AMDGPUSysfs struct {
 	TotalMB     uint64
 	UsedMB      uint64
 	FreeMB      uint64
+	Utilization float64 // 0.0 to 100.0 (best-effort)
 }
 
 // detectAMDVRAMSysfs reads AMD GPU VRAM info from sysfs.
@@ -144,12 +145,50 @@ func (a *Agent) detectAMDGPUSysfs() []AMDGPUSysfs {
 		// Read temperature from hwmon
 		gpu.Temperature = a.readAMDTemperatureSysfs(devicePath)
 
+		// Best-effort utilization.
+		gpu.Utilization = a.readAMDUtilizationSysfs(devicePath)
+
 		if gpu.TotalMB > 0 {
 			gpus = append(gpus, gpu)
 		}
 	}
 
 	return gpus
+}
+
+// readAMDUtilizationSysfs reads AMD GPU utilization from sysfs.
+// Returns 0 if utilization cannot be read.
+//
+// On most modern amdgpu drivers this is exposed as:
+// - /sys/class/drm/cardX/device/gpu_busy_percent
+func (a *Agent) readAMDUtilizationSysfs(devicePath string) float64 {
+	paths := []string{
+		filepath.Join(devicePath, "gpu_busy_percent"),
+	}
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s := strings.TrimSpace(string(data))
+		if s == "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			continue
+		}
+		if v < 0 {
+			v = 0
+		}
+		if v > 100 {
+			v = 100
+		}
+		return v
+	}
+
+	return 0
 }
 
 // readAMDTemperatureSysfs reads GPU temperature from hwmon sysfs.

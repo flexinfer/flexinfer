@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -345,6 +346,47 @@ func TestDetectFreeVRAM_AMD(t *testing.T) {
 	result := a.detectFreeVRAM(context.Background())
 	// 25742540800 bytes / 1048576 = 24550 MB
 	assert.Equal(t, uint64(24550), result)
+}
+
+func TestDetectAMDMetrics_SysfsIncludesUtilization(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("sysfs GPU metrics test is linux-only")
+	}
+
+	sys := t.TempDir()
+	mustWrite := func(path, contents string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
+	}
+
+	// Minimal sysfs layout:
+	// /sys/class/drm/card0/device/{mem_info_vram_total,mem_info_vram_used,gpu_busy_percent,hwmon/hwmon0/temp1_input}
+	card0 := filepath.Join(sys, "class/drm/card0")
+	dev0 := filepath.Join(card0, "device")
+	mustWrite(filepath.Join(dev0, "mem_info_vram_total"), "25753026560\n") // ~24560MB
+	mustWrite(filepath.Join(dev0, "mem_info_vram_used"), "1048576000\n")   // 1000MB
+	mustWrite(filepath.Join(dev0, "gpu_busy_percent"), "37\n")
+	mustWrite(filepath.Join(dev0, "hwmon/hwmon0/temp1_input"), "42000\n")
+
+	// Ensure connectors (card0-DP-1) don't get treated as GPUs.
+	_ = os.MkdirAll(filepath.Join(sys, "class/drm/card0-DP-1"), 0o755)
+
+	a := &Agent{labelPrefix: "flexinfer.ai/", sysfsRoot: sys}
+	// Force sysfs fallback.
+	a.runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, exec.ErrNotFound
+	}
+
+	metrics := a.detectAMDMetrics(context.Background())
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "AMD", metrics[0].Vendor)
+	assert.Equal(t, 0, metrics[0].Index)
+	assert.InDelta(t, 42.0, metrics[0].Temperature, 0.001)
+	assert.Equal(t, uint64(24560), metrics[0].TotalVRAMMB)
+	assert.Equal(t, uint64(1000), metrics[0].UsedVRAMMB)
+	assert.Equal(t, uint64(23560), metrics[0].FreeVRAMMB)
+	assert.InDelta(t, 37.0, metrics[0].Utilization, 0.001)
 }
 
 // loadTestData loads a test data file.

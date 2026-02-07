@@ -434,8 +434,18 @@ func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 	}
 
 	// Try AMD GPU via rocm-smi
-	out, err := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
-	if err == nil {
+	rocmQueries := []struct {
+		cmd  string
+		args []string
+	}{
+		{"rocm-smi", []string{"--showmeminfo", "vram", "--json"}},
+		{"chroot", []string{"/host", "rocm-smi", "--showmeminfo", "vram", "--json"}},
+	}
+	for _, q := range rocmQueries {
+		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		if err != nil {
+			continue
+		}
 		freeVRAM := a.parseRocmFreeMemory(string(out))
 		if freeVRAM > 0 {
 			log.Info("Detected AMD free VRAM via rocm-smi", "freeMB", freeVRAM)
@@ -720,19 +730,28 @@ func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
 func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 	log := log.FromContext(ctx)
 
-	// Get temperature
-	tempOut, err := a.runCmd(ctx, "rocm-smi", "--showtemp", "--json")
+	runRocm := func(args ...string) ([]byte, error) {
+		if out, err := a.runCmd(ctx, "rocm-smi", args...); err == nil {
+			return out, nil
+		}
+		// rocm-smi often depends on host Python libs; chroot fallback keeps the
+		// agent image small while still enabling metrics.
+		chrootArgs := append([]string{"/host", "rocm-smi"}, args...)
+		return a.runCmd(ctx, "chroot", chrootArgs...)
+	}
+
+	// Get temperature (required for rocm-smi path; otherwise we fall back to sysfs).
+	tempOut, err := runRocm("--showtemp", "--json")
 	if err != nil {
-		// rocm-smi failed (likely no Python in container), try sysfs fallback
 		log.V(1).Info("rocm-smi failed, trying sysfs fallback", "error", err)
 		return a.detectAMDMetricsSysfs()
 	}
 
-	// Get memory info
-	memOut, _ := a.runCmd(ctx, "rocm-smi", "--showmeminfo", "vram", "--json")
+	// Get memory info (best-effort).
+	memOut, _ := runRocm("--showmeminfo", "vram", "--json")
 
-	// Get utilization
-	utilOut, _ := a.runCmd(ctx, "rocm-smi", "--showuse", "--json")
+	// Get utilization (best-effort).
+	utilOut, _ := runRocm("--showuse", "--json")
 
 	var tempData map[string]map[string]interface{}
 	var memData map[string]map[string]interface{}
@@ -808,7 +827,7 @@ func (a *Agent) detectAMDMetricsSysfs() []GPUMetrics {
 			TotalVRAMMB: gpu.TotalMB,
 			UsedVRAMMB:  gpu.UsedMB,
 			FreeVRAMMB:  gpu.FreeMB,
-			Utilization: 0, // GPU utilization not easily available via sysfs
+			Utilization: gpu.Utilization,
 		}
 		metrics = append(metrics, m)
 	}
