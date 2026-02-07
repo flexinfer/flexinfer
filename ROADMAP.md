@@ -67,7 +67,7 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 ### Backend-Specific Work
 - [x] **ROCm GFX1100 image builds** - MLC-LLM ROCm 6.4 image with gfx1100 tuning (supplementalGroups fix for non-root GPU access)
 - [x] **Maxwell pre-compiled model docs** - Document FP32 model requirements and pre-compilation
-- [ ] **CPU backend support** - Add explicit CPU-only inference via llama.cpp
+- [x] **CPU backend support** - Add explicit CPU-only inference via llama.cpp (v1alpha2 docs + HF GGUF selection via config.ggufFile)
 - [x] **VRAM detection** - Implement real free VRAM detection + utilization telemetry in node agent (sysfs fallback + chroot host tooling)
 
 ### Medium Priority (Production Ready)

@@ -35,7 +35,7 @@ Quantization pipelines enable automatic conversion of full-precision models to q
 ### ModelCache with Quantization
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
 metadata:
   name: llama3-q4
@@ -66,7 +66,7 @@ spec:
 ### Model Using Quantized Cache
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: llama3-8b

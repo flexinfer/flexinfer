@@ -1,6 +1,6 @@
 # LiteLLM Integration
 # Expose local models as OpenAI-compatible endpoints with aliases.
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: local-gpt

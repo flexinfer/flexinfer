@@ -1,6 +1,6 @@
 # Always-On Ollama Model
 # Set minReplicas: 1 to keep the model warm (no cold starts).
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: llama3-warm

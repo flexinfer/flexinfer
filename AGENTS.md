@@ -7,7 +7,7 @@ This document explains what each agent does, how they communicate, and which opt
 |-----------|--------|---------|--------------------| 
 | Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
 | Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
-| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `ModelDeployment` CRDs |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
 | Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
 | Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
 
@@ -68,7 +68,7 @@ If the agent cannot list pods in `flexinfer-system`, it will still label hardwar
 
 ### Execution Model
 
-The benchmarker runs as a Kubernetes Job, executed once per unique `ModelDeployment` × device class combination:
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
 
 1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
 2. **Container Launch**: Starts the specified backend container with configured resources

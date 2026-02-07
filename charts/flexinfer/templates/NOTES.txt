@@ -19,7 +19,7 @@ QUICK START:
 1. Create your first model:
 
    kubectl apply -f - <<EOF
-   apiVersion: ai.flexinfer.io/v1alpha2
+   apiVersion: ai.flexinfer/v1alpha2
    kind: Model
    metadata:
      name: llama3

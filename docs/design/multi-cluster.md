@@ -89,7 +89,7 @@ type RoutingSpec struct {
 Tracks registered clusters and their capabilities:
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Cluster
 metadata:
   name: us-west-nvidia
@@ -120,7 +120,7 @@ status:
 A federated proxy that routes to cluster-local proxies:
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: GlobalProxy
 metadata:
   name: global
@@ -206,7 +206,7 @@ kubectl create secret generic cluster-us-west \
 
 # Register cluster
 kubectl apply -f - <<EOF
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Cluster
 metadata:
   name: us-west-nvidia
@@ -222,7 +222,7 @@ EOF
 ### Create a Federated Model
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: FederatedModel
 metadata:
   name: llama3-global

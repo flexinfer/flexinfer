@@ -1,15 +1,20 @@
 # CPU-Only Model
 # Deploy a model on CPU when no GPU is available.
 # Good for small models or testing.
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: phi-cpu
+  name: tinyllama-cpu
 spec:
   backend: llamacpp
-  source: HF://microsoft/phi-2-GGUF
+  source: HF://TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
   gpu:
     vendor: cpu    # Explicitly request CPU-only
+  config:
+    ggufFile: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+    threads: 4
+    contextSize: 2048
+    batchSize: 256
   resources:
     requests:
       cpu: "4"

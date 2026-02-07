@@ -51,7 +51,7 @@ Model registry integration enables FlexInfer to seamlessly discover, download, a
 ### ModelCatalog CRD
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: ModelCatalog
 metadata:
   name: huggingface
@@ -265,7 +265,7 @@ type Requirements struct {
 Track model usage and pre-cache popular models:
 
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: CachePolicy
 metadata:
   name: smart-cache

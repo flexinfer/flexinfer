@@ -1,6 +1,6 @@
 # vLLM with HuggingFace Model
 # Deploy a HuggingFace model using vLLM for high-throughput inference.
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: mistral-vllm

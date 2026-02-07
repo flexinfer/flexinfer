@@ -23,7 +23,7 @@ The v1alpha2 API introduces a simplified `Model` resource that replaces the v1al
 
 **v1alpha1:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: llama3
@@ -37,7 +37,7 @@ spec:
 
 **v1alpha2:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: llama3
@@ -53,7 +53,7 @@ spec:
 
 **v1alpha1:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: codellama
@@ -67,7 +67,7 @@ spec:
 
 **v1alpha2:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: codellama
@@ -83,7 +83,7 @@ spec:
 
 **v1alpha1:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: mistral
@@ -95,7 +95,7 @@ spec:
 
 **v1alpha2:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: mistral
@@ -112,7 +112,7 @@ spec:
 **v1alpha1:**
 ```yaml
 # First create a GPUGroup
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: GPUGroup
 metadata:
   name: shared-gpu
@@ -120,7 +120,7 @@ spec:
   nodeSelector:
     node.flexstack.io/gpu-vendor: nvidia
 ---
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: phi
@@ -134,7 +134,7 @@ spec:
 **v1alpha2:**
 ```yaml
 # Single Model with shared GPU - no separate GPUGroup needed
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: phi
@@ -150,7 +150,7 @@ spec:
 
 **v1alpha1:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: qwen
@@ -166,7 +166,7 @@ spec:
 
 **v1alpha2:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: qwen
@@ -183,7 +183,7 @@ spec:
 
 **v1alpha1:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha1
+apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
 metadata:
   name: gpt-local
@@ -199,7 +199,7 @@ spec:
 
 **v1alpha2:**
 ```yaml
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: gpt-local

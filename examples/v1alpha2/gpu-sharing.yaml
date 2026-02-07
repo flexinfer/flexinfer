@@ -2,7 +2,7 @@
 # Multiple models share a single GPU using time-slicing.
 # Higher priority models preempt lower priority ones.
 ---
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: codellama
@@ -16,7 +16,7 @@ spec:
   serverless:
     idleTimeout: 2m           # Quick scale-down when idle
 ---
-apiVersion: ai.flexinfer.io/v1alpha2
+apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: phi

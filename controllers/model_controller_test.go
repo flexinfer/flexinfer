@@ -185,6 +185,10 @@ func TestLabelsForModel(t *testing.T) {
 
 func TestBuildBackendModelSpec(t *testing.T) {
 	r := &ModelReconciler{}
+	b, ok := backend.Get("mlc-llm")
+	if !ok {
+		t.Fatal("mlc-llm backend not found")
+	}
 
 	model := &aiv1alpha2.Model{
 		Spec: aiv1alpha2.ModelSpec{
@@ -193,7 +197,7 @@ func TestBuildBackendModelSpec(t *testing.T) {
 		},
 	}
 
-	spec := r.buildBackendModelSpec(model, backend.GPUVendorAMD)
+	spec := r.buildBackendModelSpec(model, b, backend.GPUVendorAMD)
 
 	if spec.Model != "mlc-ai/Qwen3-8B-q4f16_1-MLC" {
 		t.Errorf("Expected model 'mlc-ai/Qwen3-8B-q4f16_1-MLC', got %q", spec.Model)
@@ -205,6 +209,38 @@ func TestBuildBackendModelSpec(t *testing.T) {
 
 	if spec.ModelPath != "" {
 		t.Errorf("Expected empty model path for HF source, got %q", spec.ModelPath)
+	}
+}
+
+func TestBuildBackendModelSpec_LlamaCppHFUsesGGUFFile(t *testing.T) {
+	r := &ModelReconciler{}
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "tinyllama-cpu",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{"ggufFile":"tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"}`),
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{
+				PVCName: "tinyllama-cpu-cache",
+				Ready:   true,
+			},
+		},
+	}
+
+	spec := r.buildBackendModelSpec(model, b, backend.GPUVendorCPU)
+	if spec.ModelPath != "/models/tinyllama-cpu/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" {
+		t.Fatalf("ModelPath = %q, want %q", spec.ModelPath, "/models/tinyllama-cpu/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
 	}
 }
 
@@ -255,6 +291,78 @@ func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
 	model.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"}
 	if err := r.validateBackendGPUCompatibility(model, mlcBackend, backend.GPUVendorNVIDIA, "sm_52"); err != nil {
 		t.Fatalf("expected /models/<name>/maxwell-lib.so default to pass, got: %v", err)
+	}
+}
+
+func TestEnsureDeploymentCPUDoesNotRequestGPU(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cpu-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "pvc://models-pvc/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: aiv1alpha2.GPUVendorCPU,
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorCPU, "", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch created deployment: %v", err)
+	}
+
+	podSpec := created.Spec.Template.Spec
+	if podSpec.RuntimeClassName != nil {
+		t.Fatalf("RuntimeClassName = %v, want nil", *podSpec.RuntimeClassName)
+	}
+	for _, tol := range podSpec.Tolerations {
+		if tol.Key == "dedicated" && tol.Value == "gpu" {
+			t.Fatalf("unexpected GPU toleration: %#v", tol)
+		}
+	}
+	if len(podSpec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(podSpec.Containers))
+	}
+
+	c := podSpec.Containers[0]
+	if c.Image != "ghcr.io/ggerganov/llama.cpp:server" {
+		t.Fatalf("Image = %q, want %q", c.Image, "ghcr.io/ggerganov/llama.cpp:server")
+	}
+	if _, ok := c.Resources.Limits[corev1.ResourceName("nvidia.com/gpu")]; ok {
+		t.Fatalf("unexpected nvidia.com/gpu limit in resources: %#v", c.Resources.Limits)
+	}
+	if _, ok := c.Resources.Limits[corev1.ResourceName("amd.com/gpu")]; ok {
+		t.Fatalf("unexpected amd.com/gpu limit in resources: %#v", c.Resources.Limits)
 	}
 }
 

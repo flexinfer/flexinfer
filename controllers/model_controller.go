@@ -307,6 +307,53 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.Status().Update(ctx, model)
 	}
 
+	// Backend-specific validation: llama.cpp needs an actual GGUF file path.
+	if b.Name() == "llamacpp" {
+		if strings.HasPrefix(model.Spec.Source, "ollama://") {
+			err := fmt.Errorf("llamacpp backend does not support ollama:// sources; use HF:// (with config.ggufFile), pvc://, or file:// instead")
+			log.Error(err, "Backend source validation failed")
+			r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
+			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+			return ctrl.Result{}, r.Status().Update(ctx, model)
+		}
+		if strings.HasPrefix(model.Spec.Source, "HF://") {
+			cfg := model.Spec.GetConfigMap()
+			ggufFile := ""
+			if cfg != nil {
+				if v, ok := cfg["ggufFile"]; ok {
+					if s, ok := v.(string); ok {
+						ggufFile = s
+					}
+				}
+				if strings.TrimSpace(ggufFile) == "" {
+					if v, ok := cfg["modelFile"]; ok {
+						if s, ok := v.(string); ok {
+							ggufFile = s
+						}
+					}
+				}
+			}
+			ggufFile = strings.TrimSpace(ggufFile)
+			if ggufFile == "" {
+				err := fmt.Errorf("llamacpp with HF:// source requires spec.config.ggufFile (a .gguf filename within the repo)")
+				log.Error(err, "Backend source validation failed")
+				r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+				setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
+				model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+				return ctrl.Result{}, r.Status().Update(ctx, model)
+			}
+			if !strings.HasSuffix(strings.ToLower(ggufFile), ".gguf") {
+				err := fmt.Errorf("spec.config.ggufFile must end with .gguf (got %q)", ggufFile)
+				log.Error(err, "Backend source validation failed")
+				r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+				setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
+				model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+				return ctrl.Result{}, r.Status().Update(ctx, model)
+			}
+		}
+	}
+
 	// GPU detection succeeded - model is schedulable
 	setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, true, aiv1alpha2.ReasonSchedulable, "Model can be scheduled on available nodes")
 
@@ -373,7 +420,7 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 			}
 		}
 
-		spec := r.buildBackendModelSpec(model, gpuVendor)
+		spec := r.buildBackendModelSpec(model, b, gpuVendor)
 		modelPath := spec.ModelPath
 		if modelPath == "" {
 			modelPath = spec.Model
@@ -523,7 +570,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	// Build ModelSpec for backend
-	spec := r.buildBackendModelSpec(model, gpuVendor)
+	spec := r.buildBackendModelSpec(model, b, gpuVendor)
 	spec.GPUArch = gpuArch
 
 	// Get container configuration from backend
@@ -777,7 +824,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 }
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.
-func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, gpuVendor backend.GPUVendor) *backend.ModelSpec {
+func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor) *backend.ModelSpec {
 	modelValue := extractModelFromSource(model.Spec.Source)
 	spec := &backend.ModelSpec{
 		Model:     modelValue,
@@ -813,6 +860,34 @@ func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, gpuVend
 	// Parse config into the spec
 	if model.Spec.Config != nil {
 		spec.Config = model.Spec.GetConfigMap()
+	}
+
+	// llama.cpp needs an actual GGUF file path. For HF sources staged into /models/<modelName>,
+	// allow selecting the file via spec.config.ggufFile (or legacy modelFile).
+	if b != nil && b.Name() == "llamacpp" && strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" && model.Status.Cache != nil {
+		if model.Status.Cache.PVCName != "" {
+			ggufFile := ""
+			if spec.Config != nil {
+				if v, ok := spec.Config["ggufFile"]; ok {
+					if s, ok := v.(string); ok {
+						ggufFile = s
+					}
+				}
+				if strings.TrimSpace(ggufFile) == "" {
+					if v, ok := spec.Config["modelFile"]; ok {
+						if s, ok := v.(string); ok {
+							ggufFile = s
+						}
+					}
+				}
+			}
+
+			ggufFile = strings.TrimLeft(strings.TrimSpace(ggufFile), "/")
+			// Best-effort safety: ignore traversal attempts.
+			if ggufFile != "" && !strings.Contains(ggufFile, "..") {
+				spec.ModelPath = "/models/" + model.Name + "/" + ggufFile
+			}
+		}
 	}
 
 	return spec

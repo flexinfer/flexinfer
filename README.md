@@ -176,6 +176,12 @@ That's it! Cache, serverless scaling, and GPU scheduling are all handled automat
 | `comfyui` | 8188 | Workflow-based image generation |
 | `vllm-omni` | 8000 | Diffusion models with OpenAI API |
 
+CPU-only inference:
+
+- Set `spec.gpu.vendor: cpu` (and omit `spec.gpu.count`).
+- For `llamacpp` + `HF://` GGUF repos, set `spec.config.ggufFile: <file>.gguf` to select the model file under `/models/<modelName>/...`.
+- See `docs/user/backends-cpu.md`.
+
 #### GPU Sharing
 
 Multiple models can time-share a GPU using the `gpu.shared` field:

@@ -92,6 +92,7 @@ spec:
     count: 1
     vramEstimateMB: 6000
   config:
+    ggufFile: Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
     contextSize: 4096
     nGPULayers: 999
     batchSize: 512
@@ -120,6 +121,7 @@ spec:
     count: 1
     vramEstimateMB: 6000
   config:
+    ggufFile: Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
     contextSize: 4096
     nGPULayers: 999
     batchSize: 512
@@ -147,6 +149,7 @@ spec:
       cpu: "16"
       memory: 16Gi
   config:
+    ggufFile: Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
     contextSize: 2048
     threads: 8
   serverless:
@@ -170,6 +173,7 @@ spec:
     priority: 100
     vramEstimateMB: 6000
   config:
+    ggufFile: Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
     contextSize: 4096
     nGPULayers: 999
     batchSize: 512
@@ -256,7 +260,9 @@ For code generation, **Q4_K_M is recommended** as it provides a good balance of 
 
 1. Verify the source URI points to a specific GGUF file:
    ```yaml
-   source: HF://mradermacher/Stable-DiffCoder-8B-Instruct-i1-GGUF/Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
+   source: HF://mradermacher/Stable-DiffCoder-8B-Instruct-i1-GGUF
+   config:
+     ggufFile: Stable-DiffCoder-8B-Instruct.Q4_K_M.gguf
    ```
 
 2. Check cache status:
