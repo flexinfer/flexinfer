@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -823,14 +824,33 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 		if missingVRAM {
 			sysfs := a.detectAMDMetricsSysfs()
 			if len(sysfs) > 0 {
-				byIdx := make(map[int]GPUMetrics, len(sysfs))
-				for _, sm := range sysfs {
-					byIdx[sm.Index] = sm
+				// Prefer matching by total VRAM size rather than relying on card indices.
+				// On some nodes, DRM card numbering does not line up with rocm-smi's cardN
+				// indexing (e.g., sysfs is card1 but rocm-smi reports card0).
+				sort.Slice(sysfs, func(i, j int) bool {
+					return sysfs[i].TotalVRAMMB > sysfs[j].TotalVRAMMB
+				})
+
+				absDiff := func(a, b uint64) uint64 {
+					if a > b {
+						return a - b
+					}
+					return b - a
 				}
+
 				for i := range metrics {
-					sm, ok := byIdx[metrics[i].Index]
-					if !ok {
-						continue
+					sm := sysfs[0]
+					if metrics[i].TotalVRAMMB > 0 {
+						for _, cand := range sysfs {
+							if cand.TotalVRAMMB == 0 {
+								continue
+							}
+							// 64MB tolerance to handle minor reporting differences.
+							if absDiff(cand.TotalVRAMMB, metrics[i].TotalVRAMMB) <= 64 {
+								sm = cand
+								break
+							}
+						}
 					}
 					if metrics[i].TotalVRAMMB == 0 {
 						metrics[i].TotalVRAMMB = sm.TotalVRAMMB

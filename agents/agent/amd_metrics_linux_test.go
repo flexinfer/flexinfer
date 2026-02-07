@@ -13,10 +13,12 @@ func TestDetectAMDMetrics_MergesSysfsWhenMemMissing(t *testing.T) {
 	t.Parallel()
 
 	sys := t.TempDir()
-	mkdirAll(t, filepath.Join(sys, "class/drm/card0/device"))
-	writeFile(t, filepath.Join(sys, "class/drm/card0/device/mem_info_vram_total"), "1000000000\n") // bytes
-	writeFile(t, filepath.Join(sys, "class/drm/card0/device/mem_info_vram_used"), "250000000\n")   // bytes
-	writeFile(t, filepath.Join(sys, "class/drm/card0/device/gpu_busy_percent"), "27\n")
+	// Use card1 to mimic nodes where DRM card numbering does not line up with rocm-smi
+	// cardN indexing (rocm-smi reports card0, but sysfs exposes mem_info under card1).
+	mkdirAll(t, filepath.Join(sys, "class/drm/card1/device"))
+	writeFile(t, filepath.Join(sys, "class/drm/card1/device/mem_info_vram_total"), "1000000000\n") // bytes
+	writeFile(t, filepath.Join(sys, "class/drm/card1/device/mem_info_vram_used"), "250000000\n")   // bytes
+	writeFile(t, filepath.Join(sys, "class/drm/card1/device/gpu_busy_percent"), "27\n")
 
 	a := &Agent{
 		labelPrefix: "flexinfer.ai/",
