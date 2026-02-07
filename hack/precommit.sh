@@ -66,7 +66,17 @@ run_golangci_lint_if_available() {
 
   if [ -x "${lint_bin}" ]; then
     warn "running golangci-lint"
-    "${lint_bin}" run ./... || warn "golangci-lint failed (fix or run manually before pushing)"
+    # golangci-lint v2 requires a versioned config file, while CI currently
+    # uses v1.x. Keep both configs and choose based on installed version.
+    local cfg="$root/.golangci.yml"
+    local lint_version
+    lint_version="$("${lint_bin}" version 2>/dev/null | head -n 1 || true)"
+    if echo "${lint_version}" | grep -qE '\bversion 2\b'; then
+      if [ -f "$root/.golangci.v2.yml" ]; then
+        cfg="$root/.golangci.v2.yml"
+      fi
+    fi
+    "${lint_bin}" run --config "${cfg}" ./... || warn "golangci-lint failed (fix or run manually before pushing)"
   else
     warn "golangci-lint not installed; skipping"
   fi
