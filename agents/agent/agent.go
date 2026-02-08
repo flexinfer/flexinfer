@@ -174,7 +174,13 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		if err == nil {
 			archOut, err := a.runCmd(ctx, "rocminfo")
 			if err != nil {
-				archOut, _ = a.runCmd(ctx, "chroot", "/host", "rocminfo")
+				// rocminfo often depends on host libs; chroot fallback keeps the agent
+				// image small while still enabling gfx* arch detection.
+				if out2, err2 := a.runCmd(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
+					archOut = out2
+				} else {
+					log.V(1).Info("rocminfo failed (best-effort)", "error", err2)
+				}
 			}
 			a.parseRocm(string(out), string(archOut), labels)
 			return
@@ -199,7 +205,11 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		// for selecting gfx1100-optimized images even when rocm-smi is missing.
 		infoOut, err := a.runCmd(ctx, "rocminfo")
 		if err != nil {
-			infoOut, _ = a.runCmd(ctx, "chroot", "/host", "rocminfo")
+			if out2, err2 := a.runCmd(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
+				infoOut = out2
+			} else {
+				log.V(1).Info("rocminfo failed during sysfs fallback (best-effort)", "error", err2)
+			}
 		}
 		if arch := extractAMDArch(string(infoOut)); arch != "" {
 			labels[a.labelPrefix+"gpu.arch"] = arch
@@ -593,7 +603,11 @@ func (a *Agent) scrapeKVCache(ctx context.Context, ip string) float64 {
 		// All attempts failed
 		return -1
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.V(1).Info("failed to close metrics response body", "error", cerr)
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -749,18 +763,35 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 	}
 
 	// Get memory info (best-effort).
-	memOut, _ := runRocm("--showmeminfo", "vram", "--json")
+	memOut, err := runRocm("--showmeminfo", "vram", "--json")
+	if err != nil {
+		log.V(1).Info("rocm-smi meminfo failed (best-effort)", "error", err)
+	}
 
 	// Get utilization (best-effort).
-	utilOut, _ := runRocm("--showuse", "--json")
+	utilOut, err := runRocm("--showuse", "--json")
+	if err != nil {
+		log.V(1).Info("rocm-smi utilization failed (best-effort)", "error", err)
+	}
 
 	var tempData map[string]map[string]interface{}
 	var memData map[string]map[string]interface{}
 	var utilData map[string]map[string]interface{}
 
-	_ = json.Unmarshal(tempOut, &tempData)
-	_ = json.Unmarshal(memOut, &memData)
-	_ = json.Unmarshal(utilOut, &utilData)
+	if err := json.Unmarshal(tempOut, &tempData); err != nil {
+		log.V(1).Info("failed to parse rocm-smi temperature JSON, falling back to sysfs", "error", err)
+		return a.detectAMDMetricsSysfs()
+	}
+	if len(memOut) > 0 {
+		if err := json.Unmarshal(memOut, &memData); err != nil {
+			log.V(1).Info("failed to parse rocm-smi meminfo JSON (best-effort)", "error", err)
+		}
+	}
+	if len(utilOut) > 0 {
+		if err := json.Unmarshal(utilOut, &utilData); err != nil {
+			log.V(1).Info("failed to parse rocm-smi utilization JSON (best-effort)", "error", err)
+		}
+	}
 
 	var metrics []GPUMetrics
 

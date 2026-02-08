@@ -57,6 +57,11 @@ func init() {
 func TestMain(m *testing.M) {
 	flag.Parse()
 
+	if testing.Short() {
+		fmt.Println("Skipping e2e tests in short mode")
+		os.Exit(0)
+	}
+
 	// Load kubeconfig
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}

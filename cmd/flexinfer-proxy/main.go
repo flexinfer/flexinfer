@@ -492,7 +492,12 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 	if modelName != "" {
 		// Still need to read body for validation
 		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			bodyBytes, _ = io.ReadAll(r.Body)
+			if b, err := io.ReadAll(r.Body); err == nil {
+				bodyBytes = b
+			} else {
+				slog.Debug("failed to read request body for model extraction (X-Model-ID)", "error", err)
+				bodyBytes = nil
+			}
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			r.ContentLength = int64(len(bodyBytes))
 		}
@@ -507,7 +512,12 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 		r.URL.Path = "/" + strings.Join(pathParts[2:], "/")
 		// Still need to read body for validation
 		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			bodyBytes, _ = io.ReadAll(r.Body)
+			if b, err := io.ReadAll(r.Body); err == nil {
+				bodyBytes = b
+			} else {
+				slog.Debug("failed to read request body for model extraction (path)", "error", err)
+				bodyBytes = nil
+			}
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			r.ContentLength = int64(len(bodyBytes))
 		}
@@ -516,7 +526,12 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 
 	// Fallback: Check JSON Body (OpenAI Standard)
 	if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		bodyBytes, _ = io.ReadAll(r.Body)
+		if b, err := io.ReadAll(r.Body); err == nil {
+			bodyBytes = b
+		} else {
+			slog.Debug("failed to read request body for model extraction (json)", "error", err)
+			bodyBytes = nil
+		}
 		// Restore body immediately so the proxy can upstream it
 		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		r.ContentLength = int64(len(bodyBytes)) // Update ContentLength for downstream handlers
@@ -1159,8 +1174,11 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		(r.Method == http.MethodPost || r.Method == http.MethodPut) {
 		var err error
 		bodyBytes, err = io.ReadAll(r.Body)
-		_ = r.Body.Close()
+		if cerr := r.Body.Close(); cerr != nil {
+			slog.Debug("failed to close request body after read", "error", cerr)
+		}
 		if err != nil {
+			slog.Debug("failed to read request body for routing decision", "error", err)
 			bodyBytes = nil
 		}
 	}
@@ -1209,7 +1227,12 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		rp = val.(*httputil.ReverseProxy)
 	} else {
 		// Create new proxy
-		u, _ := url.Parse(targetURL)
+		u, err := url.Parse(targetURL)
+		if err != nil {
+			slog.Error("invalid proxy target URL", "targetURL", targetURL, "error", err)
+			validation.WriteInternalError(w, "Internal error routing request")
+			return
+		}
 		rp = httputil.NewSingleHostReverseProxy(u)
 		p.proxyMap.Store(proxyKey, rp)
 	}

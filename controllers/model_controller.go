@@ -375,7 +375,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if !cacheReady {
 		desiredReplicas = 0
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted && model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
-			_ = r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending)
+			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending); err != nil {
+				// Non-fatal: this is a best-effort status update while cache warms.
+				log.Error(err, "Failed to update Model phase to Pending while cache is warming")
+			}
 		}
 	}
 

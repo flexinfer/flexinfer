@@ -97,8 +97,11 @@ func WriteErrorWithParam(w http.ResponseWriter, statusCode int, message, errorTy
 func writeJSONError(w http.ResponseWriter, statusCode int, resp *OpenAIErrorResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	// Ignore encoding errors - if we can't write the error response, there's nothing we can do
-	_ = json.NewEncoder(w).Encode(resp)
+	// Best-effort: if we can't write the error response, the client likely disconnected.
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Nothing else to do here; headers are already written.
+		return
+	}
 }
 
 // Common error responses as convenience functions

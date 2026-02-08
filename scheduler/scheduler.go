@@ -154,7 +154,12 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 	var vramEstimateMB float64
 	if args.Pod.Annotations != nil {
 		if est := strings.TrimSpace(args.Pod.Annotations["flexinfer.ai/gpu.vram-estimate-mb"]); est != "" {
-			vramEstimateMB, _ = strconv.ParseFloat(est, 64)
+			parsed, err := strconv.ParseFloat(est, 64)
+			if err != nil {
+				log.V(1).Info("invalid flexinfer.ai/gpu.vram-estimate-mb annotation (ignoring)", "value", est, "error", err)
+			} else {
+				vramEstimateMB = parsed
+			}
 		}
 	}
 	gpuCount := podRequestedGPUCount(args.Pod)
@@ -236,7 +241,15 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		cmName := fmt.Sprintf("%s-benchmark-results", md)
 		cm, err := s.cache.GetConfigMap(args.Pod.Namespace, cmName)
 		if err == nil {
-			fallbackTPS, _ = strconv.ParseFloat(cm.Data["tokensPerSecond"], 64)
+			raw := strings.TrimSpace(cm.Data["tokensPerSecond"])
+			if raw != "" {
+				parsed, err := strconv.ParseFloat(raw, 64)
+				if err != nil {
+					log.V(1).Info("invalid benchmark ConfigMap tokensPerSecond (using 0)", "namespace", args.Pod.Namespace, "configmap", cmName, "value", raw, "error", err)
+				} else {
+					fallbackTPS = parsed
+				}
+			}
 		}
 	}
 
@@ -249,13 +262,45 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		}
 
 		utilStr := node.Annotations["flexinfer.ai/gpu.util"]
-		util, _ := strconv.ParseFloat(utilStr, 64)
+		util := 0.0
+		if raw := strings.TrimSpace(utilStr); raw != "" {
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/gpu.util", "value", utilStr, "error", err)
+			} else {
+				util = parsed
+			}
+		}
 		costStr := node.Annotations["flexinfer.ai/cost"]
-		cost, _ := strconv.ParseFloat(costStr, 64)
+		cost := 0.0
+		if raw := strings.TrimSpace(costStr); raw != "" {
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/cost", "value", costStr, "error", err)
+			} else {
+				cost = parsed
+			}
+		}
 		cacheStr := node.Annotations["flexinfer.ai/kv-cache-usage"]
-		cacheUsage, _ := strconv.ParseFloat(cacheStr, 64)
+		cacheUsage := 0.0
+		if raw := strings.TrimSpace(cacheStr); raw != "" {
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/kv-cache-usage", "value", cacheStr, "error", err)
+			} else {
+				cacheUsage = parsed
+			}
+		}
 		freeVRAMStr := node.Annotations["flexinfer.ai/gpu-free-memory"] // MB, sum across GPUs
-		freeVRAMMB, _ := strconv.ParseFloat(freeVRAMStr, 64)
+		freeVRAMMB := 0.0
+		if raw := strings.TrimSpace(freeVRAMStr); raw != "" {
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/gpu-free-memory", "value", freeVRAMStr, "error", err)
+			} else {
+				freeVRAMMB = parsed
+			}
+		}
 
 		tps := fallbackTPS
 		if globalCM != nil {
