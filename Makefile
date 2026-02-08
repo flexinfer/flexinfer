@@ -1,9 +1,10 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
-	ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
-	docker-build docker-build-loom-core docker-build-custom-server \
-	docker-push docker-push-loom-core docker-push-custom-server \
-	deploy deploy-status \
-	hud hud-dev hud-build hud-frontend hud-clean
+		ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
+		docker-build docker-build-loom-core docker-build-custom-server \
+		docker-push docker-push-loom-core docker-push-custom-server \
+		deploy deploy-status \
+		browserkit-check browserkit-setup \
+		hud hud-dev hud-build hud-frontend hud-clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -91,6 +92,10 @@ help:
 	@echo "Other:"
 	@echo "  make install    - Install binaries to ~/.local/bin"
 	@echo "  make clean      - Remove build artifacts"
+	@echo ""
+	@echo "BrowserKit (local-only screenshots):"
+	@echo "  make browserkit-check  - Verify Python deps + Playwright Chromium"
+	@echo "  make browserkit-setup  - Install Python deps + Playwright Chromium (downloads)"
 
 build: loomd loom servers
 
@@ -243,6 +248,10 @@ install: build
 	cp bin/loomd $(HOME)/.local/bin/
 	cp bin/loom $(HOME)/.local/bin/
 	cp bin/mcp-* $(HOME)/.local/bin/
+	@echo ""
+	@echo "Note: mcp-browserkit is local-only and requires Python deps."
+	@echo "  Run: make browserkit-check"
+	@echo "  Or:  make browserkit-setup"
 
 # Code quality
 fmt:
@@ -303,6 +312,16 @@ pre-commit:
 	else \
 		./scripts/hooks/pre-commit; \
 	fi
+
+# =============================================================================
+# BrowserKit (local-only) prerequisites
+# =============================================================================
+
+browserkit-check:
+	bash scripts/browserkit/check_ready.sh
+
+browserkit-setup:
+	bash scripts/browserkit/install_deps.sh
 
 # Security scanning
 security:
