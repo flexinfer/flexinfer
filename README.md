@@ -119,6 +119,10 @@ kubectl get nodes -L flexinfer.ai/gpu.vendor -L flexinfer.ai/gpu.arch -L flexinf
 
 # 3) Verify VRAM telemetry is non-zero (used for headroom scoring)
 kubectl get nodes -o custom-columns='NAME:.metadata.name,FREE_MB:.metadata.annotations.flexinfer\.ai/gpu-free-memory,UTIL:.metadata.annotations.flexinfer\.ai/gpu\.util'
+
+# 4) If a Helm upgrade/rollout is stuck, check for pods stuck Terminating on a dead node
+kubectl -n flexinfer-system get pods -o wide | rg Terminating
+kubectl -n flexinfer-system delete pod <pod-name> --force --grace-period=0
 ```
 
 #### Model placement tips (gfx1100 + sm_52)

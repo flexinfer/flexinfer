@@ -347,6 +347,7 @@ go run cmd/flexinfer-manager/main.go --log-level=debug
 2. **Benchmarks not triggering**: Verify benchmark job creation and ConfigMap access
 3. **Scheduling failures**: Check scheduler extender logs and webhook connectivity
 4. **Status not updating**: Verify controller reconciliation loops and event recording
+5. **Helm upgrades stuck / DaemonSet not ready**: In homelabs, a NotReady/unreachable node can leave old pods stuck `Terminating`, which can block rollouts. Force-delete the stuck pods in `flexinfer-system` to unblock upgrades.
 
 ### Debug Commands
 
@@ -362,6 +363,11 @@ kubectl get configmaps -n flexinfer-system -l app=flexinfer-benchmarks
 
 # View scheduler decisions
 kubectl logs -n kube-system deployment/flexinfer-scheduler
+
+# If rollouts are stuck, look for pods stuck Terminating on a dead node
+kubectl -n flexinfer-system get pods -o wide | rg Terminating
+# Force-delete a stuck pod to unblock the rollout
+kubectl -n flexinfer-system delete pod <pod-name> --force --grace-period=0
 ```
 
 ---

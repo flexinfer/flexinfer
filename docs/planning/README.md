@@ -34,6 +34,8 @@ Reference homelab topology used while hardening these paths:
 - `cblevins-5930k`: AMD RX 7900 XTX (ROCm `gfx1100`)
 - `cblevins-gtx980ti`: NVIDIA GTX 980 Ti (Maxwell `sm_52`)
 
+Operational note (k3s homelab): if a node goes NotReady/unreachable, old FlexInfer pods can get stuck `Terminating` on that node and block Helm rollouts. Force-delete the stuck pods in `flexinfer-system` to unblock upgrades.
+
 ## Loom context pack
 
 For deeper “planning artifacts” (product spec, implementation plan, decisions/worklog), see:
