@@ -125,11 +125,14 @@ The `mcp-agent-context` server provides persistent memory for AI agents across s
 ### Quick Start Workflow
 
 ```
-1. agent_session_start(namespace="project/feature-x")
-2. agent_context_recall_enhanced(query="previous work on this feature")
-3. agent_context_add(entries=[{entry_type: "decision", title: "...", content: "..."}])
-4. agent_task_add(tasks=[{title: "Add tests", priority: "medium"}])
-5. agent_session_end(summarize=true)
+1. agent_presence_register(agent_id="claude-1", agent_type="claude-code", description="Working on auth")
+2. agent_session_start(namespace="project/feature-x")
+3. agent_context_recall_enhanced(query="previous work on this feature")
+4. agent_task_add(tasks=[{title: "...", context: "...", priority: "high", file_path: "..."}])
+5. agent_task_update(task_id="...", status="in_progress")
+6. agent_context_add(entries=[{entry_type: "decision", title: "...", content: "..."}])
+7. agent_task_update(task_id="...", status="completed", resolution="Done: ...")
+8. agent_session_end(summarize=true)  # Auto-cleans presence
 ```
 
 ### Tool Categories
@@ -161,8 +164,8 @@ The `mcp-agent-context` server provides persistent memory for AI agents across s
 #### Task Tracking
 | Tool | Description |
 |------|-------------|
-| `agent_task_add` | Add tasks with priority, file_path, blocked_by. |
-| `agent_task_update` | Update status (pending/in_progress/completed/blocked). |
+| `agent_task_add` | Add tasks with priority, context, file_path, line_number, tags, blocked_by. |
+| `agent_task_update` | Update status (pending/in_progress/completed/blocked) with resolution. |
 | `agent_task_list` | List tasks, filter by status. |
 
 #### Code Annotations
