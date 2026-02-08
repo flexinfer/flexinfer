@@ -709,7 +709,10 @@ func (s *actionsServer) handleGetJobLogs(ctx context.Context, args map[string]an
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return mcp.ErrorResult(mcperror.APIError("GitHub Actions", resp.StatusCode, fmt.Sprintf("(body read failed: %v)", readErr))), nil
+		}
 		return mcp.ErrorResult(mcperror.APIError("GitHub Actions", resp.StatusCode, string(body))), nil
 	}
 

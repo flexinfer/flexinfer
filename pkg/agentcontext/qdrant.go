@@ -80,7 +80,7 @@ func (c *QdrantClient) CollectionExists(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	defer resp.Body.Close()
-	_, _ = io.ReadAll(resp.Body)
+	_, _ = io.ReadAll(resp.Body) // drain body for connection reuse
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
@@ -101,7 +101,10 @@ func (c *QdrantClient) GetCollectionVectorSize(ctx context.Context) (exists bool
 		return false, 0, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, 0, fmt.Errorf("read response: %w", err)
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
 	}

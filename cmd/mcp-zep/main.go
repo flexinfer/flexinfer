@@ -15,6 +15,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
@@ -24,7 +25,7 @@ import (
 var version = "dev"
 
 // Shared HTTP client for connection reuse
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+var httpClient = httpclient.NewDefault()
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -123,7 +124,9 @@ func handleHealth(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 
 	// Use a shorter timeout for health checks
-	healthClient := &http.Client{Timeout: 5 * time.Second}
+	healthCfg := httpclient.DefaultConfig()
+	healthCfg.Timeout = 5 * time.Second
+	healthClient := httpclient.New(healthCfg)
 
 	// Try various health endpoints
 	healthEndpoints := []string{
@@ -259,7 +262,10 @@ func handleAddMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, mcperror.APIError("Zep", resp.StatusCode, fmt.Sprintf("(body read failed: %v)", readErr))
+		}
 		return nil, mcperror.APIError("Zep", resp.StatusCode, string(respBody))
 	}
 
@@ -297,7 +303,10 @@ func handleGetMessages(ctx context.Context, args map[string]any) (*mcp.CallToolR
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, mcperror.APIError("Zep", resp.StatusCode, fmt.Sprintf("(body read failed: %v)", readErr))
+		}
 		return nil, mcperror.APIError("Zep", resp.StatusCode, string(respBody))
 	}
 

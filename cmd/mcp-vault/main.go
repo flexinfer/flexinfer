@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/env"
+	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
@@ -28,18 +28,16 @@ var (
 	vaultToken = os.Getenv("VAULT_TOKEN")
 	vaultNS    = os.Getenv("VAULT_NAMESPACE")
 
-	httpClient *http.Client
+	httpClient *httpclient.Client
 )
 
 func init() {
-	transport := &http.Transport{}
+	cfg := httpclient.DefaultConfig()
+	cfg.Timeout = time.Duration(env.Int("VAULT_TIMEOUT", 30)) * time.Second
 	if skipVerify := os.Getenv("VAULT_SKIP_VERIFY"); strings.ToLower(skipVerify) == "true" || skipVerify == "1" {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		cfg.TLSSkipVerify = true
 	}
-	httpClient = &http.Client{
-		Timeout:   time.Duration(env.Int("VAULT_TIMEOUT", 30)) * time.Second,
-		Transport: transport,
-	}
+	httpClient = httpclient.New(cfg)
 }
 
 func main() {

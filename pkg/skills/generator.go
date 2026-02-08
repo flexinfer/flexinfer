@@ -45,7 +45,10 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 
 	sourceDir := FindSkillsSourceDir(opts.RegistryPath)
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get home directory: %w", err)
+	}
 	codexHome := opts.CodexHome
 	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
@@ -53,7 +56,10 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 
 	workspaceRoot := opts.WorkspaceRoot
 	if workspaceRoot == "" {
-		workspaceRoot, _ = os.Getwd()
+		workspaceRoot, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("get working directory: %w", err)
+		}
 	}
 
 	repoRoot := opts.RepoRoot

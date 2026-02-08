@@ -124,7 +124,9 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 			// Also copy the manifest itself
 			manifestSrc := filepath.Join(repoPath, skills.ManifestFilename)
 			if Exists(manifestSrc) {
-				CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename))
+				if err := CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename)); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not sync manifest: %v\n", err)
+				}
 			}
 			fmt.Printf("Synced %d skill files for %s\n", len(manifest.Generated), p.Name)
 		}
@@ -299,7 +301,9 @@ func (m *Manager) SyncSkills(profileName string) error {
 	// Copy manifest
 	manifestSrc := filepath.Join(repoPath, skills.ManifestFilename)
 	if Exists(manifestSrc) {
-		CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename))
+		if err := CopyFile(manifestSrc, filepath.Join(homePath, skills.ManifestFilename)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not sync manifest: %v\n", err)
+		}
 	}
 
 	fmt.Printf("Synced %d skill files for %s\n", len(manifest.Generated), profileName)

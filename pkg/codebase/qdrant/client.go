@@ -19,6 +19,8 @@ import (
 
 var ErrCollectionNotFound = errors.New("qdrant collection not found")
 
+const maxQdrantResponseBytes = 10 * 1024 * 1024 // 10MB
+
 type Client struct {
 	http       *httpclient.Client
 	baseURL    string
@@ -75,7 +77,10 @@ func (c *Client) GetCollectionVectorSize(ctx context.Context) (exists bool, size
 		return false, 0, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, 0, fmt.Errorf("read response: %w", err)
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
 	}
@@ -792,7 +797,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 
 	var reader io.Reader
 	if body != nil {
-		b, _ := json.Marshal(body)
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request body: %w", err)
+		}
 		reader = bytes.NewBuffer(b)
 	}
 
@@ -811,7 +819,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxQdrantResponseBytes))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
