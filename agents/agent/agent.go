@@ -191,15 +191,14 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 	sysfsGPUs := a.detectAMDGPUSysfs()
 	if len(sysfsGPUs) > 0 {
 		labels[a.labelPrefix+"gpu.vendor"] = "AMD"
-		labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(sysfsGPUs))
-		var maxTotalMB uint64
+		var totals []uint64
 		for _, g := range sysfsGPUs {
-			if g.TotalMB > maxTotalMB {
-				maxTotalMB = g.TotalMB
-			}
+			totals = append(totals, g.TotalMB)
 		}
-		if maxTotalMB > 0 {
-			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxTotalMB/1024)
+		_, maxDiscreteMB, count := filterAMDDiscreteTotals(totals)
+		labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(count)
+		if maxDiscreteMB > 0 {
+			labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxDiscreteMB/1024)
 		}
 		// Try to infer arch (gfx*) via rocminfo when available. This is important
 		// for selecting gfx1100-optimized images even when rocm-smi is missing.
@@ -321,6 +320,62 @@ func (a *Agent) parseNvidia(out string, labels map[string]string) {
 	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(lines))
 }
 
+const amdMinDiscreteVRAMMBDefault uint64 = 4096
+
+// amdDiscreteVRAMCutoff returns a heuristic VRAM threshold (in MB) to distinguish
+// iGPUs from dGPUs on mixed systems.
+//
+// Default behavior: treat "discrete" as any AMD GPU with >= 4GiB of VRAM, which
+// filters out typical integrated GPU entries (e.g., 512MiB or 1-2GiB) on nodes
+// that expose both iGPU and dGPU via ROCm/sysfs.
+//
+// Override via FLEXINFER_AMD_MIN_DISCRETE_VRAM_MB for clusters that include
+// small-VRAM discrete AMD GPUs.
+func amdDiscreteVRAMCutoff(maxTotalMB uint64) uint64 {
+	if maxTotalMB == 0 {
+		return 0
+	}
+
+	min := uint64(amdMinDiscreteVRAMMBDefault)
+	if s := strings.TrimSpace(os.Getenv("FLEXINFER_AMD_MIN_DISCRETE_VRAM_MB")); s != "" {
+		if v, err := strconv.ParseUint(s, 10, 64); err == nil && v > 0 {
+			min = v
+		}
+	}
+
+	if maxTotalMB < min {
+		return 0
+	}
+	return min
+}
+
+func filterAMDDiscreteTotals(totals []uint64) (cutoff uint64, maxDiscrete uint64, count int) {
+	var maxTotal uint64
+	for _, t := range totals {
+		if t > maxTotal {
+			maxTotal = t
+		}
+	}
+	cutoff = amdDiscreteVRAMCutoff(maxTotal)
+	if cutoff == 0 {
+		// No filtering requested.
+		return 0, maxTotal, len(totals)
+	}
+	for _, t := range totals {
+		if t >= cutoff {
+			count++
+			if t > maxDiscrete {
+				maxDiscrete = t
+			}
+		}
+	}
+	if count == 0 {
+		// If our heuristic filtered out everything, keep the original behavior.
+		return 0, maxTotal, len(totals)
+	}
+	return cutoff, maxDiscrete, count
+}
+
 // parseRocm parses output from rocm-smi and rocminfo to fill GPU labels.
 // Supports multiple ROCm versions (5.x, 6.0-6.3, 6.4+).
 func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
@@ -329,10 +384,9 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 		return
 	}
 	labels[a.labelPrefix+"gpu.vendor"] = "AMD"
-	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(len(data))
 
 	// Prefer the max VRAM across detected GPUs. Some nodes expose both iGPU and dGPU.
-	var maxTotalMB uint64
+	var totals []uint64
 	for _, gpu := range data {
 		totalMB := a.extractMemoryValue(gpu, []string{
 			// ROCm 6.4+ (in MB)
@@ -346,12 +400,12 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 			"VRAM Total",
 			"vram total",
 		})
-		if totalMB > maxTotalMB {
-			maxTotalMB = totalMB
-		}
+		totals = append(totals, totalMB)
 	}
-	if maxTotalMB > 0 {
-		labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxTotalMB/1024)
+	_, maxDiscreteMB, count := filterAMDDiscreteTotals(totals)
+	labels[a.labelPrefix+"gpu.count"] = strconv.Itoa(count)
+	if maxDiscreteMB > 0 {
+		labels[a.labelPrefix+"gpu.vram"] = fmt.Sprintf("%dGi", maxDiscreteMB/1024)
 	}
 
 	if arch := extractAMDArch(infoOut); arch != "" {
@@ -505,8 +559,24 @@ func (a *Agent) parseRocmFreeMemory(out string) uint64 {
 		return 0
 	}
 
-	var totalFree uint64
+	type mem struct {
+		total uint64
+		free  uint64
+	}
+	items := make([]mem, 0, len(data))
 	for _, gpu := range data {
+		total := a.extractMemoryValue(gpu, []string{
+			// ROCm 6.4+ (in MB)
+			"GPU Memory Total (MB)",
+			"gpu memory total (mb)",
+			// ROCm 6.0-6.3 (in bytes)
+			"VRAM Total Memory (B)",
+			"vram total memory (b)",
+			// ROCm 5.x
+			"vram_total",
+			"VRAM Total",
+			"vram total",
+		})
 		free := a.extractMemoryValue(gpu, []string{
 			// ROCm 6.4+ (in MB)
 			"GPU Memory Free (MB)",
@@ -519,7 +589,34 @@ func (a *Agent) parseRocmFreeMemory(out string) uint64 {
 			"VRAM Free",
 			"vram free",
 		})
-		totalFree += free
+		items = append(items, mem{total: total, free: free})
+	}
+
+	var totals []uint64
+	for _, it := range items {
+		totals = append(totals, it.total)
+	}
+	cutoff, _, _ := filterAMDDiscreteTotals(totals)
+
+	sumAll := func() uint64 {
+		var totalFree uint64
+		for _, it := range items {
+			totalFree += it.free
+		}
+		return totalFree
+	}
+	if cutoff == 0 {
+		return sumAll()
+	}
+
+	var totalFree uint64
+	for _, it := range items {
+		if it.total >= cutoff {
+			totalFree += it.free
+		}
+	}
+	if totalFree == 0 {
+		return sumAll()
 	}
 	return totalFree
 }
@@ -900,7 +997,33 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 		}
 	}
 
-	return metrics
+	return filterAMDDiscreteMetrics(metrics)
+}
+
+func filterAMDDiscreteMetrics(metrics []GPUMetrics) []GPUMetrics {
+	if len(metrics) == 0 {
+		return metrics
+	}
+
+	totals := make([]uint64, 0, len(metrics))
+	for _, m := range metrics {
+		totals = append(totals, m.TotalVRAMMB)
+	}
+	cutoff, _, count := filterAMDDiscreteTotals(totals)
+	if cutoff == 0 || count == len(metrics) {
+		return metrics
+	}
+
+	filtered := make([]GPUMetrics, 0, count)
+	for _, m := range metrics {
+		if m.TotalVRAMMB >= cutoff {
+			filtered = append(filtered, m)
+		}
+	}
+	if len(filtered) == 0 {
+		return metrics
+	}
+	return filtered
 }
 
 // detectAMDMetricsSysfs reads AMD GPU metrics from sysfs (fallback for containers).
@@ -910,8 +1033,17 @@ func (a *Agent) detectAMDMetricsSysfs() []GPUMetrics {
 		return nil
 	}
 
+	totals := make([]uint64, 0, len(sysfsGPUs))
+	for _, g := range sysfsGPUs {
+		totals = append(totals, g.TotalMB)
+	}
+	cutoff, _, _ := filterAMDDiscreteTotals(totals)
+
 	var metrics []GPUMetrics
 	for _, gpu := range sysfsGPUs {
+		if cutoff != 0 && gpu.TotalMB < cutoff {
+			continue
+		}
 		m := GPUMetrics{
 			Index:       gpu.Index,
 			Vendor:      "AMD",

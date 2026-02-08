@@ -206,6 +206,58 @@ func TestParseRocm_ROCm64(t *testing.T) {
 	assert.Equal(t, "gfx1100", labels["flexinfer.ai/gpu.arch"])
 }
 
+func TestParseRocm_IgnoresIntegratedGPUCount(t *testing.T) {
+	a := &Agent{labelPrefix: "flexinfer.ai/"}
+
+	// Some nodes expose both an iGPU (tiny "VRAM") and a dGPU (real VRAM).
+	// Count only the discrete GPU(s) for scheduling + benchmark cache keys.
+	input := `{
+  "card0": {"GPU Memory Total (MB)": "512", "GPU Memory Free (MB)": "512"},
+  "card1": {"GPU Memory Total (MB)": "24560", "GPU Memory Free (MB)": "24550"}
+}`
+
+	labels := make(map[string]string)
+	a.parseRocm(input, "Name: gfx1036\nName: gfx1100\n", labels)
+
+	assert.Equal(t, "AMD", labels["flexinfer.ai/gpu.vendor"])
+	assert.Equal(t, "1", labels["flexinfer.ai/gpu.count"])
+	assert.Equal(t, "23Gi", labels["flexinfer.ai/gpu.vram"])
+	assert.Equal(t, "gfx1100", labels["flexinfer.ai/gpu.arch"])
+}
+
+func TestDetectGPUMetricsAMD_IgnoresIntegratedGPU(t *testing.T) {
+	a := &Agent{}
+	a.runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "nvidia-smi":
+			return nil, exec.ErrNotFound
+		case "chroot":
+			return nil, exec.ErrNotFound
+		case "rocm-smi":
+			if len(args) >= 2 && args[0] == "--showtemp" && args[1] == "--json" {
+				return []byte(`{"card0": {"Temperature (Sensor edge) (C)": "40"}, "card1": {"Temperature (Sensor edge) (C)": "45"}}`), nil
+			}
+			if len(args) >= 3 && args[0] == "--showmeminfo" && args[1] == "vram" && args[2] == "--json" {
+				return []byte(`{
+  "card0": {"GPU Memory Total (MB)": "512", "GPU Memory Used (MB)": "0", "GPU Memory Free (MB)": "512"},
+  "card1": {"GPU Memory Total (MB)": "24560", "GPU Memory Used (MB)": "10", "GPU Memory Free (MB)": "24550"}
+}`), nil
+			}
+			if len(args) >= 2 && args[0] == "--showuse" && args[1] == "--json" {
+				return []byte(`{"card0": {"GPU use (%)": "0"}, "card1": {"GPU use (%)": "1"}}`), nil
+			}
+			return nil, exec.ErrNotFound
+		default:
+			return nil, exec.ErrNotFound
+		}
+	}
+
+	metrics := a.DetectGPUMetrics(context.Background())
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "AMD", metrics[0].Vendor)
+	assert.Greater(t, metrics[0].TotalVRAMMB, uint64(20000))
+}
+
 func TestExtractAMDArch_PrefersHigherMajor(t *testing.T) {
 	out := `
 Agents:

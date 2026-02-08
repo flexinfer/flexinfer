@@ -6,13 +6,13 @@
 // To run these tests:
 //
 //	# Against current kubectl context
-//	go test -v ./e2e/...
+//	FLEXINFER_E2E=1 go test -v ./e2e/...
 //
 //	# Against specific kubeconfig
-//	KUBECONFIG=/path/to/kubeconfig go test -v ./e2e/...
+//	KUBECONFIG=/path/to/kubeconfig FLEXINFER_E2E=1 go test -v ./e2e/...
 //
 //	# Skip if no cluster available (CI-friendly)
-//	go test -v ./e2e/... -skip-no-cluster
+//	FLEXINFER_E2E=1 go test -v ./e2e/... -skip-no-cluster
 //
 // The tests are designed to be non-destructive and clean up after themselves.
 package e2e
@@ -59,6 +59,12 @@ func TestMain(m *testing.M) {
 
 	if testing.Short() {
 		fmt.Println("Skipping e2e tests in short mode")
+		os.Exit(0)
+	}
+
+	// Opt-in only: e2e tests talk to a real cluster and can be slow/flaky in CI.
+	if os.Getenv("FLEXINFER_E2E") != "1" {
+		fmt.Println("Skipping e2e tests (set FLEXINFER_E2E=1 to enable)")
 		os.Exit(0)
 	}
 

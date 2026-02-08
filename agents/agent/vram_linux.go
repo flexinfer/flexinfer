@@ -75,11 +75,28 @@ func (a *Agent) getFreeAMDVRAMSysfs() uint64 {
 		return 0
 	}
 
-	var freeMB uint64
+	// Heuristic: ignore tiny-VRAM iGPU entries when a discrete GPU is present.
+	var totals []uint64
 	for _, info := range infos {
-		freeMB += info.FreeBytes / (1024 * 1024)
+		totals = append(totals, info.TotalBytes/(1024*1024))
 	}
-	return freeMB
+
+	cutoff, _, _ := filterAMDDiscreteTotals(totals)
+
+	var freeAll uint64
+	var freeDiscrete uint64
+	for _, info := range infos {
+		freeMB := info.FreeBytes / (1024 * 1024)
+		totalMB := info.TotalBytes / (1024 * 1024)
+		freeAll += freeMB
+		if cutoff > 0 && totalMB >= cutoff {
+			freeDiscrete += freeMB
+		}
+	}
+	if cutoff == 0 || freeDiscrete == 0 {
+		return freeAll
+	}
+	return freeDiscrete
 }
 
 // parseBytes parses a byte count string.
