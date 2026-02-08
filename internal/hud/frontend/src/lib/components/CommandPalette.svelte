@@ -242,7 +242,7 @@
     border-radius: 12px;
     box-shadow:
       0 16px 48px rgba(0, 0, 0, 0.5),
-      0 0 0 1px rgba(88, 166, 255, 0.1);
+      0 0 0 1px rgba(1, 135, 153, 0.1);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -346,7 +346,7 @@
   }
 
   .palette-item-selected {
-    background: rgba(88, 166, 255, 0.1) !important;
+    background: rgba(1, 135, 153, 0.1) !important;
     color: var(--info);
   }
 

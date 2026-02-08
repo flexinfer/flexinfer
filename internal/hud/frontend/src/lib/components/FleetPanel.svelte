@@ -477,7 +477,7 @@
   }
 
   .activity-row:nth-child(even) {
-    background: rgba(22, 27, 34, 0.5);
+    background: rgba(0, 34, 39, 0.5);
   }
 
   .activity-row:last-child {
@@ -601,7 +601,7 @@
     display: flex;
     gap: 12px;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+    border-bottom: 1px solid rgba(3, 89, 100, 0.3);
   }
 
   .timeline-entry:last-child {

@@ -184,11 +184,11 @@ tbody tr:last-child td {
 
 .btn-primary {
   background: var(--info);
-  color: #fff;
+  color: #00171A;
 }
 
 .btn-primary:hover {
-  background: #79b8ff;
+  background: #01A3B8;
 }
 
 .btn-ghost {
@@ -202,23 +202,23 @@ tbody tr:last-child td {
 }
 
 .btn-success {
-  background: rgba(63, 185, 80, 0.15);
+  background: rgba(34, 178, 85, 0.15);
   color: var(--success);
-  border: 1px solid rgba(63, 185, 80, 0.3);
+  border: 1px solid rgba(34, 178, 85, 0.3);
 }
 
 .btn-success:hover {
-  background: rgba(63, 185, 80, 0.25);
+  background: rgba(34, 178, 85, 0.25);
 }
 
 .btn-danger {
-  background: rgba(248, 81, 73, 0.15);
+  background: rgba(230, 30, 63, 0.15);
   color: var(--error);
-  border: 1px solid rgba(248, 81, 73, 0.3);
+  border: 1px solid rgba(230, 30, 63, 0.3);
 }
 
 .btn-danger:hover {
-  background: rgba(248, 81, 73, 0.25);
+  background: rgba(230, 30, 63, 0.25);
 }
 
 .btn-sm {
@@ -295,7 +295,7 @@ tbody tr:last-child td {
 }
 
 .filter-chip.active {
-  background: rgba(88, 166, 255, 0.15);
+  background: rgba(1, 135, 153, 0.15);
   color: var(--info);
 }
 
@@ -325,9 +325,9 @@ tbody tr:last-child td {
   animation: rowSlideIn 0.15s ease-out;
 }
 
-/* Card hover glow (terminal aesthetic) */
+/* Card hover glow */
 .card-glow:hover {
-  border-color: rgba(188, 140, 255, 0.3);
+  border-color: rgba(233, 93, 116, 0.3);
   box-shadow: 0 0 12px var(--glow-accent);
   transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
 }

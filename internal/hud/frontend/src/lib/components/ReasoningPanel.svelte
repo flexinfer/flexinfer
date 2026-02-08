@@ -249,7 +249,7 @@
   }
 
   .chain-card.expanded {
-    border-color: rgba(88, 166, 255, 0.3);
+    border-color: rgba(1, 135, 153, 0.3);
   }
 
   .chain-header {

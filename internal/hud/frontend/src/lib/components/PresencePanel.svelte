@@ -110,10 +110,10 @@
 
   // --- Agent type colors ---
   const AGENT_COLORS = {
-    claude: 'var(--agent-claude, #BC8CFF)',
-    codex: 'var(--agent-codex, #3FB950)',
-    gemini: 'var(--agent-gemini, #58A6FF)',
-    copilot: 'var(--agent-copilot, #F78166)',
+    claude: 'var(--agent-claude, #E95D74)',
+    codex: 'var(--agent-codex, #22B255)',
+    gemini: 'var(--agent-gemini, #018799)',
+    copilot: 'var(--agent-copilot, #E7B312)',
   };
 
   function agentColor(agentType) {
@@ -516,9 +516,9 @@
     font-weight: 600;
     color: var(--warning);
     padding: 2px 8px;
-    background: rgba(210, 153, 34, 0.12);
+    background: rgba(231, 179, 18, 0.12);
     border-radius: 4px;
-    border: 1px solid rgba(210, 153, 34, 0.25);
+    border: 1px solid rgba(231, 179, 18, 0.25);
   }
 
   .tab-content {
@@ -604,8 +604,8 @@
 
   /* Conflict banner */
   .conflict-banner {
-    background: rgba(210, 153, 34, 0.08);
-    border: 1px solid rgba(210, 153, 34, 0.2);
+    background: rgba(231, 179, 18, 0.08);
+    border: 1px solid rgba(231, 179, 18, 0.2);
     border-radius: var(--border-radius);
     padding: 10px 14px;
     margin: 8px 0;
@@ -637,13 +637,13 @@
   }
 
   .btn-success {
-    background: rgba(63, 185, 80, 0.15);
+    background: rgba(34, 178, 85, 0.15);
     color: var(--success);
-    border: 1px solid rgba(63, 185, 80, 0.3);
+    border: 1px solid rgba(34, 178, 85, 0.3);
   }
 
   .btn-success:hover {
-    background: rgba(63, 185, 80, 0.25);
+    background: rgba(34, 178, 85, 0.25);
   }
 
   /* Templates section */

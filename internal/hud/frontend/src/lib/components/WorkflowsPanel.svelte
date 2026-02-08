@@ -290,7 +290,7 @@
   }
 
   .wf-selected {
-    background: rgba(88, 166, 255, 0.08) !important;
+    background: rgba(1, 135, 153, 0.08) !important;
     border-left: 3px solid var(--info);
     padding-left: 11px;
   }
@@ -389,7 +389,7 @@
     gap: 8px;
     padding: 5px 16px;
     font-size: 12px;
-    border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+    border-bottom: 1px solid rgba(3, 89, 100, 0.3);
   }
 
   .event-row:last-child {

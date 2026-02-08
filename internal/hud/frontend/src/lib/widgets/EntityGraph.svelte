@@ -10,8 +10,8 @@
   let { entities = [], relations = [], width = 600, height = 400 } = $props();
 
   const typeColors = [
-    '#58A6FF', '#3FB950', '#BC8CFF', '#D29922', '#F85149',
-    '#79C0FF', '#56D364', '#D2A8FF', '#E3B341', '#FF7B72',
+    '#018799', '#22B255', '#E95D74', '#E7B312', '#E61E3F',
+    '#4EEAFE', '#9B5CD0', '#81F0FE', '#5EBDC9', '#2A7A87',
   ];
 
   function getTypeColor(type, types) {

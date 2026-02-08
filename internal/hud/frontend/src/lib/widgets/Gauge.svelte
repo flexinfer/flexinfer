@@ -66,6 +66,6 @@
     height: 100%;
     border-radius: 3px;
     transition: width 0.3s ease, background 0.3s ease;
-    box-shadow: 0 0 6px rgba(88, 166, 255, 0.15);
+    box-shadow: 0 0 6px rgba(1, 135, 153, 0.15);
   }
 </style>

@@ -1,32 +1,32 @@
 :root {
-  /* Base */
-  --bg-primary: #0D1117;
-  --bg-secondary: #161B22;
-  --bg-tertiary: #21262D;
-  --fg-primary: #C9D1D9;
-  --fg-secondary: #8B949E;
-  --fg-muted: #484F58;
-  --border: #30363D;
-  --border-focus: #58A6FF;
+  /* Base — WebDevCody deep teal palette */
+  --bg-primary: #00171A;
+  --bg-secondary: #002227;
+  --bg-tertiary: #002E34;
+  --fg-primary: #81F0FE;
+  --fg-secondary: #5EBDC9;
+  --fg-muted: #2A7A87;
+  --border: #035964;
+  --border-focus: #007180;
 
-  /* Semantic */
-  --success: #3FB950;
-  --warning: #D29922;
-  --error: #F85149;
-  --info: #58A6FF;
-  --accent: #BC8CFF;
+  /* Semantic — teal / pink accent palette */
+  --success: #22B255;
+  --warning: #E7B312;
+  --error: #E61E3F;
+  --info: #018799;
+  --accent: #E95D74;
 
   /* Status */
-  --status-running: #3FB950;
-  --status-pending: #D29922;
-  --status-completed: #58A6FF;
-  --status-failed: #F85149;
-  --status-waiting: #D29922;
+  --status-running: #22B255;
+  --status-pending: #E7B312;
+  --status-completed: #018799;
+  --status-failed: #E61E3F;
+  --status-waiting: #E7B312;
 
   /* Memory tiers */
-  --tier-working: #58A6FF;
-  --tier-short: #BC8CFF;
-  --tier-long: #3FB950;
+  --tier-working: #4EEAFE;
+  --tier-short: #9B5CD0;
+  --tier-long: #22B255;
 
   /* Typography */
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
@@ -42,17 +42,17 @@
   --transition-fast: 0.1s ease;
   --transition-normal: 0.2s ease;
 
-  /* Glow effects (terminal aesthetic) */
+  /* Glow effects */
   --scanline-opacity: 0.03;
-  --glow-accent: rgba(188, 140, 255, 0.15);
-  --glow-success: rgba(63, 185, 80, 0.12);
-  --glow-error: rgba(248, 81, 73, 0.12);
+  --glow-accent: rgba(233, 93, 116, 0.15);
+  --glow-success: rgba(34, 178, 85, 0.12);
+  --glow-error: rgba(230, 30, 63, 0.12);
 
   /* Agent type colors */
-  --agent-claude: #BC8CFF;
-  --agent-codex: #3FB950;
-  --agent-gemini: #58A6FF;
-  --agent-copilot: #D29922;
+  --agent-claude: #E95D74;
+  --agent-codex: #22B255;
+  --agent-gemini: #018799;
+  --agent-copilot: #E7B312;
 }
 
 *,
@@ -146,7 +146,7 @@ code, pre {
 
 /* Selection */
 ::selection {
-  background: rgba(88, 166, 255, 0.25);
+  background: rgba(1, 135, 153, 0.3);
   color: var(--fg-primary);
 }
 

@@ -741,7 +741,7 @@
   }
 
   .promote-btn:hover {
-    background: rgba(63, 185, 80, 0.15);
+    background: rgba(34, 178, 85, 0.15);
   }
 
   .demote-btn {
@@ -749,7 +749,7 @@
   }
 
   .demote-btn:hover {
-    background: rgba(210, 153, 34, 0.15);
+    background: rgba(231, 179, 18, 0.15);
   }
 
   .delete-btn {
@@ -758,7 +758,7 @@
   }
 
   .delete-btn:hover {
-    background: rgba(248, 81, 73, 0.15);
+    background: rgba(230, 30, 63, 0.15);
   }
 
   .empty-cell {

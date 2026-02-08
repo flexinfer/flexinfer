@@ -18,8 +18,8 @@
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    background: rgba(248, 81, 73, 0.1);
-    border: 1px solid rgba(248, 81, 73, 0.3);
+    background: rgba(230, 30, 63, 0.1);
+    border: 1px solid rgba(230, 30, 63, 0.3);
     border-radius: var(--border-radius);
     font-size: 12px;
     color: var(--error);
@@ -41,6 +41,6 @@
   }
   .error-dismiss:hover {
     opacity: 1;
-    background: rgba(248, 81, 73, 0.15);
+    background: rgba(230, 30, 63, 0.15);
   }
 </style>

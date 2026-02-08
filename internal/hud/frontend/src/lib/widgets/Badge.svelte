@@ -3,11 +3,11 @@
   let { text = '', variant = 'info' } = $props();
 
   const variantStyles = {
-    info:    { bg: 'rgba(88, 166, 255, 0.15)',  fg: 'var(--info)',    border: 'rgba(88, 166, 255, 0.3)' },
-    success: { bg: 'rgba(63, 185, 80, 0.15)',   fg: 'var(--success)', border: 'rgba(63, 185, 80, 0.3)' },
-    warning: { bg: 'rgba(210, 153, 34, 0.15)',  fg: 'var(--warning)', border: 'rgba(210, 153, 34, 0.3)' },
-    error:   { bg: 'rgba(248, 81, 73, 0.15)',   fg: 'var(--error)',   border: 'rgba(248, 81, 73, 0.3)' },
-    accent:  { bg: 'rgba(188, 140, 255, 0.15)', fg: 'var(--accent)',  border: 'rgba(188, 140, 255, 0.3)' },
+    info:    { bg: 'rgba(1, 135, 153, 0.15)',   fg: 'var(--info)',    border: 'rgba(1, 135, 153, 0.3)' },
+    success: { bg: 'rgba(34, 178, 85, 0.15)',   fg: 'var(--success)', border: 'rgba(34, 178, 85, 0.3)' },
+    warning: { bg: 'rgba(231, 179, 18, 0.15)',  fg: 'var(--warning)', border: 'rgba(231, 179, 18, 0.3)' },
+    error:   { bg: 'rgba(230, 30, 63, 0.15)',   fg: 'var(--error)',   border: 'rgba(230, 30, 63, 0.3)' },
+    accent:  { bg: 'rgba(233, 93, 116, 0.15)',  fg: 'var(--accent)',  border: 'rgba(233, 93, 116, 0.3)' },
   };
 
   let style = $derived(variantStyles[variant] || variantStyles.info);

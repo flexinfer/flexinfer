@@ -208,9 +208,9 @@
   }
 
   .paused-btn {
-    background: rgba(210, 153, 34, 0.15);
+    background: rgba(231, 179, 18, 0.15);
     color: var(--warning);
-    border: 1px solid rgba(210, 153, 34, 0.3);
+    border: 1px solid rgba(231, 179, 18, 0.3);
   }
 
   .pause-icon {
@@ -235,8 +235,8 @@
     display: flex;
     justify-content: center;
     padding: 4px;
-    background: rgba(210, 153, 34, 0.1);
-    border-bottom: 1px solid rgba(210, 153, 34, 0.3);
+    background: rgba(231, 179, 18, 0.1);
+    border-bottom: 1px solid rgba(231, 179, 18, 0.3);
   }
 
   .paused-text {
@@ -253,7 +253,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+    border-bottom: 1px solid rgba(3, 89, 100, 0.5);
     font-size: 12px;
     transition: background 0.1s;
   }
@@ -267,7 +267,7 @@
   }
 
   .alt-row {
-    background: rgba(13, 17, 23, 0.3);
+    background: rgba(0, 23, 26, 0.3);
   }
 
   .stream-time {

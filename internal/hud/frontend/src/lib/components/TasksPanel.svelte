@@ -832,8 +832,8 @@
   }
 
   .btn-resolve {
-    background: rgba(63, 185, 80, 0.15);
-    border: 1px solid rgba(63, 185, 80, 0.3);
+    background: rgba(34, 178, 85, 0.15);
+    border: 1px solid rgba(34, 178, 85, 0.3);
     color: var(--success);
     border-radius: 4px;
     padding: 2px 8px;
@@ -843,7 +843,7 @@
   }
 
   .btn-resolve:hover {
-    background: rgba(63, 185, 80, 0.25);
+    background: rgba(34, 178, 85, 0.25);
   }
 
   .context-hint {
@@ -885,7 +885,7 @@
   }
 
   .group-header:hover {
-    background: rgba(33, 38, 45, 0.8);
+    background: rgba(0, 46, 52, 0.8);
     color: var(--fg-primary);
   }
 
@@ -902,7 +902,7 @@
   .count-badge {
     font-family: var(--font-mono);
     font-size: 10px;
-    background: rgba(88, 166, 255, 0.15);
+    background: rgba(1, 135, 153, 0.15);
     color: var(--info);
     padding: 1px 6px;
     border-radius: 10px;

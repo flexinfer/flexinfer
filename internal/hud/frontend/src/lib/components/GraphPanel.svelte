@@ -619,7 +619,7 @@
     align-items: center;
     padding: 4px 0;
     font-size: 11px;
-    border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+    border-bottom: 1px solid rgba(3, 89, 100, 0.3);
   }
 
   .rel-row:last-child, .ns-row:last-child {
@@ -672,7 +672,7 @@
   }
 
   .entity-selected {
-    background: rgba(88, 166, 255, 0.05);
+    background: rgba(1, 135, 153, 0.05);
   }
 
   .entity-header {
@@ -709,7 +709,7 @@
   /* Entity detail */
   .entity-detail {
     padding: 0 14px 10px 14px;
-    background: rgba(13, 17, 23, 0.3);
+    background: rgba(0, 23, 26, 0.3);
   }
 
   .detail-group {
@@ -788,7 +788,7 @@
 
   .delete-btn-sm:hover {
     opacity: 1;
-    background: rgba(248, 81, 73, 0.15);
+    background: rgba(230, 30, 63, 0.15);
   }
 
   /* Graph viz */

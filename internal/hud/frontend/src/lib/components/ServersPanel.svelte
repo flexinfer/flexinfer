@@ -410,8 +410,8 @@
   }
 
   .server-row.selected td {
-    background: rgba(88, 166, 255, 0.08);
-    border-color: rgba(88, 166, 255, 0.2);
+    background: rgba(1, 135, 153, 0.08);
+    border-color: rgba(1, 135, 153, 0.2);
   }
 
   .server-name {
@@ -572,9 +572,9 @@
     font-family: var(--font-mono);
     font-size: 11px;
     padding: 6px 8px;
-    background: rgba(248, 81, 73, 0.08);
+    background: rgba(230, 30, 63, 0.08);
     border-radius: 4px;
-    border: 1px solid rgba(248, 81, 73, 0.2);
+    border: 1px solid rgba(230, 30, 63, 0.2);
   }
 
   .error-label {
