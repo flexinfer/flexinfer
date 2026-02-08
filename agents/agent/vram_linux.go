@@ -84,7 +84,10 @@ func (a *Agent) getFreeAMDVRAMSysfs() uint64 {
 
 // parseBytes parses a byte count string.
 func parseBytes(s string) uint64 {
-	val, _ := strconv.ParseUint(s, 10, 64)
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0
+	}
 	return val
 }
 

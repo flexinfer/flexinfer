@@ -20,6 +20,7 @@ package commands
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -70,7 +71,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "Delete ModelDeployment %s/%s? [y/N]: ", namespace, name)
 
 		reader := bufio.NewReader(cmd.InOrStdin())
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("failed to read confirmation input: %w", err)
+		}
 		response := strings.TrimSpace(line)
 		if response != "y" && response != "Y" {
 			_, _ = fmt.Fprintln(out, "Deletion cancelled")

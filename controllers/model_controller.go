@@ -1500,6 +1500,8 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 
 // updateStatusFromDeployment updates the Model status based on the deployment state.
 func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
+	log := log.FromContext(ctx)
+
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, deployment); err != nil {
 		if errors.IsNotFound(err) {
@@ -1509,8 +1511,12 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 
 	// Update endpoint
-	b, _ := backend.Get(model.Spec.Backend)
-	port := b.Port()
+	port := int32(80)
+	if b, ok := backend.Get(model.Spec.Backend); ok {
+		port = b.Port()
+	} else {
+		log.Error(fmt.Errorf("backend %q not found", model.Spec.Backend), "failed to resolve backend port for endpoint", "backend", model.Spec.Backend)
+	}
 	model.Status.Endpoint = fmt.Sprintf("http://%s.%s.svc:%d", model.Name, model.Namespace, port)
 
 	// If the cache is not ready, keep the model in Pending regardless of deployment replicas.
