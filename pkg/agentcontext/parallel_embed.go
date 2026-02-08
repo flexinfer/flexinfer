@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -110,13 +111,9 @@ func (pe *ParallelEmbedder) EmbedAll(ctx context.Context, texts []string) ([][]f
 	}
 
 	// Sort by index to maintain order
-	for i := 0; i < len(results)-1; i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Index < results[i].Index {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Index < results[j].Index
+	})
 
 	// Check for errors and combine vectors
 	var allVectors [][]float64

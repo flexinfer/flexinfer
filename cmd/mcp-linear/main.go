@@ -308,32 +308,35 @@ func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		return mcp.ErrorResult(err), nil
 	}
 
-	// Build filter
-	filters := []string{}
+	// Build filter using variables (safe from injection)
+	filter := map[string]any{}
 	if teamKey != "" {
-		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
+		filter["team"] = map[string]any{"key": map[string]any{"eq": teamKey}}
 	}
 	if state != "" {
-		filters = append(filters, fmt.Sprintf(`state: { name: { eq: "%s" } }`, state))
+		filter["state"] = map[string]any{"name": map[string]any{"eq": state}}
 	}
 	if assignee != "" {
-		filters = append(filters, fmt.Sprintf(`assignee: { or: [{ email: { eq: "%s" } }, { name: { containsIgnoreCase: "%s" } }] }`, assignee, assignee))
+		filter["assignee"] = map[string]any{"or": []map[string]any{
+			{"email": map[string]any{"eq": assignee}},
+			{"name": map[string]any{"containsIgnoreCase": assignee}},
+		}}
 	}
 	if label != "" {
-		filters = append(filters, fmt.Sprintf(`labels: { some: { name: { eq: "%s" } } }`, label))
+		filter["labels"] = map[string]any{"some": map[string]any{"name": map[string]any{"eq": label}}}
 	}
 	if priority >= 0 {
-		filters = append(filters, fmt.Sprintf(`priority: { eq: %d }`, priority))
+		filter["priority"] = map[string]any{"eq": priority}
 	}
 
-	filterClause := ""
-	if len(filters) > 0 {
-		filterClause = fmt.Sprintf("filter: { %s }", joinFilters(filters))
+	variables := map[string]any{"first": limit}
+	if len(filter) > 0 {
+		variables["filter"] = filter
 	}
 
-	query := fmt.Sprintf(`
-		query {
-			issues(first: %d %s) {
+	query := `
+		query($first: Int!, $filter: IssueFilter) {
+			issues(first: $first, filter: $filter) {
 				nodes {
 					id
 					identifier
@@ -354,9 +357,9 @@ func handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 				}
 			}
 		}
-	`, limit, filterClause)
+	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -521,8 +524,8 @@ func handleGetTeam(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	}
 
 	query := `
-		query {
-			teams(filter: { key: { eq: "` + key + `" } }) {
+		query($filter: TeamFilter) {
+			teams(filter: $filter) {
 				nodes {
 					id
 					key
@@ -539,7 +542,9 @@ func handleGetTeam(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 		}
 	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, map[string]any{
+		"filter": map[string]any{"key": map[string]any{"eq": key}},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -561,22 +566,22 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 		return mcp.ErrorResult(err), nil
 	}
 
-	filters := []string{}
+	filter := map[string]any{}
 	if teamKey != "" {
-		filters = append(filters, fmt.Sprintf(`accessibleTeams: { some: { key: { eq: "%s" } } }`, teamKey))
+		filter["accessibleTeams"] = map[string]any{"some": map[string]any{"key": map[string]any{"eq": teamKey}}}
 	}
 	if state != "" {
-		filters = append(filters, fmt.Sprintf(`state: { eq: "%s" }`, state))
+		filter["state"] = map[string]any{"eq": state}
 	}
 
-	filterClause := ""
-	if len(filters) > 0 {
-		filterClause = fmt.Sprintf("filter: { %s }", joinFilters(filters))
+	variables := map[string]any{}
+	if len(filter) > 0 {
+		variables["filter"] = filter
 	}
 
-	query := fmt.Sprintf(`
-		query {
-			projects(%s) {
+	query := `
+		query($filter: ProjectFilter) {
+			projects(filter: $filter) {
 				nodes {
 					id
 					name
@@ -590,9 +595,9 @@ func handleListProjects(ctx context.Context, args map[string]any) (*mcp.CallTool
 				}
 			}
 		}
-	`, filterClause)
+	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -655,22 +660,22 @@ func handleListCycles(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		return mcp.ErrorResult(err), nil
 	}
 
-	filters := []string{}
+	filter := map[string]any{}
 	if teamKey != "" {
-		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
+		filter["team"] = map[string]any{"key": map[string]any{"eq": teamKey}}
 	}
 	if isActive {
-		filters = append(filters, "isActive: { eq: true }")
+		filter["isActive"] = map[string]any{"eq": true}
 	}
 
-	filterClause := ""
-	if len(filters) > 0 {
-		filterClause = fmt.Sprintf("filter: { %s }", joinFilters(filters))
+	variables := map[string]any{}
+	if len(filter) > 0 {
+		variables["filter"] = filter
 	}
 
-	query := fmt.Sprintf(`
-		query {
-			cycles(%s) {
+	query := `
+		query($filter: CycleFilter) {
+			cycles(filter: $filter) {
 				nodes {
 					id
 					name
@@ -684,9 +689,9 @@ func handleListCycles(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 				}
 			}
 		}
-	`, filterClause)
+	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -775,19 +780,16 @@ func handleListLabels(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		return mcp.ErrorResult(err), nil
 	}
 
-	filters := []string{}
+	variables := map[string]any{}
 	if teamKey != "" {
-		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
+		variables["filter"] = map[string]any{
+			"team": map[string]any{"key": map[string]any{"eq": teamKey}},
+		}
 	}
 
-	filterClause := ""
-	if len(filters) > 0 {
-		filterClause = fmt.Sprintf("filter: { %s }", joinFilters(filters))
-	}
-
-	query := fmt.Sprintf(`
-		query {
-			issueLabels(%s) {
+	query := `
+		query($filter: IssueLabelFilter) {
+			issueLabels(filter: $filter) {
 				nodes {
 					id
 					name
@@ -797,9 +799,9 @@ func handleListLabels(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 				}
 			}
 		}
-	`, filterClause)
+	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -824,19 +826,16 @@ func handleListStates(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		return mcp.ErrorResult(err), nil
 	}
 
-	filters := []string{}
+	variables := map[string]any{}
 	if teamKey != "" {
-		filters = append(filters, fmt.Sprintf(`team: { key: { eq: "%s" } }`, teamKey))
+		variables["filter"] = map[string]any{
+			"team": map[string]any{"key": map[string]any{"eq": teamKey}},
+		}
 	}
 
-	filterClause := ""
-	if len(filters) > 0 {
-		filterClause = fmt.Sprintf("filter: { %s }", joinFilters(filters))
-	}
-
-	query := fmt.Sprintf(`
-		query {
-			workflowStates(%s) {
+	query := `
+		query($filter: WorkflowStateFilter) {
+			workflowStates(filter: $filter) {
 				nodes {
 					id
 					name
@@ -848,9 +847,9 @@ func handleListStates(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 				}
 			}
 		}
-	`, filterClause)
+	`
 
-	data, err := graphqlRequest(ctx, query, nil)
+	data, err := graphqlRequest(ctx, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -869,17 +868,6 @@ func handleListStates(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 }
 
 // Helper functions
-
-func joinFilters(filters []string) string {
-	result := ""
-	for i, f := range filters {
-		if i > 0 {
-			result += ", "
-		}
-		result += f
-	}
-	return result
-}
 
 func formatIssue(issue map[string]any) map[string]any {
 	formatted := map[string]any{

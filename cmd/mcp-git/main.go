@@ -16,6 +16,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -337,6 +338,10 @@ func runGit(ctx context.Context, repoPath string, args ...string) (string, error
 		repoPath = defaultRepo
 	} else if !filepath.IsAbs(repoPath) {
 		repoPath = filepath.Join(defaultRepo, repoPath)
+	}
+	// Prevent path traversal outside defaultRepo
+	if err := pathsec.ValidatePath(repoPath, defaultRepo); err != nil {
+		return "", fmt.Errorf("path not allowed: %w", err)
 	}
 
 	cmd := exec.CommandContext(ctx, "git", args...)

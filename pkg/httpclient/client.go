@@ -31,17 +31,22 @@ type Config struct {
 
 	// RetryMaxDelay is the maximum delay between retries (default: 5s)
 	RetryMaxDelay time.Duration
+
+	// MaxResponseBytes limits the size of response bodies read by convenience
+	// methods like GetJSON (default: 10MB). Set to 0 for no limit.
+	MaxResponseBytes int
 }
 
 // DefaultConfig returns a Config with sensible defaults,
 // reading from environment variables where applicable.
 func DefaultConfig() Config {
 	cfg := Config{
-		Timeout:        30 * time.Second,
-		TLSSkipVerify:  false,
-		MaxRetries:     0,
-		RetryBaseDelay: 100 * time.Millisecond,
-		RetryMaxDelay:  5 * time.Second,
+		Timeout:          30 * time.Second,
+		TLSSkipVerify:    false,
+		MaxRetries:       0,
+		RetryBaseDelay:   100 * time.Millisecond,
+		RetryMaxDelay:    5 * time.Second,
+		MaxResponseBytes: 10 * 1024 * 1024, // 10MB
 	}
 
 	// Check TLS_SKIP_VERIFY env var
@@ -150,7 +155,12 @@ func (c *Client) GetJSON(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	var reader io.Reader = resp.Body
+	if c.config.MaxResponseBytes > 0 {
+		reader = io.LimitReader(resp.Body, int64(c.config.MaxResponseBytes))
+	}
+
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}

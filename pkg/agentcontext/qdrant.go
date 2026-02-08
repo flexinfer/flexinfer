@@ -31,6 +31,8 @@ func toPointID(id string) string {
 // dummyRelationsVector is used for relations that don't need embeddings
 var dummyRelationsVector = []float64{0, 0, 0, 0}
 
+const maxQdrantResponseBytes = 10 * 1024 * 1024 // 10MB
+
 var ErrCollectionNotFound = errors.New("qdrant collection not found")
 
 type QdrantClient struct {
@@ -260,6 +262,45 @@ func (c *QdrantClient) GetPoint(ctx context.Context, id string, withVector bool)
 	}, nil
 }
 
+// GetPoints fetches multiple points by ID in a single request.
+func (c *QdrantClient) GetPoints(ctx context.Context, ids []string, withVector bool) ([]RawPoint, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	uuids := make([]string, len(ids))
+	for i, id := range ids {
+		uuids[i] = toPointID(id)
+	}
+	body := map[string]any{
+		"ids":          uuids,
+		"with_payload": true,
+		"with_vector":  withVector,
+	}
+	path := fmt.Sprintf("/collections/%s/points", c.collection)
+	var resp struct {
+		Result []struct {
+			ID      string         `json:"id"`
+			Vector  []float64      `json:"vector"`
+			Payload map[string]any `json:"payload"`
+		} `json:"result"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, path, body, &resp); err != nil {
+		if errors.Is(err, ErrCollectionNotFound) {
+			return []RawPoint{}, nil
+		}
+		return nil, err
+	}
+	points := make([]RawPoint, 0, len(resp.Result))
+	for _, p := range resp.Result {
+		points = append(points, RawPoint{
+			ID:      p.ID,
+			Vector:  p.Vector,
+			Payload: p.Payload,
+		})
+	}
+	return points, nil
+}
+
 func (c *QdrantClient) Search(
 	ctx context.Context,
 	vector []float64,
@@ -415,7 +456,10 @@ func (c *QdrantClient) doJSON(ctx context.Context, method, path string, body any
 
 	var reader io.Reader
 	if body != nil {
-		b, _ := json.Marshal(body)
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request body: %w", err)
+		}
 		reader = bytes.NewBuffer(b)
 	}
 
@@ -434,7 +478,7 @@ func (c *QdrantClient) doJSON(ctx context.Context, method, path string, body any
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxQdrantResponseBytes))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}

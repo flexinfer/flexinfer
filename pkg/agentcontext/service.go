@@ -730,10 +730,14 @@ func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*m
 		return mcp.ErrorResult(err), nil
 	}
 
+	points, err := s.contextQdrant.GetPoints(ctx, ids, false)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("get entries: %w", err)), nil
+	}
+
 	var entries []ContextEntry
-	for _, id := range ids {
-		p, err := s.contextQdrant.GetPoint(ctx, id, false)
-		if err != nil || p.Payload == nil {
+	for _, p := range points {
+		if p.Payload == nil {
 			continue
 		}
 		entry, err := PayloadToEntry(p.Payload)
