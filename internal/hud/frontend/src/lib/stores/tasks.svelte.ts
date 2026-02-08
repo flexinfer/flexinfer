@@ -143,11 +143,27 @@ class TaskStore {
     }
   }
 
-  async createTask(title: string, priority: string, sessionId?: string, tags?: string[]): Promise<boolean> {
+  async createTask(params: {
+    title: string;
+    priority: string;
+    sessionId?: string;
+    tags?: string[];
+    context?: string;
+    filePath?: string;
+    lineNumber?: number;
+    blockedBy?: string[];
+  }): Promise<boolean> {
     try {
-      const body: Record<string, unknown> = { title, priority };
-      if (sessionId) body.session_id = sessionId;
-      if (tags?.length) body.tags = tags;
+      const body: Record<string, unknown> = {
+        title: params.title,
+        priority: params.priority,
+      };
+      if (params.sessionId) body.session_id = params.sessionId;
+      if (params.tags?.length) body.tags = params.tags;
+      if (params.context) body.context = params.context;
+      if (params.filePath) body.file_path = params.filePath;
+      if (params.lineNumber) body.line_number = params.lineNumber;
+      if (params.blockedBy?.length) body.blocked_by = params.blockedBy;
       const res = await globalThis.fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -159,6 +175,20 @@ class TaskStore {
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
       return false;
+    }
+  }
+
+  async resolve(taskId: string, resolution: string): Promise<void> {
+    try {
+      const res = await globalThis.fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed', resolution }),
+      });
+      if (!res.ok) throw new Error(`Resolve task: ${res.status}`);
+      await this.fetch();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
     }
   }
 

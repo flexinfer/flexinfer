@@ -17,6 +17,11 @@ static NSPanel *overlayPanel = nil;
 static WKWebView *overlayWebView = nil;
 
 void createOverlayPanel(int x, int y, int width, int height, const char* url) {
+    // Convert the URL to an NSString NOW, before dispatch_async returns and
+    // the Go caller frees the C string. Blocks capture ObjC objects by
+    // retaining them, so urlStr survives until the block executes.
+    NSString *urlStr = [NSString stringWithUTF8String:url];
+
     dispatch_async(dispatch_get_main_queue(), ^{
         // If a panel already exists, destroy it first.
         if (overlayPanel != nil) {
@@ -78,15 +83,18 @@ void createOverlayPanel(int x, int y, int width, int height, const char* url) {
 
         [visualEffect addSubview:overlayWebView];
 
-        // Load the URL.
-        NSString *urlString = [NSString stringWithUTF8String:url];
-        NSURL *nsURL = [NSURL URLWithString:urlString];
+        // Load the URL (urlStr was captured and retained by the block).
+        NSURL *nsURL = [NSURL URLWithString:urlStr];
         if (nsURL != nil) {
             NSURLRequest *request = [NSURLRequest requestWithURL:nsURL];
             [overlayWebView loadRequest:request];
         }
 
         [overlayPanel makeKeyAndOrderFront:nil];
+
+        // Activate the app so the panel can receive focus and the WebView
+        // renders. Required for accessory-policy apps launched from a terminal.
+        [NSApp activateIgnoringOtherApps:YES];
     });
 }
 
@@ -94,6 +102,7 @@ void showPanel(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayPanel != nil) {
             [overlayPanel makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
         }
     });
 }
@@ -113,6 +122,7 @@ void togglePanel(void) {
                 [overlayPanel orderOut:nil];
             } else {
                 [overlayPanel makeKeyAndOrderFront:nil];
+                [NSApp activateIgnoringOtherApps:YES];
             }
         }
     });
@@ -144,6 +154,38 @@ void setAlwaysOnTop(bool onTop) {
         if (overlayPanel != nil) {
             [overlayPanel setLevel:onTop ? NSFloatingWindowLevel : NSNormalWindowLevel];
         }
+    });
+}
+
+// initNSApp initializes NSApplication as an accessory app (no dock icon).
+// Must be called before any AppKit operations like panel creation.
+void initNSApp(void) {
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
+// runEventLoop runs the NSApplication event loop on the current thread.
+// Must be called from the main thread after initNSApp(). Blocks until
+// stopEventLoop() is called.
+void runEventLoop(void) {
+    [NSApp run];
+}
+
+// stopEventLoop stops the NSApplication event loop.
+void stopEventLoop(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSApp stop:nil];
+        // Post a dummy event to unblock [NSApp run]'s internal event poll.
+        NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                            location:NSMakePoint(0, 0)
+                                       modifierFlags:0
+                                           timestamp:0
+                                        windowNumber:0
+                                             context:nil
+                                             subtype:0
+                                               data1:0
+                                               data2:0];
+        [NSApp postEvent:event atStart:YES];
     });
 }
 */
@@ -186,4 +228,23 @@ func Destroy() {
 // SetAlwaysOnTop sets whether the panel floats above all other windows.
 func SetAlwaysOnTop(onTop bool) {
 	C.setAlwaysOnTop(C.bool(onTop))
+}
+
+// InitApp initializes NSApplication as an accessory app (no dock icon).
+// Must be called on the main thread before CreatePanel or any AppKit call.
+func InitApp() {
+	C.initNSApp()
+}
+
+// RunApp runs the CoreFoundation event loop on the current thread.
+// This blocks until StopApp is called. It MUST be called from the main
+// goroutine with runtime.LockOSThread() held, because macOS requires
+// AppKit operations on the process's initial thread (thread 0).
+func RunApp() {
+	C.runEventLoop()
+}
+
+// StopApp stops the event loop, causing RunApp to return.
+func StopApp() {
+	C.stopEventLoop()
 }

@@ -1,15 +1,21 @@
 <script>
   import { taskStore } from '../stores/tasks.svelte.ts';
+  import { agentStore } from '../stores/agents.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
 
   $effect(() => {
     taskStore.startPolling(5000);
-    return () => { taskStore.stopPolling(); };
+    agentStore.startPolling(30000);
+    return () => {
+      taskStore.stopPolling();
+      agentStore.stopPolling();
+    };
   });
 
   let tasks = $derived(taskStore.tasks ?? []);
+  let availableAgents = $derived(agentStore.agents ?? []);
 
   let searchQuery = $state('');
   let priorityFilter = $state('all');
@@ -24,7 +30,19 @@
   let newPriority = $state('medium');
   let newSessionId = $state('');
   let newTags = $state('');
+  let newContext = $state('');
+  let newFilePath = $state('');
+  let newBlockedBy = $state([]);
+  let selectedAgentId = $state('');
   let creating = $state(false);
+  let showOptional = $state(false);
+
+  // Resolve modal
+  let showResolveModal = $state(false);
+  let resolveTaskId = $state('');
+  let resolveTaskTitle = $state('');
+  let resolutionText = $state('');
+  let resolving = $state(false);
 
   // Counts
   let pendingCt = $derived(tasks.filter(t => t.status === 'pending').length);
@@ -132,7 +150,12 @@
     newPriority = 'medium';
     newSessionId = '';
     newTags = '';
+    newContext = '';
+    newFilePath = '';
+    newBlockedBy = [];
+    selectedAgentId = '';
     creating = false;
+    showOptional = false;
   }
 
   function openCreateModal() {
@@ -145,16 +168,52 @@
     resetCreateForm();
   }
 
+  function onAgentSelect(agentId) {
+    selectedAgentId = agentId;
+    if (agentId) {
+      const agent = availableAgents.find(a => a.agent_id === agentId);
+      if (agent?.session_id) {
+        newSessionId = agent.session_id;
+      }
+    } else {
+      newSessionId = '';
+    }
+  }
+
+  function agentStatusIcon(status) {
+    if (status === 'active') return '🟢';
+    if (status === 'idle') return '🟡';
+    return '⚪';
+  }
+
+  function addBlockedBy(taskId) {
+    if (taskId && !newBlockedBy.includes(taskId)) {
+      newBlockedBy = [...newBlockedBy, taskId];
+    }
+  }
+
+  function removeBlockedBy(taskId) {
+    newBlockedBy = newBlockedBy.filter(id => id !== taskId);
+  }
+
+  // Pending/in-progress tasks for blocked-by picker
+  let blockableTasks = $derived(
+    tasks.filter(t => t.status === 'pending' || t.status === 'in_progress')
+  );
+
   async function submitCreateTask() {
     if (!newTitle.trim()) return;
     creating = true;
     const tags = newTags.trim() ? newTags.split(',').map(t => t.trim()).filter(Boolean) : undefined;
-    const ok = await taskStore.createTask(
-      newTitle.trim(),
-      newPriority,
-      newSessionId.trim() || undefined,
+    const ok = await taskStore.createTask({
+      title: newTitle.trim(),
+      priority: newPriority,
+      sessionId: newSessionId.trim() || undefined,
       tags,
-    );
+      context: newContext.trim() || undefined,
+      filePath: newFilePath.trim() || undefined,
+      blockedBy: newBlockedBy.length ? newBlockedBy : undefined,
+    });
     if (ok) {
       toastStore.success('Task created');
       closeCreateModal();
@@ -162,6 +221,30 @@
       toastStore.error(taskStore.error ?? 'Failed to create task');
       creating = false;
     }
+  }
+
+  function openResolve(task) {
+    resolveTaskId = task.id;
+    resolveTaskTitle = task.title;
+    resolutionText = '';
+    resolving = false;
+    showResolveModal = true;
+  }
+
+  function closeResolve() {
+    showResolveModal = false;
+    resolveTaskId = '';
+    resolveTaskTitle = '';
+    resolutionText = '';
+    resolving = false;
+  }
+
+  async function submitResolve() {
+    if (!resolveTaskId) return;
+    resolving = true;
+    await taskStore.resolve(resolveTaskId, resolutionText.trim());
+    toastStore.success('Task resolved');
+    closeResolve();
   }
 
   function relativeTime(ts) {
@@ -251,12 +334,18 @@
               <th>Status</th>
               <th>Blocked By</th>
               <th>Created</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {#each filtered as task (task.id)}
               <tr class="row-enter">
-                <td class="task-title">{task.title ?? '---'}</td>
+                <td class="task-title" title={task.context || task.title}>
+                  {task.title ?? '---'}
+                  {#if task.context}
+                    <span class="context-hint" title={task.context}>📋</span>
+                  {/if}
+                </td>
                 <td class="text-mono text-muted">{task.agent ?? '---'}</td>
                 <td>
                   <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
@@ -286,10 +375,15 @@
                   {/if}
                 </td>
                 <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
+                <td class="actions-col">
+                  {#if task.status !== 'completed' && task.status !== 'cancelled'}
+                    <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">✓</button>
+                  {/if}
+                </td>
               </tr>
             {:else}
               <tr>
-                <td colspan="6" class="empty-cell">No tasks match filters</td>
+                <td colspan="7" class="empty-cell">No tasks match filters</td>
               </tr>
             {/each}
           </tbody>
@@ -317,12 +411,18 @@
                         <th>Status</th>
                         <th>Blocked By</th>
                         <th>Created</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {#each items as task (task.id)}
                         <tr>
-                          <td class="task-title">{task.title ?? '---'}</td>
+                          <td class="task-title" title={task.context || task.title}>
+                            {task.title ?? '---'}
+                            {#if task.context}
+                              <span class="context-hint" title={task.context}>📋</span>
+                            {/if}
+                          </td>
                           <td class="text-mono text-muted">{task.agent ?? '---'}</td>
                           <td>
                             <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
@@ -352,6 +452,11 @@
                             {/if}
                           </td>
                           <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
+                          <td class="actions-col">
+                            {#if task.status !== 'completed' && task.status !== 'cancelled'}
+                              <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">✓</button>
+                            {/if}
+                          </td>
                         </tr>
                       {/each}
                     </tbody>
@@ -374,30 +479,115 @@
 <Modal open={showCreateModal} title="New Task" onClose={closeCreateModal}>
   <form class="create-form" onsubmit={(e) => { e.preventDefault(); submitCreateTask(); }}>
     <div class="form-field">
-      <label class="form-label" for="task-title">Title</label>
+      <label class="form-label" for="task-title">Title <span class="required">*</span></label>
       <input id="task-title" type="text" bind:value={newTitle} placeholder="What needs to be done?" required />
     </div>
-    <div class="form-field">
-      <label class="form-label" for="task-priority">Priority</label>
-      <select id="task-priority" bind:value={newPriority}>
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-        <option value="critical">Critical</option>
-      </select>
+
+    <div class="form-row">
+      <div class="form-field form-field-half">
+        <label class="form-label" for="task-agent">Assign to Agent</label>
+        <select id="task-agent" value={selectedAgentId} onchange={(e) => onAgentSelect(e.target.value)}>
+          <option value="">Unassigned</option>
+          {#each availableAgents as agent}
+            <option value={agent.agent_id}>
+              {agentStatusIcon(agent.status)} {agent.agent_id} ({agent.agent_type})
+            </option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-field form-field-half">
+        <label class="form-label" for="task-priority">Priority</label>
+        <select id="task-priority" bind:value={newPriority}>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="critical">Critical</option>
+        </select>
+      </div>
     </div>
+
     <div class="form-field">
-      <label class="form-label" for="task-session">Session ID (optional)</label>
-      <input id="task-session" type="text" bind:value={newSessionId} placeholder="Link to session..." />
+      <label class="form-label" for="task-context">Context / Description</label>
+      <textarea
+        id="task-context"
+        bind:value={newContext}
+        placeholder="Describe what needs to be done, include relevant details..."
+        rows="3"
+      ></textarea>
     </div>
-    <div class="form-field">
-      <label class="form-label" for="task-tags">Tags (comma-separated)</label>
-      <input id="task-tags" type="text" bind:value={newTags} placeholder="bug, frontend, urgent..." />
-    </div>
+
+    <button type="button" class="optional-toggle" onclick={() => showOptional = !showOptional}>
+      {showOptional ? '▼' : '▶'} Optional fields
+    </button>
+
+    {#if showOptional}
+      <div class="optional-section">
+        <div class="form-field">
+          <label class="form-label" for="task-filepath">File Path</label>
+          <input id="task-filepath" type="text" bind:value={newFilePath} placeholder="services/api/auth.go" />
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="task-tags">Tags (comma-separated)</label>
+          <input id="task-tags" type="text" bind:value={newTags} placeholder="auth, refactor, bug..." />
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="task-blocked-by">Blocked By</label>
+          <div class="blocked-by-picker">
+            <select id="task-blocked-by" onchange={(e) => { addBlockedBy(e.target.value); e.target.value = ''; }}>
+              <option value="">Select a task...</option>
+              {#each blockableTasks as t}
+                {#if !newBlockedBy.includes(t.id)}
+                  <option value={t.id}>{t.title} ({t.id.slice(0, 8)})</option>
+                {/if}
+              {/each}
+            </select>
+            {#if newBlockedBy.length > 0}
+              <div class="blocked-chips">
+                {#each newBlockedBy as depId}
+                  <span class="dep-chip">
+                    {depId.slice(0, 8)}
+                    <button type="button" class="chip-remove" onclick={() => removeBlockedBy(depId)}>×</button>
+                  </span>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+        {#if selectedAgentId}
+          <div class="form-field">
+            <label class="form-label" for="task-session">Session ID (auto-filled from agent)</label>
+            <input id="task-session" type="text" bind:value={newSessionId} placeholder="Link to session..." />
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <div class="form-actions">
       <button type="button" class="btn btn-ghost" onclick={closeCreateModal}>Cancel</button>
       <button type="submit" class="btn btn-success" disabled={creating || !newTitle.trim()}>
         {creating ? 'Creating...' : 'Create Task'}
+      </button>
+    </div>
+  </form>
+</Modal>
+
+<!-- Resolve Task Modal -->
+<Modal open={showResolveModal} title="Resolve Task" onClose={closeResolve}>
+  <form class="create-form" onsubmit={(e) => { e.preventDefault(); submitResolve(); }}>
+    <p class="resolve-title">{resolveTaskTitle}</p>
+    <div class="form-field">
+      <label class="form-label" for="resolution-text">Resolution</label>
+      <textarea
+        id="resolution-text"
+        bind:value={resolutionText}
+        placeholder="What was done to complete this task?"
+        rows="3"
+      ></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick={closeResolve}>Cancel</button>
+      <button type="submit" class="btn btn-success" disabled={resolving}>
+        {resolving ? 'Resolving...' : 'Resolve'}
       </button>
     </div>
   </form>
@@ -535,6 +725,131 @@
   .create-form {
     display: flex;
     flex-direction: column;
+  }
+
+  .create-form textarea {
+    width: 100%;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    color: var(--fg-primary);
+  }
+
+  .create-form textarea:focus {
+    border-color: var(--border-focus);
+    outline: none;
+  }
+
+  .required {
+    color: var(--error);
+  }
+
+  .form-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .form-field-half {
+    flex: 1;
+  }
+
+  .optional-toggle {
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 6px 0;
+    text-align: left;
+  }
+
+  .optional-toggle:hover {
+    color: var(--fg-secondary);
+  }
+
+  .optional-section {
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 12px;
+    margin-bottom: 8px;
+    background: var(--bg-primary);
+  }
+
+  .blocked-by-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .blocked-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .dep-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg-secondary);
+  }
+
+  .chip-remove {
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .chip-remove:hover {
+    color: var(--error);
+  }
+
+  /* Resolve modal */
+  .resolve-title {
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+
+  /* Actions column */
+  .actions-col {
+    white-space: nowrap;
+  }
+
+  .btn-resolve {
+    background: rgba(63, 185, 80, 0.15);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+    color: var(--success);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .btn-resolve:hover {
+    background: rgba(63, 185, 80, 0.25);
+  }
+
+  .context-hint {
+    font-size: 10px;
+    margin-left: 4px;
+    cursor: help;
   }
 
   /* Grouped view */

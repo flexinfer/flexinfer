@@ -461,29 +461,64 @@ func (a *AgentBridge) CompactionStatus() (*CompactionInfo, error) {
 
 // --- CRUD methods (v2) ---
 
+// CreateTaskParams holds all fields for task creation.
+type CreateTaskParams struct {
+	SessionID  string
+	Title      string
+	Priority   string
+	Tags       []string
+	Context    string   // Description of what needs to be done
+	FilePath   string   // Related file
+	LineNumber int      // Related line
+	BlockedBy  []string // Task IDs this is blocked by
+}
+
 // CreateTask creates a new task in a session.
-func (a *AgentBridge) CreateTask(sessionID, title, priority string, tags []string) error {
+func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
 	args := map[string]any{
-		"title":    title,
-		"priority": priority,
+		"title":    p.Title,
+		"priority": p.Priority,
 	}
-	if sessionID != "" {
-		args["session_id"] = sessionID
+	if p.SessionID != "" {
+		args["session_id"] = p.SessionID
 	}
-	if len(tags) > 0 {
-		args["tags"] = tags
+	if len(p.Tags) > 0 {
+		args["tags"] = p.Tags
+	}
+	if p.Context != "" {
+		args["context"] = p.Context
+	}
+	if p.FilePath != "" {
+		args["file_path"] = p.FilePath
+	}
+	if p.LineNumber > 0 {
+		args["line_number"] = p.LineNumber
+	}
+	if len(p.BlockedBy) > 0 {
+		args["blocked_by"] = p.BlockedBy
 	}
 	return a.callAgentTool("agent_task_add", args, nil)
 }
 
-// UpdateTask updates a task's status and/or priority.
-func (a *AgentBridge) UpdateTask(id, status, priority string) error {
-	args := map[string]any{"task_id": id}
-	if status != "" {
-		args["status"] = status
+// UpdateTaskParams holds all fields for task updates.
+type UpdateTaskParams struct {
+	ID         string
+	Status     string
+	Priority   string
+	Resolution string // For completed tasks
+}
+
+// UpdateTask updates a task's status, priority, and/or resolution.
+func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
+	args := map[string]any{"task_id": p.ID}
+	if p.Status != "" {
+		args["status"] = p.Status
 	}
-	if priority != "" {
-		args["priority"] = priority
+	if p.Priority != "" {
+		args["priority"] = p.Priority
+	}
+	if p.Resolution != "" {
+		args["resolution"] = p.Resolution
 	}
 	return a.callAgentTool("agent_task_update", args, nil)
 }

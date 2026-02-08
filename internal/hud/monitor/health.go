@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,6 +183,20 @@ func (m *HealthMonitor) Refresh() error {
 		m.logger.Warn("health: failed to fetch servers", "error", serversErr)
 	}
 
+	// Fetch aggregated tool list to derive per-server tool counts.
+	// Tool names are namespaced as "server__toolname".
+	toolCounts := make(map[string]int)
+	toolsResult, toolsErr := m.client.Tools()
+	if toolsErr != nil {
+		m.logger.Debug("health: failed to fetch tools for counts", "error", toolsErr)
+	} else if toolsResult != nil {
+		for _, t := range toolsResult.Tools {
+			if parts := strings.SplitN(t.Name, "__", 2); len(parts) == 2 {
+				toolCounts[parts[0]]++
+			}
+		}
+	}
+
 	// If both failed, nothing to update.
 	if healthErr != nil && serversErr != nil {
 		return healthErr
@@ -254,6 +269,9 @@ func (m *HealthMonitor) Refresh() error {
 			entry.AvgLatencyMs = active.AvgLatencyMs
 			entry.ErrorMessage = active.ErrorMessage
 		}
+
+		// Set tool count from the parsed tool namespace.
+		entry.ToolCount = toolCounts[name]
 
 		// Update sparkline history.
 		ring, ok := m.history[name]

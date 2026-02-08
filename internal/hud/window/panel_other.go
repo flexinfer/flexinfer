@@ -36,3 +36,12 @@ func RegisterHotkey(callback func()) error {
 
 // UnregisterHotkey is a no-op on non-darwin platforms.
 func UnregisterHotkey() error { return nil }
+
+// InitApp is a no-op on non-darwin platforms.
+func InitApp() {}
+
+// RunApp is a no-op on non-darwin platforms.
+func RunApp() {}
+
+// StopApp is a no-op on non-darwin platforms.
+func StopApp() {}

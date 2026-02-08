@@ -200,22 +200,6 @@ func Run(cfg Config) error {
 
 	openBrowser(url)
 
-	// Native macOS overlay: create NSPanel pointing at the HUD URL and
-	// register Cmd+Shift+L as a global hotkey to toggle it.
-	if cfg.Overlay {
-		// Default panel size: 1200x800, positioned at (100, 100).
-		window.CreatePanel(100, 100, 1200, 800, url)
-		defer window.Destroy()
-
-		if err := window.RegisterHotkey(window.Toggle); err != nil {
-			logger.Warn("failed to register Cmd+Shift+L hotkey", "error", err)
-		} else {
-			logger.Info("native overlay enabled — press Cmd+Shift+L to toggle")
-			fmt.Println("Native overlay: press Cmd+Shift+L to toggle")
-		}
-		defer window.UnregisterHotkey()
-	}
-
 	// WriteTimeout must be 0 to support SSE (Server-Sent Events) connections
 	// which are long-lived. A non-zero WriteTimeout would forcibly close SSE
 	// streams after the timeout period.
@@ -234,6 +218,47 @@ func Run(cfg Config) error {
 		errCh <- server.Serve(ln)
 	}()
 
+	if cfg.Overlay {
+		// Native macOS overlay mode: the HTTP server runs in a background
+		// goroutine above, and we run the Cocoa event loop on the main thread.
+		// Carbon hotkeys and AppKit panels need an active run loop on thread 0.
+		// NOTE: runtime.LockOSThread() is called in cmd/loom/main.go init()
+		// to guarantee goroutine 1 stays on thread 0 from process start.
+
+		// Initialize NSApplication before any AppKit calls.
+		window.InitApp()
+		window.CreatePanel(100, 100, 1200, 800, url)
+		if err := window.RegisterHotkey(window.Toggle); err != nil {
+			logger.Warn("failed to register Cmd+Shift+L hotkey", "error", err)
+		} else {
+			logger.Info("native overlay enabled — press Cmd+Shift+L to toggle")
+			fmt.Println("Native overlay: press Cmd+Shift+L to toggle")
+		}
+
+		// Watch for signal/error in background and stop the event loop.
+		go func() {
+			select {
+			case err := <-errCh:
+				if err != nil {
+					logger.Error("HTTP server error", "error", err)
+				}
+			case <-ctx.Done():
+			}
+			logger.Info("shutting down HUD server")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			server.Shutdown(shutdownCtx)
+			window.UnregisterHotkey()
+			window.Destroy()
+			window.StopApp()
+		}()
+
+		// Block on the Cocoa event loop (runs until StopApp is called).
+		window.RunApp()
+		return nil
+	}
+
+	// Non-overlay mode: block on signal/error directly.
 	select {
 	case err := <-errCh:
 		return err
@@ -267,6 +292,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/presence", a.withCORS(a.handlePresence))
 	mux.HandleFunc("GET /api/claims", a.withCORS(a.handleClaims))
 	mux.HandleFunc("GET /api/worktrees", a.withCORS(a.handleWorktrees))
+
+	// API routes — agent list (from fleet monitor).
+	mux.HandleFunc("GET /api/agents", a.withCORS(a.handleAgents))
 
 	// API routes — direct bridge calls (parameterized queries).
 	mux.HandleFunc("GET /api/sessions", a.withCORS(a.handleSessions))
@@ -784,10 +812,14 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		SessionID string   `json:"session_id"`
-		Title     string   `json:"title"`
-		Priority  string   `json:"priority"`
-		Tags      []string `json:"tags"`
+		SessionID  string   `json:"session_id"`
+		Title      string   `json:"title"`
+		Priority   string   `json:"priority"`
+		Tags       []string `json:"tags"`
+		Context    string   `json:"context"`
+		FilePath   string   `json:"file_path"`
+		LineNumber int      `json:"line_number"`
+		BlockedBy  []string `json:"blocked_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
@@ -800,7 +832,16 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if body.Priority == "" {
 		body.Priority = "medium"
 	}
-	if err := a.agent.CreateTask(body.SessionID, body.Title, body.Priority, body.Tags); err != nil {
+	if err := a.agent.CreateTask(bridge.CreateTaskParams{
+		SessionID:  body.SessionID,
+		Title:      body.Title,
+		Priority:   body.Priority,
+		Tags:       body.Tags,
+		Context:    body.Context,
+		FilePath:   body.FilePath,
+		LineNumber: body.LineNumber,
+		BlockedBy:  body.BlockedBy,
+	}); err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to create task", err)
 		return
 	}
@@ -814,18 +855,29 @@ func (a *App) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Status   string `json:"status"`
-		Priority string `json:"priority"`
+		Status     string `json:"status"`
+		Priority   string `json:"priority"`
+		Resolution string `json:"resolution"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if err := a.agent.UpdateTask(id, body.Status, body.Priority); err != nil {
+	if err := a.agent.UpdateTask(bridge.UpdateTaskParams{
+		ID:         id,
+		Status:     body.Status,
+		Priority:   body.Priority,
+		Resolution: body.Resolution,
+	}); err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to update task", err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (a *App) handleAgents(w http.ResponseWriter, _ *http.Request) {
+	snap := a.fleetMonitor.Snapshot()
+	a.writeJSON(w, http.StatusOK, map[string]any{"agents": snap.Agents})
 }
 
 func (a *App) handleMemoryAdd(w http.ResponseWriter, r *http.Request) {
@@ -1014,14 +1066,41 @@ func (a *App) handleGraphFindPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
-	// Tunnel status from daemon client — placeholder since tunnels are daemon-level.
-	a.writeJSON(w, http.StatusOK, map[string]any{"tunnels": []any{}, "count": 0})
+	result, err := a.client.Tunnels()
+	if err != nil {
+		// Fallback to empty if daemon doesn't support tunnels yet.
+		a.logger.Debug("tunnels RPC failed, returning empty", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{"tunnels": []any{}, "count": 0})
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"tunnels":   result.Tunnels,
+		"count":     result.Total,
+		"connected": result.Connected,
+	})
 }
 
 func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
+	result, err := a.client.CacheStats()
+	if err != nil {
+		// Fallback to local HUD cache stats if daemon doesn't support cache RPC.
+		a.logger.Debug("cache stats RPC failed, returning local cache", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"entries":  a.cache.Len(),
+			"hit_rate": 0.0,
+		})
+		return
+	}
+	hitRate := 0.0
+	if result.TotalHits > 0 && result.Entries > 0 {
+		hitRate = float64(result.TotalHits) / float64(result.TotalHits+int64(result.Entries))
+	}
 	a.writeJSON(w, http.StatusOK, map[string]any{
-		"entries":  a.cache.Len(),
-		"hit_rate": 0.0,
+		"entries":    result.Entries,
+		"size_bytes": result.SizeBytes,
+		"max_bytes":  result.MaxBytes,
+		"hit_rate":   hitRate,
+		"enabled":    result.Enabled,
 	})
 }
 
