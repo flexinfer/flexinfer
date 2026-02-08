@@ -243,7 +243,10 @@ func (b *Benchmarker) upsertGlobalResult(ctx context.Context, model string, resu
 		"samples":          result.Samples,
 		"timestamp":        b.now().UTC().Format(time.RFC3339),
 	}
-	metaJSON, _ := json.Marshal(meta)
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal benchmark result metadata: %w", err)
+	}
 
 	for i := 0; i < 3; i++ {
 		cm, err := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Get(ctx, b.resultsCM, metav1.GetOptions{})
@@ -487,6 +490,27 @@ type streamSample struct {
 	wallTime        time.Duration
 }
 
+func (b *Benchmarker) closeResponseBody(ctx context.Context, resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	if err := resp.Body.Close(); err != nil {
+		log.FromContext(ctx).V(1).Info("failed to close http response body", "error", err)
+	}
+}
+
+func (b *Benchmarker) readResponseBodyBestEffort(ctx context.Context, resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.FromContext(ctx).V(1).Info("failed to read http response body", "error", err)
+		return fmt.Sprintf("<failed to read body: %v>", err)
+	}
+	return string(body)
+}
+
 func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string, maxTokens int) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
 	if tokens, duration, ok, err := b.generateOnceVLLMServerTiming(ctx, model, prompt, maxTokens); err != nil {
 		return 0, 0, false, err
@@ -507,12 +531,15 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 		}
 	}
 
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
 		"stream":     false,
 	})
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("failed to marshal vLLM request: %w", err)
+	}
 
 	start := b.now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
@@ -524,11 +551,11 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -550,12 +577,15 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 		return 0, 0, false, err
 	}
 
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
 		"stream":     false,
 	})
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("failed to marshal vLLM request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return 0, 0, false, err
@@ -565,11 +595,11 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -611,7 +641,7 @@ func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimi
 	if err != nil {
 		return vllmTimingSnapshot{}, false, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 	if resp.StatusCode != http.StatusOK {
 		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 			logger.Error(err, "Failed to drain vLLM metrics response body", "status", resp.StatusCode)
@@ -694,7 +724,7 @@ func sumPromMetric(metrics, name string) (float64, bool) {
 }
 
 func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt string, maxTokens int) (streamSample, bool, error) {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
@@ -703,6 +733,9 @@ func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt 
 			"include_usage": true,
 		},
 	})
+	if err != nil {
+		return streamSample{}, false, fmt.Errorf("failed to marshal vLLM stream request: %w", err)
+	}
 
 	start := b.now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/completions"), bytes.NewBuffer(reqBody))
@@ -716,11 +749,11 @@ func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt 
 	if err != nil {
 		return streamSample{}, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	type chunk struct {
@@ -815,11 +848,14 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 		}
 	}
 
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]interface{}{
 		"model":  model,
 		"prompt": prompt,
 		"stream": false,
 	})
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("failed to marshal Ollama request: %w", err)
+	}
 
 	start := b.now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/api/generate"), bytes.NewBuffer(reqBody))
@@ -831,11 +867,11 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -856,11 +892,14 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 }
 
 func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, prompt string) (streamSample, bool, error) {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]interface{}{
 		"model":  model,
 		"prompt": prompt,
 		"stream": true,
 	})
+	if err != nil {
+		return streamSample{}, false, fmt.Errorf("failed to marshal Ollama stream request: %w", err)
+	}
 
 	start := b.now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/api/generate"), bytes.NewBuffer(reqBody))
@@ -872,11 +911,11 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 	if err != nil {
 		return streamSample{}, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return streamSample{}, false, fmt.Errorf("inference failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	decoder := json.NewDecoder(resp.Body)
@@ -930,7 +969,6 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 	}
 	if !lastTokenAt.IsZero() && !firstTokenAt.IsZero() && lastTokenAt.After(firstTokenAt) {
 		// This is "observed decode window", useful if eval_duration is absent.
-		_ = lastTokenAt
 	}
 	return s, true, nil
 }
@@ -951,11 +989,11 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("ComfyUI health check failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("ComfyUI health check failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	duration = b.now().Sub(start)
@@ -980,11 +1018,11 @@ func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("diffusers health check failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("diffusers health check failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	duration = b.now().Sub(start)
@@ -1017,11 +1055,11 @@ func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (token
 	if err != nil {
 		return 0, 0, false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer b.closeResponseBody(ctx, resp)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, false, fmt.Errorf("TEI embed request failed: status %d, body: %s", resp.StatusCode, string(body))
+		body := b.readResponseBodyBestEffort(ctx, resp)
+		return 0, 0, false, fmt.Errorf("TEI embed request failed: status %d, body: %s", resp.StatusCode, body)
 	}
 
 	// Read response body to ensure request is complete
