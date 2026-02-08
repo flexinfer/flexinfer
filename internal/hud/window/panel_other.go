@@ -45,3 +45,17 @@ func RunApp() {}
 
 // StopApp is a no-op on non-darwin platforms.
 func StopApp() {}
+
+// CreateOverlayPanel is a no-op on non-darwin platforms.
+func CreateOverlayPanel(cfg OverlayConfig) {
+	fmt.Println("native overlay not supported on this platform")
+}
+
+// SlideIn is a no-op on non-darwin platforms.
+func SlideIn() {}
+
+// SlideOut is a no-op on non-darwin platforms.
+func SlideOut() {}
+
+// AnimatedToggle is a no-op on non-darwin platforms.
+func AnimatedToggle() {}

@@ -11,6 +11,10 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var port int
 	var metricsAddr string
 	var overlay bool
+	var overlayEdge string
+	var overlayWidth int
+	var overlayOpacity float64
+	var overlayCornerRadius float64
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -27,16 +31,22 @@ Vite dev server running on :5173.
 
 Use --overlay to enable the native macOS overlay panel with a global
 Cmd+Shift+L hotkey to toggle it on/off (macOS only, requires CGo).
+The overlay appears as a borderless floating strip anchored to a screen
+edge. Customize with --edge, --width, --opacity, and --corner-radius.
 
 Use --metrics-addr to connect to the daemon's SSE event stream for
 real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return hud.Run(hud.Config{
-				SocketPath:  socketPath,
-				Dev:         dev,
-				Port:        port,
-				MetricsAddr: metricsAddr,
-				Overlay:     overlay,
+				SocketPath:          socketPath,
+				Dev:                 dev,
+				Port:                port,
+				MetricsAddr:         metricsAddr,
+				Overlay:             overlay,
+				OverlayEdge:         overlayEdge,
+				OverlayWidth:        overlayWidth,
+				OverlayOpacity:      overlayOpacity,
+				OverlayCornerRadius: overlayCornerRadius,
 			})
 		},
 	}
@@ -45,6 +55,10 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().IntVar(&port, "port", 0, "Port to listen on (0 = random)")
 	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "Daemon metrics/events address (e.g., 127.0.0.1:9090)")
 	cmd.Flags().BoolVar(&overlay, "overlay", false, "Enable native macOS overlay panel (Cmd+Shift+L to toggle)")
+	cmd.Flags().StringVar(&overlayEdge, "edge", "right", "Screen edge for overlay panel: 'right' or 'left'")
+	cmd.Flags().IntVar(&overlayWidth, "width", 380, "Overlay panel width in points")
+	cmd.Flags().Float64Var(&overlayOpacity, "opacity", 0.92, "Overlay background opacity (0.0–1.0)")
+	cmd.Flags().Float64Var(&overlayCornerRadius, "corner-radius", 12, "Overlay corner radius in points")
 
 	return cmd
 }

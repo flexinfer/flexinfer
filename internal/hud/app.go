@@ -37,6 +37,12 @@ type Config struct {
 	Port        int    // Port to listen on. 0 means pick a random available port.
 	MetricsAddr string // Daemon metrics/events HTTP address (e.g., "localhost:9090").
 	Overlay     bool   // Enable macOS native overlay (NSPanel + Cmd+Shift+L hotkey).
+
+	// Overlay appearance (only used when Overlay is true).
+	OverlayEdge         string  // Screen edge: "right" or "left" (default "right").
+	OverlayWidth        int     // Panel width in points (default 380).
+	OverlayOpacity      float64 // Background opacity 0.0–1.0 (default 0.92).
+	OverlayCornerRadius float64 // Corner radius in points (default 12).
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -227,8 +233,18 @@ func Run(cfg Config) error {
 
 		// Initialize NSApplication before any AppKit calls.
 		window.InitApp()
-		window.CreatePanel(100, 100, 1200, 800, url)
-		if err := window.RegisterHotkey(window.Toggle); err != nil {
+
+		// Build overlay URL with query parameter so the frontend renders
+		// the compact OverlayShell instead of the full dashboard.
+		overlayURL := url + "?overlay=1"
+		window.CreateOverlayPanel(window.OverlayConfig{
+			Edge:         cfg.OverlayEdge,
+			Width:        cfg.OverlayWidth,
+			Opacity:      cfg.OverlayOpacity,
+			CornerRadius: cfg.OverlayCornerRadius,
+			URL:          overlayURL,
+		})
+		if err := window.RegisterHotkey(window.AnimatedToggle); err != nil {
 			logger.Warn("failed to register Cmd+Shift+L hotkey", "error", err)
 		} else {
 			logger.Info("native overlay enabled — press Cmd+Shift+L to toggle")

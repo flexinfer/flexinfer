@@ -5,12 +5,13 @@ package window
 
 /*
 #cgo CFLAGS: -x objective-c -fmodules
-#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework WebKit
+#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework WebKit -framework QuartzCore
 
 #include <stdlib.h>
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
 #import <WebKit/WebKit.h>
+#import <QuartzCore/QuartzCore.h>
 
 // Static globals for the overlay panel and web view.
 static NSPanel *overlayPanel = nil;
@@ -188,6 +189,194 @@ void stopEventLoop(void) {
         [NSApp postEvent:event atStart:YES];
     });
 }
+
+// --- Edge-anchored borderless overlay panel with slide animation ---
+
+// Stored on/off-screen frames for animation.
+static NSRect panelOnScreenFrame;
+static NSRect panelOffScreenFrame;
+static bool panelAnimating = false;
+static bool panelEdgeIsRight = true;
+
+// createOverlayPanelEdge creates a borderless, edge-anchored floating panel.
+// edge: "right" or "left". width: panel width in points.
+// opacity: background alpha 0.0-1.0. cornerRadius: corner radius in points.
+void createOverlayPanelEdge(const char* edge, int width, double opacity,
+                            double cornerRadius, const char* url) {
+    NSString *edgeStr = [NSString stringWithUTF8String:edge];
+    NSString *urlStr  = [NSString stringWithUTF8String:url];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Destroy existing panel.
+        if (overlayPanel != nil) {
+            [overlayPanel close];
+            overlayPanel = nil;
+            overlayWebView = nil;
+        }
+
+        panelEdgeIsRight = ![edgeStr isEqualToString:@"left"];
+
+        // Compute frame from the visible screen area (excludes menu bar + Dock).
+        NSRect screen = [[NSScreen mainScreen] visibleFrame];
+        CGFloat panelW = (CGFloat)width;
+        CGFloat panelH = screen.size.height;
+        CGFloat panelX;
+        if (panelEdgeIsRight) {
+            panelX = NSMaxX(screen) - panelW;
+        } else {
+            panelX = screen.origin.x;
+        }
+        CGFloat panelY = screen.origin.y;
+
+        panelOnScreenFrame  = NSMakeRect(panelX, panelY, panelW, panelH);
+        // Off-screen: shift by panel width in the edge direction.
+        if (panelEdgeIsRight) {
+            panelOffScreenFrame = NSMakeRect(panelX + panelW, panelY, panelW, panelH);
+        } else {
+            panelOffScreenFrame = NSMakeRect(panelX - panelW, panelY, panelW, panelH);
+        }
+
+        // Borderless, non-activating, utility panel.
+        NSUInteger style = NSWindowStyleMaskBorderless |
+                           NSWindowStyleMaskNonactivatingPanel |
+                           NSWindowStyleMaskUtilityWindow;
+
+        overlayPanel = [[NSPanel alloc] initWithContentRect:panelOnScreenFrame
+                                                  styleMask:style
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+
+        [overlayPanel setLevel:NSFloatingWindowLevel];
+        [overlayPanel setHidesOnDeactivate:NO];
+        [overlayPanel setCollectionBehavior:
+            NSWindowCollectionBehaviorCanJoinAllSpaces |
+            NSWindowCollectionBehaviorFullScreenAuxiliary];
+
+        // Translucent background with configurable opacity.
+        [overlayPanel setOpaque:NO];
+        [overlayPanel setBackgroundColor:[NSColor colorWithCalibratedWhite:0.05 alpha:opacity]];
+
+        // Draggable by window background (Svelte header uses -webkit-app-region: drag).
+        [overlayPanel setMovableByWindowBackground:YES];
+
+        // Rounded corners.
+        [[overlayPanel contentView] setWantsLayer:YES];
+        [[[overlayPanel contentView] layer] setCornerRadius:cornerRadius];
+        [[[overlayPanel contentView] layer] setMasksToBounds:YES];
+
+        // Visual effect view for vibrancy.
+        NSVisualEffectView *visualEffect = [[NSVisualEffectView alloc]
+            initWithFrame:[[overlayPanel contentView] bounds]];
+        [visualEffect setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        [visualEffect setMaterial:NSVisualEffectMaterialUnderWindowBackground];
+        [visualEffect setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+        [visualEffect setState:NSVisualEffectStateActive];
+        [overlayPanel setContentView:visualEffect];
+
+        // Preserve rounded corners on the visual effect view.
+        [visualEffect setWantsLayer:YES];
+        [[visualEffect layer] setCornerRadius:cornerRadius];
+        [[visualEffect layer] setMasksToBounds:YES];
+
+        // WKWebView.
+        WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+        [config.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
+
+        overlayWebView = [[WKWebView alloc]
+            initWithFrame:[visualEffect bounds]
+            configuration:config];
+        [overlayWebView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        [overlayWebView setValue:@NO forKey:@"drawsBackground"];
+        [visualEffect addSubview:overlayWebView];
+
+        NSURL *nsURL = [NSURL URLWithString:urlStr];
+        if (nsURL != nil) {
+            NSURLRequest *request = [NSURLRequest requestWithURL:nsURL];
+            [overlayWebView loadRequest:request];
+        }
+
+        [overlayPanel makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+    });
+}
+
+// slideIn animates the panel from off-screen to its anchored position.
+void slideIn(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (overlayPanel == nil || panelAnimating) return;
+        panelAnimating = true;
+
+        [overlayPanel setFrame:panelOffScreenFrame display:NO];
+        [overlayPanel setAlphaValue:0.0];
+        [overlayPanel makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            [ctx setDuration:0.25];
+            [ctx setTimingFunction:[CAMediaTimingFunction functionWithName:
+                kCAMediaTimingFunctionEaseOut]];
+            [[overlayPanel animator] setFrame:panelOnScreenFrame display:YES];
+            [[overlayPanel animator] setAlphaValue:1.0];
+        } completionHandler:^{
+            panelAnimating = false;
+        }];
+    });
+}
+
+// slideOut animates the panel off-screen and then hides it.
+void slideOut(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (overlayPanel == nil || panelAnimating) return;
+        panelAnimating = true;
+
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            [ctx setDuration:0.20];
+            [ctx setTimingFunction:[CAMediaTimingFunction functionWithName:
+                kCAMediaTimingFunctionEaseIn]];
+            [[overlayPanel animator] setFrame:panelOffScreenFrame display:YES];
+            [[overlayPanel animator] setAlphaValue:0.0];
+        } completionHandler:^{
+            [overlayPanel orderOut:nil];
+            panelAnimating = false;
+        }];
+    });
+}
+
+// animatedToggle slides the panel in or out with animation.
+void animatedToggle(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (overlayPanel == nil || panelAnimating) return;
+        if ([overlayPanel isVisible]) {
+            // Call slideOut logic inline to avoid nested dispatch_async.
+            panelAnimating = true;
+            [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+                [ctx setDuration:0.20];
+                [ctx setTimingFunction:[CAMediaTimingFunction functionWithName:
+                    kCAMediaTimingFunctionEaseIn]];
+                [[overlayPanel animator] setFrame:panelOffScreenFrame display:YES];
+                [[overlayPanel animator] setAlphaValue:0.0];
+            } completionHandler:^{
+                [overlayPanel orderOut:nil];
+                panelAnimating = false;
+            }];
+        } else {
+            panelAnimating = true;
+            [overlayPanel setFrame:panelOffScreenFrame display:NO];
+            [overlayPanel setAlphaValue:0.0];
+            [overlayPanel makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
+            [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+                [ctx setDuration:0.25];
+                [ctx setTimingFunction:[CAMediaTimingFunction functionWithName:
+                    kCAMediaTimingFunctionEaseOut]];
+                [[overlayPanel animator] setFrame:panelOnScreenFrame display:YES];
+                [[overlayPanel animator] setAlphaValue:1.0];
+            } completionHandler:^{
+                panelAnimating = false;
+            }];
+        }
+    });
+}
 */
 import "C"
 import "unsafe"
@@ -247,4 +436,31 @@ func RunApp() {
 // StopApp stops the event loop, causing RunApp to return.
 func StopApp() {
 	C.stopEventLoop()
+}
+
+// CreateOverlayPanel creates a borderless, edge-anchored floating panel
+// configured by the given OverlayConfig. The panel spans the full visible
+// screen height and anchors to the specified edge.
+func CreateOverlayPanel(cfg OverlayConfig) {
+	cedge := C.CString(cfg.Edge)
+	defer C.free(unsafe.Pointer(cedge))
+	curl := C.CString(cfg.URL)
+	defer C.free(unsafe.Pointer(curl))
+	C.createOverlayPanelEdge(cedge, C.int(cfg.Width), C.double(cfg.Opacity),
+		C.double(cfg.CornerRadius), curl)
+}
+
+// SlideIn animates the overlay panel from off-screen to its anchored position.
+func SlideIn() {
+	C.slideIn()
+}
+
+// SlideOut animates the overlay panel off-screen and hides it.
+func SlideOut() {
+	C.slideOut()
+}
+
+// AnimatedToggle slides the overlay panel in or out with animation.
+func AnimatedToggle() {
+	C.animatedToggle()
 }

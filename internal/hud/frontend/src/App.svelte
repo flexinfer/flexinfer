@@ -5,6 +5,7 @@
   import { healthStore } from './lib/stores/health.svelte.ts';
   import { streamStore } from './lib/stores/stream.svelte.ts';
   import { eventStore } from './lib/stores/events.svelte.ts';
+  import { overlayStore } from './lib/stores/overlay.svelte.ts';
   import FleetPanel from './lib/components/FleetPanel.svelte';
   import ServersPanel from './lib/components/ServersPanel.svelte';
   import TasksPanel from './lib/components/TasksPanel.svelte';
@@ -15,6 +16,7 @@
   import PresencePanel from './lib/components/PresencePanel.svelte';
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
+  import OverlayShell from './lib/components/OverlayShell.svelte';
   import Toast from './lib/widgets/Toast.svelte';
 
   const panels = [
@@ -32,6 +34,12 @@
   let showCommandPalette = $state(false);
 
   onMount(() => {
+    // Detect overlay mode from URL query parameter (?overlay=1).
+    overlayStore.init();
+
+    // In overlay mode, OverlayShell manages its own store lifecycle.
+    if (overlayStore.enabled) return;
+
     // Initialize hash-based router.
     router.init();
 
@@ -44,8 +52,9 @@
     eventStore.disconnect();
   });
 
-  // Keyboard shortcuts (number keys for panel switching)
+  // Keyboard shortcuts (number keys for panel switching — disabled in overlay mode)
   function handleKeydown(e) {
+    if (overlayStore.enabled) return;
     const tag = e.target?.tagName;
     const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
@@ -128,6 +137,9 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#if overlayStore.enabled}
+  <OverlayShell />
+{:else}
 <div class="hud-shell">
   <!-- Top navigation bar -->
   <header class="nav-bar">
@@ -218,6 +230,7 @@
   <!-- Toast notifications overlay -->
   <Toast />
 </div>
+{/if}
 
 <style>
   .hud-shell {
