@@ -1,6 +1,7 @@
 package hud
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,7 +102,13 @@ func TestSSEHub_ServeHTTP(t *testing.T) {
 	server := httptest.NewServer(hub)
 	defer server.Close()
 
-	resp, err := http.Get(server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}

@@ -4,9 +4,11 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Notify sends a macOS notification with the given title, subtitle, and message.
@@ -74,7 +76,9 @@ func sendNotification(title, subtitle, message, sound string) error {
 		script.WriteString(fmt.Sprintf(` sound name "%s"`, sound))
 	}
 
-	cmd := exec.Command("osascript", "-e", script.String())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script.String())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("osascript failed: %w (output: %s)", err, strings.TrimSpace(string(output)))

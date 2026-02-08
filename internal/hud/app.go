@@ -194,7 +194,7 @@ func Run(cfg Config) error {
 	app.registerRoutes(mux)
 
 	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
@@ -1290,16 +1290,21 @@ func (a *App) writeError(w http.ResponseWriter, status int, message string, err 
 
 // openBrowser attempts to open a URL in the default browser.
 func openBrowser(url string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.CommandContext(ctx, "open", url)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.CommandContext(ctx, "xdg-open", url)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", url)
 	default:
+		cancel()
 		return
 	}
-	_ = cmd.Start()
+	go func() {
+		defer cancel()
+		_ = cmd.Run()
+	}()
 }
