@@ -56,6 +56,8 @@ func init() {
 
 func runLogs(cmd *cobra.Command, args []string) error {
 	name := args[0]
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 
 	clientset, err := getClientset()
 	if err != nil {
@@ -88,10 +90,10 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	if targetPod == nil {
 		// Fall back to first pod if none are running
 		targetPod = &pods.Items[0]
-		fmt.Printf("Warning: No running pods found, using pod %s (phase: %s)\n\n", targetPod.Name, targetPod.Status.Phase)
+		_, _ = fmt.Fprintf(errOut, "Warning: No running pods found, using pod %s (phase: %s)\n\n", targetPod.Name, targetPod.Status.Phase)
 	}
 
-	fmt.Printf("Streaming logs from pod %s...\n\n", targetPod.Name)
+	_, _ = fmt.Fprintf(out, "Streaming logs from pod %s...\n\n", targetPod.Name)
 
 	// Get logs
 	req := clientset.CoreV1().Pods(namespace).GetLogs(targetPod.Name, &corev1.PodLogOptions{
@@ -115,7 +117,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			}
 			return fmt.Errorf("error reading logs: %w", err)
 		}
-		fmt.Print(line)
+		_, _ = fmt.Fprint(out, line)
 	}
 
 	return nil

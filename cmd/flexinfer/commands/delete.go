@@ -18,7 +18,9 @@ limitations under the License.
 package commands
 
 import (
+	"bufio"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/types"
@@ -50,6 +52,7 @@ func init() {
 
 func runDelete(cmd *cobra.Command, args []string) error {
 	name := args[0]
+	out := cmd.OutOrStdout()
 
 	k8sClient, err := getClient()
 	if err != nil {
@@ -64,11 +67,13 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 	// Confirm deletion
 	if !forceDelete {
-		fmt.Printf("Delete ModelDeployment %s/%s? [y/N]: ", namespace, name)
-		var response string
-		_, _ = fmt.Scanln(&response)
+		_, _ = fmt.Fprintf(out, "Delete ModelDeployment %s/%s? [y/N]: ", namespace, name)
+
+		reader := bufio.NewReader(cmd.InOrStdin())
+		line, _ := reader.ReadString('\n')
+		response := strings.TrimSpace(line)
 		if response != "y" && response != "Y" {
-			fmt.Println("Deletion cancelled")
+			_, _ = fmt.Fprintln(out, "Deletion cancelled")
 			return nil
 		}
 	}
@@ -78,6 +83,6 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete ModelDeployment: %w", err)
 	}
 
-	fmt.Printf("ModelDeployment %s deleted\n", name)
+	_, _ = fmt.Fprintf(out, "ModelDeployment %s deleted\n", name)
 	return nil
 }

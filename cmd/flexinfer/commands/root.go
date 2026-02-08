@@ -41,6 +41,16 @@ var (
 	scheme     = runtime.NewScheme()
 )
 
+// Dependency injection points for unit tests.
+var (
+	inClusterConfigFn      = rest.InClusterConfig
+	userHomeDirFn          = os.UserHomeDir
+	buildConfigFromFlagsFn = clientcmd.BuildConfigFromFlags
+	newClientFn            = client.New
+	newClientsetFn         = func(cfg *rest.Config) (kubernetes.Interface, error) { return kubernetes.NewForConfig(cfg) }
+	notifyContextFn        = signal.NotifyContext
+)
+
 func init() {
 	_ = aiv1alpha1.AddToScheme(scheme)
 }
@@ -87,20 +97,20 @@ func Execute() error {
 func getKubeConfig() (*rest.Config, error) {
 	if kubeconfig == "" {
 		// Try in-cluster config first
-		cfg, err := rest.InClusterConfig()
+		cfg, err := inClusterConfigFn()
 		if err == nil {
 			return cfg, nil
 		}
 
 		// Fall back to kubeconfig file
-		home, err := os.UserHomeDir()
+		home, err := userHomeDirFn()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
 		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
 
-	return clientcmd.BuildConfigFromFlags("", kubeconfig)
+	return buildConfigFromFlagsFn("", kubeconfig)
 }
 
 // getClient returns a controller-runtime client for CRD operations
@@ -110,17 +120,17 @@ func getClient() (client.Client, error) {
 		return nil, err
 	}
 
-	return client.New(cfg, client.Options{Scheme: scheme})
+	return newClientFn(cfg, client.Options{Scheme: scheme})
 }
 
 // getClientset returns a kubernetes clientset for core operations
-func getClientset() (*kubernetes.Clientset, error) {
+func getClientset() (kubernetes.Interface, error) {
 	cfg, err := getKubeConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	return kubernetes.NewForConfig(cfg)
+	return newClientsetFn(cfg)
 }
 
 // getNamespace returns the namespace to use for queries
@@ -134,6 +144,6 @@ func getNamespace() string {
 // ctx returns a context that respects SIGINT/SIGTERM signals.
 // This allows CLI commands to be gracefully interrupted.
 func ctx() context.Context {
-	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, _ := notifyContextFn(context.Background(), os.Interrupt, syscall.SIGTERM)
 	return ctx
 }

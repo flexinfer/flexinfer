@@ -18,7 +18,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"text/tabwriter"
 	"time"
 
@@ -47,6 +46,8 @@ Examples:
 }
 
 func runList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+
 	k8sClient, err := getClient()
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
@@ -63,11 +64,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(mdList.Items) == 0 {
-		fmt.Println("No ModelDeployments found")
+		_, _ = fmt.Fprintln(out, "No ModelDeployments found")
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if allNs {
 		_, _ = fmt.Fprintln(w, "NAMESPACE\tNAME\tBACKEND\tSTATUS\tREPLICAS\tIDLE\tTPS")
 	} else {

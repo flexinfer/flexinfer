@@ -74,13 +74,13 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] **Structured logging migration** - Migrate proxy from log.Printf to slog
 - [x] **Environment variable documentation** - Complete docs/CONFIGURATION.md
 - [x] **Routing optimization** - Session affinity, prefix-based, least-loaded (Phase 3)
-- [ ] **Security hardening** - RBAC review needed
+- [x] **Security hardening** - RBAC reviewed (controller can list/watch nodes) + reduced SA token mounting for v1alpha2 model/cache pods
 - [x] **Monitoring dashboards** - Basic dashboards exist (may need expansion)
 - [x] **Documentation** - API docs, operations guide, quickstart complete
 
 ### Tech Debt (High Priority)
 - [~] **TD-1**: Add error handling to ignored returns - Already using safe patterns (Get/GetOrError)
-- [ ] **TD-3**: Increase CLI test coverage to 50%+ (currently 11.7%, was 0%)
+- [x] **TD-3**: Increase CLI test coverage to 50%+ (now 78.6% for `cmd/flexinfer/commands`)
 - [~] **TD-4**: Replace panic with graceful error handling - `MustGet` is never called, safe variants used
 - [x] **TD-11**: E2E test names violate RFC 1123 - Fixed with lowercase + "/" replacement
 - [x] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme - Added to scheme

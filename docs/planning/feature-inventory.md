@@ -5,7 +5,7 @@ description: Current feature status (what's shipped, what's partial, what's miss
 
 # Feature Inventory
 
-> Last updated: 2026-02-01
+> Last updated: 2026-02-08
 
 This is a pragmatic inventory of "what works in practice" and "what's next". **Phases 1-4 are now complete** - see phase planning docs for details.
 
@@ -77,10 +77,14 @@ Docs: `docs/dev/backends.md`
 
 ### Still Open
 
-5. **Backend build + distribution ergonomics** (digest pinning docs done, but ROCm GFX1100 image NOT built - blocker for quality models)
-6. **CLI test coverage** - Only 7% coverage for user-facing CLI commands
-7. **Error handling tech debt** - 13+ locations with ignored error returns
-8. **v1alpha1 migration guide** - Deprecated API needs documented migration path
+5. **Backend build + distribution ergonomics** (ROCm `gfx1100` image builds are resolved; remaining work is making backend build/publish paths more reproducible and documenting digest pinning patterns end-to-end.)
+6. **Error handling tech debt** - 13+ locations with ignored error returns
+7. **E2E GPU scenarios** - Expand coverage for real GPU scheduling/placement paths (many are currently skipped or too slow for CI)
+
+### Recently Resolved ✅
+
+1. ~~**CLI test coverage**~~ → `cmd/flexinfer/commands` is now 78.6% covered (target was 50%+).
+2. ~~**v1alpha1 → v1alpha2 migration guide**~~ → `docs/migration/v1alpha1-to-v1alpha2.md`.
 
 ### Future Phases
 

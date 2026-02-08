@@ -45,6 +45,7 @@ Examples:
 func runScale(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	replicasStr := args[1]
+	out := cmd.OutOrStdout()
 
 	replicas, err := strconv.ParseInt(replicasStr, 10, 32)
 	if err != nil {
@@ -79,6 +80,6 @@ func runScale(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update ModelDeployment: %w", err)
 	}
 
-	fmt.Printf("ModelDeployment %s scaled: %d -> %d replicas\n", name, oldReplicas, newReplicas)
+	_, _ = fmt.Fprintf(out, "ModelDeployment %s scaled: %d -> %d replicas\n", name, oldReplicas, newReplicas)
 	return nil
 }

@@ -47,6 +47,7 @@ Examples:
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	name := args[0]
+	out := cmd.OutOrStdout()
 
 	k8sClient, err := getClient()
 	if err != nil {
@@ -60,54 +61,54 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print header
-	fmt.Printf("Name:      %s\n", md.Name)
-	fmt.Printf("Namespace: %s\n", md.Namespace)
-	fmt.Printf("Backend:   %s\n", md.Spec.Backend)
-	fmt.Printf("Model:     %s\n", md.Spec.Model)
-	fmt.Println()
+	_, _ = fmt.Fprintf(out, "Name:      %s\n", md.Name)
+	_, _ = fmt.Fprintf(out, "Namespace: %s\n", md.Namespace)
+	_, _ = fmt.Fprintf(out, "Backend:   %s\n", md.Spec.Backend)
+	_, _ = fmt.Fprintf(out, "Model:     %s\n", md.Spec.Model)
+	_, _ = fmt.Fprintln(out)
 
 	// Print spec details
-	fmt.Println("Spec:")
+	_, _ = fmt.Fprintln(out, "Spec:")
 	if md.Spec.Replicas != nil {
-		fmt.Printf("  Replicas:       %d\n", *md.Spec.Replicas)
+		_, _ = fmt.Fprintf(out, "  Replicas:       %d\n", *md.Spec.Replicas)
 	}
 	if md.Spec.MinReplicas != nil {
-		fmt.Printf("  Min Replicas:   %d\n", *md.Spec.MinReplicas)
+		_, _ = fmt.Fprintf(out, "  Min Replicas:   %d\n", *md.Spec.MinReplicas)
 	}
 	if md.Spec.ModelCacheRef != nil {
-		fmt.Printf("  Model Cache:    %s\n", *md.Spec.ModelCacheRef)
+		_, _ = fmt.Fprintf(out, "  Model Cache:    %s\n", *md.Spec.ModelCacheRef)
 	}
 
 	// Backend-specific config
 	if md.Spec.MLCLLM != nil {
-		fmt.Println("  MLC-LLM Config:")
+		_, _ = fmt.Fprintln(out, "  MLC-LLM Config:")
 		if md.Spec.MLCLLM.Mode != "" {
-			fmt.Printf("    Mode:         %s\n", md.Spec.MLCLLM.Mode)
+			_, _ = fmt.Fprintf(out, "    Mode:         %s\n", md.Spec.MLCLLM.Mode)
 		}
 		if md.Spec.MLCLLM.ModelLibPath != "" {
-			fmt.Printf("    Model Lib:    %s\n", md.Spec.MLCLLM.ModelLibPath)
+			_, _ = fmt.Fprintf(out, "    Model Lib:    %s\n", md.Spec.MLCLLM.ModelLibPath)
 		}
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 
 	// Serverless configuration
 	if md.Spec.MinReplicas != nil && *md.Spec.MinReplicas == 0 {
-		fmt.Println("Serverless:")
-		fmt.Printf("  Enabled:        Yes (minReplicas=0)\n")
+		_, _ = fmt.Fprintln(out, "Serverless:")
+		_, _ = fmt.Fprintf(out, "  Enabled:        Yes (minReplicas=0)\n")
 
 		// Idle timeout
 		idleTimeout := int32(300)
 		if md.Spec.IdleTimeoutSeconds != nil {
 			idleTimeout = *md.Spec.IdleTimeoutSeconds
 		}
-		fmt.Printf("  Idle Timeout:   %ds\n", idleTimeout)
+		_, _ = fmt.Fprintf(out, "  Idle Timeout:   %ds\n", idleTimeout)
 
 		// Cold start timeout
 		coldStartTimeout := int32(60)
 		if md.Spec.ColdStartTimeoutSeconds != nil {
 			coldStartTimeout = *md.Spec.ColdStartTimeoutSeconds
 		}
-		fmt.Printf("  Cold Start:     %ds max\n", coldStartTimeout)
+		_, _ = fmt.Fprintf(out, "  Cold Start:     %ds max\n", coldStartTimeout)
 
 		// Current state
 		replicas := int32(1)
@@ -116,74 +117,74 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 
 		if replicas == 0 {
-			fmt.Printf("  State:          Scaled to zero (waiting for traffic)\n")
+			_, _ = fmt.Fprintf(out, "  State:          Scaled to zero (waiting for traffic)\n")
 		} else {
-			fmt.Printf("  State:          Running (%d replica)\n", replicas)
+			_, _ = fmt.Fprintf(out, "  State:          Running (%d replica)\n", replicas)
 		}
 
 		// Idle time and scale-down prediction
 		if md.Status.LastAccessTime != nil {
 			idleTime := time.Since(md.Status.LastAccessTime.Time)
-			fmt.Printf("  Last Access:    %s ago\n", formatAge(md.Status.LastAccessTime.Time))
-			fmt.Printf("  Idle For:       %s\n", formatAge(md.Status.LastAccessTime.Time))
+			_, _ = fmt.Fprintf(out, "  Last Access:    %s ago\n", formatAge(md.Status.LastAccessTime.Time))
+			_, _ = fmt.Fprintf(out, "  Idle For:       %s\n", formatAge(md.Status.LastAccessTime.Time))
 
 			if replicas > 0 {
 				remainingIdle := time.Duration(idleTimeout)*time.Second - idleTime
 				if remainingIdle > 0 {
-					fmt.Printf("  Scale Down In:  ~%s\n", formatDurationShort(remainingIdle))
+					_, _ = fmt.Fprintf(out, "  Scale Down In:  ~%s\n", formatDurationShort(remainingIdle))
 				} else {
-					fmt.Printf("  Scale Down In:  imminent\n")
+					_, _ = fmt.Fprintf(out, "  Scale Down In:  imminent\n")
 				}
 			}
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(out)
 	}
 
 	// Print status
-	fmt.Println("Status:")
-	fmt.Printf("  Phase:          %s\n", md.Status.Phase)
+	_, _ = fmt.Fprintln(out, "Status:")
+	_, _ = fmt.Fprintf(out, "  Phase:          %s\n", md.Status.Phase)
 	if md.Status.TokensPerSecond != "" {
-		fmt.Printf("  Tokens/sec:     %s\n", md.Status.TokensPerSecond)
+		_, _ = fmt.Fprintf(out, "  Tokens/sec:     %s\n", md.Status.TokensPerSecond)
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 
 	// GPU allocation
 	if md.Status.AllocatedGPU != nil {
 		gpu := md.Status.AllocatedGPU
-		fmt.Println("  GPU Allocation:")
+		_, _ = fmt.Fprintln(out, "  GPU Allocation:")
 		if gpu.Node != "" {
-			fmt.Printf("    Node:         %s\n", gpu.Node)
+			_, _ = fmt.Fprintf(out, "    Node:         %s\n", gpu.Node)
 		}
 		if gpu.Type != "" {
-			fmt.Printf("    Type:         %s\n", gpu.Type)
+			_, _ = fmt.Fprintf(out, "    Type:         %s\n", gpu.Type)
 		}
 		if gpu.Architecture != "" {
-			fmt.Printf("    Architecture: %s\n", gpu.Architecture)
+			_, _ = fmt.Fprintf(out, "    Architecture: %s\n", gpu.Architecture)
 		}
 		if gpu.Vendor != "" {
-			fmt.Printf("    Vendor:       %s\n", gpu.Vendor)
+			_, _ = fmt.Fprintf(out, "    Vendor:       %s\n", gpu.Vendor)
 		}
 		if gpu.MemoryMB > 0 {
-			fmt.Printf("    Memory:       %d MB\n", gpu.MemoryMB)
+			_, _ = fmt.Fprintf(out, "    Memory:       %d MB\n", gpu.MemoryMB)
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(out)
 	}
 
 	// Endpoints
 	if md.Status.Endpoints != nil {
-		fmt.Println("  Endpoints:")
+		_, _ = fmt.Fprintln(out, "  Endpoints:")
 		if md.Status.Endpoints.Internal != "" {
-			fmt.Printf("    Internal:     %s\n", md.Status.Endpoints.Internal)
+			_, _ = fmt.Fprintf(out, "    Internal:     %s\n", md.Status.Endpoints.Internal)
 		}
 		if md.Status.Endpoints.External != "" {
-			fmt.Printf("    External:     %s\n", md.Status.Endpoints.External)
+			_, _ = fmt.Fprintf(out, "    External:     %s\n", md.Status.Endpoints.External)
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(out)
 	}
 
 	// Conditions
 	if len(md.Status.Conditions) > 0 {
-		fmt.Println("Conditions:")
+		_, _ = fmt.Fprintln(out, "Conditions:")
 		for _, cond := range md.Status.Conditions {
 			status := "Unknown"
 			switch cond.Status {
@@ -193,12 +194,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				status = "False"
 			}
 			age := formatAge(cond.LastTransitionTime.Time)
-			fmt.Printf("  %-20s %-8s %-20s %s\n", cond.Type, status, cond.Reason, age)
+			_, _ = fmt.Fprintf(out, "  %-20s %-8s %-20s %s\n", cond.Type, status, cond.Reason, age)
 			if cond.Message != "" && cond.Status == "False" {
-				fmt.Printf("    Message: %s\n", cond.Message)
+				_, _ = fmt.Fprintf(out, "    Message: %s\n", cond.Message)
 			}
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(out)
 	}
 
 	// Get events
@@ -214,7 +215,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			}
 
 			if len(mdEvents) > 0 {
-				fmt.Println("Recent Events:")
+				_, _ = fmt.Fprintln(out, "Recent Events:")
 				// Show last 5 events
 				start := 0
 				if len(mdEvents) > 5 {
@@ -228,7 +229,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 					} else {
 						eventType = "Normal"
 					}
-					fmt.Printf("  %-8s %-8s %-20s %s\n", age, eventType, event.Reason, truncate(event.Message, 60))
+					_, _ = fmt.Fprintf(out, "  %-8s %-8s %-20s %s\n", age, eventType, event.Reason, truncate(event.Message, 60))
 				}
 			}
 		}

@@ -59,6 +59,8 @@ func init() {
 }
 
 func runCacheStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+
 	k8sClient, err := getClient()
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
@@ -76,7 +78,7 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(cacheList.Items) == 0 {
-		fmt.Println("No ModelCache resources found")
+		_, _ = fmt.Fprintln(out, "No ModelCache resources found")
 		return nil
 	}
 
@@ -86,8 +88,8 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 	})
 
 	// Print header
-	fmt.Printf("%-25s %-12s %-45s %-8s %s\n", "NAME", "STRATEGY", "PATH", "READY", "SOURCE")
-	fmt.Printf("%-25s %-12s %-45s %-8s %s\n", "----", "--------", "----", "-----", "------")
+	_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n", "NAME", "STRATEGY", "PATH", "READY", "SOURCE")
+	_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n", "----", "--------", "----", "-----", "------")
 
 	for _, mc := range cacheList.Items {
 		strategy := string(mc.Spec.StorageStrategy)
@@ -115,7 +117,7 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 
 		source := truncate(mc.Spec.Source, 40)
 
-		fmt.Printf("%-25s %-12s %-45s %-8s %s\n",
+		_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n",
 			truncate(mc.Name, 25),
 			strategy,
 			path,
@@ -133,9 +135,9 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(memoryCaches) > 0 {
-		fmt.Println()
-		fmt.Printf("RAM-cached models: %s\n", strings.Join(memoryCaches, ", "))
-		fmt.Println("Note: RAM cache uses /dev/shm (default 50% of system RAM)")
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "RAM-cached models: %s\n", strings.Join(memoryCaches, ", "))
+		_, _ = fmt.Fprintln(out, "Note: RAM cache uses /dev/shm (default 50% of system RAM)")
 	}
 
 	return nil

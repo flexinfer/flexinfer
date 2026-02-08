@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-01
+> Last updated: 2026-02-08
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 are complete.** The project is now at 85-95% production readiness.
 
@@ -68,5 +68,5 @@ See `ROADMAP.md` for full tech debt tracking:
 
 - **TD-1**: Error handling for ignored returns (high priority)
 - ~~**TD-2**: ROCm GFX1100 image builds~~ ✅ RESOLVED (supplementalGroups fix)
-- **TD-3**: CLI test coverage (currently 7%)
-- **TD-5**: v1alpha1 → v1alpha2 migration guide
+- ~~**TD-3**: CLI test coverage~~ ✅ RESOLVED (now 78.6% for `cmd/flexinfer/commands`)
+- ~~**TD-5**: v1alpha1 → v1alpha2 migration guide~~ ✅ RESOLVED (`docs/migration/v1alpha1-to-v1alpha2.md`)
