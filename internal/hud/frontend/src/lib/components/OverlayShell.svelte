@@ -9,6 +9,18 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
 
+  // Make html/body transparent so native NSVisualEffectView vibrancy shows through.
+  function transparentBody(_node) {
+    document.documentElement.style.background = 'transparent';
+    document.body.style.background = 'transparent';
+    return {
+      destroy() {
+        document.documentElement.style.background = '';
+        document.body.style.background = '';
+      }
+    };
+  }
+
   onMount(() => {
     eventStore.connect();
     fleetStore.startPolling();
@@ -189,7 +201,7 @@
   }
 </script>
 
-<div class="overlay-shell">
+<div class="overlay-shell" use:transparentBody>
   <!-- Draggable header -->
   <header class="overlay-header">
     <span class="overlay-logo">{'\u25C8'}</span>
