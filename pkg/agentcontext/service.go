@@ -191,6 +191,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		compactionConfig.CheckInterval = time.Duration(cfg.CompactionCheckInterval) * time.Second
 	}
 	svc.compactionScheduler = NewCompactionScheduler(compactionConfig, svc.memoryHierarchy, nil, svc.logger)
+	svc.compactionScheduler.SetPersistence(svc.persistedMemoryHierarchy)
 
 	// Initialize memory exporter/importer
 	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)

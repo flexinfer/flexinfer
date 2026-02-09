@@ -103,7 +103,7 @@ func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any)
 		def.InputSchema = schema
 	}
 
-	if err := s.workflowEngine.RegisterDefinition(def); err != nil {
+	if err := s.persistedWorkflowEngine.RegisterDefinitionWithPersistence(ctx, def); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
@@ -132,7 +132,7 @@ func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) 
 		input = inputRaw
 	}
 
-	wf, err := s.workflowEngine.StartWorkflow(ctx, definitionID, sessionID, agentID, input)
+	wf, err := s.persistedWorkflowEngine.StartWorkflowWithPersistence(ctx, definitionID, sessionID, agentID, input)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -264,6 +264,11 @@ func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any
 		return mcp.ErrorResult(err), nil
 	}
 
+	// Checkpoint workflow state to Qdrant after approval mutation
+	if err := s.persistedWorkflowEngine.CheckpointWorkflow(ctx, workflowID); err != nil {
+		s.logger.Warn("failed to checkpoint workflow after approve", "workflow_id", workflowID, "error", err)
+	}
+
 	return mcp.JSONResult(map[string]any{
 		"ok":          true,
 		"workflow_id": workflowID,
@@ -288,6 +293,11 @@ func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any)
 		return mcp.ErrorResult(err), nil
 	}
 
+	// Checkpoint workflow state to Qdrant after rejection mutation
+	if err := s.persistedWorkflowEngine.CheckpointWorkflow(ctx, workflowID); err != nil {
+		s.logger.Warn("failed to checkpoint workflow after reject", "workflow_id", workflowID, "error", err)
+	}
+
 	return mcp.JSONResult(map[string]any{
 		"ok":          true,
 		"workflow_id": workflowID,
@@ -308,6 +318,11 @@ func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any)
 
 	if err := s.workflowEngine.CancelWorkflow(workflowID, reason); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+
+	// Checkpoint workflow state to Qdrant after cancellation
+	if err := s.persistedWorkflowEngine.CheckpointWorkflow(ctx, workflowID); err != nil {
+		s.logger.Warn("failed to checkpoint workflow after cancel", "workflow_id", workflowID, "error", err)
 	}
 
 	return mcp.JSONResult(map[string]any{

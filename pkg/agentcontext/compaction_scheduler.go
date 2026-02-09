@@ -58,6 +58,7 @@ type CompactionScheduler struct {
 
 	config    CompactionConfig
 	hierarchy *MemoryHierarchy
+	persisted *persistedMemoryHierarchy // optional: when set, mutations write to Qdrant
 	metrics   *Metrics
 	logger    *slog.Logger
 
@@ -120,6 +121,43 @@ func NewCompactionScheduler(
 		logger:       logger,
 		stopCh:       make(chan struct{}),
 	}
+}
+
+// SetPersistence configures Qdrant-backed persistence for compaction mutations.
+func (cs *CompactionScheduler) SetPersistence(pmh *persistedMemoryHierarchy) {
+	cs.persisted = pmh
+}
+
+// deleteItem deletes via persisted hierarchy if available, else in-memory.
+func (cs *CompactionScheduler) deleteItem(ctx context.Context, id string) error {
+	if cs.persisted != nil {
+		return cs.persisted.DeleteItemWithPersistence(ctx, id)
+	}
+	return cs.hierarchy.DeleteItem(id)
+}
+
+// demoteItem demotes via persisted hierarchy if available, else in-memory.
+func (cs *CompactionScheduler) demoteItem(ctx context.Context, id string) error {
+	if cs.persisted != nil {
+		return cs.persisted.DemoteItemWithPersistence(ctx, id)
+	}
+	return cs.hierarchy.DemoteItem(id)
+}
+
+// promoteItem promotes via persisted hierarchy if available, else in-memory.
+func (cs *CompactionScheduler) promoteItem(ctx context.Context, id string) error {
+	if cs.persisted != nil {
+		return cs.persisted.PromoteItemWithPersistence(ctx, id)
+	}
+	return cs.hierarchy.PromoteItem(id)
+}
+
+// updateItem updates via persisted hierarchy if available, else in-memory.
+func (cs *CompactionScheduler) updateItem(ctx context.Context, item *MemoryItem) error {
+	if cs.persisted != nil {
+		return cs.persisted.UpdateItemWithPersistence(ctx, item, nil)
+	}
+	return cs.hierarchy.UpdateItem(item)
 }
 
 // Start begins the automatic compaction scheduler
@@ -288,10 +326,10 @@ func (cs *CompactionScheduler) runCompaction(ctx context.Context) (*CompactionSt
 	}
 
 	// Phase 0: TTL expiry sweep and auto-promotion/demotion
-	expired := cs.sweepExpiredItems()
+	expired := cs.sweepExpiredItems(ctx)
 	stats.ItemsExpired = expired
 
-	promoted := cs.runPromotionDemotion()
+	promoted := cs.runPromotionDemotion(ctx)
 	stats.ItemsPromoted = promoted
 
 	// Process each tier
@@ -448,14 +486,14 @@ func (cs *CompactionScheduler) compactTier(ctx context.Context, tier MemoryTier,
 			// Already compressed enough, demote or archive
 			if tier == MemoryTierLongTerm {
 				// Archive (remove from active memory)
-				if err := cs.hierarchy.DeleteItem(item.ID); err != nil {
+				if err := cs.deleteItem(ctx, item.ID); err != nil {
 					cs.logger.Warn("compaction: failed to archive item", "item_id", item.ID, "error", err)
 					errors++
 				}
 				demoted++ // Using demoted as "archived" for long-term
 			} else {
 				// Demote to next tier
-				if err := cs.hierarchy.DemoteItem(item.ID); err == nil {
+				if err := cs.demoteItem(ctx, item.ID); err == nil {
 					demoted++
 				} else {
 					errors++
@@ -483,7 +521,7 @@ func (cs *CompactionScheduler) compactTier(ctx context.Context, tier MemoryTier,
 				item.CompressedAt = &now
 
 				// Update in hierarchy
-				if err := cs.hierarchy.UpdateItem(&item); err != nil {
+				if err := cs.updateItem(ctx, &item); err != nil {
 					cs.logger.Warn("compaction: failed to update compressed item", "item_id", item.ID, "error", err)
 					errors++
 				}
@@ -610,7 +648,7 @@ type SchedulerStatus struct {
 }
 
 // sweepExpiredItems removes items that have exceeded their TTL
-func (cs *CompactionScheduler) sweepExpiredItems() int {
+func (cs *CompactionScheduler) sweepExpiredItems(ctx context.Context) int {
 	if cs.hierarchy == nil {
 		return 0
 	}
@@ -630,7 +668,7 @@ func (cs *CompactionScheduler) sweepExpiredItems() int {
 
 		for _, item := range result.Items {
 			if item.ExpiresAt != nil && now.After(*item.ExpiresAt) {
-				if err := cs.hierarchy.DeleteItem(item.ID); err != nil {
+				if err := cs.deleteItem(ctx, item.ID); err != nil {
 					cs.logger.Warn("TTL sweep: failed to delete expired item", "item_id", item.ID, "error", err)
 				}
 				expired++
@@ -641,7 +679,7 @@ func (cs *CompactionScheduler) sweepExpiredItems() int {
 }
 
 // runPromotionDemotion auto-promotes and auto-demotes items based on access patterns
-func (cs *CompactionScheduler) runPromotionDemotion() int {
+func (cs *CompactionScheduler) runPromotionDemotion(ctx context.Context) int {
 	if cs.hierarchy == nil {
 		return 0
 	}
@@ -657,7 +695,7 @@ func (cs *CompactionScheduler) runPromotionDemotion() int {
 	if err == nil {
 		for _, item := range workingResult.Items {
 			if item.AccessCount >= 3 && item.ImportanceScore >= 0.7 {
-				if err := cs.hierarchy.PromoteItem(item.ID); err == nil {
+				if err := cs.promoteItem(ctx, item.ID); err == nil {
 					promoted++
 				}
 			}
@@ -674,7 +712,7 @@ func (cs *CompactionScheduler) runPromotionDemotion() int {
 		demotionThreshold := 0.3
 		for _, item := range shortTermResult.Items {
 			if item.ImportanceScore < demotionThreshold && time.Since(item.LastAccessedAt) > 48*time.Hour {
-				if err := cs.hierarchy.DemoteItem(item.ID); err != nil {
+				if err := cs.demoteItem(ctx, item.ID); err != nil {
 					cs.logger.Warn("auto-demotion: failed to demote item", "item_id", item.ID, "error", err)
 				}
 			}
