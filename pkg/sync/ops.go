@@ -98,6 +98,16 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		if err := CopyFile(srcFile, dstFile); err != nil {
 			return err
 		}
+		// Sync extra generated files (e.g. settings.json for hooks).
+		for _, extra := range p.ExtraGeneratedFiles {
+			extraSrc := filepath.Join(repoPath, extra)
+			if Exists(extraSrc) {
+				extraDst := filepath.Join(homePath, extra)
+				if err := CopyFile(extraSrc, extraDst); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not sync %s: %v\n", extra, err)
+				}
+			}
+		}
 	} else {
 		if err := CopyDir(repoPath, homePath, p.Excludes); err != nil {
 			return err
@@ -135,7 +145,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	// Also copy to workspace directory if specified (e.g., .vscode/ for local MCP config)
 	if p.WorkspaceDir != "" {
 		workspacePath := filepath.Join(m.RepoRoot, p.WorkspaceDir)
-		// Only copy the generated file, not the whole directory
+		// Only copy the generated file(s), not the whole directory
 		srcFile := filepath.Join(repoPath, p.GeneratedFile)
 		if Exists(srcFile) {
 			if err := os.MkdirAll(workspacePath, 0755); err != nil {
@@ -146,6 +156,15 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 				return fmt.Errorf("copy to workspace: %w", err)
 			}
 			fmt.Printf("Also copied to %s\n", dstFile)
+		}
+		for _, extra := range p.ExtraGeneratedFiles {
+			extraSrc := filepath.Join(repoPath, extra)
+			if Exists(extraSrc) {
+				extraDst := filepath.Join(workspacePath, extra)
+				if err := CopyFile(extraSrc, extraDst); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not copy %s to workspace: %v\n", extra, err)
+				}
+			}
 		}
 	}
 
@@ -229,6 +248,19 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 	}
 
 	fmt.Printf("Updated %s\n", destFile)
+
+	// Copy extra generated files (e.g. settings.json for hooks).
+	for _, extra := range p.ExtraGeneratedFiles {
+		extraGen := filepath.Join(tmpDir, p.GeneratorTarget, extra)
+		if Exists(extraGen) {
+			extraDest := filepath.Join(repoPath, extra)
+			if err := CopyFile(extraGen, extraDest); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not copy extra file %s: %v\n", extra, err)
+			} else {
+				fmt.Printf("Updated %s\n", extraDest)
+			}
+		}
+	}
 
 	// Generate skills if the profile has a skills target (unless SkipSkills is set)
 	if p.SkillsTarget != "" && !m.SkipSkills {

@@ -816,6 +816,153 @@ func (a *AgentBridge) AnnotationAdd(filePath, content, category string, line int
 	return a.callAgentTool("agent_code_annotate", args, nil)
 }
 
+// --- Agent lifecycle methods ---
+
+// SessionStartParams holds parameters for starting an agent session.
+type SessionStartParams struct {
+	Namespace   string `json:"namespace"`
+	AgentID     string `json:"agent_id"`
+	AgentType   string `json:"agent_type"`
+	Description string `json:"description"`
+	AutoRecall  bool   `json:"auto_recall"`
+}
+
+// SessionStartResult holds the result of starting a session.
+type SessionStartResult struct {
+	SessionID       string `json:"session_id"`
+	RecalledContext string `json:"recalled_context,omitempty"`
+	AlreadyExisted  bool   `json:"already_existed"`
+}
+
+// StartSession creates a session, registers presence, and optionally recalls context.
+// It is idempotent: if the agent already has an active session in the same namespace,
+// it returns the existing session ID instead of creating a new one.
+func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, error) {
+	// Check for existing active session in the same namespace.
+	if existing, err := a.GetActiveSession(p.AgentID); err == nil && existing != nil {
+		if existing.Namespace == p.Namespace && existing.Status == "active" {
+			return &SessionStartResult{
+				SessionID:      existing.ID,
+				AlreadyExisted: true,
+			}, nil
+		}
+	}
+
+	// Start a new session.
+	args := map[string]any{
+		"namespace":   p.Namespace,
+		"description": p.Description,
+	}
+	if p.AgentID != "" {
+		args["agent_id"] = p.AgentID
+	}
+	var sessionResult struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := a.callAgentTool("agent_session_start", args, &sessionResult); err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+
+	// Register presence.
+	presenceArgs := map[string]any{
+		"agent_id": p.AgentID,
+		"status":   "active",
+	}
+	if p.AgentType != "" {
+		presenceArgs["agent_type"] = p.AgentType
+	}
+	_ = a.callAgentTool("agent_presence_register", presenceArgs, nil)
+
+	result := &SessionStartResult{
+		SessionID: sessionResult.SessionID,
+	}
+
+	// Optional: recall context.
+	if p.AutoRecall {
+		recallArgs := map[string]any{
+			"query":        p.Description,
+			"token_budget": 4000,
+		}
+		if p.Namespace != "" {
+			recallArgs["file_context"] = p.Namespace
+		}
+		var recallResult struct {
+			Summary string `json:"summary"`
+		}
+		if err := a.callAgentTool("agent_context_recall_enhanced", recallArgs, &recallResult); err == nil {
+			result.RecalledContext = recallResult.Summary
+		}
+	}
+
+	return result, nil
+}
+
+// SessionEndParams holds parameters for ending an agent session.
+type SessionEndParams struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Summarize bool   `json:"summarize"`
+}
+
+// EndSession ends a session, optionally summarizes context, and deregisters presence.
+// If SessionID is empty, it finds the active session by AgentID.
+func (a *AgentBridge) EndSession(p SessionEndParams) error {
+	sessionID := p.SessionID
+	if sessionID == "" && p.AgentID != "" {
+		if active, err := a.GetActiveSession(p.AgentID); err == nil && active != nil {
+			sessionID = active.ID
+		}
+	}
+	if sessionID == "" {
+		return fmt.Errorf("no active session found for agent %q", p.AgentID)
+	}
+
+	args := map[string]any{
+		"session_id": sessionID,
+	}
+	if p.Summarize {
+		args["summarize"] = true
+	}
+	if err := a.callAgentTool("agent_session_end", args, nil); err != nil {
+		return fmt.Errorf("end session: %w", err)
+	}
+
+	// Deregister presence (best-effort).
+	if p.AgentID != "" {
+		_ = a.callAgentTool("agent_presence_deregister", map[string]any{
+			"agent_id": p.AgentID,
+		}, nil)
+	}
+
+	return nil
+}
+
+// PresenceHeartbeat updates the heartbeat timestamp for an agent.
+func (a *AgentBridge) PresenceHeartbeat(agentID, status string) error {
+	args := map[string]any{
+		"agent_id": agentID,
+	}
+	if status != "" {
+		args["status"] = status
+	}
+	return a.callAgentTool("agent_presence_heartbeat", args, nil)
+}
+
+// GetActiveSession finds the currently active session for an agent.
+// Returns nil if no active session exists.
+func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
+	sessions, err := a.Sessions()
+	if err != nil {
+		return nil, err
+	}
+	for i := range sessions {
+		if sessions[i].AgentID == agentID && sessions[i].Status == "active" {
+			return &sessions[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // --- Tunnel/cache methods ---
 
 // TunnelInfo describes an SSH tunnel status.

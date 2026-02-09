@@ -97,6 +97,11 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
 		}
+
+		// Generate lifecycle hook configs for platforms that support them.
+		if err := generateHooksConfig(outputDir, target); err != nil {
+			return fmt.Errorf("generate hooks for %s: %w", target, err)
+		}
 	}
 
 	// Validate generated configs
@@ -334,6 +339,13 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 	sb.WriteString(fmt.Sprintf("# Generated MCP configuration for %s\n", target))
 	sb.WriteString("# Source: mcp/context/registry.yaml\n\n")
 
+	// Codex supports a notify hook that fires on agent-turn-complete.
+	// This is the only lifecycle hook Codex provides.
+	if target == "codex" {
+		sb.WriteString("# Agent lifecycle: heartbeat on turn completion\n")
+		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--quiet\"]\n\n")
+	}
+
 	// Sort keys for deterministic output
 	var names []string
 	for name := range targets {
@@ -399,4 +411,100 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 
 func sortStrings(s []string) {
 	sort.Strings(s)
+}
+
+// --- Agent lifecycle hook generation ---
+
+// generateHooksConfig writes a settings.json with lifecycle hooks for platforms
+// that support them (Claude Code and Gemini CLI). The hooks call `loom agent`
+// subcommands to ensure consistent session tracking and presence management.
+func generateHooksConfig(outputDir, target string) error {
+	var config map[string]any
+
+	switch target {
+	case "claude":
+		config = claudeHooksConfig()
+	case "gemini":
+		config = geminiHooksConfig()
+	default:
+		return nil // Platform doesn't support hooks.
+	}
+
+	destDir := filepath.Join(outputDir, target)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(destDir, "settings.json"), data, 0644)
+}
+
+// claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks.
+//
+// Hook events:
+//   - SessionStart: create session + register presence + recall context
+//   - Stop: end session + summarize + deregister presence
+//   - PostToolUse (Bash|Task): heartbeat to keep presence alive
+func claudeHooksConfig() map[string]any {
+	return map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []map[string]any{
+				{
+					"type":    "command",
+					"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
+				},
+			},
+			"Stop": []map[string]any{
+				{
+					"type":    "command",
+					"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
+				},
+			},
+			"PostToolUse": []map[string]any{
+				{
+					"matcher": "Bash|Task",
+					"type":    "command",
+					"command": "loom agent heartbeat --agent-id claude-code --status active --quiet 2>/dev/null || true",
+				},
+			},
+		},
+	}
+}
+
+// geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks.
+//
+// Gemini uses different event names than Claude Code:
+//   - SessionStart → SessionStart (same)
+//   - SessionEnd → SessionEnd (Gemini uses SessionEnd, not Stop)
+//   - AfterTool → AfterTool (Gemini uses AfterTool, not PostToolUse)
+//
+// Gemini tool names also differ (run_shell_command vs Bash).
+func geminiHooksConfig() map[string]any {
+	return map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []map[string]any{
+				{
+					"type":    "command",
+					"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
+				},
+			},
+			"SessionEnd": []map[string]any{
+				{
+					"type":    "command",
+					"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
+				},
+			},
+			"AfterTool": []map[string]any{
+				{
+					"matcher": "run_shell_command",
+					"type":    "command",
+					"command": "loom agent heartbeat --agent-id gemini-cli --status active --quiet 2>/dev/null || true",
+				},
+			},
+		},
+	}
 }

@@ -344,6 +344,13 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
+	// API routes — agent lifecycle (CLI hooks call these).
+	mux.HandleFunc("POST /api/agent/session-start", a.withCORS(a.handleAgentSessionStart))
+	mux.HandleFunc("POST /api/agent/session-end", a.withCORS(a.handleAgentSessionEnd))
+	mux.HandleFunc("POST /api/agent/heartbeat", a.withCORS(a.handleAgentHeartbeat))
+	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
+	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
+
 	// CORS preflight for all API routes.
 	mux.HandleFunc("OPTIONS /api/", a.handlePreflight)
 

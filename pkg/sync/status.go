@@ -291,28 +291,44 @@ func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftIt
 		}}
 	}
 
-	rel := profile.GeneratedFile
-	repoFile := filepath.Join(repoPath, rel)
-	homeFile := filepath.Join(homePath, rel)
+	// Compare all generated files (primary + extras).
+	files := []string{profile.GeneratedFile}
+	files = append(files, profile.ExtraGeneratedFiles...)
 
-	repoExists := Exists(repoFile)
-	homeExists := Exists(homeFile)
+	var items []DriftItem
+	for _, rel := range files {
+		repoFile := filepath.Join(repoPath, rel)
+		homeFile := filepath.Join(homePath, rel)
 
-	switch {
-	case !repoExists && !homeExists:
-		return []DriftItem{{File: rel, Status: DriftMissing}}
-	case repoExists && !homeExists:
-		repoHash, _ := hashFile(repoFile)
-		return []DriftItem{{File: rel, RepoHash: repoHash, Status: DriftMissing}}
-	case !repoExists && homeExists:
-		homeHash, _ := hashFile(homeFile)
-		return []DriftItem{{File: rel, HomeHash: homeHash, Status: DriftExtra}}
-	default:
-		repoHash, _ := hashFile(repoFile)
-		homeHash, _ := hashFile(homeFile)
-		if repoHash != homeHash {
-			return []DriftItem{{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync}}
+		repoExists := Exists(repoFile)
+		homeExists := Exists(homeFile)
+
+		switch {
+		case !repoExists && !homeExists:
+			// Extra files are optional — skip if neither side has them.
+			if rel != profile.GeneratedFile {
+				continue
+			}
+			items = append(items, DriftItem{File: rel, Status: DriftMissing})
+		case repoExists && !homeExists:
+			repoHash, _ := hashFile(repoFile)
+			items = append(items, DriftItem{File: rel, RepoHash: repoHash, Status: DriftMissing})
+		case !repoExists && homeExists:
+			homeHash, _ := hashFile(homeFile)
+			items = append(items, DriftItem{File: rel, HomeHash: homeHash, Status: DriftExtra})
+		default:
+			repoHash, _ := hashFile(repoFile)
+			homeHash, _ := hashFile(homeFile)
+			if repoHash != homeHash {
+				items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync})
+			} else {
+				items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
+			}
 		}
-		return []DriftItem{{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync}}
 	}
+
+	if len(items) == 0 {
+		return []DriftItem{{File: profile.GeneratedFile, Status: DriftMissing}}
+	}
+	return items
 }

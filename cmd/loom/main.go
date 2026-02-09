@@ -356,7 +356,7 @@ Example session:
 		},
 	}
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, newHudCmd(socketPath))
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, newHudCmd(socketPath), newAgentCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

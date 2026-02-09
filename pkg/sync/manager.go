@@ -16,6 +16,10 @@ type Profile struct {
 	SecretFiles     []string
 	GeneratorTarget string // Target name for the generator (e.g. "codex")
 	GeneratedFile   string // Filename generated (e.g. "config.toml")
+	// ExtraGeneratedFiles lists additional files produced by the generator
+	// (e.g. "settings.json" for lifecycle hooks). These are synced alongside
+	// GeneratedFile but are optional — missing extras are silently skipped.
+	ExtraGeneratedFiles []string
 	// SyncGeneratedOnly limits sync/backup/status to GeneratedFile only.
 	// This is important for profiles whose HomeDir points at large application
 	// directories (e.g. VS Code/Claude Desktop) where we only manage mcp.json.
@@ -88,17 +92,18 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["claude"] = &Profile{
-		Name:              "claude",
-		RepoDir:           ".claude",
-		HomeDir:           ".claude",
-		Excludes:          []string{"auth.json", "sessions", "backups"},
-		SecretFiles:       []string{"auth.json"},
-		GeneratorTarget:   "claude", // Uses mcp.json format (same as vscode)
-		GeneratedFile:     "mcp.json",
-		SyncGeneratedOnly: true,
-		SkillsTarget:      "claude",
-		SkillsManifest:    ".loom-skills-manifest.json",
-		DefaultLoomMode:   true,
+		Name:                "claude",
+		RepoDir:             ".claude",
+		HomeDir:             ".claude",
+		Excludes:            []string{"auth.json", "sessions", "backups"},
+		SecretFiles:         []string{"auth.json"},
+		GeneratorTarget:     "claude", // Uses mcp.json format (same as vscode)
+		GeneratedFile:       "mcp.json",
+		ExtraGeneratedFiles: []string{"settings.json"}, // Lifecycle hooks
+		SyncGeneratedOnly:   true,
+		SkillsTarget:        "claude",
+		SkillsManifest:      ".loom-skills-manifest.json",
+		DefaultLoomMode:     true,
 	}
 
 	m.Profiles["claude_desktop"] = &Profile{
@@ -114,16 +119,17 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["gemini"] = &Profile{
-		Name:              "gemini",
-		RepoDir:           ".gemini",
-		HomeDir:           ".gemini",
-		Excludes:          []string{"auth.json", "sessions", "backups"},
-		SecretFiles:       []string{"auth.json"},
-		GeneratorTarget:   "gemini",
-		GeneratedFile:     "config.toml",
-		SyncGeneratedOnly: true,
-		SkillsTarget:      "gemini",
-		SkillsManifest:    ".loom-skills-manifest.json",
+		Name:                "gemini",
+		RepoDir:             ".gemini",
+		HomeDir:             ".gemini",
+		Excludes:            []string{"auth.json", "sessions", "backups"},
+		SecretFiles:         []string{"auth.json"},
+		GeneratorTarget:     "gemini",
+		GeneratedFile:       "config.toml",
+		ExtraGeneratedFiles: []string{"settings.json"}, // Lifecycle hooks
+		SyncGeneratedOnly:   true,
+		SkillsTarget:        "gemini",
+		SkillsManifest:      ".loom-skills-manifest.json",
 	}
 
 	m.Profiles["antigravity"] = &Profile{
