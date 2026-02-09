@@ -21,6 +21,8 @@
     };
   }
 
+  let activityUnsubs = [];
+
   onMount(() => {
     eventStore.connect();
     fleetStore.startPolling();
@@ -29,9 +31,24 @@
     workflowStore.startPolling();
     memoryStore.startPolling();
     streamStore.startPolling();
+
+    // Wire granular agent SSE events to overlay activity tracking.
+    function pushAgentEvent(e) {
+      const data = e.data || {};
+      const agentId = data.agent_id || 'unknown';
+      overlayStore.pushEvent(e.type, agentId);
+    }
+    activityUnsubs = [
+      eventStore.on('agent.heartbeat', pushAgentEvent),
+      eventStore.on('agent.session.start', pushAgentEvent),
+      eventStore.on('agent.session.end', pushAgentEvent),
+      eventStore.on('agent.task.update', pushAgentEvent),
+    ];
   });
 
   onDestroy(() => {
+    for (const unsub of activityUnsubs) unsub();
+    activityUnsubs = [];
     eventStore.disconnect();
     fleetStore.stopPolling();
     healthStore.stopPolling();
@@ -62,6 +79,24 @@
       return null;
     }
   });
+
+  let activeAgentCount = $derived(fleetStore.agents.filter((a) => a.status === 'active').length);
+
+  // Last 5 activity events for the compact activity log.
+  let activityLog = $derived(overlayStore.recentEvents.slice(-5).reverse());
+
+  function activityShortTime(ts) {
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '--:--';
+    }
+  }
+
+  /** Strip "agent." prefix for compact display. */
+  function activityLabel(type) {
+    return type.replace('agent.', '');
+  }
 
   function formatTime(d) {
     if (!d) return '--:--';
@@ -166,6 +201,7 @@
     { id: 'workflows', label: 'WORKFLOWS', icon: '\u2699' },
     { id: 'memory',    label: 'MEMORY',    icon: '\u29BE' },
     { id: 'stream',    label: 'STREAM',    icon: '\u2261' },
+    { id: 'activity',  label: 'ACTIVITY',  icon: '\u26A1' },
   ];
 
   function sectionSummary(id) {
@@ -196,6 +232,10 @@
         const t = lastStreamTime();
         return t ? `last: ${formatTime(t)}` : 'no data';
       }
+      case 'activity': {
+        const count = overlayStore.recentEvents.length;
+        return count > 0 ? `${count} events` : 'none';
+      }
       default: return '';
     }
   }
@@ -212,6 +252,9 @@
   <div class="overlay-status">
     <span class="status-dot" class:online={daemonOnline} class:offline={!daemonOnline}></span>
     <span class="status-label">{daemonOnline ? 'Connected' : 'Disconnected'}</span>
+    {#if activeAgentCount > 0}
+      <span class="status-agents">{activeAgentCount} agent{activeAgentCount !== 1 ? 's' : ''}</span>
+    {/if}
     <span class="status-count">{serverCount} servers</span>
   </div>
 
@@ -254,7 +297,7 @@
                       class="session-row"
                       onclick={() => overlayStore.toggleSession(session.id)}
                     >
-                      <span class="row-dot {sessionAgentDot(session)}"></span>
+                      <span class="row-dot {sessionAgentDot(session)}" class:pulsing={overlayStore.activeAgentIds.has(session.agent_id)}></span>
                       <span class="session-chevron">{overlayStore.isSessionExpanded(session.id) ? '\u25BE' : '\u25B8'}</span>
                       <span class="row-primary truncate">{session.agent_id || session.agent || 'unknown'}</span>
                       {#if session.branch}
@@ -384,6 +427,19 @@
                   <span class="row-time">{shortTime(entry.timestamp)}</span>
                   <span class="row-type">{entry.entry_type}</span>
                   <span class="row-primary truncate">{entry.agent || ''}</span>
+                </div>
+              {/each}
+            {/if}
+
+          {:else if section.id === 'activity'}
+            {#if activityLog.length === 0}
+              <div class="empty-row">No agent events yet <span class="empty-hint">— heartbeats and session events appear here</span></div>
+            {:else}
+              {#each activityLog as event}
+                <div class="detail-row activity-row">
+                  <span class="row-time">{activityShortTime(event.timestamp)}</span>
+                  <span class="row-type">{activityLabel(event.type)}</span>
+                  <span class="row-primary truncate">{event.agentId}</span>
                 </div>
               {/each}
             {/if}
@@ -843,6 +899,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .status-agents {
+    color: var(--success);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  /* ---- Activity Row ---- */
+  .activity-row {
+    font-size: 10px;
+  }
+
+  /* ---- Pulse animation for active agent dots ---- */
+  .row-dot.pulsing {
+    animation: activityPulse 0.6s ease-in-out;
+  }
+
+  @keyframes activityPulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.8); box-shadow: 0 0 8px var(--success); }
+    100% { transform: scale(1); }
   }
 
   @keyframes pulse {

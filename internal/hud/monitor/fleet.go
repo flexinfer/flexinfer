@@ -69,8 +69,9 @@ type FleetMonitor struct {
 	agent  *bridge.AgentBridge
 	logger *slog.Logger
 
-	mu       sync.RWMutex
-	snapshot FleetSnapshot
+	mu          sync.RWMutex
+	snapshot    FleetSnapshot
+	lastRefresh time.Time // debounce: skip Refresh() if <2s since last
 
 	onRefresh func(FleetSnapshot)
 
@@ -123,6 +124,16 @@ func (m *FleetMonitor) Snapshot() FleetSnapshot {
 // the snapshot. Each sub-fetch is independent; errors are logged but
 // do not prevent other fetches from completing.
 func (m *FleetMonitor) Refresh() error {
+	// Debounce: skip if less than 2s since last refresh to prevent stampede
+	// when multiple handlers fire go Refresh() concurrently.
+	m.mu.RLock()
+	if time.Since(m.lastRefresh) < 2*time.Second {
+		m.mu.RUnlock()
+		m.logger.Debug("fleet refresh debounced")
+		return nil
+	}
+	m.mu.RUnlock()
+
 	snap := FleetSnapshot{
 		UpdatedAt: time.Now(),
 	}
@@ -234,6 +245,7 @@ func (m *FleetMonitor) Refresh() error {
 	// Commit the snapshot atomically.
 	m.mu.Lock()
 	m.snapshot = snap
+	m.lastRefresh = time.Now()
 	m.mu.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh snapshot.

@@ -206,6 +206,9 @@ class WorkflowStore {
       eventStore.on('hud.workflows', (e) => this.applySnapshot(e.data)),
       // Legacy daemon events still trigger a full refresh as fallback.
       eventStore.on('workflow.step', () => this.fetch()),
+      // Granular workflow mutation events — trigger full refresh.
+      eventStore.on('hud.workflow.approve', () => this.fetch()),
+      eventStore.on('hud.workflow.reject', () => this.fetch()),
     );
   }
 

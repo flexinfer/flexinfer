@@ -287,6 +287,27 @@ class FleetStore {
       eventStore.on('config.reload', () => this.fetch()),
       eventStore.on('process.start', () => this.fetch()),
       eventStore.on('process.stop', () => this.fetch()),
+      // Granular agent events — trigger re-derive of namespaceGroups immediately.
+      eventStore.on('agent.session.start', () => { this.lastUpdated = new Date(); }),
+      eventStore.on('agent.session.end', (e) => {
+        const sessionId = (e.data as Record<string, unknown>).session_id as string;
+        if (sessionId) {
+          this.sessions = this.sessions.map((s) =>
+            s.id === sessionId ? { ...s, status: 'ended', ended_at: new Date().toISOString(), active: false } : s,
+          );
+        }
+        this.lastUpdated = new Date();
+      }),
+      eventStore.on('agent.heartbeat', (e) => {
+        const data = e.data as Record<string, unknown>;
+        const agentId = data.agent_id as string;
+        const status = (data.status as string) || 'active';
+        const ts = (data.timestamp as string) || new Date().toISOString();
+        this.agents = this.agents.map((a) =>
+          a.agent_id === agentId ? { ...a, status, last_heartbeat: ts } : a,
+        );
+        this.lastUpdated = new Date();
+      }),
     );
   }
 

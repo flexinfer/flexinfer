@@ -89,7 +89,7 @@ func Run(cfg Config) error {
 
 	// Initialize and start background monitors.
 	app.fleetMonitor = monitor.NewFleetMonitor(client, agent, logger)
-	app.fleetMonitor.Start(5 * time.Second)
+	app.fleetMonitor.Start(15 * time.Second) // Slow cadence — granular agent.* SSE events carry real-time deltas.
 	defer app.fleetMonitor.Stop()
 
 	app.healthMonitor = monitor.NewHealthMonitor(client, logger)
@@ -109,7 +109,7 @@ func Run(cfg Config) error {
 	defer app.streamMonitor.Stop()
 
 	logger.Info("background monitors started",
-		"fleet", "5s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s")
+		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s")
 
 	// Initialize SSE fan-out hub for browser clients.
 	app.sseHub = NewSSEHub(logger)
@@ -142,7 +142,17 @@ func Run(cfg Config) error {
 		})
 	})
 	app.memoryMonitor.OnRefresh(func(stats *bridge.MemoryStatsResult) {
-		data, err := json.Marshal(stats)
+		// Transform to match the HTTP endpoint shape (items/tokens, not item_count/token_count).
+		tierJSON := func(t bridge.MemoryTierStats) map[string]any {
+			return map[string]any{"items": t.Items, "tokens": t.Tokens}
+		}
+		data, err := json.Marshal(map[string]any{
+			"working_memory":    tierJSON(stats.WorkingMemory),
+			"short_term_memory": tierJSON(stats.ShortTermMemory),
+			"long_term_memory":  tierJSON(stats.LongTermMemory),
+			"total_items":       stats.TotalItems,
+			"total_tokens":      stats.TotalTokens,
+		})
 		if err != nil {
 			return
 		}
@@ -369,6 +379,13 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
 	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
+
+	// Lightweight health check — no bridge calls, no CORS overhead, sub-1ms response.
+	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	})
 
 	// CORS preflight for all API routes.
 	mux.HandleFunc("OPTIONS /api/", a.handlePreflight)
@@ -612,6 +629,11 @@ func (a *App) handleWorkflowApprove(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to approve step", err)
 		return
 	}
+	go a.workflowMonitor.Refresh()
+	a.broadcastAgentEvent("hud.workflow.approve", map[string]any{
+		"workflow_id": id,
+		"step_id":     body.StepID,
+	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
 }
 
@@ -637,6 +659,11 @@ func (a *App) handleWorkflowReject(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to reject step", err)
 		return
 	}
+	go a.workflowMonitor.Refresh()
+	a.broadcastAgentEvent("hud.workflow.reject", map[string]any{
+		"workflow_id": id,
+		"step_id":     body.StepID,
+	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
 }
 
@@ -678,6 +705,9 @@ func (a *App) handleMemoryPromote(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to promote memory", err)
 		return
 	}
+	a.broadcastAgentEvent("hud.memory.promote", map[string]any{
+		"id": id,
+	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "promoted"})
 }
 
@@ -692,6 +722,9 @@ func (a *App) handleMemoryDemote(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to demote memory", err)
 		return
 	}
+	a.broadcastAgentEvent("hud.memory.demote", map[string]any{
+		"id": id,
+	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "demoted"})
 }
 
@@ -902,6 +935,10 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to create task", err)
 		return
 	}
+	a.broadcastAgentEvent("hud.task.create", map[string]any{
+		"title":    body.Title,
+		"priority": body.Priority,
+	})
 	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -957,8 +994,11 @@ func (a *App) handleMemoryAdd(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to add memory", err)
 		return
 	}
-	// Refresh stats after adding.
-	a.memoryMonitor.Refresh()
+	go a.memoryMonitor.Refresh()
+	a.broadcastAgentEvent("hud.memory.add", map[string]any{
+		"title": body.Title,
+		"tier":  body.Tier,
+	})
 	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -972,7 +1012,10 @@ func (a *App) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to delete memory", err)
 		return
 	}
-	a.memoryMonitor.Refresh()
+	go a.memoryMonitor.Refresh()
+	a.broadcastAgentEvent("hud.memory.delete", map[string]any{
+		"id": id,
+	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

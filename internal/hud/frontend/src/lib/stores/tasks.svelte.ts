@@ -211,9 +211,23 @@ class TaskStore {
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
 
     // Subscribe to SSE events: apply task list directly from hud.fleet snapshots.
-    // The FleetMonitor already fetches all tasks every 5s and broadcasts them.
+    // The FleetMonitor fetches all tasks on its 15s cadence and broadcasts them.
     this.eventUnsubs.push(
       eventStore.on('hud.fleet', (e) => this.applySnapshot(e.data)),
+      // Granular task creation event — trigger full refresh.
+      eventStore.on('hud.task.create', () => this.fetch()),
+      // Granular agent.task.update — apply single-task status change immediately.
+      eventStore.on('agent.task.update', (e) => {
+        const data = e.data as Record<string, unknown>;
+        const taskId = data.task_id as string;
+        const status = data.status as string;
+        if (taskId && status) {
+          this.tasks = this.tasks.map((t) =>
+            t.id === taskId ? { ...t, status: status as Task['status'], updated_at: new Date().toISOString() } : t,
+          );
+          this.lastUpdated = new Date();
+        }
+      }),
     );
   }
 

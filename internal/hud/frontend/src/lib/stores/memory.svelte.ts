@@ -256,6 +256,11 @@ class MemoryStore {
     // Subscribe to SSE events: apply stats directly from hud.memory snapshots.
     this.eventUnsubs.push(
       eventStore.on('hud.memory', (e) => this.applyStats(e.data)),
+      // Granular memory mutation events — trigger full refresh for items + stats.
+      eventStore.on('hud.memory.add', () => this.fetch()),
+      eventStore.on('hud.memory.delete', () => this.fetch()),
+      eventStore.on('hud.memory.promote', () => this.fetch()),
+      eventStore.on('hud.memory.demote', () => this.fetch()),
     );
   }
 

@@ -91,6 +91,85 @@ func hudGet(port, path string) (json.RawMessage, error) {
 	return data, nil
 }
 
+// hudPostFast sends a POST with a short timeout (for latency-sensitive ops like heartbeats).
+func hudPostFast(port, path string, body any, timeout time.Duration) (json.RawMessage, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hudBaseURL(port)+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
+	}
+
+	return data, nil
+}
+
+// hudGetFast sends a GET with a short timeout (for preflight health checks).
+func hudGetFast(port, path string, timeout time.Duration) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hudBaseURL(port)+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
+	}
+
+	return data, nil
+}
+
+// hudPostWithRetry sends a POST with retry and exponential backoff.
+// Retries up to maxAttempts times with the given backoff schedule.
+func hudPostWithRetry(port, path string, body any, timeout time.Duration, backoffs []time.Duration) (json.RawMessage, error) {
+	var lastErr error
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		result, err := hudPostFast(port, path, body, timeout)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if attempt < len(backoffs) {
+			time.Sleep(backoffs[attempt])
+		}
+	}
+	return nil, lastErr
+}
+
 // resolvePort returns the HUD port from flag, env var, or default.
 func resolvePort(cmd *cobra.Command) string {
 	port, _ := cmd.Flags().GetString("port")
@@ -154,6 +233,15 @@ same namespace, the existing session ID is returned without creating a duplicate
 Designed for use in Claude Code SessionStart hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
+
+			// Preflight ping: fail fast if HUD is not running (1s timeout).
+			if _, err := hudGetFast(port, "/api/ping", 1*time.Second); err != nil {
+				if quiet {
+					fmt.Fprintf(os.Stderr, "loom: session-start: HUD not reachable: %v\n", err)
+					return nil
+				}
+				return fmt.Errorf("HUD not reachable at port %s: %w", port, err)
+			}
 
 			body := map[string]any{
 				"namespace":   namespace,
@@ -264,9 +352,15 @@ during active tool use.`,
 				body["status"] = status
 			}
 
-			_, err := hudPost(port, "/api/agent/heartbeat", body)
+			// Heartbeat uses a short 3s timeout with retry (50ms, 100ms, 200ms backoff).
+			_, err := hudPostWithRetry(port, "/api/agent/heartbeat", body,
+				3*time.Second,
+				[]time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond},
+			)
 			if err != nil {
 				if quiet {
+					// Log to stderr even in quiet mode (visible via 2> redirect).
+					fmt.Fprintf(os.Stderr, "loom: heartbeat: %v\n", err)
 					return nil
 				}
 				return err

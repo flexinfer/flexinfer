@@ -117,7 +117,7 @@ class PresenceStore {
     }
   }
 
-  startPolling(intervalMs = 5000): void {
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
@@ -125,6 +125,20 @@ class PresenceStore {
     this.eventUnsubs.push(
       eventStore.on('process.start', () => this.fetch()),
       eventStore.on('process.stop', () => this.fetch()),
+      // Granular agent events — update presence in real-time.
+      eventStore.on('agent.heartbeat', (e) => {
+        const data = e.data as Record<string, unknown>;
+        const agentId = data.agent_id as string;
+        const status = (data.status as string) || 'active';
+        const ts = (data.timestamp as string) || new Date().toISOString();
+        this.agents = this.agents.map((a) =>
+          a.agent_id === agentId ? { ...a, status, last_heartbeat: ts } : a,
+        );
+        this.lastUpdated = new Date();
+      }),
+      // Session start/end — trigger full refresh for complete data.
+      eventStore.on('agent.session.start', () => this.fetch()),
+      eventStore.on('agent.session.end', () => this.fetch()),
     );
   }
 

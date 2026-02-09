@@ -81,6 +81,12 @@ class EventStore {
       'server.health', 'config.reload', 'process.start', 'process.stop', 'workflow.step',
       // HUD-specific snapshot events (SSE-first data flow).
       'hud.fleet', 'hud.health', 'hud.memory', 'hud.workflows', 'hud.stream',
+      // Granular agent lifecycle events (real-time deltas, <100ms latency).
+      'agent.session.start', 'agent.session.end', 'agent.heartbeat', 'agent.task.update',
+      // Granular memory mutation events.
+      'hud.memory.add', 'hud.memory.delete', 'hud.memory.promote', 'hud.memory.demote',
+      // Granular workflow/task mutation events.
+      'hud.workflow.approve', 'hud.workflow.reject', 'hud.task.create',
     ];
     for (const type of knownTypes) {
       this.source.addEventListener(type, (e: MessageEvent) => {
@@ -117,9 +123,9 @@ class EventStore {
       if (!event.type && fallbackType) {
         event.type = fallbackType;
       }
-      // For HUD events, the data payload is nested inside the event's top-level
-      // "data" field. Parse it if it's a string (from json.RawMessage).
-      if (event.type?.startsWith('hud.') && typeof event.data === 'string') {
+      // For HUD and agent events, the data payload is nested inside the event's
+      // top-level "data" field. Parse it if it's a string (from json.RawMessage).
+      if ((event.type?.startsWith('hud.') || event.type?.startsWith('agent.')) && typeof event.data === 'string') {
         try {
           event.data = JSON.parse(event.data as unknown as string);
         } catch { /* keep as-is */ }

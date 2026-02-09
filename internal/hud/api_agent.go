@@ -7,10 +7,38 @@ package hud
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
+
+// mustMarshal marshals v to JSON, returning nil on error.
+func mustMarshal(v any) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// broadcastAgentEvent sends a granular agent SSE event to all browser clients.
+func (a *App) broadcastAgentEvent(eventType string, payload any) {
+	if a.sseHub == nil {
+		return
+	}
+	data := mustMarshal(payload)
+	if data == nil {
+		return
+	}
+	a.sseHub.Broadcast(bridge.SSEEvent{
+		ID:        fmt.Sprintf("%s-%d", eventType, time.Now().UnixMilli()),
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Data:      data,
+	})
+}
 
 // --- Agent lifecycle API handlers ---
 
@@ -45,8 +73,15 @@ func (a *App) handleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger a fleet refresh so the HUD picks up the new session immediately.
-	a.fleetMonitor.Refresh()
+	// Broadcast a granular SSE event immediately so the overlay reacts in <100ms.
+	a.broadcastAgentEvent("agent.session.start", map[string]any{
+		"session_id": result.SessionID,
+		"agent_id":   body.AgentID,
+		"namespace":  body.Namespace,
+	})
+
+	// Async fleet refresh for full snapshot consistency (non-blocking).
+	go a.fleetMonitor.Refresh()
 
 	a.writeJSON(w, http.StatusOK, result)
 }
@@ -77,7 +112,12 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.fleetMonitor.Refresh()
+	a.broadcastAgentEvent("agent.session.end", map[string]any{
+		"session_id": body.SessionID,
+		"agent_id":   body.AgentID,
+	})
+
+	go a.fleetMonitor.Refresh()
 
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -99,10 +139,31 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Coalesce rapid heartbeats: skip the MCP round-trip if we saw one recently.
+	cacheKey := "hb:" + body.AgentID
+	if _, ok := a.cache.Get(cacheKey); ok {
+		// Cache hit — broadcast SSE for overlay responsiveness, skip MCP call.
+		a.broadcastAgentEvent("agent.heartbeat", map[string]any{
+			"agent_id":  body.AgentID,
+			"status":    body.Status,
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+		a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
 	if err := a.agent.PresenceHeartbeat(body.AgentID, body.Status); err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to send heartbeat", err)
 		return
 	}
+
+	a.cache.Set(cacheKey, true, 10*time.Second)
+
+	a.broadcastAgentEvent("agent.heartbeat", map[string]any{
+		"agent_id":  body.AgentID,
+		"status":    body.Status,
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -133,7 +194,13 @@ func (a *App) handleAgentTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.fleetMonitor.Refresh()
+	a.broadcastAgentEvent("agent.task.update", map[string]any{
+		"task_id":    body.TaskID,
+		"status":     body.Status,
+		"resolution": body.Resolution,
+	})
+
+	go a.fleetMonitor.Refresh()
 
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
