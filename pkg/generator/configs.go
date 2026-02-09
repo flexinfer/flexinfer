@@ -435,40 +435,95 @@ func generateHooksConfig(outputDir, target string) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
+	// Use Encoder with SetEscapeHTML(false) to avoid \u003e for > and \u0026 for &
+	// in shell commands. The escaped form is valid JSON but makes hook commands unreadable.
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(config); err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(destDir, "settings.json"), data, 0644)
+	return os.WriteFile(filepath.Join(destDir, "settings.json"), []byte(buf.String()), 0644)
 }
 
-// claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks.
+// claudeHooksConfig returns a Claude Code settings.json with lifecycle and
+// guardrail hooks using the correct three-level nesting:
 //
-// Hook events:
+//	event → matcher group (with "hooks" array) → handler objects
+//
+// Lifecycle hooks:
 //   - SessionStart: create session + register presence + recall context
 //   - Stop: end session + summarize + deregister presence
 //   - PostToolUse (Bash|Task): heartbeat to keep presence alive
+//
+// Guardrail hooks:
+//   - PreToolUse (Bash): deny kubectl edit/set env (GitOps violation)
+//   - PostToolUse (Write|Edit): auto-format Python files with black
+//   - PostToolUse (Write|Edit): warn on image:latest tags
 func claudeHooksConfig() map[string]any {
 	return map[string]any{
 		"hooks": map[string]any{
+			// SessionStart has no matcher — fires on every session start.
 			"SessionStart": []map[string]any{
 				{
-					"type":    "command",
-					"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
+						},
+					},
 				},
 			},
+			// Stop has no matcher — fires on every stop.
 			"Stop": []map[string]any{
 				{
-					"type":    "command",
-					"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
+						},
+					},
 				},
 			},
+			// PreToolUse matcher group: Bash commands only.
+			"PreToolUse": []map[string]any{
+				{
+					"matcher": "Bash",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; exit 0`,
+						},
+					},
+				},
+			},
+			// PostToolUse has two matcher groups:
+			//   1. Bash|Task → heartbeat
+			//   2. Write|Edit → black + image tag warning
 			"PostToolUse": []map[string]any{
 				{
 					"matcher": "Bash|Task",
-					"type":    "command",
-					"command": "loom agent heartbeat --agent-id claude-code --status active --quiet 2>/dev/null || true",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": "loom agent heartbeat --agent-id claude-code --status active --quiet 2>/dev/null || true",
+						},
+					},
+				},
+				{
+					"matcher": "Write|Edit",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.py ]] && black "$f" 2>/dev/null; exit 0; }`,
+						},
+						{
+							"type":    "command",
+							"command": `jq -r '.tool_input.new_string // .tool_input.content // ""' | { read content; if echo "$content" | grep -qE 'image:.*:latest'; then echo '{"systemMessage":"Noticed :latest tag - consider pinning to a specific version for reproducibility."}'; fi; exit 0; }`,
+						},
+					},
 				},
 			},
 		},
@@ -476,8 +531,7 @@ func claudeHooksConfig() map[string]any {
 }
 
 // geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks.
-//
-// Gemini uses different event names than Claude Code:
+// Uses the same three-level nesting as Claude Code but with Gemini event names:
 //   - SessionStart → SessionStart (same)
 //   - SessionEnd → SessionEnd (Gemini uses SessionEnd, not Stop)
 //   - AfterTool → AfterTool (Gemini uses AfterTool, not PostToolUse)
@@ -488,21 +542,33 @@ func geminiHooksConfig() map[string]any {
 		"hooks": map[string]any{
 			"SessionStart": []map[string]any{
 				{
-					"type":    "command",
-					"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
+						},
+					},
 				},
 			},
 			"SessionEnd": []map[string]any{
 				{
-					"type":    "command",
-					"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
+						},
+					},
 				},
 			},
 			"AfterTool": []map[string]any{
 				{
 					"matcher": "run_shell_command",
-					"type":    "command",
-					"command": "loom agent heartbeat --agent-id gemini-cli --status active --quiet 2>/dev/null || true",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": "loom agent heartbeat --agent-id gemini-cli --status active --quiet 2>/dev/null || true",
+						},
+					},
 				},
 			},
 		},
