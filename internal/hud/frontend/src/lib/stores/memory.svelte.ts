@@ -116,6 +116,7 @@ class MemoryStore {
       tokens: (raw?.token_count as number) ?? (raw?.tokens as number) ?? 0,
     });
 
+    const prevTotal = this.stats.total_items;
     this.stats = {
       ...this.stats,
       working_memory: mapTier(data.working_memory as Record<string, unknown>),
@@ -126,6 +127,27 @@ class MemoryStore {
     };
     this.lastUpdated = new Date();
     this.error = null;
+
+    // If the item count changed, re-fetch the items list so it stays in sync.
+    if (this.stats.total_items !== prevTotal) {
+      this.fetchItems();
+    }
+  }
+
+  /** Fetch only the items list (not stats) to keep items in sync after SSE stat changes. */
+  private async fetchItems(): Promise<void> {
+    try {
+      const params = new URLSearchParams();
+      if (this.filterTier !== 'all') params.set('tier', this.filterTier);
+      if (this.searchQuery) params.set('query', this.searchQuery);
+      params.set('limit', '100');
+      const res = await globalThis.fetch(`/api/memory/items?${params.toString()}`);
+      if (!res.ok) return;
+      const data: MemoryItemsResponse = await res.json();
+      this.items = data.items || [];
+    } catch {
+      // Non-critical: items will refresh on next poll cycle.
+    }
   }
 
   async promote(itemId: string): Promise<void> {

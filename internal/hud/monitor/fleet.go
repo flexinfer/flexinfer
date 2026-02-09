@@ -27,10 +27,11 @@ type FleetSnapshot struct {
 	TotalSessions  int                  `json:"total_sessions"`
 
 	// Task summary
-	TotalTasks   int `json:"total_tasks"`
-	PendingTasks int `json:"pending_tasks"`
-	ActiveTasks  int `json:"active_tasks"`
-	BlockedTasks int `json:"blocked_tasks"`
+	TotalTasks   int               `json:"total_tasks"`
+	PendingTasks int               `json:"pending_tasks"`
+	ActiveTasks  int               `json:"active_tasks"`
+	BlockedTasks int               `json:"blocked_tasks"`
+	Tasks        []bridge.TaskInfo `json:"tasks"`
 
 	// Token summary (across all sessions)
 	TotalTokens int `json:"total_tokens"`
@@ -154,6 +155,7 @@ func (m *FleetMonitor) Refresh() error {
 	if tasks, err := m.agent.AllTasks(); err != nil {
 		m.logger.Warn("fleet: failed to fetch tasks", "error", err)
 	} else {
+		snap.Tasks = tasks
 		snap.TotalTasks = len(tasks)
 		for _, t := range tasks {
 			switch t.Status {

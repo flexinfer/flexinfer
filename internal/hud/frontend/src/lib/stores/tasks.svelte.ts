@@ -1,4 +1,6 @@
 // Tasks store - task management
+// v2: SSE-first with 30s fallback poll. Applies task list from hud.fleet snapshots.
+import { eventStore } from './events.svelte.ts';
 
 export interface Task {
   id: string;
@@ -51,6 +53,7 @@ class TaskStore {
   sortDir = $state<TaskSortDir>('asc');
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventUnsubs: Array<() => void> = [];
 
   get filteredTasks(): Task[] {
     let result = [...this.tasks];
@@ -113,6 +116,15 @@ class TaskStore {
     } finally {
       this.loading = false;
     }
+  }
+
+  /** Apply task list directly from SSE hud.fleet snapshot, avoiding an HTTP round-trip. */
+  applySnapshot(data: Record<string, unknown>): void {
+    const tasks = data.tasks as Task[] | undefined;
+    if (!tasks) return;
+    this.tasks = tasks;
+    this.lastUpdated = new Date();
+    this.error = null;
   }
 
   async updateStatus(taskId: string, status: string): Promise<void> {
@@ -192,10 +204,17 @@ class TaskStore {
     }
   }
 
-  startPolling(intervalMs = 5000): void {
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
+    // 30s fallback poll (SSE is the primary data source).
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+
+    // Subscribe to SSE events: apply task list directly from hud.fleet snapshots.
+    // The FleetMonitor already fetches all tasks every 5s and broadcasts them.
+    this.eventUnsubs.push(
+      eventStore.on('hud.fleet', (e) => this.applySnapshot(e.data)),
+    );
   }
 
   stopPolling(): void {
@@ -203,6 +222,8 @@ class TaskStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) unsub();
+    this.eventUnsubs = [];
   }
 }
 

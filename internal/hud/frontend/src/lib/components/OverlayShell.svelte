@@ -36,8 +36,10 @@
   let sessionCount = $derived(fleetStore.activeSessions.length);
   let pendingTasks = $derived(taskStore.pendingCount);
   let inProgressTasks = $derived(taskStore.inProgressCount);
+  let blockedTasks = $derived(taskStore.blockedCount);
+  let totalTasks = $derived(taskStore.tasks.length);
   let activeWorkflows = $derived(workflowStore.activeWorkflows.length);
-  let workingMemory = $derived(memoryStore.stats.working_memory?.items ?? 0);
+  let totalMemoryItems = $derived(memoryStore.stats.total_items ?? 0);
   let lastStreamTime = $derived(() => {
     const entries = streamStore.entries;
     if (entries.length === 0) return null;
@@ -82,6 +84,29 @@
     }
   }
 
+  function taskStatusDot(status) {
+    switch (status) {
+      case 'in_progress': return 'dot-healthy';
+      case 'blocked':     return 'dot-degraded';
+      case 'pending':     return 'dot-idle';
+      case 'completed':   return 'dot-completed';
+      case 'cancelled':   return 'dot-down';
+      default:            return 'dot-idle';
+    }
+  }
+
+  function workflowStatusDot(status) {
+    switch (status) {
+      case 'running':          return 'dot-healthy';
+      case 'waiting_approval': return 'dot-degraded';
+      case 'pending':          return 'dot-idle';
+      case 'completed':        return 'dot-completed';
+      case 'failed':           return 'dot-down';
+      case 'cancelled':        return 'dot-down';
+      default:                 return 'dot-idle';
+    }
+  }
+
   // Sections config
   const sections = [
     { id: 'fleet',     label: 'FLEET',     icon: '\u25C8' },
@@ -96,9 +121,16 @@
     switch (id) {
       case 'fleet':     return `${sessionCount} session${sessionCount !== 1 ? 's' : ''}`;
       case 'servers':   return `${healthyCount}/${serverCount} \u25CF`;
-      case 'tasks':     return `${pendingTasks} pend`;
+      case 'tasks': {
+        if (totalTasks === 0) return 'none';
+        const parts = [];
+        if (inProgressTasks > 0) parts.push(`${inProgressTasks} active`);
+        if (pendingTasks > 0) parts.push(`${pendingTasks} pend`);
+        if (blockedTasks > 0) parts.push(`${blockedTasks} blocked`);
+        return parts.length > 0 ? parts.join(' \u00B7 ') : `${totalTasks} total`;
+      }
       case 'workflows': return `${activeWorkflows} active`;
-      case 'memory':    return `${workingMemory} working`;
+      case 'memory':    return `${totalMemoryItems} items`;
       case 'stream': {
         const t = lastStreamTime();
         return t ? `last: ${formatTime(t)}` : 'no data';
@@ -169,23 +201,29 @@
             {#if taskStore.tasks.length === 0}
               <div class="empty-row">No tasks</div>
             {:else}
-              {#each taskStore.filteredTasks.slice(0, 5) as task}
+              {#each taskStore.filteredTasks.slice(0, 8) as task (task.id)}
                 <div class="detail-row">
+                  <span class="row-dot {taskStatusDot(task.status)}"></span>
                   <span class="row-badge-pill {priorityClass(task.priority)}">{task.priority?.charAt(0).toUpperCase()}</span>
                   <span class="row-primary truncate">{task.title}</span>
-                  <span class="row-secondary">{task.agent || ''}</span>
+                  <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
                 </div>
               {/each}
+              {#if totalTasks > 8}
+                <div class="overflow-row">+{totalTasks - 8} more</div>
+              {/if}
             {/if}
 
           {:else if section.id === 'workflows'}
             {#if workflowStore.workflows.length === 0}
               <div class="empty-row">No workflows</div>
             {:else}
-              {#each workflowStore.activeWorkflows.slice(0, 5) as wf}
+              {#each workflowStore.activeWorkflows.slice(0, 5) as wf (wf.id)}
                 <div class="detail-row">
+                  <span class="row-dot {workflowStatusDot(wf.status)}"></span>
                   <span class="row-primary truncate">{wf.name || wf.id}</span>
                   <span class="row-secondary">{wf.current_step || ''}</span>
+                  <span class="row-status-label">{wf.status === 'waiting_approval' ? 'approval' : wf.status}</span>
                 </div>
               {/each}
               {#if workflowStore.activeWorkflows.length === 0}
@@ -408,10 +446,11 @@
     flex-shrink: 0;
   }
 
-  .dot-healthy { background: var(--success); }
-  .dot-degraded { background: var(--warning); }
+  .dot-healthy { background: var(--success); box-shadow: 0 0 3px var(--success); }
+  .dot-degraded { background: var(--warning); box-shadow: 0 0 3px var(--warning); }
   .dot-down { background: var(--error); }
   .dot-idle { background: var(--fg-muted); }
+  .dot-completed { background: var(--info, #4a9eff); opacity: 0.5; }
 
   .row-primary {
     flex: 1;
@@ -450,6 +489,23 @@
   .badge-high { background: var(--warning); }
   .badge-medium { background: var(--info); }
   .badge-low { background: var(--fg-muted); }
+
+  .row-status-label {
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+  }
+
+  .overflow-row {
+    padding: 3px 12px 5px 24px;
+    color: var(--fg-muted);
+    font-size: 9px;
+    font-family: var(--font-mono);
+    opacity: 0.7;
+  }
 
   /* ---- Tier Rows (Memory) ---- */
   .tier-row {
