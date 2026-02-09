@@ -364,17 +364,6 @@ func findReadyModels(t *testing.T, ctx context.Context, ns string, n int) []stri
 	return names
 }
 
-// findReadyChatModelObj returns a full Ready Model object for cloning in tests.
-// Prefers backends with faster inference for reliable cold start testing.
-func findReadyChatModelObj(t *testing.T, ctx context.Context, ns string) *aiv1alpha2.Model {
-	t.Helper()
-	models := readyChatModels(t, ctx, ns)
-	if len(models) == 0 {
-		t.Skip("No Ready chat-compatible models found in namespace " + ns)
-	}
-	return &models[0]
-}
-
 // getProxyEndpoint returns the FlexInfer proxy endpoint URL.
 // If running outside the cluster, it starts a kubectl port-forward.
 func getProxyEndpoint(ctx context.Context) (string, error) {
@@ -395,7 +384,9 @@ func getProxyEndpoint(ctx context.Context) (string, error) {
 	clusterEndpoint := fmt.Sprintf("http://%s:%d", svc.Spec.ClusterIP, port)
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), 2*time.Second)
 	if err == nil {
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			// Not actionable; best effort so errcheck doesn't fail.
+		}
 		return clusterEndpoint, nil
 	}
 
@@ -413,7 +404,9 @@ func getProxyEndpoint(ctx context.Context) (string, error) {
 		time.Sleep(250 * time.Millisecond)
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", localPort), time.Second)
 		if err == nil {
-			conn.Close()
+			if err := conn.Close(); err != nil {
+				// Not actionable; best effort so errcheck doesn't fail.
+			}
 			return fmt.Sprintf("http://127.0.0.1:%d", localPort), nil
 		}
 	}

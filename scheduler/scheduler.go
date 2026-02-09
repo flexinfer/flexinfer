@@ -204,7 +204,9 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		log.Error(err, "Failed to write response")
+	}
 }
 
 // Score is the handler for the /score endpoint.
@@ -356,7 +358,9 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		log.Error(err, "Failed to write response")
+	}
 }
 
 func deviceClassFromNode(node *corev1.Node) string {

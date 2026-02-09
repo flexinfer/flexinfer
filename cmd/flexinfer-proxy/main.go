@@ -1830,7 +1830,9 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		slog.Warn("error writing models response", "error", err)
+	}
 }
 
 // modelDeploymentToOpenAI converts a ModelDeployment to OpenAI model format
