@@ -75,7 +75,7 @@ func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mc
 			}
 		}
 
-		if err := s.memoryHierarchy.AddItem(item); err != nil {
+		if err := s.persistedMemoryHierarchy.AddItemWithPersistence(ctx, item, nil); err != nil {
 			return mcp.ErrorResult(fmt.Errorf("failed to add item %d: %w", i, err)), nil
 		}
 
@@ -202,7 +202,7 @@ func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (
 
 	var deleted []string
 	for _, id := range itemIDs {
-		if err := s.memoryHierarchy.DeleteItem(id); err == nil {
+		if err := s.persistedMemoryHierarchy.DeleteItemWithPersistence(ctx, id); err == nil {
 			deleted = append(deleted, id)
 		}
 	}
@@ -225,7 +225,7 @@ func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) 
 	var promoted []string
 	var errors []string
 	for _, id := range itemIDs {
-		if err := s.memoryHierarchy.PromoteItem(id); err == nil {
+		if err := s.persistedMemoryHierarchy.PromoteItemWithPersistence(ctx, id); err == nil {
 			promoted = append(promoted, id)
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", id, err))
@@ -255,7 +255,7 @@ func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (
 	var demoted []string
 	var errors []string
 	for _, id := range itemIDs {
-		if err := s.memoryHierarchy.DemoteItem(id); err == nil {
+		if err := s.persistedMemoryHierarchy.DemoteItemWithPersistence(ctx, id); err == nil {
 			demoted = append(demoted, id)
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", id, err))
