@@ -39,6 +39,7 @@
   let blockedTasks = $derived(taskStore.blockedCount);
   let totalTasks = $derived(taskStore.tasks.length);
   let activeWorkflows = $derived(workflowStore.activeWorkflows.length);
+  let definitionCount = $derived(workflowStore.uniqueDefinitions.length);
   let totalMemoryItems = $derived(memoryStore.stats.total_items ?? 0);
   let lastStreamTime = $derived(() => {
     const entries = streamStore.entries;
@@ -95,6 +96,44 @@
     }
   }
 
+  function sessionAgentDot(session) {
+    switch (session.agentStatus) {
+      case 'active':  return 'dot-healthy';
+      case 'idle':    return 'dot-idle';
+      case 'offline': return 'dot-down';
+      default:        return session.status === 'active' ? 'dot-healthy' : 'dot-idle';
+    }
+  }
+
+  // Smart-default: auto-collapse idle namespaces/sessions when FLEET opens
+  let prevFleetOpen = false;
+  $effect(() => {
+    const isOpen = overlayStore.expandedSection === 'fleet';
+    if (isOpen && !prevFleetOpen) {
+      // Section just opened — collapse idle groups
+      const groups = fleetStore.namespaceGroups;
+      const collapseNs = new Set();
+      const collapseSess = new Set();
+      for (const g of groups) {
+        if (!g.hasActiveWork) {
+          collapseNs.add(g.project);
+        } else {
+          for (const s of g.sessions) {
+            const hasActiveTasks = s.tasks.some((t) => t.status === 'in_progress');
+            if (s.agentStatus !== 'active' && !hasActiveTasks) {
+              collapseSess.add(s.id);
+            }
+          }
+        }
+      }
+      overlayStore.collapsedNamespaces = collapseNs;
+      overlayStore.collapsedSessions = collapseSess;
+    } else if (!isOpen && prevFleetOpen) {
+      overlayStore.resetSubGroups();
+    }
+    prevFleetOpen = isOpen;
+  });
+
   function workflowStatusDot(status) {
     switch (status) {
       case 'running':          return 'dot-healthy';
@@ -119,7 +158,12 @@
 
   function sectionSummary(id) {
     switch (id) {
-      case 'fleet':     return `${sessionCount} session${sessionCount !== 1 ? 's' : ''}`;
+      case 'fleet': {
+        const groups = fleetStore.namespaceGroups;
+        const activeCount = groups.filter((g) => g.hasActiveWork).length;
+        if (groups.length === 0) return 'no activity';
+        return `${groups.length} ns${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
+      }
       case 'servers':   return `${healthyCount}/${serverCount} \u25CF`;
       case 'tasks': {
         if (totalTasks === 0) return 'none';
@@ -129,7 +173,12 @@
         if (blockedTasks > 0) parts.push(`${blockedTasks} blocked`);
         return parts.length > 0 ? parts.join(' \u00B7 ') : `${totalTasks} total`;
       }
-      case 'workflows': return `${activeWorkflows} active`;
+      case 'workflows': {
+        const parts = [];
+        if (activeWorkflows > 0) parts.push(`${activeWorkflows} active`);
+        if (definitionCount > 0) parts.push(`${definitionCount} defs`);
+        return parts.length > 0 ? parts.join(' \u00B7 ') : 'none';
+      }
       case 'memory':    return `${totalMemoryItems} items`;
       case 'stream': {
         const t = lastStreamTime();
@@ -170,22 +219,77 @@
       {#if overlayStore.expandedSection === section.id}
         <div class="section-body">
           {#if section.id === 'fleet'}
-            {#if fleetStore.activeSessions.length === 0}
-              <div class="empty-row">No active sessions</div>
+            {#if fleetStore.namespaceGroups.length === 0}
+              <div class="empty-row">No active sessions <span class="empty-hint">— agents register on connect</span></div>
             {:else}
-              {#each fleetStore.activeSessions.slice(0, 8) as session}
-                <div class="detail-row">
-                  <span class="row-icon">{'\u25C9'}</span>
-                  <span class="row-primary truncate">{session.agent_id || session.agent || 'unknown'}</span>
-                  <span class="row-secondary truncate">{session.namespace || ''}</span>
-                  <span class="row-badge">{session.total_tokens ?? 0} tok</span>
-                </div>
+              {#each fleetStore.namespaceGroups as group (group.project)}
+                <!-- Level 1: Namespace group header -->
+                <button
+                  class="ns-header"
+                  class:ns-active={group.hasActiveWork}
+                  onclick={() => overlayStore.toggleNamespace(group.project)}
+                >
+                  <span class="ns-chevron">{overlayStore.isNamespaceExpanded(group.project) ? '\u25BE' : '\u25B8'}</span>
+                  <span class="ns-name">{group.project}</span>
+                  <span class="ns-summary">{group.sessionCount}s {group.taskCount}t</span>
+                  <span class="ns-tokens">{group.totalTokens} tok</span>
+                </button>
+
+                {#if overlayStore.isNamespaceExpanded(group.project)}
+                  <!-- Level 2: Sessions -->
+                  {#each group.sessions.slice(0, 4) as session (session.id)}
+                    <button
+                      class="session-row"
+                      onclick={() => overlayStore.toggleSession(session.id)}
+                    >
+                      <span class="row-dot {sessionAgentDot(session)}"></span>
+                      <span class="session-chevron">{overlayStore.isSessionExpanded(session.id) ? '\u25BE' : '\u25B8'}</span>
+                      <span class="row-primary truncate">{session.agent_id || session.agent || 'unknown'}</span>
+                      {#if session.branch}
+                        <span class="session-branch">{session.branch}</span>
+                      {/if}
+                      <span class="row-badge">{session.total_tokens ?? 0} tok</span>
+                    </button>
+
+                    {#if overlayStore.isSessionExpanded(session.id)}
+                      <!-- Level 3: Tasks under this session -->
+                      {#each session.tasks.slice(0, 3) as task (task.id)}
+                        <div class="task-row">
+                          <span class="row-dot {taskStatusDot(task.status)}"></span>
+                          <span class="row-primary truncate">{task.title}</span>
+                          <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
+                        </div>
+                      {/each}
+                      {#if session.tasks.length > 3}
+                        <div class="overflow-row nested">+{session.tasks.length - 3} more tasks</div>
+                      {/if}
+                      {#if session.tasks.length === 0}
+                        <div class="task-row empty-task">no tasks</div>
+                      {/if}
+                    {/if}
+                  {/each}
+                  {#if group.sessions.length > 4}
+                    <div class="overflow-row nested">+{group.sessions.length - 4} more sessions</div>
+                  {/if}
+
+                  <!-- Orphan tasks (namespace match, no session) -->
+                  {#each group.orphanTasks.slice(0, 3) as task (task.id)}
+                    <div class="task-row orphan">
+                      <span class="row-dot {taskStatusDot(task.status)}"></span>
+                      <span class="row-primary truncate">{task.title}</span>
+                      <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
+                    </div>
+                  {/each}
+                  {#if group.orphanTasks.length > 3}
+                    <div class="overflow-row nested">+{group.orphanTasks.length - 3} more orphan tasks</div>
+                  {/if}
+                {/if}
               {/each}
             {/if}
 
           {:else if section.id === 'servers'}
             {#if healthStore.servers.length === 0}
-              <div class="empty-row">No servers</div>
+              <div class="empty-row">No servers <span class="empty-hint">— check daemon config</span></div>
             {:else}
               {#each healthStore.servers as server}
                 <div class="detail-row">
@@ -199,7 +303,7 @@
 
           {:else if section.id === 'tasks'}
             {#if taskStore.tasks.length === 0}
-              <div class="empty-row">No tasks</div>
+              <div class="empty-row">No tasks <span class="empty-hint">— use agent_task_add to create</span></div>
             {:else}
               {#each taskStore.filteredTasks.slice(0, 8) as task (task.id)}
                 <div class="detail-row">
@@ -215,9 +319,8 @@
             {/if}
 
           {:else if section.id === 'workflows'}
-            {#if workflowStore.workflows.length === 0}
-              <div class="empty-row">No workflows</div>
-            {:else}
+            <!-- Running instances -->
+            {#if workflowStore.activeWorkflows.length > 0}
               {#each workflowStore.activeWorkflows.slice(0, 5) as wf (wf.id)}
                 <div class="detail-row">
                   <span class="row-dot {workflowStatusDot(wf.status)}"></span>
@@ -226,9 +329,21 @@
                   <span class="row-status-label">{wf.status === 'waiting_approval' ? 'approval' : wf.status}</span>
                 </div>
               {/each}
-              {#if workflowStore.activeWorkflows.length === 0}
-                <div class="empty-row">No active workflows</div>
+            {/if}
+            <!-- Registered definitions -->
+            {#if workflowStore.uniqueDefinitions.length > 0}
+              {#if workflowStore.activeWorkflows.length > 0}
+                <div class="sub-header">Definitions</div>
               {/if}
+              {#each workflowStore.uniqueDefinitions as def (def.id)}
+                <div class="detail-row def-row">
+                  <span class="row-dot dot-idle"></span>
+                  <span class="row-primary truncate">{def.name}</span>
+                  <span class="row-secondary">{def.step_count} steps</span>
+                </div>
+              {/each}
+            {:else if workflowStore.activeWorkflows.length === 0}
+              <div class="empty-row">No workflows <span class="empty-hint">— define in .agents/workflows/</span></div>
             {/if}
 
           {:else if section.id === 'memory'}
@@ -250,7 +365,7 @@
 
           {:else if section.id === 'stream'}
             {#if streamStore.entries.length === 0}
-              <div class="empty-row">No activity</div>
+              <div class="empty-row">No activity <span class="empty-hint">— context entries appear here</span></div>
             {:else}
               {#each streamStore.entries.slice(0, 8) as entry}
                 <div class="detail-row stream-row">
@@ -276,7 +391,9 @@
     overflow-y: auto;
     overflow-x: hidden;
     font-size: 11px;
-    background: transparent;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur-heavy));
+    -webkit-backdrop-filter: blur(var(--glass-blur-heavy));
   }
 
   /* ---- Draggable Header ---- */
@@ -288,8 +405,8 @@
     padding: 0 12px;
     flex-shrink: 0;
     -webkit-app-region: drag;
-    border-bottom: 1px solid var(--border);
-    background: rgba(0, 34, 39, 0.6);
+    border-bottom: 1px solid var(--glass-border);
+    background: rgba(0, 34, 39, 0.75);
   }
 
   .overlay-logo {
@@ -311,8 +428,8 @@
     align-items: center;
     gap: 8px;
     padding: 6px 12px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(0, 23, 26, 0.4);
+    border-bottom: 1px solid var(--glass-border);
+    background: rgba(0, 23, 26, 0.5);
     flex-shrink: 0;
   }
 
@@ -359,7 +476,7 @@
     padding: 6px 12px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
-    transition: background var(--transition-fast, 0.1s);
+    transition: background var(--transition-fast, 0.1s), color var(--transition-fast, 0.1s);
     -webkit-app-region: no-drag;
     font-size: 10px;
     text-align: left;
@@ -398,17 +515,17 @@
   .section-body {
     border-bottom: 1px solid var(--border);
     background: rgba(0, 23, 26, 0.3);
-    animation: expandIn 0.15s ease-out;
+    animation: expandFadeIn 0.18s ease-out;
   }
 
-  @keyframes expandIn {
+  @keyframes expandFadeIn {
     from {
       opacity: 0;
-      max-height: 0;
+      transform: translateY(-4px);
     }
     to {
       opacity: 1;
-      max-height: 500px;
+      transform: translateY(0);
     }
   }
 
@@ -417,6 +534,11 @@
     color: var(--fg-muted);
     font-style: italic;
     font-size: 10px;
+  }
+
+  .empty-hint {
+    opacity: 0.5;
+    font-size: 9px;
   }
 
   /* ---- Detail Rows ---- */
@@ -477,7 +599,7 @@
     font-weight: 700;
     width: 14px;
     height: 14px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -507,6 +629,137 @@
     opacity: 0.7;
   }
 
+  .overflow-row.nested {
+    padding-left: 44px;
+  }
+
+  /* ---- Namespace Group (Level 1) ---- */
+  .ns-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 4px 12px 4px 18px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: left;
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: var(--fg-secondary);
+    border-left: 2px solid transparent;
+    transition: background var(--transition-fast, 0.1s);
+  }
+
+  .ns-header:hover {
+    background: rgba(0, 46, 52, 0.4);
+  }
+
+  .ns-header.ns-active {
+    border-left-color: var(--success);
+  }
+
+  .ns-chevron {
+    width: 10px;
+    color: var(--fg-muted);
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+
+  .ns-name {
+    font-weight: 600;
+    color: var(--fg-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ns-summary {
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+
+  .ns-tokens {
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    flex-shrink: 0;
+    margin-left: 4px;
+  }
+
+  /* ---- Session Row (Level 2) ---- */
+  .session-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 3px 12px 3px 28px;
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: var(--fg-primary);
+    transition: background var(--transition-fast, 0.1s);
+  }
+
+  .session-row:hover {
+    background: rgba(0, 46, 52, 0.4);
+  }
+
+  .session-chevron {
+    width: 10px;
+    color: var(--fg-muted);
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+
+  .session-branch {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    flex-shrink: 0;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    background: rgba(0, 188, 212, 0.1);
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---- Task Row (Level 3) ---- */
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 12px 2px 44px;
+    font-size: 10px;
+    color: var(--fg-primary);
+    min-height: 20px;
+  }
+
+  .task-row:hover {
+    background: rgba(0, 46, 52, 0.3);
+  }
+
+  .task-row.orphan {
+    padding-left: 34px;
+    opacity: 0.8;
+    font-style: italic;
+  }
+
+  .task-row.empty-task {
+    color: var(--fg-muted);
+    font-style: italic;
+    font-size: 9px;
+  }
+
   /* ---- Tier Rows (Memory) ---- */
   .tier-row {
     display: flex;
@@ -534,6 +787,22 @@
     color: var(--fg-muted);
     font-family: var(--font-mono);
     font-size: 9px;
+  }
+
+  /* ---- Workflow Definition Rows ---- */
+  .sub-header {
+    padding: 4px 12px 2px 24px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+  }
+
+  .def-row {
+    opacity: 0.75;
   }
 
   /* ---- Stream Rows ---- */

@@ -286,7 +286,7 @@
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 12px;
     color: var(--fg-secondary);
     transition: background var(--transition-fast, 0.12s), color var(--transition-fast, 0.12s);
@@ -301,6 +301,7 @@
   .nav-tab.active {
     background: var(--bg-tertiary);
     color: var(--fg-primary);
+    box-shadow: 0 0 8px var(--glow-accent);
   }
 
   .nav-tab.active::after {
@@ -329,7 +330,7 @@
     color: var(--fg-muted);
     padding: 1px 3px;
     border: 1px solid var(--border);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     line-height: 1;
   }
 

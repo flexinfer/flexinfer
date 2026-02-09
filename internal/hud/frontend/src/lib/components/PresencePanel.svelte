@@ -480,7 +480,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 12px;
     font-weight: 500;
     color: var(--fg-secondary);
@@ -505,7 +505,7 @@
     font-size: 10px;
     background: var(--bg-primary);
     padding: 1px 5px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     color: var(--fg-muted);
   }
 
@@ -517,7 +517,7 @@
     color: var(--warning);
     padding: 2px 8px;
     background: rgba(231, 179, 18, 0.12);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border: 1px solid rgba(231, 179, 18, 0.25);
   }
 
@@ -558,7 +558,7 @@
     background: var(--bg-tertiary);
     color: var(--fg-secondary);
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
   }
 
   .empty-cell {

@@ -411,7 +411,7 @@
     background: var(--bg-tertiary);
     color: var(--fg-secondary);
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
   }
 
   .empty-cell {

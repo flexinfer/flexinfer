@@ -239,7 +239,7 @@
     max-height: 60vh;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     box-shadow:
       0 16px 48px rgba(0, 0, 0, 0.5),
       0 0 0 1px rgba(1, 135, 153, 0.1);
@@ -295,7 +295,7 @@
     padding: 2px 6px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     flex-shrink: 0;
   }
@@ -368,7 +368,7 @@
     padding: 1px 5px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     flex-shrink: 0;
   }

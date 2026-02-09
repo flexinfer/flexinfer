@@ -296,7 +296,7 @@
     font-weight: 600;
     color: var(--bg-primary);
     padding: 1px 6px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     flex-shrink: 0;
   }
 

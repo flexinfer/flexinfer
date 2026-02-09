@@ -236,6 +236,49 @@ func (a *AgentBridge) AllTasks() ([]TaskInfo, error) {
 	return a.Tasks("")
 }
 
+// WorkflowDefineResult holds the result of defining a workflow.
+type WorkflowDefineResult struct {
+	OK           bool   `json:"ok"`
+	DefinitionID string `json:"definition_id"`
+	Name         string `json:"name"`
+	StepCount    int    `json:"step_count"`
+}
+
+// WorkflowDefinitionInfo describes a registered workflow definition.
+type WorkflowDefinitionInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Namespace   string `json:"namespace"`
+	StepCount   int    `json:"step_count"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// WorkflowDefine registers a new workflow definition.
+func (a *AgentBridge) WorkflowDefine(args map[string]any) (*WorkflowDefineResult, error) {
+	var result WorkflowDefineResult
+	if err := a.callAgentTool("agent_workflow_define", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// WorkflowDefinitions lists registered workflow definitions.
+func (a *AgentBridge) WorkflowDefinitions(namespace string) ([]WorkflowDefinitionInfo, error) {
+	args := map[string]any{}
+	if namespace != "" {
+		args["namespace"] = namespace
+	}
+	var result struct {
+		Definitions []WorkflowDefinitionInfo `json:"definitions"`
+	}
+	if err := a.callAgentTool("agent_workflow_definitions", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Definitions, nil
+}
+
 // WorkflowList returns all workflows.
 func (a *AgentBridge) WorkflowList() ([]WorkflowInfo, error) {
 	var result struct {

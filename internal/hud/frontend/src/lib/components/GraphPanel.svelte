@@ -588,13 +588,13 @@
     flex: 1;
     height: 14px;
     background: var(--bg-tertiary);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
   }
 
   .hist-bar {
     height: 100%;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     transition: width 0.3s ease;
     min-width: 2px;
   }
@@ -777,7 +777,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     font-size: 10px;
     color: var(--error);
     opacity: 0.5;
@@ -851,7 +851,7 @@
     gap: 4px;
     background: var(--bg-tertiary);
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
 
   .path-arrow {

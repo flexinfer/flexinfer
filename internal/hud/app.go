@@ -60,6 +60,7 @@ type App struct {
 	healthMonitor   *monitor.HealthMonitor
 	memoryMonitor   *monitor.MemoryMonitor
 	workflowMonitor *monitor.WorkflowMonitor
+	streamMonitor   *monitor.StreamMonitor
 
 	// SSE streaming — daemon events → browser clients.
 	sseHub *SSEHub
@@ -103,8 +104,12 @@ func Run(cfg Config) error {
 	app.workflowMonitor.Start(5 * time.Second)
 	defer app.workflowMonitor.Stop()
 
+	app.streamMonitor = monitor.NewStreamMonitor(agent, logger)
+	app.streamMonitor.Start(5 * time.Second)
+	defer app.streamMonitor.Stop()
+
 	logger.Info("background monitors started",
-		"fleet", "5s", "health", "5s", "memory", "10s", "workflow", "5s")
+		"fleet", "5s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s")
 
 	// Initialize SSE fan-out hub for browser clients.
 	app.sseHub = NewSSEHub(logger)
@@ -156,6 +161,18 @@ func Run(cfg Config) error {
 		app.sseHub.Broadcast(bridge.SSEEvent{
 			ID:        fmt.Sprintf("hud-workflows-%d", time.Now().UnixMilli()),
 			Type:      "hud.workflows",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+	app.streamMonitor.OnRefresh(func(entries []monitor.StreamEntry) {
+		data, err := json.Marshal(map[string]any{"entries": entries})
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-stream-%d", time.Now().UnixMilli()),
+			Type:      "hud.stream",
 			Timestamp: time.Now(),
 			Data:      data,
 		})
@@ -350,6 +367,8 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/heartbeat", a.withCORS(a.handleAgentHeartbeat))
 	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
+	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
+	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
 
 	// CORS preflight for all API routes.
 	mux.HandleFunc("OPTIONS /api/", a.handlePreflight)

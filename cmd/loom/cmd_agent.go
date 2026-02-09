@@ -13,9 +13,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // defaultHUDPort is the default port for the Agent HUD server.
@@ -124,6 +126,7 @@ The HUD server must be running (default port 3333). Set LOOM_HUD_PORT or use
 		newAgentHeartbeatCmd(),
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
+		newAgentWorkflowSyncCmd(),
 	)
 
 	return agentCmd
@@ -363,4 +366,146 @@ func newAgentSessionCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd
+}
+
+// workflowYAML mirrors the YAML structure of workflow definition files.
+type workflowYAML struct {
+	Name              string           `yaml:"name"`
+	Description       string           `yaml:"description"`
+	Steps             []map[string]any `yaml:"steps"`
+	InputSchema       map[string]any   `yaml:"input_schema"`
+	RollbackOnFailure bool             `yaml:"rollback_on_failure"`
+	TimeoutSeconds    int              `yaml:"timeout_seconds"`
+}
+
+// newAgentWorkflowSyncCmd creates the `loom agent workflow-sync` command.
+func newAgentWorkflowSyncCmd() *cobra.Command {
+	var (
+		dir       string
+		namespace string
+		createdBy string
+		quiet     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "workflow-sync",
+		Short: "Register workflow definitions from YAML files",
+		Long: `Read workflow definition YAML files from a directory and register them
+with the agent-context workflow engine via the HUD API.
+
+This is idempotent: re-registering a definition updates it in-memory.
+Definitions are stored in-memory and must be re-synced after daemon restart.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+
+			// Find YAML files.
+			pattern := filepath.Join(dir, "*.yaml")
+			files, err := filepath.Glob(pattern)
+			if err != nil {
+				return fmt.Errorf("glob %s: %w", pattern, err)
+			}
+			ymlPattern := filepath.Join(dir, "*.yml")
+			ymlFiles, _ := filepath.Glob(ymlPattern)
+			files = append(files, ymlFiles...)
+
+			if len(files) == 0 {
+				if !quiet {
+					fmt.Printf("No workflow files found in %s\n", dir)
+				}
+				return nil
+			}
+
+			var registered, failed int
+			for _, f := range files {
+				body, err := loadWorkflowFile(f, namespace, createdBy)
+				if err != nil {
+					if !quiet {
+						fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", filepath.Base(f), err)
+					}
+					failed++
+					continue
+				}
+
+				result, err := hudPost(port, "/api/agent/workflow-define", body)
+				if err != nil {
+					if !quiet {
+						fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", filepath.Base(f), err)
+					}
+					failed++
+					continue
+				}
+
+				registered++
+				if !quiet {
+					var res struct {
+						DefinitionID string `json:"definition_id"`
+						Name         string `json:"name"`
+						StepCount    int    `json:"step_count"`
+					}
+					_ = json.Unmarshal(result, &res)
+					fmt.Printf("  ✓ %s (%s, %d steps)\n", res.Name, res.DefinitionID, res.StepCount)
+				}
+			}
+
+			if !quiet {
+				fmt.Printf("\nRegistered %d workflow(s)", registered)
+				if failed > 0 {
+					fmt.Printf(", %d failed", failed)
+				}
+				fmt.Println()
+			}
+
+			if failed > 0 {
+				return fmt.Errorf("%d workflow(s) failed to register", failed)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", ".agents/workflows", "Directory containing workflow YAML files")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Override namespace for all definitions")
+	cmd.Flags().StringVar(&createdBy, "created-by", "loom-cli", "Creator agent ID")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
+
+	return cmd
+}
+
+// loadWorkflowFile reads a YAML workflow file and converts it to a map
+// suitable for POSTing to the workflow-define API.
+func loadWorkflowFile(path, namespace, createdBy string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+
+	var wf workflowYAML
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		return nil, fmt.Errorf("parse yaml: %w", err)
+	}
+
+	if wf.Name == "" {
+		return nil, fmt.Errorf("workflow name is required")
+	}
+	if len(wf.Steps) == 0 {
+		return nil, fmt.Errorf("workflow must have at least one step")
+	}
+
+	body := map[string]any{
+		"name":                wf.Name,
+		"description":         wf.Description,
+		"steps":               wf.Steps,
+		"rollback_on_failure": wf.RollbackOnFailure,
+		"created_by":          createdBy,
+	}
+	if namespace != "" {
+		body["namespace"] = namespace
+	}
+	if wf.InputSchema != nil {
+		body["input_schema"] = wf.InputSchema
+	}
+	if wf.TimeoutSeconds > 0 {
+		body["timeout_seconds"] = wf.TimeoutSeconds
+	}
+
+	return body, nil
 }

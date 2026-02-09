@@ -1,4 +1,6 @@
-// Stream store - live context stream
+// Stream store - live context stream with SSE-first data flow
+
+import { eventStore } from './events.svelte.ts';
 
 export interface StreamEntry {
   id: string;
@@ -27,6 +29,8 @@ class StreamStore {
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastTimestamp: string | null = null;
+  private eventUnsubs: Array<() => void> = [];
+  private seenIds = new Set<string>();
 
   get filteredEntries(): StreamEntry[] {
     let result = [...this.entries];
@@ -49,6 +53,34 @@ class StreamStore {
     return Array.from(agents).sort();
   }
 
+  /** Apply entries from either SSE or HTTP, deduplicating against existing IDs. */
+  private applyEntries(newEntries: StreamEntry[]): void {
+    if (!newEntries || newEntries.length === 0) return;
+
+    const unique = newEntries.filter((e) => {
+      if (!e.id || this.seenIds.has(e.id)) return false;
+      this.seenIds.add(e.id);
+      return true;
+    });
+
+    if (unique.length === 0) return;
+
+    // Prepend new entries, keep max 500.
+    this.entries = [...unique, ...this.entries].slice(0, 500);
+
+    // Trim seenIds to match entries.
+    if (this.seenIds.size > 600) {
+      this.seenIds = new Set(this.entries.map((e) => e.id));
+    }
+
+    // Track latest timestamp for incremental HTTP fetching.
+    if (unique[0].timestamp) {
+      this.lastTimestamp = unique[0].timestamp;
+    }
+
+    this.lastUpdated = new Date();
+  }
+
   async fetch(): Promise<void> {
     if (this.paused) return;
 
@@ -65,16 +97,7 @@ class StreamStore {
       if (!res.ok) throw new Error(`Stream API: ${res.status}`);
 
       const data: StreamResponse = await res.json();
-      const newEntries = data.entries || [];
-
-      if (newEntries.length > 0) {
-        // Prepend new entries, keep max 500
-        this.entries = [...newEntries, ...this.entries].slice(0, 500);
-        // Track latest timestamp for incremental fetching
-        this.lastTimestamp = newEntries[0].timestamp;
-      }
-
-      this.lastUpdated = new Date();
+      this.applyEntries(data.entries || []);
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -89,10 +112,23 @@ class StreamStore {
   clear(): void {
     this.entries = [];
     this.lastTimestamp = null;
+    this.seenIds.clear();
   }
 
-  startPolling(intervalMs = 3000): void {
+  startPolling(intervalMs = 30000): void {
     this.stopPolling();
+
+    // Subscribe to SSE events for real-time delivery.
+    const unsub = eventStore.on('hud.stream', (event) => {
+      if (this.paused) return;
+      const data = event.data as Record<string, unknown>;
+      if (data && Array.isArray(data.entries)) {
+        this.applyEntries(data.entries as StreamEntry[]);
+      }
+    });
+    this.eventUnsubs.push(unsub);
+
+    // Initial HTTP fetch + slow fallback polling.
     this.fetch();
     this.pollTimer = setInterval(() => this.fetch(), intervalMs);
   }
@@ -102,6 +138,10 @@ class StreamStore {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    for (const unsub of this.eventUnsubs) {
+      unsub();
+    }
+    this.eventUnsubs = [];
   }
 }
 

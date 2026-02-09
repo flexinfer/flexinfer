@@ -37,7 +37,7 @@
     color: var(--error);
     opacity: 0.7;
     padding: 2px 4px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
   }
   .error-dismiss:hover {
     opacity: 1;

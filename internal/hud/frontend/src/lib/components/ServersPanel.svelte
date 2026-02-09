@@ -562,7 +562,7 @@
     font-size: 10px;
     padding: 2px 6px;
     background: var(--bg-tertiary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--fg-secondary);
   }
 
@@ -573,7 +573,7 @@
     font-size: 11px;
     padding: 6px 8px;
     background: rgba(230, 30, 63, 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border: 1px solid rgba(230, 30, 63, 0.2);
   }
 

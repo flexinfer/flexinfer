@@ -623,7 +623,7 @@
     padding: 4px 10px;
     font-size: 11px;
     font-weight: 500;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--fg-secondary);
     transition: background 0.15s, color 0.15s;
   }
@@ -688,7 +688,7 @@
   .expand-content {
     background: var(--bg-primary);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 10px 14px;
     margin-left: 16px;
   }
@@ -730,7 +730,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 700;
     transition: background 0.15s;

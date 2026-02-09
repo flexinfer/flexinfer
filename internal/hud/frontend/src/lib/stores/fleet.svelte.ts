@@ -37,6 +37,59 @@ export interface SessionsResponse {
   sessions: Session[];
 }
 
+export interface PresenceInfo {
+  agent_id: string;
+  session_id?: string;
+  status: string;
+  agent_type: string;
+  description: string;
+  current_task: string;
+  active_files?: string[];
+  branch: string;
+  worktree_id?: string;
+  last_heartbeat: string;
+  registered_at: string;
+}
+
+export interface TaskInfo {
+  id: string;
+  session_id: string;
+  agent_id: string;
+  namespace: string;
+  title: string;
+  context?: string;
+  priority: string;
+  status: string;
+  tags?: string[];
+  blocked_by?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnrichedSession extends Session {
+  agentStatus?: string;
+  agentType?: string;
+  currentTask?: string;
+  branch?: string;
+  tasks: TaskInfo[];
+}
+
+export interface NamespaceGroup {
+  project: string;
+  sessions: EnrichedSession[];
+  orphanTasks: TaskInfo[];
+  hasActiveWork: boolean;
+  totalTokens: number;
+  sessionCount: number;
+  taskCount: number;
+}
+
+function extractProject(namespace: string | undefined): string {
+  if (!namespace) return '(ungrouped)';
+  const seg = namespace.split('/')[0];
+  return seg || '(ungrouped)';
+}
+
 class FleetStore {
   status = $state<StatusResponse>({
     running: false,
@@ -46,6 +99,8 @@ class FleetStore {
     processes: [],
   });
   sessions = $state<Session[]>([]);
+  agents = $state<PresenceInfo[]>([]);
+  tasks = $state<TaskInfo[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
@@ -64,6 +119,100 @@ class FleetStore {
   get agentCount(): number {
     const agents = new Set(this.sessions.map((s) => s.agent_id));
     return agents.size;
+  }
+
+  /** Group active sessions by namespace project, enriched with agent presence and linked tasks. */
+  get namespaceGroups(): NamespaceGroup[] {
+    // Build agent lookup by session_id for O(1) enrichment
+    const agentBySession = new Map<string, PresenceInfo>();
+    for (const a of this.agents) {
+      if (a.session_id) agentBySession.set(a.session_id, a);
+    }
+
+    // Build task lookup by session_id
+    const tasksBySession = new Map<string, TaskInfo[]>();
+    const orphansByProject = new Map<string, TaskInfo[]>();
+    for (const t of this.tasks) {
+      if (t.session_id) {
+        const arr = tasksBySession.get(t.session_id) ?? [];
+        arr.push(t);
+        tasksBySession.set(t.session_id, arr);
+      } else {
+        const proj = extractProject(t.namespace);
+        const arr = orphansByProject.get(proj) ?? [];
+        arr.push(t);
+        orphansByProject.set(proj, arr);
+      }
+    }
+
+    // Group active sessions by project
+    const groupMap = new Map<string, EnrichedSession[]>();
+    for (const s of this.activeSessions) {
+      const proj = extractProject(s.namespace);
+      const agent = agentBySession.get(s.id);
+      const enriched: EnrichedSession = {
+        ...s,
+        agentStatus: agent?.status,
+        agentType: agent?.agent_type,
+        currentTask: agent?.current_task,
+        branch: agent?.branch,
+        tasks: tasksBySession.get(s.id) ?? [],
+      };
+      const arr = groupMap.get(proj) ?? [];
+      arr.push(enriched);
+      groupMap.set(proj, arr);
+    }
+
+    // Build NamespaceGroup array
+    const groups: NamespaceGroup[] = [];
+    for (const [project, sessions] of groupMap) {
+      // Sort sessions: active agents first, then by start time
+      sessions.sort((a, b) => {
+        const aActive = a.agentStatus === 'active' ? 0 : 1;
+        const bActive = b.agentStatus === 'active' ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return (b.started_at ?? '').localeCompare(a.started_at ?? '');
+      });
+
+      const orphans = orphansByProject.get(project) ?? [];
+      const totalTasks = sessions.reduce((s, sess) => s + sess.tasks.length, 0) + orphans.length;
+      const hasActive = sessions.some(
+        (s) => s.agentStatus === 'active' || s.tasks.some((t) => t.status === 'in_progress'),
+      );
+
+      groups.push({
+        project,
+        sessions,
+        orphanTasks: orphans,
+        hasActiveWork: hasActive,
+        totalTokens: sessions.reduce((s, sess) => s + (sess.total_tokens || 0), 0),
+        sessionCount: sessions.length,
+        taskCount: totalTasks,
+      });
+    }
+
+    // Also include orphan-only projects (tasks with no matching session)
+    for (const [project, orphans] of orphansByProject) {
+      if (!groupMap.has(project)) {
+        groups.push({
+          project,
+          sessions: [],
+          orphanTasks: orphans,
+          hasActiveWork: orphans.some((t) => t.status === 'in_progress'),
+          totalTokens: 0,
+          sessionCount: 0,
+          taskCount: orphans.length,
+        });
+      }
+    }
+
+    // Sort: active namespaces first, then alphabetical
+    groups.sort((a, b) => {
+      if (a.hasActiveWork !== b.hasActiveWork) return a.hasActiveWork ? -1 : 1;
+      return a.project.localeCompare(b.project);
+    });
+
+    return groups;
   }
 
   async fetch(): Promise<void> {
@@ -101,6 +250,12 @@ class FleetStore {
     }
     if (data.sessions) {
       this.sessions = data.sessions as Session[];
+    }
+    if (data.agents) {
+      this.agents = data.agents as PresenceInfo[];
+    }
+    if (data.tasks) {
+      this.tasks = data.tasks as TaskInfo[];
     }
     this.lastUpdated = new Date();
     this.error = null;

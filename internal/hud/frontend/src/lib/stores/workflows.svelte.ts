@@ -63,8 +63,19 @@ export interface WorkflowsResponse {
   workflows: WorkflowSummary[];
 }
 
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  namespace: string;
+  step_count: number;
+  created_by: string;
+  created_at: string;
+}
+
 class WorkflowStore {
   workflows = $state<WorkflowSummary[]>([]);
+  definitions = $state<WorkflowDefinition[]>([]);
   selectedWorkflow = $state<WorkflowDetail | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
@@ -85,14 +96,33 @@ class WorkflowStore {
     );
   }
 
+  /** Deduplicate definitions by name, keeping the latest registration. */
+  get uniqueDefinitions(): WorkflowDefinition[] {
+    const byName = new Map<string, WorkflowDefinition>();
+    for (const def of this.definitions) {
+      const existing = byName.get(def.name);
+      if (!existing || def.created_at > existing.created_at) {
+        byName.set(def.name, def);
+      }
+    }
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async fetch(): Promise<void> {
     this.loading = true;
     this.error = null;
     try {
-      const res = await globalThis.fetch('/api/workflows');
-      if (!res.ok) throw new Error(`Workflows API: ${res.status}`);
-      const data: WorkflowsResponse = await res.json();
+      const [wfRes, defRes] = await Promise.all([
+        globalThis.fetch('/api/workflows'),
+        globalThis.fetch('/api/agent/workflow-definitions'),
+      ]);
+      if (!wfRes.ok) throw new Error(`Workflows API: ${wfRes.status}`);
+      const data: WorkflowsResponse = await wfRes.json();
       this.workflows = data.workflows || [];
+      if (defRes.ok) {
+        const defData = await defRes.json();
+        this.definitions = defData.definitions || [];
+      }
       this.lastUpdated = new Date();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);

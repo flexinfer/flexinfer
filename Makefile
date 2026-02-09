@@ -4,7 +4,7 @@
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-frontend hud-clean
+		hud hud-dev hud-build hud-install hud-frontend hud-clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -86,6 +86,7 @@ help:
 	@echo "  make hud           - Build frontend + Go binary, then launch HUD"
 	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + Go API)"
 	@echo "  make hud-build     - Build frontend (pnpm build) + Go binary"
+	@echo "  make hud-install   - Build + install to ~/.local/bin"
 	@echo "  make hud-frontend  - Build only the Svelte frontend"
 	@echo "  make hud-clean     - Remove frontend node_modules and dist"
 	@echo ""
@@ -472,9 +473,19 @@ hud-frontend:
 	@echo "✓ Frontend built to $(HUD_FRONTEND)/dist/"
 
 # Build frontend + Go binary with HUD embedded
-hud-build: hud-frontend loom
-	@echo "✓ HUD build complete"
-	@echo "  Run: ./bin/loom hud"
+# Uses go build -a to force recompilation so embedded dist changes are picked up.
+hud-build: hud-frontend
+	go build -a $(LDFLAGS) -o bin/loom ./cmd/loom
+	@echo "✓ HUD build complete (bin/loom)"
+
+# Build + install to ~/.local/bin in one step.
+# Remove before copy: macOS cp over an in-use binary can leave it broken.
+hud-install: hud-build
+	@mkdir -p $(HOME)/.local/bin
+	rm -f $(HOME)/.local/bin/loom
+	cp bin/loom $(HOME)/.local/bin/loom
+	@echo "✓ Installed to $(HOME)/.local/bin/loom"
+	@echo "  Restart HUD: loom hud --port 3333 --overlay"
 
 # Launch HUD (builds first if needed)
 hud: hud-build

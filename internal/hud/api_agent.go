@@ -138,6 +138,45 @@ func (a *App) handleAgentTaskUpdate(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// handleAgentWorkflowDefine registers a workflow definition.
+// POST /api/agent/workflow-define
+func (a *App) handleAgentWorkflowDefine(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body["name"] == nil || body["steps"] == nil {
+		a.writeError(w, http.StatusBadRequest, "name and steps are required", nil)
+		return
+	}
+
+	result, err := a.agent.WorkflowDefine(body)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to define workflow", err)
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAgentWorkflowDefinitions lists registered workflow definitions.
+// GET /api/agent/workflow-definitions?namespace=...
+func (a *App) handleAgentWorkflowDefinitions(w http.ResponseWriter, r *http.Request) {
+	namespace := r.URL.Query().Get("namespace")
+
+	defs, err := a.agent.WorkflowDefinitions(namespace)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list workflow definitions", err)
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"definitions": defs,
+		"count":       len(defs),
+	})
+}
+
 // handleAgentSession returns the active session for an agent.
 // GET /api/agent/session?agent_id=...
 func (a *App) handleAgentSession(w http.ResponseWriter, r *http.Request) {

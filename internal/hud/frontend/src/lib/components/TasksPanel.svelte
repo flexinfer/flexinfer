@@ -673,7 +673,7 @@
     font-size: 10px;
     padding: 1px 4px;
     background: var(--bg-tertiary);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     color: var(--fg-secondary);
   }
 
@@ -692,7 +692,7 @@
   .status-select {
     font-size: 10px;
     padding: 2px 4px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
     color: var(--fg-secondary);
@@ -800,7 +800,7 @@
     padding: 2px 6px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--fg-secondary);
   }
 
@@ -835,7 +835,7 @@
     background: rgba(34, 178, 85, 0.15);
     border: 1px solid rgba(34, 178, 85, 0.3);
     color: var(--success);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 2px 8px;
     font-size: 12px;
     cursor: pointer;
@@ -905,7 +905,7 @@
     background: rgba(1, 135, 153, 0.15);
     color: var(--info);
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
   }
 
   .group-body {

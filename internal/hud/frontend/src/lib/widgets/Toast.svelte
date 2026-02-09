@@ -49,15 +49,17 @@
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
     border-left: 3px solid var(--info);
     border-radius: var(--border-radius);
     font-size: 12px;
     color: var(--fg-primary);
     min-width: 240px;
     max-width: 380px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-md);
     animation: toastSlideIn 0.2s ease-out;
   }
   .toast-icon {
@@ -72,7 +74,7 @@
     font-size: 10px;
     color: var(--fg-muted);
     padding: 2px 4px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
   }
   .toast-dismiss:hover {
     color: var(--fg-primary);

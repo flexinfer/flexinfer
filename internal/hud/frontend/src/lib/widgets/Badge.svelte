@@ -27,7 +27,7 @@
     display: inline-flex;
     align-items: center;
     padding: 1px 7px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.3px;

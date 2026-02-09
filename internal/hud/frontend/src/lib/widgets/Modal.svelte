@@ -31,7 +31,9 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -39,15 +41,17 @@
     animation: backdropFadeIn 0.15s ease;
   }
   .modal {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
     min-width: 380px;
     max-width: 540px;
     max-height: 80vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-lg);
     animation: modalSlideIn 0.2s ease-out;
   }
   .modal-header {
@@ -66,7 +70,7 @@
     font-size: 14px;
     color: var(--fg-muted);
     padding: 4px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
   .modal-close:hover {
     color: var(--fg-primary);
