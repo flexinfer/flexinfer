@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/crb2nu/loom/internal/hud"
@@ -67,9 +69,11 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().Float64Var(&overlayCornerRadius, "corner-radius", 12, "Overlay corner radius in points")
 
 	// Coordinator (FlexInfer LLM integration).
-	cmd.Flags().StringVar(&flexinferURL, "flexinfer-url", "", "FlexInfer proxy URL (enables coordinator)")
-	cmd.Flags().StringVar(&flexinferKey, "flexinfer-key", "", "FlexInfer API key")
-	cmd.Flags().StringVar(&coordinatorModel, "coordinator-model", "", "Default model for coordinator (e.g., qwen3-8b)")
+	// Defaults from env vars so the coordinator auto-enables when the
+	// environment is configured (e.g., in .zshrc or launchd plist).
+	cmd.Flags().StringVar(&flexinferURL, "flexinfer-url", os.Getenv("FLEXINFER_URL"), "FlexInfer proxy URL (enables coordinator) [$FLEXINFER_URL]")
+	cmd.Flags().StringVar(&flexinferKey, "flexinfer-key", os.Getenv("FLEXINFER_API_KEY"), "FlexInfer API key [$FLEXINFER_API_KEY]")
+	cmd.Flags().StringVar(&coordinatorModel, "coordinator-model", os.Getenv("COORDINATOR_MODEL"), "Default model for coordinator (e.g., fast-chat) [$COORDINATOR_MODEL]")
 
 	return cmd
 }
