@@ -22,6 +22,13 @@ type Profile struct {
 	SyncGeneratedOnly bool
 	SkillsTarget      string // Target name for skills generator (mirrors GeneratorTarget)
 	SkillsManifest    string // Filename of skills manifest (e.g., ".loom-skills-manifest.json")
+
+	// DefaultLoomMode generates a single loom proxy entry instead of individual servers.
+	// Useful for platforms that can't resolve template patterns at runtime (e.g. Claude Code).
+	DefaultLoomMode bool
+	// DefaultResolveSecrets resolves ${keychain:}, ${env:}, ${secret:} at generation time.
+	// Useful for platforms that pass templates as literal strings (e.g. Codex, Kilocode).
+	DefaultResolveSecrets bool
 }
 
 // Manager handles synchronization operations.
@@ -53,29 +60,31 @@ func NewManager(repoRoot string) (*Manager, error) {
 
 func (m *Manager) registerProfiles() {
 	m.Profiles["codex"] = &Profile{
-		Name:              "codex",
-		RepoDir:           ".codex",
-		HomeDir:           ".codex",
-		Excludes:          []string{"auth.json", "sessions", "backups"},
-		SecretFiles:       []string{"auth.json"},
-		GeneratorTarget:   "codex",
-		GeneratedFile:     "config.toml",
-		SyncGeneratedOnly: true,
-		SkillsTarget:      "codex",
-		SkillsManifest:    ".loom-skills-manifest.json",
+		Name:                  "codex",
+		RepoDir:               ".codex",
+		HomeDir:               ".codex",
+		Excludes:              []string{"auth.json", "sessions", "backups"},
+		SecretFiles:           []string{"auth.json"},
+		GeneratorTarget:       "codex",
+		GeneratedFile:         "config.toml",
+		SyncGeneratedOnly:     true,
+		SkillsTarget:          "codex",
+		SkillsManifest:        ".loom-skills-manifest.json",
+		DefaultResolveSecrets: true,
 	}
 
 	m.Profiles["kilocode"] = &Profile{
-		Name:              "kilocode",
-		RepoDir:           ".kilocode",
-		HomeDir:           ".kilocode",
-		Excludes:          []string{"auth.json", "sessions", "backups"},
-		SecretFiles:       []string{"auth.json"},
-		GeneratorTarget:   "kilocode",
-		GeneratedFile:     "config.toml",
-		SyncGeneratedOnly: true,
-		SkillsTarget:      "kilocode",
-		SkillsManifest:    ".loom-skills-manifest.json",
+		Name:                  "kilocode",
+		RepoDir:               ".kilocode",
+		HomeDir:               ".kilocode",
+		Excludes:              []string{"auth.json", "sessions", "backups"},
+		SecretFiles:           []string{"auth.json"},
+		GeneratorTarget:       "kilocode",
+		GeneratedFile:         "config.toml",
+		SyncGeneratedOnly:     true,
+		SkillsTarget:          "kilocode",
+		SkillsManifest:        ".loom-skills-manifest.json",
+		DefaultResolveSecrets: true,
 	}
 
 	m.Profiles["claude"] = &Profile{
@@ -89,6 +98,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly: true,
 		SkillsTarget:      "claude",
 		SkillsManifest:    ".loom-skills-manifest.json",
+		DefaultLoomMode:   true,
 	}
 
 	m.Profiles["claude_desktop"] = &Profile{
@@ -100,6 +110,7 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "claude_desktop",
 		GeneratedFile:     "claude_desktop_config.json",
 		SyncGeneratedOnly: true,
+		DefaultLoomMode:   true,
 	}
 
 	m.Profiles["gemini"] = &Profile{

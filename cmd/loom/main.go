@@ -478,7 +478,8 @@ func newGenerateConfigsCmd() *cobra.Command {
 				}
 			}
 			fmt.Printf("Using workspace root: %s\n", workspaceRoot)
-			return generator.GenerateConfigsWithPath(reg, registryPath, outputDir, targets, hubMode, hubURL, loomMode, loomBinary)
+			resolveSecrets, _ := cmd.Flags().GetBool("resolve-secrets")
+			return generator.GenerateConfigsWithPath(reg, registryPath, outputDir, targets, hubMode, hubURL, loomMode, loomBinary, resolveSecrets)
 		},
 	}
 	cmd.Flags().String("output-dir", "generated/mcp", "Output directory")
@@ -489,6 +490,7 @@ func newGenerateConfigsCmd() *cobra.Command {
 	cmd.Flags().String("loom-binary", "", "Path to loom binary")
 	cmd.Flags().String("registry", "", "Path to registry.yaml")
 	cmd.Flags().Bool("emit", true, "Emit generated files (always true)")
+	cmd.Flags().Bool("resolve-secrets", false, "Resolve secret templates to literal values")
 	return cmd
 }
 
@@ -606,12 +608,7 @@ func newSyncCmd() *cobra.Command {
 			hubURL, _ := cmd.Flags().GetString("hub-url")
 			loomMode, _ := cmd.Flags().GetBool("loom-mode")
 			loomBinary, _ := cmd.Flags().GetString("loom-binary")
-
-			if loomMode && loomBinary == "" {
-				if exe, err := os.Executable(); err == nil && exe != "" {
-					loomBinary = exe
-				}
-			}
+			resolveSecrets, _ := cmd.Flags().GetBool("resolve-secrets")
 
 			skipSkills, _ := cmd.Flags().GetBool("skip-skills")
 
@@ -623,9 +620,39 @@ func newSyncCmd() *cobra.Command {
 			mgr.SkipSkills = skipSkills
 
 			if profile == "all" {
-				return mgr.SyncAll(true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary)
+				// For "all", pass nil/explicit resolveSecrets and loomMode flag status
+				// so SyncAll can apply per-profile defaults
+				var rs *bool
+				if cmd.Flags().Changed("resolve-secrets") {
+					rs = &resolveSecrets
+				}
+				loomModeExplicit := cmd.Flags().Changed("loom-mode")
+				// Auto-detect loom binary for profiles that default to loom mode
+				if loomBinary == "" {
+					if exe, err := os.Executable(); err == nil && exe != "" {
+						loomBinary = exe
+					}
+				}
+				return mgr.SyncAll(true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary, rs, loomModeExplicit)
 			}
-			return mgr.SyncToHome(profile, true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary)
+
+			// For single profile: apply per-profile defaults when flags not explicitly set
+			if p := mgr.Get(profile); p != nil {
+				if !cmd.Flags().Changed("loom-mode") {
+					loomMode = p.DefaultLoomMode
+				}
+				if !cmd.Flags().Changed("resolve-secrets") {
+					resolveSecrets = p.DefaultResolveSecrets
+				}
+			}
+
+			if loomMode && loomBinary == "" {
+				if exe, err := os.Executable(); err == nil && exe != "" {
+					loomBinary = exe
+				}
+			}
+
+			return mgr.SyncToHome(profile, true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary, resolveSecrets)
 		},
 	}
 
@@ -636,6 +663,7 @@ func newSyncCmd() *cobra.Command {
 	syncCmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
 	syncCmd.Flags().String("loom-binary", "", "Path to loom binary")
 	syncCmd.Flags().Bool("skip-skills", false, "Skip skills generation during --regen")
+	syncCmd.Flags().Bool("resolve-secrets", false, "Resolve secret templates to literal values")
 
 	// Sync skills subcommand
 	syncSkillsCmd := &cobra.Command{

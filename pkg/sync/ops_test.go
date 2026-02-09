@@ -442,7 +442,7 @@ func TestSyncToHome_Basic(t *testing.T) {
 		HomeDir: filepath.Join(homeDir, "test-profile"),
 	}
 
-	err := m.SyncToHome("test", false, false, false, false, "", false, "")
+	err := m.SyncToHome("test", false, false, false, false, "", false, "", false)
 	if err != nil {
 		t.Fatalf("SyncToHome failed: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestSyncToHome_RepoNotExists(t *testing.T) {
 		HomeDir: filepath.Join(homeDir, "test-profile"),
 	}
 
-	err := m.SyncToHome("test", false, false, false, false, "", false, "")
+	err := m.SyncToHome("test", false, false, false, false, "", false, "", false)
 	if err == nil {
 		t.Error("expected error when repo doesn't exist")
 	}
@@ -495,7 +495,7 @@ func TestSyncToHome_RepoOnly(t *testing.T) {
 	}
 
 	// With repoOnly=true, should not sync to home
-	err := m.SyncToHome("test", false, false, true, false, "", false, "")
+	err := m.SyncToHome("test", false, false, true, false, "", false, "", false)
 	if err != nil {
 		t.Fatalf("SyncToHome failed: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestSyncToHome_RepoOnly(t *testing.T) {
 func TestSyncToHome_UnknownProfile(t *testing.T) {
 	m, _ := NewManager(t.TempDir())
 
-	err := m.SyncToHome("nonexistent", false, false, false, false, "", false, "")
+	err := m.SyncToHome("nonexistent", false, false, false, false, "", false, "", false)
 	if err == nil {
 		t.Error("expected error for unknown profile")
 	}
@@ -536,7 +536,7 @@ func TestSyncToHome_WithWorkspaceDir(t *testing.T) {
 		GeneratedFile: "mcp.json",
 	}
 
-	err := m.SyncToHome("vscode", false, false, false, false, "", false, "")
+	err := m.SyncToHome("vscode", false, false, false, false, "", false, "", false)
 	if err != nil {
 		t.Fatalf("SyncToHome failed: %v", err)
 	}
@@ -567,7 +567,7 @@ func TestSyncToHome_GeneratedOnly(t *testing.T) {
 		SyncGeneratedOnly: true,
 	}
 
-	err := m.SyncToHome("test", false, false, false, false, "", false, "")
+	err := m.SyncToHome("test", false, false, false, false, "", false, "", false)
 	if err != nil {
 		t.Fatalf("SyncToHome failed: %v", err)
 	}
@@ -653,13 +653,141 @@ func TestSyncAll_MultiplePreparedProfiles(t *testing.T) {
 		},
 	}
 
-	err := m.SyncAll(false, false, false, false, "", false, "")
+	err := m.SyncAll(false, false, false, false, "", false, "", nil, false)
 	if err != nil {
 		t.Fatalf("SyncAll failed: %v", err)
 	}
 
 	// Check both profiles were synced
 	for _, profile := range []string{"profile1", "profile2"} {
+		homeFile := filepath.Join(homeDir, profile, "config.toml")
+		if !Exists(homeFile) {
+			t.Errorf("expected %s to be synced", homeFile)
+		}
+	}
+}
+
+// =============================================================================
+// Profile Default Tests
+// =============================================================================
+
+func TestProfile_DefaultLoomMode(t *testing.T) {
+	m, _ := NewManager(t.TempDir())
+
+	claude := m.Get("claude")
+	if claude == nil {
+		t.Fatal("claude profile not found")
+	}
+	if !claude.DefaultLoomMode {
+		t.Error("claude profile should default to loom mode")
+	}
+
+	claudeDesktop := m.Get("claude_desktop")
+	if claudeDesktop == nil {
+		t.Fatal("claude_desktop profile not found")
+	}
+	if !claudeDesktop.DefaultLoomMode {
+		t.Error("claude_desktop profile should default to loom mode")
+	}
+
+	codex := m.Get("codex")
+	if codex == nil {
+		t.Fatal("codex profile not found")
+	}
+	if codex.DefaultLoomMode {
+		t.Error("codex profile should NOT default to loom mode")
+	}
+
+	vscode := m.Get("vscode")
+	if vscode == nil {
+		t.Fatal("vscode profile not found")
+	}
+	if vscode.DefaultLoomMode {
+		t.Error("vscode profile should NOT default to loom mode")
+	}
+}
+
+func TestProfile_DefaultResolveSecrets(t *testing.T) {
+	m, _ := NewManager(t.TempDir())
+
+	codex := m.Get("codex")
+	if codex == nil {
+		t.Fatal("codex profile not found")
+	}
+	if !codex.DefaultResolveSecrets {
+		t.Error("codex profile should default to resolving secrets")
+	}
+
+	kilocode := m.Get("kilocode")
+	if kilocode == nil {
+		t.Fatal("kilocode profile not found")
+	}
+	if !kilocode.DefaultResolveSecrets {
+		t.Error("kilocode profile should default to resolving secrets")
+	}
+
+	claude := m.Get("claude")
+	if claude == nil {
+		t.Fatal("claude profile not found")
+	}
+	if claude.DefaultResolveSecrets {
+		t.Error("claude profile should NOT default to resolving secrets")
+	}
+
+	vscode := m.Get("vscode")
+	if vscode == nil {
+		t.Fatal("vscode profile not found")
+	}
+	if vscode.DefaultResolveSecrets {
+		t.Error("vscode profile should NOT default to resolving secrets")
+	}
+
+	gemini := m.Get("gemini")
+	if gemini == nil {
+		t.Fatal("gemini profile not found")
+	}
+	if gemini.DefaultResolveSecrets {
+		t.Error("gemini profile should NOT default to resolving secrets")
+	}
+}
+
+func TestSyncAll_PerProfileDefaults(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create repo directories for profiles with different defaults
+	for _, profile := range []string{"profile-loom", "profile-resolve"} {
+		profDir := filepath.Join(repoDir, profile)
+		os.MkdirAll(profDir, 0755)
+		os.WriteFile(filepath.Join(profDir, "config.toml"), []byte(profile), 0644)
+	}
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	m.Profiles = map[string]*Profile{
+		"profile-loom": {
+			Name:            "profile-loom",
+			RepoDir:         "profile-loom",
+			HomeDir:         filepath.Join(homeDir, "profile-loom"),
+			DefaultLoomMode: true,
+		},
+		"profile-resolve": {
+			Name:                  "profile-resolve",
+			RepoDir:               "profile-resolve",
+			HomeDir:               filepath.Join(homeDir, "profile-resolve"),
+			DefaultResolveSecrets: true,
+		},
+	}
+
+	// SyncAll with nil resolveSecrets (use per-profile defaults)
+	err := m.SyncAll(false, false, false, false, "", false, "", nil, false)
+	if err != nil {
+		t.Fatalf("SyncAll failed: %v", err)
+	}
+
+	// Both profiles should be synced
+	for _, profile := range []string{"profile-loom", "profile-resolve"} {
 		homeFile := filepath.Join(homeDir, profile, "config.toml")
 		if !Exists(homeFile) {
 			t.Errorf("expected %s to be synced", homeFile)

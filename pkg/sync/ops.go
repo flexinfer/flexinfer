@@ -29,7 +29,7 @@ func discoverRegistryPath(repoRoot string) string {
 }
 
 // SyncToHome syncs configuration from repo to home directory.
-func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOnly bool, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOnly bool, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets bool) error {
 	p, err := m.GetProfile(profileName)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	homePath := m.ResolveHomePath(p)
 
 	if regen {
-		if err := m.Regenerate(p, hubMode, hubURL, loomMode, loomBinary); err != nil {
+		if err := m.Regenerate(p, hubMode, hubURL, loomMode, loomBinary, resolveSecrets); err != nil {
 			return fmt.Errorf("regenerate failed: %w", err)
 		}
 	}
@@ -153,7 +153,8 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 }
 
 // SyncAll syncs all profiles.
-func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+// resolveSecrets is a pointer: nil means use per-profile defaults.
+func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets *bool, loomModeExplicit bool) error {
 	var names []string
 	for name := range m.Profiles {
 		names = append(names, name)
@@ -161,7 +162,20 @@ func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, 
 	sort.Strings(names)
 
 	for _, name := range names {
-		if err := m.SyncToHome(name, backup, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary); err != nil {
+		p := m.Profiles[name]
+		// Apply per-profile defaults when flags were not explicitly set
+		effectiveLoomMode := loomMode
+		if !loomModeExplicit {
+			effectiveLoomMode = p.DefaultLoomMode
+		}
+		effectiveResolve := false
+		if resolveSecrets != nil {
+			effectiveResolve = *resolveSecrets
+		} else {
+			effectiveResolve = p.DefaultResolveSecrets
+		}
+
+		if err := m.SyncToHome(name, backup, regen, repoOnly, hubMode, hubURL, effectiveLoomMode, loomBinary, effectiveResolve); err != nil {
 			return fmt.Errorf("sync %s: %w", name, err)
 		}
 	}
@@ -169,7 +183,7 @@ func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, 
 }
 
 // Regenerate generates the configuration for a profile and updates the repo directory.
-func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode bool, loomBinary string) error {
+func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets bool) error {
 	if p.GeneratorTarget == "" {
 		return fmt.Errorf("profile %s has no generator target", p.Name)
 	}
@@ -191,7 +205,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 
 	// Generate
 	fmt.Printf("Regenerating config for %s...\n", p.Name)
-	err = generator.GenerateConfigsWithPath(reg, regPath, tmpDir, []string{p.GeneratorTarget}, hubMode, hubURL, loomMode, loomBinary)
+	err = generator.GenerateConfigsWithPath(reg, regPath, tmpDir, []string{p.GeneratorTarget}, hubMode, hubURL, loomMode, loomBinary, resolveSecrets)
 	if err != nil {
 		return err
 	}

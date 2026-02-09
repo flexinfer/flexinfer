@@ -24,8 +24,8 @@ import (
 	"github.com/crb2nu/loom/internal/router"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
-	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/sync"
+	"github.com/crb2nu/loom/pkg/templatevars"
 )
 
 // Config holds daemon configuration.
@@ -1051,7 +1051,7 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		go func() {
 			defer wg.Done()
 			// Fetch token from secret store if needed
-			token := resolveSecret("MCP_HUB_TOKEN")
+			token := d.expandVars("${secret:MCP_HUB_TOKEN}")
 			if token == "" {
 				token = os.Getenv("MCP_HUB_TOKEN")
 			}
@@ -1305,115 +1305,12 @@ func expandVarsWithRegistry(s string, repoRoot string, reg *registry.Registry) s
 		s = strings.ReplaceAll(s, "${repo}", repoRoot)
 	}
 
-	// Helper to resolve env var with fallbacks
-	resolveEnv := func(name string) string {
-		if reg != nil {
-			return reg.GetEnvWithFallback(name)
-		}
-		return os.Getenv(name)
-	}
-
-	// Expand ${env:VAR} and ${env:VAR:-default} patterns
-	for {
-		start := strings.Index(s, "${env:")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[start:], "}")
-		if end == -1 {
-			break
-		}
-		end += start
-		varExpr := s[start+6 : end]
-
-		// Check for default value syntax: VAR:-default
-		var varName, defaultVal string
-		if idx := strings.Index(varExpr, ":-"); idx != -1 {
-			varName = varExpr[:idx]
-			defaultVal = varExpr[idx+2:]
-		} else {
-			varName = varExpr
-		}
-
-		value := resolveEnv(varName)
-		if value == "" {
-			value = defaultVal
-		}
-		s = s[:start] + value + s[end+1:]
-	}
-
-	// Expand ${keychain:VAR} patterns using secrets manager
-	for {
-		start := strings.Index(s, "${keychain:")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[start:], "}")
-		if end == -1 {
-			break
-		}
-		end += start
-		varName := s[start+11 : end]
-		// Try keychain via secrets manager, fall back to env
-		value := resolveSecret(varName)
-		if value == "" {
-			value = resolveEnv(varName)
-		}
-		s = s[:start] + value + s[end+1:]
-	}
-
-	// Expand ${secret:VAR} patterns using loom secret store
-	if strings.Contains(s, "${secret:") {
-		slog.Debug("expanding secret pattern", "input", s)
-	}
-	for {
-		start := strings.Index(s, "${secret:")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[start:], "}")
-		if end == -1 {
-			break
-		}
-		end += start
-		varName := s[start+9 : end]
-		slog.Debug("extracting secret", "varName", varName)
-		value := resolveSecret(varName)
-		s = s[:start] + value + s[end+1:]
-	}
-
-	return s
-}
-
-// secretsManager is a lazily initialized singleton for resolving secrets.
-var (
-	secretsManager     *secrets.Manager
-	secretsManagerOnce gosync.Once
-	secretsManagerErr  error
-)
-
-// getSecretsManager returns the singleton secrets manager.
-func getSecretsManager() (*secrets.Manager, error) {
-	secretsManagerOnce.Do(func() {
-		secretsManager, secretsManagerErr = secrets.DefaultManager()
-	})
-	return secretsManager, secretsManagerErr
-}
-
-// resolveSecret resolves a secret using the loom secret store.
-func resolveSecret(key string) string {
-	mgr, err := getSecretsManager()
-	if err != nil {
-		slog.Debug("failed to get secrets manager", "key", key, "error", err)
-		return ""
-	}
-	val := mgr.GetValue(key)
-	if val == "" {
-		slog.Debug("secret not found", "key", key, "backends", len(mgr.Backends()))
-	} else {
-		slog.Debug("secret resolved", "key", key, "length", len(val))
-	}
-	return val
+	// Delegate ${env:}, ${keychain:}, ${secret:} to the shared expander
+	exp := templatevars.New(
+		templatevars.WithRegistry(reg),
+		templatevars.WithLazySecrets(),
+	)
+	return exp.Expand(s)
 }
 
 // expandVars expands variable patterns in strings (uses daemon's repoRoot and registry).
