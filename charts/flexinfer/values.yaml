@@ -87,6 +87,25 @@ proxy:
     requests:
       cpu: 100m
       memory: 128Mi
+  # Rate limiting configuration
+  # Protects K8s API server from excessive per-request API calls
+  rateLimit:
+    enabled: false
+    # Per-model requests per second (token bucket rate)
+    perModelRPS: 100
+    # Per-model burst size (token bucket capacity)
+    burst: 50
+    # Global requests per second across all models (API server protection)
+    globalRPS: 1000
+    # Global burst size
+    globalBurst: 200
+  # Authentication configuration
+  auth:
+    enabled: false
+    # Name of the Kubernetes Secret containing the bearer token
+    tokenSecretName: ""
+    # Key within the Secret (default: "token")
+    tokenSecretKey: "token"
 
 # Backend images - controller auto-detects GPU vendor and selects appropriate image
 # Ollama backend (default):
@@ -210,6 +229,28 @@ benchmarker:
 
 grafanaDashboard:
   enabled: true
+
+# PrometheusRule alerting configuration
+# Requires Prometheus Operator (monitoring.coreos.com/v1 CRD)
+alerting:
+  enabled: false
+  # Extra labels to add to the PrometheusRule (e.g., for routing)
+  labels: {}
+  # Alert thresholds (tune for your environment)
+  thresholds:
+    # Proxy alerts
+    errorRatePercent: 0.05  # 5% error rate triggers warning
+    errorRateFor: "5m"
+    queueDepth: 50
+    queueDepthFor: "2m"
+    coldStartTimeoutRate: 0.1  # >0.1 timeout/s
+    coldStartTimeoutFor: "5m"
+    # GPU alerts
+    gpuTempCelsius: 85
+    gpuTempCriticalCelsius: 95
+    gpuTempFor: "5m"
+    vramFreeRatio: 0.1  # <10% free VRAM
+    vramLowFor: "5m"
 
 # Network Policy configuration
 # Restricts pod communication for improved security

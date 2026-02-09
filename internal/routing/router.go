@@ -25,6 +25,10 @@ const (
 	StrategyLeastLoaded Strategy = "least-loaded"
 )
 
+// defaultVirtualNodes is the number of virtual nodes per real node on the hash ring.
+// Higher values give more even distribution but use more memory (150 is typical for <100 backends).
+const defaultVirtualNodes = 150
+
 // Router handles routing decisions for multi-replica models.
 type Router struct {
 	mu    sync.RWMutex
@@ -56,7 +60,7 @@ func (r *Router) GetRing(model string) *HashRing {
 		return ring
 	}
 
-	ring = NewHashRing(150)
+	ring = NewHashRing(defaultVirtualNodes)
 	r.rings[model] = ring
 	return ring
 }

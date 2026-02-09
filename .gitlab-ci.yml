@@ -81,8 +81,27 @@ vet:
 unit_test:
   stage: test
   <<: *go-cache
+  variables:
+    # Minimum code coverage percentage required to pass CI.
+    # Raise this as coverage improves; lowering requires justification.
+    MIN_COVERAGE: "40"
   script:
-    - SKIP_ENVTEST=1 go test -v ./... -short
+    - SKIP_ENVTEST=1 go test -v -coverprofile=coverage.out ./... -short
+    - go tool cover -func=coverage.out | tee coverage.txt
+    - |
+      total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
+      echo "Total coverage: ${total}%"
+      if [ "$(echo "${total} < ${MIN_COVERAGE}" | bc -l)" -eq 1 ]; then
+        echo "FAIL: Coverage ${total}% is below minimum threshold ${MIN_COVERAGE}%"
+        exit 1
+      fi
+      echo "PASS: Coverage ${total}% meets minimum threshold ${MIN_COVERAGE}%"
+  artifacts:
+    paths:
+      - coverage.out
+      - coverage.txt
+    expire_in: 7 days
+    when: always
 
 gpugroup_test:
   stage: test

@@ -32,6 +32,41 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if .Values.proxy.rateLimit }}
+            {{- if .Values.proxy.rateLimit.enabled }}
+            - name: PROXY_RATE_LIMIT_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.proxy.rateLimit.perModelRPS }}
+            - name: PROXY_RATE_LIMIT_PER_MODEL
+              value: {{ .Values.proxy.rateLimit.perModelRPS | quote }}
+            {{- end }}
+            {{- if .Values.proxy.rateLimit.burst }}
+            - name: PROXY_RATE_LIMIT_BURST
+              value: {{ .Values.proxy.rateLimit.burst | quote }}
+            {{- end }}
+            {{- if .Values.proxy.rateLimit.globalRPS }}
+            - name: PROXY_RATE_LIMIT_GLOBAL
+              value: {{ .Values.proxy.rateLimit.globalRPS | quote }}
+            {{- end }}
+            {{- if .Values.proxy.rateLimit.globalBurst }}
+            - name: PROXY_RATE_LIMIT_GLOBAL_BURST
+              value: {{ .Values.proxy.rateLimit.globalBurst | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.proxy.auth }}
+            {{- if .Values.proxy.auth.enabled }}
+            - name: PROXY_AUTH_ENABLED
+              value: "true"
+            {{- if .Values.proxy.auth.tokenSecretName }}
+            - name: PROXY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.proxy.auth.tokenSecretName }}
+                  key: {{ .Values.proxy.auth.tokenSecretKey | default "token" }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
           resources:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
 {{- end }}

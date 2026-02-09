@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/flexinfer/flexinfer/scheduler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,6 +28,7 @@ func main() {
 	sched, err := scheduler.NewScheduler()
 	if err != nil {
 		setupLog.Error(err, "Failed to create scheduler")
+		os.Exit(1)
 	}
 
 	http.HandleFunc("/filter", sched.Filter)
@@ -39,5 +41,6 @@ func main() {
 	setupLog.Info("Scheduler listening", "addr", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		setupLog.Error(err, "Failed to start HTTP server")
+		os.Exit(1)
 	}
 }

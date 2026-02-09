@@ -3,6 +3,7 @@ package validation
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -174,4 +175,15 @@ func WriteColdStartTimeout(w http.ResponseWriter, waitedDuration string) {
 // WriteGPUGroupTimeout writes a 504 Gateway Timeout error for GPUGroup activation timeout.
 func WriteGPUGroupTimeout(w http.ResponseWriter, waitedDuration string) {
 	WriteError(w, http.StatusGatewayTimeout, "Timeout waiting for model to become active (waited "+waitedDuration+")", ErrorTypeTimeout, CodeTimeout)
+}
+
+// WriteRateLimited writes a 429 Too Many Requests error with Retry-After header.
+func WriteRateLimited(w http.ResponseWriter, retryAfterSeconds int) {
+	w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
+	WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded, please retry later", ErrorTypeRateLimit, CodeRateLimitExceeded)
+}
+
+// WriteUnauthorized writes a 401 Unauthorized error.
+func WriteUnauthorized(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusUnauthorized, message, ErrorTypeInvalidRequest, CodeInvalidAPIKey)
 }

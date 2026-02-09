@@ -1,0 +1,141 @@
+{{- if .Values.alerting.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "flexinfer.fullname" . }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    {{- with .Values.alerting.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: flexinfer-proxy
+      rules:
+        # High request error rate (>5% of requests failing over 5 minutes)
+        - alert: FlexInferProxyHighErrorRate
+          expr: |
+            (
+              sum(rate(flexinfer_proxy_requests_total{status="error"}[5m])) by (model)
+              /
+              sum(rate(flexinfer_proxy_requests_total[5m])) by (model)
+            ) > {{ .Values.alerting.thresholds.errorRatePercent | default 0.05 }}
+          for: {{ .Values.alerting.thresholds.errorRateFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "High error rate for model {{ "{{ $labels.model }}" }}"
+            description: "Model {{ "{{ $labels.model }}" }} has an error rate of {{ "{{ $value | humanizePercentage }}" }} over the last 5 minutes."
+
+        # Request queue depth too high (requests waiting for cold start)
+        - alert: FlexInferProxyQueueDepthHigh
+          expr: |
+            flexinfer_proxy_queue_depth > {{ .Values.alerting.thresholds.queueDepth | default 50 }}
+          for: {{ .Values.alerting.thresholds.queueDepthFor | default "2m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "High queue depth for model {{ "{{ $labels.model }}" }}"
+            description: "Model {{ "{{ $labels.model }}" }} has {{ "{{ $value }}" }} requests waiting in queue."
+
+        # Cold start timeout rate (models failing to become ready)
+        - alert: FlexInferColdStartTimeouts
+          expr: |
+            sum(rate(flexinfer_proxy_requests_total{status="error"}[10m])) by (model)
+            > {{ .Values.alerting.thresholds.coldStartTimeoutRate | default 0.1 }}
+          for: {{ .Values.alerting.thresholds.coldStartTimeoutFor | default "5m" }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cold start timeouts for model {{ "{{ $labels.model }}" }}"
+            description: "Model {{ "{{ $labels.model }}" }} is experiencing cold start failures at {{ "{{ $value }}" }}/s."
+
+        # Rate limiting triggered (potential abuse or misconfiguration)
+        - alert: FlexInferRateLimitTriggered
+          expr: |
+            sum(rate(flexinfer_proxy_rate_limited_total[5m])) by (model, scope) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Rate limiting active for model {{ "{{ $labels.model }}" }}"
+            description: "Rate limiter ({{ "{{ $labels.scope }}" }}) is rejecting requests for model {{ "{{ $labels.model }}" }} at {{ "{{ $value }}" }}/s."
+
+        # Queue rejections (capacity exhausted)
+        - alert: FlexInferQueueRejections
+          expr: |
+            sum(rate(flexinfer_proxy_queue_rejected_total[5m])) by (model) > 0.5
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Queue rejections for model {{ "{{ $labels.model }}" }}"
+            description: "Model {{ "{{ $labels.model }}" }} is rejecting requests due to queue overflow at {{ "{{ $value }}" }}/s."
+
+    - name: flexinfer-gpu
+      rules:
+        # GPU temperature too high
+        - alert: FlexInferGPUTemperatureHigh
+          expr: |
+            flexinfer_gpu_temperature_celsius > {{ .Values.alerting.thresholds.gpuTempCelsius | default 85 }}
+          for: {{ .Values.alerting.thresholds.gpuTempFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU temperature high on node {{ "{{ $labels.node }}" }}"
+            description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} is at {{ "{{ $value }}" }}°C."
+
+        # GPU temperature critical
+        - alert: FlexInferGPUTemperatureCritical
+          expr: |
+            flexinfer_gpu_temperature_celsius > {{ .Values.alerting.thresholds.gpuTempCriticalCelsius | default 95 }}
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU temperature critical on node {{ "{{ $labels.node }}" }}"
+            description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} is at {{ "{{ $value }}" }}°C — thermal throttling likely."
+
+        # VRAM nearly exhausted
+        - alert: FlexInferGPUVRAMLow
+          expr: |
+            (
+              flexinfer_gpu_vram_free_bytes
+              /
+              flexinfer_gpu_vram_total_bytes
+            ) < {{ .Values.alerting.thresholds.vramFreeRatio | default 0.1 }}
+          for: {{ .Values.alerting.thresholds.vramLowFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Low VRAM on GPU {{ "{{ $labels.gpu }}" }} (node {{ "{{ $labels.node }}" }})"
+            description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} has only {{ "{{ $value | humanizePercentage }}" }} VRAM free."
+
+    - name: flexinfer-scheduler
+      rules:
+        # Scheduler extender not responding
+        - alert: FlexInferSchedulerDown
+          expr: |
+            up{job=~".*flexinfer-scheduler.*"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "FlexInfer scheduler is down"
+            description: "The FlexInfer scheduler extender has been unreachable for 2 minutes. GPU-aware scheduling is disabled."
+
+    - name: flexinfer-gpugroup
+      rules:
+        # GPUGroup swap signals not being processed
+        - alert: FlexInferGPUGroupSwapStalled
+          expr: |
+            sum(rate(flexinfer_proxy_gpugroup_swap_signals_total[10m])) by (gpugroup) > 0
+            unless
+            sum(rate(flexinfer_proxy_gpugroup_queued_requests_total[10m])) by (gpugroup) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPUGroup {{ "{{ $labels.gpugroup }}" }} swap may be stalled"
+            description: "Swap signals are being sent but no requests are being queued for GPUGroup {{ "{{ $labels.gpugroup }}" }}."
+{{- end }}

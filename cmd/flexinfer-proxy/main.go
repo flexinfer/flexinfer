@@ -27,6 +27,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/singleflight"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,6 +151,15 @@ var (
 		},
 	)
 
+	// Rate limiting metrics
+	rateLimitedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_rate_limited_total",
+			Help: "Total number of requests rejected due to rate limiting.",
+		},
+		[]string{"model", "scope"},
+	)
+
 	// Backoff metrics
 	activationRetriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -181,6 +191,34 @@ const (
 	AnnotationServiceLabels = "flexinfer.ai/service-labels"
 )
 
+// Proxy operational constants
+const (
+	// staleQueueCleanupInterval is how often stale queues are checked and removed.
+	staleQueueCleanupInterval = 30 * time.Second
+
+	// endpointWatchInterval is how often the endpoint watcher refreshes pod addresses.
+	endpointWatchInterval = 10 * time.Second
+
+	// serviceLabelCacheTTL is how long the service label cache is valid before refresh.
+	serviceLabelCacheTTL = 5 * time.Second
+
+	// lastAccessThrottleInterval prevents excessive K8s API calls by skipping
+	// LastAccessTime updates if the last update was within this duration.
+	lastAccessThrottleInterval = 1 * time.Minute
+
+	// defaultBackendPort is used when a model's backend port cannot be determined.
+	defaultBackendPort int32 = 8000
+
+	// gpuGroupMinTimeout is the minimum timeout for GPUGroup model swaps.
+	gpuGroupMinTimeout = 120 * time.Second
+
+	// gpuGroupPollInterval is the polling interval when waiting for GPUGroup activation.
+	gpuGroupPollInterval = 1 * time.Second
+
+	// readyPollInterval is the polling interval when waiting for a model to become ready.
+	readyPollInterval = 1 * time.Second
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(aiv1alpha1.AddToScheme(scheme))
@@ -202,6 +240,7 @@ func init() {
 	prometheus.MustRegister(endpointRefreshDuration)
 	prometheus.MustRegister(activationRetriesTotal)
 	prometheus.MustRegister(activationRetryWaitDuration)
+	prometheus.MustRegister(rateLimitedTotal)
 }
 
 // QueuedRequest represents a request waiting in queue during cold start
@@ -261,6 +300,19 @@ type Proxy struct {
 	backoffMaxRetries  int           // Maximum retry attempts (default: 3)
 	backoffInitialWait time.Duration // Initial wait time (default: 5s)
 	backoffMaxWait     time.Duration // Maximum wait time (default: 30s)
+
+	// Rate limiting
+	rateLimitEnabled     bool          // Enable per-model rate limiting
+	rateLimitPerModel    float64       // Requests per second per model (0 = unlimited)
+	rateLimitBurst       int           // Max burst size per model
+	rateLimitGlobal      float64       // Global requests per second (0 = unlimited)
+	rateLimitGlobalBurst int           // Global burst size
+	modelLimiters        sync.Map      // map[string]*rate.Limiter per-model rate limiters
+	globalLimiter        *rate.Limiter // global rate limiter (nil if disabled)
+
+	// Authentication
+	authEnabled bool   // Enable bearer token authentication
+	authToken   string // Expected bearer token (from Secret)
 }
 
 func main() {
@@ -313,20 +365,43 @@ func main() {
 	backoffMaxRetries := getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3)
 	backoffInitialWait := getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second)
 	backoffMaxWait := getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second)
+	rateLimitEnabled := getEnvBool("PROXY_RATE_LIMIT_ENABLED", false)
+	rateLimitPerModel := getEnvFloat("PROXY_RATE_LIMIT_PER_MODEL", 100.0) // 100 req/s per model
+	rateLimitBurst := getEnvInt("PROXY_RATE_LIMIT_BURST", 50)             // burst of 50
+	rateLimitGlobal := getEnvFloat("PROXY_RATE_LIMIT_GLOBAL", 1000.0)     // 1000 req/s global
+	rateLimitGlobalBurst := getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200)
+	authEnabled := getEnvBool("PROXY_AUTH_ENABLED", false)
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+
+	if authEnabled && authToken == "" {
+		slog.Warn("PROXY_AUTH_ENABLED=true but PROXY_AUTH_TOKEN is empty — auth will reject all requests")
+	}
 
 	p := &Proxy{
-		client:             k8sClient,
-		namespace:          namespace,
-		maxQueueSize:       maxQueueSize,
-		queueTimeout:       queueTimeout,
-		coldStartTimeout:   coldStartTimeout,
-		router:             routing.NewRouter(),
-		routingEnabled:     routingEnabled,
-		validateRequests:   validateRequests,
-		backoffEnabled:     backoffEnabled,
-		backoffMaxRetries:  backoffMaxRetries,
-		backoffInitialWait: backoffInitialWait,
-		backoffMaxWait:     backoffMaxWait,
+		client:               k8sClient,
+		namespace:            namespace,
+		maxQueueSize:         maxQueueSize,
+		queueTimeout:         queueTimeout,
+		coldStartTimeout:     coldStartTimeout,
+		router:               routing.NewRouter(),
+		routingEnabled:       routingEnabled,
+		validateRequests:     validateRequests,
+		backoffEnabled:       backoffEnabled,
+		backoffMaxRetries:    backoffMaxRetries,
+		backoffInitialWait:   backoffInitialWait,
+		backoffMaxWait:       backoffMaxWait,
+		rateLimitEnabled:     rateLimitEnabled,
+		rateLimitPerModel:    rateLimitPerModel,
+		rateLimitBurst:       rateLimitBurst,
+		rateLimitGlobal:      rateLimitGlobal,
+		rateLimitGlobalBurst: rateLimitGlobalBurst,
+		authEnabled:          authEnabled,
+		authToken:            authToken,
+	}
+
+	// Initialize global rate limiter
+	if rateLimitEnabled && rateLimitGlobal > 0 {
+		p.globalLimiter = rate.NewLimiter(rate.Limit(rateLimitGlobal), rateLimitGlobalBurst)
 	}
 
 	// Start queue cleanup goroutine
@@ -354,7 +429,10 @@ func main() {
 		"queue_timeout", queueTimeout.String(),
 		"cold_start_timeout", coldStartTimeout.String(),
 		"validate_requests", validateRequests,
-		"backoff_enabled", backoffEnabled)
+		"backoff_enabled", backoffEnabled,
+		"rate_limit_enabled", rateLimitEnabled,
+		"rate_limit_per_model", rateLimitPerModel,
+		"rate_limit_global", rateLimitGlobal)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
@@ -394,13 +472,104 @@ func getEnvBool(key string, defaultVal bool) bool {
 	return defaultVal
 }
 
+// getEnvFloat returns a float64 from environment variable or default
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
+		}
+	}
+	return defaultVal
+}
+
+// getModelLimiter returns a per-model rate limiter, creating one if needed.
+func (p *Proxy) getModelLimiter(modelName string) *rate.Limiter {
+	if val, ok := p.modelLimiters.Load(modelName); ok {
+		return val.(*rate.Limiter)
+	}
+	limiter := rate.NewLimiter(rate.Limit(p.rateLimitPerModel), p.rateLimitBurst)
+	actual, _ := p.modelLimiters.LoadOrStore(modelName, limiter)
+	return actual.(*rate.Limiter)
+}
+
+// checkRateLimit returns true if the request is allowed, false if rate limited.
+func (p *Proxy) checkRateLimit(modelName string) bool {
+	if !p.rateLimitEnabled {
+		return true
+	}
+
+	// Check global limit first (protects K8s API server)
+	if p.globalLimiter != nil && !p.globalLimiter.Allow() {
+		rateLimitedTotal.WithLabelValues(modelName, "global").Inc()
+		return false
+	}
+
+	// Check per-model limit
+	if p.rateLimitPerModel > 0 {
+		limiter := p.getModelLimiter(modelName)
+		if !limiter.Allow() {
+			rateLimitedTotal.WithLabelValues(modelName, "per_model").Inc()
+			return false
+		}
+	}
+
+	return true
+}
+
+// checkAuth validates the bearer token. Returns true if authenticated or auth is disabled.
+func (p *Proxy) checkAuth(r *http.Request) bool {
+	if !p.authEnabled {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	return auth[len(prefix):] == p.authToken
+}
+
+// requestIDKey is the context key for request IDs.
+type requestIDKey struct{}
+
+// generateRequestID creates a unique request ID for tracing.
+// Uses the incoming X-Request-ID header if present, otherwise generates a new one.
+func generateRequestID(r *http.Request) string {
+	if id := r.Header.Get("X-Request-ID"); id != "" {
+		return id
+	}
+	// Simple time-based ID: compact, sortable, collision-resistant for single-process use.
+	return fmt.Sprintf("%d-%04x", time.Now().UnixNano(), rand.Intn(0xFFFF))
+}
+
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	// 0a. Generate/propagate request ID
+	requestID := generateRequestID(r)
+	w.Header().Set("X-Request-ID", requestID)
+	r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
+
+	// 0b. Authentication check
+	if !p.checkAuth(r) {
+		validation.WriteUnauthorized(w, "Invalid or missing bearer token")
+		return
+	}
 
 	// 1. Extract model name and body from request
 	modelName, bodyBytes := p.extractModelNameAndBody(r)
 	if modelName == "" {
 		validation.WriteBadRequestWithCode(w, "X-Model-ID header, /model/<name> path, or 'model' field in request body required", validation.CodeMissingRequiredField)
+		return
+	}
+
+	// 1b. Rate limit check
+	if !p.checkRateLimit(modelName) {
+		validation.WriteRateLimited(w, 1)
+		requestsTotal.WithLabelValues(modelName, "rate_limited").Inc()
 		return
 	}
 
@@ -417,7 +586,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
 	resolvedName := p.resolveServiceLabel(ctx, modelName)
 	if resolvedName != modelName {
-		slog.Debug("resolved service label", "label", modelName, "model", resolvedName)
+		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
 		modelName = resolvedName
 	}
 
@@ -815,14 +984,14 @@ func (p *Proxy) processGPUGroupQueue(queue *RequestQueue) {
 func (p *Proxy) waitForGPUGroupActive(ctx context.Context, modelName, gpuGroupName string) error {
 	// Use longer timeout for GPUGroup swaps (model swap + cold start)
 	timeout := p.coldStartTimeout * 2
-	if timeout < 120*time.Second {
-		timeout = 120 * time.Second
+	if timeout < gpuGroupMinTimeout {
+		timeout = gpuGroupMinTimeout
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(gpuGroupPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -937,7 +1106,7 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(readyPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -1098,7 +1267,7 @@ func (p *Proxy) getPodConnections(podAddr string) int64 {
 
 // cleanupStaleQueues periodically removes stale queues
 func (p *Proxy) cleanupStaleQueues() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(staleQueueCleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -1134,7 +1303,7 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 			return
 		}
 
-		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < 1*time.Minute {
+		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < lastAccessThrottleInterval {
 			return
 		}
 
@@ -1146,7 +1315,7 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 		return
 	}
 
-	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < 1*time.Minute {
+	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < lastAccessThrottleInterval {
 		return
 	}
 
@@ -1287,19 +1456,19 @@ func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
 		if b, ok := backend.Get(md.Spec.Backend); ok {
 			return b.Port()
 		}
-		return 8000
+		return defaultBackendPort
 	} else if !errors.IsNotFound(err) {
-		return 8000
+		return defaultBackendPort
 	}
 
 	m := &aiv1alpha2.Model{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
-		return 8000
+		return defaultBackendPort
 	}
 	if b, ok := backend.Get(m.Spec.Backend); ok {
 		return b.Port()
 	}
-	return 8000
+	return defaultBackendPort
 }
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
@@ -1532,7 +1701,7 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	defer p.serviceLabelCacheMu.Unlock()
 
 	// Skip if recently refreshed
-	if time.Since(p.lastCacheRefresh) < 5*time.Second {
+	if time.Since(p.lastCacheRefresh) < serviceLabelCacheTTL {
 		return
 	}
 
@@ -1592,7 +1761,7 @@ const (
 // watchEndpoints periodically updates the router with current pod endpoints for each model.
 // This enables direct pod routing for session affinity and prefix-based routing.
 func (p *Proxy) watchEndpoints(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(endpointWatchInterval)
 	defer ticker.Stop()
 
 	slog.Info("starting endpoint watcher for routing")
@@ -1655,7 +1824,7 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		// Collect ready pod addresses
 		var podAddresses []string
 		for _, subset := range endpoints.Subsets {
-			port := int32(8000) // default
+			port := defaultBackendPort
 			for _, p := range subset.Ports {
 				port = p.Port
 				break
@@ -1826,7 +1995,7 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	data, err := json.Marshal(response)
 	if err != nil {
 		slog.Warn("error encoding models response", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		validation.WriteInternalError(w, "Failed to encode models response")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
