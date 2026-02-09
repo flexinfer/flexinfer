@@ -16,6 +16,25 @@ import (
 	"github.com/crb2nu/loom/pkg/secrets"
 )
 
+func looksLikeSecretKey(name string) bool {
+	// Keep this intentionally small and suffix-based; it is used as a fallback
+	// signal when an ${env:...} reference is actually intended to be a secret.
+	//
+	// This improves robustness for GUI-launched processes (launchd, VS Code, etc.)
+	// where shell-exported env vars are often missing, but secrets may exist in
+	// Keychain or loom's encrypted file backend.
+	secretSuffixes := []string{
+		"_TOKEN", "_KEY", "_SECRET", "_PASSWORD", "_PAT",
+		"_API_KEY", "_API_TOKEN", "_ACCESS_TOKEN",
+	}
+	for _, suffix := range secretSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Expander resolves template variable patterns in strings.
 type Expander struct {
 	registry   *registry.Registry
@@ -61,9 +80,25 @@ func New(opts ...Option) *Expander {
 // resolveEnv resolves an environment variable with registry alias fallbacks.
 func (e *Expander) resolveEnv(name string) string {
 	if e.registry != nil {
-		return e.registry.GetEnvWithFallback(name)
+		val := e.registry.GetEnvWithFallback(name)
+		if val != "" {
+			return val
+		}
+		// If this looks like a secret and the process env is missing it,
+		// fall back to the secrets manager (env backend -> keychain -> file).
+		if looksLikeSecretKey(name) {
+			return e.resolveSecret(name)
+		}
+		return ""
 	}
-	return os.Getenv(name)
+	val := os.Getenv(name)
+	if val != "" {
+		return val
+	}
+	if looksLikeSecretKey(name) {
+		return e.resolveSecret(name)
+	}
+	return ""
 }
 
 // resolveSecret resolves a secret using the secrets manager.

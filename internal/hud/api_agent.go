@@ -119,6 +119,11 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 
 	go a.fleetMonitor.Refresh()
 
+	// Trigger async LLM summarization if coordinator is available.
+	if a.coordinator != nil {
+		go a.coordinator.OnSessionEnd(body.SessionID, body.AgentID)
+	}
+
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

@@ -21,6 +21,7 @@ flowchart LR
   subgraph LocalMachine[Developer machine]
     LoomProxy["loom proxy<br/>(stdio MCP server)"]
     Loomd["loomd<br/>(local MCP hub + router)"]
+    HUD["loom hud<br/>(local dashboard + overlay)"]
 
     subgraph LocalServers[Local MCP server processes]
       GitLab["mcp-gitlab"]
@@ -40,6 +41,7 @@ flowchart LR
   Other -->|stdio MCP| LoomProxy
 
   LoomProxy -->|unix socket| Loomd
+  HUD -->|unix socket| Loomd
 
   Loomd -->|spawn + stdio MCP| GitLab
   Loomd -->|spawn + stdio MCP| GitHub
@@ -102,6 +104,20 @@ flowchart TB
   Registry --> Daemon
   Sync --> Reload --> Daemon
 ```
+
+## HUD (Agent Command Center)
+
+The Agent HUD (`loom hud`) is a local UI layer that connects to the daemon and exposes a dashboard + REST API for:
+
+- server health and tool inventory
+- agent sessions/tasks/workflows (via `mcp-agent-context`)
+- an optional native overlay on macOS (`--overlay`, Cmd+Shift+L)
+
+The HUD connects to the daemon via the same unix socket used by `loom proxy`. It can also subscribe to the daemon’s metrics/events stream (`--metrics-addr`) for near-real-time updates.
+
+### Coordinator (optional)
+
+The HUD can optionally run a coordinator that uses FlexInfer (OpenAI-compatible proxy) to do “LLM ops” for agent context (summaries, compression, plan generation). This is enabled by setting a FlexInfer URL (CLI flag or `FLEXINFER_URL` env var).
 
 ## Observability
 

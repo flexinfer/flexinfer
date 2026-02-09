@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/pkg/secrets"
 )
 
 type checkResult struct {
@@ -62,6 +63,11 @@ func findWorkspaceRootForChecks() string {
 func runCheck(socketPath string, outputJSON bool) error {
 	checks := make([]checkResult, 0)
 
+	// Default to the daemon's default profile (Codex / loom-mode).
+	// This is the profile used by both Codex CLI and Claude Code when configured
+	// with a single `loom proxy` entry.
+	targetProfile := "codex"
+
 	// Daemon connectivity
 	if conn, err := dial(socketPath); err == nil {
 		_ = conn.Close()
@@ -82,6 +88,7 @@ func runCheck(socketPath string, outputJSON bool) error {
 
 	// Registry discovery + parse
 	regPath, found := registry.FindRegistry()
+	var reg *registry.Registry
 	if !found {
 		if root := findWorkspaceRootForChecks(); root != "" {
 			candidate := filepath.Join(root, "platform", "gitops", "mcp", "context", "registry.yaml")
@@ -100,7 +107,9 @@ func runCheck(socketPath string, outputJSON bool) error {
 			Fix:      "Set up registry at ~/.config/loom/registry.yaml or run from a repo with platform/gitops/mcp/context/registry.yaml",
 		})
 	} else {
-		if _, err := registry.Load(regPath); err != nil {
+		var err error
+		reg, err = registry.Load(regPath)
+		if err != nil {
 			checks = append(checks, checkResult{
 				Name:     "registry",
 				OK:       false,
@@ -114,6 +123,68 @@ func runCheck(socketPath string, outputJSON bool) error {
 				OK:      true,
 				Message: "registry OK: " + regPath,
 			})
+		}
+	}
+
+	// Secrets sanity: detect likely-required secrets referenced by registry for the active profile.
+	// This helps with GUI-launched processes (launchd/VS Code) where shell env exports are missing.
+	if reg != nil {
+		mgr, err := secrets.DefaultManager()
+		if err == nil {
+			missing := make(map[string]bool)
+			// Best-effort: scan effective env for each server spec and find template references.
+			for _, srv := range reg.Servers {
+				if srv == nil {
+					continue
+				}
+				spec, specErr := reg.GetServerSpec(srv.Name, targetProfile)
+				if specErr != nil || spec.Env == nil {
+					continue
+				}
+				for _, tmpl := range spec.Env {
+					for _, ref := range extractTemplateRefs(tmpl) {
+						if !looksLikeSecretKey(ref) {
+							continue
+						}
+						if mgr.GetValue(ref) == "" {
+							missing[ref] = true
+						}
+					}
+				}
+			}
+
+			if len(missing) > 0 {
+				keys := make([]string, 0, len(missing))
+				for k := range missing {
+					keys = append(keys, k)
+				}
+				// Keep output concise and actionable.
+				msg := fmt.Sprintf("missing %d secret(s) referenced by registry for profile '%s' (some MCP tools will fail until set)", len(keys), targetProfile)
+				fixLines := make([]string, 0, 6)
+				for i, k := range keys {
+					if i >= 6 {
+						break
+					}
+					fixLines = append(fixLines, "loom secrets set "+k)
+				}
+				fix := "Run:\n  " + strings.Join(fixLines, "\n  ")
+				if len(keys) > 6 {
+					fix += fmt.Sprintf("\n  ... and %d more", len(keys)-6)
+				}
+				checks = append(checks, checkResult{
+					Name:     "secrets",
+					OK:       false,
+					Severity: "warn",
+					Message:  msg,
+					Fix:      fix,
+				})
+			} else {
+				checks = append(checks, checkResult{
+					Name:    "secrets",
+					OK:      true,
+					Message: fmt.Sprintf("required secrets available for profile '%s' (best-effort)", targetProfile),
+				})
+			}
 		}
 	}
 
@@ -236,4 +307,51 @@ func runCheck(socketPath string, outputJSON bool) error {
 		return fmt.Errorf("one or more checks failed")
 	}
 	return nil
+}
+
+func looksLikeSecretKey(name string) bool {
+	secretSuffixes := []string{
+		"_TOKEN", "_KEY", "_SECRET", "_PASSWORD", "_PAT",
+		"_API_KEY", "_API_TOKEN", "_ACCESS_TOKEN",
+	}
+	for _, suffix := range secretSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractTemplateRefs finds ${env:...}, ${keychain:...}, and ${secret:...} references in s.
+// It returns the referenced key names (without defaults).
+func extractTemplateRefs(s string) []string {
+	var refs []string
+	consume := func(prefix string) {
+		tmp := s
+		for {
+			start := strings.Index(tmp, prefix)
+			if start == -1 {
+				return
+			}
+			rest := tmp[start+len(prefix):]
+			end := strings.Index(rest, "}")
+			if end == -1 {
+				return
+			}
+			raw := rest[:end]
+			// Trim default syntax for env patterns (VAR:-default)
+			if idx := strings.Index(raw, ":-"); idx != -1 {
+				raw = raw[:idx]
+			}
+			raw = strings.TrimSpace(raw)
+			if raw != "" {
+				refs = append(refs, raw)
+			}
+			tmp = rest[end+1:]
+		}
+	}
+	consume("${env:")
+	consume("${keychain:")
+	consume("${secret:")
+	return refs
 }

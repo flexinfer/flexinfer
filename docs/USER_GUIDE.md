@@ -16,9 +16,17 @@ From `services/loom-core/`:
 
 ```bash
 make build
-./bin/loom generate configs --target all
-./bin/loom sync all --regen
+
+# Most setups only need sync (it can regenerate from registry via --regen).
+# Use --loom-mode to generate a single `loom proxy` entry for each client.
+./bin/loom sync all --regen --loom-mode
+
+# Start the daemon (foreground)...
 ./bin/loomd
+
+# ...or install + manage via launchd:
+#   ./bin/loom install
+#   ./bin/loom start
 ```
 
 ## Install the CLI/daemon (recommended)
@@ -73,6 +81,22 @@ Sync them into each client’s config location (and regenerate first):
 
 Common targets include: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemini`, `antigravity`.
 
+### Loom-mode (recommended): one proxy entry per client
+
+When you enable Loom-mode, downstream clients are configured with a single `loom proxy` MCP server entrypoint. The daemon (`loomd`) owns routing and process lifecycle behind that proxy.
+
+Generate Loom-mode configs:
+
+```bash
+./bin/loom generate configs --target all --loom-mode
+```
+
+Or do it in one step during sync:
+
+```bash
+./bin/loom sync all --regen --loom-mode
+```
+
 ## Pagination and output sizing
 
 ### GitHub + GitLab pagination
@@ -99,9 +123,87 @@ Some MCPs enforce a maximum response size and will return a helpful error if exc
 - `QDRANT_MAX_RESPONSE_BYTES` (default `5242880`)
 - `ALERTMANAGER_MAX_RESPONSE_BYTES` (default `5242880`)
 
+### Tavily endpoint override
+
+For `mcp-tavily`, you can override the Tavily API base URL (useful for testing or proxies):
+
+- `TAVILY_BASE_URL` (default `https://api.tavily.com`)
+
+## Secrets and template variables
+
+The registry often uses template variables in server env, for example:
+
+- `${env:GITLAB_TOKEN}` (read from process env)
+- `${keychain:GITLAB_TOKEN}` (read from macOS Keychain)
+- `${secret:GITLAB_TOKEN}` (read from Loom secrets backend)
+
+For GUI-launched processes (launchd, VS Code, desktop apps), shell-exported env vars may not be present. Two practical patterns help:
+
+- `loom check` will warn when likely-required secrets referenced by the registry are missing for the default profile.
+- For secret-looking `${env:...}` keys (suffixes like `_TOKEN`, `_API_KEY`, etc.), Loom can fall back to the secrets manager when the env var is unset.
+
+Set a secret:
+
+```bash
+./bin/loom secrets set GITLAB_TOKEN
+```
+
 ## Troubleshooting
 
 - “Daemon not running”: `loom status`, then `loom restart`
 - “Updated binaries but daemon still old”: ensure `~/.local/bin/loomd` is updated, then `loom restart`
 - “Stale tool list”: `loom reload`
 - “Client can’t find servers”: re-run `loom sync all --regen`
+- “Tavily unauthorized/not configured (loom-mode)”: `loom secrets set TAVILY_API_KEY`
+- “Some tools fail in VS Code / launchd but work in terminal”: run `loom check`, then set missing values via `loom secrets set ...` (or ensure GUI env propagation)
+
+## HUD + Native Overlay (macOS)
+
+Loom includes a local Agent HUD (dashboard) for:
+
+- MCP server health and tool inventory
+- agent sessions and tasks (via `mcp-agent-context`)
+- workflows (including approvals)
+- memory/graph visibility (when enabled)
+
+Run it locally:
+
+```bash
+./bin/loom hud --port 3333
+```
+
+### Native overlay (macOS)
+
+Enable the native overlay strip (Cmd+Shift+L to toggle):
+
+```bash
+./bin/loom hud --overlay --edge right --width 380 --opacity 0.92
+```
+
+### Coordinator (optional): FlexInfer-backed “LLM ops” for agent context
+
+The HUD can optionally start a coordinator that uses FlexInfer (OpenAI-compatible proxy) to do agent-context intelligence, such as:
+
+- session summarization on `session-end`
+- on-demand summarization/compression
+- generating workflow plans from a natural-language goal
+
+Enable it by providing a FlexInfer URL (CLI flags override env vars):
+
+```bash
+./bin/loom hud \
+  --flexinfer-url http://127.0.0.1:8080 \
+  --flexinfer-key "$FLEXINFER_API_KEY" \
+  --coordinator-model qwen3-8b
+```
+
+Environment variables (optional):
+
+- `FLEXINFER_URL`, `FLEXINFER_API_KEY`
+- `COORDINATOR_MODEL`, `COORDINATOR_FALLBACK_MODEL`, `COORDINATOR_PLANNER_MODEL`
+- `COORDINATOR_ENABLE_SUMMARIZER`, `COORDINATOR_ENABLE_COMPRESSOR`, `COORDINATOR_ENABLE_TRIAGER`, `COORDINATOR_ENABLE_EXTRACTOR`, `COORDINATOR_ENABLE_PLANNER`
+- `COORDINATOR_POLL_INTERVAL`
+
+### Note: `loom agent` uses the HUD API
+
+The `loom agent ...` CLI is designed for hooks/automation and talks to the HUD REST API (default port `3333`). If you use `loom agent` in hooks, ensure the HUD is running (or set `LOOM_HUD_PORT` to match your HUD port).

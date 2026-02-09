@@ -75,6 +75,18 @@ func TestExpand_EnvVarMissing_NoDefault(t *testing.T) {
 	}
 }
 
+func TestExpand_EnvVarMissing_SecretFallback(t *testing.T) {
+	// Simulate a GUI-launched process where env is missing but the secret exists
+	// in the secrets manager (e.g., Keychain or encrypted file backend).
+	os.Unsetenv("TAVILY_API_KEY")
+	mgr := newMockSecrets(map[string]string{"TAVILY_API_KEY": "secret-from-store"})
+	e := New(WithSecretsManager(mgr))
+	got := e.Expand("${env:TAVILY_API_KEY}")
+	if got != "secret-from-store" {
+		t.Errorf("got %q, want %q", got, "secret-from-store")
+	}
+}
+
 func TestExpand_MultipleEnvVars(t *testing.T) {
 	t.Setenv("A", "1")
 	t.Setenv("B", "2")

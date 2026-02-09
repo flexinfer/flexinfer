@@ -26,6 +26,7 @@ var version = "1.0.0"
 
 type tavilyServer struct {
 	apiKey     string
+	baseURL    string
 	httpClient *httpclient.Client
 }
 
@@ -44,10 +45,16 @@ func run(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "Warning: TAVILY_API_KEY not set\n")
 	}
 
+	baseURL := strings.TrimRight(os.Getenv("TAVILY_BASE_URL"), "/")
+	if baseURL == "" {
+		baseURL = "https://api.tavily.com"
+	}
+
 	cfg := httpclient.DefaultConfig()
 	cfg.Timeout = 60 * time.Second
 	tav := &tavilyServer{
 		apiKey:     apiKey,
+		baseURL:    baseURL,
 		httpClient: httpclient.New(cfg),
 	}
 
@@ -178,7 +185,7 @@ func (t *tavilyServer) request(ctx context.Context, endpoint string, payload map
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com"+endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", t.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

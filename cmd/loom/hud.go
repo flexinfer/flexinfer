@@ -15,6 +15,9 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var overlayWidth int
 	var overlayOpacity float64
 	var overlayCornerRadius float64
+	var flexinferURL string
+	var flexinferKey string
+	var coordinatorModel string
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -47,6 +50,9 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				OverlayWidth:        overlayWidth,
 				OverlayOpacity:      overlayOpacity,
 				OverlayCornerRadius: overlayCornerRadius,
+				FlexInferURL:        flexinferURL,
+				FlexInferKey:        flexinferKey,
+				CoordinatorModel:    coordinatorModel,
 			})
 		},
 	}
@@ -59,6 +65,11 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().IntVar(&overlayWidth, "width", 380, "Overlay panel width in points")
 	cmd.Flags().Float64Var(&overlayOpacity, "opacity", 0.92, "Overlay background opacity (0.0–1.0)")
 	cmd.Flags().Float64Var(&overlayCornerRadius, "corner-radius", 12, "Overlay corner radius in points")
+
+	// Coordinator (FlexInfer LLM integration).
+	cmd.Flags().StringVar(&flexinferURL, "flexinfer-url", "", "FlexInfer proxy URL (enables coordinator)")
+	cmd.Flags().StringVar(&flexinferKey, "flexinfer-key", "", "FlexInfer API key")
+	cmd.Flags().StringVar(&coordinatorModel, "coordinator-model", "", "Default model for coordinator (e.g., qwen3-8b)")
 
 	return cmd
 }

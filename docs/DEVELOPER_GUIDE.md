@@ -97,3 +97,38 @@ go test ./pkg/agentcontext/... -v -count=1 -run TestMetrics
 - Inspect daemon logs:
   - `~/.config/loom/logs/daemon.log`
   - `~/.config/loom/logs/daemon.err`
+
+## HUD development
+
+The Agent HUD is a local dashboard + API that connects to `loomd`. It also powers `loom agent ...` (hooks/automation) via HTTP.
+
+Run HUD on a fixed port:
+
+```bash
+./bin/loom hud --port 3333
+```
+
+Development mode (CORS for a local Vite dev server on `:5173`):
+
+```bash
+./bin/loom hud --port 3333 --dev
+```
+
+Native overlay (macOS only; requires CGO):
+
+```bash
+./bin/loom hud --overlay --edge right --width 380
+```
+
+### Coordinator (FlexInfer integration)
+
+The HUD can optionally start an LLM-powered coordinator that uses FlexInfer (OpenAI-compatible proxy). It lives under `internal/hud/coordinator/`.
+
+Enable it with either env vars or CLI flags (flags override env vars):
+
+```bash
+export FLEXINFER_URL=http://127.0.0.1:8080
+export FLEXINFER_API_KEY=...
+export COORDINATOR_MODEL=qwen3-8b
+./bin/loom hud --port 3333
+```

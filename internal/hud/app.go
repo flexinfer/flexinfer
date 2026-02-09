@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/window"
 )
@@ -43,6 +44,11 @@ type Config struct {
 	OverlayWidth        int     // Panel width in points (default 380).
 	OverlayOpacity      float64 // Background opacity 0.0–1.0 (default 0.92).
 	OverlayCornerRadius float64 // Corner radius in points (default 12).
+
+	// Coordinator (FlexInfer LLM integration). Empty URL = disabled.
+	FlexInferURL     string // FlexInfer proxy URL (e.g., "http://flexinfer-proxy:8080").
+	FlexInferKey     string // Optional API key for FlexInfer.
+	CoordinatorModel string // Default model for coordinator tasks (e.g., "qwen3-8b").
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -64,6 +70,9 @@ type App struct {
 
 	// SSE streaming — daemon events → browser clients.
 	sseHub *SSEHub
+
+	// Coordinator — optional LLM-powered agent context intelligence.
+	coordinator *coordinator.Coordinator
 }
 
 // Run creates and starts the HUD application. This is the main entry point
@@ -187,6 +196,30 @@ func Run(cfg Config) error {
 			Data:      data,
 		})
 	})
+
+	// Initialize coordinator if FlexInfer URL is configured.
+	if cfg.FlexInferURL != "" {
+		coordCfg := coordinator.ConfigFromEnv()
+		// CLI flags override env vars.
+		coordCfg.FlexInferURL = cfg.FlexInferURL
+		if cfg.FlexInferKey != "" {
+			coordCfg.FlexInferKey = cfg.FlexInferKey
+		}
+		if cfg.CoordinatorModel != "" {
+			coordCfg.DefaultModel = cfg.CoordinatorModel
+		}
+
+		c := coordinator.NewCoordinator(coordCfg, agent, app.sseHub, logger)
+		if c != nil {
+			if err := c.Start(); err != nil {
+				logger.Warn("coordinator: failed to start, continuing without it", "error", err)
+			} else {
+				app.coordinator = c
+				defer c.Stop()
+				logger.Info("coordinator started", "url", cfg.FlexInferURL, "model", coordCfg.DefaultModel)
+			}
+		}
+	}
 
 	// Connect to daemon's SSE event stream if metrics address is configured.
 	if cfg.MetricsAddr != "" {
@@ -379,6 +412,12 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
 	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
+
+	// API routes — coordinator (LLM-powered agent context intelligence).
+	mux.HandleFunc("GET /api/coordinator/status", a.withCORS(a.handleCoordinatorStatus))
+	mux.HandleFunc("POST /api/coordinator/summarize/{session_id}", a.withCORS(a.handleCoordinatorSummarize))
+	mux.HandleFunc("POST /api/coordinator/compress", a.withCORS(a.handleCoordinatorCompress))
+	mux.HandleFunc("POST /api/coordinator/plan", a.withCORS(a.handleCoordinatorPlan))
 
 	// Lightweight health check — no bridge calls, no CORS overhead, sub-1ms response.
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
