@@ -50,7 +50,50 @@ func (s *Service) HandleCompactionStatus(ctx context.Context, args map[string]an
 		}
 	}
 
+	// Include task reconciler status if available.
+	if s.taskReconciler != nil {
+		rs := s.taskReconciler.LastStats()
+		reconciler := map[string]any{
+			"enabled":        s.cfg.TaskReconcilerEnabled,
+			"check_interval": s.taskReconciler.config.CheckInterval.String(),
+		}
+		if !rs.StartTime.IsZero() {
+			reconciler["last_run"] = rs.StartTime.Format(time.RFC3339)
+			reconciler["last_stats"] = map[string]any{
+				"completed_gcd": rs.CompletedGCd,
+				"orphans":       rs.OrphansCleanedUp,
+				"unblocked":     rs.Unblocked,
+				"stale":         rs.MarkedStale,
+				"errors":        rs.Errors,
+				"duration":      rs.Duration.String(),
+			}
+		}
+		result["task_reconciler"] = reconciler
+	}
+
 	return mcp.JSONResult(result)
+}
+
+// HandleReconcileTrigger manually triggers a task reconciliation cycle
+func (s *Service) HandleReconcileTrigger(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if s.taskReconciler == nil {
+		return mcp.ErrorResult(fmt.Errorf("task reconciler not initialized")), nil
+	}
+
+	stats, err := s.taskReconciler.TriggerReconcile(ctx)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("trigger reconcile: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":        true,
+		"gc":        stats.CompletedGCd,
+		"orphans":   stats.OrphansCleanedUp,
+		"unblocked": stats.Unblocked,
+		"stale":     stats.MarkedStale,
+		"errors":    stats.Errors,
+		"duration":  stats.Duration.String(),
+	})
 }
 
 // HandleCompactionTrigger manually triggers a compaction cycle

@@ -36,4 +36,15 @@ func registerCompactionTools(server *mcp.Server, svc *agentcontext.Service, trac
 	}, traced(tracer, "agent_compaction_trigger", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleCompactionTrigger(ctx, args)
 	}))
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_reconcile_trigger",
+		Description: "Manually trigger a task reconciliation cycle. Runs GC, orphan cleanup, auto-unblock, and stale detection.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, traced(tracer, "agent_reconcile_trigger", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleReconcileTrigger(ctx, args)
+	}))
 }
