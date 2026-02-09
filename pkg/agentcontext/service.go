@@ -93,6 +93,7 @@ type Service struct {
 
 	// Background services
 	compactionScheduler *CompactionScheduler
+	taskReconciler      *TaskReconciler
 	memoryExporter      *MemoryExporter
 	memoryImporter      *MemoryImporter
 	bgCancel            context.CancelFunc
@@ -193,6 +194,20 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.compactionScheduler = NewCompactionScheduler(compactionConfig, svc.memoryHierarchy, nil, svc.logger)
 	svc.compactionScheduler.SetPersistence(svc.persistedMemoryHierarchy)
 
+	// Initialize task reconciler
+	reconcilerConfig := DefaultTaskReconcilerConfig()
+	reconcilerConfig.Enabled = cfg.TaskReconcilerEnabled
+	if cfg.TaskReconcilerInterval > 0 {
+		reconcilerConfig.CheckInterval = time.Duration(cfg.TaskReconcilerInterval) * time.Second
+	}
+	if cfg.TaskReconcilerCompletedRetention > 0 {
+		reconcilerConfig.CompletedRetention = time.Duration(cfg.TaskReconcilerCompletedRetention) * time.Hour
+	}
+	if cfg.TaskReconcilerStaleTimeout > 0 {
+		reconcilerConfig.StaleTimeout = time.Duration(cfg.TaskReconcilerStaleTimeout) * time.Hour
+	}
+	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.tasksQdrant, svc, svc.logger)
+
 	// Initialize memory exporter/importer
 	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
 	svc.memoryImporter = NewMemoryImporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
@@ -285,6 +300,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 
 	s.logger.Info("starting background services",
 		"compaction_enabled", s.cfg.CompactionEnabled,
+		"task_reconciler_enabled", s.cfg.TaskReconcilerEnabled,
 		"presence_cleanup_interval_s", s.cfg.PresenceCleanupInterval,
 	)
 
@@ -293,6 +309,11 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 		if err := s.compactionScheduler.Start(bgCtx); err != nil {
 			s.logger.Warn("failed to start compaction scheduler", "error", err)
 		}
+	}
+
+	// Start task reconciler
+	if s.taskReconciler != nil && s.cfg.TaskReconcilerEnabled {
+		s.taskReconciler.Start(bgCtx)
 	}
 
 	// Start presence cleanup goroutine
@@ -304,6 +325,9 @@ func (s *Service) StopBackgroundServices() {
 	s.logger.Info("stopping background services")
 	if s.compactionScheduler != nil {
 		s.compactionScheduler.Stop()
+	}
+	if s.taskReconciler != nil {
+		s.taskReconciler.Stop()
 	}
 	if s.bgCancel != nil {
 		s.bgCancel()
@@ -503,10 +527,51 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		s.orphanWorktreesForAgent(agentID)
 		cleanedUp["worktrees_orphaned"] = true
 
+		// Mark incomplete session tasks as blocked/stale
+		staleTasks := s.markSessionTasksStale(ctx, sessionID)
+		cleanedUp["tasks_marked_stale"] = staleTasks
+
 		result["cleanup"] = cleanedUp
 	}
 
 	return mcp.JSONResult(result)
+}
+
+// markSessionTasksStale marks pending/in_progress tasks for a session as blocked
+// with a stale note, so they surface in the reconciler and HUD.
+func (s *Service) markSessionTasksStale(ctx context.Context, sessionID string) int {
+	filter := FilterMust(
+		Match("session_id", sessionID),
+		FilterShould(
+			Match("status", string(TaskStatusPending)),
+			Match("status", string(TaskStatusInProgress)),
+		),
+	)
+
+	points, err := s.tasksQdrant.ScrollPoints(ctx, filter, 500, false)
+	if err != nil || len(points) == 0 {
+		return 0
+	}
+
+	count := 0
+	now := time.Now().Format(time.RFC3339Nano)
+	for _, p := range points {
+		id := toString(p.Payload["id"])
+		if id == "" {
+			continue
+		}
+		payload := map[string]any{
+			"status":     string(TaskStatusBlocked),
+			"resolution": "session ended — task incomplete",
+			"updated_at": now,
+		}
+		if err := s.tasksQdrant.SetPayload(ctx, []string{id}, payload, false); err != nil {
+			s.logger.Warn("failed to mark task stale on session end", "task_id", id, "error", err)
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

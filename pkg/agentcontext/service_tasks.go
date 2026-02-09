@@ -242,6 +242,41 @@ func (s *Service) HandleTaskList(ctx context.Context, args map[string]any) (*mcp
 	})
 }
 
+// HandleTaskDelete deletes one or more tasks by ID.
+func (s *Service) HandleTaskDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	taskIDsRaw := v.RequiredAny("task_ids")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	ids, ok := taskIDsRaw.([]any)
+	if !ok || len(ids) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("task_ids array is required")), nil
+	}
+
+	taskIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if s := toString(id); s != "" {
+			taskIDs = append(taskIDs, s)
+		}
+	}
+
+	if len(taskIDs) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("no valid task IDs provided")), nil
+	}
+
+	if err := s.tasksQdrant.Delete(ctx, taskIDs); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("delete tasks: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"deleted": len(taskIDs),
+	})
+}
+
 func (s *Service) getActiveTasks(ctx context.Context, agentID, sessionID string, limit int) ([]Task, error) {
 	var conds []any
 	conds = append(conds, FilterShould(

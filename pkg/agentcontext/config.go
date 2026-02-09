@@ -83,6 +83,12 @@ type Config struct {
 	// Compaction scheduler
 	CompactionEnabled       bool
 	CompactionCheckInterval int // seconds, default 300
+
+	// Task reconciler
+	TaskReconcilerEnabled            bool
+	TaskReconcilerInterval           int // seconds, default 300
+	TaskReconcilerCompletedRetention int // hours, default 168 (7 days)
+	TaskReconcilerStaleTimeout       int // hours, default 4
 }
 
 // TrustedSource defines a trusted source pattern for context weighting
@@ -168,6 +174,12 @@ func LoadConfigFromEnv() (Config, error) {
 		// Compaction scheduler
 		CompactionEnabled:       boolEnv("AGENT_CONTEXT_COMPACTION_ENABLED", true),
 		CompactionCheckInterval: intEnv("AGENT_CONTEXT_COMPACTION_CHECK_INTERVAL", 300),
+
+		// Task reconciler
+		TaskReconcilerEnabled:            boolEnv("AGENT_CONTEXT_TASK_RECONCILER_ENABLED", true),
+		TaskReconcilerInterval:           intEnv("AGENT_CONTEXT_TASK_RECONCILER_INTERVAL", 300),
+		TaskReconcilerCompletedRetention: intEnv("AGENT_CONTEXT_TASK_COMPLETED_RETENTION_HOURS", 168),
+		TaskReconcilerStaleTimeout:       intEnv("AGENT_CONTEXT_TASK_STALE_TIMEOUT_HOURS", 4),
 	}
 
 	// Validate visibility

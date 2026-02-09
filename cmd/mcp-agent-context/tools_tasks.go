@@ -131,4 +131,22 @@ func registerTaskTools(server *mcp.Server, svc *agentcontext.Service, tracer tra
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleTaskList(ctx, args)
 	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_task_delete",
+		Description: "Delete tasks by ID. Useful for cleaning up completed or abandoned tasks.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"task_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Array of task IDs to delete.",
+				},
+			},
+			Required: []string{"task_ids"},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTaskDelete(ctx, args)
+	})
 }
