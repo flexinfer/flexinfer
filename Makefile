@@ -459,6 +459,7 @@ ci-benchmark: ci-build
 HUD_FRONTEND := internal/hud/frontend
 
 # Build the Svelte frontend (requires pnpm)
+# Always cleans dist/ first so stale assets never leak into the embed.
 hud-frontend:
 	@echo "Building HUD frontend..."
 	@if ! command -v pnpm >/dev/null 2>&1; then \
@@ -469,13 +470,16 @@ hud-frontend:
 		echo "Installing frontend dependencies..."; \
 		cd $(HUD_FRONTEND) && pnpm install; \
 	fi
+	rm -rf $(HUD_FRONTEND)/dist
 	cd $(HUD_FRONTEND) && pnpm build
 	@echo "✓ Frontend built to $(HUD_FRONTEND)/dist/"
 
-# Build frontend + Go binary with HUD embedded
-# Uses go build -a to force recompilation so embedded dist changes are picked up.
+# Build frontend + Go binary with HUD embedded.
+# Flushes Go's build cache so the new dist/ is always re-embedded,
+# then does a full rebuild with -a.
 hud-build: hud-frontend
-	go build -a $(LDFLAGS) -o bin/loom ./cmd/loom
+	go clean -cache
+	go build $(LDFLAGS) -o bin/loom ./cmd/loom
 	@echo "✓ HUD build complete (bin/loom)"
 
 # Build + install to ~/.local/bin in one step.

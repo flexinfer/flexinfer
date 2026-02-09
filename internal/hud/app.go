@@ -379,6 +379,10 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 
 // serveFrontend serves the embedded Svelte dist directory, falling back to
 // index.html for SPA client-side routing.
+//
+// Cache policy: index.html is served with no-cache so the browser always
+// checks for a new version on reload. Hashed assets (JS/CSS in /assets/)
+// are immutable and cached aggressively.
 func (a *App) serveFrontend(mux *http.ServeMux) {
 	distFS, err := fs.Sub(frontendFS, "frontend/dist")
 	if err != nil {
@@ -393,14 +397,25 @@ func (a *App) serveFrontend(mux *http.ServeMux) {
 		if path == "/" {
 			path = "/index.html"
 		}
+
+		trimmed := strings.TrimPrefix(path, "/")
+
 		// Check if the file exists in the embedded FS.
-		f, err := distFS.Open(strings.TrimPrefix(path, "/"))
+		f, err := distFS.Open(trimmed)
 		if err == nil {
 			f.Close()
+			// Content-hashed assets are immutable; cache forever.
+			if strings.HasPrefix(trimmed, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				// HTML entry point: always revalidate so new builds are picked up.
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		// Fall back to index.html for SPA routing.
+		// Fall back to index.html for SPA routing (also no-cache).
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
