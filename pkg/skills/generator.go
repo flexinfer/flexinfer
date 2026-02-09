@@ -284,11 +284,10 @@ func (g *Generator) generateCodexSkillMD(skill *Skill) string {
 	sb.WriteString("---\n")
 	sb.WriteString(fmt.Sprintf("name: %s\n", skill.Name))
 
-	// Description: escape quotes and normalize whitespace
+	// Description: normalize whitespace and escape for YAML
 	desc := strings.TrimSpace(skill.Common.Description)
 	desc = strings.ReplaceAll(desc, "\n", " ")
-	desc = strings.ReplaceAll(desc, "\"", "\\\"")
-	sb.WriteString(fmt.Sprintf("description: %q\n", desc))
+	sb.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(desc)))
 	sb.WriteString("---\n\n")
 
 	// Instructions body with resolved paths
@@ -296,22 +295,19 @@ func (g *Generator) generateCodexSkillMD(skill *Skill) string {
 	instructions := skill.ResolveInstructions("codex", g.CodexHome, sourceSkillDir)
 	sb.WriteString(instructions)
 
-	// Bundled Resources section
-	sb.WriteString("\n## Bundled Resources\n\n")
+	// Bundled Resources section (only if resources exist)
+	hasResources := len(skill.Common.Scripts) > 0 || len(skill.Common.References) > 0 || len(skill.Common.Assets) > 0
+	if hasResources {
+		sb.WriteString("\n## Bundled Resources\n\n")
 
-	if skill.Common.Scripts != nil {
 		for _, script := range skill.Common.Scripts {
 			sb.WriteString(fmt.Sprintf("- `%s`\n", script.Path))
 		}
-	}
 
-	if skill.Common.References != nil {
 		for _, ref := range skill.Common.References {
 			sb.WriteString(fmt.Sprintf("- `references/%s`\n", ref))
 		}
-	}
 
-	if skill.Common.Assets != nil {
 		for _, asset := range skill.Common.Assets {
 			sb.WriteString(fmt.Sprintf("- `assets/%s`\n", asset))
 		}
