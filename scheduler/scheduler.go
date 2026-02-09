@@ -197,11 +197,14 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 		FailedNodes: failed,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(result); err != nil {
+	data, err := json.Marshal(result)
+	if err != nil {
 		log.Error(err, "Failed to encode response")
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 // Score is the handler for the /score endpoint.
@@ -346,11 +349,14 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(scores); err != nil {
+	data, err := json.Marshal(scores)
+	if err != nil {
 		log.Error(err, "Failed to encode response")
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func deviceClassFromNode(node *corev1.Node) string {

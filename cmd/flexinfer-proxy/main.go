@@ -1823,10 +1823,14 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 		Data:   models,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	data, err := json.Marshal(response)
+	if err != nil {
 		slog.Warn("error encoding models response", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 // modelDeploymentToOpenAI converts a ModelDeployment to OpenAI model format

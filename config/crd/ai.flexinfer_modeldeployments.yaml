@@ -30,7 +30,12 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ModelDeployment is the Schema for the modeldeployments API
+        description: |-
+          ModelDeployment is the Schema for the modeldeployments API.
+
+          Deprecated: ModelDeployment is deprecated in favor of the v1alpha2 Model resource.
+          ModelDeployment will be removed in a future release. Please migrate to v1alpha2 Model.
+          See docs/migration/v1alpha1-to-v1alpha2.md for migration guide.
         properties:
           apiVersion:
             description: |-

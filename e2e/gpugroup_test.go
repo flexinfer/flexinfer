@@ -3,6 +3,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,33 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
+
+// simulateDemand sets queue annotations on a GPUGroup to trigger model activation.
+// The controller requires demand signals before activating any model in Exclusive strategy.
+// Uses retry-on-conflict because the controller frequently updates the GPUGroup status.
+func simulateDemand(ctx context.Context, t *testing.T, groupName, ns, modelName string, queueDepth int) {
+	t.Helper()
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		var gg aiv1alpha1.GPUGroup
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: groupName, Namespace: ns}, &gg); err != nil {
+			t.Fatalf("Failed to get GPUGroup for demand simulation: %v", err)
+		}
+		if gg.Annotations == nil {
+			gg.Annotations = make(map[string]string)
+		}
+		gg.Annotations["flexinfer.ai/queue."+modelName] = fmt.Sprintf("%d", queueDepth)
+		gg.Annotations["flexinfer.ai/queue-since."+modelName] = time.Now().Format(time.RFC3339)
+		if err := k8sClient.Update(ctx, &gg); err != nil {
+			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		t.Logf("Simulated %d queued requests for %s", queueDepth, modelName)
+		return
+	}
+	t.Fatalf("Failed to set demand annotations after retries: %v", lastErr)
+}
 
 // TestGPUGroupExclusiveScheduling tests that only one model runs at a time in an exclusive GPUGroup.
 func TestGPUGroupExclusiveScheduling(t *testing.T) {
@@ -94,6 +122,10 @@ func TestGPUGroupExclusiveScheduling(t *testing.T) {
 	if err := f.CreateModelDeployment(ctx, md2); err != nil {
 		t.Fatalf("Failed to create ModelDeployment 2: %v", err)
 	}
+
+	// Simulate demand so the controller activates the higher-priority model.
+	// The Exclusive strategy requires queue annotations before activating any model.
+	simulateDemand(ctx, t, groupName, *namespace, model1Name, 5)
 
 	// Wait for GPUGroup to have an active model
 	t.Log("Waiting for GPUGroup to activate a model...")
@@ -230,6 +262,9 @@ func TestGPUGroupSwapOnDemand(t *testing.T) {
 		t.Fatalf("Failed to create ModelDeployment 2: %v", err)
 	}
 
+	// Simulate demand for model1 to trigger initial activation
+	simulateDemand(ctx, t, groupName, *namespace, model1Name, 5)
+
 	// Wait for initial activation
 	t.Log("Waiting for initial model activation...")
 	err := wait.PollUntilContextTimeout(ctx, timeouts.PollInterval, timeouts.ModelReady, true,
@@ -262,15 +297,9 @@ func TestGPUGroupSwapOnDemand(t *testing.T) {
 		gpuGroup.Spec.AntiThrashing.MinimumRunDurationSeconds)
 	time.Sleep(time.Duration(gpuGroup.Spec.AntiThrashing.MinimumRunDurationSeconds+2) * time.Second)
 
-	// Simulate demand by annotating the GPUGroup
-	// In production, this would come from the proxy
+	// Simulate demand for the other model to trigger a swap
 	t.Logf("Simulating demand for %s...", targetModel)
-	gg.Annotations = map[string]string{
-		"flexinfer.ai/queue." + targetModel: "5", // Simulate queue depth
-	}
-	if err := k8sClient.Update(ctx, &gg); err != nil {
-		t.Fatalf("Failed to update GPUGroup with queue annotation: %v", err)
-	}
+	simulateDemand(ctx, t, groupName, *namespace, targetModel, 5)
 
 	// Wait for swap to occur
 	t.Log("Waiting for model swap...")
@@ -381,6 +410,9 @@ func TestGPUGroupAntiThrashing(t *testing.T) {
 		t.Fatalf("Failed to create ModelDeployment 2: %v", err)
 	}
 
+	// Simulate demand for model1 to trigger initial activation
+	simulateDemand(ctx, t, groupName, *namespace, model1Name, 10)
+
 	// Wait for initial activation
 	t.Log("Waiting for initial model activation...")
 	err := wait.PollUntilContextTimeout(ctx, timeouts.PollInterval, timeouts.ModelReady, true,
@@ -409,13 +441,9 @@ func TestGPUGroupAntiThrashing(t *testing.T) {
 	}
 
 	// Immediately try to trigger swap (should be blocked by anti-thrashing)
+	// Queue depth is below the threshold of 5, so the swap should be rejected
 	t.Logf("Attempting to trigger swap to %s (should be blocked)...", targetModel)
-	gg.Annotations = map[string]string{
-		"flexinfer.ai/queue." + targetModel: "3", // Below threshold
-	}
-	if err := k8sClient.Update(ctx, &gg); err != nil {
-		t.Fatalf("Failed to update GPUGroup: %v", err)
-	}
+	simulateDemand(ctx, t, groupName, *namespace, targetModel, 3)
 
 	// Wait a short time and verify no swap occurred
 	time.Sleep(10 * time.Second)

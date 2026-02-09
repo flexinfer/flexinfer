@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: February 2026
+> Last Updated: 2026-02-08
 
 ## Current Status
 
@@ -79,7 +79,7 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] **Documentation** - API docs, operations guide, quickstart complete
 
 ### Tech Debt (High Priority)
-- [~] **TD-1**: Add error handling to ignored returns - Already using safe patterns (Get/GetOrError)
+- [x] **TD-1**: Add error handling to ignored returns - Fixed JSON encode-after-header-sent in proxy `handleModels` and scheduler Filter/Score handlers (pre-marshal pattern)
 - [x] **TD-3**: Increase CLI test coverage to 50%+ (now 78.6% for `cmd/flexinfer/commands`)
 - [~] **TD-4**: Replace panic with graceful error handling - `MustGet` is never called, safe variants used
 - [x] **TD-11**: E2E test names violate RFC 1123 - Fixed with lowercase + "/" replacement
@@ -88,7 +88,7 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 ### Tech Debt (Medium Priority)
 - [x] **TD-5**: Create v1alpha1 → v1alpha2 migration guide (docs/migration/v1alpha1-to-v1alpha2.md)
 - [~] **TD-6**: Centralize hardcoded URLs/ConfigMap names (backends already support env var overrides)
-- [ ] **TD-7**: E2E tests for GPU scenarios (currently skipped)
+- [~] **TD-7**: E2E tests for GPU scenarios - 6/7 pass on K3s GPU cluster (AMD 7900XTX). GPUGroup tests (3/3) pass, inference basic+streaming+multi-model (3/4) pass. ColdStart gracefully skips (iGPU not usable with ROCm, no spare discrete GPU)
 
 ### Tech Debt (Low Priority)
 - [x] **TD-8**: Logging consistency - servers use slog, CLI uses fmt.Print (correct pattern)

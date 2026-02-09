@@ -260,6 +260,22 @@ spec:
                   Updated when a deployment references this cache.
                 format: date-time
                 type: string
+              ociDigest:
+                description: |-
+                  OCIDigest is the immutable digest of the OCI artifact that was pulled.
+                  Format: sha256:<hash>. Only set for OCI/ORAS sources.
+                type: string
+              ociPulledAt:
+                description: |-
+                  OCIPulledAt is the timestamp when the OCI artifact was last pulled.
+                  Useful for tracking freshness and triggering re-pulls on tag updates.
+                format: date-time
+                type: string
+              ociRegistry:
+                description: |-
+                  OCIRegistry is the registry hostname where the artifact was pulled from.
+                  Extracted from the source URL for observability.
+                type: string
               path:
                 description: Path is the path where the model is accessible (volume
                   name or host path)

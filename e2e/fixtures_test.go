@@ -348,11 +348,22 @@ func (f *Fixture) WaitForPodsReady(ctx context.Context, ns, labelSelector string
 }
 
 // UniqueModelName generates a unique model name for a test.
+// Names are capped at 50 chars to stay within Kubernetes annotation key limits
+// (the controller uses "flexinfer.ai/queue-since.{name}" which must be ≤63 chars).
 func (f *Fixture) UniqueModelName(prefix string) string {
-	return fmt.Sprintf("%s-%s-%d", prefix, f.name, time.Now().UnixNano()%1000000)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
+	// Budget: 50 chars total, reserve suffix + separator
+	maxMiddle := 50 - len(prefix) - len(suffix) - 2 // 2 dashes
+	middle := f.name
+	if maxMiddle > 0 && len(middle) > maxMiddle {
+		middle = strings.TrimRight(middle[:maxMiddle], "-")
+	}
+	return fmt.Sprintf("%s-%s-%s", prefix, middle, suffix)
 }
 
 // OllamaModel creates a basic Ollama model spec for testing.
+// Vendor is set to AMD to avoid AmbiguousGPUVendor errors on multi-vendor clusters.
+// MinReplicas is set to 1 so the model starts immediately (not serverless scale-to-zero).
 func OllamaModel(name, modelID string) *aiv1alpha2.Model {
 	return &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{
@@ -362,7 +373,11 @@ func OllamaModel(name, modelID string) *aiv1alpha2.Model {
 			Backend: "ollama",
 			Source:  fmt.Sprintf("ollama://%s", modelID),
 			GPU: &aiv1alpha2.GPUSpec{
-				Count: int32Ptr(1),
+				Vendor: aiv1alpha2.GPUVendorAMD,
+				Count:  int32Ptr(1),
+			},
+			Serverless: &aiv1alpha2.ServerlessSpec{
+				MinReplicas: int32Ptr(1),
 			},
 		},
 	}
@@ -393,7 +408,8 @@ func ServerlessModel(name, backend, source string, idleTimeout time.Duration) *a
 			Backend: backend,
 			Source:  source,
 			GPU: &aiv1alpha2.GPUSpec{
-				Count: int32Ptr(1),
+				Vendor: aiv1alpha2.GPUVendorAMD,
+				Count:  int32Ptr(1),
 			},
 			Serverless: &aiv1alpha2.ServerlessSpec{
 				IdleTimeout: &timeout,

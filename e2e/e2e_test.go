@@ -134,6 +134,19 @@ func ensureNamespace(t *testing.T) {
 	if err != nil && !errors.IsAlreadyExists(err) {
 		t.Fatalf("Failed to create namespace: %v", err)
 	}
+
+	// The controller creates benchmark Jobs referencing this ServiceAccount.
+	// Without it, Jobs fail with "serviceaccount not found".
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "flexinfer-benchmarker",
+			Namespace: *namespace,
+		},
+	}
+	err = k8sClient.Create(ctx, sa)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		t.Fatalf("Failed to create benchmarker ServiceAccount: %v", err)
+	}
 }
 
 // cleanupModel deletes a model and waits for cleanup.
