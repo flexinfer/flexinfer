@@ -101,7 +101,7 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, ROCmEnvVars()...)
 
 		// vLLM-specific ROCm tuning for gfx1100 (RX 7900 XTX)
-		// These settings prevent SIGSEGV crashes on RDNA3 architecture
+		// These settings prevent hangs/SIGSEGV crashes on consumer RDNA3 (gfx1100).
 		env = append(env,
 			corev1.EnvVar{
 				// Force V0 engine - V1 engine has compatibility issues with gfx1100
@@ -109,10 +109,11 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 				Value: "0",
 			},
 			corev1.EnvVar{
-				// Use Triton flash attention on gfx1100 - CK (Composable Kernel) crashes
-				// with "invalid device function" because CK isn't compiled for RDNA3
+				// Disable Triton flash attention on gfx1100. In our builds/env, Triton
+				// attention paths have caused hangs; V0 engine + non-Triton attention
+				// is the stable baseline.
 				Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-				Value: "1",
+				Value: "0",
 			},
 			corev1.EnvVar{
 				// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100

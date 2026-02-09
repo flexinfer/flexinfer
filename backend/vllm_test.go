@@ -82,6 +82,11 @@ func TestVLLMBackendEnv_GFX1100Settings(t *testing.T) {
 		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
 	}
 
+	// Triton flash attention should be disabled for gfx1100
+	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
+	}
+
 	// AITER should be disabled for gfx1100
 	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
 		t.Errorf("expected VLLM_ROCM_USE_AITER=0, got %q", v)
