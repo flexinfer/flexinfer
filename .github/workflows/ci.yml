@@ -16,12 +16,14 @@ jobs:
         with:
           repository: crb2nu/mcp-go
           path: _deps/mcp-go
-          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          ref: main
+          ssh-key: ${{ secrets.LOOM_DEPS_SSH_KEY_MCP_GO }}
       - uses: actions/checkout@v4
         with:
           repository: crb2nu/fi-mcp-kit
           path: _deps/fi-mcp-kit
-          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          ref: main
+          ssh-key: ${{ secrets.LOOM_DEPS_SSH_KEY_FI_MCP_KIT }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
