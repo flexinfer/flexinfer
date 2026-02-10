@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-02-10
+
+### Fixed
+- GitHub Actions can now check out private dependency repos using per-repo deploy keys stored as Actions secrets.
+
 ## [0.9.3] - 2026-02-10
 
 ### Fixed
@@ -94,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.3...HEAD
+[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.4...HEAD
+[0.9.4]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.3...v0.9.4
 [0.9.3]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.2...v0.9.3
 [0.9.2]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.1...v0.9.2
 [0.9.1]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.0...v0.9.1
