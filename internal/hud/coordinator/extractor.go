@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
@@ -114,16 +115,41 @@ func (e *Extractor) StoreExtractions(ctx context.Context, entities []ExtractedEn
 }
 
 // ExtractRecent processes recent context entries for entity extraction.
+// It first reads from working memory, then supplements with context stream
+// entries when working memory is sparse (common at session start).
 func (e *Extractor) ExtractRecent(ctx context.Context) (*ExtractionResult, error) {
-	items, err := e.agent.MemoryRecall("working", "", e.config.ExtractorBatchSize)
+	batchSize := e.config.ExtractorBatchSize
+
+	items, err := e.agent.MemoryRecall("working", "", batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("recall working memory: %w", err)
 	}
-	if len(items) == 0 {
-		return nil, nil
-	}
 
 	entries := memoryToContextEntries(items)
+
+	// Supplement with context stream entries when working memory is sparse.
+	if len(entries) < batchSize {
+		remaining := batchSize - len(entries)
+		streamEntries, err := e.agent.ContextStream(time.Time{}, remaining)
+		if err != nil {
+			e.logger.Debug("extractor: context stream fallback failed", "error", err)
+		} else {
+			// Deduplicate by ID: working memory entries take priority.
+			seen := make(map[string]bool, len(entries))
+			for _, entry := range entries {
+				seen[entry.Entry.ID] = true
+			}
+			for _, se := range streamEntries {
+				if !seen[se.Entry.ID] {
+					entries = append(entries, se)
+				}
+			}
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil, nil
+	}
 
 	entities, relations, err := e.ExtractFromEntries(ctx, entries)
 	if err != nil {

@@ -120,6 +120,9 @@ func Run(cfg Config) error {
 	logger.Info("background monitors started",
 		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s")
 
+	// Bootstrap workflow definitions from .agents/workflows/*.yaml files.
+	app.bootstrapWorkflowDefinitions()
+
 	// Initialize SSE fan-out hub for browser clients.
 	app.sseHub = NewSSEHub(logger)
 

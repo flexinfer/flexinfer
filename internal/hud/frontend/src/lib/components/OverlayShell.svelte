@@ -227,7 +227,12 @@
         if (definitionCount > 0) parts.push(`${definitionCount} defs`);
         return parts.length > 0 ? parts.join(' \u00B7 ') : 'none';
       }
-      case 'memory':    return `${totalMemoryItems} items`;
+      case 'memory': {
+        const w = memoryStore.stats.working_memory?.items ?? 0;
+        const s = memoryStore.stats.short_term_memory?.items ?? 0;
+        const l = memoryStore.stats.long_term_memory?.items ?? 0;
+        return `${w}w ${s}s ${l}l`;
+      }
       case 'stream': {
         const t = lastStreamTime();
         return t ? `last: ${formatTime(t)}` : 'no data';

@@ -949,7 +949,10 @@ type SessionEndParams struct {
 
 // EndSession ends a session, optionally summarizes context, and deregisters presence.
 // If SessionID is empty, it finds the active session by AgentID.
-func (a *AgentBridge) EndSession(p SessionEndParams) error {
+// Returns (true, nil) when a session was ended, (false, nil) when no session was
+// found (not an error — hooks may fire against a restarted HUD), or (false, err)
+// on actual failures.
+func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 	sessionID := p.SessionID
 	if sessionID == "" && p.AgentID != "" {
 		if active, err := a.GetActiveSession(p.AgentID); err == nil && active != nil {
@@ -957,7 +960,7 @@ func (a *AgentBridge) EndSession(p SessionEndParams) error {
 		}
 	}
 	if sessionID == "" {
-		return fmt.Errorf("no active session found for agent %q", p.AgentID)
+		return false, nil
 	}
 
 	args := map[string]any{
@@ -967,7 +970,7 @@ func (a *AgentBridge) EndSession(p SessionEndParams) error {
 		args["summarize"] = true
 	}
 	if err := a.callAgentTool("agent_session_end", args, nil); err != nil {
-		return fmt.Errorf("end session: %w", err)
+		return false, fmt.Errorf("end session: %w", err)
 	}
 
 	// Deregister presence (best-effort).
@@ -977,7 +980,7 @@ func (a *AgentBridge) EndSession(p SessionEndParams) error {
 		}, nil)
 	}
 
-	return nil
+	return true, nil
 }
 
 // PresenceHeartbeat updates the heartbeat timestamp for an agent.

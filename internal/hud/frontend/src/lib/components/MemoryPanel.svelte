@@ -37,9 +37,9 @@
   let compaction = $state(null);
 
   // Tier data accessors
-  let workingTier = $derived(stats.tiers?.working ?? {});
-  let shortTier = $derived(stats.tiers?.short_term ?? {});
-  let longTier = $derived(stats.tiers?.long_term ?? {});
+  let workingTier = $derived(stats.working_memory ?? {});
+  let shortTier = $derived(stats.short_term_memory ?? {});
+  let longTier = $derived(stats.long_term_memory ?? {});
 
   // Compression stats
   let compression = $derived(stats.compression ?? {});

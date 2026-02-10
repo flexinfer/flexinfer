@@ -13,11 +13,6 @@ export interface MemoryStats {
   long_term_memory: TierStats;
   total_items: number;
   total_tokens: number;
-  tiers?: {
-    working?: TierStats;
-    short_term?: TierStats;
-    long_term?: TierStats;
-  };
   compression?: {
     ratio: number;
     overall_ratio?: number;

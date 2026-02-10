@@ -103,25 +103,31 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.agent.EndSession(bridge.SessionEndParams{
+	ended, err := a.agent.EndSession(bridge.SessionEndParams{
 		SessionID: body.SessionID,
 		AgentID:   body.AgentID,
 		Summarize: body.Summarize,
-	}); err != nil {
+	})
+	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to end session", err)
 		return
 	}
 
-	a.broadcastAgentEvent("agent.session.end", map[string]any{
-		"session_id": body.SessionID,
-		"agent_id":   body.AgentID,
-	})
+	if ended {
+		a.broadcastAgentEvent("agent.session.end", map[string]any{
+			"session_id": body.SessionID,
+			"agent_id":   body.AgentID,
+		})
 
-	go a.fleetMonitor.Refresh()
+		go a.fleetMonitor.Refresh()
 
-	// Trigger async LLM summarization if coordinator is available.
-	if a.coordinator != nil {
-		go a.coordinator.OnSessionEnd(body.SessionID, body.AgentID)
+		// Trigger async LLM summarization if coordinator is available.
+		if a.coordinator != nil {
+			go a.coordinator.OnSessionEnd(body.SessionID, body.AgentID)
+		}
+	} else {
+		a.logger.Info("session end: no active session found, skipping",
+			"agent_id", body.AgentID, "session_id", body.SessionID)
 	}
 
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
