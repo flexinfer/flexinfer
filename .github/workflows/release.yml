@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -42,6 +43,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: crb2nu/mcp-go
+          path: _deps/mcp-go
+      - uses: actions/checkout@v4
+        with:
+          repository: crb2nu/fi-mcp-kit
+          path: _deps/fi-mcp-kit
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -55,6 +64,9 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
+          go mod edit -replace gitlab.flexinfer.ai/libs/mcp-go=./_deps/mcp-go
+          go mod edit -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=./_deps/fi-mcp-kit
 
           mkdir -p dist/stage
 
