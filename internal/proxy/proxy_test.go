@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -23,6 +23,8 @@ import (
 
 func setupTestProxy(t *testing.T) *Proxy {
 	t.Helper()
+
+	RegisterMetrics()
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
@@ -823,6 +825,8 @@ func TestConnectionTimeout_CancelledContext(t *testing.T) {
 
 func TestColdStartTimeout_Exceeded(t *testing.T) {
 	// Create proxy with very short cold start timeout
+	RegisterMetrics()
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
@@ -878,6 +882,8 @@ func TestModelNotFoundAtStartup(t *testing.T) {
 }
 
 func TestQueueTimeout_Context(t *testing.T) {
+	RegisterMetrics()
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
@@ -899,6 +905,8 @@ func TestQueueTimeout_Context(t *testing.T) {
 }
 
 func TestHandleRequest_QueueTimeoutResponse(t *testing.T) {
+	RegisterMetrics()
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, aiv1alpha1.AddToScheme(scheme))

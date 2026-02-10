@@ -1,0 +1,452 @@
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"time"
+
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/validation"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// Routing annotation for models
+const (
+	AnnotationRouting = "flexinfer.ai/routing"
+)
+
+// watchEndpoints periodically updates the router with current pod endpoints for each model.
+// This enables direct pod routing for session affinity and prefix-based routing.
+func (p *Proxy) watchEndpoints(ctx context.Context) {
+	ticker := time.NewTicker(endpointWatchInterval)
+	defer ticker.Stop()
+
+	slog.Info("starting endpoint watcher for routing")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.refreshEndpoints(ctx)
+		}
+	}
+}
+
+// refreshEndpoints updates the router with current endpoints for models that have routing enabled.
+// Only models with the flexinfer.ai/routing annotation will get direct pod routing;
+// others will use Kubernetes Service DNS for load balancing.
+func (p *Proxy) refreshEndpoints(ctx context.Context) {
+	start := time.Now()
+	defer func() {
+		endpointRefreshDuration.Observe(time.Since(start).Seconds())
+	}()
+
+	// List all Services in namespace (each model has a service)
+	var services corev1.ServiceList
+	if err := p.client.List(ctx, &services, client.InNamespace(p.namespace)); err != nil {
+		slog.Warn("failed to list services for endpoint refresh", "error", err)
+		return
+	}
+
+	for _, svc := range services.Items {
+		// Only process services that look like model services
+		if svc.Spec.Selector == nil {
+			continue
+		}
+		modelName, hasModelLabel := svc.Spec.Selector["flexinfer.ai/model"]
+		if !hasModelLabel {
+			continue
+		}
+
+		// Check if this model has routing annotation enabled
+		// Only models with explicit routing strategy will get direct pod routing
+		hasRoutingAnnotation := p.modelHasRoutingAnnotation(ctx, modelName)
+		if !hasRoutingAnnotation {
+			// Remove from router if previously added, so it falls back to Service DNS
+			p.router.RemoveModel(modelName)
+			// Clear endpoint cache and metrics for this model
+			if _, existed := p.endpointCache.LoadAndDelete(modelName); existed {
+				endpointCount.DeleteLabelValues(modelName)
+			}
+			continue
+		}
+
+		// List endpoints for this service
+		var endpoints corev1.Endpoints
+		if err := p.client.Get(ctx, client.ObjectKey{Name: svc.Name, Namespace: p.namespace}, &endpoints); err != nil {
+			continue
+		}
+
+		// Collect ready pod addresses, skipping pods on terminating nodes.
+		var podAddresses []string
+		for _, subset := range endpoints.Subsets {
+			port := defaultBackendPort
+			for _, pp := range subset.Ports {
+				port = pp.Port
+				break
+			}
+			for _, addr := range subset.Addresses {
+				// Skip pods on nodes marked for spot termination
+				if addr.NodeName != nil && p.isNodeTerminating(ctx, *addr.NodeName) {
+					slog.Debug("skipping endpoint on terminating node", "model", modelName, "node", *addr.NodeName)
+					continue
+				}
+				podAddresses = append(podAddresses, fmt.Sprintf("%s:%d", addr.IP, port))
+			}
+		}
+
+		// Track endpoint changes for metrics
+		p.trackEndpointChanges(modelName, podAddresses)
+
+		// Update router if we have endpoints
+		if len(podAddresses) > 0 {
+			p.router.UpdateEndpoints(modelName, podAddresses)
+			slog.Debug("updated routing endpoints", "model", modelName, "endpoints", len(podAddresses))
+		}
+	}
+}
+
+// isNodeTerminating checks if a node is marked for spot instance termination.
+// Nodes are marked by the drain coordinator setting the flexinfer.ai/spot-terminating annotation.
+func (p *Proxy) isNodeTerminating(ctx context.Context, nodeName string) bool {
+	var node corev1.Node
+	if err := p.client.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
+		return false
+	}
+
+	if node.Annotations != nil {
+		if node.Annotations["flexinfer.ai/spot-terminating"] == "true" {
+			return true
+		}
+	}
+
+	// Also check for the taint
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == "flexinfer.ai/spot-terminating" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// trackEndpointChanges compares current endpoints with cached ones and updates metrics.
+func (p *Proxy) trackEndpointChanges(modelName string, newEndpoints []string) {
+	// Update endpoint count gauge
+	endpointCount.WithLabelValues(modelName).Set(float64(len(newEndpoints)))
+
+	// Get previous endpoints from cache
+	var oldEndpoints []string
+	if cached, ok := p.endpointCache.Load(modelName); ok {
+		oldEndpoints = cached.([]string)
+	}
+
+	// Create sets for comparison
+	oldSet := make(map[string]bool, len(oldEndpoints))
+	for _, ep := range oldEndpoints {
+		oldSet[ep] = true
+	}
+	newSet := make(map[string]bool, len(newEndpoints))
+	for _, ep := range newEndpoints {
+		newSet[ep] = true
+	}
+
+	// Count additions
+	for ep := range newSet {
+		if !oldSet[ep] {
+			endpointChangesTotal.WithLabelValues(modelName, "added").Inc()
+		}
+	}
+
+	// Count removals
+	for ep := range oldSet {
+		if !newSet[ep] {
+			endpointChangesTotal.WithLabelValues(modelName, "removed").Inc()
+		}
+	}
+
+	// Store updated cache
+	p.endpointCache.Store(modelName, newEndpoints)
+}
+
+// modelHasRoutingAnnotation checks if a model has the flexinfer.ai/routing annotation set.
+func (p *Proxy) modelHasRoutingAnnotation(ctx context.Context, modelName string) bool {
+	// Check v1alpha1 ModelDeployment
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if md.Annotations != nil {
+			if _, ok := md.Annotations[AnnotationRouting]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Check v1alpha2 Model
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if _, ok := m.Annotations[AnnotationRouting]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getRoutingStrategy returns the routing strategy for a model from its annotation.
+func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routing.Strategy {
+	if !p.routingEnabled {
+		return routing.StrategyDefault
+	}
+
+	// Check v1alpha1 ModelDeployment
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if md.Annotations != nil {
+			if strategy, ok := md.Annotations[AnnotationRouting]; ok {
+				return routing.Strategy(strategy)
+			}
+		}
+		return routing.StrategyDefault
+	}
+
+	// Check v1alpha2 Model
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if strategy, ok := m.Annotations[AnnotationRouting]; ok {
+				return routing.Strategy(strategy)
+			}
+		}
+	}
+
+	return routing.StrategyDefault
+}
+
+// serveProxy forwards the request to the appropriate backend.
+// If the model name resolves to a LoRA adapter, the request is routed to the
+// parent model's endpoint while preserving the adapter name in the request body
+// so the backend (vLLM) routes to the correct LoRA weights.
+func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName string) {
+	ctx := r.Context()
+
+	// Check if the model name is a LoRA adapter; if so, route to parent model
+	// but keep the adapter name in the request body for the backend.
+	resolvedModel := modelName
+	isLoRA := false
+	if parentModel, ok := p.resolveLoRAAdapter(ctx, modelName); ok {
+		resolvedModel = parentModel
+		isLoRA = true
+	}
+
+	// Get the backend port for this model (defaults to 8000 if not found)
+	port := p.getBackendPort(ctx, resolvedModel)
+
+	// Get the actual backend model name (e.g., HuggingFace model ID)
+	// For LoRA adapters, skip model rewriting — the adapter name must pass through.
+	var backendModelName string
+	if !isLoRA {
+		backendModelName = p.getBackendModelName(ctx, resolvedModel)
+	}
+
+	// Read body for routing decision and model rewriting
+	var bodyBytes []byte
+	if r.Body != nil && r.Body != http.NoBody &&
+		(r.Method == http.MethodPost || r.Method == http.MethodPut) {
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if cerr := r.Body.Close(); cerr != nil {
+			slog.Debug("failed to close request body after read", "error", cerr)
+		}
+		if err != nil {
+			slog.Debug("failed to read request body for routing decision", "error", err)
+			bodyBytes = nil
+		}
+	}
+
+	// Determine target URL - try routing first, fall back to Service DNS
+	var targetURL string
+	var targetPod string // Track if we routed to a specific pod
+	strategy := p.getRoutingStrategy(ctx, resolvedModel)
+
+	if strategy != routing.StrategyDefault && p.router != nil {
+		// Try to route to a specific pod
+		// Use RouteWithLoad to support least-loaded routing
+		targetPod = p.router.RouteWithLoad(resolvedModel, strategy, r, bodyBytes, p.getPodConnections)
+		if targetPod != "" {
+			targetURL = fmt.Sprintf("http://%s", targetPod)
+			slog.Debug("routing to pod", "model", modelName, "strategy", strategy, "target", targetPod)
+		}
+	}
+
+	// Fall back to Service DNS if no routing target
+	if targetURL == "" {
+		targetURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", resolvedModel, p.namespace, port)
+	}
+
+	// Rewrite model name in request body if needed
+	if backendModelName != "" && len(bodyBytes) > 0 {
+		bodyBytes = p.rewriteModelInBody(bodyBytes, backendModelName)
+	}
+
+	// Restore body if we read it
+	if len(bodyBytes) > 0 {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+	}
+
+	// Track per-pod connections for least-loaded routing
+	if targetPod != "" {
+		p.incrementPodConnections(targetPod)
+		defer p.decrementPodConnections(targetPod)
+	}
+
+	// Create or get cached proxy for this target
+	var rp *httputil.ReverseProxy
+	proxyKey := targetURL // Use full URL as key for pod-specific proxies
+	if val, ok := p.proxyMap.Load(proxyKey); ok {
+		rp = val.(*httputil.ReverseProxy)
+	} else {
+		// Create new proxy
+		u, err := url.Parse(targetURL)
+		if err != nil {
+			slog.Error("invalid proxy target URL", "targetURL", targetURL, "error", err)
+			validation.WriteInternalError(w, "Internal error routing request")
+			return
+		}
+		rp = httputil.NewSingleHostReverseProxy(u)
+		p.proxyMap.Store(proxyKey, rp)
+	}
+
+	rp.ServeHTTP(w, r)
+}
+
+// getBackendModelName returns the actual model identifier used by the backend (e.g., HuggingFace model ID).
+// This allows the proxy to rewrite model names in requests before forwarding.
+func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) string {
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
+		return md.Spec.Model
+	} else if !errors.IsNotFound(err) {
+		return ""
+	}
+
+	// v1alpha2 fallback
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+		return ""
+	}
+	return extractModelFromSource(m.Spec.Source)
+}
+
+// getBackendPort returns the port for a model's backend service.
+// Returns the backend-specific port based on model spec, or 8000 as default.
+func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if b, ok := backend.Get(md.Spec.Backend); ok {
+			return b.Port()
+		}
+		return defaultBackendPort
+	} else if !errors.IsNotFound(err) {
+		return defaultBackendPort
+	}
+
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+		return defaultBackendPort
+	}
+	if b, ok := backend.Get(m.Spec.Backend); ok {
+		return b.Port()
+	}
+	return defaultBackendPort
+}
+
+// rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
+// This allows clients to use FlexInfer model names/aliases while backends receive their native model IDs.
+func (p *Proxy) rewriteModelInBody(body []byte, backendModelName string) []byte {
+	// Parse the JSON
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		// Not valid JSON or parse error, return original
+		return body
+	}
+
+	// Check if there's a model field
+	if _, ok := data["model"]; !ok {
+		return body
+	}
+
+	// Replace the model field with the backend model name
+	data["model"] = backendModelName
+
+	// Re-marshal
+	modified, err := json.Marshal(data)
+	if err != nil {
+		return body
+	}
+
+	return modified
+}
+
+// updateLastAccess updates the LastAccessTime for a model.
+func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
+	// Optimization: Don't update on every request to avoid API spam.
+	// Only update if current LastAccessTime is old (> 1 minute ago).
+	// We'll need to fetch the object first.
+
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
+		if !errors.IsNotFound(err) {
+			slog.Warn("error fetching modeldeployment for stats update", "model", modelName, "error", err)
+			return
+		}
+
+		// v1alpha2 fallback: update LastActiveTime
+		m := &aiv1alpha2.Model{}
+		if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+			slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
+			return
+		}
+
+		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < lastAccessThrottleInterval {
+			return
+		}
+
+		now := metav1.Now()
+		m.Status.LastActiveTime = &now
+		if err := p.client.Status().Update(ctx, m); err != nil {
+			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
+		}
+		return
+	}
+
+	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < lastAccessThrottleInterval {
+		return
+	}
+
+	now := metav1.Now()
+	// Update status directly
+	md.Status.LastAccessTime = &now
+	if err := p.client.Status().Update(ctx, md); err != nil {
+		// Log but don't fail, it's just stats
+		slog.Debug("failed to update LastAccessTime", "model", modelName, "error", err)
+	}
+}

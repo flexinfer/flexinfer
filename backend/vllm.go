@@ -143,3 +143,40 @@ func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {
 func (b *VLLMBackend) StartupTimeout() time.Duration {
 	return 120 * time.Second
 }
+
+// KVCacheArgs returns CLI arguments for KV-cache tuning.
+func (b *VLLMBackend) KVCacheArgs(maxBlockSize *int, swapSpaceGiB *float64) []string {
+	var args []string
+	if maxBlockSize != nil {
+		args = append(args, "--block-size", fmt.Sprintf("%d", *maxBlockSize))
+	}
+	if swapSpaceGiB != nil {
+		args = append(args, "--swap-space", fmt.Sprintf("%.1f", *swapSpaceGiB))
+	}
+	return args
+}
+
+// SupportsSwapSpace returns true — vLLM supports CPU-offloaded KV-cache via --swap-space.
+func (b *VLLMBackend) SupportsSwapSpace() bool {
+	return true
+}
+
+// SupportsLoRA returns true — vLLM supports hot-loading LoRA adapters.
+func (b *VLLMBackend) SupportsLoRA() bool {
+	return true
+}
+
+// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter count.
+func (b *VLLMBackend) LoRABaseArgs(maxAdapters int) []string {
+	return []string{"--enable-lora", "--max-loras", fmt.Sprintf("%d", maxAdapters)}
+}
+
+// LoadLoRAEndpoint returns the vLLM API path for loading a LoRA adapter.
+func (b *VLLMBackend) LoadLoRAEndpoint() string {
+	return "/v1/load_lora_adapter"
+}
+
+// UnloadLoRAEndpoint returns the vLLM API path for unloading a LoRA adapter.
+func (b *VLLMBackend) UnloadLoRAEndpoint() string {
+	return "/v1/unload_lora_adapter"
+}

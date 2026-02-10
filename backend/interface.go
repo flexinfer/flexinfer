@@ -169,6 +169,35 @@ type Backend interface {
 	DefaultIdleTimeout() time.Duration
 }
 
+// KVCacheConfigurer is an optional interface that backends can implement
+// to support KV-cache tuning arguments. Backends that manage their own
+// KV-cache (like vLLM) implement this to translate CRD-level cache policies
+// into CLI arguments.
+type KVCacheConfigurer interface {
+	// KVCacheArgs returns CLI arguments for KV-cache tuning based on the spec.
+	// Returns nil if no tuning is needed.
+	KVCacheArgs(maxBlockSize *int, swapSpaceGiB *float64) []string
+
+	// SupportsSwapSpace returns true if the backend supports CPU-offloaded KV-cache.
+	SupportsSwapSpace() bool
+}
+
+// LoRASupporter is an optional interface that backends can implement
+// to support dynamic LoRA adapter loading and unloading at runtime.
+type LoRASupporter interface {
+	// SupportsLoRA returns true if the backend supports hot-loading LoRA adapters.
+	SupportsLoRA() bool
+
+	// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter count.
+	LoRABaseArgs(maxAdapters int) []string
+
+	// LoadLoRAEndpoint returns the HTTP path for loading a LoRA adapter.
+	LoadLoRAEndpoint() string
+
+	// UnloadLoRAEndpoint returns the HTTP path for unloading a LoRA adapter.
+	UnloadLoRAEndpoint() string
+}
+
 // BaseBackend provides common default implementations for Backend methods.
 // Embed this in concrete backend implementations to inherit defaults.
 type BaseBackend struct{}

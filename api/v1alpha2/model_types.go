@@ -22,6 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -79,6 +80,65 @@ const (
 	// ReasonPreempted - model was preempted by higher priority model
 	ReasonPreempted = "Preempted"
 )
+
+// KVCachePressurePolicy defines how to react to KV-cache pressure.
+type KVCachePressurePolicy string
+
+const (
+	// KVCachePressurePolicyObserve only monitors and emits events.
+	KVCachePressurePolicyObserve KVCachePressurePolicy = "Observe"
+	// KVCachePressurePolicyReconfigure patches backend args (e.g., increase swap-space).
+	KVCachePressurePolicyReconfigure KVCachePressurePolicy = "Reconfigure"
+	// KVCachePressurePolicyEvict scales down the lowest-priority replica under pressure.
+	KVCachePressurePolicyEvict KVCachePressurePolicy = "Evict"
+)
+
+// KVCacheSpec configures KV-cache management policies for a model.
+// FlexInfer observes cache pressure from agent metrics and reacts according to the policy.
+// +kubebuilder:object:generate=true
+type KVCacheSpec struct {
+	// PressurePolicy defines how to react when KV-cache usage exceeds watermarks.
+	// +kubebuilder:validation:Enum=Observe;Reconfigure;Evict
+	// +kubebuilder:default=Observe
+	// +optional
+	PressurePolicy KVCachePressurePolicy `json:"pressurePolicy,omitempty"`
+
+	// HighWatermark is the KV-cache utilization ratio that triggers the pressure policy.
+	// +optional
+	HighWatermark *resource.Quantity `json:"highWatermark,omitempty"`
+
+	// LowWatermark is the target KV-cache utilization ratio after pressure mitigation.
+	// +optional
+	LowWatermark *resource.Quantity `json:"lowWatermark,omitempty"`
+
+	// MaxBlockSize overrides the vLLM --block-size argument for KV-cache block allocation.
+	// +optional
+	MaxBlockSize *int `json:"maxBlockSize,omitempty"`
+
+	// SwapSpace configures the vLLM --swap-space argument (GiB) for CPU-offloaded KV-cache.
+	// +optional
+	SwapSpace *resource.Quantity `json:"swapSpace,omitempty"`
+}
+
+// KVCacheStatus reports observed KV-cache metrics.
+// +kubebuilder:object:generate=true
+type KVCacheStatus struct {
+	// Utilization is the current KV-cache usage ratio (0.0 to 1.0).
+	// +optional
+	Utilization string `json:"utilization,omitempty"`
+
+	// Pressure indicates whether the model is under KV-cache pressure.
+	// +optional
+	Pressure bool `json:"pressure,omitempty"`
+
+	// LastPressureTime is when cache pressure was last detected.
+	// +optional
+	LastPressureTime *metav1.Time `json:"lastPressureTime,omitempty"`
+
+	// LastAction describes the most recent action taken in response to pressure.
+	// +optional
+	LastAction string `json:"lastAction,omitempty"`
+}
 
 // ModelSpec defines the desired state of Model
 // This is the simplified v1alpha2 spec optimized for homelab users.
@@ -141,6 +201,11 @@ type ModelSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=10
 	ServiceLabels []string `json:"serviceLabels,omitempty"`
+
+	// KVCache configures KV-cache pressure management.
+	// Only effective with backends that support KV-cache tuning (vLLM).
+	// +optional
+	KVCache *KVCacheSpec `json:"kvCache,omitempty"`
 }
 
 // GPUVendor selects which vendor GPU resource to request.
@@ -307,6 +372,10 @@ type ModelStatus struct {
 	// Cache tracks the cache state.
 	// +optional
 	Cache *CacheStatus `json:"cache,omitempty"`
+
+	// KVCache tracks observed KV-cache metrics and pressure state.
+	// +optional
+	KVCache *KVCacheStatus `json:"kvCache,omitempty"`
 }
 
 // GPUStatus contains allocated GPU information.
@@ -513,6 +582,30 @@ func (s *ModelSpec) ConfigInt(key string, defaultVal int) int {
 		return int(v)
 	}
 	return defaultVal
+}
+
+// GetKVCacheHighWatermark returns the high watermark as a float64, defaulting to 0.85.
+func (s *ModelSpec) GetKVCacheHighWatermark() float64 {
+	if s.KVCache != nil && s.KVCache.HighWatermark != nil {
+		return s.KVCache.HighWatermark.AsApproximateFloat64()
+	}
+	return 0.85
+}
+
+// GetKVCacheLowWatermark returns the low watermark as a float64, defaulting to 0.60.
+func (s *ModelSpec) GetKVCacheLowWatermark() float64 {
+	if s.KVCache != nil && s.KVCache.LowWatermark != nil {
+		return s.KVCache.LowWatermark.AsApproximateFloat64()
+	}
+	return 0.60
+}
+
+// GetKVCachePressurePolicy returns the pressure policy, defaulting to Observe.
+func (s *ModelSpec) GetKVCachePressurePolicy() KVCachePressurePolicy {
+	if s.KVCache != nil && s.KVCache.PressurePolicy != "" {
+		return s.KVCache.PressurePolicy
+	}
+	return KVCachePressurePolicyObserve
 }
 
 // ConfigBool returns a config value as bool with default.

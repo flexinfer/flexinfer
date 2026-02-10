@@ -161,6 +161,47 @@ type ModelCacheSpec struct {
 	// +kubebuilder:validation:Maximum=100
 	// +optional
 	RetentionPriority *int32 `json:"retentionPriority,omitempty"`
+
+	// FlashLoader configures the flash-loader init container for fast model loading.
+	// When enabled, model files are parallel-copied from PVC to tmpfs before
+	// the inference container starts, dramatically reducing cold start time.
+	// +optional
+	FlashLoader *FlashLoaderSpec `json:"flashLoader,omitempty"`
+}
+
+// FlashLoaderSpec configures the flash-loader init container for fast model loading.
+// When enabled, an init container parallel-copies model files from PVC to tmpfs
+// before the inference container starts, reducing cold start I/O latency.
+// +kubebuilder:object:generate=true
+type FlashLoaderSpec struct {
+	// Enabled activates flash-loader for this cache.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Concurrency is the number of parallel copy goroutines.
+	// +kubebuilder:default=4
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=32
+	// +optional
+	Concurrency int `json:"concurrency,omitempty"`
+
+	// TmpfsSizeLimit is the maximum size of the tmpfs volume.
+	// Defaults to 2x the model size if not specified.
+	// +optional
+	TmpfsSizeLimit *string `json:"tmpfsSizeLimit,omitempty"`
+
+	// P2P enables peer-to-peer transfer between pods on the same node.
+	// +optional
+	P2P bool `json:"p2p,omitempty"`
+
+	// P2PPort is the port used for peer-to-peer transfer.
+	// +kubebuilder:default=9876
+	// +optional
+	P2PPort int `json:"p2pPort,omitempty"`
+
+	// Image overrides the flash-loader init container image.
+	// +optional
+	Image string `json:"image,omitempty"`
 }
 
 // ModelCacheStatus defines the observed state of ModelCache

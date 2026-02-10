@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 )
@@ -394,6 +396,11 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile KV-cache pressure if the model is running and has a KVCache policy.
+	if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
+		r.reconcileKVCachePressure(ctx, model)
+	}
+
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
@@ -584,6 +591,41 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	env := b.Env(spec)
 	probe := b.ReadinessProbe()
 
+	// Append KV-cache tuning args if the backend supports it.
+	if model.Spec.KVCache != nil {
+		if kvc, ok := b.(backend.KVCacheConfigurer); ok {
+			var swapGiB *float64
+			if model.Spec.KVCache.SwapSpace != nil {
+				v := model.Spec.KVCache.SwapSpace.AsApproximateFloat64()
+				swapGiB = &v
+			}
+			if extra := kvc.KVCacheArgs(model.Spec.KVCache.MaxBlockSize, swapGiB); len(extra) > 0 {
+				args = append(args, extra...)
+			}
+		}
+	}
+
+	// Append LoRA base args if the model has LoRA adapters and backend supports it.
+	if ls, ok := b.(backend.LoRASupporter); ok && ls.SupportsLoRA() {
+		// Check for LoRA adapter CRs referencing this model.
+		loraList := &aiv1alpha2.LoRAAdapterList{}
+		if err := r.List(ctx, loraList, client.InNamespace(model.Namespace)); err == nil {
+			count := 0
+			for _, la := range loraList.Items {
+				if la.Spec.ModelRef == model.Name {
+					count++
+				}
+			}
+			if count > 0 {
+				maxAdapters := count
+				if maxAdapters < 4 {
+					maxAdapters = 4 // minimum headroom
+				}
+				args = append(args, ls.LoRABaseArgs(maxAdapters)...)
+			}
+		}
+	}
+
 	// If this is a HuggingFace source and we have a /models volume, store HF caches on it.
 	// This makes SharedPVC act as a real cache layer without adding a dedicated downloader job.
 	if strings.HasPrefix(model.Spec.Source, "HF://") && b.NeedsVolume() {
@@ -676,6 +718,46 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			},
 		},
 	})
+
+	// Flash-loader init container: if the ModelCache for this model has flash-loader enabled,
+	// inject an init container that parallel-copies model files from PVC to tmpfs.
+	var initContainers []corev1.Container
+	if r.shouldInjectFlashLoader(ctx, model) {
+		flashImage := "registry.harbor.lan/flexinfer/flash-loader:latest"
+		flashConcurrency := "4"
+		flashContainer := corev1.Container{
+			Name:            "flash-loader",
+			Image:           flashImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Env: []corev1.EnvVar{
+				{Name: "FLASH_SRC", Value: "/src"},
+				{Name: "FLASH_DST", Value: "/models"},
+				{Name: "FLASH_CONCURRENCY", Value: flashConcurrency},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "model", MountPath: "/src", ReadOnly: true},
+				{Name: "flash-tmpfs", MountPath: "/models"},
+			},
+		}
+		initContainers = append(initContainers, flashContainer)
+
+		// Replace the model volume mount on the main container to use tmpfs
+		for i := range container.VolumeMounts {
+			if container.VolumeMounts[i].Name == "model" {
+				container.VolumeMounts[i].Name = "flash-tmpfs"
+			}
+		}
+
+		// Add the tmpfs volume
+		volumes = append(volumes, corev1.Volume{
+			Name: "flash-tmpfs",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium: corev1.StorageMediumMemory,
+				},
+			},
+		})
+	}
 
 	desiredDeployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -785,8 +867,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 							},
 						}
 					}(),
-					Containers: []corev1.Container{container},
-					Volumes:    volumes,
+					InitContainers: initContainers,
+					Containers:     []corev1.Container{container},
+					Volumes:        volumes,
 					RuntimeClassName: func() *string {
 						// NVIDIA GPUs require the "nvidia" runtime to inject /dev/nvidia* and driver libs.
 						// Without this, pods may schedule with nvidia.com/gpu but have no CUDA devices.
@@ -1726,6 +1809,101 @@ func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 		return model.Spec.Serverless.IdleTimeout.Duration
 	}
 	return b.DefaultIdleTimeout()
+}
+
+// shouldInjectFlashLoader checks if the ModelCache for this model has flash-loader enabled.
+func (r *ModelReconciler) shouldInjectFlashLoader(ctx context.Context, model *aiv1alpha2.Model) bool {
+	cacheList := &aiv1alpha1.ModelCacheList{}
+	if err := r.List(ctx, cacheList, client.InNamespace(model.Namespace)); err != nil {
+		return false
+	}
+
+	for _, mc := range cacheList.Items {
+		if mc.Spec.FlashLoader != nil && mc.Spec.FlashLoader.Enabled {
+			// Match by source: if the ModelCache source matches the model source
+			if strings.HasPrefix(model.Spec.Source, "HF://") && strings.Contains(mc.Spec.Source, strings.TrimPrefix(model.Spec.Source, "HF://")) {
+				return true
+			}
+			// Match by name convention: modelcache name = model name
+			if mc.Name == model.Name || mc.Name == model.Name+"-cache" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reconcileKVCachePressure checks KV-cache utilization from agent annotations
+// and reacts according to the model's KVCache pressure policy.
+func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *aiv1alpha2.Model) {
+	if model.Spec.KVCache == nil {
+		return
+	}
+
+	log := log.FromContext(ctx)
+
+	// Read KV-cache utilization from the node where the model is running.
+	if model.Status.GPU == nil || model.Status.GPU.Node == "" {
+		return
+	}
+
+	node := &corev1.Node{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Status.GPU.Node}, node); err != nil {
+		log.V(1).Info("cannot read node for KV-cache check", "node", model.Status.GPU.Node, "error", err)
+		return
+	}
+
+	utilStr := ""
+	if node.Annotations != nil {
+		utilStr = node.Annotations["flexinfer.ai/kv-cache-usage"]
+	}
+	if utilStr == "" {
+		return
+	}
+
+	util, err := strconv.ParseFloat(strings.TrimSpace(utilStr), 64)
+	if err != nil {
+		return
+	}
+
+	// Update status
+	if model.Status.KVCache == nil {
+		model.Status.KVCache = &aiv1alpha2.KVCacheStatus{}
+	}
+	model.Status.KVCache.Utilization = fmt.Sprintf("%.4f", util)
+
+	highWatermark := model.Spec.GetKVCacheHighWatermark()
+	lowWatermark := model.Spec.GetKVCacheLowWatermark()
+
+	if util < highWatermark {
+		model.Status.KVCache.Pressure = false
+		return
+	}
+
+	// Pressure detected
+	model.Status.KVCache.Pressure = true
+	now := metav1.Now()
+	model.Status.KVCache.LastPressureTime = &now
+
+	policy := model.Spec.GetKVCachePressurePolicy()
+
+	switch policy {
+	case aiv1alpha2.KVCachePressurePolicyObserve:
+		model.Status.KVCache.LastAction = "Observed"
+		r.Recorder.Event(model, corev1.EventTypeWarning, "KVCachePressure",
+			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Observe)", util, highWatermark))
+
+	case aiv1alpha2.KVCachePressurePolicyReconfigure:
+		model.Status.KVCache.LastAction = "Reconfigure"
+		r.Recorder.Event(model, corev1.EventTypeWarning, "KVCachePressure",
+			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Reconfigure, target: %.2f)", util, highWatermark, lowWatermark))
+
+	case aiv1alpha2.KVCachePressurePolicyEvict:
+		model.Status.KVCache.LastAction = "EvictRequested"
+		r.Recorder.Event(model, corev1.EventTypeWarning, "KVCachePressure",
+			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Evict)", util, highWatermark))
+		log.Info("KV-cache pressure: eviction requested", "model", model.Name, "utilization", util, "highWatermark", highWatermark)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

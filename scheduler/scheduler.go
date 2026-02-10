@@ -340,10 +340,17 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// KV-cache pressure penalty: if the node's KV-cache usage exceeds 0.85 (high watermark),
+		// penalize the score to steer new models away from pressure-saturated nodes.
+		kvPressurePenalty := 0.0
+		if cacheUsage > 0.85 {
+			kvPressurePenalty = (cacheUsage - 0.85) * 20.0 // 20x penalty per unit over watermark
+		}
+
 		// Higher score is better.
-		// We subtract penalties for utilization, cost, and cache usage.
+		// We subtract penalties for utilization, cost, cache usage, and KV-cache pressure.
 		// Use tps as base reward.
-		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight + freeRatio*s.vramFreeWeight
+		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight + freeRatio*s.vramFreeWeight - kvPressurePenalty
 
 		scores[i] = extenderv1.HostPriority{
 			Host:  nodeName,

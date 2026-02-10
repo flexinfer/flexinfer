@@ -64,7 +64,7 @@ test-gpugroup: ## Run GPUGroup-specific tests
 
 .PHONY: test-proxy
 test-proxy: ## Run proxy tests
-	go test -v ./cmd/flexinfer-proxy/... -timeout 2m
+	go test -v ./internal/proxy/... -timeout 2m
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage report
@@ -105,11 +105,20 @@ install-cli: build-cli ## Install the flexinfer CLI to /usr/local/bin.
 	cp bin/flexinfer /usr/local/bin/
 
 .PHONY: build-all
-build-all: build build-cli ## Build all binaries (manager + CLI).
+build-all: build build-cli ## Build all binaries (manager + CLI + flash-loader).
 	go build -o bin/flexinfer-agent ./cmd/flexinfer-agent
 	go build -o bin/flexinfer-bench ./cmd/flexinfer-bench
 	go build -o bin/flexinfer-proxy ./cmd/flexinfer-proxy
 	go build -o bin/flexinfer-sched ./cmd/flexinfer-sched
+	go build -o bin/flexinfer-flash-loader ./cmd/flexinfer-flash-loader
+
+.PHONY: build-flash-loader
+build-flash-loader: ## Build the flash-loader init container binary.
+	go build -o bin/flexinfer-flash-loader ./cmd/flexinfer-flash-loader
+
+.PHONY: test-race
+test-race: ## Run tests with race detector
+	go test -race ./... -short
 
 ##@ Deployment
 

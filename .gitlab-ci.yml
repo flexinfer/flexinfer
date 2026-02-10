@@ -113,7 +113,15 @@ proxy_test:
   stage: test
   <<: *go-cache
   script:
-    - go test -v ./cmd/flexinfer-proxy/... -timeout 2m
+    - go test -v ./internal/proxy/... -timeout 2m
+
+race_test:
+  stage: test
+  <<: *go-cache
+  script:
+    - echo "Running tests with race detector..."
+    - CGO_ENABLED=1 go test -race ./... -short -timeout 10m
+  allow_failure: false
 
 integration_test:
   stage: test
@@ -179,7 +187,7 @@ build_proxy:
   stage: build
   <<: *go-cache
   script:
-    - go build -o bin/proxy cmd/flexinfer-proxy/main.go
+    - go build -o bin/proxy ./cmd/flexinfer-proxy/
   artifacts:
     paths:
       - bin/proxy
@@ -205,6 +213,16 @@ build_benchmarker:
       - bin/benchmarker
     expire_in: 1 day
 
+build_flash_loader:
+  stage: build
+  <<: *go-cache
+  script:
+    - go build -o bin/flash-loader cmd/flexinfer-flash-loader/main.go
+  artifacts:
+    paths:
+      - bin/flash-loader
+    expire_in: 1 day
+
 # --- Publish Stage ---
 # Build via BuildKit (no Docker-in-Docker)
 publish:
@@ -221,6 +239,8 @@ publish:
     - job: build_benchmarker
       artifacts: true
     - job: build_proxy
+      artifacts: true
+    - job: build_flash_loader
       artifacts: true
   before_script:
     - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
@@ -270,6 +290,7 @@ publish:
       scheduler_tags="${REGISTRY}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
       bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
       proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+      flash_loader_tags="${REGISTRY}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
 
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
         controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
@@ -277,6 +298,7 @@ publish:
         scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:latest"
         bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:latest"
         proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:latest"
+        flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:latest"
       fi
 
       if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
@@ -285,6 +307,7 @@ publish:
         scheduler_tags="${scheduler_tags} ${CI_REGISTRY_IMAGE}/flexinfer-scheduler:${CI_COMMIT_SHORT_SHA}"
         bench_tags="${bench_tags} ${CI_REGISTRY_IMAGE}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
         proxy_tags="${proxy_tags} ${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
+        flash_loader_tags="${flash_loader_tags} ${CI_REGISTRY_IMAGE}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
         if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
           controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
         fi
@@ -302,6 +325,8 @@ publish:
       build_image "flexinfer-bench" "Dockerfile.bench.bin" ${bench_tags}
       # shellcheck disable=SC2086
       build_image "flexinfer-proxy" "Dockerfile.proxy.bin" ${proxy_tags}
+      # shellcheck disable=SC2086
+      build_image "flexinfer-flash-loader" "Dockerfile.flash-loader.bin" ${flash_loader_tags}
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
@@ -319,6 +344,8 @@ publish_binaries:
     - job: build_benchmarker
       artifacts: true
     - job: build_proxy
+      artifacts: true
+    - job: build_flash_loader
       artifacts: true
   script:
     - apk add --no-cache curl
@@ -338,6 +365,7 @@ publish_binaries:
       upload "bin/scheduler" "scheduler_linux_amd64"
       upload "bin/benchmarker" "benchmarker_linux_amd64"
       upload "bin/proxy" "proxy_linux_amd64"
+      upload "bin/flash-loader" "flash-loader_linux_amd64"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
@@ -624,6 +652,71 @@ trivy_scan_deps:
     - if: $CI_MERGE_REQUEST_ID
     - if: $CI_PIPELINE_SOURCE == "schedule"
 
+# SBOM generation using syft (spdx-json format)
+# Generates Software Bill of Materials for CNCF compliance
+sbom_generate:
+  stage: security
+  image: registry.harbor.lan/library/golang:${GO_VERSION}
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export PATH=$PATH:$GOPATH/bin
+    - |
+      echo "Installing syft..."
+      curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+  script:
+    - echo "Generating SBOM in SPDX JSON format..."
+    - syft dir:. -o spdx-json=sbom-spdx.json
+    - echo "Generating SBOM in CycloneDX format..."
+    - syft dir:. -o cyclonedx-json=sbom-cyclonedx.json
+    - echo "SBOM generation complete."
+    - echo "SPDX entries:"
+    - wc -l sbom-spdx.json
+  artifacts:
+    paths:
+      - sbom-spdx.json
+      - sbom-cyclonedx.json
+    expire_in: 90 days
+    when: always
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# License compliance check using go-licenses
+# Ensures all dependencies use approved open-source licenses
+go_licenses_check:
+  stage: security
+  <<: *go-cache
+  before_script:
+    - mkdir -p .go
+    - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export PATH=$PATH:$GOPATH/bin
+    - go install github.com/google/go-licenses@latest
+  script:
+    - echo "Checking license compliance for all Go dependencies..."
+    - go-licenses report ./... 2>licenses-errors.txt | tee licenses-report.csv || true
+    - |
+      echo ""
+      echo "=== Checking for forbidden licenses ==="
+      # Fail if any dependency uses a restricted license (GPL, AGPL, SSPL)
+      if go-licenses check ./... 2>&1 | grep -i "forbidden\|restricted"; then
+        echo "FAIL: Found dependencies with forbidden licenses"
+        exit 1
+      fi
+      echo "PASS: All dependencies use approved licenses"
+  artifacts:
+    paths:
+      - licenses-report.csv
+      - licenses-errors.txt
+    expire_in: 30 days
+    when: always
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
+
 # Go module update check (informational)
 go_mod_outdated:
   stage: security
@@ -798,6 +891,7 @@ trivy_scan_nightly:
         ${REGISTRY}/flexinfer-proxy:latest
         ${REGISTRY}/flexinfer-scheduler:latest
         ${REGISTRY}/flexinfer-bench:latest
+        ${REGISTRY}/flexinfer-flash-loader:latest
       "
 
       all_passed=true

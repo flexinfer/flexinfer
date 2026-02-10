@@ -1,0 +1,169 @@
+package proxy
+
+import (
+	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	requestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_requests_total",
+			Help: "Total number of requests processed by the proxy.",
+		},
+		[]string{"model", "status"},
+	)
+
+	scaleUpsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_scale_ups_total",
+			Help: "Total number of scale-up operations triggered.",
+		},
+		[]string{"model"},
+	)
+
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_request_duration_seconds",
+			Help:    "Histogram of request processing duration.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"model"},
+	)
+
+	// Request queue metrics
+	queuedRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_queued_requests_total",
+			Help: "Total number of requests queued during cold start.",
+		},
+		[]string{"model"},
+	)
+
+	queueRejectedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_queue_rejected_total",
+			Help: "Total number of requests rejected due to full queue.",
+		},
+		[]string{"model"},
+	)
+
+	queueWaitDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_queue_wait_duration_seconds",
+			Help:    "Time requests spent waiting in queue during cold start.",
+			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 20, 30, 60},
+		},
+		[]string{"model"},
+	)
+
+	activeConnections = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_proxy_active_connections",
+			Help: "Number of active connections per model.",
+		},
+		[]string{"model"},
+	)
+
+	queueDepth = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_proxy_queue_depth",
+			Help: "Current number of requests waiting in queue per model.",
+		},
+		[]string{"model"},
+	)
+
+	// GPUGroup metrics
+	gpuGroupSwapSignalsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_gpugroup_swap_signals_total",
+			Help: "Total number of swap signals sent to GPUGroup controller.",
+		},
+		[]string{"gpugroup", "model"},
+	)
+
+	gpuGroupQueuedRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_gpugroup_queued_requests_total",
+			Help: "Total requests queued waiting for GPUGroup model swap.",
+		},
+		[]string{"gpugroup", "model"},
+	)
+
+	// Endpoint routing metrics
+	endpointChangesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_endpoint_changes_total",
+			Help: "Total number of endpoint changes detected per model and change type.",
+		},
+		[]string{"model", "change_type"},
+	)
+
+	endpointCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_proxy_endpoint_count",
+			Help: "Current number of endpoints per model.",
+		},
+		[]string{"model"},
+	)
+
+	endpointRefreshDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_endpoint_refresh_duration_seconds",
+			Help:    "Time spent refreshing endpoints.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		},
+	)
+
+	// Rate limiting metrics
+	rateLimitedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_rate_limited_total",
+			Help: "Total number of requests rejected due to rate limiting.",
+		},
+		[]string{"model", "scope"},
+	)
+
+	// Backoff metrics
+	activationRetriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_activation_retries_total",
+			Help: "Total number of activation retries per model.",
+		},
+		[]string{"model"},
+	)
+
+	activationRetryWaitDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_activation_retry_wait_duration_seconds",
+			Help:    "Time spent waiting between activation retries.",
+			Buckets: []float64{1, 2, 5, 10, 15, 20, 30, 45, 60},
+		},
+		[]string{"model"},
+	)
+)
+
+var metricsOnce sync.Once
+
+// RegisterMetrics registers all proxy Prometheus metrics. Safe to call multiple times.
+func RegisterMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(requestsTotal)
+		prometheus.MustRegister(scaleUpsTotal)
+		prometheus.MustRegister(requestDuration)
+		prometheus.MustRegister(queuedRequestsTotal)
+		prometheus.MustRegister(queueRejectedTotal)
+		prometheus.MustRegister(queueWaitDuration)
+		prometheus.MustRegister(activeConnections)
+		prometheus.MustRegister(queueDepth)
+		prometheus.MustRegister(gpuGroupSwapSignalsTotal)
+		prometheus.MustRegister(gpuGroupQueuedRequestsTotal)
+		prometheus.MustRegister(endpointChangesTotal)
+		prometheus.MustRegister(endpointCount)
+		prometheus.MustRegister(endpointRefreshDuration)
+		prometheus.MustRegister(activationRetriesTotal)
+		prometheus.MustRegister(activationRetryWaitDuration)
+		prometheus.MustRegister(rateLimitedTotal)
+	})
+}
