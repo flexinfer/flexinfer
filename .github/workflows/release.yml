@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -47,10 +47,12 @@ jobs:
         with:
           repository: crb2nu/mcp-go
           path: _deps/mcp-go
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: crb2nu/fi-mcp-kit
           path: _deps/fi-mcp-kit
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
