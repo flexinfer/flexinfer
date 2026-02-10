@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-10
+
 ### Added
 - API stability documentation in `docs/API_STABILITY.md`
 - **OpenTelemetry tracing** across `mcp-git`, `mcp-prometheus`, and `mcp-gitlab` via `pkg/mcpotel` (noop when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset)
@@ -82,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.0...HEAD
+[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.1...HEAD
+[0.9.1]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.0...v0.9.1
 [0.9.0]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.8.0...v0.9.0
 [0.8.0]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.7.0...v0.8.0
 [0.7.0]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.6.0...v0.7.0
