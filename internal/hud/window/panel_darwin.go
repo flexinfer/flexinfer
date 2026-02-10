@@ -197,12 +197,163 @@ static NSRect panelOnScreenFrame;
 static NSRect panelOffScreenFrame;
 static bool panelAnimating = false;
 static bool panelEdgeIsRight = true;
+static double panelCornerRadius = 12.0;
+static double panelOpacity = 0.92;
+static bool panelRememberState = false;
+
+// --- NSUserDefaults persistence keys ---
+static NSString *const kLoomWidth    = @"loom.hud.overlay.width";
+static NSString *const kLoomEdge     = @"loom.hud.overlay.edge";
+static NSString *const kLoomVisible  = @"loom.hud.overlay.visible";
+
+void persistWidth(CGFloat w) {
+    if (!panelRememberState) return;
+    [[NSUserDefaults standardUserDefaults] setFloat:w forKey:kLoomWidth];
+}
+
+void persistEdge(bool isRight) {
+    if (!panelRememberState) return;
+    [[NSUserDefaults standardUserDefaults] setObject:isRight ? @"right" : @"left" forKey:kLoomEdge];
+}
+
+void persistVisible(bool visible) {
+    if (!panelRememberState) return;
+    [[NSUserDefaults standardUserDefaults] setBool:visible forKey:kLoomVisible];
+}
+
+int loadPersistedWidth(int defaultWidth) {
+    if (!panelRememberState) return defaultWidth;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    if ([ud objectForKey:kLoomWidth] == nil) return defaultWidth;
+    int w = (int)[ud floatForKey:kLoomWidth];
+    return (w >= 200) ? w : defaultWidth;
+}
+
+bool loadPersistedEdgeIsRight(bool defaultIsRight) {
+    if (!panelRememberState) return defaultIsRight;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    NSString *edge = [ud stringForKey:kLoomEdge];
+    if (edge == nil) return defaultIsRight;
+    return ![edge isEqualToString:@"left"];
+}
+
+bool loadPersistedVisible(void) {
+    if (!panelRememberState) return true;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    if ([ud objectForKey:kLoomVisible] == nil) return true;
+    return [ud boolForKey:kLoomVisible];
+}
+
+// --- Multi-monitor: find the screen containing the mouse cursor ---
+NSScreen* screenUnderMouse(void) {
+    NSPoint mouseLoc = [NSEvent mouseLocation];
+    for (NSScreen *screen in [NSScreen screens]) {
+        if (NSMouseInRect(mouseLoc, [screen frame], NO)) {
+            return screen;
+        }
+    }
+    return [NSScreen mainScreen]; // Fallback
+}
+
+// --- Recompute on/off-screen frames for the current screen + width ---
+void recomputePanelFrames(NSScreen *screen, CGFloat panelW) {
+    NSRect vis = [screen visibleFrame];
+    CGFloat panelH = vis.size.height;
+    CGFloat panelX;
+    if (panelEdgeIsRight) {
+        panelX = NSMaxX(vis) - panelW;
+    } else {
+        panelX = vis.origin.x;
+    }
+    CGFloat panelY = vis.origin.y;
+
+    panelOnScreenFrame  = NSMakeRect(panelX, panelY, panelW, panelH);
+    if (panelEdgeIsRight) {
+        panelOffScreenFrame = NSMakeRect(panelX + panelW, panelY, panelW, panelH);
+    } else {
+        panelOffScreenFrame = NSMakeRect(panelX - panelW, panelY, panelW, panelH);
+    }
+}
+
+// --- Drag-resize tracking view ---
+// A 6px invisible view on the inner edge of the panel. Dragging it resizes
+// the panel width, clamped to [200, screenWidth/2].
+@interface LoomResizeHandle : NSView {
+    BOOL _dragging;
+    CGFloat _dragStartX;
+    CGFloat _dragStartWidth;
+}
+@end
+
+@implementation LoomResizeHandle
+
+- (void)resetCursorRects {
+    [self addCursorRect:[self bounds] cursor:[NSCursor resizeLeftRightCursor]];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    _dragging = YES;
+    _dragStartX = [NSEvent mouseLocation].x;
+    _dragStartWidth = panelOnScreenFrame.size.width;
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    if (!_dragging || overlayPanel == nil) return;
+
+    CGFloat mouseX = [NSEvent mouseLocation].x;
+    CGFloat delta = mouseX - _dragStartX;
+
+    CGFloat newWidth;
+    if (panelEdgeIsRight) {
+        // Dragging left (negative delta) = wider panel.
+        newWidth = _dragStartWidth - delta;
+    } else {
+        // Dragging right (positive delta) = wider panel.
+        newWidth = _dragStartWidth + delta;
+    }
+
+    // Clamp to [200, screenWidth/2].
+    NSScreen *screen = screenUnderMouse();
+    CGFloat maxW = [screen visibleFrame].size.width / 2.0;
+    if (newWidth < 200) newWidth = 200;
+    if (newWidth > maxW) newWidth = maxW;
+
+    recomputePanelFrames(screen, newWidth);
+    [overlayPanel setFrame:panelOnScreenFrame display:YES];
+    persistWidth(newWidth);
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    _dragging = NO;
+}
+
+@end
+
+static LoomResizeHandle *resizeHandle = nil;
+
+void addResizeHandle(NSView *container, CGFloat cornerRadius) {
+    CGFloat handleWidth = 6.0;
+    NSRect handleFrame;
+    if (panelEdgeIsRight) {
+        // Inner edge = left side.
+        handleFrame = NSMakeRect(0, 0, handleWidth, container.bounds.size.height);
+    } else {
+        // Inner edge = right side.
+        handleFrame = NSMakeRect(container.bounds.size.width - handleWidth, 0,
+                                 handleWidth, container.bounds.size.height);
+    }
+    resizeHandle = [[LoomResizeHandle alloc] initWithFrame:handleFrame];
+    [resizeHandle setAutoresizingMask:NSViewHeightSizable |
+        (panelEdgeIsRight ? NSViewMaxXMargin : NSViewMinXMargin)];
+    [container addSubview:resizeHandle];
+}
 
 // createOverlayPanelEdge creates a borderless, edge-anchored floating panel.
 // edge: "right" or "left". width: panel width in points.
 // opacity: background alpha 0.0-1.0. cornerRadius: corner radius in points.
 void createOverlayPanelEdge(const char* edge, int width, double opacity,
-                            double cornerRadius, const char* url) {
+                            double cornerRadius, const char* url,
+                            bool rememberState) {
     NSString *edgeStr = [NSString stringWithUTF8String:edge];
     NSString *urlStr  = [NSString stringWithUTF8String:url];
 
@@ -212,29 +363,20 @@ void createOverlayPanelEdge(const char* edge, int width, double opacity,
             [overlayPanel close];
             overlayPanel = nil;
             overlayWebView = nil;
+            resizeHandle = nil;
         }
 
-        panelEdgeIsRight = ![edgeStr isEqualToString:@"left"];
+        panelRememberState = rememberState;
+        panelCornerRadius = cornerRadius;
+        panelOpacity = opacity;
 
-        // Compute frame from the visible screen area (excludes menu bar + Dock).
-        NSRect screen = [[NSScreen mainScreen] visibleFrame];
-        CGFloat panelW = (CGFloat)width;
-        CGFloat panelH = screen.size.height;
-        CGFloat panelX;
-        if (panelEdgeIsRight) {
-            panelX = NSMaxX(screen) - panelW;
-        } else {
-            panelX = screen.origin.x;
-        }
-        CGFloat panelY = screen.origin.y;
+        // Load persisted state or use defaults.
+        panelEdgeIsRight = loadPersistedEdgeIsRight(![edgeStr isEqualToString:@"left"]);
+        int panelW = loadPersistedWidth(width);
 
-        panelOnScreenFrame  = NSMakeRect(panelX, panelY, panelW, panelH);
-        // Off-screen: shift by panel width in the edge direction.
-        if (panelEdgeIsRight) {
-            panelOffScreenFrame = NSMakeRect(panelX + panelW, panelY, panelW, panelH);
-        } else {
-            panelOffScreenFrame = NSMakeRect(panelX - panelW, panelY, panelW, panelH);
-        }
+        // Multi-monitor: anchor to the screen containing the mouse cursor.
+        NSScreen *activeScreen = screenUnderMouse();
+        recomputePanelFrames(activeScreen, (CGFloat)panelW);
 
         // Borderless, non-activating, utility panel.
         NSUInteger style = NSWindowStyleMaskBorderless |
@@ -289,22 +431,40 @@ void createOverlayPanelEdge(const char* edge, int width, double opacity,
         [overlayWebView setValue:@NO forKey:@"drawsBackground"];
         [visualEffect addSubview:overlayWebView];
 
+        // Add drag-resize handle on the inner edge.
+        addResizeHandle(visualEffect, cornerRadius);
+
         NSURL *nsURL = [NSURL URLWithString:urlStr];
         if (nsURL != nil) {
             NSURLRequest *request = [NSURLRequest requestWithURL:nsURL];
             [overlayWebView loadRequest:request];
         }
 
-        [overlayPanel makeKeyAndOrderFront:nil];
-        [NSApp activateIgnoringOtherApps:YES];
+        // Check persisted visibility: if remembering state and last state was hidden, don't show.
+        bool shouldShow = loadPersistedVisible();
+        if (shouldShow) {
+            [overlayPanel makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
+        }
+
+        persistEdge(panelEdgeIsRight);
+        persistWidth(panelW);
     });
 }
 
 // slideIn animates the panel from off-screen to its anchored position.
+// Re-detects the active screen (multi-monitor) before sliding in.
 void slideIn(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayPanel == nil || panelAnimating) return;
+
+        // Re-detect screen for multi-monitor support.
+        NSScreen *activeScreen = screenUnderMouse();
+        CGFloat currentW = panelOnScreenFrame.size.width;
+        recomputePanelFrames(activeScreen, currentW);
+
         panelAnimating = true;
+        persistVisible(true);
 
         [overlayPanel setFrame:panelOffScreenFrame display:NO];
         [overlayPanel setAlphaValue:0.0];
@@ -328,6 +488,7 @@ void slideOut(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayPanel == nil || panelAnimating) return;
         panelAnimating = true;
+        persistVisible(false);
 
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
             [ctx setDuration:0.20];
@@ -343,12 +504,14 @@ void slideOut(void) {
 }
 
 // animatedToggle slides the panel in or out with animation.
+// On show: re-detects the active screen (multi-monitor) and recomputes frames.
 void animatedToggle(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (overlayPanel == nil || panelAnimating) return;
         if ([overlayPanel isVisible]) {
-            // Call slideOut logic inline to avoid nested dispatch_async.
+            // Slide out.
             panelAnimating = true;
+            persistVisible(false);
             [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
                 [ctx setDuration:0.20];
                 [ctx setTimingFunction:[CAMediaTimingFunction functionWithName:
@@ -360,7 +523,13 @@ void animatedToggle(void) {
                 panelAnimating = false;
             }];
         } else {
+            // Re-detect active screen before sliding in (multi-monitor support).
+            NSScreen *activeScreen = screenUnderMouse();
+            CGFloat currentW = panelOnScreenFrame.size.width;
+            recomputePanelFrames(activeScreen, currentW);
+
             panelAnimating = true;
+            persistVisible(true);
             [overlayPanel setFrame:panelOffScreenFrame display:NO];
             [overlayPanel setAlphaValue:0.0];
             [overlayPanel makeKeyAndOrderFront:nil];
@@ -443,14 +612,16 @@ func StopApp() {
 
 // CreateOverlayPanel creates a borderless, edge-anchored floating panel
 // configured by the given OverlayConfig. The panel spans the full visible
-// screen height and anchors to the specified edge.
+// screen height and anchors to the specified edge. When RememberState is true,
+// the panel width, edge preference, and visibility state persist across launches
+// via NSUserDefaults.
 func CreateOverlayPanel(cfg OverlayConfig) {
 	cedge := C.CString(cfg.Edge)
 	defer C.free(unsafe.Pointer(cedge))
 	curl := C.CString(cfg.URL)
 	defer C.free(unsafe.Pointer(curl))
 	C.createOverlayPanelEdge(cedge, C.int(cfg.Width), C.double(cfg.Opacity),
-		C.double(cfg.CornerRadius), curl)
+		C.double(cfg.CornerRadius), curl, C.bool(cfg.RememberState))
 }
 
 // SlideIn animates the overlay panel from off-screen to its anchored position.

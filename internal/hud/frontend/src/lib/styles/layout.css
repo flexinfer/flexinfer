@@ -307,14 +307,14 @@ tbody tr:last-child td {
 
 /* ---- Animations (v2) ---- */
 
-/* Panel slide-in on tab switch */
+/* Panel crossfade transition on tab switch */
 @keyframes panelSlideIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(4px) scale(0.998); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .panel-enter {
-  animation: panelSlideIn 0.2s ease-out;
+  animation: panelSlideIn 0.15s ease-out;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -331,11 +331,30 @@ tbody tr:last-child td {
   animation: rowSlideIn 0.15s ease-out;
 }
 
-/* Card hover glow */
+/* Card hover glow + lift */
+.card-glow {
+  transition: border-color var(--transition-normal),
+              box-shadow var(--transition-normal),
+              transform var(--transition-normal);
+}
+
 .card-glow:hover {
   border-color: rgba(233, 93, 116, 0.3);
-  box-shadow: 0 0 12px var(--glow-accent);
-  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+  box-shadow: 0 0 12px var(--glow-accent), var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* Card with info glow variant */
+.card-glow-info {
+  transition: border-color var(--transition-normal),
+              box-shadow var(--transition-normal),
+              transform var(--transition-normal);
+}
+
+.card-glow-info:hover {
+  border-color: rgba(1, 135, 153, 0.4);
+  box-shadow: 0 0 12px rgba(1, 135, 153, 0.15), var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 /* Metric value count-up transition */

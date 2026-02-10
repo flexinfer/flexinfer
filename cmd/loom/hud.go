@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,9 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var flexinferURL string
 	var flexinferKey string
 	var coordinatorModel string
+	var ghosttyConfig bool
+	var installShader bool
+	var tui bool
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -39,9 +43,28 @@ Cmd+Shift+L hotkey to toggle it on/off (macOS only, requires CGo).
 The overlay appears as a borderless floating strip anchored to a screen
 edge. Customize with --edge, --width, --opacity, and --corner-radius.
 
+Use --tui to launch a terminal-based dashboard using bubbletea (runs
+standalone or inside Ghostty's quick terminal as a sidebar HUD).
+
+Use --ghostty-config to output a Ghostty config snippet with the deep
+teal palette, quick terminal settings, and shader reference. Pipe it
+into your Ghostty config file to set up the integration.
+
+Use --install-shader to install the loom-vibrancy.glsl shader to
+~/.config/loom/ for Ghostty's custom-shader feature.
+
 Use --metrics-addr to connect to the daemon's SSE event stream for
 real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Standalone utility commands (no daemon connection needed).
+			if ghosttyConfig {
+				fmt.Print(hud.GenerateGhosttyConfig())
+				return nil
+			}
+			if installShader {
+				return hud.InstallShader()
+			}
+
 			return hud.Run(hud.Config{
 				SocketPath:          socketPath,
 				Dev:                 dev,
@@ -55,6 +78,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				FlexInferURL:        flexinferURL,
 				FlexInferKey:        flexinferKey,
 				CoordinatorModel:    coordinatorModel,
+				TUI:                 tui,
 			})
 		},
 	}
@@ -74,6 +98,13 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&flexinferURL, "flexinfer-url", os.Getenv("FLEXINFER_URL"), "FlexInfer proxy URL (enables coordinator) [$FLEXINFER_URL]")
 	cmd.Flags().StringVar(&flexinferKey, "flexinfer-key", os.Getenv("FLEXINFER_API_KEY"), "FlexInfer API key [$FLEXINFER_API_KEY]")
 	cmd.Flags().StringVar(&coordinatorModel, "coordinator-model", os.Getenv("COORDINATOR_MODEL"), "Default model for coordinator (e.g., fast-chat) [$COORDINATOR_MODEL]")
+
+	// Ghostty integration.
+	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")
+	cmd.Flags().BoolVar(&installShader, "install-shader", false, "Install loom-vibrancy.glsl shader to ~/.config/loom/ and exit")
+
+	// TUI mode.
+	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
 
 	return cmd
 }

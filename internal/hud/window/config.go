@@ -9,4 +9,8 @@ type OverlayConfig struct {
 	Opacity      float64 // Background opacity 0.0–1.0 (default 0.92).
 	CornerRadius float64 // Corner radius in points (default 12).
 	URL          string  // URL to load in the embedded WebView.
+
+	// RememberState enables persistence of panel width, edge preference,
+	// and visibility state to NSUserDefaults across launches.
+	RememberState bool
 }

@@ -50,6 +50,9 @@ type Config struct {
 	FlexInferURL     string // FlexInfer proxy URL (e.g., "http://flexinfer-proxy:8080").
 	FlexInferKey     string // Optional API key for FlexInfer.
 	CoordinatorModel string // Default model for coordinator tasks (e.g., "qwen3-8b").
+
+	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
+	TUI bool
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -79,6 +82,11 @@ type App struct {
 // Run creates and starts the HUD application. This is the main entry point
 // called from the CLI command.
 func Run(cfg Config) error {
+	// TUI mode: launch bubbletea terminal UI instead of web dashboard.
+	if cfg.TUI {
+		return tuiRun(cfg.SocketPath)
+	}
+
 	logger := slog.Default().With("component", "hud")
 
 	client := bridge.NewDaemonClient(cfg.SocketPath, logger)
@@ -317,11 +325,12 @@ func Run(cfg Config) error {
 		// the compact OverlayShell instead of the full dashboard.
 		overlayURL := url + "?overlay=1"
 		window.CreateOverlayPanel(window.OverlayConfig{
-			Edge:         cfg.OverlayEdge,
-			Width:        cfg.OverlayWidth,
-			Opacity:      cfg.OverlayOpacity,
-			CornerRadius: cfg.OverlayCornerRadius,
-			URL:          overlayURL,
+			Edge:          cfg.OverlayEdge,
+			Width:         cfg.OverlayWidth,
+			Opacity:       cfg.OverlayOpacity,
+			CornerRadius:  cfg.OverlayCornerRadius,
+			URL:           overlayURL,
+			RememberState: true,
 		})
 		if err := window.RegisterHotkey(window.AnimatedToggle); err != nil {
 			logger.Warn("failed to register Cmd+Shift+L hotkey", "error", err)
