@@ -37,7 +37,7 @@ func init() {
 	runtime.LockOSThread()
 }
 
-var version = "0.9.2"
+var version = "0.9.3"
 
 func main() {
 	var socketPath string
