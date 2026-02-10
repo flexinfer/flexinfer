@@ -1,4 +1,5 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
+		install-core install-all dev-upgrade \
 		ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
 		docker-build docker-build-loom-core docker-build-custom-server \
 		docker-push docker-push-loom-core docker-push-custom-server \
@@ -8,6 +9,7 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+INSTALL_DIR ?= $(HOME)/.local/bin
 GOPATH := $(shell go env GOPATH)
 GOLANGCI_LINT := $(GOPATH)/bin/golangci-lint
 GOIMPORTS := $(GOPATH)/bin/goimports
@@ -244,15 +246,36 @@ test-short:
 	go test -short ./...
 
 # Installation
-install: build
-	mkdir -p $(HOME)/.local/bin
-	cp bin/loomd $(HOME)/.local/bin/
-	cp bin/loom $(HOME)/.local/bin/
-	cp bin/mcp-* $(HOME)/.local/bin/
+install: install-all
+
+# Install only loom + loomd (fast iteration; least disruptive to agent/server processes).
+install-core: loom loomd
+	@chmod +x scripts/install_atomic.sh
+	@scripts/install_atomic.sh bin/loomd $(INSTALL_DIR)/loomd
+	@scripts/install_atomic.sh bin/loom  $(INSTALL_DIR)/loom
+
+# Install loom, loomd, and all MCP server binaries.
+install-all: build
+	@chmod +x scripts/install_atomic.sh
+	@mkdir -p $(INSTALL_DIR)
+	@scripts/install_atomic.sh bin/loomd $(INSTALL_DIR)/loomd
+	@scripts/install_atomic.sh bin/loom  $(INSTALL_DIR)/loom
+	@for f in bin/mcp-*; do \
+		if [ -f "$$f" ]; then scripts/install_atomic.sh "$$f" "$(INSTALL_DIR)/$$(basename $$f)"; fi; \
+	done
 	@echo ""
 	@echo "Note: mcp-browserkit is local-only and requires Python deps."
 	@echo "  Run: make browserkit-check"
 	@echo "  Or:  make browserkit-setup"
+
+# One-command local dev upgrade:
+# - rebuild loom/loomd
+# - atomic install to ~/.local/bin
+# - regen+sync configs in loom mode
+# - restart daemon only when idle
+dev-upgrade:
+	@chmod +x scripts/dev/upgrade_local.sh
+	@scripts/dev/upgrade_local.sh
 
 # Code quality
 fmt:
@@ -485,10 +508,9 @@ hud-build: hud-frontend
 # Build + install to ~/.local/bin in one step.
 # Remove before copy: macOS cp over an in-use binary can leave it broken.
 hud-install: hud-build
-	@mkdir -p $(HOME)/.local/bin
-	rm -f $(HOME)/.local/bin/loom
-	cp bin/loom $(HOME)/.local/bin/loom
-	@echo "✓ Installed to $(HOME)/.local/bin/loom"
+	@chmod +x scripts/install_atomic.sh
+	@scripts/install_atomic.sh bin/loom $(INSTALL_DIR)/loom
+	@echo "✓ Installed to $(INSTALL_DIR)/loom"
 	@echo "  Restart HUD: loom hud --port 3333 --overlay"
 
 # Launch HUD (builds first if needed)
