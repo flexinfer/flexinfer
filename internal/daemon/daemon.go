@@ -1022,49 +1022,30 @@ func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
 
 // refreshToolCache fetches tools from all servers concurrently and updates the cache.
 func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
-	d.logger.Info("refreshing tool cache", "servers", len(d.registry.Servers))
+	const refreshConcurrency = 6
 
-	// Fetch tools from all servers concurrently
-	type serverTools struct {
-		name  string
-		tools []mcp.Tool
-		err   error
-	}
-
-	// Calculate total potential sources (local + hub)
-	results := make(chan serverTools, len(d.registry.Servers)+20) // buffer enough for hub hosts
-	var wg gosync.WaitGroup
-
-	// Local servers
+	// Build a unified list of sources (local + hub) and fetch them with bounded concurrency.
+	sources := make([]toolSource, 0, len(d.registry.Servers)+20)
 	for _, server := range d.registry.Servers {
-		wg.Add(1)
-		go func(serverName string) {
-			defer wg.Done()
-			tools, err := d.fetchServerTools(ctx, serverName)
-			results <- serverTools{name: serverName, tools: tools, err: err}
-		}(server.Name)
+		sources = append(sources, toolSource{name: server.Name, kind: toolSourceLocal})
 	}
 
-	// Hub servers
+	var hubClient *router.HubClient
 	if d.cfg.HubFallback && d.hubClient != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// Fetch token from secret store if needed
-			token := d.expandVars("${secret:MCP_HUB_TOKEN}")
-			if token == "" {
-				token = os.Getenv("MCP_HUB_TOKEN")
-			}
+		// Fetch token from secret store if needed.
+		token := d.expandVars("${secret:MCP_HUB_TOKEN}")
+		if token == "" {
+			token = os.Getenv("MCP_HUB_TOKEN")
+		}
 
-			client := router.NewHubClient(d.cfg.HubURL, token)
-			hostNames, err := client.DiscoverHosts(ctx)
-			if err != nil {
-				d.logger.Warn("failed to discover hub hosts", "error", err)
-				return
-			}
-
+		hubClient = router.NewHubClient(d.cfg.HubURL, token)
+		hostNames, err := hubClient.DiscoverHosts(ctx)
+		if err != nil {
+			d.logger.Warn("failed to discover hub hosts", "error", err)
+			hubClient = nil
+		} else {
 			for _, host := range hostNames {
-				// Avoid shadowing local servers if they have the same name
+				// Avoid shadowing local servers if they have the same name.
 				isLocal := false
 				for _, s := range d.registry.Servers {
 					if s.Name == host {
@@ -1075,22 +1056,24 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 				if isLocal {
 					continue
 				}
-
-				wg.Add(1)
-				go func(h string) {
-					defer wg.Done()
-					tools, err := client.FetchTools(ctx, h)
-					results <- serverTools{name: h, tools: tools, err: err}
-				}(host)
+				sources = append(sources, toolSource{name: host, kind: toolSourceHub})
 			}
-		}()
+		}
 	}
 
-	// Wait for all goroutines and close channel
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	d.logger.Info("refreshing tool cache", "sources", len(sources), "local", len(d.registry.Servers))
+
+	results := fetchToolsBounded(ctx, sources, refreshConcurrency, func(ctx context.Context, src toolSource) ([]mcp.Tool, error) {
+		switch src.kind {
+		case toolSourceHub:
+			if hubClient == nil {
+				return nil, fmt.Errorf("hub client unavailable")
+			}
+			return hubClient.FetchTools(ctx, src.name)
+		default:
+			return d.fetchServerTools(ctx, src.name)
+		}
+	})
 
 	// Aggregate results
 	var allTools []mcp.Tool
@@ -1115,7 +1098,7 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		return res
 	}
 
-	for result := range results {
+	for _, result := range results {
 		if result.err != nil {
 			d.logger.Debug("failed to get tools from server", "server", result.name, "error", result.err)
 			continue

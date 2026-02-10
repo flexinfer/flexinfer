@@ -49,6 +49,10 @@ func main() {
 }
 
 func run(cfg daemon.Config, metricsAddr string) error {
+	// Best-effort raise the file descriptor limit early. A low RLIMIT_NOFILE
+	// prevents loomd from spawning many MCP servers (EMFILE / "too many open files").
+	tuneNoFileLimit(slog.Default())
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

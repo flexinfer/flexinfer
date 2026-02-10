@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-02-10
+
+### Fixed
+- `loomd` now best-effort raises `RLIMIT_NOFILE` on startup (configurable via `LOOM_NOFILE`) to avoid `EMFILE` / "Too many open files" when spawning many MCP servers from launchd/GUI contexts (which often start with a soft limit of 256).
+- Tool cache refresh is now fetched with bounded concurrency to reduce burst FD usage during startup.
+
 ## [0.9.6] - 2026-02-10
 
 ### Fixed
@@ -114,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.6...HEAD
+[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.7...HEAD
+[0.9.7]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.6...v0.9.7
 [0.9.6]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.5...v0.9.6
 [0.9.5]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.4...v0.9.5
 [0.9.4]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.3...v0.9.4
