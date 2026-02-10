@@ -7,9 +7,11 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,8 +19,30 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
+// Circuit breaker states for downstream server failure detection.
+type circuitState int
+
+const (
+	circuitClosed   circuitState = iota // Normal operation.
+	circuitOpen                         // Failing — skip calls, wait for cooldown.
+	circuitHalfOpen                     // Testing recovery with a single probe.
+)
+
+const (
+	cbFailureThreshold = 3                // Consecutive failures before opening.
+	cbMinCooldown      = 10 * time.Second // Initial cooldown when circuit opens.
+	cbMaxCooldown      = 60 * time.Second // Maximum cooldown between retries.
+)
+
+// ErrCircuitOpen is returned when the circuit breaker is open and the
+// cooldown has not elapsed. Callers should back off.
+var ErrCircuitOpen = errors.New("circuit breaker open: downstream server unavailable")
+
 // DaemonClient wraps a persistent connection to the loom daemon Unix socket.
 // It serializes requests with a mutex and reconnects automatically on errors.
+// A circuit breaker tracks consecutive "server unavailable" errors from the
+// daemon (indicating a stale downstream connection) and triggers an automatic
+// reload to clear them.
 type DaemonClient struct {
 	socketPath string
 	conn       net.Conn
@@ -26,6 +50,12 @@ type DaemonClient struct {
 	mu         sync.Mutex
 	reqID      atomic.Int64
 	logger     *slog.Logger
+
+	// Circuit breaker for downstream server failures.
+	cbState       circuitState
+	cbFailures    int
+	cbLastFailure time.Time
+	cbCooldown    time.Duration
 }
 
 // NewDaemonClient creates a new client for the given daemon socket path.
@@ -37,6 +67,7 @@ func NewDaemonClient(socketPath string, logger *slog.Logger) *DaemonClient {
 	c := &DaemonClient{
 		socketPath: socketPath,
 		logger:     logger,
+		cbCooldown: cbMinCooldown,
 	}
 	c.reqID.Store(0)
 	return c
@@ -120,24 +151,93 @@ func (c *DaemonClient) reconnect() error {
 }
 
 // call sends a JSON-RPC request and returns the result. It handles
-// auto-reconnection on transport errors. Caller must NOT hold c.mu.
+// auto-reconnection on transport errors and circuit-breaking on downstream
+// server failures. Caller must NOT hold c.mu.
 func (c *DaemonClient) call(method string, params any) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Circuit breaker: check state before making the call.
+	if c.cbState == circuitOpen {
+		if time.Since(c.cbLastFailure) < c.cbCooldown {
+			return nil, ErrCircuitOpen
+		}
+		// Cooldown elapsed — transition to half-open for a probe.
+		c.cbState = circuitHalfOpen
+		c.logger.Info("circuit breaker half-open, probing downstream")
+	}
 
 	result, err := c.callLocked(method, params)
 	if err != nil {
 		// Attempt reconnect and retry once.
 		c.logger.Debug("call failed, attempting reconnect", "method", method, "error", err)
 		if reconnErr := c.reconnect(); reconnErr != nil {
+			c.recordFailure(err)
 			return nil, fmt.Errorf("%s: %w (reconnect also failed: %v)", method, err, reconnErr)
 		}
 		result, err = c.callLocked(method, params)
 		if err != nil {
+			c.recordFailure(err)
 			return nil, fmt.Errorf("%s after reconnect: %w", method, err)
 		}
 	}
+
+	// Success — reset circuit breaker.
+	if c.cbState != circuitClosed {
+		c.logger.Info("circuit breaker closed, downstream recovered")
+	}
+	c.cbState = circuitClosed
+	c.cbFailures = 0
+	c.cbCooldown = cbMinCooldown
 	return result, nil
+}
+
+// recordFailure tracks a downstream failure and opens the circuit breaker
+// when the threshold is reached. Caller must hold c.mu.
+func (c *DaemonClient) recordFailure(err error) {
+	if !isServerUnavailable(err) {
+		return
+	}
+	c.cbFailures++
+	c.cbLastFailure = time.Now()
+
+	if c.cbFailures >= cbFailureThreshold && c.cbState != circuitOpen {
+		c.logger.Warn("circuit breaker open: downstream server unavailable",
+			"failures", c.cbFailures, "cooldown", c.cbCooldown)
+		c.cbState = circuitOpen
+		c.triggerDaemonReload()
+		// Double cooldown for next time (exponential backoff), capped.
+		c.cbCooldown = min(c.cbCooldown*2, cbMaxCooldown)
+	}
+}
+
+// isServerUnavailable checks if an error indicates the daemon's downstream
+// MCP server connection is stale/broken.
+func isServerUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "server unavailable") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "bad handshake")
+}
+
+// triggerDaemonReload sends a loom/reload to the daemon to clear stale
+// server connections. Caller must hold c.mu.
+func (c *DaemonClient) triggerDaemonReload() {
+	c.logger.Info("triggering daemon reload to clear stale server connections")
+	if _, err := c.callLocked("loom/reload", nil); err != nil {
+		c.logger.Warn("daemon reload failed", "error", err)
+	}
+}
+
+// CircuitOpen reports whether the circuit breaker is currently open.
+// Monitors can check this to skip unnecessary polling.
+func (c *DaemonClient) CircuitOpen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cbState == circuitOpen
 }
 
 // callLocked performs the actual send/recv. Caller must hold c.mu.

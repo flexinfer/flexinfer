@@ -152,10 +152,12 @@ func (s *StreamMonitor) Refresh() error {
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.
+// On consecutive errors, it backs off by skipping ticker ticks.
 func (s *StreamMonitor) pollLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	consecutiveErrors := 0
 	for {
 		select {
 		case <-s.stopCh:
@@ -163,7 +165,23 @@ func (s *StreamMonitor) pollLoop(interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := s.Refresh(); err != nil {
-				s.logger.Warn("stream refresh error", "error", err)
+				consecutiveErrors++
+				if consecutiveErrors <= 3 {
+					s.logger.Warn("stream refresh error", "error", err)
+				}
+				skipTicks := min(consecutiveErrors-1, 4)
+				for range skipTicks {
+					select {
+					case <-s.stopCh:
+						return
+					case <-ticker.C:
+					}
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					s.logger.Info("stream refresh recovered", "after_errors", consecutiveErrors)
+				}
+				consecutiveErrors = 0
 			}
 		}
 	}

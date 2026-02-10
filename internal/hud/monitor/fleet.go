@@ -257,10 +257,12 @@ func (m *FleetMonitor) Refresh() error {
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.
+// On consecutive errors, it backs off by skipping ticker ticks.
 func (m *FleetMonitor) pollLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	consecutiveErrors := 0
 	for {
 		select {
 		case <-m.stopCh:
@@ -268,7 +270,24 @@ func (m *FleetMonitor) pollLoop(interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := m.Refresh(); err != nil {
-				m.logger.Warn("fleet refresh error", "error", err)
+				consecutiveErrors++
+				if consecutiveErrors <= 3 {
+					m.logger.Warn("fleet refresh error", "error", err)
+				}
+				// Back off: skip next N-1 ticks (up to 4 skips = 5x interval).
+				skipTicks := min(consecutiveErrors-1, 4)
+				for range skipTicks {
+					select {
+					case <-m.stopCh:
+						return
+					case <-ticker.C:
+					}
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					m.logger.Info("fleet refresh recovered", "after_errors", consecutiveErrors)
+				}
+				consecutiveErrors = 0
 			}
 		}
 	}

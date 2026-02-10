@@ -187,10 +187,12 @@ func (m *WorkflowMonitor) invalidateDetail(workflowID string) {
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.
+// On consecutive errors, it backs off by skipping ticker ticks.
 func (m *WorkflowMonitor) pollLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	consecutiveErrors := 0
 	for {
 		select {
 		case <-m.stopCh:
@@ -198,7 +200,23 @@ func (m *WorkflowMonitor) pollLoop(interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := m.Refresh(); err != nil {
-				m.logger.Warn("workflow refresh error", "error", err)
+				consecutiveErrors++
+				if consecutiveErrors <= 3 {
+					m.logger.Warn("workflow refresh error", "error", err)
+				}
+				skipTicks := min(consecutiveErrors-1, 4)
+				for range skipTicks {
+					select {
+					case <-m.stopCh:
+						return
+					case <-ticker.C:
+					}
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					m.logger.Info("workflow refresh recovered", "after_errors", consecutiveErrors)
+				}
+				consecutiveErrors = 0
 			}
 		}
 	}

@@ -14,10 +14,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/crb2nu/loom/internal/hud"
 )
 
 // defaultHUDPort is the default port for the Agent HUD server.
@@ -170,7 +173,8 @@ func hudPostWithRetry(port, path string, body any, timeout time.Duration, backof
 	return nil, lastErr
 }
 
-// resolvePort returns the HUD port from flag, env var, or default.
+// resolvePort returns the HUD port from flag, env var, port file, or default.
+// Priority: --port flag > LOOM_HUD_PORT env > port file > 3333.
 func resolvePort(cmd *cobra.Command) string {
 	port, _ := cmd.Flags().GetString("port")
 	if port != "" {
@@ -178,6 +182,12 @@ func resolvePort(cmd *cobra.Command) string {
 	}
 	if p := os.Getenv("LOOM_HUD_PORT"); p != "" {
 		return p
+	}
+	// Read port file written by the running HUD.
+	if data, err := os.ReadFile(hud.PortFilePath()); err == nil {
+		if p := strings.TrimSpace(string(data)); p != "" {
+			return p
+		}
 	}
 	return defaultHUDPort
 }
