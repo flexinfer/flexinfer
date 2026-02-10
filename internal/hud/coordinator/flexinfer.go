@@ -77,7 +77,7 @@ func NewFlexInferClient(baseURL, apiKey string, breaker *CircuitBreaker, logger 
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 30 * time.Second, // Match context timeout; prevents orphaned connections.
 		},
 		breaker: breaker,
 		logger:  logger.With("component", "flexinfer-client"),

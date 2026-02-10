@@ -57,10 +57,11 @@ type Coordinator struct {
 	sem chan struct{} // Semaphore limiting concurrent LLM calls.
 
 	// State.
-	mu       sync.RWMutex
-	healthy  bool
-	lastPoll time.Time
-	models   []string // Cached model IDs.
+	mu              sync.RWMutex
+	healthy         bool
+	lastPoll        time.Time
+	models          []string // Cached model IDs.
+	consecutiveFail int      // Consecutive poll failures for backoff.
 
 	// Lifecycle.
 	stopCh   chan struct{}
@@ -222,27 +223,55 @@ func (c *Coordinator) OnSessionEnd(sessionID, agentID string) {
 	}()
 }
 
+// ErrUnavailable is returned by API methods when the circuit is open or the
+// semaphore is full, so the HTTP handler can return 503 instead of 502.
+var ErrUnavailable = fmt.Errorf("coordinator is temporarily unavailable")
+
 // SummarizeSession performs on-demand summarization (for API calls).
+// Returns ErrUnavailable if the backend is unreachable or overloaded.
 func (c *Coordinator) SummarizeSession(ctx context.Context, sessionID string) (*SessionSummaryResult, error) {
 	if c.summarizer == nil {
 		return nil, fmt.Errorf("summarizer is disabled")
 	}
+	if !c.client.breaker.IsAvailable() {
+		return nil, ErrUnavailable
+	}
+	if !c.acquireSem() {
+		return nil, ErrUnavailable
+	}
+	defer c.releaseSem()
 	return c.summarizer.SummarizeSession(ctx, sessionID)
 }
 
 // RunCompression performs on-demand memory compression (for API calls).
+// Returns ErrUnavailable if the backend is unreachable or overloaded.
 func (c *Coordinator) RunCompression(ctx context.Context) (*CompactionResult, error) {
 	if c.compressor == nil {
 		return nil, fmt.Errorf("compressor is disabled")
 	}
+	if !c.client.breaker.IsAvailable() {
+		return nil, ErrUnavailable
+	}
+	if !c.acquireSem() {
+		return nil, ErrUnavailable
+	}
+	defer c.releaseSem()
 	return c.compressor.RunCompactionCycle(ctx)
 }
 
 // PlanWorkflow generates a workflow from a natural language goal.
+// Returns ErrUnavailable if the backend is unreachable or overloaded.
 func (c *Coordinator) PlanWorkflow(ctx context.Context, goal, namespace string) (*WorkflowPlan, error) {
 	if c.planner == nil {
 		return nil, fmt.Errorf("planner is disabled")
 	}
+	if !c.client.breaker.IsAvailable() {
+		return nil, ErrUnavailable
+	}
+	if !c.acquireSem() {
+		return nil, ErrUnavailable
+	}
+	defer c.releaseSem()
 	return c.planner.PlanFromGoal(ctx, goal, namespace)
 }
 
@@ -254,10 +283,12 @@ func (c *Coordinator) RegisterPlan(ctx context.Context, plan *WorkflowPlan, name
 	return c.planner.RegisterPlan(ctx, plan, namespace)
 }
 
-// pollLoop runs periodic sweeps at the configured interval.
+// pollLoop runs periodic sweeps with exponential backoff on failure.
 func (c *Coordinator) pollLoop() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(c.config.PollInterval)
+
+	interval := c.config.PollInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -266,111 +297,153 @@ func (c *Coordinator) pollLoop() {
 			c.logger.Debug("coordinator poll loop stopped")
 			return
 		case <-ticker.C:
-			c.poll()
+			ok := c.poll()
+			newInterval := c.adjustInterval(ok)
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				c.logger.Info("coordinator poll interval adjusted", "interval", interval, "healthy", ok)
+			}
 		}
 	}
 }
 
-// poll executes one sweep cycle.
-func (c *Coordinator) poll() {
-	ctx, cancel := context.WithTimeout(context.Background(), c.config.DefaultTimeout)
-	defer cancel()
+// adjustInterval returns the next poll interval based on success/failure.
+// Doubles on failure (capped at 5 min), resets to base on success.
+func (c *Coordinator) adjustInterval(pollOK bool) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	if pollOK {
+		c.consecutiveFail = 0
+		return c.config.PollInterval
+	}
+
+	c.consecutiveFail++
+	backoff := c.config.PollInterval * time.Duration(1<<min(c.consecutiveFail, 4))
+	const maxBackoff = 5 * time.Minute
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	return backoff
+}
+
+// poll executes one sweep cycle. Returns true if the cycle was healthy.
+func (c *Coordinator) poll() bool {
 	c.mu.Lock()
 	c.lastPoll = time.Now()
 	c.mu.Unlock()
 
-	// Health check — update model list and broadcast state changes.
+	// ── Health check ───────────────────────────────────────────────
+	// Skip when circuit is open — the breaker's half-open probe handles recovery.
 	prevHealthy := c.isHealthy()
-	if err := c.client.HealthCheck(ctx); err != nil {
+	if c.client.breaker.IsAvailable() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := c.client.HealthCheck(ctx)
+		cancel()
+
+		if err != nil {
+			c.mu.Lock()
+			c.healthy = false
+			c.mu.Unlock()
+			if prevHealthy {
+				c.broadcastEvent("coordinator.health", map[string]any{
+					"flexinfer_healthy": false,
+					"circuit_state":     c.client.breaker.State().String(),
+				})
+			}
+			return false
+		}
+		c.mu.Lock()
+		c.healthy = true
+		c.mu.Unlock()
+		if !prevHealthy {
+			c.broadcastEvent("coordinator.health", map[string]any{
+				"flexinfer_healthy": true,
+				"circuit_state":     c.client.breaker.State().String(),
+				"model":             c.config.DefaultModel,
+			})
+		}
+	} else {
+		// Circuit is open — skip everything, report unhealthy.
 		c.mu.Lock()
 		c.healthy = false
 		c.mu.Unlock()
-		if prevHealthy {
-			c.broadcastEvent("coordinator.health", map[string]any{
-				"flexinfer_healthy": false,
-				"circuit_state":     c.client.breaker.State().String(),
-			})
-		}
-		return
-	}
-	c.mu.Lock()
-	c.healthy = true
-	c.mu.Unlock()
-	if !prevHealthy {
-		c.broadcastEvent("coordinator.health", map[string]any{
-			"flexinfer_healthy": true,
-			"circuit_state":     c.client.breaker.State().String(),
-			"model":             c.config.DefaultModel,
-		})
+		c.logger.Debug("coordinator poll skipped: circuit open")
+		return false
 	}
 
-	// Sweep ended sessions for unsummarized ones.
-	if c.summarizer != nil {
-		if !c.acquireSem() {
-			return
-		}
-		count, err := c.summarizer.SweepEndedSessions(ctx)
-		c.releaseSem()
-		if err != nil {
-			c.logger.Debug("sweep ended sessions error", "error", err)
-		} else if count > 0 {
-			c.logger.Info("swept ended sessions", "summarized", count)
+	// ── Subsystems — each gets its own short context ───────────────
+	// Check circuit before each step to bail fast on cascading failures.
+
+	if c.summarizer != nil && c.client.breaker.IsAvailable() {
+		if c.acquireSem() {
+			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
+			count, err := c.summarizer.SweepEndedSessions(ctx, c.config.MaxSweepSessions)
+			cancel()
+			c.releaseSem()
+			if err != nil {
+				c.logger.Debug("sweep ended sessions error", "error", err)
+			} else if count > 0 {
+				c.logger.Info("swept ended sessions", "summarized", count)
+			}
 		}
 	}
 
-	// Triage recent entries.
-	if c.triager != nil {
-		if !c.acquireSem() {
-			return
-		}
-		result, err := c.triager.TriageRecent(ctx)
-		c.releaseSem()
-		if err != nil {
-			c.logger.Debug("triage recent error", "error", err)
-		} else if result != nil && result.Count > 0 {
-			c.broadcastEvent("coordinator.triage.complete", map[string]any{
-				"count":    result.Count,
-				"critical": result.Critical,
-				"high":     result.High,
-			})
-		}
-	}
-
-	// Extract entities from recent entries.
-	if c.extractor != nil {
-		if !c.acquireSem() {
-			return
-		}
-		result, err := c.extractor.ExtractRecent(ctx)
-		c.releaseSem()
-		if err != nil {
-			c.logger.Debug("extract recent error", "error", err)
-		} else if result != nil && (result.EntitiesAdded > 0 || result.RelationsAdded > 0) {
-			c.broadcastEvent("coordinator.extract.complete", map[string]any{
-				"entities_added":  result.EntitiesAdded,
-				"relations_added": result.RelationsAdded,
-			})
+	if c.triager != nil && c.client.breaker.IsAvailable() {
+		if c.acquireSem() {
+			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
+			result, err := c.triager.TriageRecent(ctx)
+			cancel()
+			c.releaseSem()
+			if err != nil {
+				c.logger.Debug("triage recent error", "error", err)
+			} else if result != nil && result.Count > 0 {
+				c.broadcastEvent("coordinator.triage.complete", map[string]any{
+					"count":    result.Count,
+					"critical": result.Critical,
+					"high":     result.High,
+				})
+			}
 		}
 	}
 
-	// Run compaction if memory is over threshold.
-	if c.compressor != nil {
-		if !c.acquireSem() {
-			return
-		}
-		result, err := c.compressor.RunCompactionCycle(ctx)
-		c.releaseSem()
-		if err != nil {
-			c.logger.Debug("compaction cycle error", "error", err)
-		} else if result != nil && result.CompressedCount > 0 {
-			c.broadcastEvent("coordinator.compress.complete", map[string]any{
-				"tier":             result.Tier,
-				"compressed_count": result.CompressedCount,
-				"tokens_saved":     result.TokensSaved,
-			})
+	if c.extractor != nil && c.client.breaker.IsAvailable() {
+		if c.acquireSem() {
+			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
+			result, err := c.extractor.ExtractRecent(ctx)
+			cancel()
+			c.releaseSem()
+			if err != nil {
+				c.logger.Debug("extract recent error", "error", err)
+			} else if result != nil && (result.EntitiesAdded > 0 || result.RelationsAdded > 0) {
+				c.broadcastEvent("coordinator.extract.complete", map[string]any{
+					"entities_added":  result.EntitiesAdded,
+					"relations_added": result.RelationsAdded,
+				})
+			}
 		}
 	}
+
+	if c.compressor != nil && c.client.breaker.IsAvailable() {
+		if c.acquireSem() {
+			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
+			result, err := c.compressor.RunCompactionCycle(ctx)
+			cancel()
+			c.releaseSem()
+			if err != nil {
+				c.logger.Debug("compaction cycle error", "error", err)
+			} else if result != nil && result.CompressedCount > 0 {
+				c.broadcastEvent("coordinator.compress.complete", map[string]any{
+					"tier":             result.Tier,
+					"compressed_count": result.CompressedCount,
+					"tokens_saved":     result.TokensSaved,
+				})
+			}
+		}
+	}
+
+	return true
 }
 
 // selectModel checks if the preferred model is available; falls back if not.

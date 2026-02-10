@@ -41,6 +41,10 @@ type Config struct {
 	TriagerBatchSize    int     // Entries per triage batch.
 	ExtractorBatchSize  int     // Entries per extraction batch.
 
+	// Per-cycle safety caps — limit work per poll to avoid storming the backend.
+	MaxSweepSessions int // Max sessions to summarize per poll cycle.
+	MaxCompressItems int // Max items to compress per poll cycle.
+
 	// Circuit breaker.
 	CircuitBreakerThreshold int           // Consecutive failures to open.
 	CircuitBreakerReset     time.Duration // Time before half-open retry.
@@ -48,7 +52,8 @@ type Config struct {
 	// Concurrency.
 	MaxConcurrentLLM int           // Max parallel LLM calls.
 	DefaultTimeout   time.Duration // Default per-call timeout.
-	PlannerTimeout   time.Duration // Planner gets longer timeout.
+	SubsystemTimeout time.Duration // Per-subsystem timeout within a poll cycle.
+	PlannerTimeout   time.Duration // Planner gets longer timeout (API only).
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -71,12 +76,16 @@ func DefaultConfig() Config {
 		TriagerBatchSize:    10,
 		ExtractorBatchSize:  5,
 
-		CircuitBreakerThreshold: 5,
+		MaxSweepSessions: 2,
+		MaxCompressItems: 3,
+
+		CircuitBreakerThreshold: 3,
 		CircuitBreakerReset:     30 * time.Second,
 
 		MaxConcurrentLLM: 2,
 		DefaultTimeout:   30 * time.Second,
-		PlannerTimeout:   60 * time.Second,
+		SubsystemTimeout: 15 * time.Second,
+		PlannerTimeout:   45 * time.Second,
 	}
 }
 

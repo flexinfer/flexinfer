@@ -101,6 +101,7 @@ func (c *Compressor) SuggestMerges(ctx context.Context, items []bridge.MemoryIte
 }
 
 // RunCompactionCycle checks memory stats and compresses oversized tiers.
+// It limits work per cycle to avoid storming the LLM backend.
 func (c *Compressor) RunCompactionCycle(ctx context.Context) (*CompactionResult, error) {
 	stats, err := c.agent.MemoryStats()
 	if err != nil {
@@ -113,6 +114,11 @@ func (c *Compressor) RunCompactionCycle(ctx context.Context) (*CompactionResult,
 		return nil, nil // Nothing to compress.
 	}
 
+	maxItems := c.config.MaxCompressItems
+	if maxItems <= 0 {
+		maxItems = 3 // Safety default.
+	}
+
 	items, err := c.agent.MemoryRecall(tier, "", 20)
 	if err != nil {
 		return nil, fmt.Errorf("recall tier %s: %w", tier, err)
@@ -123,8 +129,11 @@ func (c *Compressor) RunCompactionCycle(ctx context.Context) (*CompactionResult,
 
 	result := &CompactionResult{Tier: tier}
 
-	// Compress individual oversized items.
+	// Compress individual oversized items — capped to avoid LLM storms.
 	for _, item := range items {
+		if result.CompressedCount >= maxItems {
+			break
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -155,8 +164,8 @@ func (c *Compressor) RunCompactionCycle(ctx context.Context) (*CompactionResult,
 		result.TokensSaved += item.Tokens - len(compressed.Compressed)/4 // Rough token estimate
 	}
 
-	// Suggest merges for remaining items.
-	if len(items) >= 3 {
+	// Suggest merges only if we have context budget remaining and items to merge.
+	if len(items) >= 3 && ctx.Err() == nil {
 		merges, err := c.SuggestMerges(ctx, items)
 		if err == nil {
 			for _, merge := range merges {

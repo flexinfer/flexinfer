@@ -2,7 +2,10 @@ package hud
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"github.com/crb2nu/loom/internal/hud/coordinator"
 )
 
 // handleCoordinatorStatus returns the coordinator's current status.
@@ -31,7 +34,7 @@ func (a *App) handleCoordinatorSummarize(w http.ResponseWriter, r *http.Request)
 
 	result, err := a.coordinator.SummarizeSession(r.Context(), sessionID)
 	if err != nil {
-		a.writeError(w, http.StatusBadGateway, "summarization failed", err)
+		a.writeError(w, coordinatorErrStatus(err), "summarization failed", err)
 		return
 	}
 
@@ -48,7 +51,7 @@ func (a *App) handleCoordinatorCompress(w http.ResponseWriter, r *http.Request) 
 
 	result, err := a.coordinator.RunCompression(r.Context())
 	if err != nil {
-		a.writeError(w, http.StatusBadGateway, "compression failed", err)
+		a.writeError(w, coordinatorErrStatus(err), "compression failed", err)
 		return
 	}
 	if result == nil {
@@ -83,7 +86,7 @@ func (a *App) handleCoordinatorPlan(w http.ResponseWriter, r *http.Request) {
 
 	plan, err := a.coordinator.PlanWorkflow(r.Context(), body.Goal, body.Namespace)
 	if err != nil {
-		a.writeError(w, http.StatusBadGateway, "planning failed", err)
+		a.writeError(w, coordinatorErrStatus(err), "planning failed", err)
 		return
 	}
 
@@ -108,4 +111,12 @@ func (a *App) handleCoordinatorPlan(w http.ResponseWriter, r *http.Request) {
 	})
 
 	a.writeJSON(w, http.StatusOK, response)
+}
+
+// coordinatorErrStatus returns 503 for ErrUnavailable, 502 otherwise.
+func coordinatorErrStatus(err error) int {
+	if errors.Is(err, coordinator.ErrUnavailable) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadGateway
 }

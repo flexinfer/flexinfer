@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -228,4 +229,106 @@ func TestCoordinator_SemaphoreNonBlocking(t *testing.T) {
 		t.Fatal("expected to acquire after release")
 	}
 	c.releaseSem()
+}
+
+func TestAdjustInterval_BackoffOnFailure(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FlexInferURL = "http://localhost:9999"
+	cfg.PollInterval = 30 * time.Second
+
+	c := NewCoordinator(cfg, nil, nil, slog.Default())
+
+	// Success resets to base interval.
+	if got := c.adjustInterval(true); got != 30*time.Second {
+		t.Fatalf("expected 30s on success, got %s", got)
+	}
+
+	// First failure → 2× base.
+	if got := c.adjustInterval(false); got != 60*time.Second {
+		t.Fatalf("expected 60s after 1 failure, got %s", got)
+	}
+
+	// Second failure → 4× base.
+	if got := c.adjustInterval(false); got != 120*time.Second {
+		t.Fatalf("expected 120s after 2 failures, got %s", got)
+	}
+
+	// Third failure → 8× base = 240s.
+	if got := c.adjustInterval(false); got != 240*time.Second {
+		t.Fatalf("expected 240s after 3 failures, got %s", got)
+	}
+
+	// Capped at 5 minutes.
+	c.adjustInterval(false)
+	got := c.adjustInterval(false)
+	if got > 5*time.Minute {
+		t.Fatalf("expected cap at 5min, got %s", got)
+	}
+
+	// Success resets.
+	if got := c.adjustInterval(true); got != 30*time.Second {
+		t.Fatalf("expected reset to 30s on success, got %s", got)
+	}
+}
+
+func TestErrUnavailable_WhenCircuitOpen(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FlexInferURL = "http://localhost:9999"
+	cfg.CircuitBreakerThreshold = 1
+
+	c := NewCoordinator(cfg, nil, nil, slog.Default())
+
+	// Trip the circuit breaker.
+	c.client.breaker.Execute(func() error { return fmt.Errorf("fail") })
+
+	// All API methods should return ErrUnavailable.
+	_, err := c.PlanWorkflow(nil, "test", "")
+	if err != ErrUnavailable {
+		t.Errorf("PlanWorkflow: expected ErrUnavailable, got %v", err)
+	}
+
+	_, err = c.SummarizeSession(nil, "test-session")
+	if err != ErrUnavailable {
+		t.Errorf("SummarizeSession: expected ErrUnavailable, got %v", err)
+	}
+
+	_, err = c.RunCompression(nil)
+	if err != ErrUnavailable {
+		t.Errorf("RunCompression: expected ErrUnavailable, got %v", err)
+	}
+}
+
+func TestErrUnavailable_WhenSemaphoreFull(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FlexInferURL = "http://localhost:9999"
+	cfg.MaxConcurrentLLM = 1
+
+	c := NewCoordinator(cfg, nil, nil, slog.Default())
+
+	// Fill the semaphore.
+	c.acquireSem()
+	defer c.releaseSem()
+
+	// API methods should return ErrUnavailable when semaphore is full.
+	_, err := c.PlanWorkflow(nil, "test", "")
+	if err != ErrUnavailable {
+		t.Errorf("PlanWorkflow: expected ErrUnavailable, got %v", err)
+	}
+}
+
+func TestDefaultConfig_SafetyCaps(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.MaxSweepSessions != 2 {
+		t.Errorf("expected MaxSweepSessions=2, got %d", cfg.MaxSweepSessions)
+	}
+	if cfg.MaxCompressItems != 3 {
+		t.Errorf("expected MaxCompressItems=3, got %d", cfg.MaxCompressItems)
+	}
+	if cfg.CircuitBreakerThreshold != 3 {
+		t.Errorf("expected CircuitBreakerThreshold=3, got %d", cfg.CircuitBreakerThreshold)
+	}
+	if cfg.SubsystemTimeout != 15*time.Second {
+		t.Errorf("expected SubsystemTimeout=15s, got %s", cfg.SubsystemTimeout)
+	}
 }

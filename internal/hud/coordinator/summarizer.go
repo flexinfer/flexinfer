@@ -84,15 +84,23 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, sessionID string) (*S
 	return result, nil
 }
 
-// SweepEndedSessions finds ended sessions without summaries and summarizes them.
-func (s *Summarizer) SweepEndedSessions(ctx context.Context) (int, error) {
+// SweepEndedSessions finds ended sessions without summaries and summarizes
+// up to maxSessions of them. This cap prevents storming the LLM backend
+// when many sessions have accumulated.
+func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (int, error) {
 	sessions, err := s.agent.Sessions()
 	if err != nil {
 		return 0, fmt.Errorf("list sessions: %w", err)
 	}
+	if maxSessions <= 0 {
+		maxSessions = 2 // Safety default.
+	}
 
 	var count int
 	for _, sess := range sessions {
+		if count >= maxSessions {
+			break
+		}
 		if sess.Status != "ended" {
 			continue
 		}
