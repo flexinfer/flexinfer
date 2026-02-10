@@ -6,6 +6,9 @@ package window
 
 import "fmt"
 
+// Available reports whether the native overlay implementation is available in this build.
+func Available() bool { return false }
+
 // CreatePanel is a no-op on non-darwin platforms.
 func CreatePanel(x, y, width, height int, url string) {
 	fmt.Println("native overlay not supported on this platform")

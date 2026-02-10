@@ -285,6 +285,10 @@ func Run(cfg Config) error {
 	}()
 
 	if cfg.Overlay {
+		if !window.Available() {
+			return fmt.Errorf("native overlay requires a CGO-enabled darwin build")
+		}
+
 		// Native macOS overlay mode: the HTTP server runs in a background
 		// goroutine above, and we run the Cocoa event loop on the main thread.
 		// Carbon hotkeys and AppKit panels need an active run loop on thread 0.

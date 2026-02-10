@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && cgo
 
 // Package window provides macOS native overlay panel management via CGo.
 package window
@@ -380,6 +380,9 @@ void animatedToggle(void) {
 */
 import "C"
 import "unsafe"
+
+// Available reports whether the native overlay implementation is available in this build.
+func Available() bool { return true }
 
 // CreatePanel creates and shows a macOS NSPanel overlay window at (x, y)
 // with the given dimensions, loading the specified URL in an embedded WKWebView.
