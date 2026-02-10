@@ -48,13 +48,15 @@ jobs:
           repository: crb2nu/mcp-go
           path: _deps/mcp-go
           ref: main
-          ssh-key: ${{ secrets.LOOM_DEPS_SSH_KEY_MCP_GO }}
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: crb2nu/fi-mcp-kit
           path: _deps/fi-mcp-kit
           ref: main
-          ssh-key: ${{ secrets.LOOM_DEPS_SSH_KEY_FI_MCP_KIT }}
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -129,6 +131,10 @@ jobs:
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
+        # `action-gh-release` expects a tag ref; for workflow_dispatch runs on a
+        # branch we still want the build/package steps to run, but we should not
+        # attempt to publish a release.
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           generate_release_notes: true
           files: |

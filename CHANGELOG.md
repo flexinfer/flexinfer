@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-02-10
+
+### Fixed
+- GitHub Actions now checks out private dependency repos using `LOOM_DEPS_TOKEN` (HTTPS) to avoid intermittent SSH key parsing failures on runners.
+- The release workflow now skips publishing a GitHub release when run via `workflow_dispatch` on a non-tag ref.
+
 ## [0.9.4] - 2026-02-10
 
 ### Fixed
-- GitHub Actions can now check out private dependency repos using per-repo deploy keys stored as Actions secrets.
+- GitHub Actions attempted to check out private dependency repos using per-repo deploy keys stored as Actions secrets; superseded by the `LOOM_DEPS_TOKEN` approach in `0.9.5` due to runner key parsing failures.
 
 ## [0.9.3] - 2026-02-10
 
@@ -99,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.4...HEAD
+[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.5...HEAD
+[0.9.5]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.4...v0.9.5
 [0.9.4]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.3...v0.9.4
 [0.9.3]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.2...v0.9.3
 [0.9.2]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.1...v0.9.2
