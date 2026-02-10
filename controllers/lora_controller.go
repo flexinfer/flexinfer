@@ -225,7 +225,7 @@ func (r *LoRAAdapterReconciler) loadAdapterOnPod(ctx context.Context, podAddr st
 	if err != nil {
 		return fmt.Errorf("HTTP request to %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
@@ -285,7 +285,7 @@ func (r *LoRAAdapterReconciler) unloadAdapterFromPod(ctx context.Context, podAdd
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil

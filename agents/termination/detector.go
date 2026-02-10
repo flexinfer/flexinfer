@@ -40,7 +40,7 @@ func AutoDetect(ctx context.Context) TerminationDetector {
 		req.Header.Set("Metadata-Flavor", "Google")
 		resp, err := client.Do(req)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return &GCPDetector{}
 			}
@@ -64,7 +64,7 @@ func isReachable(ctx context.Context, client *http.Client, url, method string) b
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode < 500
 }
 
@@ -81,7 +81,7 @@ func fetchURL(ctx context.Context, url string, headers map[string]string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
