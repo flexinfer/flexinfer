@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-02-10
+
+### Fixed
+- GitHub Actions cross-compiles for `darwin` with `CGO_ENABLED=0` again by providing `darwin && !cgo` stubs for the native overlay window package.
+- macOS hotkey/overlay sources are now explicitly tagged `darwin && cgo` to avoid accidental inclusion in non-CGO builds.
+
+### Changed
+- Refreshed branding banner asset.
+
 ## [0.9.5] - 2026-02-10
 
 ### Fixed
@@ -105,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.5...HEAD
+[Unreleased]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.6...HEAD
+[0.9.6]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.5...v0.9.6
 [0.9.5]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.4...v0.9.5
 [0.9.4]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.3...v0.9.4
 [0.9.3]: https://gitlab.flexinfer.ai/services/loom-core/-/compare/v0.9.2...v0.9.3
