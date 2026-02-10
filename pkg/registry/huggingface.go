@@ -66,7 +66,7 @@ func (r *HuggingFaceRegistry) List(ctx context.Context, filter ListFilter) ([]Mo
 	if err != nil {
 		return nil, fmt.Errorf("HuggingFace API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -121,7 +121,7 @@ func (r *HuggingFaceRegistry) Resolve(ctx context.Context, ref string) (*ModelMe
 	if err != nil {
 		return nil, fmt.Errorf("HuggingFace API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

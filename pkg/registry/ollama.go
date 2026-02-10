@@ -51,7 +51,7 @@ func (r *OllamaRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEn
 	if err != nil {
 		return nil, fmt.Errorf("Ollama API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -113,7 +113,7 @@ func (r *OllamaRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadat
 	if err != nil {
 		return nil, fmt.Errorf("Ollama API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

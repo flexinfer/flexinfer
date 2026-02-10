@@ -139,7 +139,7 @@ func copyFile(src, dst string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", src, err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	info, err := srcFile.Stat()
 	if err != nil {
@@ -150,7 +150,7 @@ func copyFile(src, dst string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", dst, err)
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	n, err := io.Copy(dstFile, srcFile)
 	if err != nil {

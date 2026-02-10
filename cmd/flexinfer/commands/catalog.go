@@ -94,7 +94,7 @@ func runCatalogList(cmd *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tREGISTRY\tREFERENCE\tSIZE")
+	_, _ = fmt.Fprintln(w, "NAME\tREGISTRY\tREFERENCE\tSIZE")
 
 	for _, cat := range catalogs.Items {
 		for _, entry := range cat.Status.Entries {
@@ -102,7 +102,7 @@ func runCatalogList(cmd *cobra.Command, _ []string) error {
 			if entry.Size > 0 {
 				size = formatSize(entry.Size)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", entry.Name, entry.Registry, entry.Reference, size)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", entry.Name, entry.Registry, entry.Reference, size)
 		}
 	}
 
@@ -114,7 +114,7 @@ func runCatalogSearch(cmd *cobra.Command, args []string) error {
 
 	// Search across all registered registry types
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tREGISTRY\tREFERENCE")
+	_, _ = fmt.Fprintln(w, "NAME\tREGISTRY\tREFERENCE")
 
 	for _, regType := range registry.Types() {
 		reg, err := registry.Get(regType)
@@ -129,7 +129,7 @@ func runCatalogSearch(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, e := range entries {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", e.Name, e.Registry, e.Reference)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", e.Name, e.Registry, e.Reference)
 		}
 	}
 

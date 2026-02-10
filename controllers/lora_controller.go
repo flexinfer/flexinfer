@@ -27,7 +27,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -301,33 +300,4 @@ func (r *LoRAAdapterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.LoRAAdapter{}).
 		Complete(r)
-}
-
-// setLoRACondition sets a condition on a LoRAAdapter.
-func setLoRACondition(adapter *aiv1alpha2.LoRAAdapter, conditionType string, status bool, reason, message string) {
-	condStatus := metav1.ConditionFalse
-	if status {
-		condStatus = metav1.ConditionTrue
-	}
-
-	now := metav1.Now()
-	newCond := metav1.Condition{
-		Type:               conditionType,
-		Status:             condStatus,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-		ObservedGeneration: adapter.Generation,
-	}
-
-	for i := range adapter.Status.Conditions {
-		if adapter.Status.Conditions[i].Type == conditionType {
-			if adapter.Status.Conditions[i].Status == condStatus {
-				newCond.LastTransitionTime = adapter.Status.Conditions[i].LastTransitionTime
-			}
-			adapter.Status.Conditions[i] = newCond
-			return
-		}
-	}
-	adapter.Status.Conditions = append(adapter.Status.Conditions, newCond)
 }
