@@ -17,6 +17,11 @@ variables:
   AUTO_DEVOPS_ENABLED: "false"
   GO_VERSION: "1.25.5"
   BINARY_NAME: "loom"
+  # Ensure private modules never go to public proxies/sumdb.
+  GOPRIVATE: "gitlab.flexinfer.ai/*"
+  # Athens is the preferred in-cluster proxy; fall back to public proxy then direct
+  # to reduce transient infra outages breaking CI.
+  GOPROXY: "http://athens.ci.svc.cluster.local:3000,https://proxy.golang.org,direct"
   # Work around occasional runner fetch failures for ephemeral pipeline refs by
   # disabling shallow clones (fetch full history).
   GIT_DEPTH: "0"
@@ -92,7 +97,26 @@ cache:
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
     - mkdir -p "$GOPATH" "$GOCACHE"
-    - go mod download
+    - |
+      # Best-effort: wait briefly for in-cluster Athens during rollouts.
+      ATHENS_READY_URL="http://athens.ci.svc.cluster.local:3000/readyz"
+      for i in 1 2 3 4 5; do
+        if curl -fsS "$ATHENS_READY_URL" >/dev/null 2>&1; then
+          break
+        fi
+        echo "Waiting for Athens (${i}/5)..."
+        sleep 2
+      done
+    - |
+      # Go module downloads are occasionally flaky on the homelab runner; retry a few times.
+      for i in 1 2 3; do
+        if go mod download; then
+          exit 0
+        fi
+        echo "go mod download failed (attempt ${i}/3); retrying..."
+        sleep 3
+      done
+      exit 1
 
 # =============================================================================
 # LINT STAGE
