@@ -1,54 +1,87 @@
 # Loom Core User Guide
 
-This guide covers day-to-day usage of Loom Core on a developer machine: generating client configs, running the daemon, and tuning MCP calls.
+This guide covers daily usage on a developer machine: config sync, daemon operations, HUD visibility, and sandboxed execution.
 
-For a system overview, see `docs/ARCHITECTURE.md`.
+For architecture details, see `docs/ARCHITECTURE.md`.
 
 ## Concepts
 
-- `loom` (CLI): generates + syncs MCP client configs and manages the local daemon.
-- `loomd` (daemon): runs a local MCP hub that routes tool calls to MCP servers (local processes and/or the remote hub).
-- MCP servers: binaries like `mcp-gitlab`, `mcp-github`, `mcp-loki`, etc.
+- `loom`: CLI for configuration, daemon control, and utility commands.
+- `loomd`: local daemon that aggregates and routes MCP tool calls.
+- `loom proxy`: stdio MCP entrypoint used by AI clients in `--loom-mode`.
 
-## Quickstart (local)
+## Quickstart
 
 From `services/loom-core/`:
 
 ```bash
 make build
-
-# Most setups only need sync (it can regenerate from registry via --regen).
-# Use --loom-mode to generate a single `loom proxy` entry for each client.
 ./bin/loom sync all --regen --loom-mode
-
-# Start the daemon (foreground)...
 ./bin/loomd
-
-# ...or install + manage via launchd:
-#   ./bin/loom install
-#   ./bin/loom start
 ```
 
-## Install the CLI/daemon (recommended)
-
-The launchd-managed daemon runs `~/.local/bin/loomd` by default. After building, install the binaries:
+Or run the one-shot first-time bootstrap:
 
 ```bash
-cp -f bin/loom  ~/.local/bin/loom
-cp -f bin/loomd ~/.local/bin/loomd
+make bootstrap-local
 ```
 
-## Start/stop/reload the daemon
-
-### Foreground
+Or run daemon via launchd on macOS:
 
 ```bash
-./bin/loomd
-# or (if installed):
-# loomd
+./bin/loom start
+./bin/loom status
 ```
 
-### launchd (macOS)
+## Install Loom Binaries (recommended)
+
+For fast local iteration while preserving agent stability:
+
+```bash
+make install-core
+```
+
+For a full update including all `mcp-*` binaries:
+
+```bash
+make install-all
+```
+
+## Safe Local Upgrade Loop
+
+Use atomic install + controlled restart flow:
+
+```bash
+make dev-upgrade
+```
+
+For initial setup (build + install + sync + check), use:
+
+```bash
+make bootstrap-local
+```
+
+See `docs/DEV_BUILD_LIFECYCLE.md` for rollback and restart policy.
+
+## Generate and Sync MCP Configs
+
+Generate config artifacts into `generated/`:
+
+```bash
+./bin/loom generate configs --target all --loom-mode
+```
+
+Sync into client-specific destinations:
+
+```bash
+./bin/loom sync all --regen --loom-mode
+```
+
+Common targets: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemini`, `antigravity`.
+
+## Daemon Operations
+
+### launchd commands (macOS)
 
 ```bash
 ./bin/loom start
@@ -56,154 +89,101 @@ cp -f bin/loomd ~/.local/bin/loomd
 ./bin/loom reload
 ./bin/loom restart
 ./bin/loom stop
-# or (if installed):
-# loom start
 ```
 
-Logs (defaults):
+### Health and logs
+
+```bash
+curl http://localhost:9876/health
+```
+
+Default log files:
 
 - `~/.config/loom/logs/daemon.log`
 - `~/.config/loom/logs/daemon.err`
 
-## Generate and sync MCP configs
+## HUD (Agent Command Center)
 
-Generate configs into the repo-local `generated/` folder:
-
-```bash
-./bin/loom generate configs --target all
-```
-
-Sync them into each client’s config location (and regenerate first):
-
-```bash
-./bin/loom sync all --regen
-```
-
-Common targets include: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemini`, `antigravity`.
-
-### Loom-mode (recommended): one proxy entry per client
-
-When you enable Loom-mode, downstream clients are configured with a single `loom proxy` MCP server entrypoint. The daemon (`loomd`) owns routing and process lifecycle behind that proxy.
-
-Generate Loom-mode configs:
-
-```bash
-./bin/loom generate configs --target all --loom-mode
-```
-
-Or do it in one step during sync:
-
-```bash
-./bin/loom sync all --regen --loom-mode
-```
-
-## Pagination and output sizing
-
-### GitHub + GitLab pagination
-
-List/search tools now accept:
-
-- `per_page` (capped at 100)
-- `page` (default 1)
-
-Responses include a `pagination` object:
-
-- GitLab: derived from `X-Page`, `X-Next-Page`, `X-Total`, etc.
-- GitHub: derived from the `Link` header (includes `next_url`, `prev_url`, etc when present).
-
-### Response size caps (avoid huge payloads)
-
-Some MCPs enforce a maximum response size and will return a helpful error if exceeded. You can raise/lower the limit via env vars:
-
-- `LOKI_MAX_RESPONSE_BYTES` (default `5242880`)
-- `PROMETHEUS_MAX_RESPONSE_BYTES` (default `5242880`)
-- `GRAFANA_MAX_RESPONSE_BYTES` (default `10485760`)
-- `CONFLUENCE_MAX_RESPONSE_BYTES` (default `10485760`)
-- `TAVILY_MAX_RESPONSE_BYTES` (default `5242880`)
-- `QDRANT_MAX_RESPONSE_BYTES` (default `5242880`)
-- `ALERTMANAGER_MAX_RESPONSE_BYTES` (default `5242880`)
-
-### Tavily endpoint override
-
-For `mcp-tavily`, you can override the Tavily API base URL (useful for testing or proxies):
-
-- `TAVILY_BASE_URL` (default `https://api.tavily.com`)
-
-## Secrets and template variables
-
-The registry often uses template variables in server env, for example:
-
-- `${env:GITLAB_TOKEN}` (read from process env)
-- `${keychain:GITLAB_TOKEN}` (read from macOS Keychain)
-- `${secret:GITLAB_TOKEN}` (read from Loom secrets backend)
-
-For GUI-launched processes (launchd, VS Code, desktop apps), shell-exported env vars may not be present. Two practical patterns help:
-
-- `loom check` will warn when likely-required secrets referenced by the registry are missing for the default profile.
-- For secret-looking `${env:...}` keys (suffixes like `_TOKEN`, `_API_KEY`, etc.), Loom can fall back to the secrets manager when the env var is unset.
-
-Set a secret:
-
-```bash
-./bin/loom secrets set GITLAB_TOKEN
-```
-
-## Troubleshooting
-
-- “Daemon not running”: `loom status`, then `loom restart`
-- “Updated binaries but daemon still old”: ensure `~/.local/bin/loomd` is updated, then `loom restart`
-- “Stale tool list”: `loom reload`
-- “Client can’t find servers”: re-run `loom sync all --regen`
-- “Tavily unauthorized/not configured (loom-mode)”: `loom secrets set TAVILY_API_KEY`
-- “Some tools fail in VS Code / launchd but work in terminal”: run `loom check`, then set missing values via `loom secrets set ...` (or ensure GUI env propagation)
-
-## HUD + Native Overlay (macOS)
-
-Loom includes a local Agent HUD (dashboard) for:
-
-- MCP server health and tool inventory
-- agent sessions and tasks (via `mcp-agent-context`)
-- workflows (including approvals)
-- memory/graph visibility (when enabled)
-
-Run it locally:
+Launch HUD:
 
 ```bash
 ./bin/loom hud --port 3333
 ```
 
-### Native overlay (macOS)
+Optional modes:
 
-Enable the native overlay strip (Cmd+Shift+L to toggle):
+- Dev CORS mode: `./bin/loom hud --port 3333 --dev`
+- Terminal dashboard: `./bin/loom hud --tui`
+- Native overlay (macOS): `./bin/loom hud --overlay --edge right --width 380 --opacity 0.92`
+
+### Sandbox panel
+
+The HUD sandbox panel queries `devbox_summary` from `mcp-devbox` and shows `available=false` when the server is not configured/running.
+
+## Devbox Sandbox Workflows
+
+`mcp-devbox` provides project-aware, persistent sandbox execution.
+
+Key tools:
+
+- `devbox_detect`: detect runtimes/dependencies for a project.
+- `devbox_build`: build/rebuild the sandbox image.
+- `devbox_exec`: run commands with bounded output.
+- `devbox_exec_async` + `devbox_exec_poll`: long-running command workflow.
+- `devbox_status` / `devbox_stop`: lifecycle operations.
+- `devbox_summary` / `devbox_metrics`: HUD + observability data.
+
+Relevant environment variables:
+
+- `DEVBOX_WORKSPACE_ROOT` (default `~/workspace`)
+- `DEVBOX_BACKEND` (`docker` or `k8s`)
+- `DEVBOX_CACHE_DIR` (default `~/.cache/loom/devbox`)
+- `DEVBOX_IDLE_TIMEOUT` (default `30m`)
+- `DEVBOX_KUBECONFIG`, `DEVBOX_K8S_NAMESPACE`, `DEVBOX_K8S_STORAGE_CLASS` (K8s backend)
+
+## Secrets and Template Variables
+
+Registry env templates often use:
+
+- `${env:KEY}`
+- `${keychain:KEY}`
+- `${secret:KEY}`
+
+Set a Loom-managed secret:
 
 ```bash
-./bin/loom hud --overlay --edge right --width 380 --opacity 0.92
+./bin/loom secrets set GITLAB_TOKEN
 ```
 
-### Coordinator (optional): FlexInfer-backed “LLM ops” for agent context
-
-The HUD can optionally start a coordinator that uses FlexInfer (OpenAI-compatible proxy) to do agent-context intelligence, such as:
-
-- session summarization on `session-end`
-- on-demand summarization/compression
-- generating workflow plans from a natural-language goal
-
-Enable it by providing a FlexInfer URL (CLI flags override env vars):
+Validate local setup:
 
 ```bash
-./bin/loom hud \
-  --flexinfer-url http://127.0.0.1:8080 \
-  --flexinfer-key "$FLEXINFER_API_KEY" \
-  --coordinator-model qwen3-8b
+./bin/loom check
 ```
 
-Environment variables (optional):
+## Agent Hooks and Lifecycle
 
-- `FLEXINFER_URL`, `FLEXINFER_API_KEY`
-- `COORDINATOR_MODEL`, `COORDINATOR_FALLBACK_MODEL`, `COORDINATOR_PLANNER_MODEL`
-- `COORDINATOR_ENABLE_SUMMARIZER`, `COORDINATOR_ENABLE_COMPRESSOR`, `COORDINATOR_ENABLE_TRIAGER`, `COORDINATOR_ENABLE_EXTRACTOR`, `COORDINATOR_ENABLE_PLANNER`
-- `COORDINATOR_POLL_INTERVAL`
+`loom agent ...` commands are hook-friendly wrappers that call the HUD API (default port `3333`).
 
-### Note: `loom agent` uses the HUD API
+If you rely on `loom agent` automation, ensure HUD is running and `LOOM_HUD_PORT` matches your HUD port.
 
-The `loom agent ...` CLI is designed for hooks/automation and talks to the HUD REST API (default port `3333`). If you use `loom agent` in hooks, ensure the HUD is running (or set `LOOM_HUD_PORT` to match your HUD port).
+## Response Size and Pagination
+
+Many list/search tools support `page` + `per_page` (capped at 100). Several servers also enforce response size limits to prevent tool-call timeouts.
+
+Selected env controls:
+
+- `LOKI_MAX_RESPONSE_BYTES`
+- `PROMETHEUS_MAX_RESPONSE_BYTES`
+- `GRAFANA_MAX_RESPONSE_BYTES`
+- `TAVILY_MAX_RESPONSE_BYTES`
+- `ALERTMANAGER_MAX_RESPONSE_BYTES`
+
+## Troubleshooting
+
+- Daemon offline: `loom status`, then `loom restart`
+- Binary drift after rebuild: run `make install-core`, then `loom restart`
+- Stale tool list: `loom reload`
+- Client cannot find servers: `loom sync all --regen --loom-mode`
+- GUI apps miss shell env vars: run `loom check` and move secrets into `loom secrets`
+- HUD API calls fail from hooks: verify `loom hud` is running on expected port

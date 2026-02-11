@@ -1,82 +1,59 @@
 # Project Roadmap
 
-> Last Updated: February 1, 2026
+> Last Updated: February 11, 2026
 
 ## Current Status
 
-Loom Core provides the high-performance Go backend components for the Loom ecosystem, including the CLI, daemon, and specialized MCP servers.
+Loom Core is the production backend for Loom’s local MCP runtime:
 
-### Implemented Features
+- `loom` CLI for config generation/sync, daemon control, HUD launch, and agent hooks
+- `loomd` daemon for routing, process lifecycle, health monitoring, and tunnel management
+- Broad `mcp-*` server catalog (Git, GitLab, GitHub, K8s, observability, memory, sandbox, and more)
 
-- ✅ **CLI**: `loom` command for managing context and connections.
-- ✅ **Daemon Mode**: Background process (`loomd`) managing persistent connections and tool aggregation.
-- ✅ **Smart Routing**: Support for prefix-less tool calls and argument-based routing.
-- ✅ **Hub Bridging**: Automatic discovery and transparent access to remote MCP Hub tools.
-- ✅ **Health Monitoring**: Periodic health probes with auto-restart on server failure.
-- ✅ **SSH Tunnel Management**: Auto-connect tunnels for remote K8s access via jump hosts.
-- ✅ **Prometheus Metrics**: `/metrics` endpoint for observability.
-- ✅ **MCP Servers**:
-  - `mcp-gitlab`: GitLab integration.
-  - `mcp-k8s`: Kubernetes resource access.
-  - `mcp-grafana`: Dashboard search and querying.
-  - `mcp-loki`: Log querying.
-  - `mcp-minio`: S3/MinIO file access.
-- ✅ **Shared Utils**: Delegation to `fi-mcp-kit` for enterprise orchestration.
+## Recently Shipped (post `v0.9.7`)
 
-## v0.9.0 (Current)
+- ✅ **Devbox sandboxing**
+  - Added `mcp-devbox` with project fingerprinting, Dockerfile generation, and persistent sandbox lifecycle.
+  - Added K8s backend support for sandbox execution.
+  - Added async tools (`devbox_exec_async`, `devbox_exec_poll`) and observability tools (`devbox_metrics`, `devbox_summary`).
+  - Improved monorepo support (workspace-root mount + project-aware workdir).
 
-Production hardening and remote access:
+- ✅ **HUD improvements**
+  - Added sandbox panel integration (via `devbox_summary`).
+  - Added richer TUI/web polish and notification/UX refinements.
+  - Added Ghostty palette/shader integration helpers.
 
-- [x] **Health Monitoring**: HealthMonitor integrated into daemon lifecycle with auto-restart.
-- [x] **SSH Tunnel Manager**: TunnelManager for remote K8s access via SSH tunnels.
-- [x] **CLI Tunnel Commands**: `loom tunnel status` for monitoring tunnel health.
-- [x] **Enhanced Health Endpoint**: `/health` returns detailed JSON with per-server status.
-- [x] **OpenTelemetry Tracing**: `pkg/mcpotel` middleware across `mcp-agent-context`, `mcp-git`, `mcp-prometheus`, `mcp-gitlab`.
-- [x] **Metrics Wiring**: Agent-context atomic counters (sessions, recall, embeddings, graph, workflows, memory tiers) wired into handlers.
-- [x] **Error Visibility**: ~20 silent error drops replaced with structured `logger.Warn()` calls.
-- [ ] **Response Caching**: TTL-based caching for read-only tool results.
-- [ ] **Test Coverage**: Target 60%+ on critical paths.
-- [ ] **Platform Expansion**: Core servers on all platforms (Claude, Gemini, Codex).
+- ✅ **Developer lifecycle hardening**
+  - Added atomic install scripts and `make dev-upgrade` workflow.
+  - Added rollback-friendly `.prev` binary flow and safer restart behavior.
 
-## Completed Work
+## Near-Term Priorities
 
-### Phase 1: Server Expansion
+- [ ] **Quality gates for new MCP servers**
+  - Ensure each newly added `mcp-*` server has baseline tests and lint-clean handlers.
+  - Standardize error handling (`pkg/mcperror`) and argument validation (`pkg/validate`).
 
-- [x] **`mcp-jira`**: Jira issue tracking integration.
-- [x] **`mcp-confluence`**: Knowledge base search.
-- [x] **`mcp-postgres`**: Database schema and query inspector.
-- [x] **`mcp-github-actions`**: GitHub Actions workflow management (trigger, cancel, rerun, logs).
-- [x] **`mcp-slack`**: Slack integration (search, channels, messages, reactions).
+- [ ] **Devbox maturity**
+  - Expand integration tests for Docker + K8s backends under realistic monorepo layouts.
+  - Add stronger safeguards for long-running async exec cleanup/recovery.
 
-### Phase 2: Core Infrastructure
+- [ ] **Onboarding and docs consistency**
+  - Keep README/docs/changelog synchronized with shipped command and tool surface.
+  - Maintain one canonical docs entrypoint for user/developer/operator tasks.
 
-- [x] **Concurrency**: Parallel tool execution with configurable backpressure.
-- [x] **Secure Tunneling**: SSH tunneling for remote MCP server access.
-  - `pkg/tunnel`: SSHTunnel, SSHTransport for secure remote connections.
-  - Registry support: `ssh:` config block in TargetSpec for host, user, key, etc.
-  - Process manager integration: Auto-detects SSH config and connects via tunnel.
-  - Auth methods: SSH agent, key files, known_hosts verification.
-- [x] **Context Caching**: Persistent tool manifest caching for instant startup.
+- [ ] **Observability expansion**
+  - Broaden `pkg/mcpotel` adoption across additional MCP servers.
+  - Keep HUD health/sandbox/fleet views aligned with backend metrics and events.
 
-### Phase 3: Additional Integrations
+## Ongoing Engineering Goals
 
-Planned MCP servers for broader ecosystem coverage:
-
-- [x] **`mcp-linear`**: Linear issue tracking (alternative to Jira for modern teams).
-- [x] **`mcp-notion`**: Notion pages and databases.
-- [x] **`mcp-sentry`**: Error tracking and issue management.
-- [x] **`mcp-pagerduty`**: Incident management and on-call scheduling.
-- [x] **`mcp-elasticsearch`**: Full-text search and log analysis.
-- [x] **`mcp-mongodb`**: MongoDB document queries.
-- [x] **`mcp-argocd`**: ArgoCD application management (GitOps for K8s).
-- [x] **`mcp-terraform`**: Terraform Cloud/Enterprise state and plan management.
-- [x] **`mcp-vault`**: HashiCorp Vault secrets access.
-- [x] **`mcp-aws`**: AWS resource access (S3, Lambda, EC2).
-- [x] **`mcp-gcp`**: Google Cloud Platform (Storage, Compute, Functions).
+- Keep tool-call latency bounded under typical client deadlines (~60s).
+- Preserve backwards compatibility for `loom proxy` and generated client configs.
+- Maintain secure defaults around secrets interpolation and config validation.
 
 ## References
 
-| Document               | Purpose          |
-| ---------------------- | ---------------- |
-| [README.md](README.md) | Project overview |
-| [AGENTS.md](AGENTS.md) | Agent guidance   |
+- `README.md`
+- `docs/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DEV_BUILD_LIFECYCLE.md`

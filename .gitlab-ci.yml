@@ -151,6 +151,25 @@ fmt:
         exit 1
       fi
 
+guardrails:docs-cli:
+  <<: *go-template
+  stage: lint
+  script:
+    - |
+      # The shared template may fetch sources via archive (no .git metadata).
+      # Recreate a minimal git checkout so docs drift checks can diff against base.
+      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git init -q
+        git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+        git fetch -q origin "${CI_COMMIT_SHA}"
+        git checkout -q -f "${CI_COMMIT_SHA}"
+      fi
+      BASE_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}"
+      git fetch -q origin "${BASE_BRANCH}:${BASE_BRANCH}" || true
+      DOCS_CHECK_BASE_REF="${BASE_BRANCH}" bash scripts/ci/check_docs_guardrails.sh
+    - go run ./cmd/loom --help >/dev/null
+    - go run ./cmd/loom proxy --help >/dev/null
+
 # =============================================================================
 # BUILD STAGE
 # Build binaries before tests to enable integration testing

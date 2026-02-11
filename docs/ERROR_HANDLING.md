@@ -1,209 +1,83 @@
 # MCP Server Error Handling Guide
 
-This document describes the standardized error handling patterns for loom-core MCP servers.
+This guide defines current error-handling standards for Loom Core MCP servers.
 
-## Overview
+## Core Rules
 
-All MCP servers should use the `pkg/mcperror` package for consistent, user-friendly error messages.
+1. Validate all input early.
+2. Return structured errors via `pkg/mcperror`.
+3. Return `mcp.ErrorResult(err), nil` from handlers for user-facing failures.
+4. Wrap external/API failures with service context.
+5. Do not panic in tool handlers.
 
-## Import
+## Recommended Imports
 
 ```go
-import "github.com/crb2nu/loom/pkg/mcperror"
+import (
+    "gitlab.flexinfer.ai/libs/mcp-go"
+
+    "github.com/crb2nu/loom/pkg/mcperror"
+    "github.com/crb2nu/loom/pkg/validate"
+)
 ```
 
-## Error Types
-
-### Parameter Validation
-
-Use these for input validation errors:
+## Handler Pattern
 
 ```go
-// Missing required parameter
-if owner == "" {
-    return nil, mcperror.RequiredParam("owner")
-}
-
-// Invalid parameter value
-if count < 0 {
-    return nil, mcperror.InvalidParam("count", "must be positive")
-}
-```
-
-### API Errors
-
-Use these for external service errors:
-
-```go
-// HTTP error response (automatically provides user-friendly messages)
-if resp.StatusCode >= 400 {
-    return nil, mcperror.APIError("GitHub", resp.StatusCode, bodyText)
-}
-
-// Connection/timeout errors
-if err != nil {
-    return nil, mcperror.WrapAPI("GitHub", err)
-}
-```
-
-### Service Errors
-
-Use these for service-level issues:
-
-```go
-// Service unavailable
-if !connected {
-    return nil, mcperror.ServiceUnavailable("Qdrant", "connection refused")
-}
-
-// Missing configuration
-if token == "" {
-    return nil, mcperror.NotConfigured("GITHUB_TOKEN", "set via environment variable")
-}
-
-// Operation failure
-if err != nil {
-    return nil, mcperror.OperationFailed("database query", err)
-}
-```
-
-### Resource Errors
-
-Use these for resource-related issues:
-
-```go
-// Resource not found
-return nil, mcperror.NotFound("repository", repoName)
-
-// Parse error
-if err != nil {
-    return nil, mcperror.ParseError("JSON response", err)
-}
-```
-
-## Error Codes
-
-The package defines standard error codes:
-
-| Code | Constant | When to Use |
-|------|----------|-------------|
-| `INVALID_INPUT` | `CodeInvalidInput` | Parameter validation failures |
-| `NOT_FOUND` | `CodeNotFound` | Resource not found |
-| `UNAUTHORIZED` | `CodeUnauthorized` | Authentication failures |
-| `FORBIDDEN` | `CodeForbidden` | Permission denied |
-| `TIMEOUT` | `CodeTimeout` | Operation timeouts |
-| `SERVER_ERROR` | `CodeServerError` | Internal/external server errors |
-| `CONNECTION_ERROR` | `CodeConnectionError` | Network/connection issues |
-| `RATE_LIMITED` | `CodeRateLimited` | Rate limit exceeded |
-| `VALIDATION_ERROR` | `CodeValidation` | Multiple field validation errors |
-
-## Best Practices
-
-### 1. Use Specific Error Types
-
-Instead of:
-```go
-return nil, fmt.Errorf("owner and repo are required")
-```
-
-Use:
-```go
-if owner == "" {
-    return nil, mcperror.RequiredParam("owner")
-}
-if repo == "" {
-    return nil, mcperror.RequiredParam("repo")
-}
-```
-
-### 2. Provide Context
-
-The error helpers automatically provide context:
-- `APIError` includes service name and HTTP status with user-friendly explanations
-- `NotFound` includes the resource type and name
-- `RequiredParam` includes the parameter name
-
-### 3. Handle API Errors with Status Codes
-
-`APIError` provides automatic user-friendly messages:
-
-| Status Code | Message |
-|-------------|---------|
-| 401 | "authentication failed - check your API token" |
-| 403 | "access forbidden - check permissions" |
-| 404 | "resource not found" |
-| 429 | "rate limit exceeded - try again later" |
-| 5xx | "service unavailable - try again later" |
-
-### 4. Never Panic
-
-Tool handlers should never panic. Always return errors:
-
-```go
-// Bad
-panic("unexpected nil value")
-
-// Good
-if value == nil {
-    return nil, mcperror.ServerError("unexpected nil value")
-}
-```
-
-### 5. Wrap External Errors
-
-When calling external services, wrap errors with context:
-
-```go
-result, err := externalAPI.Call()
-if err != nil {
-    return nil, mcperror.WrapAPI("ExternalService", err)
-}
-```
-
-## Example: Complete Handler
-
-```go
-func (s *server) handleGetUser(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-    // Validate required parameters
-    username := getStringArg(args, "username", "")
-    if username == "" {
-        return nil, mcperror.RequiredParam("username")
+func (s *server) handleThing(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+    v := validate.NewArgs(args)
+    project := v.Required("project")
+    page := v.Int("page", 1)
+    if err := v.Validate(); err != nil {
+        return mcp.ErrorResult(err), nil
     }
 
-    // Validate parameter format
-    if len(username) > 39 {
-        return nil, mcperror.InvalidParam("username", "must be 39 characters or less")
+    if page < 1 {
+        return mcp.ErrorResult(mcperror.InvalidParam("page", "must be >= 1")), nil
     }
 
-    // Make API call
-    user, err := s.client.GetUser(ctx, username)
+    out, err := s.client.Fetch(ctx, project)
     if err != nil {
-        // Check for specific error types
-        if isNotFound(err) {
-            return nil, mcperror.NotFound("user", username)
-        }
-        return nil, mcperror.WrapAPI("GitHub", err)
+        return mcp.ErrorResult(mcperror.WrapAPI("MyService", err)), nil
     }
 
-    return mcp.JSONResult(user)
+    return mcp.JSONResult(out)
 }
 ```
 
-## Migration Checklist
+## Error Helpers
 
-When updating an MCP server to use standardized error handling:
+Use `pkg/mcperror` helpers consistently:
 
-- [ ] Add import for `github.com/crb2nu/loom/pkg/mcperror`
-- [ ] Replace `fmt.Errorf` for required params with `mcperror.RequiredParam`
-- [ ] Replace `fmt.Errorf` for validation with `mcperror.InvalidParam`
-- [ ] Replace custom apiError types with `mcperror.APIError`
-- [ ] Wrap external errors with `mcperror.WrapAPI`
-- [ ] Replace panic with error returns
-- [ ] Test that error messages are user-friendly
+- Input: `RequiredParam`, `InvalidParam`, `Validation`, `ParseError`
+- API/service: `APIError`, `WrapAPI`, `ServiceUnavailable`, `RateLimited`
+- Resources: `NotFound`
+- Configuration: `NotConfigured`
+- Generic failures: `OperationFailed`, `ServerError`
 
-## Servers Updated
+## HTTP/API Mapping
 
-- [x] mcp-github (example implementation)
-- [x] mcp-gitlab
-- [x] mcp-k8s
-- [ ] ... (remaining servers)
+When translating upstream HTTP errors, use `mcperror.APIError(service, statusCode, body)`.
+
+Expected mapping:
+
+- `401` -> `UNAUTHORIZED`
+- `403` -> `FORBIDDEN`
+- `404` -> `NOT_FOUND`
+- `429` -> `RATE_LIMITED`
+- `5xx` -> `SERVER_ERROR`
+
+## Logging Expectations
+
+- Log warnings/errors with operation context and identifiers.
+- Do not silently discard errors (`_ = err`) unless truly ignorable and documented.
+- Avoid logging secrets/token values.
+
+## Checklist for New or Updated MCP Servers
+
+- [ ] Uses `validate.NewArgs` for parsing and validation
+- [ ] Returns structured errors via `mcp.ErrorResult`
+- [ ] Wraps external failures with `mcperror.WrapAPI`/`APIError`
+- [ ] No panics in handler paths
+- [ ] Has tests for at least one error path per tool family
+- [ ] Updates docs/CHANGELOG for behavior-visible changes

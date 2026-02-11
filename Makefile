@@ -1,6 +1,6 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
-		install-core install-all dev-upgrade \
-		ci ci-lint ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
+		install-core install-all bootstrap-local dev-upgrade \
+		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
 		docker-build docker-build-loom-core docker-build-custom-server \
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
@@ -29,7 +29,7 @@ GITOPS_DIR ?= $(shell realpath ../../platform/gitops 2>/dev/null || echo "$(HOME
 LOOM_HUB_DIR := $(GITOPS_DIR)/k3s/loom-hub
 
 # MCP server binaries
-MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox
+MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack
 .PHONY: $(MCP_SERVERS)
 
 # Default target
@@ -43,6 +43,7 @@ help:
 	@echo "  make setup      - Install dev dependencies and git hooks"
 	@echo "  make hooks      - Install git pre-commit hooks"
 	@echo "  make dev        - Build and run daemon in debug mode"
+	@echo "  make bootstrap-local - Build + install core binaries + sync configs + check setup"
 	@echo "  make check      - Run all checks (fmt, vet, lint, test)"
 	@echo ""
 	@echo "Building:"
@@ -65,6 +66,7 @@ help:
 	@echo "CI (local):"
 	@echo "  make ci              - Run full CI pipeline locally"
 	@echo "  make ci-lint         - Run CI lint stage (fmt, vet, lint - warnings only)"
+	@echo "  make ci-guardrails   - Run docs drift + loom CLI help smoke checks"
 	@echo "  make ci-lint-strict  - Run lint stage (fails on any issue)"
 	@echo "  make ci-build        - Run CI build stage"
 	@echo "  make ci-test         - Run CI test stage (unit + integration)"
@@ -218,6 +220,15 @@ mcp-browserkit:
 mcp-devbox:
 	go build $(LDFLAGS) -o bin/mcp-devbox ./cmd/mcp-devbox
 
+mcp-itchio:
+	go build $(LDFLAGS) -o bin/mcp-itchio ./cmd/mcp-itchio
+
+mcp-release:
+	go build $(LDFLAGS) -o bin/mcp-release ./cmd/mcp-release
+
+mcp-substack:
+	go build $(LDFLAGS) -o bin/mcp-substack ./cmd/mcp-substack
+
 clean: hud-clean
 	rm -rf bin/
 	rm -f coverage.out coverage.html
@@ -279,6 +290,19 @@ install-all: build
 dev-upgrade:
 	@chmod +x scripts/dev/upgrade_local.sh
 	@scripts/dev/upgrade_local.sh
+
+# First-run/local onboarding:
+# - build + atomic install loom/loomd
+# - regenerate and sync loom-mode configs
+# - run environment checks
+bootstrap-local: install-core
+	@./bin/loom sync all --regen --loom-mode
+	@./bin/loom check
+	@echo ""
+	@echo "Bootstrap complete."
+	@echo "Next:"
+	@echo "  loom start"
+	@echo "  loom hud --port 3333"
 
 # Code quality
 fmt:
@@ -388,8 +412,16 @@ ci: ci-lint ci-build ci-test
 	@echo "✓ CI pipeline passed!"
 
 # Lint stage (mirrors GitLab CI lint stage - lint allows failure in CI)
-ci-lint: fmt-check vet ci-lint-soft
+ci-lint: fmt-check vet ci-guardrails ci-lint-soft
 	@echo "✓ Lint stage passed (lint issues are warnings only, matching CI)"
+
+# Guardrails: keep docs and command surface in sync.
+ci-guardrails:
+	@echo "Running docs/CLI guardrails..."
+	@bash scripts/ci/check_docs_guardrails.sh
+	@go run ./cmd/loom --help >/dev/null
+	@go run ./cmd/loom proxy --help >/dev/null
+	@echo "✓ Guardrails passed"
 
 # Lint soft - matches CI behavior (allow_failure: true)
 ci-lint-soft:

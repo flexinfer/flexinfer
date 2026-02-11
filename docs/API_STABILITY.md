@@ -1,198 +1,138 @@
 # API Stability Policy
 
-This document describes the stability guarantees for loom-core APIs.
+This document describes Loom Core compatibility expectations for contributors and integrators.
 
-## Versioning
+## Versioning Policy
 
-Loom-core follows [Semantic Versioning 2.0.0](https://semver.org/):
+Loom Core uses [Semantic Versioning](https://semver.org/), with an important caveat:
 
-- **MAJOR** (1.x.x): Breaking changes to stable APIs
-- **MINOR** (x.1.x): New features, backwards-compatible changes
-- **PATCH** (x.x.1): Bug fixes, documentation updates
+- Current releases are still `0.x`.
+- Before `1.0.0`, occasional breaking changes may still happen.
+- Breaking changes must be called out in `CHANGELOG.md` with migration notes.
 
-## API Categories
+## Stability Levels
 
-### Stable APIs (`pkg/`)
+### Stable Surfaces
 
-These packages are intended for external use and have stability guarantees:
+These are expected to remain compatible across patch releases and usually across minor releases:
 
-| Package | Description | Stability |
-|---------|-------------|-----------|
-| `pkg/agentcontext` | Agent context and session management | Stable |
-| `pkg/codebase` | Codebase indexing and search | Stable |
-| `pkg/context` | Context configuration | Stable |
-| `pkg/generator` | Config file generation | Stable |
-| `pkg/httpclient` | HTTP client utilities | Stable |
-| `pkg/lifecycle` | Process lifecycle management | Stable |
-| `pkg/mcperror` | MCP error types | Stable |
-| `pkg/pathsec` | Path security validation | Stable |
-| `pkg/poll` | Polling utilities | Stable |
-| `pkg/profiles` | Server profile management | Stable |
-| `pkg/registry` | Registry loading and parsing | Stable |
-| `pkg/secrets` | Secret management | Stable |
-| `pkg/skills` | Skills registry | Stable |
-| `pkg/sync` | Configuration sync | Stable |
-| `pkg/testutil` | Test utilities | Stable |
-| `pkg/tunnel` | SSH tunnel management | Stable |
-| `pkg/validate` | Input validation | Stable |
+- `loom proxy` behavior used by generated client configs
+- Existing MCP tool names and required parameters
+- Registry-driven config generation and sync workflows (`loom generate`, `loom sync`)
 
-**Stability Guarantees:**
+### Best-Effort Stable (Pre-1.0)
 
-1. No breaking changes without major version bump
-2. Deprecated APIs marked with `// Deprecated:` comments
-3. Minimum 1 minor version deprecation period before removal
-4. All changes documented in CHANGELOG.md
+These are intended to be stable, but may evolve between minor versions while the project is `<1.0.0`:
 
-### Internal APIs (`internal/`)
+- User-facing CLI command set (`loom`)
+- JSON response shapes for commonly consumed tool outputs
+- Public package APIs under `pkg/`
 
-These packages are for internal use only and may change without notice:
+### Unstable/Internal
 
-| Package | Description |
-|---------|-------------|
-| `internal/daemon` | Daemon orchestrator |
-| `internal/integration` | Integration tests |
-| `internal/pool` | Connection pool |
-| `internal/process` | Process management |
-| `internal/router` | Request routing |
+These can change at any time:
 
-**No Stability Guarantees:**
+- `internal/*` packages
+- HUD internal API contracts not documented as public
+- daemon internals (routing/process/cache implementations)
 
-- May change between any versions
-- Not intended for external import
-- Go compiler enforces this via import restrictions
+## Public Package Surface (`pkg/`)
 
-### MCP Servers (`cmd/mcp-*`)
+The following packages are considered reusable public code:
 
-MCP servers expose tools via the Model Context Protocol:
+- `pkg/agentcontext`
+- `pkg/codebase`
+- `pkg/context`
+- `pkg/env`
+- `pkg/generator`
+- `pkg/httpclient`
+- `pkg/lifecycle`
+- `pkg/mcperror`
+- `pkg/mcplog`
+- `pkg/mcpotel`
+- `pkg/pathsec`
+- `pkg/poll`
+- `pkg/portforward`
+- `pkg/profiles`
+- `pkg/registry`
+- `pkg/secrets`
+- `pkg/skills`
+- `pkg/strutil`
+- `pkg/sync`
+- `pkg/templatevars`
+- `pkg/tunnel`
+- `pkg/validate`
+- `pkg/validator`
 
-| Server | Tools | Stability |
-|--------|-------|-----------|
-| `mcp-agent-context` | Session/context management | Stable |
-| `mcp-codebase-memory` | Code indexing and search | Stable |
-| `mcp-git` | Git operations | Stable |
-| `mcp-github` | GitHub API | Stable |
-| `mcp-gitlab` | GitLab API | Stable |
-| `mcp-k8s` | Kubernetes operations | Stable |
-| All others | Various integrations | Stable |
+`pkg/testutil` is test-support code and may evolve with less strict compatibility guarantees.
 
-**Tool Stability:**
+## MCP Tool Contract Rules
 
-1. Tool names are stable (no renaming)
-2. Required parameters are stable
-3. New optional parameters may be added
-4. Return schemas are stable (fields may be added)
+For existing tools:
+
+1. Tool names should not be renamed.
+2. Required params should not be removed or made stricter without migration.
+3. Optional params may be added.
+4. Response objects may add fields but should not remove widely used fields without a deprecation window.
+
+## CLI Compatibility
+
+Core command families expected to remain available:
+
+- Daemon lifecycle: `start`, `stop`, `status`, `restart`, `reload`, `daemon ...`
+- Config workflows: `generate ...`, `sync ...`, `validate ...`
+- Operations: `servers`, `tools ...`, `tunnel ...`, `secrets ...`
+- Runtime interfaces: `proxy`, `hud`, `agent ...`
+
+Notes:
+
+- Human-readable output may change.
+- Prefer `--json` output where available for automation.
+
+## Configuration Compatibility
+
+Primary stable config surfaces:
+
+- `registry.yaml` (workspace canonical metadata)
+- Generated client config files produced by `loom generate`/`loom sync`
+- `~/.config/loom/config.yaml` daemon/CLI config (if used)
+
+Rules:
+
+1. Additive fields are preferred.
+2. Existing field semantics should remain stable.
+3. Deprecated fields should be documented before removal.
 
 ## Breaking Change Process
 
-When a breaking change is necessary:
+When a breaking change is unavoidable:
 
-1. **Announce** in CHANGELOG.md under "Breaking Changes"
-2. **Deprecate** the old API with `// Deprecated:` comment
-3. **Document** migration path in the deprecation notice
-4. **Wait** at least one minor version before removal
-5. **Remove** in next major version
+1. Add an explicit `CHANGELOG.md` entry.
+2. Document migration steps.
+3. Keep a compatibility shim/alias where feasible.
+4. Remove deprecated behavior in a later minor/major release (depending on impact).
 
-### Example Deprecation
+## Validation Checklist
 
-```go
-// Deprecated: Use NewClientWithConfig instead.
-// This function will be removed in v2.0.0.
-// Migration: Replace NewClient(url) with NewClientWithConfig(Config{URL: url})
-func NewClient(url string) *Client {
-    return NewClientWithConfig(Config{URL: url})
-}
-```
-
-## CLI Stability
-
-The `loom` CLI commands are stable:
-
-| Command | Stability |
-|---------|-----------|
-| `loom daemon start/stop/restart/status` | Stable |
-| `loom servers` | Stable |
-| `loom tools list/call` | Stable |
-| `loom sync <platform>` | Stable |
-| `loom profiles` | Stable |
-| `loom secrets` | Stable |
-
-**CLI Guarantees:**
-
-1. Command names are stable
-2. Required flags are stable
-3. New optional flags may be added
-4. Output format may change (use `--json` for stable output)
-5. Exit codes: 0=success, 1=error, 2=usage error
-
-## Configuration File Stability
-
-Configuration files have backwards compatibility:
-
-| File | Format | Stability |
-|------|--------|-----------|
-| `~/.config/loom/config.yaml` | YAML | Stable |
-| `registry.yaml` | YAML | Stable |
-| `skills-registry.yaml` | YAML | Stable |
-| `.vscode/mcp.json` | JSON | Stable (VS Code spec) |
-
-**Config Guarantees:**
-
-1. New fields may be added (ignored by older versions)
-2. Field types don't change
-3. Required fields documented in schema
-4. Defaults documented in code/docs
-
-## Protocol Stability
-
-### MCP Protocol
-
-Loom implements [Model Context Protocol](https://modelcontextprotocol.io/):
-
-- Protocol version: `2024-11-05`
-- Stable transport: stdio, WebSocket
-- Tool schemas follow JSON Schema
-
-### Hub WebSocket Protocol
-
-Hub communication uses JSON-RPC 2.0 over WebSocket:
-
-```
-wss://mcp.flexinfer.ai/ws?profile=<profile>
-```
-
-Messages follow MCP message format.
-
-## Testing Against Stability
-
-To verify your code against loom-core APIs:
+Before merging compatibility-sensitive changes:
 
 ```bash
-# Run all tests
 go test ./...
-
-# Check for deprecated usage
 go vet ./...
-
-# Integration tests (requires services)
-LOOM_RUN_MCP_SMOKE=1 go test ./internal/integration/...
 ```
 
-## Reporting Compatibility Issues
+For command-level sanity:
 
-If you find a breaking change that wasn't documented:
+```bash
+go run ./cmd/loom --help
+go run ./cmd/loom proxy --help
+```
 
-1. Check CHANGELOG.md for known changes
-2. Search existing issues
-3. File an issue with:
-   - Version before/after
-   - Code that broke
-   - Expected vs actual behavior
+## Reporting Regressions
 
-## Version History
+If you hit an unexpected compatibility break, include:
 
-| Version | Date | Notes |
-|---------|------|-------|
-| v1.0.0 | TBD | Initial stable release |
-| v0.9.0 | 2026-02 | Pre-release, feature complete |
-| v0.8.0 | 2026-01 | Error recovery, offline mode |
-| v0.7.0 | 2026-01 | Multi-platform support |
+- Loom version (before/after)
+- command/tool impacted
+- expected vs actual behavior
+- minimal reproduction

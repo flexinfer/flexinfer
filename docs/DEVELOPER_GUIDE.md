@@ -1,18 +1,21 @@
 # Loom Core Developer Guide
 
-This guide is for contributors working on the Loom Core Go codebase.
+This guide is for contributors working on Loom Core internals.
 
-For a system overview, see `docs/ARCHITECTURE.md`.
+For system architecture, see `docs/ARCHITECTURE.md`.
 
-## Repo layout
+## Repository Layout
 
-- `cmd/loom/`: CLI for config generation/sync and daemon management
-- `cmd/loomd/`: daemon (local MCP hub + routing)
+- `cmd/loom/`: CLI command tree (`sync`, `generate`, `hud`, `agent`, etc.)
+- `cmd/loomd/`: daemon process (routing, lifecycle, health monitoring)
 - `cmd/mcp-*/`: MCP server binaries
-- `internal/`: daemon/process/router internals
-- `pkg/`: shared libraries (registry, profiles, sync, validation, etc.)
+- `internal/daemon/`: daemon core orchestration
+- `internal/hud/`: HUD API + web app integration
+- `internal/tui/`: terminal dashboard components
+- `internal/devbox/`: devbox detection, Dockerfile generation, backends, state
+- `pkg/`: shared reusable packages (`env`, `validate`, `mcperror`, `mcpotel`, etc.)
 
-## Build, test, lint
+## Build, Test, Lint
 
 ```bash
 make build
@@ -20,115 +23,120 @@ go test ./...
 golangci-lint run
 ```
 
-Notes:
-
-- `generated/` is local output from `loom generate configs` and should not be committed.
-- `services/loom-core/go.mod` uses a local `replace` for `gitlab.flexinfer.ai/libs/mcp-go` → `../../libs/mcp-go` during workspace development.
-
-## Local dev loop
+Restricted/sandboxed environments:
 
 ```bash
-make build
-cp -f bin/loom  ~/.local/bin/loom
-cp -f bin/loomd ~/.local/bin/loomd
-./bin/loom restart
-./bin/loom sync all --regen
+make test-sandbox
 ```
 
-## Adding or updating an MCP server
-
-1. Implement under `cmd/mcp-<name>/main.go`.
-2. Keep tool schemas stable (inputs/outputs). Prefer additive changes.
-3. Run `go test ./...` and `make build`.
-4. Regenerate/sync configs so clients pick up tool schema changes:
-   - `./bin/loom generate configs --target all`
-   - `./bin/loom sync all --regen`
-
-## Observability
-
-### Tracing
-
-MCP servers use `pkg/mcpotel` for OpenTelemetry tracing. To enable locally:
+Useful aggregate checks:
 
 ```bash
-# Start a local Jaeger instance
-docker run -d --name jaeger -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
-
-# Set the OTLP endpoint before starting the daemon
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-
-# Start daemon — traces appear at http://localhost:16686
-./bin/loomd --debug
+make check
+make check-quick
 ```
 
-When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, tracing is a noop with zero overhead.
+## Local Developer Loop
 
-Servers with tracing: `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, `mcp-prometheus`.
-
-### Adding tracing to a new MCP server
-
-```go
-import "github.com/crb2nu/loom/pkg/mcpotel"
-
-// After logger creation:
-tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-myserver", logger)
-if err != nil { logger.Warn("OTel tracer init failed", "error", err) }
-defer func() { _ = shutdownTracer(ctx) }()
-tracer := mcpotel.Tracer(tp, "mcp-myserver")
-
-// Wrap each tool handler:
-server.AddTool(tool, mcpotel.TracedToolHandler(tracer, "tool_name", handler))
-```
-
-### Metrics (agent-context)
-
-`mcp-agent-context` exposes internal metrics via the `agent_context_stats` tool. Counters track sessions, embedding calls, recall hit rates, graph operations, workflows, and per-tier memory usage.
-
-### Running observability tests
+Safe binary upgrade without breaking running agents:
 
 ```bash
-go test ./pkg/mcpotel/... -v -count=1 -race
-go test ./pkg/agentcontext/... -v -count=1 -run TestMetrics
+make dev-upgrade
 ```
 
-## Debugging
+First-time local onboarding:
 
-- Run daemon in foreground for interactive debugging: `./bin/loomd --debug`
-- Inspect daemon logs:
-  - `~/.config/loom/logs/daemon.log`
-  - `~/.config/loom/logs/daemon.err`
+```bash
+make bootstrap-local
+```
 
-## HUD development
+This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, and restarts daemon only when idle.
 
-The Agent HUD is a local dashboard + API that connects to `loomd`. It also powers `loom agent ...` (hooks/automation) via HTTP.
+## Adding or Updating an MCP Server
 
-Run HUD on a fixed port:
+1. Add/update implementation in `cmd/mcp-<name>/`.
+2. Keep tool schemas backward compatible (additive changes preferred).
+3. Use shared packages where possible:
+   - `pkg/validate` for argument parsing/validation
+   - `pkg/mcperror` for structured tool errors
+   - `pkg/httpclient` for timeout/retry-safe external calls
+4. Run quality gates (`go test`, `golangci-lint`, `make build`).
+5. Regenerate and sync configs:
+   - `./bin/loom generate configs --target all --loom-mode`
+   - `./bin/loom sync all --regen --loom-mode`
+
+## Devbox Development Notes
+
+`mcp-devbox` spans:
+
+- `cmd/mcp-devbox/`: tool schemas + manager wiring
+- `internal/devbox/detect/`: runtime/dependency fingerprinting
+- `internal/devbox/dockerfile/`: generated build plan
+- `internal/devbox/backend/`: Docker and K8s execution backends
+- `internal/devbox/state/`: persisted sandbox metadata/cache
+
+Recent behavior to preserve:
+
+- Monorepo-aware mounts (`workspaceRoot` mounted at `/workspace`)
+- Per-project lifecycle locking to avoid TOCTOU races
+- Idle pause/reap loop with active-exec safeguards
+- Async execution (`devbox_exec_async` / `devbox_exec_poll`)
+
+## HUD Development Notes
+
+Run HUD locally:
 
 ```bash
 ./bin/loom hud --port 3333
 ```
 
-Development mode (CORS for a local Vite dev server on `:5173`):
+Development mode (frontend hot reload):
 
 ```bash
 ./bin/loom hud --port 3333 --dev
 ```
 
-Native overlay (macOS only; requires CGO):
+Terminal mode:
+
+```bash
+./bin/loom hud --tui
+```
+
+Native overlay (macOS, CGO build):
 
 ```bash
 ./bin/loom hud --overlay --edge right --width 380
 ```
 
-### Coordinator (FlexInfer integration)
+Sandbox panel data path:
 
-The HUD can optionally start an LLM-powered coordinator that uses FlexInfer (OpenAI-compatible proxy). It lives under `internal/hud/coordinator/`.
+- HUD endpoint: `GET /api/sandbox`
+- Backing tool call: `devbox_summary`
+- Behavior when devbox missing: returns `{"available": false}`
 
-Enable it with either env vars or CLI flags (flags override env vars):
+## Observability
+
+### Tracing (`pkg/mcpotel`)
+
+Tracing is opt-in and no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 
 ```bash
-export FLEXINFER_URL=http://127.0.0.1:8080
-export FLEXINFER_API_KEY=...
-export COORDINATOR_MODEL=qwen3-8b
-./bin/loom hud --port 3333
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+./bin/loomd --debug
 ```
+
+Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, and `mcp-prometheus`.
+
+### Metrics
+
+- `mcp-agent-context`: `agent_context_stats` tool exposes counters and memory/workflow stats.
+- `mcp-devbox`: `devbox_metrics` and `devbox_summary` support runtime visibility and HUD integration.
+
+## Pre-PR Checklist
+
+- `go test ./...`
+- `golangci-lint run`
+- `make ci-guardrails` (docs drift + CLI help smoke)
+- `make build`
+- `./bin/loom sync all --regen --loom-mode` (if tool schemas changed)
+- Update docs/CHANGELOG for user-visible behavior changes

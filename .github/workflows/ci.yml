@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # loom-core uses local `replace` directives for these libs. In GitHub Actions we
       # check them out and repoint the replaces so builds/tests are hermetic.
       - uses: actions/checkout@v4
@@ -37,5 +39,10 @@ jobs:
           set -euo pipefail
           go mod edit -replace gitlab.flexinfer.ai/libs/mcp-go=./_deps/mcp-go
           go mod edit -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=./_deps/fi-mcp-kit
+      - name: Guardrails (docs drift + CLI help smoke)
+        run: |
+          bash scripts/ci/check_docs_guardrails.sh
+          go run ./cmd/loom --help >/dev/null
+          go run ./cmd/loom proxy --help >/dev/null
       - name: Test
         run: go test ./...

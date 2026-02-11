@@ -1,11 +1,13 @@
 # Loom Core Architecture
 
-This document describes Loom Core’s architecture at a “how the pieces fit together” level. For day-to-day commands, see:
+This document explains how Loom Core components fit together at runtime.
 
-- User guide: `docs/USER_GUIDE.md`
-- Developer guide: `docs/DEVELOPER_GUIDE.md`
+For operational commands, see:
 
-## High-level components
+- `docs/USER_GUIDE.md`
+- `docs/DEVELOPER_GUIDE.md`
+
+## High-Level Components
 
 ```mermaid
 flowchart LR
@@ -14,22 +16,24 @@ flowchart LR
     VSCode[VS Code MCP]
     Claude[Claude / Claude Desktop]
     Gemini[Gemini CLI]
-    Kilo[Kilo Code]
     Other[Other MCP clients]
   end
 
   subgraph LocalMachine[Developer machine]
-    LoomProxy["loom proxy<br/>(stdio MCP server)"]
-    Loomd["loomd<br/>(local MCP hub + router)"]
-    HUD["loom hud<br/>(local dashboard + overlay)"]
+    LoomProxy["loom proxy\n(stdio MCP server)"]
+    Loomd["loomd\n(local MCP hub + router)"]
+    HUD["loom hud\n(web/TUI/overlay)"]
 
-    subgraph LocalServers[Local MCP server processes]
-      GitLab["mcp-gitlab"]
-      GitHub["mcp-github"]
-      Loki["mcp-loki"]
-      Prom["mcp-prometheus"]
+    subgraph LocalServers[Local MCP servers]
+      Devbox["mcp-devbox"]
+      AgentCtx["mcp-agent-context"]
       K8s["mcp-k8s / mcp-k8s-ops"]
-      OtherMCP["mcp-*"]
+      APIBacked["mcp-gitlab / mcp-github / mcp-loki / ..."]
+    end
+
+    subgraph SandboxRuntime[Sandbox runtime]
+      Docker[Docker backend]
+      K8sBackend[Kubernetes backend]
     end
   end
 
@@ -37,138 +41,146 @@ flowchart LR
   VSCode -->|stdio MCP| LoomProxy
   Claude -->|stdio MCP| LoomProxy
   Gemini -->|stdio MCP| LoomProxy
-  Kilo -->|stdio MCP| LoomProxy
   Other -->|stdio MCP| LoomProxy
 
   LoomProxy -->|unix socket| Loomd
-  HUD -->|unix socket| Loomd
+  HUD -->|unix socket + HTTP APIs| Loomd
 
-  Loomd -->|spawn + stdio MCP| GitLab
-  Loomd -->|spawn + stdio MCP| GitHub
-  Loomd -->|spawn + stdio MCP| Loki
-  Loomd -->|spawn + stdio MCP| Prom
+  Loomd -->|spawn + stdio MCP| Devbox
+  Loomd -->|spawn + stdio MCP| AgentCtx
   Loomd -->|spawn + stdio MCP| K8s
-  Loomd -->|spawn + stdio MCP| OtherMCP
+  Loomd -->|spawn + stdio MCP| APIBacked
 
-  GitLab -->|HTTP| GitLabAPI[(GitLab API)]
-  GitHub -->|HTTP| GitHubAPI[(GitHub API)]
-  Loki -->|HTTP| LokiAPI[(Loki)]
-  Prom -->|HTTP| PromAPI[(Prometheus)]
-  K8s -->|HTTPS| K8sAPI[(Kubernetes API)]
+  Devbox --> Docker
+  Devbox --> K8sBackend
 ```
 
-Notes:
-
-- **Clients** talk to a single local entrypoint (`loom proxy`) when using `--loom-mode` configs.
-- **`loomd`** owns routing, lifecycle, and policy (what servers exist, env/secrets, etc.).
-- **MCP servers** are typically separate binaries (`cmd/mcp-*/`) spawned as local child processes and spoken to over stdio MCP.
-
-## Tool call flow (sequence)
+## Tool Call Flow
 
 ```mermaid
 sequenceDiagram
   participant Client as MCP client
-  participant Proxy as loom proxy (stdio)
-  participant Loomd as loomd (daemon)
+  participant Proxy as loom proxy
+  participant Loomd as loomd daemon
   participant Router as router
-  participant Server as mcp-<server> (child process)
-  participant API as external API
+  participant Server as mcp-<server>
+  participant API as external API/backend
 
   Client->>Proxy: tools/call server__tool(params)
   Proxy->>Loomd: loom/call {server, tool, params}
-  Loomd->>Router: resolve + route call
-  Router->>Server: MCP tools/call tool(params)
-  Server->>API: HTTP/SDK request(s)
+  Loomd->>Router: resolve + route
+  Router->>Server: MCP tools/call
+  Server->>API: request(s)
   API-->>Server: response
-  Server-->>Router: result (+ pagination/metadata)
+  Server-->>Router: result
   Router-->>Loomd: result
   Loomd-->>Proxy: result
   Proxy-->>Client: result
 ```
 
-## Registry and configuration artifacts
+## Sandbox Execution Flow (`mcp-devbox`)
 
-Loom uses a shared registry (`registry.yaml`) to generate downstream configs and manifests.
+```mermaid
+sequenceDiagram
+  participant Client as MCP client
+  participant Loomd as loomd daemon
+  participant Devbox as mcp-devbox
+  participant Detect as fingerprint/detect
+  participant Build as dockerfile/build
+  participant Runtime as Docker or K8s backend
+
+  Client->>Loomd: devbox_exec(project, command)
+  Loomd->>Devbox: tools/call devbox_exec
+  Devbox->>Detect: fingerprint project
+  alt image/container reusable
+    Devbox->>Runtime: resume/start existing sandbox
+  else rebuild required
+    Devbox->>Build: generate Dockerfile + build image
+    Devbox->>Runtime: start sandbox
+  end
+  Devbox->>Runtime: exec command in project workdir
+  Runtime-->>Devbox: exit code + output tail
+  Devbox-->>Loomd: structured result
+  Loomd-->>Client: tool response
+```
+
+Design details:
+
+- Workspace-root mounting enables monorepo workflows and sibling module access.
+- Per-project lifecycle locks prevent concurrent ensure/start races.
+- Idle sandboxes pause/stop via reaper loop; active execs are protected from reaping.
+
+## Registry and Configuration Flow
 
 ```mermaid
 flowchart TB
-  Registry["registry.yaml<br/>(canonical server + tool metadata)"]
-  Gen["loom generate configs --loom-mode"]
-  Out["generated/mcp/<profile>/..."]
+  Registry["registry.yaml\n(canonical metadata)"]
+  Generate["loom generate configs --loom-mode"]
+  Generated["generated/mcp/<profile>/..."]
   Sync["loom sync all --regen --loom-mode"]
-  Home["Client configs in $HOME<br/>(.codex/.vscode/.claude/etc.)"]
-  Daemon["loomd"]
+  Clients["Client configs in $HOME"]
+  Daemon[loomd]
   Reload["loom reload"]
 
-  Registry --> Gen --> Out --> Sync --> Home
+  Registry --> Generate --> Generated --> Sync --> Clients
   Registry --> Daemon
   Sync --> Reload --> Daemon
 ```
 
-## HUD (Agent Command Center)
+## HUD Architecture
 
-The Agent HUD (`loom hud`) is a local UI layer that connects to the daemon and exposes a dashboard + REST API for:
+`loom hud` is a local API + UI layer for:
 
-- server health and tool inventory
-- agent sessions/tasks/workflows (via `mcp-agent-context`)
-- an optional native overlay on macOS (`--overlay`, Cmd+Shift+L)
+- server health and inventory
+- agent sessions, tasks, workflows, and memory views
+- sandbox summary visibility via `/api/sandbox` (backed by `devbox_summary`)
+- optional macOS native overlay and terminal UI mode
 
-The HUD connects to the daemon via the same unix socket used by `loom proxy`. It can also subscribe to the daemon’s metrics/events stream (`--metrics-addr`) for near-real-time updates.
-
-### Coordinator (optional)
-
-The HUD can optionally run a coordinator that uses FlexInfer (OpenAI-compatible proxy) to do “LLM ops” for agent context (summaries, compression, plan generation). This is enabled by setting a FlexInfer URL (CLI flag or `FLEXINFER_URL` env var).
+`loom agent ...` commands call HUD REST endpoints, so HUD availability matters for hook/automation workflows.
 
 ## Observability
 
 ```mermaid
 flowchart LR
-  subgraph MCPServers[MCP Servers]
-    Git["mcp-git"]
-    GL["mcp-gitlab"]
-    Prom["mcp-prometheus"]
-    AC["mcp-agent-context"]
-    Others["mcp-*"]
+  subgraph Servers[Selected instrumented servers]
+    Git[mcp-git]
+    GitLab[mcp-gitlab]
+    Prom[mcp-prometheus]
+    AgentContext[mcp-agent-context]
+    Devbox[mcp-devbox]
   end
 
-  subgraph Observability
-    Logs["Structured Logs<br/>(slog/JSON)"]
-    Traces["OTel Traces<br/>(pkg/mcpotel)"]
-    Metrics["Prometheus Metrics<br/>(atomic counters)"]
+  subgraph Signals
+    Logs[Structured logs]
+    Traces[OTel traces]
+    Stats[Tool metrics/stats]
   end
 
   subgraph Backends
-    Loki["Loki"]
-    Jaeger["Jaeger / Langfuse"]
-    PromBE["Prometheus"]
+    Loki[Loki]
+    Jaeger[Jaeger/Langfuse]
+    Prometheus[Prometheus]
+    HUD[HUD panels]
   end
 
-  Git & GL & Prom & AC & Others -->|slog| Logs --> Loki
-  Git & GL & Prom & AC & Others -->|OTLP gRPC| Traces --> Jaeger
-  AC -->|/metrics| Metrics --> PromBE
+  Git & GitLab & Prom & AgentContext & Devbox --> Logs --> Loki
+  Git & GitLab & Prom & AgentContext --> Traces --> Jaeger
+  AgentContext --> Stats --> Prometheus
+  Devbox --> Stats --> HUD
 ```
 
-### Tracing (`pkg/mcpotel`)
+Notes:
 
-All MCP servers use `TracedToolHandler` middleware to create per-tool-call spans. The tracer initializes as a noop when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so tracing adds zero overhead by default. Spans include `agent_id`, `session_id`, and `namespace` attributes when present in tool arguments.
+- Tracing currently ships on selected servers, not every `mcp-*` binary.
+- `pkg/mcpotel` is noop unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
-Servers with tracing: `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, `mcp-prometheus`.
+## Reliability and Safety Notes
 
-### Metrics (`pkg/agentcontext`)
+- Per-server stdio calls are serialized to avoid transport corruption.
+- Pagination and response-size caps limit timeout/OOM risk for large APIs.
+- Secrets should be referenced indirectly (`${env:...}` / `${secret:...}`), not stored plaintext.
+- Best-effort cleanup paths log warnings instead of crashing parent workflows.
 
-`mcp-agent-context` maintains atomic counters for sessions, embedding calls, recall hit/miss rates, graph operations, workflows, compression, and per-tier memory items. The `agent_context_stats` tool returns a live snapshot. Prometheus-format export is available via `PrometheusFormat()`.
+## Diagram Sources
 
-### Logging (`pkg/mcplog`)
-
-All servers use `slog`-based structured logging. Error paths log warnings with contextual fields (IDs, operation names, error details) rather than silently discarding errors.
-
-## Reliability and safety design notes
-
-- **Stdio concurrency**: requests to local stdio-backed MCP servers are serialized per-server in `loomd` to avoid transport corruption (stdio is a single shared byte stream).
-- **Pagination + bounded output**: list/search tools in API-backed MCPs expose `page`/`per_page` and return pagination metadata; large responses are capped to avoid client timeouts and OOMs.
-- **Secrets hygiene**: generated configs are validated for plaintext secrets (`loom validate configs`); registry values should use `${env:...}` / `${secret:...}` indirections.
-- **Best-effort error handling**: Internal cleanup operations (compaction, TTL sweeps, rollbacks) log failures as warnings but do not abort the parent operation. This prevents cascading failures while keeping errors visible.
-
-## Diagram sources
-
-Source `.mmd` files (including auto-generated internal/package dependency graphs) live under `docs/diagrams/`.
+Diagram source files live under `docs/diagrams/`.

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `mcp-devbox`: project-aware sandbox executor with Docker/K8s backends.
+- New devbox tools: `devbox_exec_async`, `devbox_exec_poll`, `devbox_metrics`, `devbox_summary`, `devbox_read_file`, `devbox_write_file`.
+- HUD sandbox API/panel integration backed by `devbox_summary` for live sandbox visibility.
+- Atomic local upgrade workflow via `make dev-upgrade`, `scripts/dev/upgrade_local.sh`, and `scripts/install_atomic.sh`.
+- `docs/DEV_BUILD_LIFECYCLE.md` for agent-safe local upgrade and rollback procedures.
+- CI guardrails for docs/command drift:
+  - docs drift check (`scripts/ci/check_docs_guardrails.sh`)
+  - CLI help smoke checks (`go run ./cmd/loom --help`, `go run ./cmd/loom proxy --help`)
+
+### Changed
+- Devbox now mounts workspace root and sets project-relative container workdirs for better monorepo support.
+- HUD web/TUI surfaces were refined (polish, interactions, and Ghostty palette alignment).
+
+### Fixed
+- `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.
+
 ## [0.9.7] - 2026-02-10
 
 ### Fixed
