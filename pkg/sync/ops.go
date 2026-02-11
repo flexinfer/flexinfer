@@ -13,19 +13,47 @@ import (
 	"github.com/crb2nu/loom/pkg/validator"
 )
 
-func discoverRegistryPath(repoRoot string) string {
-	// Prefer workspace-local registries first (repo overrides) before falling back
-	// to the user's default registry under ~/.config/loom.
-	candidates := []string{
-		filepath.Join(repoRoot, "mcp", "context", "registry.yaml"),
-		filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "registry.yaml"),
+func ancestorRoots(start string) []string {
+	var roots []string
+	current := filepath.Clean(start)
+	for {
+		roots = append(roots, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
 	}
-	for _, candidate := range candidates {
-		if Exists(candidate) {
-			return candidate
+	return roots
+}
+
+func discoverWorkspaceContextFile(repoRoot, filename string) string {
+	seen := map[string]struct{}{}
+	for _, root := range ancestorRoots(repoRoot) {
+		candidates := []string{
+			filepath.Join(root, "mcp", "context", filename),
+			filepath.Join(root, "platform", "gitops", "mcp", "context", filename),
+		}
+		for _, candidate := range candidates {
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			if Exists(candidate) {
+				return candidate
+			}
 		}
 	}
-	return registry.FindRegistryOrDefault(candidates[0])
+	return ""
+}
+
+func discoverRegistryPath(repoRoot string) string {
+	// Prefer workspace-local registries first (repo overrides + ancestor workspace
+	// roots) before falling back to user defaults.
+	if local := discoverWorkspaceContextFile(repoRoot, "registry.yaml"); local != "" {
+		return local
+	}
+	return registry.FindRegistryOrDefault(filepath.Join(repoRoot, "mcp", "context", "registry.yaml"))
 }
 
 // SyncToHome syncs configuration from repo to home directory.
@@ -366,14 +394,8 @@ func (m *Manager) SyncSkills(profileName string) error {
 
 // discoverSkillsRegistryPath locates the skills-registry.yaml file.
 func discoverSkillsRegistryPath(repoRoot string) string {
-	candidates := []string{
-		filepath.Join(repoRoot, "mcp", "context", "skills-registry.yaml"),
-		filepath.Join(repoRoot, "platform", "gitops", "mcp", "context", "skills-registry.yaml"),
-	}
-	for _, candidate := range candidates {
-		if Exists(candidate) {
-			return candidate
-		}
+	if local := discoverWorkspaceContextFile(repoRoot, "skills-registry.yaml"); local != "" {
+		return local
 	}
 	// Try the skills package finder as fallback
 	if path, found := skills.FindRegistry(); found {

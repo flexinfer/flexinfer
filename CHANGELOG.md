@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.
 - Hook-only clients (for example Codex `notify`) can now bootstrap agent session/presence via `loom agent heartbeat --ensure-session`, preventing repeated heartbeat failures when no explicit session-start hook exists.
+- `loom sync <profile|all> --regen` now prefers workspace-local registry discovery across ancestor directories (including `platform/gitops/mcp/context/registry.yaml`), avoiding stale regeneration from `~/.config/loom/registry.yaml` when run from `services/*` repos.
 
 ## [0.9.7] - 2026-02-10
 

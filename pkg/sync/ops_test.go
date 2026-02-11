@@ -262,6 +262,48 @@ func TestDiscoverRegistryPath_FindsPlatformGitopsRegistry(t *testing.T) {
 	}
 }
 
+func TestDiscoverRegistryPath_FindsAncestorWorkspacePlatformRegistry(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	repoRoot := filepath.Join(workspaceRoot, "services", "loom-core")
+	if err := os.MkdirAll(repoRoot, 0755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+
+	platform := filepath.Join(workspaceRoot, "platform", "gitops", "mcp", "context", "registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(platform), 0755); err != nil {
+		t.Fatalf("mkdir platform dir: %v", err)
+	}
+	if err := os.WriteFile(platform, []byte("platform: true\n"), 0644); err != nil {
+		t.Fatalf("write platform: %v", err)
+	}
+
+	got := discoverRegistryPath(repoRoot)
+	if got != platform {
+		t.Fatalf("discoverRegistryPath()=%q, want %q", got, platform)
+	}
+}
+
+func TestDiscoverSkillsRegistryPath_FindsAncestorWorkspacePlatformRegistry(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	repoRoot := filepath.Join(workspaceRoot, "services", "loom-core")
+	if err := os.MkdirAll(repoRoot, 0755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+
+	skillsRegistry := filepath.Join(workspaceRoot, "platform", "gitops", "mcp", "context", "skills-registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(skillsRegistry), 0755); err != nil {
+		t.Fatalf("mkdir skills dir: %v", err)
+	}
+	if err := os.WriteFile(skillsRegistry, []byte("version: 1\nskills: []\n"), 0644); err != nil {
+		t.Fatalf("write skills registry: %v", err)
+	}
+
+	got := discoverSkillsRegistryPath(repoRoot)
+	if got != skillsRegistry {
+		t.Fatalf("discoverSkillsRegistryPath()=%q, want %q", got, skillsRegistry)
+	}
+}
+
 func TestValidate_McpJson(t *testing.T) {
 	homeDir := t.TempDir()
 	profileDir := filepath.Join(homeDir, "test-profile")

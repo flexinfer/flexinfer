@@ -64,6 +64,7 @@ This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs 
 5. Regenerate and sync configs:
    - `./bin/loom generate configs --target all --loom-mode`
    - `./bin/loom sync all --regen --loom-mode`
+   - `sync --regen` now prefers workspace-local registries discovered from repo ancestors before home-level defaults.
 
 ## Devbox Development Notes
 

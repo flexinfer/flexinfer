@@ -77,6 +77,8 @@ Sync into client-specific destinations:
 ./bin/loom sync all --regen --loom-mode
 ```
 
+`sync --regen` resolves registries from the nearest workspace tree first (including ancestor `platform/gitops/mcp/context/registry.yaml`), then falls back to home defaults.
+
 Common targets: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemini`, `antigravity`.
 
 ## Daemon Operations
