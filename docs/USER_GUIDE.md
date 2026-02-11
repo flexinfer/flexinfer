@@ -163,9 +163,18 @@ Validate local setup:
 
 ## Agent Hooks and Lifecycle
 
-`loom agent ...` commands are hook-friendly wrappers that call the HUD API (default port `3333`).
+`loom agent ...` commands are hook-friendly wrappers that prefer HUD API calls (default port `3333`) and fall back to daemon socket tool calls when HUD is unavailable.
 
-If you rely on `loom agent` automation, ensure HUD is running and `LOOM_HUD_PORT` matches your HUD port.
+For hook-only clients that do not emit explicit session start events (for example Codex `notify`), use heartbeat bootstrap mode:
+
+```bash
+loom agent heartbeat --agent-id codex --status active --ensure-session --agent-type codex --quiet
+```
+
+Optional environment overrides:
+
+- `LOOM_HUD_PORT`: HUD API port
+- `LOOM_SOCKET`: daemon socket path (fallback path)
 
 ## Response Size and Pagination
 
@@ -186,4 +195,4 @@ Selected env controls:
 - Stale tool list: `loom reload`
 - Client cannot find servers: `loom sync all --regen --loom-mode`
 - GUI apps miss shell env vars: run `loom check` and move secrets into `loom secrets`
-- HUD API calls fail from hooks: verify `loom hud` is running on expected port
+- Hook calls fail with both HUD and daemon errors: verify either `loom hud` is reachable (`LOOM_HUD_PORT`) or daemon socket exists (`LOOM_SOCKET` / `~/.config/loom/loom.sock`)

@@ -1,8 +1,8 @@
 // cmd_agent.go implements `loom agent` subcommands for agent lifecycle management.
 //
-// These commands call the HUD REST API (not the daemon socket directly) to
-// manage sessions, presence, and tasks. They are designed to be called from
-// Claude Code hooks, shell scripts, and other automation.
+// These commands prefer the HUD REST API and fall back to daemon socket calls
+// when HUD is unavailable. They are designed to be called from Claude Code
+// hooks, shell scripts, and other automation.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/crb2nu/loom/internal/hud"
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // defaultHUDPort is the default port for the Agent HUD server.
@@ -192,18 +193,205 @@ func resolvePort(cmd *cobra.Command) string {
 	return defaultHUDPort
 }
 
+// resolveSocketPath returns the daemon socket path from inherited --socket,
+// LOOM_SOCKET, or the default ~/.config/loom/loom.sock.
+func resolveSocketPath(cmd *cobra.Command) string {
+	if cmd != nil {
+		if socketPath, err := cmd.Flags().GetString("socket"); err == nil && strings.TrimSpace(socketPath) != "" {
+			return socketPath
+		}
+		if socketPath, err := cmd.InheritedFlags().GetString("socket"); err == nil && strings.TrimSpace(socketPath) != "" {
+			return socketPath
+		}
+	}
+	if socketPath := strings.TrimSpace(os.Getenv("LOOM_SOCKET")); socketPath != "" {
+		return socketPath
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "loom", "loom.sock")
+}
+
+func withAgentBridge(cmd *cobra.Command, fn func(*bridge.AgentBridge) (json.RawMessage, error)) (json.RawMessage, error) {
+	socketPath := resolveSocketPath(cmd)
+	client := bridge.NewDaemonClient(socketPath, nil)
+	if err := client.Connect(); err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	return fn(bridge.NewAgentBridge(client))
+}
+
+func withAgentFallback(op string, hudCall, daemonCall func() (json.RawMessage, error)) (json.RawMessage, error) {
+	result, err := hudCall()
+	if err == nil {
+		return result, nil
+	}
+
+	fallbackResult, fallbackErr := daemonCall()
+	if fallbackErr == nil {
+		return fallbackResult, nil
+	}
+
+	return nil, fmt.Errorf("%s failed via HUD (%v) and daemon fallback (%w)", op, err, fallbackErr)
+}
+
+func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionStartParams) (json.RawMessage, error) {
+	body := map[string]any{
+		"namespace":   p.Namespace,
+		"agent_id":    p.AgentID,
+		"agent_type":  p.AgentType,
+		"description": p.Description,
+		"auto_recall": p.AutoRecall,
+	}
+
+	return withAgentFallback(
+		"agent session-start",
+		func() (json.RawMessage, error) {
+			// Skip slow HUD POST when HUD is clearly not reachable.
+			if _, err := hudGetFast(port, "/api/ping", 1*time.Second); err != nil {
+				return nil, err
+			}
+			return hudPost(port, "/api/agent/session-start", body)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				result, err := agentBridge.StartSession(p)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(result)
+			})
+		},
+	)
+}
+
+func endSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionEndParams) (json.RawMessage, error) {
+	body := map[string]any{
+		"agent_id":  p.AgentID,
+		"summarize": p.Summarize,
+	}
+	if p.SessionID != "" {
+		body["session_id"] = p.SessionID
+	}
+
+	return withAgentFallback(
+		"agent session-end",
+		func() (json.RawMessage, error) {
+			return hudPost(port, "/api/agent/session-end", body)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				_, err := agentBridge.EndSession(p)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]bool{"ok": true})
+			})
+		},
+	)
+}
+
+func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status string) error {
+	body := map[string]any{
+		"agent_id": agentID,
+	}
+	if status != "" {
+		body["status"] = status
+	}
+
+	_, err := withAgentFallback(
+		"agent heartbeat",
+		func() (json.RawMessage, error) {
+			return hudPostWithRetry(port, "/api/agent/heartbeat", body,
+				3*time.Second,
+				[]time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond},
+			)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				if err := agentBridge.PresenceHeartbeat(agentID, status); err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]bool{"ok": true})
+			})
+		},
+	)
+	return err
+}
+
+func updateTaskWithFallback(cmd *cobra.Command, port string, p bridge.UpdateTaskParams) (json.RawMessage, error) {
+	body := map[string]any{
+		"task_id": p.ID,
+		"status":  p.Status,
+	}
+	if p.Resolution != "" {
+		body["resolution"] = p.Resolution
+	}
+
+	return withAgentFallback(
+		"agent task-update",
+		func() (json.RawMessage, error) {
+			return hudPost(port, "/api/agent/task-update", body)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				if err := agentBridge.UpdateTask(p); err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]string{"status": "updated"})
+			})
+		},
+	)
+}
+
+func activeSessionWithFallback(cmd *cobra.Command, port, agentID string) (json.RawMessage, error) {
+	return withAgentFallback(
+		"agent session",
+		func() (json.RawMessage, error) {
+			return hudGet(port, "/api/agent/session?agent_id="+agentID)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				session, err := agentBridge.GetActiveSession(agentID)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(map[string]any{"session": session})
+			})
+		},
+	)
+}
+
+func workflowDefineWithFallback(cmd *cobra.Command, port string, body map[string]any) (json.RawMessage, error) {
+	return withAgentFallback(
+		"agent workflow-define",
+		func() (json.RawMessage, error) {
+			return hudPost(port, "/api/agent/workflow-define", body)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				result, err := agentBridge.WorkflowDefine(body)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(result)
+			})
+		},
+	)
+}
+
 // newAgentCmd creates the `loom agent` command group and all subcommands.
 func newAgentCmd() *cobra.Command {
 	agentCmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Agent lifecycle management (sessions, heartbeats, tasks)",
-		Long: `Manage agent lifecycle through the HUD API.
+		Long: `Manage agent lifecycle via HUD API with daemon fallback.
 
 These commands are designed to be called from Claude Code hooks, shell scripts,
 and other automation to ensure consistent session tracking and presence management.
 
-The HUD server must be running (default port 3333). Set LOOM_HUD_PORT or use
---port to override.`,
+Set LOOM_HUD_PORT or use --port to target a non-default HUD instance. If HUD is
+not reachable, commands fall back to daemon socket tool calls.`,
 	}
 
 	// Persistent flag for all subcommands.
@@ -244,24 +432,13 @@ Designed for use in Claude Code SessionStart hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			// Preflight ping: fail fast if HUD is not running (1s timeout).
-			if _, err := hudGetFast(port, "/api/ping", 1*time.Second); err != nil {
-				if quiet {
-					fmt.Fprintf(os.Stderr, "loom: session-start: HUD not reachable: %v\n", err)
-					return nil
-				}
-				return fmt.Errorf("HUD not reachable at port %s: %w", port, err)
-			}
-
-			body := map[string]any{
-				"namespace":   namespace,
-				"agent_id":    agentID,
-				"agent_type":  agentType,
-				"description": description,
-				"auto_recall": autoRecall,
-			}
-
-			result, err := hudPost(port, "/api/agent/session-start", body)
+			result, err := startSessionWithFallback(cmd, port, bridge.SessionStartParams{
+				Namespace:   namespace,
+				AgentID:     agentID,
+				AgentType:   agentType,
+				Description: description,
+				AutoRecall:  autoRecall,
+			})
 			if err != nil {
 				if quiet {
 					return nil // Silent failure for hooks.
@@ -306,15 +483,11 @@ Designed for use in Claude Code Stop hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			body := map[string]any{
-				"agent_id":  agentID,
-				"summarize": summarize,
-			}
-			if sessionID != "" {
-				body["session_id"] = sessionID
-			}
-
-			result, err := hudPost(port, "/api/agent/session-end", body)
+			result, err := endSessionWithFallback(cmd, port, bridge.SessionEndParams{
+				SessionID: sessionID,
+				AgentID:   agentID,
+				Summarize: summarize,
+			})
 			if err != nil {
 				if quiet {
 					return nil
@@ -340,9 +513,13 @@ Designed for use in Claude Code Stop hooks.`,
 // newAgentHeartbeatCmd creates the `loom agent heartbeat` command.
 func newAgentHeartbeatCmd() *cobra.Command {
 	var (
-		agentID string
-		status  string
-		quiet   bool
+		agentID       string
+		status        string
+		ensureSession bool
+		namespace     string
+		agentType     string
+		description   string
+		quiet         bool
 	)
 
 	cmd := &cobra.Command{
@@ -351,22 +528,36 @@ func newAgentHeartbeatCmd() *cobra.Command {
 		Long: `Update the agent's presence heartbeat timestamp and optional status.
 
 Designed for use in Claude Code PostToolUse hooks to keep presence alive
-during active tool use.`,
+during active tool use. Use --ensure-session for clients that only have
+heartbeat hooks (for example Codex notify).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			body := map[string]any{
-				"agent_id": agentID,
-			}
-			if status != "" {
-				body["status"] = status
-			}
+			err := heartbeatWithFallback(cmd, port, agentID, status)
+			if err != nil && ensureSession {
+				startNamespace := namespace
+				startAgentType := agentType
+				startDescription := description
+				if startAgentType == "" {
+					startAgentType = agentID
+				}
+				if startDescription == "" {
+					startDescription = "Heartbeat bootstrap session"
+				}
 
-			// Heartbeat uses a short 3s timeout with retry (50ms, 100ms, 200ms backoff).
-			_, err := hudPostWithRetry(port, "/api/agent/heartbeat", body,
-				3*time.Second,
-				[]time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond},
-			)
+				_, ensureErr := startSessionWithFallback(cmd, port, bridge.SessionStartParams{
+					Namespace:   startNamespace,
+					AgentID:     agentID,
+					AgentType:   startAgentType,
+					Description: startDescription,
+					AutoRecall:  false,
+				})
+				if ensureErr == nil {
+					err = heartbeatWithFallback(cmd, port, agentID, status)
+				} else {
+					err = fmt.Errorf("%v (ensure-session failed: %w)", err, ensureErr)
+				}
+			}
 			if err != nil {
 				if quiet {
 					// Log to stderr even in quiet mode (visible via 2> redirect).
@@ -385,6 +576,10 @@ during active tool use.`,
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
 	cmd.Flags().StringVar(&status, "status", "", "Agent status (active, idle)")
+	cmd.Flags().BoolVar(&ensureSession, "ensure-session", false, "Auto-start session if heartbeat fails due to missing presence/session")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace used with --ensure-session")
+	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type used with --ensure-session")
+	cmd.Flags().StringVar(&description, "description", "", "Session description used with --ensure-session")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd
@@ -406,15 +601,11 @@ func newAgentTaskUpdateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			body := map[string]any{
-				"task_id": taskID,
-				"status":  status,
-			}
-			if resolution != "" {
-				body["resolution"] = resolution
-			}
-
-			result, err := hudPost(port, "/api/agent/task-update", body)
+			result, err := updateTaskWithFallback(cmd, port, bridge.UpdateTaskParams{
+				ID:         taskID,
+				Status:     status,
+				Resolution: resolution,
+			})
 			if err != nil {
 				if quiet {
 					return nil
@@ -451,7 +642,7 @@ func newAgentSessionCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			result, err := hudGet(port, "/api/agent/session?agent_id="+agentID)
+			result, err := activeSessionWithFallback(cmd, port, agentID)
 			if err != nil {
 				if quiet {
 					return nil
@@ -495,7 +686,7 @@ func newAgentWorkflowSyncCmd() *cobra.Command {
 		Use:   "workflow-sync",
 		Short: "Register workflow definitions from YAML files",
 		Long: `Read workflow definition YAML files from a directory and register them
-with the agent-context workflow engine via the HUD API.
+with the agent-context workflow engine via HUD API with daemon fallback.
 
 This is idempotent: re-registering a definition updates it in-memory.
 Definitions are stored in-memory and must be re-synced after daemon restart.`,
@@ -530,7 +721,7 @@ Definitions are stored in-memory and must be re-synced after daemon restart.`,
 					continue
 				}
 
-				result, err := hudPost(port, "/api/agent/workflow-define", body)
+				result, err := workflowDefineWithFallback(cmd, port, body)
 				if err != nil {
 					if !quiet {
 						fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", filepath.Base(f), err)

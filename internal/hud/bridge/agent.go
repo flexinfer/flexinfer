@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	mcp "gitlab.flexinfer.ai/libs/mcp-go"
@@ -161,6 +162,7 @@ type mcpContent struct {
 // mcpCallToolResult is the MCP envelope returned by tools/call.
 type mcpCallToolResult struct {
 	Content []mcpContent `json:"content"`
+	IsError bool         `json:"isError"`
 }
 
 // callAgentTool invokes an agent_context tool and unmarshals the response
@@ -171,13 +173,29 @@ func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target
 	if err != nil {
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
-	if target == nil {
-		return nil
-	}
 
-	// Try to unwrap MCP content envelope first.
+	// Try to unwrap MCP content envelope first so tool-level errors are
+	// surfaced even when the caller does not expect a response payload.
 	var envelope mcpCallToolResult
-	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Content) > 0 {
+	if err := json.Unmarshal(raw, &envelope); err == nil {
+		if envelope.IsError {
+			errText := "tool returned error"
+			for _, c := range envelope.Content {
+				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
+					errText = strings.TrimSpace(c.Text)
+					break
+				}
+			}
+			return fmt.Errorf("agent tool %s: %s", toolName, errText)
+		}
+		if target == nil {
+			return nil
+		}
+
+		if len(envelope.Content) == 0 {
+			return fmt.Errorf("unmarshal %s result: empty content envelope", toolName)
+		}
+
 		// Extract the text payload from the first content item.
 		for _, c := range envelope.Content {
 			if c.Type == "text" && c.Text != "" {
@@ -194,6 +212,11 @@ func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target
 				return nil
 			}
 		}
+		return fmt.Errorf("unmarshal %s result: no text content in envelope", toolName)
+	}
+
+	if target == nil {
+		return nil
 	}
 
 	// Fallback: try direct unmarshal (in case the daemon returns unwrapped JSON).

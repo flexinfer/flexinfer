@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Devbox now mounts workspace root and sets project-relative container workdirs for better monorepo support.
 - HUD web/TUI surfaces were refined (polish, interactions, and Ghostty palette alignment).
+- `loom agent` lifecycle commands now prefer HUD API but automatically fall back to daemon socket `tools/call` when HUD is unavailable.
 
 ### Fixed
 - `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.
+- Hook-only clients (for example Codex `notify`) can now bootstrap agent session/presence via `loom agent heartbeat --ensure-session`, preventing repeated heartbeat failures when no explicit session-start hook exists.
 
 ## [0.9.7] - 2026-02-10
 

@@ -342,8 +342,8 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 	// Codex supports a notify hook that fires on agent-turn-complete.
 	// This is the only lifecycle hook Codex provides.
 	if target == "codex" {
-		sb.WriteString("# Agent lifecycle: heartbeat on turn completion\n")
-		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--quiet\"]\n\n")
+		sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
+		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
 	}
 
 	// Sort keys for deterministic output
@@ -508,7 +508,7 @@ func claudeHooksConfig() map[string]any {
 					"hooks": []map[string]any{
 						{
 							"type":    "command",
-							"command": "loom agent heartbeat --agent-id claude-code --status active --quiet 2>/dev/null || true",
+							"command": "loom agent heartbeat --agent-id claude-code --status active --ensure-session --agent-type claude-code --quiet 2>/dev/null || true",
 						},
 					},
 				},
@@ -566,7 +566,7 @@ func geminiHooksConfig() map[string]any {
 					"hooks": []map[string]any{
 						{
 							"type":    "command",
-							"command": "loom agent heartbeat --agent-id gemini-cli --status active --quiet 2>/dev/null || true",
+							"command": "loom agent heartbeat --agent-id gemini-cli --status active --ensure-session --agent-type gemini-cli --quiet 2>/dev/null || true",
 						},
 					},
 				},

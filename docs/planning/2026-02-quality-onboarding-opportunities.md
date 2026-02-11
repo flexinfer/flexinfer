@@ -9,6 +9,7 @@
 - `go test ./...`: passing
 - `golangci-lint run`: passing after one low-risk fix in `internal/devbox/detect/hash_test.go`
 - current total Go coverage (`go tool cover -func`): **21.2%**
+- hook reliability improvement (2026-02-11): `loom agent` now supports HUD->daemon fallback and `heartbeat --ensure-session` bootstrap for notify-only clients.
 
 ## Priority Opportunities
 

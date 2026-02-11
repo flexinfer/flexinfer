@@ -136,7 +136,7 @@ flowchart TB
 - sandbox summary visibility via `/api/sandbox` (backed by `devbox_summary`)
 - optional macOS native overlay and terminal UI mode
 
-`loom agent ...` commands call HUD REST endpoints, so HUD availability matters for hook/automation workflows.
+`loom agent ...` commands prefer HUD REST endpoints and fall back to daemon socket tool calls, so hook/automation flows continue when HUD is not running.
 
 ## Observability
 
