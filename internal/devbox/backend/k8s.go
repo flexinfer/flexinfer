@@ -138,8 +138,9 @@ func (k *K8sBackend) Start(ctx context.Context, opts StartOpts) (*StartResult, e
 		return nil, fmt.Errorf("create pod: %w", err)
 	}
 
-	// Wait for pod to be Running
+	// Wait for pod to be Running; cleanup dangling pod on failure
 	if err := k.waitForPodRunning(ctx, opts.Name, 120*time.Second); err != nil {
+		_ = k.Stop(ctx, opts.Name) // cleanup dangling pod
 		return nil, fmt.Errorf("pod not ready: %w", err)
 	}
 
@@ -165,7 +166,7 @@ func (k *K8sBackend) Exec(ctx context.Context, opts ExecOpts) (*ExecResult, erro
 		shellCmd = envPrefix.String() + shellCmd
 	}
 	if opts.WorkDir != "" {
-		shellCmd = fmt.Sprintf("cd %s && %s", opts.WorkDir, shellCmd)
+		shellCmd = fmt.Sprintf("cd %q && %s", opts.WorkDir, shellCmd)
 	}
 
 	req := k.clientset.CoreV1().RESTClient().Post().
@@ -251,6 +252,75 @@ func (k *K8sBackend) Status(ctx context.Context, id string) (*StatusResult, erro
 		Running: pod.Status.Phase == corev1.PodRunning,
 		Status:  status,
 	}, nil
+}
+
+func (k *K8sBackend) Pause(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+func (k *K8sBackend) Resume(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+func (k *K8sBackend) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
+	req := k.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(id).
+		Namespace(k.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: "devbox",
+			Command:   []string{"cat", path},
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("create executor: %w", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		return nil, fmt.Errorf("read file %q: %w (%s)", path, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func (k *K8sBackend) WriteFile(ctx context.Context, id, path string, content []byte, mode string) error {
+	if mode == "" {
+		mode = "0644"
+	}
+	shellCmd := fmt.Sprintf("cat > %q && chmod %s %q", path, mode, path)
+	req := k.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(id).
+		Namespace(k.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: "devbox",
+			Command:   []string{"sh", "-c", shellCmd},
+			Stdin:     true,
+			Stdout:    true,
+			Stderr:    true,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	if err != nil {
+		return fmt.Errorf("create executor: %w", err)
+	}
+
+	var stderr bytes.Buffer
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  bytes.NewReader(content),
+		Stderr: &stderr,
+	}); err != nil {
+		return fmt.Errorf("write file %q: %w (%s)", path, err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // buildPodSpec creates a Pod spec for a devbox sandbox.

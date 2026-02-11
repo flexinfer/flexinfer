@@ -15,7 +15,7 @@ import (
 	"github.com/crb2nu/loom/pkg/mcplog"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	if err := lifecycle.RunWithSignals(context.Background(), run); err != nil {
@@ -58,8 +58,21 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("init manager: %w", err)
 	}
 
+	// Initialize metrics
+	mgr.metrics = newMetrics()
+
+	// Initialize event emitter (optional — enabled via DEVBOX_HUD_ADDR)
+	mgr.events = newEventEmitter(env.String("DEVBOX_HUD_ADDR", ""), logger)
+
+	// Initialize async exec registry
+	mgr.asyncExecs = newAsyncRegistry()
+	go mgr.asyncExecs.cleanupLoop(ctx)
+
 	server := mcp.NewServer("mcp-devbox", version)
-	server.SetInstructions("Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. Tools: devbox_exec, devbox_build, devbox_status, devbox_stop, devbox_detect")
+	server.SetInstructions("Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. " +
+		"Tools: devbox_exec, devbox_build, devbox_status, devbox_stop, devbox_detect, " +
+		"devbox_read_file, devbox_write_file, devbox_exec_async, devbox_exec_poll, " +
+		"devbox_metrics, devbox_summary")
 
 	registerTools(server, mgr)
 

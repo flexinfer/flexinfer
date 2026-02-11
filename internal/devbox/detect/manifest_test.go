@@ -191,7 +191,7 @@ func TestLoadManifest_MinimalFields(t *testing.T) {
 	if len(m.Setup) != 0 {
 		t.Errorf("Setup = %v, want empty", m.Setup)
 	}
-	if m.Env != nil && len(m.Env) != 0 {
+	if len(m.Env) != 0 {
 		t.Errorf("Env = %v, want nil or empty", m.Env)
 	}
 	if len(m.Mounts) != 0 {

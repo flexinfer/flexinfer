@@ -192,3 +192,47 @@ func (d *DockerBackend) Status(ctx context.Context, id string) (*StatusResult, e
 		Status:  status,
 	}, nil
 }
+
+func (d *DockerBackend) Pause(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, d.dockerPath, "pause", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker pause failed: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (d *DockerBackend) Resume(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, d.dockerPath, "unpause", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker unpause failed: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (d *DockerBackend) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, d.dockerPath, "exec", id, "cat", path)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("read file %q: %w (%s)", path, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func (d *DockerBackend) WriteFile(ctx context.Context, id, path string, content []byte, mode string) error {
+	if mode == "" {
+		mode = "0644"
+	}
+	// Use sh -c to write content via stdin and set permissions
+	shellCmd := fmt.Sprintf("cat > %q && chmod %s %q", path, mode, path)
+	cmd := exec.CommandContext(ctx, d.dockerPath, "exec", "-i", id, "sh", "-c", shellCmd)
+	cmd.Stdin = bytes.NewReader(content)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("write file %q: %w (%s)", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

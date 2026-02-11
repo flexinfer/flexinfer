@@ -3,6 +3,7 @@ package state
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,6 +36,7 @@ type Entry struct {
 }
 
 // NewStore creates a store at the given path, loading existing data if present.
+// If state.json is corrupt, it renames the file to .bak and starts fresh.
 func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -47,7 +49,14 @@ func NewStore(dir string) (*Store, error) {
 
 	data, err := os.ReadFile(s.path)
 	if err == nil {
-		_ = json.Unmarshal(data, &s.data)
+		if jsonErr := json.Unmarshal(data, &s.data); jsonErr != nil {
+			// Corrupt file — rename to .bak and start fresh
+			bakPath := s.path + ".bak"
+			_ = os.Rename(s.path, bakPath)
+			slog.Warn("state file corrupt, renamed to .bak and starting fresh",
+				"path", s.path, "error", jsonErr)
+			s.data = StoreData{Sandboxes: make(map[string]*Entry)}
+		}
 	}
 	if s.data.Sandboxes == nil {
 		s.data.Sandboxes = make(map[string]*Entry)
@@ -115,11 +124,15 @@ func (s *Store) IdleEntries(idleTimeout time.Duration) map[string]*Entry {
 	return result
 }
 
-// save persists state to disk. Must be called with mu held.
+// save persists state to disk atomically via temp+rename. Must be called with mu held.
 func (s *Store) save() error {
 	data, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	tmpPath := s.path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, s.path)
 }

@@ -1,7 +1,13 @@
 // Package backend provides container runtime backends for devbox sandboxes.
 package backend
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotSupported is returned when a backend doesn't support an operation.
+var ErrNotSupported = errors.New("operation not supported by this backend")
 
 // Backend defines the interface for container runtimes (Docker, K8s).
 type Backend interface {
@@ -22,6 +28,20 @@ type Backend interface {
 
 	// Health checks if the backend runtime is available.
 	Health(ctx context.Context) error
+
+	// Pause freezes a running container for instant resume later.
+	// Returns ErrNotSupported if the backend doesn't support pausing.
+	Pause(ctx context.Context, id string) error
+
+	// Resume unfreezes a paused container (~5ms for Docker).
+	// Returns ErrNotSupported if the backend doesn't support resuming.
+	Resume(ctx context.Context, id string) error
+
+	// ReadFile reads a file from inside a running container.
+	ReadFile(ctx context.Context, id, path string) ([]byte, error)
+
+	// WriteFile writes content to a file inside a running container.
+	WriteFile(ctx context.Context, id, path string, content []byte, mode string) error
 }
 
 // BuildOpts configures an image build.

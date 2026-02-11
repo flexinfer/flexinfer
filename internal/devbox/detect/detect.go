@@ -7,6 +7,7 @@ import (
 )
 
 // Fingerprint analyzes a project directory and returns its environment fingerprint.
+// If a .devcontainer/devcontainer.json is present, it takes priority over auto-detection.
 func Fingerprint(projectDir string) (*EnvFingerprint, error) {
 	fp := &EnvFingerprint{
 		ProjectDir:  projectDir,
@@ -15,6 +16,16 @@ func Fingerprint(projectDir string) (*EnvFingerprint, error) {
 		EnvVars:     make(map[string]string),
 	}
 
+	// Check for devcontainer.json first — takes priority for image/build config
+	dc, err := loadDevContainer(projectDir)
+	if err == nil && dc != nil {
+		fp.DevContainer = dc
+		for k, v := range dc.ContainerEnv {
+			fp.EnvVars[k] = v
+		}
+	}
+
+	// Always detect languages for metadata even with devcontainer
 	detectGo(projectDir, fp)
 	detectPython(projectDir, fp)
 	detectNode(projectDir, fp)

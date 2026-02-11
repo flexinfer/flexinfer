@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crb2nu/loom/internal/devbox/backend"
@@ -37,6 +39,77 @@ type manager struct {
 	backend backend.Backend
 	store   *state.Store
 	logger  *slog.Logger
+	metrics *metrics
+	events  *eventEmitter
+
+	// Async exec tracking
+	asyncExecs *asyncRegistry
+
+	// Per-project lifecycle lock prevents concurrent ensureRunning races (TOCTOU).
+	projectMu sync.Map // map[string]*sync.Mutex
+
+	// Active exec counter per project — reaper skips projects with active execs.
+	activeExecs sync.Map // map[string]*atomic.Int32
+}
+
+// projectLock returns (or creates) a per-project mutex for lifecycle serialization.
+func (m *manager) projectLock(name string) *sync.Mutex {
+	v, _ := m.projectMu.LoadOrStore(name, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// incActiveExecs increments the active exec counter for a project.
+func (m *manager) incActiveExecs(name string) {
+	v, _ := m.activeExecs.LoadOrStore(name, &atomic.Int32{})
+	v.(*atomic.Int32).Add(1)
+}
+
+// decActiveExecs decrements the active exec counter for a project.
+func (m *manager) decActiveExecs(name string) {
+	if v, ok := m.activeExecs.Load(name); ok {
+		v.(*atomic.Int32).Add(-1)
+	}
+}
+
+// hasActiveExecs returns true if a project has exec calls in flight.
+func (m *manager) hasActiveExecs(name string) bool {
+	if v, ok := m.activeExecs.Load(name); ok {
+		return v.(*atomic.Int32).Load() > 0
+	}
+	return false
+}
+
+// sanitizeContainerName ensures the name contains only Docker-safe characters.
+func sanitizeContainerName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
+// validateMountPath ensures a host path is under an allowed directory.
+func (m *manager) validateMountPath(hostPath string) error {
+	abs, err := filepath.Abs(hostPath)
+	if err != nil {
+		return fmt.Errorf("invalid mount path %q: %w", hostPath, err)
+	}
+	home, _ := os.UserHomeDir()
+	allowed := []string{
+		m.cfg.workspaceRoot,
+		filepath.Join(home, ".cache"),
+		filepath.Join(home, ".local"),
+	}
+	for _, prefix := range allowed {
+		if strings.HasPrefix(abs, prefix+string(filepath.Separator)) || abs == prefix {
+			return nil
+		}
+	}
+	return fmt.Errorf("mount path %q not under allowed directories (%s)", hostPath, strings.Join(allowed, ", "))
 }
 
 func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*manager, error) {
@@ -104,12 +177,12 @@ func (m *manager) resolveProject(project string) (string, string, error) {
 
 // imageTag returns the Docker image tag for a project fingerprint.
 func (m *manager) imageTag(projectName, hash string) string {
-	return fmt.Sprintf("%s/%s:%s", m.cfg.imagePrefix, projectName, hash[:7])
+	return fmt.Sprintf("%s/%s:%s", m.cfg.imagePrefix, sanitizeContainerName(projectName), hash[:7])
 }
 
 // containerName returns the Docker container name for a project.
 func (m *manager) containerName(projectName string) string {
-	return "devbox-" + projectName
+	return "devbox-" + sanitizeContainerName(projectName)
 }
 
 // ensureRunning ensures a sandbox is built and running for a project.
@@ -131,6 +204,19 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName str
 		if err == nil && status.Running {
 			return containerID, nil
 		}
+	}
+
+	// Warm resume: paused container with matching hash — unpause instead of rebuild
+	if entry != nil && entry.FingerprintHash == fp.Hash && entry.Status == "paused" {
+		if err := m.backend.Resume(ctx, containerID); err == nil {
+			entry.Status = "running"
+			entry.LastUsed = time.Now()
+			_ = m.store.Set(projectName, entry)
+			m.logger.Info("resumed paused sandbox", "project", projectName)
+			return containerID, nil
+		}
+		// Resume failed — fall through to rebuild
+		m.logger.Warn("resume failed, rebuilding", "project", projectName)
 	}
 
 	// Stale or missing: rebuild if hash changed
@@ -174,6 +260,9 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName str
 			network = *fp.Overrides.Network
 		}
 		for _, extra := range fp.Overrides.Mounts {
+			if err := m.validateMountPath(extra.Host); err != nil {
+				return "", fmt.Errorf("invalid override mount: %w", err)
+			}
 			mounts = append(mounts, backend.Mount{
 				Host:      extra.Host,
 				Container: extra.Container,
@@ -277,20 +366,37 @@ func (m *manager) reapLoop(ctx context.Context) {
 	}
 }
 
-// reapIdle stops containers that have been idle beyond the timeout.
+// reapIdle pauses containers that have been idle beyond the timeout.
+// Paused containers can be resumed instantly (~5ms) vs cold start (~2-5s).
+// Falls back to stop if pause is not supported by the backend.
 func (m *manager) reapIdle(ctx context.Context) {
 	idle := m.store.IdleEntries(m.cfg.idleTimeout)
 	for name, entry := range idle {
-		m.logger.Info("reaping idle sandbox", "project", name,
-			"idle_since", entry.LastUsed.Format(time.RFC3339))
-
-		containerName := m.containerName(name)
-		if err := m.backend.Stop(ctx, containerName); err != nil {
-			m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
+		// Skip projects with active exec calls
+		if m.hasActiveExecs(name) {
 			continue
 		}
 
-		entry.Status = "stopped"
+		m.logger.Info("pausing idle sandbox", "project", name,
+			"idle_since", entry.LastUsed.Format(time.RFC3339))
+
+		containerName := m.containerName(name)
+
+		// Try pause first (instant resume); fall back to stop
+		if err := m.backend.Pause(ctx, containerName); err != nil {
+			// Pause not supported — fall back to stop
+			if err := m.backend.Stop(ctx, containerName); err != nil {
+				m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
+				continue
+			}
+			entry.Status = "stopped"
+		} else {
+			entry.Status = "paused"
+		}
+
+		if m.metrics != nil {
+			m.metrics.idleReaps.WithLabelValues(name).Inc()
+		}
 		if err := m.store.Set(name, entry); err != nil {
 			m.logger.Warn("failed to update state", "project", name, "error", err)
 		}

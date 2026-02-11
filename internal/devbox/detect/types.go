@@ -3,14 +3,15 @@ package detect
 
 // EnvFingerprint describes the detected environment for a project directory.
 type EnvFingerprint struct {
-	ProjectDir   string            `json:"project_dir"`
-	ProjectName  string            `json:"project_name"`
-	Languages    []LanguageSpec    `json:"languages"`
-	SystemDeps   []string          `json:"system_deps,omitempty"`
-	BuildTargets []string          `json:"build_targets,omitempty"`
-	EnvVars      map[string]string `json:"env_vars,omitempty"`
-	Overrides    *ManifestOverride `json:"overrides,omitempty"`
-	Hash         string            `json:"hash"`
+	ProjectDir   string              `json:"project_dir"`
+	ProjectName  string              `json:"project_name"`
+	Languages    []LanguageSpec      `json:"languages"`
+	SystemDeps   []string            `json:"system_deps,omitempty"`
+	BuildTargets []string            `json:"build_targets,omitempty"`
+	EnvVars      map[string]string   `json:"env_vars,omitempty"`
+	Overrides    *ManifestOverride   `json:"overrides,omitempty"`
+	DevContainer *DevContainerConfig `json:"devcontainer,omitempty"`
+	Hash         string              `json:"hash"`
 }
 
 // LanguageSpec describes a detected language runtime and its dependency management.

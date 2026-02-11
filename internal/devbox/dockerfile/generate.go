@@ -3,12 +3,19 @@ package dockerfile
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/crb2nu/loom/internal/devbox/detect"
 )
 
 // Generate produces a Dockerfile from an environment fingerprint.
 func Generate(fp *detect.EnvFingerprint) ([]byte, error) {
+	// DevContainer takes priority: use its Dockerfile or image directly
+	if fp.DevContainer != nil {
+		return generateDevContainer(fp)
+	}
+
 	if len(fp.Languages) == 0 {
 		return nil, fmt.Errorf("no languages detected in %s", fp.ProjectDir)
 	}
@@ -97,6 +104,64 @@ func generateCustomBase(fp *detect.EnvFingerprint) ([]byte, error) {
 	if err := multiTemplate.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("custom base template: %w", err)
 	}
+	return buf.Bytes(), nil
+}
+
+// generateDevContainer creates a Dockerfile from devcontainer.json config.
+// If the devcontainer specifies a Dockerfile, it reads and returns it directly.
+// If it specifies an image, it generates a minimal Dockerfile using that image.
+func generateDevContainer(fp *detect.EnvFingerprint) ([]byte, error) {
+	dc := fp.DevContainer
+
+	// If devcontainer references an existing Dockerfile, use it
+	if dfPath := dc.ResolveDockerfile(); dfPath != "" {
+		fullPath := filepath.Join(fp.ProjectDir, ".devcontainer", dfPath)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			// Try relative to project root
+			fullPath = filepath.Join(fp.ProjectDir, dfPath)
+			content, err = os.ReadFile(fullPath)
+			if err != nil {
+				return nil, fmt.Errorf("read devcontainer dockerfile %q: %w", dfPath, err)
+			}
+		}
+
+		// Append postCreateCommand as a RUN layer if present
+		postCreate := dc.ResolvePostCreateCommand()
+		if postCreate != "" {
+			content = append(content, []byte(fmt.Sprintf("\nRUN %s\n", postCreate))...)
+		}
+		return content, nil
+	}
+
+	// Generate from image
+	image := dc.Image
+	if image == "" {
+		// No image or Dockerfile — fall through to auto-detection
+		if len(fp.Languages) == 0 {
+			return nil, fmt.Errorf("devcontainer.json has no image/dockerfile and no languages detected")
+		}
+		return nil, nil // will fall through in caller
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("FROM %s\n\n", image))
+	buf.WriteString("# Generated from .devcontainer/devcontainer.json\n")
+	buf.WriteString("RUN apt-get update && apt-get install -y --no-install-recommends git make curl ca-certificates && rm -rf /var/lib/apt/lists/*\n\n")
+
+	// Environment variables
+	for k, v := range dc.ContainerEnv {
+		buf.WriteString(fmt.Sprintf("ENV %s=%q\n", k, v))
+	}
+
+	// PostCreateCommand
+	postCreate := dc.ResolvePostCreateCommand()
+	if postCreate != "" {
+		buf.WriteString(fmt.Sprintf("\nRUN %s\n", postCreate))
+	}
+
+	buf.WriteString("\nWORKDIR /workspace\n")
+
 	return buf.Bytes(), nil
 }
 
