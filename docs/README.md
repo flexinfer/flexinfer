@@ -13,6 +13,7 @@ This index helps contributors and operators quickly find the right guide.
 - Build + safe local upgrade loop: `docs/DEV_BUILD_LIFECYCLE.md`
 - API compatibility guarantees: `docs/API_STABILITY.md`
 - MCP server error handling standards: `docs/ERROR_HANDLING.md`
+- flexinfer.ai docs publishing integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
 
 ## Planning and Roadmap
 

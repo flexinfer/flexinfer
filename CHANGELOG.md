@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HUD sandbox API/panel integration backed by `devbox_summary` for live sandbox visibility.
 - Atomic local upgrade workflow via `make dev-upgrade`, `scripts/dev/upgrade_local.sh`, and `scripts/install_atomic.sh`.
 - `docs/DEV_BUILD_LIFECYCLE.md` for agent-safe local upgrade and rollback procedures.
+- `docs/FLEXINFER_SITE_INTEGRATION.md` runbook describing how Loom Core docs are synced/published through `services/flexinfer-site` to `flexinfer.ai`.
 - CI guardrails for docs/command drift:
   - docs drift check (`scripts/ci/check_docs_guardrails.sh`)
+  - flexinfer-site integration check (`scripts/ci/check_flexinfer_site_integration.sh`)
   - CLI help smoke checks (`go run ./cmd/loom --help`, `go run ./cmd/loom proxy --help`)
 
 ### Changed

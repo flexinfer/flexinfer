@@ -23,6 +23,12 @@ repos:
   # Go hooks (local for reliability)
   - repo: local
     hooks:
+      - id: check-flexinfer-site-integration
+        name: Check flexinfer-site docs integration
+        entry: bash scripts/ci/check_flexinfer_site_integration.sh
+        language: system
+        pass_filenames: false
+
       - id: go-fmt
         name: go fmt
         entry: bash -c 'gofmt -l -w $(find . -name "*.go" -not -path "./vendor/*")'

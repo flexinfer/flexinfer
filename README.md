@@ -16,6 +16,7 @@ Go backend for the Loom ecosystem:
 - Architecture: `docs/ARCHITECTURE.md`
 - Build lifecycle: `docs/DEV_BUILD_LIFECYCLE.md`
 - API stability policy: `docs/API_STABILITY.md`
+- flexinfer.ai site integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
 - Roadmap: `ROADMAP.md`
 
 ## Recent changes (post `v0.9.7`)

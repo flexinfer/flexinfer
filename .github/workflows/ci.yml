@@ -42,6 +42,7 @@ jobs:
       - name: Guardrails (docs drift + CLI help smoke)
         run: |
           bash scripts/ci/check_docs_guardrails.sh
+          bash scripts/ci/check_flexinfer_site_integration.sh
           go run ./cmd/loom --help >/dev/null
           go run ./cmd/loom proxy --help >/dev/null
       - name: Test

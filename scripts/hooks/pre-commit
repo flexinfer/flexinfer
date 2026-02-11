@@ -13,6 +13,15 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Running pre-commit checks...${NC}"
 
+# Always run docs-site integration guardrail (even for non-Go commits).
+echo -n "Checking flexinfer-site docs integration... "
+if ! bash scripts/ci/check_flexinfer_site_integration.sh >/dev/null 2>&1; then
+    echo -e "${RED}FAILED${NC}"
+    bash scripts/ci/check_flexinfer_site_integration.sh
+    exit 1
+fi
+echo -e "${GREEN}OK${NC}"
+
 # Get list of staged Go files
 STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 

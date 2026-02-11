@@ -419,6 +419,7 @@ ci-lint: fmt-check vet ci-guardrails ci-lint-soft
 ci-guardrails:
 	@echo "Running docs/CLI guardrails..."
 	@bash scripts/ci/check_docs_guardrails.sh
+	@bash scripts/ci/check_flexinfer_site_integration.sh
 	@go run ./cmd/loom --help >/dev/null
 	@go run ./cmd/loom proxy --help >/dev/null
 	@echo "✓ Guardrails passed"

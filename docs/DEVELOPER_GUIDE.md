@@ -137,7 +137,8 @@ Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitl
 
 - `go test ./...`
 - `golangci-lint run`
-- `make ci-guardrails` (docs drift + CLI help smoke)
+- `make ci-guardrails` (docs drift + flexinfer-site integration + CLI help smoke)
 - `make build`
 - `./bin/loom sync all --regen --loom-mode` (if tool schemas changed)
 - Update docs/CHANGELOG for user-visible behavior changes
+- If docs changed, sync to site repo: see `docs/FLEXINFER_SITE_INTEGRATION.md`
