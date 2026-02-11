@@ -3,7 +3,7 @@
 // Effects:
 //   1. Subtle scanline overlay (2px spacing, ~4% opacity)
 //   2. Soft vignette darkening at screen edges
-//   3. Chromatic tint toward the #00171A base hue
+//   3. Chromatic tint toward the #001315 base hue
 //   4. CRT phosphor glow (bloom) on bright text
 //
 // Install: loom hud --install-shader
@@ -28,10 +28,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     color.rgb *= mix(0.7, 1.0, vignette);
 
     // --- 3. Chromatic tint ---
-    // Subtle shift toward the deep teal base (#00171A ~ rgb(0, 0.09, 0.10)).
+    // Subtle shift toward the deep teal base (#001315 ~ rgb(0, 0.075, 0.082)).
     // Only applies to darker areas to preserve bright text readability.
     float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-    vec3 tealTint = vec3(0.0, 0.09, 0.10);
+    vec3 tealTint = vec3(0.0, 0.075, 0.082);
     float tintStrength = 0.08 * (1.0 - luminance);
     color.rgb = mix(color.rgb, color.rgb + tealTint, tintStrength);
 

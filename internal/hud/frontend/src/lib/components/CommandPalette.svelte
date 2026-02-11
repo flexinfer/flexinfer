@@ -14,6 +14,7 @@
     { id: 'memory', label: 'Memory Inspector', category: 'Panels', icon: '\u29BF' },
     { id: 'graph', label: 'Knowledge Graph', category: 'Panels', icon: '\u25C9' },
     { id: 'presence', label: 'Agent Presence', category: 'Panels', icon: '\u25C9' },
+    { id: 'sandbox', label: 'Sandbox Dashboard', category: 'Panels', icon: '\u2B22' },
     { id: 'reasoning', label: 'Reasoning Chains', category: 'Panels', icon: '\u2726' },
   ];
 

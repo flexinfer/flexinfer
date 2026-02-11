@@ -276,6 +276,93 @@ func TestHandler_Servers(t *testing.T) {
 	}
 }
 
+func TestHandler_Sandbox(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	req := httptest.NewRequest("GET", "/api/sandbox", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected application/json, got %s", ct)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// The mock daemon returns {} for unknown tools, so the handler should
+	// parse it and add available=true.
+	if _, ok := result["available"]; !ok {
+		t.Error("expected 'available' field in sandbox response")
+	}
+}
+
+func TestHandler_Sandbox_Cached(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	// First request populates the cache.
+	req1 := httptest.NewRequest("GET", "/api/sandbox", nil)
+	w1 := httptest.NewRecorder()
+	mux.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", w1.Code)
+	}
+
+	// Second request should hit the cache and still return 200.
+	req2 := httptest.NewRequest("GET", "/api/sandbox", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("cached request: expected 200, got %d", w2.Code)
+	}
+}
+
+func TestHandler_AgentContextAdd(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	body := `{"entries":[{"entry_type":"finding","title":"devbox.exec: myproject","content":"ran make test"}]}`
+	req := httptest.NewRequest("POST", "/api/agent/context/add", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if !result["ok"] {
+		t.Error("expected ok=true in response")
+	}
+}
+
+func TestHandler_AgentContextAdd_EmptyEntries(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	body := `{"entries":[]}`
+	req := httptest.NewRequest("POST", "/api/agent/context/add", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty entries, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- Mock daemon helpers (same pattern as bridge/daemon_test.go) ---
 
 func newMockDaemonForApp(t *testing.T) (string, *appMockHandlers) {

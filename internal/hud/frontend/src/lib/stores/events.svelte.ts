@@ -93,6 +93,7 @@ class EventStore {
       'server.health', 'config.reload', 'process.start', 'process.stop', 'workflow.step',
       // HUD-specific snapshot events (SSE-first data flow).
       'hud.fleet', 'hud.health', 'hud.memory', 'hud.workflows', 'hud.stream',
+      'hud.sandbox', 'hud.sandbox.event',
       // Granular agent lifecycle events (real-time deltas, <100ms latency).
       'agent.session.start', 'agent.session.end', 'agent.heartbeat', 'agent.task.update',
       // Granular memory mutation events.

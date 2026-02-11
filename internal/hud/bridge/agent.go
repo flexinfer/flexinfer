@@ -566,6 +566,18 @@ func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
 	return a.callAgentTool("agent_task_update", args, nil)
 }
 
+// ContextAdd adds context entries (findings, decisions, etc.) via agent_context_add.
+// The entries parameter should be a slice of maps with entry_type, title, content, etc.
+func (a *AgentBridge) ContextAdd(sessionID string, entries []map[string]any) error {
+	args := map[string]any{
+		"entries": entries,
+	}
+	if sessionID != "" {
+		args["session_id"] = sessionID
+	}
+	return a.callAgentTool("agent_context_add", args, nil)
+}
+
 // MemoryAdd adds a new memory item.
 func (a *AgentBridge) MemoryAdd(title, content, tier, importance, category string) error {
 	args := map[string]any{

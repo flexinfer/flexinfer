@@ -15,6 +15,7 @@
   import StreamPanel from './lib/components/StreamPanel.svelte';
   import PresencePanel from './lib/components/PresencePanel.svelte';
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
+  import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
   import OverviewPanel from './lib/components/OverviewPanel.svelte';
@@ -30,6 +31,7 @@
     { id: 'graph',     label: 'Graph',     key: '6', icon: '\u2B21' },
     { id: 'stream',    label: 'Stream',    key: '7', icon: '\u2261' },
     { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
+    { id: 'sandbox',   label: 'Sandbox',   key: '9', icon: '\u2B22' },
     { id: 'reasoning', label: 'Reasoning', key: '0', icon: '\u2726' },
   ];
 
@@ -103,7 +105,7 @@
         return;
       }
       const num = parseInt(e.key);
-      if (num >= 1 && num <= 8) {
+      if (num >= 1 && num <= 9) {
         router.navigate(panels[num - 1].id);
         return;
       }
@@ -237,6 +239,8 @@
           <StreamPanel />
         {:else if router.panel === 'presence'}
           <PresencePanel />
+        {:else if router.panel === 'sandbox'}
+          <SandboxPanel />
         {:else if router.panel === 'reasoning'}
           <ReasoningPanel />
         {/if}
@@ -280,7 +284,8 @@
         <div class="help-grid">
           <div class="help-section">
             <div class="help-section-title">Navigation</div>
-            <div class="help-row"><kbd>1</kbd>-<kbd>8</kbd> <span>Switch panels</span></div>
+            <div class="help-row"><kbd>1</kbd>-<kbd>9</kbd> <span>Switch panels</span></div>
+            <div class="help-row"><kbd>9</kbd> <span>Sandbox</span></div>
             <div class="help-row"><kbd>0</kbd> <span>Reasoning</span></div>
             <div class="help-row"><kbd>`</kbd> / <kbd>o</kbd> <span>Overview</span></div>
           </div>

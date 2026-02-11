@@ -430,6 +430,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/templates", a.withCORS(a.handleTemplateList))
 	mux.HandleFunc("GET /api/annotations", a.withCORS(a.handleAnnotationList))
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
+	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// API routes — agent lifecycle (CLI hooks call these).
@@ -438,6 +439,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/heartbeat", a.withCORS(a.handleAgentHeartbeat))
 	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
+	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
 	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
 
@@ -1269,6 +1271,38 @@ func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 		"hit_rate":   hitRate,
 		"enabled":    result.Enabled,
 	})
+}
+
+// handleSandbox returns devbox sandbox summary by calling the devbox_summary tool.
+// The result is cached for 5s to avoid hammering the daemon on rapid refreshes.
+// Returns {"available": false} if mcp-devbox is not running.
+func (a *App) handleSandbox(w http.ResponseWriter, _ *http.Request) {
+	if cached, ok := a.cache.Get("sandbox_summary"); ok {
+		a.writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	result, err := a.client.CallTool("devbox_summary", nil)
+	if err != nil {
+		// Devbox not available — graceful fallback.
+		a.logger.Debug("devbox_summary call failed, returning unavailable", "error", err)
+		fallback := map[string]any{"available": false}
+		a.cache.Set("sandbox_summary", fallback, 5*time.Second)
+		a.writeJSON(w, http.StatusOK, fallback)
+		return
+	}
+
+	// Parse the raw tool result and inject available=true.
+	var summary map[string]any
+	if err := json.Unmarshal(result, &summary); err != nil {
+		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
+		fallback := map[string]any{"available": false}
+		a.writeJSON(w, http.StatusOK, fallback)
+		return
+	}
+	summary["available"] = true
+	a.cache.Set("sandbox_summary", summary, 5*time.Second)
+	a.writeJSON(w, http.StatusOK, summary)
 }
 
 func (a *App) handleReasoningChainList(w http.ResponseWriter, _ *http.Request) {

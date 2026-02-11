@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -275,4 +276,52 @@ func (a *App) handleAgentSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.writeJSON(w, http.StatusOK, map[string]any{"session": session})
+}
+
+// handleAgentContextAdd proxies context entries to agent-context and broadcasts
+// SSE events for devbox-titled entries so the sandbox panel shows live activity.
+// POST /api/agent/context/add
+func (a *App) handleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SessionID string           `json:"session_id,omitempty"`
+		Entries   []map[string]any `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if len(body.Entries) == 0 {
+		a.writeError(w, http.StatusBadRequest, "entries array is required", nil)
+		return
+	}
+
+	// Forward to agent-context MCP server.
+	if err := a.agent.ContextAdd(body.SessionID, body.Entries); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to add context entries", err)
+		return
+	}
+
+	// Detect devbox events and broadcast SSE for the sandbox panel.
+	for _, entry := range body.Entries {
+		title, _ := entry["title"].(string)
+		if len(title) > 7 && title[:7] == "devbox." {
+			// Parse "devbox.<type>: <project>" format.
+			rest := title[7:]
+			eventType := rest
+			project := ""
+			if idx := strings.Index(rest, ": "); idx >= 0 {
+				eventType = rest[:idx]
+				project = rest[idx+2:]
+			}
+			content, _ := entry["content"].(string)
+			a.broadcastAgentEvent("hud.sandbox.event", map[string]any{
+				"type":      eventType,
+				"project":   project,
+				"detail":    content,
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		}
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

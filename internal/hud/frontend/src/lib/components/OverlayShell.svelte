@@ -7,6 +7,7 @@
   import { workflowStore } from '../stores/workflows.svelte.ts';
   import { memoryStore } from '../stores/memory.svelte.ts';
   import { streamStore } from '../stores/stream.svelte.ts';
+  import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
 
   // Make html/body transparent so native NSVisualEffectView vibrancy shows through.
@@ -31,6 +32,7 @@
     workflowStore.startPolling();
     memoryStore.startPolling();
     streamStore.startPolling();
+    sandboxStore.startPolling();
 
     // Wire granular agent SSE events to overlay activity tracking.
     function pushAgentEvent(e) {
@@ -56,6 +58,7 @@
     workflowStore.stopPolling();
     memoryStore.stopPolling();
     streamStore.stopPolling();
+    sandboxStore.stopPolling();
   });
 
   // Derived values
@@ -197,6 +200,7 @@
   const sections = [
     { id: 'fleet',     label: 'FLEET',     icon: '\u25C8' },
     { id: 'servers',   label: 'SERVERS',   icon: '\u2665' },
+    { id: 'sandbox',   label: 'SANDBOX',   icon: '\u2B22' },
     { id: 'tasks',     label: 'TASKS',     icon: '\u2611' },
     { id: 'workflows', label: 'WORKFLOWS', icon: '\u2699' },
     { id: 'memory',    label: 'MEMORY',    icon: '\u29BE' },
@@ -213,6 +217,11 @@
         return `${groups.length} ns${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
       }
       case 'servers':   return `${healthyCount}/${serverCount} \u25CF`;
+      case 'sandbox': {
+        if (!sandboxStore.available) return 'offline';
+        const r = sandboxStore.runningCount;
+        return r > 0 ? `${r} running` : 'idle';
+      }
       case 'tasks': {
         if (totalTasks === 0) return 'none';
         const parts = [];
@@ -357,6 +366,20 @@
                   <span class="row-primary truncate">{server.name}</span>
                   <span class="row-secondary">{server.latency > 0 ? server.latency + 'ms' : ''}</span>
                   <span class="row-badge">{server.tool_count > 0 ? server.tool_count + ' tools' : ''}</span>
+                </div>
+              {/each}
+            {/if}
+
+          {:else if section.id === 'sandbox'}
+            {#if !sandboxStore.available}
+              <div class="empty-row">Devbox offline <span class="empty-hint">— start with loom start devbox</span></div>
+            {:else if sandboxStore.projects.length === 0}
+              <div class="empty-row">No sandboxes <span class="empty-hint">— create with devbox_create</span></div>
+            {:else}
+              {#each sandboxStore.projects as project}
+                <div class="detail-row">
+                  <span class="row-dot dot-healthy"></span>
+                  <span class="row-primary truncate">{project}</span>
                 </div>
               {/each}
             {/if}

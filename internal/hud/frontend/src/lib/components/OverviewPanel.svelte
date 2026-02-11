@@ -6,6 +6,7 @@
   import { workflowStore } from '../stores/workflows.svelte.ts';
   import { memoryStore } from '../stores/memory.svelte.ts';
   import { streamStore } from '../stores/stream.svelte.ts';
+  import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
 
   /**
@@ -175,6 +176,18 @@
         <div class="tile-detail">{lastStreamAge ? `last: ${lastStreamAge}` : 'no data'}</div>
       </div>
       {#if agoText(streamStore.lastUpdated)}<div class="tile-footer">{agoText(streamStore.lastUpdated)}</div>{/if}
+    </button>
+
+    <!-- Sandbox tile -->
+    <button class="tile" onclick={() => navigate('sandbox')}>
+      <div class="tile-header">
+        <span class="tile-icon">{'\u2B22'}</span>
+        <span class="tile-title">Sandbox</span>
+      </div>
+      <div class="tile-body">
+        <div class="tile-metric">{sandboxStore.runningCount} <span class="tile-unit">running</span></div>
+        <div class="tile-detail">{sandboxStore.available ? `${sandboxStore.totalExecs} execs · ${sandboxStore.totalBuilds} builds` : 'offline'}</div>
+      </div>
     </button>
 
     <!-- Workflows tile -->
