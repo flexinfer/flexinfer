@@ -17,7 +17,9 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -195,28 +198,43 @@ func handleScreenshot(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 		return mcp.ErrorResult(err), nil
 	}
 
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return mcp.ErrorResult(mcperror.InvalidParam("url", fmt.Sprintf("invalid URL: %v", err))), nil
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	switch scheme {
+	case "http", "https", "file":
+	default:
+		return mcp.ErrorResult(mcperror.InvalidParam("url", fmt.Sprintf("unsupported scheme %q (use http, https, or file)", scheme))), nil
+	}
+
 	if format != "png" && format != "jpeg" && format != "jpg" {
-		return mcp.ErrorResult(fmt.Errorf("unsupported format: %q (use png or jpeg)", format)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("format", fmt.Sprintf("unsupported format %q (use png or jpeg)", format))), nil
 	}
 	if format == "jpg" {
 		format = "jpeg"
 	}
 	if quality < 1 || quality > 100 {
-		return mcp.ErrorResult(fmt.Errorf("quality must be 1-100, got %d", quality)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("quality", fmt.Sprintf("must be 1-100, got %d", quality))), nil
 	}
 	if viewportW < 320 || viewportW > 8000 || viewportH < 240 || viewportH > 8000 {
-		return mcp.ErrorResult(fmt.Errorf("invalid viewport %dx%d", viewportW, viewportH)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("viewport", fmt.Sprintf("invalid viewport %dx%d", viewportW, viewportH))), nil
 	}
 	switch waitUntil {
 	case "load", "domcontentloaded", "networkidle":
 	default:
-		return mcp.ErrorResult(fmt.Errorf("invalid wait_until: %q", waitUntil)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("wait_until", fmt.Sprintf("invalid value %q (use load, domcontentloaded, or networkidle)", waitUntil))), nil
 	}
 	if waitMS < 0 || waitMS > 120000 {
-		return mcp.ErrorResult(fmt.Errorf("wait_ms out of range: %d", waitMS)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("wait_ms", fmt.Sprintf("out of range: %d (must be 0-120000)", waitMS))), nil
 	}
 	if timeoutMS < 1000 || timeoutMS > 300000 {
-		return mcp.ErrorResult(fmt.Errorf("timeout_ms out of range: %d", timeoutMS)), nil
+		return mcp.ErrorResult(mcperror.InvalidParam("timeout_ms", fmt.Sprintf("out of range: %d (must be 1000-300000)", timeoutMS))), nil
+	}
+	if storageDir == "" {
+		// Match docs/schema and keep sessions stable between calls.
+		storageDir = filepath.Join(os.TempDir(), "browserkit-sessions")
 	}
 
 	req := map[string]any{
@@ -291,6 +309,9 @@ func runPythonHelper(ctx context.Context, req map[string]any) (*helperResponse, 
 		// navigation timeout isn't total runtime; include some headroom for slow sites.
 		timeout = time.Duration(t)*time.Millisecond + 15*time.Second
 	}
+	if w, ok := req["wait_ms"].(int); ok && w > 0 {
+		timeout += time.Duration(w) * time.Millisecond
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -308,8 +329,15 @@ func runPythonHelper(ctx context.Context, req map[string]any) (*helperResponse, 
 	if err := cmd.Run(); err != nil {
 		// Provide actionable errors for missing deps.
 		msg := strings.TrimSpace(stderr.String())
+		var ee *exec.Error
+		if errors.As(err, &ee) && errors.Is(ee.Err, exec.ErrNotFound) {
+			return nil, mcperror.NotConfigured("python3", fmt.Sprintf("python executable not found (%q). Set BROWSERKIT_PYTHON or install python3.", py))
+		}
 		if errorsLikeMissingBrowserKit(msg) {
-			return nil, fmt.Errorf("%s\n\nInstall:\n  pip install flexinfer-browser-kit playwright\n  python3 -m playwright install chromium", msg)
+			return nil, mcperror.NotConfigured("flexinfer-browser-kit", fmt.Sprintf("%s. Install:\n  python3 -m pip install -U flexinfer-browser-kit playwright\n  python3 -m playwright install chromium", msg))
+		}
+		if errorsLikeMissingChromium(msg) {
+			return nil, mcperror.NotConfigured("playwright chromium", fmt.Sprintf("%s. Fix:\n  python3 -m playwright install chromium", msg))
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("browserkit screenshot timed out (try increasing timeout_ms). stderr: %s", msg)
@@ -318,8 +346,19 @@ func runPythonHelper(ctx context.Context, req map[string]any) (*helperResponse, 
 	}
 
 	var resp helperResponse
-	if err := json.Unmarshal([]byte(stdout.String()), &resp); err != nil {
-		return nil, fmt.Errorf("decode helper response: %w (stdout=%q stderr=%q)", err, truncate(stdout.String(), 500), truncate(stderr.String(), 500))
+	stdoutStr := strings.TrimSpace(stdout.String())
+	lastLine := stdoutStr
+	if stdoutStr != "" {
+		lines := strings.Split(stdoutStr, "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				lastLine = lines[i]
+				break
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(lastLine), &resp); err != nil {
+		return nil, fmt.Errorf("decode helper response: %w (stdout=%q stderr=%q)", err, truncate(stdoutStr, 500), truncate(stderr.String(), 500))
 	}
 	if !resp.OK {
 		if resp.Error == "" {
@@ -365,4 +404,12 @@ func truncate(s string, n int) string {
 func errorsLikeMissingBrowserKit(msg string) bool {
 	l := strings.ToLower(msg)
 	return strings.Contains(l, "no module named") && (strings.Contains(l, "browser_kit") || strings.Contains(l, "playwright"))
+}
+
+func errorsLikeMissingChromium(msg string) bool {
+	l := strings.ToLower(msg)
+	// Common Playwright messages when browsers aren't installed.
+	return strings.Contains(l, "playwright install") ||
+		strings.Contains(l, "executable doesn't exist") ||
+		strings.Contains(l, "browser_type.launch")
 }

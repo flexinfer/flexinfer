@@ -28,8 +28,68 @@ type FileConfig struct {
 	// Cache controls response caching for read-only tools
 	Cache CacheConfig `yaml:"cache,omitempty"`
 
+	// Sandbox controls devbox sandbox settings
+	Sandbox SandboxConfig `yaml:"sandbox,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// SandboxConfig controls devbox sandbox environments.
+type SandboxConfig struct {
+	// Enabled activates sandbox functionality
+	Enabled bool `yaml:"enabled"`
+
+	// Backend selects the container runtime ("docker" or "k8s")
+	Backend string `yaml:"backend,omitempty"`
+
+	// WorkspaceRoot is the root directory for project discovery (default: ~/workspace)
+	WorkspaceRoot string `yaml:"workspace_root,omitempty"`
+
+	// Registry is the container image registry (default: registry.harbor.lan)
+	Registry string `yaml:"registry,omitempty"`
+
+	// ImagePrefix is the image name prefix (default: mcp/devbox)
+	ImagePrefix string `yaml:"image_prefix,omitempty"`
+
+	// CacheDir stores sandbox state and build cache (default: ~/.cache/loom/devbox)
+	CacheDir string `yaml:"cache_dir,omitempty"`
+
+	// DefaultLimits sets default resource limits for sandboxes
+	DefaultLimits SandboxLimits `yaml:"default_limits,omitempty"`
+
+	// IdleTimeout before stopping unused sandboxes (default: 30m)
+	IdleTimeout string `yaml:"idle_timeout,omitempty"`
+
+	// MaxTailLines controls output truncation (default: 20)
+	MaxTailLines int `yaml:"max_tail_lines,omitempty"`
+
+	// K8s holds Kubernetes-specific configuration
+	K8s K8sSandboxConfig `yaml:"k8s,omitempty"`
+}
+
+// SandboxLimits defines resource limits for sandbox containers.
+type SandboxLimits struct {
+	// CPU cores limit (default: 2)
+	CPU float64 `yaml:"cpu,omitempty"`
+
+	// MemoryMB memory limit in megabytes (default: 1024)
+	MemoryMB int `yaml:"memory_mb,omitempty"`
+
+	// Timeout is the default command execution timeout (default: 5m)
+	Timeout string `yaml:"timeout,omitempty"`
+}
+
+// K8sSandboxConfig holds Kubernetes-specific sandbox settings.
+type K8sSandboxConfig struct {
+	// Kubeconfig path for the K8s cluster
+	Kubeconfig string `yaml:"kubeconfig,omitempty"`
+
+	// Namespace to create sandbox pods in (default: devbox)
+	Namespace string `yaml:"namespace,omitempty"`
+
+	// StorageClass for workspace PVCs (default: longhorn)
+	StorageClass string `yaml:"storage_class,omitempty"`
 }
 
 // ResourceConfig controls process and connection resource limits.
