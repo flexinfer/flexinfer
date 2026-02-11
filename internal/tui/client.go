@@ -84,3 +84,44 @@ func (c *Client) Refresh() {
 	c.memory.Refresh()
 	c.stream.Refresh()
 }
+
+// UpdateTaskStatus updates a task's status via the agent bridge.
+func (c *Client) UpdateTaskStatus(taskID, status string) error {
+	return c.agent.UpdateTask(bridge.UpdateTaskParams{
+		ID:     taskID,
+		Status: status,
+	})
+}
+
+// SessionEntries returns context entries for a specific session.
+func (c *Client) SessionEntries(sessionID string) []monitor.StreamEntry {
+	entries, err := c.agent.SessionEntries(sessionID, 10)
+	if err != nil {
+		c.logger.Debug("failed to fetch session entries", "session", sessionID, "error", err)
+		return nil
+	}
+	result := make([]monitor.StreamEntry, len(entries))
+	for i, e := range entries {
+		result[i] = monitor.StreamEntry{
+			ID:        e.Entry.ID,
+			EntryType: e.Entry.EntryType,
+			AgentID:   e.Entry.AgentID,
+			Namespace: e.Entry.Namespace,
+			Title:     e.Entry.Title,
+			Content:   e.Entry.Content,
+			Timestamp: e.Entry.Timestamp,
+			Score:     e.Score,
+		}
+	}
+	return result
+}
+
+// MemoryItems returns items from a specific memory tier.
+func (c *Client) MemoryItems(tier string) []bridge.MemoryItem {
+	items, err := c.memory.Recall(tier, "", 50)
+	if err != nil {
+		c.logger.Debug("failed to fetch memory items", "tier", tier, "error", err)
+		return nil
+	}
+	return items
+}

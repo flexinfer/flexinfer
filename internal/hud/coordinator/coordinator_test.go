@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -282,17 +283,17 @@ func TestErrUnavailable_WhenCircuitOpen(t *testing.T) {
 	c.client.breaker.Execute(func() error { return fmt.Errorf("fail") })
 
 	// All API methods should return ErrUnavailable.
-	_, err := c.PlanWorkflow(nil, "test", "")
+	_, err := c.PlanWorkflow(context.TODO(), "test", "")
 	if err != ErrUnavailable {
 		t.Errorf("PlanWorkflow: expected ErrUnavailable, got %v", err)
 	}
 
-	_, err = c.SummarizeSession(nil, "test-session")
+	_, err = c.SummarizeSession(context.TODO(), "test-session")
 	if err != ErrUnavailable {
 		t.Errorf("SummarizeSession: expected ErrUnavailable, got %v", err)
 	}
 
-	_, err = c.RunCompression(nil)
+	_, err = c.RunCompression(context.TODO())
 	if err != ErrUnavailable {
 		t.Errorf("RunCompression: expected ErrUnavailable, got %v", err)
 	}
@@ -310,7 +311,7 @@ func TestErrUnavailable_WhenSemaphoreFull(t *testing.T) {
 	defer c.releaseSem()
 
 	// API methods should return ErrUnavailable when semaphore is full.
-	_, err := c.PlanWorkflow(nil, "test", "")
+	_, err := c.PlanWorkflow(context.TODO(), "test", "")
 	if err != ErrUnavailable {
 		t.Errorf("PlanWorkflow: expected ErrUnavailable, got %v", err)
 	}

@@ -253,13 +253,26 @@
                   </td>
                   <td class="text-mono text-muted">{session.namespace ?? '---'}</td>
                   <td class="text-mono">{session.task_count ?? 0}</td>
-                  <td class="text-mono">{formatNumber(session.tokens_used ?? 0)}</td>
+                  <td class="text-mono">{#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}</td>
                   <td class="text-mono">{session.memory_items ?? 0}</td>
                 </tr>
               {:else}
-                <tr>
-                  <td colspan="6" class="empty-cell">No active agents</td>
-                </tr>
+                {#if !fleetStore.lastUpdated}
+                  {#each Array(4) as _}
+                    <tr>
+                      <td><div class="skeleton skeleton-text" style="width: 80px"></div></td>
+                      <td><div class="skeleton" style="width: 10px; height: 10px; border-radius: 50%"></div></td>
+                      <td><div class="skeleton skeleton-text" style="width: 100px"></div></td>
+                      <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
+                      <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
+                      <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
+                    </tr>
+                  {/each}
+                {:else}
+                  <tr>
+                    <td colspan="6" class="empty-cell">No active agents</td>
+                  </tr>
+                {/if}
               {/each}
             </tbody>
           </table>
@@ -269,35 +282,35 @@
       <!-- RIGHT TOP: Quick Stats -->
       <div class="stats-grid">
         <div class="stat-card" style="--accent-color: var(--info)">
-          <div class="metric-value">{sessions.length}</div>
+          {#key sessions.length}<div class="metric-value data-updated">{sessions.length}</div>{/key}
           <div class="metric-label">Sessions</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--warning)">
-          <div class="metric-value">{tasks.length}</div>
+          {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
           <div class="metric-label">Tasks</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--accent)">
-          <div class="metric-value">{formatNumber(totalTokens)}</div>
+          {#key totalTokens}<div class="metric-value data-updated">{formatNumber(totalTokens)}</div>{/key}
           <div class="metric-label">Tokens</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--success)">
-          <div class="metric-value">{workflows.length}</div>
+          {#key workflows.length}<div class="metric-value data-updated">{workflows.length}</div>{/key}
           <div class="metric-label">Workflows</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--tier-short)">
-          <div class="metric-value">{formatNumber(workingItems + shortItems + longItems)}</div>
+          {#key workingItems + shortItems + longItems}<div class="metric-value data-updated">{formatNumber(workingItems + shortItems + longItems)}</div>{/key}
           <div class="metric-label">Memory Items</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--tier-long)">
-          <div class="metric-value">{formatNumber(graphStats.total_entities ?? 0)}</div>
+          {#key graphStats.total_entities}<div class="metric-value data-updated">{formatNumber(graphStats.total_entities ?? 0)}</div>{/key}
           <div class="metric-label">Graph Entities</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--fg-muted)">
-          <div class="metric-value">{tunnelCount}</div>
+          {#key tunnelCount}<div class="metric-value data-updated">{tunnelCount}</div>{/key}
           <div class="metric-label">Tunnels</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--info)">
-          <div class="metric-value">{(cacheHitRate * 100).toFixed(0)}%</div>
+          {#key cacheHitRate}<div class="metric-value data-updated">{(cacheHitRate * 100).toFixed(0)}%</div>{/key}
           <div class="metric-label">Cache Hit</div>
         </div>
       </div>

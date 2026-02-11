@@ -1,6 +1,6 @@
 <script>
-  /** @type {{ data: number[], width?: number, height?: number, color?: string }} */
-  let { data = [], width = 120, height = 24, color = 'var(--info)' } = $props();
+  /** @type {{ data: number[], width?: number, height?: number, color?: string, showTrend?: boolean }} */
+  let { data = [], width = 120, height = 24, color = 'var(--info)', showTrend = false } = $props();
 
   let gradientId = $derived(`spark-grad-${Math.random().toString(36).slice(2, 8)}`);
 
@@ -56,6 +56,22 @@
   let minPoint = $derived(computed ? computed.pts[computed.minIdx] : null);
   let maxPoint = $derived(computed ? computed.pts[computed.maxIdx] : null);
 
+  // Compute trend direction from last ~20% of data points.
+  let trendArrow = $derived.by(() => {
+    if (!showTrend || !data || data.length < 3) return '';
+    const tail = Math.max(2, Math.floor(data.length * 0.2));
+    const recent = data.slice(-tail);
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    const delta = last - first;
+    const threshold = (Math.max(...data) - Math.min(...data)) * 0.05 || 0.01;
+    if (delta > threshold) return '↑';
+    if (delta < -threshold) return '↓';
+    return '→';
+  });
+
+  let glowFilterId = $derived(`spark-glow-${Math.random().toString(36).slice(2, 8)}`);
+
   // Tooltip state.
   let hoveredIdx = $state(null);
   let hoveredPt = $derived(hoveredIdx !== null && computed ? computed.pts[hoveredIdx] : null);
@@ -100,18 +116,25 @@
   onmouseleave={handleMouseLeave}
 >
   {#if computed}
-    <!-- Gradient definition -->
+    <!-- Gradient + glow definitions -->
     <defs>
       <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
         <stop offset="0%" stop-color={color} stop-opacity="0.25" />
         <stop offset="100%" stop-color={color} stop-opacity="0.02" />
       </linearGradient>
+      <filter id={glowFilterId} x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
     </defs>
 
     <!-- Gradient fill under curve -->
     <path d={computed.fillD} fill="url(#{gradientId})" />
 
-    <!-- Smooth curve -->
+    <!-- Smooth curve with glow -->
     <path
       d={computed.pathD}
       fill="none"
@@ -119,6 +142,7 @@
       stroke-width="1.5"
       stroke-linecap="round"
       stroke-linejoin="round"
+      filter="url(#{glowFilterId})"
     />
 
     <!-- Min annotation dot -->
@@ -195,6 +219,15 @@
   {/if}
 </svg>
 
+{#if showTrend && trendArrow}
+  <span
+    class="trend-arrow"
+    class:trend-up={trendArrow === '↑'}
+    class:trend-down={trendArrow === '↓'}
+    class:trend-flat={trendArrow === '→'}
+  >{trendArrow}</span>
+{/if}
+
 <style>
   .sparkline {
     display: block;
@@ -208,4 +241,17 @@
     font-feature-settings: 'tnum';
     pointer-events: none;
   }
+
+  .trend-arrow {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    margin-left: 4px;
+    vertical-align: middle;
+    line-height: 1;
+  }
+
+  .trend-up { color: var(--success); }
+  .trend-down { color: var(--error); }
+  .trend-flat { color: var(--fg-muted); }
 </style>

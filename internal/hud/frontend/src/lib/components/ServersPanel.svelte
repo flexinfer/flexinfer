@@ -210,7 +210,7 @@
               <td>
                 <StatusDot status={server.status ?? 'unknown'} />
               </td>
-              <td class="text-mono">{formatLatency(server.latency)}</td>
+              <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
               <td class="text-mono">{server.tool_count ?? 0}</td>
               <td class="text-mono text-muted target-cell">{server.target ?? '---'}</td>
               <td class="sparkline-cell">
@@ -227,9 +227,22 @@
               </td>
             </tr>
           {:else}
-            <tr>
-              <td colspan="6" class="empty-cell">No servers match filters</td>
-            </tr>
+            {#if !healthStore.lastUpdated}
+              {#each Array(5) as _}
+                <tr>
+                  <td><div class="skeleton" style="width: 10px; height: 10px; border-radius: 50%"></div></td>
+                  <td><div class="skeleton skeleton-text" style="width: 120px"></div></td>
+                  <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
+                  <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
+                  <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
+                  <td><div class="skeleton skeleton-bar" style="width: 80px; height: 16px"></div></td>
+                </tr>
+              {/each}
+            {:else}
+              <tr>
+                <td colspan="6" class="empty-cell">No servers match filters</td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>

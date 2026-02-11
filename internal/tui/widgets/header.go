@@ -15,6 +15,8 @@ type Header struct {
 	DaemonOnline bool
 	ServerCount  int
 	SessionCount int
+	Refreshing   bool
+	SpinnerView  string
 	Width        int
 }
 
@@ -46,7 +48,11 @@ func (h Header) Render() string {
 		Render(time.Now().Format("15:04:05"))
 
 	left := logo + sep + status + sep + serverInfo + sep + sessionInfo
+
 	right := clock
+	if h.Refreshing && h.SpinnerView != "" {
+		right = h.SpinnerView + " " + clock
+	}
 
 	// Calculate padding to right-align the clock.
 	gap := h.Width - lipgloss.Width(left) - lipgloss.Width(right)

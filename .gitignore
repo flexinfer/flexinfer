@@ -39,6 +39,7 @@ vendor/
 .codex/config.toml
 .gemini/config.toml
 .kilocode/config.toml
+.kilocode/
 .vscode-mcp/
 .vscode/mcp.json
 .antigravity/

@@ -10,27 +10,33 @@ import (
 
 // Generator handles skill generation for different platforms.
 type Generator struct {
-	Registry      *Registry
-	SourceDir     string // Where skill source files live (mcp/skills/)
-	Target        string // "codex" | "claude" | "kilocode" | "gemini" | "all"
-	OutputDir     string // Where to generate skills (overrides platform defaults)
-	RepoRoot      string // Base directory containing .claude/, .codex/, .kilocode/, .gemini/
-	CodexHome     string // ~/.codex
-	WorkspaceRoot string // For Claude: workspace root for .agents/skills/
-	DryRun        bool
-	Verbose       bool
+	Registry  *Registry
+	SourceDir string // Where skill source files live (mcp/skills/)
+	Target    string // "codex" | "claude" | "kilocode" | "gemini" | "all"
+	OutputDir string // Where to generate skills (overrides platform defaults)
+	// CodexSkillsDir overrides the default Codex skills directory (normally ~/.codex/skills).
+	// This is intentionally separate from OutputDir so callers (like `loom sync`) can
+	// generate Codex skills into the repo while keeping manifest/instructions rooted
+	// at the repo's .codex/ directory.
+	CodexSkillsDir string
+	RepoRoot       string // Base directory containing .claude/, .codex/, .kilocode/, .gemini/
+	CodexHome      string // ~/.codex
+	WorkspaceRoot  string // For Claude: workspace root for .agents/skills/
+	DryRun         bool
+	Verbose        bool
 }
 
 // GeneratorOptions configures the generator.
 type GeneratorOptions struct {
-	RegistryPath  string
-	Target        string
-	OutputDir     string
-	RepoRoot      string
-	CodexHome     string
-	WorkspaceRoot string
-	DryRun        bool
-	Verbose       bool
+	RegistryPath   string
+	Target         string
+	OutputDir      string
+	RepoRoot       string
+	CodexHome      string
+	CodexSkillsDir string
+	WorkspaceRoot  string
+	DryRun         bool
+	Verbose        bool
 }
 
 // AllTargets lists all supported skill generation targets.
@@ -68,15 +74,16 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 	}
 
 	return &Generator{
-		Registry:      reg,
-		SourceDir:     sourceDir,
-		Target:        opts.Target,
-		OutputDir:     opts.OutputDir,
-		RepoRoot:      repoRoot,
-		CodexHome:     codexHome,
-		WorkspaceRoot: workspaceRoot,
-		DryRun:        opts.DryRun,
-		Verbose:       opts.Verbose,
+		Registry:       reg,
+		SourceDir:      sourceDir,
+		Target:         opts.Target,
+		OutputDir:      opts.OutputDir,
+		CodexSkillsDir: opts.CodexSkillsDir,
+		RepoRoot:       repoRoot,
+		CodexHome:      codexHome,
+		WorkspaceRoot:  workspaceRoot,
+		DryRun:         opts.DryRun,
+		Verbose:        opts.Verbose,
 	}, nil
 }
 
@@ -195,7 +202,11 @@ func (g *Generator) resolveTargetDir(target string) string {
 
 // generateCodexSkill generates a Codex skill in SKILL.md + scripts/ + references/ + assets/ format.
 func (g *Generator) generateCodexSkill(skill *Skill) error {
+	// For Codex, OutputDir refers to the skills root directory (not the platform root).
 	outputDir := g.OutputDir
+	if outputDir == "" {
+		outputDir = g.CodexSkillsDir
+	}
 	if outputDir == "" {
 		outputDir = filepath.Join(g.CodexHome, "skills")
 	}

@@ -287,6 +287,14 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 		Target:        p.SkillsTarget,
 		RepoRoot:      m.RepoRoot,
 		WorkspaceRoot: m.RepoRoot,
+		// Codex normally generates directly into ~/.codex/skills; for sync we generate
+		// into the repo's .codex/ so status + sync can verify and propagate changes.
+		CodexSkillsDir: func() string {
+			if p.SkillsTarget != "codex" {
+				return ""
+			}
+			return filepath.Join(repoPath, "skills")
+		}(),
 	})
 	if err != nil {
 		return fmt.Errorf("create skills generator: %w", err)
