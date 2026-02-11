@@ -50,6 +50,9 @@ func run(ctx context.Context) error {
 		idleTimeout:   env.Duration("DEVBOX_IDLE_TIMEOUT", 30*60*1e9), // 30m
 		defaultCPU:    2.0,
 		defaultMemMB:  env.Int("DEVBOX_DEFAULT_MEMORY_MB", 1024),
+		kubeconfig:    env.String("DEVBOX_KUBECONFIG", ""),
+		k8sNamespace:  env.String("DEVBOX_K8S_NAMESPACE", "devbox"),
+		storageClass:  env.String("DEVBOX_K8S_STORAGE_CLASS", "longhorn"),
 	})
 	if err != nil {
 		return fmt.Errorf("init manager: %w", err)

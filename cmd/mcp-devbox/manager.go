@@ -25,6 +25,11 @@ type managerConfig struct {
 	idleTimeout   time.Duration
 	defaultCPU    float64
 	defaultMemMB  int
+
+	// K8s-specific
+	kubeconfig   string
+	k8sNamespace string
+	storageClass string
 }
 
 type manager struct {
@@ -43,8 +48,18 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			return nil, err
 		}
 		b = db
+	case "k8s", "kubernetes":
+		kb, err := backend.NewK8sBackend(backend.K8sBackendConfig{
+			Kubeconfig: cfg.kubeconfig,
+			Namespace:  cfg.k8sNamespace,
+			Registry:   cfg.registry,
+		})
+		if err != nil {
+			return nil, err
+		}
+		b = kb
 	default:
-		return nil, fmt.Errorf("unsupported backend: %s", cfg.backendType)
+		return nil, fmt.Errorf("unsupported backend: %s (use 'docker' or 'k8s')", cfg.backendType)
 	}
 
 	if err := b.Health(ctx); err != nil {
