@@ -23,6 +23,7 @@ var version = "0.1.0"
 
 type substackServer struct {
 	baseURL    string
+	userID     int
 	httpClient *httpclient.Client
 	logger     *slog.Logger
 }
@@ -58,7 +59,13 @@ func run(ctx context.Context) error {
 		logger:     logger,
 	}
 
-	logger.Info("starting server", "name", "mcp-substack", "version", version, "subdomain", subdomain)
+	// Fetch user ID from a published post for draft byline attribution.
+	if err := s.resolveUserID(ctx); err != nil {
+		logger.Warn("could not resolve user ID (draft creation may fail)", "error", err)
+	}
+
+	logger.Info("starting server", "name", "mcp-substack", "version", version,
+		"subdomain", subdomain, "user_id", s.userID)
 
 	server := mcp.NewServer("mcp-substack", version)
 	server.SetInstructions("Substack publication management. Create drafts, publish posts, and read archives for your newsletter.")
@@ -149,6 +156,29 @@ func run(ctx context.Context) error {
 	return server.Run(ctx)
 }
 
+// resolveUserID fetches the authenticated user's ID from a published post.
+func (s *substackServer) resolveUserID(ctx context.Context) error {
+	data, err := s.doRequest(ctx, "GET", "/archive?limit=1&sort=new", nil)
+	if err != nil {
+		return fmt.Errorf("fetch archive: %w", err)
+	}
+
+	var posts []struct {
+		PublishedBylines []struct {
+			ID int `json:"id"`
+		} `json:"publishedBylines"`
+	}
+	if err := json.Unmarshal(data, &posts); err != nil {
+		return fmt.Errorf("parse archive: %w", err)
+	}
+	if len(posts) == 0 || len(posts[0].PublishedBylines) == 0 {
+		return fmt.Errorf("no published posts found (publish at least one post first)")
+	}
+
+	s.userID = posts[0].PublishedBylines[0].ID
+	return nil
+}
+
 // doRequest performs an HTTP request against the Substack API and returns the raw response body.
 func (s *substackServer) doRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
 	reqURL := s.baseURL + path
@@ -231,12 +261,14 @@ func (s *substackServer) handleCreateDraft(ctx context.Context, args map[string]
 	}
 
 	draft := map[string]any{
-		"title":    title,
-		"body":     body,
-		"audience": v.String("audience", "everyone"),
+		"draft_title":   title,
+		"draft_body":    body,
+		"draft_bylines": []map[string]any{{"id": s.userID, "is_guest": false}},
+		"audience":      v.String("audience", "everyone"),
+		"type":          "newsletter",
 	}
 	if subtitle := v.String("subtitle", ""); subtitle != "" {
-		draft["subtitle"] = subtitle
+		draft["draft_subtitle"] = subtitle
 	}
 	if sectionID := v.Int("section_id", 0); sectionID > 0 {
 		draft["section_id"] = sectionID
@@ -259,13 +291,13 @@ func (s *substackServer) handleUpdateDraft(ctx context.Context, args map[string]
 
 	update := map[string]any{}
 	if title := v.String("title", ""); title != "" {
-		update["title"] = title
+		update["draft_title"] = title
 	}
 	if subtitle := v.String("subtitle", ""); subtitle != "" {
-		update["subtitle"] = subtitle
+		update["draft_subtitle"] = subtitle
 	}
 	if body := v.String("body", ""); body != "" {
-		update["body"] = body
+		update["draft_body"] = body
 	}
 	if sectionID := v.Int("section_id", 0); sectionID > 0 {
 		update["section_id"] = sectionID
