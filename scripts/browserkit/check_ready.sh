@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PY="${BROWSERKIT_PYTHON:-python3}"
+VENV_DIR="${BROWSERKIT_VENV_DIR:-$HOME/.config/loom/browserkit-venv}"
+
+PY="${BROWSERKIT_PYTHON:-}"
+if [ -z "${PY:-}" ]; then
+  if [ -x "$VENV_DIR/bin/python" ]; then
+    PY="$VENV_DIR/bin/python"
+  elif [ -x "$VENV_DIR/bin/python3" ]; then
+    PY="$VENV_DIR/bin/python3"
+  else
+    PY="python3"
+  fi
+fi
 
 if ! command -v "$PY" >/dev/null 2>&1; then
   echo "ERROR: '$PY' not found. Set BROWSERKIT_PYTHON or install python3." >&2

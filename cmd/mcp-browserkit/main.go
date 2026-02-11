@@ -293,10 +293,7 @@ func runPythonHelper(ctx context.Context, req map[string]any) (*helperResponse, 
 		return nil, helperErr
 	}
 
-	py := strings.TrimSpace(os.Getenv("BROWSERKIT_PYTHON"))
-	if py == "" {
-		py = "python3"
-	}
+	py := browserkitPython()
 	if _, err := exec.LookPath(py); err != nil {
 		return nil, mcperror.NotConfigured("BROWSERKIT_PYTHON", fmt.Sprintf("python executable not found: %q", py))
 	}
@@ -480,6 +477,33 @@ func getReqInt(req map[string]any, key string) (int, bool) {
 		return i, true
 	}
 	return 0, false
+}
+
+func browserkitPython() string {
+	if py := strings.TrimSpace(os.Getenv("BROWSERKIT_PYTHON")); py != "" {
+		return py
+	}
+
+	home, _ := os.UserHomeDir()
+	venvDir := strings.TrimSpace(os.Getenv("BROWSERKIT_VENV_DIR"))
+	if venvDir == "" && home != "" {
+		venvDir = filepath.Join(home, ".config", "loom", "browserkit-venv")
+	}
+	if venvDir != "" {
+		if p := filepath.Join(venvDir, "bin", "python3"); fileExists(p) {
+			return p
+		}
+		if p := filepath.Join(venvDir, "bin", "python"); fileExists(p) {
+			return p
+		}
+	}
+
+	return "python3"
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func normalizeImageDataURL(mimeType, data string) (string, error) {
