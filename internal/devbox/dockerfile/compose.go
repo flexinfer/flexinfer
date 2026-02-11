@@ -133,7 +133,7 @@ func buildMultiData(fp *detect.EnvFingerprint) multiTemplateData {
 		data.PackageManager = "apk add --no-cache"
 		data.PackageInstallCmd = "ca-certificates git make bash curl"
 
-		data.DepSteps = append(data.DepSteps, "COPY go.mod go.sum* ./\nRUN go mod download")
+		data.DepSteps = append(data.DepSteps, "COPY go.mod go.sum* ./\nRUN go mod download || true")
 
 		if hasNode {
 			data.PackageInstallCmd += " nodejs npm"

@@ -41,6 +41,7 @@ type BuildResult struct {
 type StartOpts struct {
 	Name     string            // container name (e.g., "devbox-loom-core")
 	ImageTag string            // image to use
+	WorkDir  string            // working directory inside container (default: "/workspace")
 	Mounts   []Mount           // bind mounts
 	Env      map[string]string // environment variables
 	MemoryMB int               // memory limit in MB (0 = no limit)
@@ -64,6 +65,7 @@ type StartResult struct {
 type ExecOpts struct {
 	ContainerID string            // target container
 	Command     string            // shell command to run
+	WorkDir     string            // working directory (default: "/workspace")
 	Env         map[string]string // additional env vars
 	TimeoutSec  int               // execution timeout in seconds
 	MaxLines    int               // max tail lines to return

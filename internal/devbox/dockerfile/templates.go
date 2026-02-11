@@ -10,7 +10,7 @@ RUN apk add --no-cache ca-certificates git make bash curl{{ range .SystemDeps }}
 WORKDIR /workspace
 
 COPY go.mod go.sum* ./
-RUN go mod download
+RUN go mod download || true
 {{ range .Tools }}
 RUN go install {{ . }}@latest
 {{- end }}

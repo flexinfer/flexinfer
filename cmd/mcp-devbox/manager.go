@@ -182,10 +182,12 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName str
 		}
 	}
 
-	m.logger.Info("starting sandbox", "project", projectName, "image", tag)
+	workDir := m.projectWorkDir(projectDir)
+	m.logger.Info("starting sandbox", "project", projectName, "image", tag, "workdir", workDir)
 	result, err := m.backend.Start(ctx, backend.StartOpts{
 		Name:     containerID,
 		ImageTag: tag,
+		WorkDir:  workDir,
 		Mounts:   mounts,
 		Env:      fp.EnvVars,
 		MemoryMB: memMB,
@@ -214,11 +216,31 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName str
 	return m.containerName(projectName), nil
 }
 
+// projectWorkDir returns the working directory inside the container for a project.
+// If the project is under workspaceRoot, we mount the root and use a subdirectory.
+// Otherwise, we mount the project directly at /workspace.
+func (m *manager) projectWorkDir(projectDir string) string {
+	rel, err := filepath.Rel(m.cfg.workspaceRoot, projectDir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "/workspace"
+	}
+	return filepath.Join("/workspace", rel)
+}
+
 // buildMounts creates the standard bind mounts for a sandbox.
 func (m *manager) buildMounts(projectDir string) []backend.Mount {
 	home, _ := os.UserHomeDir()
+
+	// Mount workspace root so sibling projects (Go replace directives) are accessible
+	mountHost := m.cfg.workspaceRoot
+	rel, err := filepath.Rel(m.cfg.workspaceRoot, projectDir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		// Project is outside workspace root — mount project directly
+		mountHost = projectDir
+	}
+
 	mounts := []backend.Mount{
-		{Host: projectDir, Container: "/workspace"},
+		{Host: mountHost, Container: "/workspace"},
 	}
 
 	// Shared caches (only mount if they exist on host)

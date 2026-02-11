@@ -54,6 +54,7 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	result, err := m.backend.Exec(ctx, backend.ExecOpts{
 		ContainerID: containerID,
 		Command:     command,
+		WorkDir:     m.projectWorkDir(projectDir),
 		Env:         envVars,
 		TimeoutSec:  int(timeout.Seconds()),
 		MaxLines:    maxLines,

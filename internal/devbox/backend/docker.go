@@ -108,7 +108,11 @@ func (d *DockerBackend) Exec(ctx context.Context, opts ExecOpts) (*ExecResult, e
 
 	start := time.Now()
 
-	args := []string{"exec", "-w", "/workspace"}
+	workDir := opts.WorkDir
+	if workDir == "" {
+		workDir = "/workspace"
+	}
+	args := []string{"exec", "-w", workDir}
 	for k, v := range opts.Env {
 		args = append(args, "-e", k+"="+v)
 	}

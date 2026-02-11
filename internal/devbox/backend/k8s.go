@@ -155,7 +155,7 @@ func (k *K8sBackend) Exec(ctx context.Context, opts ExecOpts) (*ExecResult, erro
 
 	start := time.Now()
 
-	// Build the command with env vars prepended
+	// Build the command with workdir and env vars prepended
 	shellCmd := opts.Command
 	if len(opts.Env) > 0 {
 		var envPrefix strings.Builder
@@ -163,6 +163,9 @@ func (k *K8sBackend) Exec(ctx context.Context, opts ExecOpts) (*ExecResult, erro
 			envPrefix.WriteString(fmt.Sprintf("export %s=%q; ", k, v))
 		}
 		shellCmd = envPrefix.String() + shellCmd
+	}
+	if opts.WorkDir != "" {
+		shellCmd = fmt.Sprintf("cd %s && %s", opts.WorkDir, shellCmd)
 	}
 
 	req := k.clientset.CoreV1().RESTClient().Post().
@@ -332,7 +335,7 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 					Command:         []string{"sleep", "infinity"},
 					Env:             env,
 					Resources:       resources,
-					WorkingDir:      "/workspace",
+					WorkingDir:      workDir(opts.WorkDir),
 					VolumeMounts:    volumeMounts,
 					ImagePullPolicy: corev1.PullAlways,
 				},
@@ -393,6 +396,14 @@ func parseExitCode(err error) int {
 // isNotFound returns true if the error is a K8s "not found" error.
 func isNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "not found")
+}
+
+// workDir returns the working directory, defaulting to "/workspace".
+func workDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return "/workspace"
 }
 
 // Ensure K8sBackend implements Backend at compile time.
