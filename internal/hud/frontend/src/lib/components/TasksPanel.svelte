@@ -382,9 +382,23 @@
                 </td>
               </tr>
             {:else}
-              <tr>
-                <td colspan="7" class="empty-cell">No tasks match filters</td>
-              </tr>
+              {#if !taskStore.lastUpdated}
+                {#each Array(3) as _}
+                  <tr>
+                    <td><div class="skeleton skeleton-text" style="width: 140px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 40px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 70px"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
+                  </tr>
+                {/each}
+              {:else}
+                <tr>
+                  <td colspan="7" class="empty-cell">No tasks match filters</td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>

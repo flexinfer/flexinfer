@@ -12,6 +12,11 @@ type KeyMap struct {
 	Refresh key.Binding
 	Help    key.Binding
 	Quit    key.Binding
+
+	// Panel interaction keys
+	Enter  key.Binding
+	Escape key.Binding
+	Filter key.Binding
 }
 
 // Keys is the default set of key bindings for the TUI dashboard.
@@ -48,17 +53,30 @@ var Keys = KeyMap{
 		key.WithKeys("q"),
 		key.WithHelp("q", "quit"),
 	),
+	Enter: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("⏎", "expand/action"),
+	),
+	Escape: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "collapse"),
+	),
+	Filter: key.NewBinding(
+		key.WithKeys("f"),
+		key.WithHelp("f", "filter"),
+	),
 }
 
 // ShortHelp returns key bindings shown in the compact help view.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Quit}
+	return []key.Binding{k.Enter, k.Filter, k.Help, k.Quit}
 }
 
 // FullHelp returns key bindings shown in the expanded help view.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream},
-		{k.Refresh, k.Help, k.Quit},
+		{k.Refresh, k.Enter, k.Escape, k.Filter},
+		{k.Help, k.Quit},
 	}
 }

@@ -33,11 +33,15 @@ type StreamEntryData struct {
 // Model
 // ---------------------------------------------------------------------------
 
+// streamFilters lists the filter cycle for the stream panel.
+var streamFilters = []string{"all", "decision", "finding", "error", "action", "note"}
+
 // StreamPanel renders a scrollable activity log.
 type StreamPanel struct {
 	width, height int
 	entries       []StreamEntryData
 	scrollOffset  int
+	filterIdx     int // index into streamFilters
 }
 
 // NewStreamPanel creates a new stream panel.
@@ -69,8 +73,11 @@ func (p StreamPanel) Update(msg tea.Msg) (StreamPanel, tea.Cmd) {
 		case "g":
 			p.scrollOffset = 0
 		case "G":
-			p.scrollOffset = len(p.entries)
+			p.scrollOffset = len(p.filteredEntries())
 			p.clampScroll()
+		case "f":
+			p.filterIdx = (p.filterIdx + 1) % len(streamFilters)
+			p.scrollOffset = 0
 		}
 	}
 	return p, nil
@@ -86,9 +93,25 @@ func (p StreamPanel) visibleLines() int {
 	return v
 }
 
+// filteredEntries returns entries matching the current filter.
+func (p StreamPanel) filteredEntries() []StreamEntryData {
+	filter := streamFilters[p.filterIdx]
+	if filter == "all" {
+		return p.entries
+	}
+	var out []StreamEntryData
+	for _, e := range p.entries {
+		if strings.ToLower(e.EntryType) == filter {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // clampScroll ensures the scroll offset stays within bounds.
 func (p *StreamPanel) clampScroll() {
-	maxOffset := len(p.entries) - p.visibleLines()
+	total := len(p.filteredEntries())
+	maxOffset := total - p.visibleLines()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -108,25 +131,41 @@ func (p StreamPanel) View() string {
 	b.WriteString(theme.Styles.SectionTitle.Render("CONTEXT STREAM"))
 	b.WriteString("\n")
 
-	// Summary
+	// Summary with filter indicator
+	filtered := p.filteredEntries()
+	filter := streamFilters[p.filterIdx]
+
 	countLabel := theme.Styles.Label.Render("Entries: ") +
-		theme.Styles.Value.Render(fmt.Sprintf("%d", len(p.entries)))
+		theme.Styles.Value.Render(fmt.Sprintf("%d", len(filtered)))
 	b.WriteString(countLabel)
 
+	// Filter badge
+	if filter != "all" {
+		filterBadge := lipgloss.NewStyle().
+			Foreground(theme.ColorAccent).
+			Bold(true).
+			Render(fmt.Sprintf("  [filter: %s]", filter))
+		b.WriteString(filterBadge)
+	}
+
 	// Scroll indicator
-	if len(p.entries) > p.visibleLines() {
+	if len(filtered) > p.visibleLines() {
 		scrollInfo := theme.Styles.MutedText.Render(
 			fmt.Sprintf("  [%d-%d of %d]",
 				p.scrollOffset+1,
-				min(p.scrollOffset+p.visibleLines(), len(p.entries)),
-				len(p.entries)),
+				min(p.scrollOffset+p.visibleLines(), len(filtered)),
+				len(filtered)),
 		)
 		b.WriteString(scrollInfo)
 	}
 	b.WriteString("\n\n")
 
-	if len(p.entries) == 0 {
-		b.WriteString(theme.Styles.MutedText.Render("  No activity yet"))
+	if len(filtered) == 0 {
+		msg := "  No activity yet"
+		if filter != "all" {
+			msg = fmt.Sprintf("  No %s entries", filter)
+		}
+		b.WriteString(theme.Styles.MutedText.Render(msg))
 		b.WriteString("\n")
 		return b.String()
 	}
@@ -135,12 +174,12 @@ func (p StreamPanel) View() string {
 	visible := p.visibleLines()
 	start := p.scrollOffset
 	end := start + visible
-	if end > len(p.entries) {
-		end = len(p.entries)
+	if end > len(filtered) {
+		end = len(filtered)
 	}
 
 	for i := start; i < end; i++ {
-		b.WriteString(p.renderEntry(p.entries[i]))
+		b.WriteString(p.renderEntry(filtered[i]))
 		b.WriteString("\n")
 	}
 
@@ -149,10 +188,15 @@ func (p StreamPanel) View() string {
 		b.WriteString(theme.Styles.MutedText.Render("  ^ more above (k/up)"))
 		b.WriteString("\n")
 	}
-	if end < len(p.entries) {
+	if end < len(filtered) {
 		b.WriteString(theme.Styles.MutedText.Render("  v more below (j/down)"))
 		b.WriteString("\n")
 	}
+
+	// Navigation hint
+	hintStyle := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
+	b.WriteString(hintStyle.Render("  j/k:scroll  g/G:top/bottom  f:filter"))
+	b.WriteString("\n")
 
 	return b.String()
 }

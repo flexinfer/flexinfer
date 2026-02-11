@@ -106,18 +106,25 @@ func (p HealthPanel) renderSummary() string {
 }
 
 func (p HealthPanel) renderTable() string {
+	compact := p.width < 60
 	colStatus := 3
 	colName := 24
 	colLatency := 10
 	colFails := 7
 	colSpark := 20
+	if compact {
+		colName = 18
+		colSpark = 0
+	}
 
 	headerStyle := theme.Styles.TableHeader
 	header := headerStyle.Render(padRight("", colStatus)) +
 		headerStyle.Render(padRight("Name", colName)) +
 		headerStyle.Render(padRight("Latency", colLatency)) +
-		headerStyle.Render(padRight("Fails", colFails)) +
-		headerStyle.Render(padRight("Trend", colSpark))
+		headerStyle.Render(padRight("Fails", colFails))
+	if !compact {
+		header += headerStyle.Render(padRight("Trend", colSpark))
+	}
 
 	var b strings.Builder
 	b.WriteString(header)
@@ -132,17 +139,19 @@ func (p HealthPanel) renderTable() string {
 		dot := widgets.StatusDot(serverStatus(s))
 		latencyStr := formatLatency(s.Latency)
 		latencyStyled := colorLatency(latencyStr, s.Latency)
-		spark := widgets.Sparkline{
-			Data:  s.LatencyHistory,
-			Width: colSpark,
-			Color: sparkColor(s),
-		}.Render()
 
 		row := style.Render(padRight(dot, colStatus)) +
 			style.Render(padRight(truncate(s.Name, colName-1), colName)) +
 			style.Render(padRight(latencyStyled, colLatency)) +
-			style.Render(padRight(fmt.Sprintf("%d", s.ConsecFails), colFails)) +
-			style.Render(spark)
+			style.Render(padRight(fmt.Sprintf("%d", s.ConsecFails), colFails))
+		if !compact {
+			spark := widgets.Sparkline{
+				Data:  s.LatencyHistory,
+				Width: colSpark,
+				Color: sparkColor(s),
+			}.Render()
+			row += style.Render(spark)
+		}
 
 		b.WriteString(row)
 		b.WriteString("\n")

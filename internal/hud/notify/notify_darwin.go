@@ -42,6 +42,16 @@ func NotifyServerDown(serverName string) error {
 	)
 }
 
+// NotifyServerRecovered sends a notification when a server comes back online.
+func NotifyServerRecovered(serverName string) error {
+	return NotifyWithSound(
+		"Server Recovered",
+		serverName,
+		fmt.Sprintf("MCP server \"%s\" is healthy again", serverName),
+		"Pop",
+	)
+}
+
 // NotifyHandoff sends a notification for an agent handoff.
 func NotifyHandoff(sourceAgent, targetAgent, instructions string) error {
 	msg := fmt.Sprintf("From %s: %s", sourceAgent, instructions)

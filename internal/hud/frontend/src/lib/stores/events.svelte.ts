@@ -22,10 +22,19 @@ class EventStore {
   lastEvent: SSEEvent | null = $state(null);
   eventCount = $state(0);
 
+  /** Connection state for the banner: 'connected' | 'reconnecting' | 'disconnected' | 'circuit-open' */
+  connectionState = $state<'connected' | 'reconnecting' | 'disconnected' | 'circuit-open'>('disconnected');
+  /** Seconds until next reconnect attempt (shown in banner). */
+  retryCountdown = $state(0);
+
   private source: EventSource | null = null;
   private listeners: Map<string, EventListener[]> = new Map();
   private anyListeners: EventListener[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private countdownTimer: ReturnType<typeof setInterval> | null = null;
+  private consecutiveErrors = 0;
+  private static readonly MAX_RECONNECT_ERRORS = 5;
+  private static readonly BASE_RECONNECT_MS = 5000;
 
   /** Register a listener for a specific event type. Returns an unsubscribe function. */
   on(eventType: string, listener: EventListener): () => void {
@@ -58,6 +67,9 @@ class EventStore {
 
     this.source.addEventListener('connected', (e: MessageEvent) => {
       this.connected = true;
+      this.connectionState = 'connected';
+      this.consecutiveErrors = 0;
+      this.clearCountdown();
       try {
         const data = JSON.parse(e.data);
         this.dispatch({ id: 'connected', type: 'connected', timestamp: new Date().toISOString(), data });
@@ -98,9 +110,18 @@ class EventStore {
       this.connected = false;
       this.source?.close();
       this.source = null;
+      this.consecutiveErrors++;
 
-      // Auto-reconnect after 5 seconds.
-      this.reconnectTimer = setTimeout(() => this.connect(), 5000);
+      // Circuit breaker: after repeated failures, open circuit with longer cooldown.
+      const isCircuitOpen = this.consecutiveErrors >= EventStore.MAX_RECONNECT_ERRORS;
+      const delayMs = isCircuitOpen
+        ? EventStore.BASE_RECONNECT_MS * Math.min(this.consecutiveErrors, 12)
+        : EventStore.BASE_RECONNECT_MS;
+
+      this.connectionState = isCircuitOpen ? 'circuit-open' : 'reconnecting';
+      this.startCountdown(delayMs);
+
+      this.reconnectTimer = setTimeout(() => this.connect(), delayMs);
     };
   }
 
@@ -110,11 +131,32 @@ class EventStore {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.clearCountdown();
     if (this.source) {
       this.source.close();
       this.source = null;
     }
     this.connected = false;
+    this.connectionState = 'disconnected';
+  }
+
+  /** Start a visual countdown timer for the banner. */
+  private startCountdown(durationMs: number) {
+    this.clearCountdown();
+    this.retryCountdown = Math.ceil(durationMs / 1000);
+    this.countdownTimer = setInterval(() => {
+      this.retryCountdown = Math.max(0, this.retryCountdown - 1);
+      if (this.retryCountdown <= 0) this.clearCountdown();
+    }, 1000);
+  }
+
+  /** Clear the countdown timer. */
+  private clearCountdown() {
+    if (this.countdownTimer) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
+    }
+    this.retryCountdown = 0;
   }
 
   private handleEvent(raw: string, fallbackType?: string) {

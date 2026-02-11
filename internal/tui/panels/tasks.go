@@ -22,6 +22,12 @@ type MsgTasksData struct {
 	BlockedCount int
 }
 
+// MsgTaskStatusCycled signals that a task status was toggled via the TUI.
+type MsgTaskStatusCycled struct {
+	TaskID    string
+	NewStatus string
+}
+
 // TaskData holds task data for the tasks panel.
 type TaskData struct {
 	ID        string
@@ -42,11 +48,24 @@ type TasksPanel struct {
 	pendingCount  int
 	activeCount   int
 	blockedCount  int
+
+	// Interactive state
+	selectedIdx int
+	flatTasks   []TaskData // ordered: pending, active, blocked
 }
 
 // NewTasksPanel creates a new tasks panel.
 func NewTasksPanel() TasksPanel {
 	return TasksPanel{}
+}
+
+// SelectedTask returns the currently selected task, if any.
+func (p TasksPanel) SelectedTask() *TaskData {
+	if len(p.flatTasks) == 0 || p.selectedIdx >= len(p.flatTasks) {
+		return nil
+	}
+	t := p.flatTasks[p.selectedIdx]
+	return &t
 }
 
 // Init satisfies the bubbletea model interface.
@@ -63,8 +82,61 @@ func (p TasksPanel) Update(msg tea.Msg) (TasksPanel, tea.Cmd) {
 		p.pendingCount = msg.PendingCount
 		p.activeCount = msg.ActiveCount
 		p.blockedCount = msg.BlockedCount
+		p.rebuildFlatTasks()
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			if p.selectedIdx < len(p.flatTasks)-1 {
+				p.selectedIdx++
+			}
+		case "k", "up":
+			if p.selectedIdx > 0 {
+				p.selectedIdx--
+			}
+		case "enter":
+			if t := p.SelectedTask(); t != nil {
+				next := cycleTaskStatus(t.Status)
+				return p, func() tea.Msg {
+					return MsgTaskStatusCycled{TaskID: t.ID, NewStatus: next}
+				}
+			}
+		}
 	}
 	return p, nil
+}
+
+// rebuildFlatTasks orders tasks: pending → in_progress → blocked.
+func (p *TasksPanel) rebuildFlatTasks() {
+	p.flatTasks = p.flatTasks[:0]
+	var pending, active, blocked []TaskData
+	for _, t := range p.tasks {
+		switch strings.ToLower(t.Status) {
+		case "pending":
+			pending = append(pending, t)
+		case "in_progress", "active":
+			active = append(active, t)
+		case "blocked":
+			blocked = append(blocked, t)
+		}
+	}
+	p.flatTasks = append(p.flatTasks, pending...)
+	p.flatTasks = append(p.flatTasks, active...)
+	p.flatTasks = append(p.flatTasks, blocked...)
+	if p.selectedIdx >= len(p.flatTasks) {
+		p.selectedIdx = max(0, len(p.flatTasks)-1)
+	}
+}
+
+// cycleTaskStatus returns the next status in the cycle.
+func cycleTaskStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "pending":
+		return "in_progress"
+	case "in_progress", "active":
+		return "completed"
+	default:
+		return "pending"
+	}
 }
 
 // View renders the tasks panel.
@@ -86,6 +158,12 @@ func (p TasksPanel) View() string {
 	}
 
 	b.WriteString(p.renderColumns())
+
+	// Navigation hint
+	hintStyle := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
+	b.WriteString(hintStyle.Render("  j/k:move  enter:cycle status"))
+	b.WriteString("\n")
+
 	return b.String()
 }
 
@@ -157,14 +235,28 @@ func (p TasksPanel) renderColumn(title string, tasks []TaskData, width int) stri
 	}
 
 	for _, t := range tasks {
+		isSelected := p.isTaskSelected(t.ID)
 		badge := priorityBadge(t.Priority)
-		taskTitle := truncate(t.Title, width-8)
-		line := fmt.Sprintf(" %s %s", badge, taskTitle)
+		taskTitle := truncate(t.Title, width-10)
+
+		cursor := " "
+		if isSelected {
+			cursor = lipgloss.NewStyle().Foreground(theme.ColorAccent).Bold(true).Render("▸")
+		}
+		line := fmt.Sprintf("%s %s %s", cursor, badge, taskTitle)
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
 	return colStyle.Render(b.String())
+}
+
+// isTaskSelected returns true if the given task ID matches the currently selected task.
+func (p TasksPanel) isTaskSelected(id string) bool {
+	if p.selectedIdx >= len(p.flatTasks) {
+		return false
+	}
+	return p.flatTasks[p.selectedIdx].ID == id
 }
 
 // priorityBadge returns a colored single-character priority indicator.

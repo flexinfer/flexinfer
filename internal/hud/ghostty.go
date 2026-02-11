@@ -69,7 +69,9 @@ func GenerateGhosttyConfig() string {
 	b.WriteString("# ── Quick Terminal (HUD sidebar) ──\n")
 	b.WriteString("quick-terminal-position = right\n")
 	b.WriteString("quick-terminal-size = 380\n")
-	b.WriteString("quick-terminal-animation-duration = 0.15\n\n")
+	b.WriteString("quick-terminal-animation-duration = 0.15\n")
+	b.WriteString("quick-terminal-shell-integration = none\n")
+	b.WriteString("# quick-terminal-command = loom hud --tui\n\n")
 
 	// Global keybind for quick terminal toggle.
 	b.WriteString("# ── Global Keybind ──\n")

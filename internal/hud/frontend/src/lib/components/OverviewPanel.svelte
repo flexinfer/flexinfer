@@ -6,6 +6,7 @@
   import { workflowStore } from '../stores/workflows.svelte.ts';
   import { memoryStore } from '../stores/memory.svelte.ts';
   import { streamStore } from '../stores/stream.svelte.ts';
+  import SparkLine from '../widgets/SparkLine.svelte';
 
   /**
    * OverviewPanel renders all panels simultaneously as a compact
@@ -46,6 +47,48 @@
     workflowStore.activeWorkflows.filter(w => w.status === 'waiting_approval').length
   );
 
+  // Rolling history buffers for mini sparklines (plain arrays to avoid circular deps).
+  const _healthBuf = [];
+  const _memoryBuf = [];
+  let healthHistory = $state([]);
+  let memoryHistory = $state([]);
+
+  $effect(() => {
+    const sc = serverCount;
+    const hc = healthyCount;
+    if (sc > 0) {
+      _healthBuf.push(Math.round((hc / sc) * 100));
+      if (_healthBuf.length > 20) _healthBuf.shift();
+      healthHistory = [..._healthBuf];
+    }
+  });
+
+  $effect(() => {
+    const total = workingItems + shortItems + longItems;
+    if (total > 0 || _memoryBuf.length > 0) {
+      _memoryBuf.push(total);
+      if (_memoryBuf.length > 20) _memoryBuf.shift();
+      memoryHistory = [..._memoryBuf];
+    }
+  });
+
+  // Tick counter to refresh "last updated" text periodically.
+  let _tick = $state(0);
+  $effect(() => {
+    const t = setInterval(() => { _tick++ }, 10000);
+    return () => clearInterval(t);
+  });
+
+  function agoText(ts) {
+    void _tick;
+    if (!ts) return '';
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 10) return 'just now';
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
+
   function navigate(panel) {
     router.navigate(panel);
   }
@@ -63,6 +106,7 @@
         <div class="tile-metric">{sessionCount} <span class="tile-unit">sessions</span></div>
         <div class="tile-detail">{agentCount} agents · {namespaceCount} ns</div>
       </div>
+      {#if agoText(fleetStore.lastUpdated)}<div class="tile-footer">{agoText(fleetStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Health tile -->
@@ -72,11 +116,17 @@
         <span class="tile-title">Health</span>
       </div>
       <div class="tile-body">
-        <div class="tile-metric">{healthyCount}<span class="tile-unit">/{serverCount} ok</span></div>
+        <div class="tile-metric-row">
+          <div class="tile-metric">{healthyCount}<span class="tile-unit">/{serverCount} ok</span></div>
+          {#if healthHistory.length >= 2}
+            <SparkLine data={healthHistory} width={40} height={16} color="var(--success)" />
+          {/if}
+        </div>
         <div class="tile-detail" class:tile-alert={downCount > 0}>
           {downCount > 0 ? `${downCount} down` : 'all healthy'}
         </div>
       </div>
+      {#if agoText(healthStore.lastUpdated)}<div class="tile-footer">{agoText(healthStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Tasks tile -->
@@ -89,6 +139,7 @@
         <div class="tile-metric">{pendingTasks} <span class="tile-unit">pending</span></div>
         <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked</div>
       </div>
+      {#if agoText(taskStore.lastUpdated)}<div class="tile-footer">{agoText(taskStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Memory tile -->
@@ -98,13 +149,19 @@
         <span class="tile-title">Memory</span>
       </div>
       <div class="tile-body">
-        <div class="tile-metric tile-tier">
-          <span class="tier-w">{workingItems}</span>
-          <span class="tier-s">{shortItems}</span>
-          <span class="tier-l">{longItems}</span>
+        <div class="tile-metric-row">
+          <div class="tile-metric tile-tier">
+            <span class="tier-w">{workingItems}</span>
+            <span class="tier-s">{shortItems}</span>
+            <span class="tier-l">{longItems}</span>
+          </div>
+          {#if memoryHistory.length >= 2}
+            <SparkLine data={memoryHistory} width={40} height={16} color="var(--tier-short)" />
+          {/if}
         </div>
         <div class="tile-detail">{totalTokens.toLocaleString()} tokens</div>
       </div>
+      {#if agoText(memoryStore.lastUpdated)}<div class="tile-footer">{agoText(memoryStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Stream tile -->
@@ -117,6 +174,7 @@
         <div class="tile-metric">{streamCount} <span class="tile-unit">entries</span></div>
         <div class="tile-detail">{lastStreamAge ? `last: ${lastStreamAge}` : 'no data'}</div>
       </div>
+      {#if agoText(streamStore.lastUpdated)}<div class="tile-footer">{agoText(streamStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Workflows tile -->
@@ -131,6 +189,7 @@
           {pendingApprovals > 0 ? `${pendingApprovals} awaiting approval` : 'none waiting'}
         </div>
       </div>
+      {#if agoText(workflowStore.lastUpdated)}<div class="tile-footer">{agoText(workflowStore.lastUpdated)}</div>{/if}
     </button>
   </div>
 </div>
@@ -218,6 +277,21 @@
 
   .tile-alert {
     color: var(--warning);
+  }
+
+  .tile-metric-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .tile-footer {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    margin-top: 6px;
+    opacity: 0.7;
   }
 
   .tile-tier {

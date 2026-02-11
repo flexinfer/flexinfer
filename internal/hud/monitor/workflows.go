@@ -3,10 +3,12 @@ package monitor
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/notify"
 )
 
 // cachedDetail wraps a WorkflowDetail with an expiration timestamp for
@@ -30,6 +32,9 @@ type WorkflowMonitor struct {
 	workflows []bridge.WorkflowInfo
 	details   map[string]*cachedDetail // workflow ID -> cached detail
 
+	// Notification dedup: tracks workflow+step combos already notified.
+	notifiedApprovals map[string]bool // "workflowID:stepName" -> true
+
 	onRefresh func([]bridge.WorkflowInfo)
 
 	stopCh   chan struct{}
@@ -48,10 +53,11 @@ func NewWorkflowMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *Workflo
 		logger = slog.Default()
 	}
 	return &WorkflowMonitor{
-		agent:   agent,
-		logger:  logger.With("component", "workflow-monitor"),
-		details: make(map[string]*cachedDetail),
-		stopCh:  make(chan struct{}),
+		agent:             agent,
+		logger:            logger.With("component", "workflow-monitor"),
+		details:           make(map[string]*cachedDetail),
+		notifiedApprovals: make(map[string]bool),
+		stopCh:            make(chan struct{}),
 	}
 }
 
@@ -164,6 +170,36 @@ func (m *WorkflowMonitor) Refresh() error {
 	for id := range m.details {
 		if _, exists := currentIDs[id]; !exists {
 			delete(m.details, id)
+		}
+	}
+
+	// Notify for new pending approvals (deduped by workflow+step).
+	for _, w := range workflows {
+		if w.Status == "waiting_approval" {
+			key := w.ID + ":" + w.CurrentStep
+			if !m.notifiedApprovals[key] {
+				m.notifiedApprovals[key] = true
+				go func(name, step string) {
+					if err := notify.NotifyWorkflowApproval(name, step); err != nil {
+						m.logger.Debug("workflow-approval notification failed", "workflow", name, "error", err)
+					}
+				}(w.Name, w.CurrentStep)
+			}
+		}
+	}
+
+	// Prune approval dedup entries for workflows no longer waiting.
+	for key := range m.notifiedApprovals {
+		wID := key[:strings.Index(key, ":")]
+		found := false
+		for _, w := range workflows {
+			if w.ID == wID && w.Status == "waiting_approval" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(m.notifiedApprovals, key)
 		}
 	}
 	m.mu.Unlock()

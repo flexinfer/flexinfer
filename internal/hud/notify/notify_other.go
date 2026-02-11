@@ -16,5 +16,8 @@ func NotifyWorkflowApproval(workflowName, stepName string) error { return nil }
 // NotifyServerDown is a no-op on non-darwin platforms.
 func NotifyServerDown(serverName string) error { return nil }
 
+// NotifyServerRecovered is a no-op on non-darwin platforms.
+func NotifyServerRecovered(serverName string) error { return nil }
+
 // NotifyHandoff is a no-op on non-darwin platforms.
 func NotifyHandoff(sourceAgent, targetAgent, instructions string) error { return nil }

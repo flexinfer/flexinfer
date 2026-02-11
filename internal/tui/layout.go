@@ -6,10 +6,11 @@ import "github.com/charmbracelet/lipgloss"
 type Layout struct {
 	Width    int
 	Height   int
-	HeaderH  int // height of top header bar (1 line)
-	HelpH    int // height of bottom help bar (1 line)
-	ContentH int // remaining height for panel content
-	ContentW int // available width for panel content
+	HeaderH  int  // height of top header bar (1 line)
+	HelpH    int  // height of bottom help bar (1 line)
+	ContentH int  // remaining height for panel content
+	ContentW int  // available width for panel content
+	Compact  bool // true when width < 60 (e.g. Ghostty quick terminal)
 }
 
 // NewLayout creates a layout for the given terminal dimensions.
@@ -27,6 +28,7 @@ func NewLayout(width, height int) Layout {
 		HelpH:    helpH,
 		ContentH: contentH,
 		ContentW: width,
+		Compact:  width < 60,
 	}
 }
 

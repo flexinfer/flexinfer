@@ -171,6 +171,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case panels.MsgStreamData:
 		m.stream, _ = m.stream.Update(msg)
 
+	case tea.MouseMsg:
+		// Handle mouse clicks on the tab bar (row 1, after header).
+		if msg.Action == tea.MouseActionRelease && msg.Button == tea.MouseButtonLeft {
+			if msg.Y == 1 { // Tab bar row
+				panel := m.tabFromX(msg.X)
+				if panel >= 0 {
+					m.active = panel
+				}
+			}
+		}
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -179,12 +190,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Forward key messages to the active panel (for scrolling etc).
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		var cmd tea.Cmd
 		switch m.active {
+		case PanelFleet:
+			m.fleet, cmd = m.fleet.Update(keyMsg)
+			cmds = append(cmds, cmd)
+		case PanelHealth:
+			m.health, _ = m.health.Update(keyMsg)
+		case PanelTasks:
+			m.tasks, cmd = m.tasks.Update(keyMsg)
+			cmds = append(cmds, cmd)
+		case PanelMemory:
+			m.memory, _ = m.memory.Update(keyMsg)
 		case PanelStream:
 			m.stream, _ = m.stream.Update(keyMsg)
-		case PanelTasks:
-			m.tasks, _ = m.tasks.Update(keyMsg)
 		}
+	}
+
+	// Handle task status cycle from the tasks panel.
+	if msg, ok := msg.(panels.MsgTaskStatusCycled); ok {
+		cmds = append(cmds, m.updateTaskStatus(msg.TaskID, msg.NewStatus))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -206,6 +231,8 @@ func (m Model) View() string {
 		DaemonOnline: snap.DaemonRunning,
 		ServerCount:  snap.ServerCount,
 		SessionCount: snap.ActiveSessions,
+		Refreshing:   m.refreshing,
+		SpinnerView:  m.spinner.View(),
 		Width:        m.width,
 	}
 	b.WriteString(header.Render())
@@ -250,9 +277,16 @@ func (m Model) activeView() string {
 	}
 }
 
+var compactPanelNames = []string{"F", "H", "T", "M", "S"}
+
 func (m Model) renderTabs() string {
+	compact := m.width < 60
 	var tabs []string
-	for i, name := range panelNames {
+	names := panelNames
+	if compact {
+		names = compactPanelNames
+	}
+	for i, name := range names {
 		style := Styles.InactiveTab
 		if Panel(i) == m.active {
 			style = Styles.ActiveTab
@@ -320,12 +354,14 @@ func (m Model) fetchAll() tea.Cmd {
 		fleetSessions := make([]panels.SessionData, len(snap.Sessions))
 		for i, s := range snap.Sessions {
 			fleetSessions[i] = panels.SessionData{
-				ID:         s.ID,
-				AgentID:    s.AgentID,
-				Namespace:  s.Namespace,
-				Status:     s.Status,
-				TokenCount: s.TotalTokens,
-				EntryCount: s.EntryCount,
+				ID:          s.ID,
+				AgentID:     s.AgentID,
+				Namespace:   s.Namespace,
+				Status:      s.Status,
+				Description: s.Description,
+				StartedAt:   s.StartedAt,
+				TokenCount:  s.TotalTokens,
+				EntryCount:  s.EntryCount,
 			}
 		}
 		fleetAgents := make([]panels.AgentData, len(snap.Agents))
@@ -415,6 +451,17 @@ func (m Model) fetchAll() tea.Cmd {
 	}
 }
 
+// updateTaskStatus sends a status update to the daemon and triggers a refresh.
+func (m Model) updateTaskStatus(taskID, status string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.client.UpdateTaskStatus(taskID, status); err != nil {
+			// Best effort — refresh anyway.
+			_ = err
+		}
+		return msgRefreshDone{}
+	}
+}
+
 // batchDataMsg carries all panel data in a single message.
 // The Update loop unpacks it and routes to individual panels.
 type batchDataMsg struct {
@@ -423,6 +470,26 @@ type batchDataMsg struct {
 	tasks  panels.MsgTasksData
 	memory panels.MsgMemoryData
 	stream panels.MsgStreamData
+}
+
+// tabFromX returns the Panel index for a mouse click at the given X coordinate
+// on the tab bar, or -1 if the click is outside any tab.
+func (m Model) tabFromX(x int) Panel {
+	// Use compact names when terminal is narrow.
+	names := panelNames
+	if m.width < 60 {
+		names = compactPanelNames
+	}
+	// Each tab is " N Name " — estimate widths.
+	offset := 0
+	for i, name := range names {
+		tabWidth := len(name) + 4 // " N Name " padding
+		if x >= offset && x < offset+tabWidth {
+			return Panel(i)
+		}
+		offset += tabWidth
+	}
+	return -1
 }
 
 // Run starts the TUI dashboard. This is the main entry point called from the CLI.
@@ -437,7 +504,7 @@ func Run(socketPath string) error {
 	defer client.Stop()
 
 	model := New(client)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

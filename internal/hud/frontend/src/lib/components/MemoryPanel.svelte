@@ -215,7 +215,7 @@
         showPercentage={true}
       />
       <div class="tier-tokens text-mono text-xs">
-        {formatNumber(workingTier.tokens ?? 0)} tokens
+        {#key workingTier.tokens}<span class="data-updated">{formatNumber(workingTier.tokens ?? 0)} tokens</span>{/key}
       </div>
       <div class="tier-policy text-xs text-muted">
         TTL: {workingTier.ttl ?? '---'}
@@ -235,7 +235,7 @@
         showPercentage={true}
       />
       <div class="tier-tokens text-mono text-xs">
-        {formatNumber(shortTier.tokens ?? 0)} tokens
+        {#key shortTier.tokens}<span class="data-updated">{formatNumber(shortTier.tokens ?? 0)} tokens</span>{/key}
       </div>
       <div class="tier-policy text-xs text-muted">
         TTL: {shortTier.ttl ?? '---'}
@@ -255,7 +255,7 @@
         showPercentage={true}
       />
       <div class="tier-tokens text-mono text-xs">
-        {formatNumber(longTier.tokens ?? 0)} tokens
+        {#key longTier.tokens}<span class="data-updated">{formatNumber(longTier.tokens ?? 0)} tokens</span>{/key}
       </div>
       <div class="tier-policy text-xs text-muted">
         TTL: {longTier.ttl ?? '---'}
@@ -274,27 +274,27 @@
       </div>
       <div class="compression-cards">
         <div class="comp-card">
-          <div class="metric-value">{((compression.overall_ratio ?? 0) * 100).toFixed(1)}%</div>
+          {#key compression.overall_ratio}<div class="metric-value data-updated">{((compression.overall_ratio ?? 0) * 100).toFixed(1)}%</div>{/key}
           <div class="metric-label">Overall Ratio</div>
         </div>
         <div class="comp-card">
-          <div class="metric-value">{formatNumber(compression.compressed_items ?? 0)}</div>
+          {#key compression.compressed_items}<div class="metric-value data-updated">{formatNumber(compression.compressed_items ?? 0)}</div>{/key}
           <div class="metric-label">Compressed</div>
         </div>
         <div class="comp-card">
-          <div class="metric-value">{formatNumber(compression.tokens_saved ?? 0)}</div>
+          {#key compression.tokens_saved}<div class="metric-value data-updated">{formatNumber(compression.tokens_saved ?? 0)}</div>{/key}
           <div class="metric-label">Tokens Saved</div>
         </div>
         <div class="comp-card">
-          <div class="metric-value">{formatNumber(compression.added_24h ?? 0)}</div>
+          {#key compression.added_24h}<div class="metric-value data-updated">{formatNumber(compression.added_24h ?? 0)}</div>{/key}
           <div class="metric-label">Added (24h)</div>
         </div>
         <div class="comp-card">
-          <div class="metric-value">{formatNumber(compression.compressed_24h ?? 0)}</div>
+          {#key compression.compressed_24h}<div class="metric-value data-updated">{formatNumber(compression.compressed_24h ?? 0)}</div>{/key}
           <div class="metric-label">Compressed (24h)</div>
         </div>
         <div class="comp-card">
-          <div class="metric-value">{formatNumber(compression.expired_24h ?? 0)}</div>
+          {#key compression.expired_24h}<div class="metric-value data-updated">{formatNumber(compression.expired_24h ?? 0)}</div>{/key}
           <div class="metric-label">Expired (24h)</div>
         </div>
       </div>

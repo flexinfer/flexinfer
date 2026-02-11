@@ -7,12 +7,17 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/notify"
 )
 
 const (
 	// DefaultRingSize is the default number of latency readings to keep
 	// for sparkline history (60 readings).
 	DefaultRingSize = 60
+
+	// notifyDebounce is the minimum interval between repeated server-down
+	// notifications for the same server.
+	notifyDebounce = 5 * time.Minute
 )
 
 // RingBuffer is a fixed-size circular buffer for sparkline data.
@@ -111,6 +116,10 @@ type HealthMonitor struct {
 	summary HealthSummary
 	history map[string]*RingBuffer // server name -> latency ring buffer
 
+	// Notification debounce state (protected by mu).
+	notifiedDown map[string]time.Time // server name -> last notification time
+	prevDown     map[string]bool      // servers that were down on previous refresh
+
 	onRefresh func([]ServerHealthEntry)
 
 	stopCh   chan struct{}
@@ -129,10 +138,12 @@ func NewHealthMonitor(client *bridge.DaemonClient, logger *slog.Logger) *HealthM
 		logger = slog.Default()
 	}
 	return &HealthMonitor{
-		client:  client,
-		logger:  logger.With("component", "health-monitor"),
-		history: make(map[string]*RingBuffer),
-		stopCh:  make(chan struct{}),
+		client:       client,
+		logger:       logger.With("component", "health-monitor"),
+		history:      make(map[string]*RingBuffer),
+		notifiedDown: make(map[string]time.Time),
+		prevDown:     make(map[string]bool),
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -295,6 +306,38 @@ func (m *HealthMonitor) Refresh() error {
 
 		entries = append(entries, entry)
 	}
+
+	// Detect server state transitions for desktop notifications.
+	nowDown := make(map[string]bool)
+	for _, e := range entries {
+		isDown := e.Running && (e.Target == "unavailable" || (!e.Healthy && e.ConsecFails > 3))
+		if isDown {
+			nowDown[e.Name] = true
+		}
+
+		// Server went down: notify with debounce.
+		if isDown && !m.prevDown[e.Name] {
+			if last, ok := m.notifiedDown[e.Name]; !ok || time.Since(last) >= notifyDebounce {
+				m.notifiedDown[e.Name] = time.Now()
+				go func(name string) {
+					if err := notify.NotifyServerDown(name); err != nil {
+						m.logger.Debug("server-down notification failed", "server", name, "error", err)
+					}
+				}(e.Name)
+			}
+		}
+
+		// Server recovered: notify and clear suppression.
+		if !isDown && m.prevDown[e.Name] {
+			delete(m.notifiedDown, e.Name)
+			go func(name string) {
+				if err := notify.NotifyServerRecovered(name); err != nil {
+					m.logger.Debug("server-recovered notification failed", "server", name, "error", err)
+				}
+			}(e.Name)
+		}
+	}
+	m.prevDown = nowDown
 
 	m.servers = entries
 	m.summary = summary

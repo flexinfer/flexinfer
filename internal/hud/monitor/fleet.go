@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/notify"
 )
 
 // FleetSnapshot is the aggregated fleet state served to the frontend.
@@ -73,6 +74,9 @@ type FleetMonitor struct {
 	snapshot    FleetSnapshot
 	lastRefresh time.Time // debounce: skip Refresh() if <2s since last
 
+	// Handoff notification dedup: tracks handoff IDs already notified.
+	notifiedHandoffs map[string]bool
+
 	onRefresh func(FleetSnapshot)
 
 	stopCh   chan struct{}
@@ -91,10 +95,11 @@ func NewFleetMonitor(client *bridge.DaemonClient, agent *bridge.AgentBridge, log
 		logger = slog.Default()
 	}
 	return &FleetMonitor{
-		client: client,
-		agent:  agent,
-		logger: logger.With("component", "fleet-monitor"),
-		stopCh: make(chan struct{}),
+		client:           client,
+		agent:            agent,
+		logger:           logger.With("component", "fleet-monitor"),
+		notifiedHandoffs: make(map[string]bool),
+		stopCh:           make(chan struct{}),
 	}
 }
 
@@ -240,6 +245,24 @@ func (m *FleetMonitor) Refresh() error {
 	} else {
 		snap.Worktrees = worktrees
 		snap.ActiveWorktrees = len(worktrees)
+	}
+
+	// Check for new handoffs and send desktop notifications.
+	if handoffs, err := m.agent.HandoffList(); err != nil {
+		m.logger.Debug("fleet: failed to fetch handoffs for notification", "error", err)
+	} else {
+		m.mu.Lock()
+		for _, h := range handoffs {
+			if h.Status == "pending" && !m.notifiedHandoffs[h.ID] {
+				m.notifiedHandoffs[h.ID] = true
+				go func(from, to, summary string) {
+					if err := notify.NotifyHandoff(from, to, summary); err != nil {
+						m.logger.Debug("handoff notification failed", "error", err)
+					}
+				}(h.FromAgent, h.ToAgent, h.Summary)
+			}
+		}
+		m.mu.Unlock()
 	}
 
 	// Commit the snapshot atomically.
