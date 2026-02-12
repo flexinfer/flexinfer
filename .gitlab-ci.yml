@@ -489,7 +489,8 @@ build:image:loom-core:
 
         echo "Attempting build/push via registry host: $REGISTRY"
         echo "Building with destinations: $DESTINATIONS"
-        LOG_FILE="$(mktemp)"
+        LOG_FILE="$CI_PROJECT_DIR/.kaniko-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        rm -f "$LOG_FILE"
         if /kaniko/executor \
           --context "$CI_PROJECT_DIR" \
           --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
@@ -559,7 +560,8 @@ build:image:custom-server:
 
         echo "Attempting build/push via registry host: $REGISTRY"
         echo "Building with destinations: $DESTINATIONS"
-        LOG_FILE="$(mktemp)"
+        LOG_FILE="$CI_PROJECT_DIR/.kaniko-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        rm -f "$LOG_FILE"
         if /kaniko/executor \
           --context "$CI_PROJECT_DIR" \
           --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
