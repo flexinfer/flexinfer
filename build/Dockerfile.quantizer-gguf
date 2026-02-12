@@ -30,14 +30,17 @@ RUN cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --target llama-quantize -j$(nproc)
 
-# Install Python dependencies for convert_hf_to_gguf.py
+# Install Python dependencies for convert_hf_to_gguf.py.
+# Note: PyTorch's index does not host all packages; install torch separately.
 RUN pip install --no-cache-dir \
     numpy \
     sentencepiece \
     transformers \
-    torch --index-url https://download.pytorch.org/whl/cpu \
     safetensors \
-    gguf
+    gguf \
+    && pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch
 
 # --- Runtime stage ---
 FROM python:3.11-slim
