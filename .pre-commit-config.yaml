@@ -31,17 +31,15 @@ repos:
 
       - id: go-fmt
         name: go fmt
-        entry: bash -c 'gofmt -l -w $(find . -name "*.go" -not -path "./vendor/*")'
+        entry: bash -c 'if [ "$#" -eq 0 ]; then exit 0; fi; gofmt -l -w "$@"' --
         language: system
         types: [go]
-        pass_filenames: false
 
       - id: go-imports
         name: goimports
-        entry: bash -c '~/go/bin/goimports -local github.com/crb2nu/loom -w $(find . -name "*.go" -not -path "./vendor/*")'
+        entry: bash -c 'if [ "$#" -eq 0 ]; then exit 0; fi; ~/go/bin/goimports -local github.com/crb2nu/loom -w "$@"' --
         language: system
         types: [go]
-        pass_filenames: false
 
       - id: go-vet
         name: go vet
@@ -52,14 +50,14 @@ repos:
 
       - id: go-mod-tidy
         name: go mod tidy
-        entry: go mod tidy
+        entry: go mod tidy -diff
         language: system
         types: [go]
         pass_filenames: false
 
       - id: golangci-lint
         name: golangci-lint
-        entry: bash -c '$HOME/go/bin/golangci-lint run --fix || true'
+        entry: bash -c '$HOME/go/bin/golangci-lint run'
         language: system
         types: [go]
         pass_filenames: false
