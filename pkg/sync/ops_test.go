@@ -802,16 +802,32 @@ func TestProfile_DefaultLoomMode(t *testing.T) {
 	if codex == nil {
 		t.Fatal("codex profile not found")
 	}
-	if codex.DefaultLoomMode {
-		t.Error("codex profile should NOT default to loom mode")
+	if !codex.DefaultLoomMode {
+		t.Error("codex profile should default to loom mode")
 	}
 
 	vscode := m.Get("vscode")
 	if vscode == nil {
 		t.Fatal("vscode profile not found")
 	}
-	if vscode.DefaultLoomMode {
-		t.Error("vscode profile should NOT default to loom mode")
+	if !vscode.DefaultLoomMode {
+		t.Error("vscode profile should default to loom mode")
+	}
+
+	gemini := m.Get("gemini")
+	if gemini == nil {
+		t.Fatal("gemini profile not found")
+	}
+	if !gemini.DefaultLoomMode {
+		t.Error("gemini profile should default to loom mode")
+	}
+
+	antigravity := m.Get("antigravity")
+	if antigravity == nil {
+		t.Fatal("antigravity profile not found")
+	}
+	if !antigravity.DefaultLoomMode {
+		t.Error("antigravity profile should default to loom mode")
 	}
 }
 

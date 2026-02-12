@@ -74,6 +74,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "codex",
 		SkillsManifest:        ".loom-skills-manifest.json",
+		DefaultLoomMode:       true,
 		DefaultResolveSecrets: true,
 	}
 
@@ -88,6 +89,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "kilocode",
 		SkillsManifest:        ".loom-skills-manifest.json",
+		DefaultLoomMode:       true,
 		DefaultResolveSecrets: true,
 	}
 
@@ -130,6 +132,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:   true,
 		SkillsTarget:        "gemini",
 		SkillsManifest:      ".loom-skills-manifest.json",
+		DefaultLoomMode:     true,
 	}
 
 	m.Profiles["antigravity"] = &Profile{
@@ -144,6 +147,7 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "antigravity", // Uses mcp.json format (VSCode fork)
 		GeneratedFile:     "mcp.json",
 		SyncGeneratedOnly: true,
+		DefaultLoomMode:   true,
 	}
 
 	m.Profiles["vscode"] = &Profile{
@@ -166,6 +170,7 @@ func (m *Manager) registerProfiles() {
 		GeneratorTarget:   "vscode",
 		GeneratedFile:     "mcp.json",
 		SyncGeneratedOnly: true,
+		DefaultLoomMode:   true,
 	}
 }
 

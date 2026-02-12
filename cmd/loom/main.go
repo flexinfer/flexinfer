@@ -486,7 +486,7 @@ func newGenerateConfigsCmd() *cobra.Command {
 	cmd.Flags().String("target", "all", "Target config (all, vscode, codex, etc.)")
 	cmd.Flags().Bool("hub-mode", false, "Generate configs for MCP Hub")
 	cmd.Flags().String("hub-url", "wss://mcp.flexinfer.ai/ws", "MCP Hub WebSocket URL")
-	cmd.Flags().Bool("loom-mode", false, "Generate single loom proxy entry")
+	cmd.Flags().Bool("loom-mode", true, "Generate single loom proxy entry")
 	cmd.Flags().String("loom-binary", "", "Path to loom binary")
 	cmd.Flags().String("registry", "", "Path to registry.yaml")
 	cmd.Flags().Bool("emit", true, "Emit generated files (always true)")
