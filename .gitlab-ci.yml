@@ -33,7 +33,7 @@ variables:
   # Lowered from 30% to accommodate SSH tunnel code which requires actual SSH server to test
   COVERAGE_THRESHOLD: "24"
   IMAGE_REGISTRY: registry.flexinfer.ai
-  IMAGE_REGISTRIES: "registry.flexinfer.ai registry.harbor.lan"
+  IMAGE_REGISTRIES: "registry.harbor.lan registry.flexinfer.ai"
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
   DOCKER_CONFIG: /kaniko/.docker
   # The CI runner injects a pre-build step that waits for a Docker daemon when DOCKER_HOST is tcp://localhost:2375.
@@ -478,6 +478,22 @@ build:image:loom-core:
       LAST_RC=1
 
       for REGISTRY in $REGISTRY_CANDIDATES; do
+        PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        rm -f "$PROBE_LOG"
+        if command -v wget >/dev/null 2>&1; then
+          if ! wget -q --spider --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
+            if grep -Eqi "401|403|unauthorized|forbidden" "$PROBE_LOG"; then
+              echo "Registry host $REGISTRY is reachable (auth challenge)."
+            else
+              echo "Registry host $REGISTRY is unreachable; skipping."
+              cat "$PROBE_LOG"
+              rm -f "$PROBE_LOG"
+              continue
+            fi
+          fi
+        fi
+        rm -f "$PROBE_LOG"
+
         IMAGE="$REGISTRY/mcp/loom-core"
         DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
@@ -549,6 +565,22 @@ build:image:custom-server:
       LAST_RC=1
 
       for REGISTRY in $REGISTRY_CANDIDATES; do
+        PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        rm -f "$PROBE_LOG"
+        if command -v wget >/dev/null 2>&1; then
+          if ! wget -q --spider --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
+            if grep -Eqi "401|403|unauthorized|forbidden" "$PROBE_LOG"; then
+              echo "Registry host $REGISTRY is reachable (auth challenge)."
+            else
+              echo "Registry host $REGISTRY is unreachable; skipping."
+              cat "$PROBE_LOG"
+              rm -f "$PROBE_LOG"
+              continue
+            fi
+          fi
+        fi
+        rm -f "$PROBE_LOG"
+
         IMAGE="$REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
         DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
