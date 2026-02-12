@@ -102,6 +102,12 @@ func (m *WorkflowMonitor) Detail(id string) (*bridge.WorkflowDetail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch workflow detail %s: %w", id, err)
 	}
+	events, err := m.agent.WorkflowEvents(id)
+	if err != nil {
+		m.logger.Debug("workflow: failed to fetch workflow events", "workflow_id", id, "error", err)
+	} else {
+		detail.Events = events
+	}
 
 	// Cache the result.
 	m.mu.Lock()

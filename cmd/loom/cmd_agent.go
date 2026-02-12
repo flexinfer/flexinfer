@@ -665,6 +665,7 @@ func newAgentSessionCmd() *cobra.Command {
 
 // workflowYAML mirrors the YAML structure of workflow definition files.
 type workflowYAML struct {
+	ID                string           `yaml:"id"`
 	Name              string           `yaml:"name"`
 	Description       string           `yaml:"description"`
 	Steps             []map[string]any `yaml:"steps"`
@@ -791,6 +792,9 @@ func loadWorkflowFile(path, namespace, createdBy string) (map[string]any, error)
 		"steps":               wf.Steps,
 		"rollback_on_failure": wf.RollbackOnFailure,
 		"created_by":          createdBy,
+	}
+	if wf.ID != "" {
+		body["id"] = wf.ID
 	}
 	if namespace != "" {
 		body["namespace"] = namespace

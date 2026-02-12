@@ -74,18 +74,28 @@ type WorkflowStep struct {
 
 // WorkflowDetail is the full workflow status including steps (MCP field names).
 type WorkflowDetail struct {
-	ID             string         `json:"workflow_id"`
-	Name           string         `json:"name,omitempty"`
-	Status         string         `json:"status"`
-	CurrentStep    string         `json:"current_step"`
-	Progress       float64        `json:"progress,omitempty"`
-	CompletedSteps int            `json:"completed_steps,omitempty"`
-	TotalSteps     int            `json:"total_steps,omitempty"`
-	Steps          []WorkflowStep `json:"steps,omitempty"`
-	CreatedAt      string         `json:"created_at"`
-	StartedAt      string         `json:"started_at,omitempty"`
-	CompletedAt    string         `json:"completed_at,omitempty"`
-	Error          string         `json:"error,omitempty"`
+	ID             string          `json:"workflow_id"`
+	Name           string          `json:"name,omitempty"`
+	Status         string          `json:"status"`
+	CurrentStep    string          `json:"current_step"`
+	Progress       float64         `json:"progress,omitempty"`
+	CompletedSteps int             `json:"completed_steps,omitempty"`
+	TotalSteps     int             `json:"total_steps,omitempty"`
+	Steps          []WorkflowStep  `json:"steps,omitempty"`
+	CreatedAt      string          `json:"created_at"`
+	StartedAt      string          `json:"started_at,omitempty"`
+	CompletedAt    string          `json:"completed_at,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	Events         []WorkflowEvent `json:"events,omitempty"`
+}
+
+// WorkflowEvent is a single workflow execution event.
+type WorkflowEvent struct {
+	ID        string         `json:"id"`
+	EventType string         `json:"event_type"`
+	Timestamp string         `json:"timestamp"`
+	StepID    string         `json:"step_id,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 // MemoryTierStats describes statistics for a single memory tier.
@@ -348,6 +358,18 @@ func (a *AgentBridge) WorkflowStatus(id string) (*WorkflowDetail, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// WorkflowEvents returns workflow execution events for a single workflow.
+func (a *AgentBridge) WorkflowEvents(id string) ([]WorkflowEvent, error) {
+	args := map[string]any{"workflow_id": id}
+	var result struct {
+		Events []WorkflowEvent `json:"events"`
+	}
+	if err := a.callAgentTool("agent_workflow_events", args, &result); err != nil {
+		return nil, err
+	}
+	return result.Events, nil
 }
 
 // ApproveStep approves a pending step in a workflow.

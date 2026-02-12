@@ -369,6 +369,50 @@ func TestAgentBridge_WorkflowStatus_UsesWorkflowIDArg(t *testing.T) {
 	}
 }
 
+func TestAgentBridge_WorkflowEvents_UsesWorkflowIDArg(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_workflow_events" {
+			t.Fatalf("unexpected tool name: %s", req.Name)
+		}
+		if got, _ := req.Arguments["workflow_id"].(string); got != "wf-1" {
+			t.Fatalf("expected workflow_id wf-1, got %q", got)
+		}
+		return map[string]any{
+			"isError": false,
+			"content": []map[string]any{
+				{"type": "text", "text": "{\"events\":[{\"id\":\"e-1\",\"event_type\":\"workflow_started\",\"timestamp\":\"2026-02-12T00:00:00Z\"}]}"},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	events, err := bridge.WorkflowEvents("wf-1")
+	if err != nil {
+		t.Fatalf("workflow events failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].EventType != "workflow_started" {
+		t.Fatalf("unexpected event type: %q", events[0].EventType)
+	}
+}
+
 func TestAgentBridge_GraphFindPath_UsesSourceTargetAndEnriches(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 

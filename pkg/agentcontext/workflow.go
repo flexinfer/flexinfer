@@ -53,9 +53,6 @@ func (e *WorkflowEngine) SetEventCallback(cb func(WorkflowEvent)) {
 
 // RegisterDefinition registers a workflow definition
 func (e *WorkflowEngine) RegisterDefinition(def *WorkflowDefinition) error {
-	if def.ID == "" {
-		def.ID = uuid.New().String()[:8]
-	}
 	if def.Name == "" {
 		return fmt.Errorf("workflow definition name is required")
 	}
@@ -76,11 +73,31 @@ func (e *WorkflowEngine) RegisterDefinition(def *WorkflowDefinition) error {
 		def.Steps[i].Status = StepStatusPending
 	}
 
-	def.CreatedAt = time.Now().UTC()
-	def.UpdatedAt = def.CreatedAt
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Idempotent registration by name+namespace when ID is not provided.
+	// This keeps repeated sync/bootstrap runs from creating duplicate definitions.
+	if def.ID == "" {
+		for id, existing := range e.definitions {
+			if existing.Name == def.Name && existing.Namespace == def.Namespace {
+				def.ID = id
+				break
+			}
+		}
+		if def.ID == "" {
+			def.ID = uuid.New().String()[:8]
+		}
+	}
+
+	now := time.Now().UTC()
+	if existing, ok := e.definitions[def.ID]; ok {
+		def.CreatedAt = existing.CreatedAt
+	} else {
+		def.CreatedAt = now
+	}
+	def.UpdatedAt = now
+
 	e.definitions[def.ID] = def
 
 	return nil

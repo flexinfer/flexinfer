@@ -645,13 +645,40 @@ func (a *App) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Build frontend-compatible step list.
 	steps := make([]map[string]any, len(detail.Steps))
+	stepNames := make(map[string]string, len(detail.Steps))
 	for i, s := range detail.Steps {
+		stepNames[s.ID] = s.Name
 		steps[i] = map[string]any{
 			"id":     s.ID,
 			"name":   s.Name,
 			"type":   s.Type,
 			"status": s.Status,
 		}
+	}
+	events := make([]map[string]any, len(detail.Events))
+	for i, e := range detail.Events {
+		entry := map[string]any{
+			"id":         e.ID,
+			"event_type": e.EventType,
+			"timestamp":  e.Timestamp,
+		}
+		if e.StepID != "" {
+			entry["step_id"] = e.StepID
+			if name := stepNames[e.StepID]; name != "" {
+				entry["step_name"] = name
+			}
+		}
+		if len(e.Details) > 0 {
+			if msg, ok := e.Details["message"].(string); ok && msg != "" {
+				entry["details"] = msg
+			} else {
+				raw, err := json.Marshal(e.Details)
+				if err == nil {
+					entry["details"] = string(raw)
+				}
+			}
+		}
+		events[i] = entry
 	}
 
 	result := map[string]any{
@@ -662,6 +689,7 @@ func (a *App) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		"progress":     detail.Progress,
 		"started_at":   detail.CreatedAt,
 		"steps":        steps,
+		"events":       events,
 	}
 	if detail.StartedAt != "" {
 		result["started_at"] = detail.StartedAt

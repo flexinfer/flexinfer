@@ -321,7 +321,7 @@
 
         <div class="def-usage">
           <span class="card-title">Usage</span>
-          <code class="def-usage-code">agent_workflow_start(definition_id="{selectedDef.name}", input=&#123;...&#125;)</code>
+          <code class="def-usage-code">agent_workflow_start(definition_id="{selectedDef.id}", input=&#123;...&#125;)</code>
         </div>
       </div>
 

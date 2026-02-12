@@ -23,6 +23,7 @@ func (s *Service) GetWorkflowEngine() *WorkflowEngine {
 // HandleWorkflowDefine registers a new workflow definition
 func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
+	id := v.String("id", "")
 	name := v.Required("name")
 	description := v.String("description", "")
 	namespace := v.String("namespace", s.cfg.DefaultNamespace)
@@ -89,6 +90,7 @@ func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any)
 	}
 
 	def := &WorkflowDefinition{
+		ID:                id,
 		Name:              name,
 		Description:       description,
 		Namespace:         namespace,

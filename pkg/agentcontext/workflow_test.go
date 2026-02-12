@@ -60,6 +60,47 @@ func TestWorkflowEngine_RegisterDefinition_Validation(t *testing.T) {
 	}
 }
 
+func TestWorkflowEngine_RegisterDefinition_IsIdempotentByNameAndNamespace(t *testing.T) {
+	engine := NewWorkflowEngine(nil)
+
+	first := &WorkflowDefinition{
+		Name:      "deploy",
+		Namespace: "team/platform",
+		Steps: []WorkflowStep{
+			{Name: "step1", StepType: StepTypeTool, ToolName: "tool_one"},
+		},
+	}
+	if err := engine.RegisterDefinition(first); err != nil {
+		t.Fatalf("first register failed: %v", err)
+	}
+	if first.ID == "" {
+		t.Fatal("first definition ID should be set")
+	}
+
+	second := &WorkflowDefinition{
+		Name:      "deploy",
+		Namespace: "team/platform",
+		Steps: []WorkflowStep{
+			{Name: "step1", StepType: StepTypeTool, ToolName: "tool_two"},
+		},
+	}
+	if err := engine.RegisterDefinition(second); err != nil {
+		t.Fatalf("second register failed: %v", err)
+	}
+
+	if second.ID != first.ID {
+		t.Fatalf("expected second register to reuse ID %q, got %q", first.ID, second.ID)
+	}
+
+	defs := engine.ListDefinitions("team/platform")
+	if len(defs) != 1 {
+		t.Fatalf("expected exactly one definition in namespace, got %d", len(defs))
+	}
+	if defs[0].Steps[0].ToolName != "tool_two" {
+		t.Fatalf("expected second registration to update definition, got tool %q", defs[0].Steps[0].ToolName)
+	}
+}
+
 func TestWorkflowEngine_StartWorkflow(t *testing.T) {
 	var executedTools []string
 	executor := func(ctx context.Context, server, tool string, args map[string]any) (map[string]any, error) {
