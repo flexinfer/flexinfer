@@ -364,6 +364,56 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Trace
 		},
 	}, mcpotel.TracedToolHandler(tracer, "create_issue", gl.handleCreateIssue))
 
+	// update_issue
+	server.AddTool(mcp.Tool{
+		Name:        "update_issue",
+		Description: "Update an issue in a project (labels, assignees, state, and fields)",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"issue_iid": map[string]any{
+					"type":        "integer",
+					"description": "Issue IID within the project",
+				},
+				"title": map[string]any{
+					"type":        "string",
+					"description": "Updated issue title",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Updated issue description",
+				},
+				"labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to set (replaces current labels)",
+				},
+				"add_labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to add",
+				},
+				"remove_labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to remove",
+				},
+				"assignee_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "integer"},
+					"description": "User IDs to assign",
+				},
+				"state_event": map[string]any{
+					"type":        "string",
+					"description": "Issue state transition: close or reopen",
+					"enum":        []string{"close", "reopen"},
+				},
+			},
+			Required: []string{"project", "issue_iid"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "update_issue", gl.handleUpdateIssue))
+
 	// list_issues
 	server.AddTool(mcp.Tool{
 		Name:        "list_issues",

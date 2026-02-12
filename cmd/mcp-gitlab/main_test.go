@@ -604,6 +604,65 @@ func TestHandleCreateIssue(t *testing.T) {
 	}
 }
 
+func TestHandleUpdateIssue(t *testing.T) {
+	var gotBody map[string]any
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":1,"iid":7,"title":"Bug report","state":"closed","labels":["bug","resolved"]}`)
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	result, err := gl.handleUpdateIssue(context.Background(), map[string]any{
+		"project":     "group/project",
+		"issue_iid":   7,
+		"labels":      "bug,resolved",
+		"state_event": "close",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != "PUT" {
+		t.Fatalf("expected PUT, got %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "/projects/group/project/issues/7") {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+
+	parsed := mustParseJSON(t, result)
+	if parsed["state"] != "closed" {
+		t.Fatalf("expected state=closed, got %v", parsed["state"])
+	}
+	if gotBody["labels"] != "bug,resolved" {
+		t.Fatalf("expected request body labels=bug,resolved, got %v", gotBody["labels"])
+	}
+	if gotBody["state_event"] != "close" {
+		t.Fatalf("expected request body state_event=close, got %v", gotBody["state_event"])
+	}
+}
+
+func TestHandleUpdateIssue_MissingUpdateFields(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleUpdateIssue(context.Background(), map[string]any{
+		"project":   "group/project",
+		"issue_iid": 7,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result when no update fields are provided")
+	}
+}
+
 func TestHandleListMergeRequests(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
