@@ -3,12 +3,15 @@ package sync
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/registry"
@@ -68,9 +71,16 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 
 	repoPath := m.ResolveRepoPath(p)
 	homePath := m.ResolveHomePath(p)
-	var geminiTrustedSnapshot []byte
-	if p.Name == "gemini" {
-		geminiTrustedSnapshot = readGeminiTrustedFoldersSnapshot(homePath)
+	var geminiSnapshot geminiConfigSnapshot
+	var claudeSnapshot claudeConfigSnapshot
+	var codexSnapshot codexConfigSnapshot
+	switch p.Name {
+	case "gemini":
+		geminiSnapshot = readGeminiConfigSnapshot(homePath)
+	case "claude":
+		claudeSnapshot = readClaudeConfigSnapshot(homePath)
+	case "codex":
+		codexSnapshot = readCodexConfigSnapshot(homePath)
 	}
 
 	if regen {
@@ -203,13 +213,58 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
-	if p.Name == "gemini" {
-		if err := ensureGeminiTrustedFolders(homePath, geminiTrustedSnapshot); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not verify Gemini trustedFolders.json: %v\n", err)
+	switch p.Name {
+	case "gemini":
+		if err := ensureGeminiConfigFiles(homePath, geminiSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not verify Gemini config files: %v\n", err)
+		}
+	case "claude":
+		if err := ensureClaudeConfigFiles(homePath, claudeSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not verify Claude config files: %v\n", err)
+		}
+	case "codex":
+		if err := ensureCodexConfigFiles(homePath, codexSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not verify Codex config files: %v\n", err)
 		}
 	}
 
 	return nil
+}
+
+type geminiConfigSnapshot struct {
+	trustedFolders      []byte
+	extensionEnablement []byte
+	extensionManifests  map[string][]byte
+}
+
+type claudeConfigSnapshot struct {
+	mcp      []byte
+	settings []byte
+}
+
+type codexConfigSnapshot struct {
+	config []byte
+}
+
+func readGeminiConfigSnapshot(homePath string) geminiConfigSnapshot {
+	return geminiConfigSnapshot{
+		trustedFolders:      readGeminiTrustedFoldersSnapshot(homePath),
+		extensionEnablement: readGeminiJSONSnapshot(filepath.Join(homePath, "extensions", "extension-enablement.json")),
+		extensionManifests:  readGeminiExtensionManifestSnapshots(homePath),
+	}
+}
+
+func readClaudeConfigSnapshot(homePath string) claudeConfigSnapshot {
+	return claudeConfigSnapshot{
+		mcp:      readJSONSnapshot(filepath.Join(homePath, "mcp.json")),
+		settings: readJSONSnapshot(filepath.Join(homePath, "settings.json")),
+	}
+}
+
+func readCodexConfigSnapshot(homePath string) codexConfigSnapshot {
+	return codexConfigSnapshot{
+		config: readTOMLSnapshot(filepath.Join(homePath, "config.toml")),
+	}
 }
 
 func readGeminiTrustedFoldersSnapshot(homePath string) []byte {
@@ -224,6 +279,98 @@ func readGeminiTrustedFoldersSnapshot(homePath string) []byte {
 	return append([]byte(nil), data...)
 }
 
+func readGeminiJSONSnapshot(path string) []byte {
+	return readJSONSnapshot(path)
+}
+
+func readJSONSnapshot(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if !isValidGeminiJSONObject(data) {
+		return nil
+	}
+	return append([]byte(nil), data...)
+}
+
+func readTOMLSnapshot(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if !isValidTOML(data) {
+		return nil
+	}
+	return append([]byte(nil), data...)
+}
+
+func readGeminiExtensionManifestSnapshots(homePath string) map[string][]byte {
+	matches, err := filepath.Glob(filepath.Join(homePath, "extensions", "*", "gemini-extension.json"))
+	if err != nil || len(matches) == 0 {
+		return nil
+	}
+
+	snapshots := make(map[string][]byte)
+	for _, path := range matches {
+		data := readGeminiJSONSnapshot(path)
+		if len(data) == 0 {
+			continue
+		}
+		relPath, err := filepath.Rel(homePath, path)
+		if err != nil {
+			continue
+		}
+		snapshots[relPath] = data
+	}
+	if len(snapshots) == 0 {
+		return nil
+	}
+	return snapshots
+}
+
+func ensureGeminiConfigFiles(homePath string, snapshot geminiConfigSnapshot) error {
+	var errs []string
+
+	if err := ensureGeminiTrustedFolders(homePath, snapshot.trustedFolders); err != nil {
+		errs = append(errs, fmt.Sprintf("trustedFolders.json: %v", err))
+	}
+	if err := ensureGeminiExtensionEnablement(homePath, snapshot.extensionEnablement); err != nil {
+		errs = append(errs, fmt.Sprintf("extensions/extension-enablement.json: %v", err))
+	}
+	if err := ensureGeminiExtensionManifests(homePath, snapshot.extensionManifests); err != nil {
+		errs = append(errs, fmt.Sprintf("extensions/*/gemini-extension.json: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func ensureClaudeConfigFiles(homePath string, snapshot claudeConfigSnapshot) error {
+	var errs []string
+
+	if err := ensureProfileJSONFile(homePath, "claude", "mcp.json", snapshot.mcp, []byte("{\"mcpServers\":{}}\n")); err != nil {
+		errs = append(errs, fmt.Sprintf("mcp.json: %v", err))
+	}
+	if err := ensureProfileJSONFile(homePath, "claude", "settings.json", snapshot.settings, []byte("{}\n")); err != nil {
+		errs = append(errs, fmt.Sprintf("settings.json: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func ensureCodexConfigFiles(homePath string, snapshot codexConfigSnapshot) error {
+	if err := ensureProfileTOMLFile(homePath, "codex", "config.toml", snapshot.config, []byte("[mcp_servers]\n")); err != nil {
+		return fmt.Errorf("config.toml: %w", err)
+	}
+	return nil
+}
+
 func ensureGeminiTrustedFolders(homePath string, fallback []byte) error {
 	path := filepath.Join(homePath, "trustedFolders.json")
 	if current, err := os.ReadFile(path); err == nil && isValidGeminiTrustedFolders(current) {
@@ -233,6 +380,158 @@ func ensureGeminiTrustedFolders(homePath string, fallback []byte) error {
 		return writeFileAtomic(path, fallback, 0o600)
 	}
 	return writeFileAtomic(path, []byte("{}\n"), 0o600)
+}
+
+func ensureGeminiExtensionEnablement(homePath string, fallback []byte) error {
+	path := filepath.Join(homePath, "extensions", "extension-enablement.json")
+	if current, err := os.ReadFile(path); err == nil && isValidGeminiJSONObject(current) {
+		return nil
+	}
+	if len(fallback) > 0 && isValidGeminiJSONObject(fallback) {
+		return writeFileAtomic(path, fallback, 0o600)
+	}
+
+	if backup := readGeminiBackupJSON(homePath, filepath.Join("extensions", "extension-enablement.json")); len(backup) > 0 {
+		return writeFileAtomic(path, backup, 0o600)
+	}
+
+	return writeFileAtomic(path, []byte("{}\n"), 0o600)
+}
+
+func ensureGeminiExtensionManifests(homePath string, snapshots map[string][]byte) error {
+	processed := make(map[string]struct{})
+	var errs []string
+
+	matches, err := filepath.Glob(filepath.Join(homePath, "extensions", "*", "gemini-extension.json"))
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		relPath, err := filepath.Rel(homePath, path)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", path, err))
+			continue
+		}
+		processed[relPath] = struct{}{}
+		if err := repairGeminiManifestFile(homePath, relPath, snapshots[relPath]); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
+		}
+	}
+
+	for relPath, fallback := range snapshots {
+		if _, ok := processed[relPath]; ok {
+			continue
+		}
+		if err := repairGeminiManifestFile(homePath, relPath, fallback); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func repairGeminiManifestFile(homePath, relPath string, fallback []byte) error {
+	path := filepath.Join(homePath, relPath)
+	if current, err := os.ReadFile(path); err == nil && isValidGeminiJSONObject(current) {
+		return nil
+	}
+	if len(fallback) > 0 && isValidGeminiJSONObject(fallback) {
+		return writeFileAtomic(path, fallback, 0o600)
+	}
+	if backup := readGeminiBackupJSON(homePath, relPath); len(backup) > 0 {
+		return writeFileAtomic(path, backup, 0o600)
+	}
+	return writeFileAtomic(path, []byte("{}\n"), 0o600)
+}
+
+func readGeminiBackupJSON(homePath, relPath string) []byte {
+	return readProfileBackupFile(homePath, "gemini", relPath, isValidGeminiJSONObject)
+}
+
+func profileBackupRoots(homePath, profileName string) []string {
+	homeParent := filepath.Dir(homePath)
+	roots := []string{
+		filepath.Join(homePath, "backups"),
+		filepath.Join(homeParent, ".config", "loom", "backups", profileName),
+	}
+
+	seen := make(map[string]struct{}, len(roots))
+	unique := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		unique = append(unique, root)
+	}
+	return unique
+}
+
+func readProfileBackupFile(homePath, profileName, relPath string, validate func([]byte) bool) []byte {
+	for _, root := range profileBackupRoots(homePath, profileName) {
+		if data := readLatestBackupFile(root, relPath, validate); len(data) > 0 {
+			return data
+		}
+	}
+	return nil
+}
+
+func readLatestBackupFile(backupRoot, relPath string, validate func([]byte) bool) []byte {
+	entries, err := os.ReadDir(backupRoot)
+	if err != nil {
+		return nil
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() > entries[j].Name()
+	})
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(backupRoot, entry.Name(), relPath)
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		if validate(data) {
+			return append([]byte(nil), data...)
+		}
+	}
+
+	return nil
+}
+
+func ensureProfileJSONFile(homePath, profileName, relPath string, fallback, defaultData []byte) error {
+	path := filepath.Join(homePath, relPath)
+	if current, err := os.ReadFile(path); err == nil && isValidGeminiJSONObject(current) {
+		return nil
+	}
+	if len(fallback) > 0 && isValidGeminiJSONObject(fallback) {
+		return writeFileAtomic(path, fallback, 0o600)
+	}
+	if backup := readProfileBackupFile(homePath, profileName, relPath, isValidGeminiJSONObject); len(backup) > 0 {
+		return writeFileAtomic(path, backup, 0o600)
+	}
+	return writeFileAtomic(path, defaultData, 0o600)
+}
+
+func ensureProfileTOMLFile(homePath, profileName, relPath string, fallback, defaultData []byte) error {
+	path := filepath.Join(homePath, relPath)
+	if current, err := os.ReadFile(path); err == nil && isValidTOML(current) {
+		return nil
+	}
+	if len(fallback) > 0 && isValidTOML(fallback) {
+		return writeFileAtomic(path, fallback, 0o600)
+	}
+	if backup := readProfileBackupFile(homePath, profileName, relPath, isValidTOML); len(backup) > 0 {
+		return writeFileAtomic(path, backup, 0o600)
+	}
+	return writeFileAtomic(path, defaultData, 0o600)
 }
 
 func isValidGeminiTrustedFolders(data []byte) bool {
@@ -252,6 +551,22 @@ func isValidGeminiTrustedFolders(data []byte) bool {
 		}
 	}
 	return true
+}
+
+func isValidGeminiJSONObject(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var obj map[string]any
+	return json.Unmarshal(data, &obj) == nil
+}
+
+func isValidTOML(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var obj map[string]any
+	return toml.Unmarshal(data, &obj) == nil
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) (retErr error) {

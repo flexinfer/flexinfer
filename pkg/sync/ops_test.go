@@ -255,6 +255,258 @@ func TestEnsureGeminiTrustedFolders_RepairsInvalidFile(t *testing.T) {
 	}
 }
 
+func TestSyncToHome_GeminiPreservesExtensionEnablement(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	repoGemini := filepath.Join(repoDir, ".gemini")
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(filepath.Join(repoGemini), 0755); err != nil {
+		t.Fatalf("mkdir repo gemini: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(homeGemini, "extensions"), 0755); err != nil {
+		t.Fatalf("mkdir home gemini extensions: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoGemini, "config.toml"), []byte("[mcp_servers.test]\ncommand = \"echo\"\n"), 0644); err != nil {
+		t.Fatalf("write repo config.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoGemini, "settings.json"), []byte("{\"theme\":\"test\"}\n"), 0644); err != nil {
+		t.Fatalf("write repo settings.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "trustedFolders.json"), []byte("{}\n"), 0600); err != nil {
+		t.Fatalf("write trustedFolders.json: %v", err)
+	}
+
+	original := []byte("{\n  \"foo\": true,\n  \"bar\": false\n}\n")
+	enablementPath := filepath.Join(homeGemini, "extensions", "extension-enablement.json")
+	if err := os.WriteFile(enablementPath, original, 0600); err != nil {
+		t.Fatalf("write extension-enablement.json: %v", err)
+	}
+
+	if err := m.SyncToHome("gemini", false, false, false, false, "", false, "", false); err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	got, err := os.ReadFile(enablementPath)
+	if err != nil {
+		t.Fatalf("read extension-enablement.json: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("extension-enablement.json changed unexpectedly\nwant: %q\ngot:  %q", string(original), string(got))
+	}
+}
+
+func TestEnsureGeminiExtensionEnablement_RepairsInvalidFile(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(filepath.Join(homeGemini, "extensions"), 0755); err != nil {
+		t.Fatalf("mkdir home gemini extensions: %v", err)
+	}
+
+	path := filepath.Join(homeGemini, "extensions", "extension-enablement.json")
+	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
+		t.Fatalf("write empty extension-enablement.json: %v", err)
+	}
+
+	if err := ensureGeminiExtensionEnablement(homeGemini, nil); err != nil {
+		t.Fatalf("ensureGeminiExtensionEnablement failed: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read extension-enablement.json: %v", err)
+	}
+	if !isValidGeminiJSONObject(got) {
+		t.Fatalf("extension-enablement.json should be valid after repair, got %q", string(got))
+	}
+}
+
+func TestEnsureGeminiExtensionEnablement_RepairsFromBackup(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(filepath.Join(homeGemini, "extensions"), 0755); err != nil {
+		t.Fatalf("mkdir home gemini extensions: %v", err)
+	}
+
+	path := filepath.Join(homeGemini, "extensions", "extension-enablement.json")
+	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
+		t.Fatalf("write invalid extension-enablement.json: %v", err)
+	}
+
+	backupPath := filepath.Join(homeGemini, "backups", "gemini_home_20990101_000000", "extensions", "extension-enablement.json")
+	backup := []byte("{\"context7\":true}\n")
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0755); err != nil {
+		t.Fatalf("mkdir backup path: %v", err)
+	}
+	if err := os.WriteFile(backupPath, backup, 0600); err != nil {
+		t.Fatalf("write backup extension-enablement.json: %v", err)
+	}
+
+	if err := ensureGeminiExtensionEnablement(homeGemini, nil); err != nil {
+		t.Fatalf("ensureGeminiExtensionEnablement failed: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read extension-enablement.json: %v", err)
+	}
+	if string(got) != string(backup) {
+		t.Fatalf("expected extension-enablement.json restored from backup\nwant: %q\ngot:  %q", string(backup), string(got))
+	}
+}
+
+func TestEnsureGeminiExtensionManifests_RepairsInvalidFromBackup(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	manifestPath := filepath.Join(homeGemini, "extensions", "context7", "gemini-extension.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(""), 0600); err != nil {
+		t.Fatalf("write invalid gemini-extension.json: %v", err)
+	}
+
+	backupPath := filepath.Join(homeGemini, "backups", "gemini_home_20990101_000000", "extensions", "context7", "gemini-extension.json")
+	backup := []byte("{\"name\":\"context7\"}\n")
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0755); err != nil {
+		t.Fatalf("mkdir backup manifest dir: %v", err)
+	}
+	if err := os.WriteFile(backupPath, backup, 0600); err != nil {
+		t.Fatalf("write backup manifest: %v", err)
+	}
+
+	if err := ensureGeminiExtensionManifests(homeGemini, nil); err != nil {
+		t.Fatalf("ensureGeminiExtensionManifests failed: %v", err)
+	}
+
+	got, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read gemini-extension.json: %v", err)
+	}
+	if string(got) != string(backup) {
+		t.Fatalf("expected gemini-extension.json restored from backup\nwant: %q\ngot:  %q", string(backup), string(got))
+	}
+}
+
+func TestSyncToHome_ClaudeRepairsInvalidSettingsFromSnapshot(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	repoClaude := filepath.Join(repoDir, ".claude")
+	homeClaude := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(repoClaude, 0755); err != nil {
+		t.Fatalf("mkdir repo claude: %v", err)
+	}
+	if err := os.MkdirAll(homeClaude, 0755); err != nil {
+		t.Fatalf("mkdir home claude: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoClaude, "mcp.json"), []byte("{\"mcpServers\":{}}\n"), 0644); err != nil {
+		t.Fatalf("write repo mcp.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoClaude, "settings.json"), []byte(""), 0644); err != nil {
+		t.Fatalf("write invalid repo settings.json: %v", err)
+	}
+
+	original := []byte("{\"customSetting\":true}\n")
+	settingsPath := filepath.Join(homeClaude, "settings.json")
+	if err := os.WriteFile(settingsPath, original, 0600); err != nil {
+		t.Fatalf("write home settings.json: %v", err)
+	}
+
+	if err := m.SyncToHome("claude", false, false, false, false, "", false, "", false); err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	got, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read home settings.json: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("expected settings.json repaired from snapshot\nwant: %q\ngot:  %q", string(original), string(got))
+	}
+}
+
+func TestSyncToHome_CodexRepairsInvalidConfigFromSnapshot(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	repoCodex := filepath.Join(repoDir, ".codex")
+	homeCodex := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(repoCodex, 0755); err != nil {
+		t.Fatalf("mkdir repo codex: %v", err)
+	}
+	if err := os.MkdirAll(homeCodex, 0755); err != nil {
+		t.Fatalf("mkdir home codex: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoCodex, "config.toml"), []byte(""), 0644); err != nil {
+		t.Fatalf("write invalid repo config.toml: %v", err)
+	}
+
+	original := []byte("[mcp_servers.test]\ncommand = \"echo\"\n")
+	configPath := filepath.Join(homeCodex, "config.toml")
+	if err := os.WriteFile(configPath, original, 0600); err != nil {
+		t.Fatalf("write home config.toml: %v", err)
+	}
+
+	if err := m.SyncToHome("codex", false, false, false, false, "", false, "", false); err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read home config.toml: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("expected config.toml repaired from snapshot\nwant: %q\ngot:  %q", string(original), string(got))
+	}
+}
+
+func TestEnsureCodexConfigFiles_RepairsInvalidFromBackup(t *testing.T) {
+	homeDir := t.TempDir()
+	homeCodex := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(homeCodex, 0755); err != nil {
+		t.Fatalf("mkdir home codex: %v", err)
+	}
+
+	path := filepath.Join(homeCodex, "config.toml")
+	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
+		t.Fatalf("write invalid config.toml: %v", err)
+	}
+
+	backupPath := filepath.Join(homeCodex, "backups", "codex_home_20990101_000000", "config.toml")
+	backup := []byte("[mcp_servers.backup]\ncommand = \"echo\"\n")
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0755); err != nil {
+		t.Fatalf("mkdir backup path: %v", err)
+	}
+	if err := os.WriteFile(backupPath, backup, 0600); err != nil {
+		t.Fatalf("write backup config.toml: %v", err)
+	}
+
+	if err := ensureCodexConfigFiles(homeCodex, codexConfigSnapshot{}); err != nil {
+		t.Fatalf("ensureCodexConfigFiles failed: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	if string(got) != string(backup) {
+		t.Fatalf("expected config.toml restored from backup\nwant: %q\ngot:  %q", string(backup), string(got))
+	}
+}
+
 // =============================================================================
 // Validate Tests
 // =============================================================================
