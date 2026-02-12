@@ -1,4 +1,5 @@
 # Build stage
+ARG RUNTIME_REGISTRY=registry.harbor.lan
 FROM golang:1.25.5-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
@@ -38,7 +39,7 @@ RUN mkdir -p /bin && \
     done
 
 # Runtime stage - minimal image
-FROM registry.harbor.lan/dockerhub-cache/library/alpine:3.21
+FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21
 
 RUN apk add --no-cache ca-certificates git
 

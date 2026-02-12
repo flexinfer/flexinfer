@@ -32,7 +32,8 @@ variables:
   # Minimum test coverage threshold (percentage)
   # Lowered from 30% to accommodate SSH tunnel code which requires actual SSH server to test
   COVERAGE_THRESHOLD: "24"
-  IMAGE_REGISTRY: registry.harbor.lan
+  IMAGE_REGISTRY: registry.flexinfer.ai
+  IMAGE_REGISTRIES: "registry.flexinfer.ai registry.harbor.lan"
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
   DOCKER_CONFIG: /kaniko/.docker
   # The CI runner injects a pre-build step that waits for a Docker daemon when DOCKER_HOST is tcp://localhost:2375.
@@ -455,6 +456,11 @@ build:image:loom-core:
   stage: deploy
   # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
   resource_group: kaniko
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
@@ -466,23 +472,54 @@ build:image:loom-core:
     - mkdir -p "$DOCKER_CONFIG"
     - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
     - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
-    - export IMAGE="$IMAGE_REGISTRY/mcp/loom-core"
     - |
-      DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
-      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-$IMAGE_REGISTRY}"
+      SUCCESS=0
+      LAST_RC=1
+
+      for REGISTRY in $REGISTRY_CANDIDATES; do
+        IMAGE="$REGISTRY/mcp/loom-core"
+        DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
+        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+          DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+        fi
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+        fi
+
+        echo "Attempting build/push via registry host: $REGISTRY"
+        echo "Building with destinations: $DESTINATIONS"
+        LOG_FILE="$(mktemp)"
+        if /kaniko/executor \
+          --context "$CI_PROJECT_DIR" \
+          --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+          $DESTINATIONS \
+          --cleanup \
+          --build-arg "RUNTIME_REGISTRY=$REGISTRY" \
+          --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
+          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN" >"$LOG_FILE" 2>&1; then
+          cat "$LOG_FILE"
+          rm -f "$LOG_FILE"
+          SUCCESS=1
+          break
+        fi
+
+        LAST_RC=$?
+        cat "$LOG_FILE"
+        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied" "$LOG_FILE"; then
+          echo "Registry host $REGISTRY failed; trying next configured host."
+          rm -f "$LOG_FILE"
+          continue
+        fi
+
+        rm -f "$LOG_FILE"
+        exit "$LAST_RC"
+      done
+
+      if [ "$SUCCESS" -ne 1 ]; then
+        echo "All registry hosts failed: $REGISTRY_CANDIDATES"
+        exit "$LAST_RC"
       fi
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
-      fi
-      echo "Building with destinations: $DESTINATIONS"
-      /kaniko/executor \
-        --context "$CI_PROJECT_DIR" \
-        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-        $DESTINATIONS \
-        --cleanup \
-        --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-        --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
@@ -491,6 +528,11 @@ build:image:custom-server:
   stage: deploy
   # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
   resource_group: kaniko
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
@@ -500,22 +542,53 @@ build:image:custom-server:
     - mkdir -p "$DOCKER_CONFIG"
     - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
     - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
-    - export IMAGE="$IMAGE_REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
     - |
-      DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
-      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-$IMAGE_REGISTRY}"
+      SUCCESS=0
+      LAST_RC=1
+
+      for REGISTRY in $REGISTRY_CANDIDATES; do
+        IMAGE="$REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
+        DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
+        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+          DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+        fi
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+        fi
+
+        echo "Attempting build/push via registry host: $REGISTRY"
+        echo "Building with destinations: $DESTINATIONS"
+        LOG_FILE="$(mktemp)"
+        if /kaniko/executor \
+          --context "$CI_PROJECT_DIR" \
+          --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
+          $DESTINATIONS \
+          --cleanup \
+          --build-arg "RUNTIME_REGISTRY=$REGISTRY" \
+          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN" >"$LOG_FILE" 2>&1; then
+          cat "$LOG_FILE"
+          rm -f "$LOG_FILE"
+          SUCCESS=1
+          break
+        fi
+
+        LAST_RC=$?
+        cat "$LOG_FILE"
+        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied" "$LOG_FILE"; then
+          echo "Registry host $REGISTRY failed; trying next configured host."
+          rm -f "$LOG_FILE"
+          continue
+        fi
+
+        rm -f "$LOG_FILE"
+        exit "$LAST_RC"
+      done
+
+      if [ "$SUCCESS" -ne 1 ]; then
+        echo "All registry hosts failed: $REGISTRY_CANDIDATES"
+        exit "$LAST_RC"
       fi
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
-      fi
-      echo "Building with destinations: $DESTINATIONS"
-      /kaniko/executor \
-        --context "$CI_PROJECT_DIR" \
-        --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
-        $DESTINATIONS \
-        --cleanup \
-        --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN"
   rules:
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'

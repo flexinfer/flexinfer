@@ -1,4 +1,5 @@
 # Build stage
+ARG RUNTIME_REGISTRY=registry.harbor.lan
 FROM golang:1.25.5-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
@@ -32,7 +33,7 @@ RUN mkdir -p /out/services/loom-core/bin && \
     done
 
 # Runtime stage
-FROM registry.harbor.lan/dockerhub-cache/library/alpine:3.21
+FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21
 
 RUN apk add --no-cache ca-certificates
 
