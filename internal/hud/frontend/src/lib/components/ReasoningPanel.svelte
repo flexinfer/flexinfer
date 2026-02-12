@@ -171,12 +171,12 @@
 <!-- Create Chain Modal -->
 <Modal title="New Reasoning Chain" open={showCreateModal} onclose={() => { showCreateModal = false; }}>
   <div class="form-group">
-    <label class="form-label">Title</label>
-    <input type="text" bind:value={newTitle} placeholder="Chain title..." class="form-input" />
+    <label class="form-label" for="reasoning-chain-title">Title</label>
+    <input id="reasoning-chain-title" type="text" bind:value={newTitle} placeholder="Chain title..." class="form-input" />
   </div>
   <div class="form-group">
-    <label class="form-label">Description</label>
-    <textarea bind:value={newDescription} placeholder="What is being reasoned about..." class="form-input" rows="3"></textarea>
+    <label class="form-label" for="reasoning-chain-description">Description</label>
+    <textarea id="reasoning-chain-description" bind:value={newDescription} placeholder="What is being reasoned about..." class="form-input" rows="3"></textarea>
   </div>
   <div class="form-actions">
     <button class="btn btn-ghost" onclick={() => { showCreateModal = false; }}>Cancel</button>

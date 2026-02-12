@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -13,8 +14,13 @@ var shaderSource string
 
 // shaderInstallPath returns the destination path for the shader file.
 func shaderInstallPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "loom", "loom-vibrancy.glsl")
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".config", "loom", "loom-vibrancy.glsl")
+	}
+	if cfg, err := os.UserConfigDir(); err == nil && cfg != "" {
+		return filepath.Join(cfg, "loom", "loom-vibrancy.glsl")
+	}
+	return filepath.Join(".", "loom-vibrancy.glsl")
 }
 
 // InstallShader copies the embedded loom-vibrancy.glsl shader to
@@ -71,7 +77,7 @@ func GenerateGhosttyConfig() string {
 	b.WriteString("quick-terminal-size = 380\n")
 	b.WriteString("quick-terminal-animation-duration = 0.15\n")
 	b.WriteString("quick-terminal-shell-integration = none\n")
-	b.WriteString("quick-terminal-command = loom hud --tui\n\n")
+	b.WriteString(fmt.Sprintf("quick-terminal-command = %s\n\n", strconv.Quote("loom hud --tui")))
 
 	// Global keybind for quick terminal toggle.
 	b.WriteString("# ── Global Keybind ──\n")
@@ -80,7 +86,7 @@ func GenerateGhosttyConfig() string {
 	// Shader.
 	b.WriteString("# ── Custom Shader ──\n")
 	b.WriteString("# Install first: loom hud --install-shader\n")
-	b.WriteString(fmt.Sprintf("custom-shader = %s\n\n", shaderPath))
+	b.WriteString(fmt.Sprintf("custom-shader = %s\n\n", strconv.Quote(shaderPath)))
 
 	// Font and appearance recommendations.
 	b.WriteString("# ── Recommended Appearance ──\n")

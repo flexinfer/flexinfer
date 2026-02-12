@@ -279,7 +279,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="keyboard-help-overlay" role="presentation" onclick={() => { showKeyboardHelp = false; }}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="keyboard-help" role="dialog" aria-label="Keyboard shortcuts" onclick={(e) => e.stopPropagation()}>
+      <div class="keyboard-help" role="dialog" aria-label="Keyboard shortcuts" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <div class="help-title">Keyboard Shortcuts</div>
         <div class="help-grid">
           <div class="help-section">

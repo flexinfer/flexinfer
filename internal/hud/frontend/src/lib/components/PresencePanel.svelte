@@ -439,16 +439,16 @@
 <!-- Create Handoff Modal -->
 <Modal title="Create Handoff" open={showHandoffModal} onclose={() => { showHandoffModal = false; }}>
   <div class="form-group">
-    <label class="form-label">To Agent (optional)</label>
-    <input type="text" bind:value={newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
+    <label class="form-label" for="handoff-to-agent">To Agent (optional)</label>
+    <input id="handoff-to-agent" type="text" bind:value={newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
   </div>
   <div class="form-group">
-    <label class="form-label">Summary *</label>
-    <input type="text" bind:value={newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
+    <label class="form-label" for="handoff-summary">Summary *</label>
+    <input id="handoff-summary" type="text" bind:value={newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
   </div>
   <div class="form-group">
-    <label class="form-label">Context</label>
-    <textarea bind:value={newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
+    <label class="form-label" for="handoff-context">Context</label>
+    <textarea id="handoff-context" bind:value={newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
   </div>
   <div class="form-actions">
     <button class="btn btn-ghost" onclick={() => { showHandoffModal = false; }}>Cancel</button>

@@ -715,6 +715,9 @@ func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]Entity
 func (a *AgentBridge) SessionEntries(sessionID string, limit int) ([]ContextEntryInfo, error) {
 	args := map[string]any{
 		"session_id": sessionID,
+		// agent_context_search requires a non-empty query string.
+		// Session filter does the heavy lifting; keep query generic.
+		"query": "session context entries",
 	}
 	if limit > 0 {
 		args["limit"] = limit
@@ -1064,9 +1067,13 @@ type CacheStatsInfo struct {
 
 // ContextStream returns context entries since a given time, up to limit.
 func (a *AgentBridge) ContextStream(since time.Time, limit int) ([]ContextEntryInfo, error) {
-	args := map[string]any{}
+	args := map[string]any{
+		// agent_context_search requires a non-empty query string.
+		// Keep the existing since: marker used by HUD stream callers.
+		"query": "since:1970-01-01T00:00:00Z",
+	}
 	if !since.IsZero() {
-		args["query"] = fmt.Sprintf("since:%s", since.Format(time.RFC3339))
+		args["query"] = fmt.Sprintf("since:%s", since.UTC().Format(time.RFC3339))
 	}
 	if limit > 0 {
 		args["limit"] = limit

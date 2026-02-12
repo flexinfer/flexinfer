@@ -91,6 +91,7 @@ func (s *StreamMonitor) Refresh() error {
 		s.logger.Warn("stream: failed to fetch context stream", "error", err)
 		return err
 	}
+	pollTime := time.Now()
 
 	// Flatten and deduplicate.
 	var delta []StreamEntry
@@ -119,12 +120,13 @@ func (s *StreamMonitor) Refresh() error {
 		})
 	}
 
+	// Update watermark to now after any successful fetch, even if no entries
+	// were added, so retries do not keep querying the same time window.
+	s.lastPoll = pollTime
+
 	if len(delta) == 0 {
 		return nil
 	}
-
-	// Update watermark to now (entries returned are "since" the last poll).
-	s.lastPoll = time.Now()
 
 	// Prepend delta, cap at maxEntries.
 	s.mu.Lock()

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,6 +195,41 @@ func TestCoordinator_StartAndStop(t *testing.T) {
 	}
 
 	c.Stop()
+}
+
+func TestCoordinator_StartHealthyWhenModelCacheRefreshFails(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		n := calls.Add(1)
+		if n == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(modelsResponse{
+				Data: []ModelInfo{{ID: "fast-chat"}},
+			})
+			return
+		}
+		http.Error(w, "temporary model list failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	cfg.FlexInferURL = server.URL
+	cfg.PollInterval = 100 * time.Millisecond
+
+	c := NewCoordinator(cfg, nil, nil, slog.Default())
+	if err := c.Start(); err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+	defer c.Stop()
+
+	status := c.Status()
+	if !status.Healthy {
+		t.Fatal("expected healthy status after successful startup health check")
+	}
 }
 
 func TestCoordinator_StartFails_Unreachable(t *testing.T) {

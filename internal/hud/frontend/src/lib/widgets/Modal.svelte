@@ -1,5 +1,5 @@
 <script>
-  let { open = false, title = '', onClose = () => {} } = $props();
+  let { open = false, title = '', onClose = () => {}, children } = $props();
 
   function handleBackdropClick(e) {
     if (e.target === e.currentTarget) onClose();
@@ -13,15 +13,23 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={handleBackdropClick}>
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    onclick={handleBackdropClick}
+    onkeydown={(e) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') handleBackdropClick(e);
+    }}
+  >
     <div class="modal" role="dialog" aria-modal="true" aria-label={title}>
       <div class="modal-header">
         <h3 class="modal-title">{title}</h3>
         <button class="modal-close" onclick={onClose}>✕</button>
       </div>
       <div class="modal-body">
-        <slot />
+        {@render children?.()}
       </div>
     </div>
   </div>

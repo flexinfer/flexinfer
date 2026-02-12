@@ -33,12 +33,18 @@ func TestConfigFromEnv(t *testing.T) {
 	os.Setenv("COORDINATOR_MODEL", "llama3-70b")
 	os.Setenv("COORDINATOR_ENABLE_PLANNER", "false")
 	os.Setenv("COORDINATOR_POLL_INTERVAL", "15s")
+	os.Setenv("COORDINATOR_DEFAULT_TIMEOUT", "40s")
+	os.Setenv("COORDINATOR_SUBSYSTEM_TIMEOUT", "20s")
+	os.Setenv("COORDINATOR_MAX_CONCURRENT_LLM", "4")
 	defer func() {
 		os.Unsetenv("FLEXINFER_URL")
 		os.Unsetenv("FLEXINFER_API_KEY")
 		os.Unsetenv("COORDINATOR_MODEL")
 		os.Unsetenv("COORDINATOR_ENABLE_PLANNER")
 		os.Unsetenv("COORDINATOR_POLL_INTERVAL")
+		os.Unsetenv("COORDINATOR_DEFAULT_TIMEOUT")
+		os.Unsetenv("COORDINATOR_SUBSYSTEM_TIMEOUT")
+		os.Unsetenv("COORDINATOR_MAX_CONCURRENT_LLM")
 	}()
 
 	cfg := ConfigFromEnv()
@@ -57,6 +63,15 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if cfg.PollInterval != 15*time.Second {
 		t.Fatalf("expected 15s poll interval, got %s", cfg.PollInterval)
+	}
+	if cfg.DefaultTimeout != 40*time.Second {
+		t.Fatalf("expected 40s default timeout, got %s", cfg.DefaultTimeout)
+	}
+	if cfg.SubsystemTimeout != 20*time.Second {
+		t.Fatalf("expected 20s subsystem timeout, got %s", cfg.SubsystemTimeout)
+	}
+	if cfg.MaxConcurrentLLM != 4 {
+		t.Fatalf("expected max concurrent LLM 4, got %d", cfg.MaxConcurrentLLM)
 	}
 	if !cfg.Enabled() {
 		t.Fatal("config with URL should be enabled")
@@ -85,6 +100,52 @@ func TestEnvBool(t *testing.T) {
 
 		if got != tt.want {
 			t.Errorf("envBool(%q, %v) = %v, want %v", tt.val, tt.def, got, tt.want)
+		}
+	}
+}
+
+func TestEnvPositiveInt(t *testing.T) {
+	tests := []struct {
+		val  string
+		def  int
+		want int
+	}{
+		{"", 3, 3},
+		{"7", 3, 7},
+		{"0", 3, 3},
+		{"-1", 3, 3},
+		{"bad", 3, 3},
+	}
+
+	for _, tt := range tests {
+		os.Setenv("TEST_INT", tt.val)
+		got := envPositiveInt("TEST_INT", tt.def)
+		os.Unsetenv("TEST_INT")
+		if got != tt.want {
+			t.Errorf("envPositiveInt(%q, %d) = %d, want %d", tt.val, tt.def, got, tt.want)
+		}
+	}
+}
+
+func TestEnvPositiveDuration(t *testing.T) {
+	tests := []struct {
+		val  string
+		def  time.Duration
+		want time.Duration
+	}{
+		{"", 10 * time.Second, 10 * time.Second},
+		{"25s", 10 * time.Second, 25 * time.Second},
+		{"0s", 10 * time.Second, 10 * time.Second},
+		{"-1s", 10 * time.Second, 10 * time.Second},
+		{"bad", 10 * time.Second, 10 * time.Second},
+	}
+
+	for _, tt := range tests {
+		os.Setenv("TEST_DUR", tt.val)
+		got := envPositiveDuration("TEST_DUR", tt.def)
+		os.Unsetenv("TEST_DUR")
+		if got != tt.want {
+			t.Errorf("envPositiveDuration(%q, %s) = %s, want %s", tt.val, tt.def, got, tt.want)
 		}
 	}
 }

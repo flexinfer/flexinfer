@@ -124,15 +124,20 @@ func (c *Coordinator) Start() error {
 		return err
 	}
 
+	c.mu.Lock()
+	c.healthy = true
+	c.mu.Unlock()
+
 	// Cache available models.
 	if models, err := c.client.Models(ctx); err == nil {
 		c.mu.Lock()
-		c.healthy = true
 		c.models = make([]string, len(models))
 		for i, m := range models {
 			c.models[i] = m.ID
 		}
 		c.mu.Unlock()
+	} else {
+		c.logger.Warn("coordinator: initial model listing failed; continuing", "error", err)
 	}
 
 	c.logger.Info("coordinator started",

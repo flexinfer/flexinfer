@@ -121,6 +121,12 @@ func ConfigFromEnv() Config {
 			cfg.PollInterval = d
 		}
 	}
+	cfg.MaxConcurrentLLM = envPositiveInt("COORDINATOR_MAX_CONCURRENT_LLM", cfg.MaxConcurrentLLM)
+	cfg.CircuitBreakerThreshold = envPositiveInt("COORDINATOR_CIRCUIT_BREAKER_THRESHOLD", cfg.CircuitBreakerThreshold)
+	cfg.DefaultTimeout = envPositiveDuration("COORDINATOR_DEFAULT_TIMEOUT", cfg.DefaultTimeout)
+	cfg.SubsystemTimeout = envPositiveDuration("COORDINATOR_SUBSYSTEM_TIMEOUT", cfg.SubsystemTimeout)
+	cfg.PlannerTimeout = envPositiveDuration("COORDINATOR_PLANNER_TIMEOUT", cfg.PlannerTimeout)
+	cfg.CircuitBreakerReset = envPositiveDuration("COORDINATOR_CIRCUIT_BREAKER_RESET", cfg.CircuitBreakerReset)
 
 	return cfg
 }
@@ -141,4 +147,32 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// envPositiveInt reads a positive integer environment variable, returning def
+// when unset, non-numeric, or non-positive.
+func envPositiveInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+// envPositiveDuration reads a positive duration environment variable,
+// returning def when unset, invalid, or non-positive.
+func envPositiveDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
