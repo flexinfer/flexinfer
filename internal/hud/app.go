@@ -1221,7 +1221,11 @@ func (a *App) handleGraphFindPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxDepth := 5
-	if d := r.URL.Query().Get("depth"); d != "" {
+	depthArg := r.URL.Query().Get("max_depth")
+	if depthArg == "" {
+		depthArg = r.URL.Query().Get("depth")
+	}
+	if d := depthArg; d != "" {
 		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
 			maxDepth = parsed
 		}

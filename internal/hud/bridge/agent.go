@@ -128,10 +128,13 @@ type GraphStatsResult struct {
 
 // EntityInfo describes an entity in the knowledge graph.
 type EntityInfo struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	EntityType string         `json:"entity_type"`
-	Properties map[string]any `json:"properties,omitempty"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Type        string         `json:"type,omitempty"`
+	EntityType  string         `json:"entity_type,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Namespace   string         `json:"namespace,omitempty"`
+	Properties  map[string]any `json:"properties,omitempty"`
 }
 
 // ContextEntryInfo describes a context stream entry.
@@ -149,6 +152,30 @@ type ContextEntry struct {
 	Title     string `json:"title"`
 	Content   string `json:"content,omitempty"`
 	Timestamp string `json:"timestamp"`
+}
+
+func normalizeEntityInfo(e *EntityInfo) {
+	if e == nil {
+		return
+	}
+	if e.EntityType == "" {
+		e.EntityType = e.Type
+	}
+	if e.Type == "" {
+		e.Type = e.EntityType
+	}
+}
+
+func normalizeRelationInfo(r *RelationInfo) {
+	if r == nil {
+		return
+	}
+	if r.RelationType == "" {
+		r.RelationType = r.Type
+	}
+	if r.Type == "" {
+		r.Type = r.RelationType
+	}
 }
 
 // --- Helper to call an agent tool and unmarshal ---
@@ -315,7 +342,7 @@ func (a *AgentBridge) WorkflowList() ([]WorkflowInfo, error) {
 
 // WorkflowStatus returns the full detail for a single workflow.
 func (a *AgentBridge) WorkflowStatus(id string) (*WorkflowDetail, error) {
-	args := map[string]any{"id": id}
+	args := map[string]any{"workflow_id": id}
 	var result WorkflowDetail
 	if err := a.callAgentTool("agent_workflow_status", args, &result); err != nil {
 		return nil, err
@@ -373,13 +400,13 @@ func (a *AgentBridge) MemoryRecall(tier, query string, limit int) ([]MemoryItem,
 
 // MemoryPromote promotes a memory item to a higher tier.
 func (a *AgentBridge) MemoryPromote(id string) error {
-	args := map[string]any{"id": id}
+	args := map[string]any{"item_ids": []string{id}}
 	return a.callAgentTool("agent_memory_promote", args, nil)
 }
 
 // MemoryDemote demotes a memory item to a lower tier.
 func (a *AgentBridge) MemoryDemote(id string) error {
-	args := map[string]any{"id": id}
+	args := map[string]any{"item_ids": []string{id}}
 	return a.callAgentTool("agent_memory_demote", args, nil)
 }
 
@@ -396,10 +423,10 @@ func (a *AgentBridge) GraphStats() (*GraphStatsResult, error) {
 func (a *AgentBridge) EntityFind(query string, entityType string, limit int) ([]EntityInfo, error) {
 	args := map[string]any{}
 	if query != "" {
-		args["query"] = query
+		args["name_pattern"] = query
 	}
 	if entityType != "" {
-		args["entity_type"] = entityType
+		args["type"] = entityType
 	}
 	if limit > 0 {
 		args["limit"] = limit
@@ -409,6 +436,9 @@ func (a *AgentBridge) EntityFind(query string, entityType string, limit int) ([]
 	}
 	if err := a.callAgentTool("agent_entity_find", args, &result); err != nil {
 		return nil, err
+	}
+	for i := range result.Entities {
+		normalizeEntityInfo(&result.Entities[i])
 	}
 	return result.Entities, nil
 }
@@ -541,27 +571,33 @@ type CreateTaskParams struct {
 
 // CreateTask creates a new task in a session.
 func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
-	args := map[string]any{
-		"title":    p.Title,
-		"priority": p.Priority,
+	if p.SessionID == "" {
+		return fmt.Errorf("session_id is required")
 	}
-	if p.SessionID != "" {
-		args["session_id"] = p.SessionID
+	task := map[string]any{
+		"title": p.Title,
+	}
+	if p.Priority != "" {
+		task["priority"] = p.Priority
 	}
 	if len(p.Tags) > 0 {
-		args["tags"] = p.Tags
+		task["tags"] = p.Tags
 	}
 	if p.Context != "" {
-		args["context"] = p.Context
+		task["context"] = p.Context
 	}
 	if p.FilePath != "" {
-		args["file_path"] = p.FilePath
+		task["file_path"] = p.FilePath
 	}
 	if p.LineNumber > 0 {
-		args["line_number"] = p.LineNumber
+		task["line_number"] = p.LineNumber
 	}
 	if len(p.BlockedBy) > 0 {
-		args["blocked_by"] = p.BlockedBy
+		task["blocked_by"] = p.BlockedBy
+	}
+	args := map[string]any{
+		"session_id": p.SessionID,
+		"tasks":      []map[string]any{task},
 	}
 	return a.callAgentTool("agent_task_add", args, nil)
 }
@@ -603,46 +639,58 @@ func (a *AgentBridge) ContextAdd(sessionID string, entries []map[string]any) err
 
 // MemoryAdd adds a new memory item.
 func (a *AgentBridge) MemoryAdd(title, content, tier, importance, category string) error {
-	args := map[string]any{
+	item := map[string]any{
 		"title":   title,
 		"content": content,
 	}
 	if tier != "" {
-		args["tier"] = tier
+		item["tier"] = tier
 	}
 	if importance != "" {
-		args["importance"] = importance
+		item["importance"] = importance
 	}
 	if category != "" {
-		args["category"] = category
+		item["category"] = category
+	}
+	args := map[string]any{
+		"items": []map[string]any{item},
 	}
 	return a.callAgentTool("agent_memory_add", args, nil)
 }
 
 // MemoryDelete deletes a memory item by ID.
 func (a *AgentBridge) MemoryDelete(id string) error {
-	args := map[string]any{"id": id}
+	args := map[string]any{
+		"item_ids": []string{id},
+		"confirm":  true,
+	}
 	return a.callAgentTool("agent_memory_delete", args, nil)
 }
 
 // EntityAdd creates a new entity in the knowledge graph.
 func (a *AgentBridge) EntityAdd(name, entityType, namespace string, props map[string]any) error {
-	args := map[string]any{
-		"name":        name,
-		"entity_type": entityType,
+	entity := map[string]any{
+		"name": name,
+		"type": entityType,
 	}
 	if namespace != "" {
-		args["namespace"] = namespace
+		entity["namespace"] = namespace
 	}
 	if len(props) > 0 {
-		args["properties"] = props
+		entity["properties"] = props
+	}
+	args := map[string]any{
+		"entities": []map[string]any{entity},
 	}
 	return a.callAgentTool("agent_entity_add", args, nil)
 }
 
 // EntityDelete deletes an entity by ID.
 func (a *AgentBridge) EntityDelete(id string) error {
-	args := map[string]any{"id": id}
+	args := map[string]any{
+		"entity_ids": []string{id},
+		"confirm":    true,
+	}
 	return a.callAgentTool("agent_entity_delete", args, nil)
 }
 
@@ -650,7 +698,8 @@ func (a *AgentBridge) EntityDelete(id string) error {
 type EntityDetail struct {
 	ID                string         `json:"id"`
 	Name              string         `json:"name"`
-	EntityType        string         `json:"entity_type"`
+	Type              string         `json:"type,omitempty"`
+	EntityType        string         `json:"entity_type,omitempty"`
 	Namespace         string         `json:"namespace,omitempty"`
 	Properties        map[string]any `json:"properties,omitempty"`
 	InboundRelations  []RelationInfo `json:"inbound_relations,omitempty"`
@@ -660,55 +709,130 @@ type EntityDetail struct {
 // RelationInfo describes a relation in the knowledge graph.
 type RelationInfo struct {
 	ID           string `json:"id"`
-	Source       string `json:"source"`
+	Source       string `json:"source_id"`
 	SourceName   string `json:"source_name,omitempty"`
-	Target       string `json:"target"`
+	Target       string `json:"target_id"`
 	TargetName   string `json:"target_name,omitempty"`
-	RelationType string `json:"relation_type"`
+	Type         string `json:"type,omitempty"`
+	RelationType string `json:"relation_type,omitempty"`
 }
 
 // EntityGet retrieves a single entity with its relations.
 func (a *AgentBridge) EntityGet(id string) (*EntityDetail, error) {
-	args := map[string]any{"id": id}
-	var result EntityDetail
+	args := map[string]any{"entity_ids": []string{id}}
+	var result struct {
+		Entities []EntityDetail `json:"entities"`
+	}
 	if err := a.callAgentTool("agent_entity_get", args, &result); err != nil {
 		return nil, err
 	}
-	return &result, nil
+	if len(result.Entities) == 0 {
+		return nil, fmt.Errorf("entity not found: %s", id)
+	}
+	entity := result.Entities[0]
+	if entity.EntityType == "" {
+		entity.EntityType = entity.Type
+	}
+	if entity.Type == "" {
+		entity.Type = entity.EntityType
+	}
+
+	var relResult struct {
+		Relations []RelationInfo `json:"relations"`
+	}
+	if err := a.callAgentTool("agent_relation_get", map[string]any{"entity_id": id}, &relResult); err == nil {
+		for i := range relResult.Relations {
+			normalizeRelationInfo(&relResult.Relations[i])
+			if relResult.Relations[i].Source == id {
+				entity.OutboundRelations = append(entity.OutboundRelations, relResult.Relations[i])
+			}
+			if relResult.Relations[i].Target == id {
+				entity.InboundRelations = append(entity.InboundRelations, relResult.Relations[i])
+			}
+		}
+	}
+
+	return &entity, nil
 }
 
 // RelationAdd creates a relation between two entities.
 func (a *AgentBridge) RelationAdd(sourceID, targetID, relationType string) error {
 	args := map[string]any{
-		"source_id":     sourceID,
-		"target_id":     targetID,
-		"relation_type": relationType,
+		"relations": []map[string]any{
+			{
+				"source_id": sourceID,
+				"target_id": targetID,
+				"type":      relationType,
+			},
+		},
 	}
 	return a.callAgentTool("agent_relation_add", args, nil)
 }
 
 // RelationDelete deletes a relation by ID.
 func (a *AgentBridge) RelationDelete(id string) error {
-	args := map[string]any{"id": id}
+	args := map[string]any{
+		"relation_ids": []string{id},
+		"confirm":      true,
+	}
 	return a.callAgentTool("agent_relation_delete", args, nil)
 }
 
 // GraphFindPath finds the shortest path between two entities.
 func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]EntityInfo, error) {
 	args := map[string]any{
-		"from_id": fromID,
-		"to_id":   toID,
+		"source_id": fromID,
+		"target_id": toID,
 	}
 	if maxDepth > 0 {
 		args["max_depth"] = maxDepth
 	}
 	var result struct {
-		Path []EntityInfo `json:"path"`
+		Path []string `json:"path"`
 	}
 	if err := a.callAgentTool("agent_graph_find_path", args, &result); err != nil {
 		return nil, err
 	}
-	return result.Path, nil
+	if len(result.Path) == 0 {
+		return nil, nil
+	}
+
+	var entitiesResult struct {
+		Entities []EntityInfo `json:"entities"`
+	}
+	if err := a.callAgentTool("agent_entity_get", map[string]any{"entity_ids": result.Path}, &entitiesResult); err != nil {
+		fallback := make([]EntityInfo, 0, len(result.Path))
+		for _, id := range result.Path {
+			fallback = append(fallback, EntityInfo{
+				ID:         id,
+				Name:       id,
+				Type:       "entity",
+				EntityType: "entity",
+			})
+		}
+		return fallback, nil
+	}
+
+	byID := make(map[string]EntityInfo, len(entitiesResult.Entities))
+	for i := range entitiesResult.Entities {
+		normalizeEntityInfo(&entitiesResult.Entities[i])
+		byID[entitiesResult.Entities[i].ID] = entitiesResult.Entities[i]
+	}
+
+	path := make([]EntityInfo, 0, len(result.Path))
+	for _, id := range result.Path {
+		if e, ok := byID[id]; ok {
+			path = append(path, e)
+			continue
+		}
+		path = append(path, EntityInfo{
+			ID:         id,
+			Name:       id,
+			Type:       "entity",
+			EntityType: "entity",
+		})
+	}
+	return path, nil
 }
 
 // SessionEntries returns context entries for a specific session.
