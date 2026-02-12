@@ -21,7 +21,9 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - endpoints
   - nodes
+  - secrets
   verbs:
   - get
   - list
@@ -30,7 +32,9 @@ rules:
   - ai.flexinfer
   resources:
   - gpugroups
+  - loraadapters
   - modelcaches
+  - modelcatalogs
   - modeldeployments
   - models
   verbs:
@@ -45,6 +49,7 @@ rules:
   - ai.flexinfer
   resources:
   - gpugroups/finalizers
+  - loraadapters/finalizers
   - modelcaches/finalizers
   - modeldeployments/finalizers
   - models/finalizers
@@ -54,7 +59,9 @@ rules:
   - ai.flexinfer
   resources:
   - gpugroups/status
+  - loraadapters/status
   - modelcaches/status
+  - modelcatalogs/status
   - modeldeployments/status
   - models/status
   verbs:

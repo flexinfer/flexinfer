@@ -162,6 +162,49 @@ spec:
                 - message: gpu.shared must be empty when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
                     == 0
+              kvCache:
+                description: |-
+                  KVCache configures KV-cache pressure management.
+                  Only effective with backends that support KV-cache tuning (vLLM).
+                properties:
+                  highWatermark:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: HighWatermark is the KV-cache utilization ratio that
+                      triggers the pressure policy.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  lowWatermark:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: LowWatermark is the target KV-cache utilization ratio
+                      after pressure mitigation.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  maxBlockSize:
+                    description: MaxBlockSize overrides the vLLM --block-size argument
+                      for KV-cache block allocation.
+                    type: integer
+                  pressurePolicy:
+                    default: Observe
+                    description: PressurePolicy defines how to react when KV-cache
+                      usage exceeds watermarks.
+                    enum:
+                    - Observe
+                    - Reconfigure
+                    - Evict
+                    type: string
+                  swapSpace:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: SwapSpace configures the vLLM --swap-space argument
+                      (GiB) for CPU-offloaded KV-cache.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
               litellm:
                 description: LiteLLM configures proxy integration for unified API
                   access.
@@ -428,6 +471,28 @@ spec:
                     type: string
                   vendor:
                     description: Vendor is NVIDIA, AMD, or Intel.
+                    type: string
+                type: object
+              kvCache:
+                description: KVCache tracks observed KV-cache metrics and pressure
+                  state.
+                properties:
+                  lastAction:
+                    description: LastAction describes the most recent action taken
+                      in response to pressure.
+                    type: string
+                  lastPressureTime:
+                    description: LastPressureTime is when cache pressure was last
+                      detected.
+                    format: date-time
+                    type: string
+                  pressure:
+                    description: Pressure indicates whether the model is under KV-cache
+                      pressure.
+                    type: boolean
+                  utilization:
+                    description: Utilization is the current KV-cache usage ratio (0.0
+                      to 1.0).
                     type: string
                 type: object
               lastActiveTime:

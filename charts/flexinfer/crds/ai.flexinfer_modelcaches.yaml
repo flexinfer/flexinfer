@@ -99,6 +99,38 @@ spec:
                   When set, the controller skips PVC creation and uses the referenced claim.
                   The model will be downloaded to a subdirectory named after the ModelCache.
                 type: string
+              flashLoader:
+                description: |-
+                  FlashLoader configures the flash-loader init container for fast model loading.
+                  When enabled, model files are parallel-copied from PVC to tmpfs before
+                  the inference container starts, dramatically reducing cold start time.
+                properties:
+                  concurrency:
+                    default: 4
+                    description: Concurrency is the number of parallel copy goroutines.
+                    maximum: 32
+                    minimum: 1
+                    type: integer
+                  enabled:
+                    description: Enabled activates flash-loader for this cache.
+                    type: boolean
+                  image:
+                    description: Image overrides the flash-loader init container image.
+                    type: string
+                  p2p:
+                    description: P2P enables peer-to-peer transfer between pods on
+                      the same node.
+                    type: boolean
+                  p2pPort:
+                    default: 9876
+                    description: P2PPort is the port used for peer-to-peer transfer.
+                    type: integer
+                  tmpfsSizeLimit:
+                    description: |-
+                      TmpfsSizeLimit is the maximum size of the tmpfs volume.
+                      Defaults to 2x the model size if not specified.
+                    type: string
+                type: object
               hostPath:
                 description: |-
                   HostPath is the base directory for NodeLocal storage.
@@ -133,6 +165,49 @@ spec:
                   OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
                   for authenticating to OCI registries. Used when source begins with oci:// or oras://
                 type: string
+              quantization:
+                description: |-
+                  Quantization configures post-download quantization of model weights.
+                  When set, the controller creates a quantization Job after the download
+                  completes, converting the model to the specified format before marking Ready.
+                properties:
+                  bits:
+                    description: Bits is the quantization bit width for AWQ/GPTQ formats.
+                    format: int32
+                    type: integer
+                  format:
+                    description: Format is the target quantization format.
+                    enum:
+                    - GGUF
+                    - AWQ
+                    - GPTQ
+                    - EXL2
+                    - FP8
+                    type: string
+                  ggufType:
+                    description: |-
+                      GGUFType is the GGUF quantization level (e.g., Q4_K_M, Q5_K_M, Q8_0).
+                      Only used when Format is GGUF.
+                    type: string
+                  groupSize:
+                    description: GroupSize is the quantization group size for AWQ/GPTQ
+                      formats.
+                    format: int32
+                    type: integer
+                  maxMemoryGB:
+                    description: |-
+                      MaxMemoryGB limits the memory available to the quantization job.
+                      Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
+                    format: int32
+                    type: integer
+                  useGPU:
+                    description: |-
+                      UseGPU enables GPU-accelerated quantization (required for AWQ/GPTQ).
+                      GGUF quantization runs on CPU only.
+                    type: boolean
+                required:
+                - format
+                type: object
               retentionPriority:
                 default: 50
                 description: |-
@@ -260,6 +335,22 @@ spec:
                   Updated when a deployment references this cache.
                 format: date-time
                 type: string
+              ociDigest:
+                description: |-
+                  OCIDigest is the immutable digest of the OCI artifact that was pulled.
+                  Format: sha256:<hash>. Only set for OCI/ORAS sources.
+                type: string
+              ociPulledAt:
+                description: |-
+                  OCIPulledAt is the timestamp when the OCI artifact was last pulled.
+                  Useful for tracking freshness and triggering re-pulls on tag updates.
+                format: date-time
+                type: string
+              ociRegistry:
+                description: |-
+                  OCIRegistry is the registry hostname where the artifact was pulled from.
+                  Extracted from the source URL for observability.
+                type: string
               path:
                 description: Path is the path where the model is accessible (volume
                   name or host path)
@@ -267,6 +358,37 @@ spec:
               phase:
                 description: Phase represents the current lifecycle state
                 type: string
+              quantization:
+                description: |-
+                  Quantization records the result of model quantization.
+                  Only populated when spec.quantization is set and the job completes.
+                properties:
+                  compressedSizeBytes:
+                    description: CompressedSizeBytes is the size of the model after
+                      quantization.
+                    format: int64
+                    type: integer
+                  compressionRatio:
+                    description: CompressionRatio is the ratio of original to compressed
+                      size (e.g., "3.75").
+                    type: string
+                  format:
+                    description: Format is the quantization format that was applied.
+                    type: string
+                  originalSizeBytes:
+                    description: OriginalSizeBytes is the size of the model before
+                      quantization.
+                    format: int64
+                    type: integer
+                  quantizationTime:
+                    description: QuantizationTime is the wall-clock duration of the
+                      quantization job.
+                    type: string
+                  type:
+                    description: Type is the specific quantization type (e.g., Q4_K_M
+                      for GGUF).
+                    type: string
+                type: object
               readyNodes:
                 description: ReadyNodes is the count of nodes where the model is fully
                   cached (NodeLocal strategy)
