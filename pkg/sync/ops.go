@@ -1,10 +1,13 @@
 package sync
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/generator"
@@ -65,6 +68,10 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 
 	repoPath := m.ResolveRepoPath(p)
 	homePath := m.ResolveHomePath(p)
+	var geminiTrustedSnapshot []byte
+	if p.Name == "gemini" {
+		geminiTrustedSnapshot = readGeminiTrustedFoldersSnapshot(homePath)
+	}
 
 	if regen {
 		if err := m.Regenerate(p, hubMode, hubURL, loomMode, loomBinary, resolveSecrets); err != nil {
@@ -196,6 +203,84 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
+	if p.Name == "gemini" {
+		if err := ensureGeminiTrustedFolders(homePath, geminiTrustedSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not verify Gemini trustedFolders.json: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+func readGeminiTrustedFoldersSnapshot(homePath string) []byte {
+	path := filepath.Join(homePath, "trustedFolders.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if !isValidGeminiTrustedFolders(data) {
+		return nil
+	}
+	return append([]byte(nil), data...)
+}
+
+func ensureGeminiTrustedFolders(homePath string, fallback []byte) error {
+	path := filepath.Join(homePath, "trustedFolders.json")
+	if current, err := os.ReadFile(path); err == nil && isValidGeminiTrustedFolders(current) {
+		return nil
+	}
+	if len(fallback) > 0 && isValidGeminiTrustedFolders(fallback) {
+		return writeFileAtomic(path, fallback, 0o600)
+	}
+	return writeFileAtomic(path, []byte("{}\n"), 0o600)
+}
+
+func isValidGeminiTrustedFolders(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return false
+	}
+	for k, v := range obj {
+		if strings.TrimSpace(k) == "" {
+			return false
+		}
+		if _, ok := v.(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) (retErr error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
 	return nil
 }
 

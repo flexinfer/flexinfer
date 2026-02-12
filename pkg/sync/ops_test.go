@@ -189,6 +189,72 @@ func TestBackup_TimestampFormat(t *testing.T) {
 	}
 }
 
+func TestSyncToHome_GeminiPreservesTrustedFolders(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	repoGemini := filepath.Join(repoDir, ".gemini")
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(repoGemini, 0755); err != nil {
+		t.Fatalf("mkdir repo gemini: %v", err)
+	}
+	if err := os.MkdirAll(homeGemini, 0755); err != nil {
+		t.Fatalf("mkdir home gemini: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoGemini, "config.toml"), []byte("[mcp_servers.test]\ncommand = \"echo\"\n"), 0644); err != nil {
+		t.Fatalf("write repo config.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoGemini, "settings.json"), []byte("{\"theme\":\"test\"}\n"), 0644); err != nil {
+		t.Fatalf("write repo settings.json: %v", err)
+	}
+
+	original := []byte("{\n  \"/tmp/workspace\": \"TRUST_PARENT\"\n}\n")
+	if err := os.WriteFile(filepath.Join(homeGemini, "trustedFolders.json"), original, 0600); err != nil {
+		t.Fatalf("write trustedFolders.json: %v", err)
+	}
+
+	if err := m.SyncToHome("gemini", false, false, false, false, "", false, "", false); err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(homeGemini, "trustedFolders.json"))
+	if err != nil {
+		t.Fatalf("read trustedFolders.json: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("trustedFolders.json changed unexpectedly\nwant: %q\ngot:  %q", string(original), string(got))
+	}
+}
+
+func TestEnsureGeminiTrustedFolders_RepairsInvalidFile(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(homeGemini, 0755); err != nil {
+		t.Fatalf("mkdir home gemini: %v", err)
+	}
+
+	path := filepath.Join(homeGemini, "trustedFolders.json")
+	if err := os.WriteFile(path, []byte(""), 0600); err != nil {
+		t.Fatalf("write empty trustedFolders.json: %v", err)
+	}
+
+	if err := ensureGeminiTrustedFolders(homeGemini, nil); err != nil {
+		t.Fatalf("ensureGeminiTrustedFolders failed: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read trustedFolders.json: %v", err)
+	}
+	if !isValidGeminiTrustedFolders(got) {
+		t.Fatalf("trustedFolders.json should be valid after repair, got %q", string(got))
+	}
+}
+
 // =============================================================================
 // Validate Tests
 // =============================================================================
