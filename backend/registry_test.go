@@ -1,8 +1,45 @@
 package backend
 
 import (
+	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
+
+type testBackend struct {
+	BaseBackend
+	name    string
+	aliases []string
+}
+
+func (b *testBackend) Name() string {
+	return b.name
+}
+
+func (b *testBackend) Aliases() []string {
+	return b.aliases
+}
+
+func (b *testBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
+	return "example/test:latest"
+}
+
+func (b *testBackend) Port() int32 {
+	return 8080
+}
+
+func (b *testBackend) Args(spec *ModelSpec) []string {
+	return nil
+}
+
+func (b *testBackend) Env(spec *ModelSpec) []corev1.EnvVar {
+	return nil
+}
+
+func (b *testBackend) ReadinessProbe() *corev1.Probe {
+	return nil
+}
 
 func TestRegistryContainsAllBackends(t *testing.T) {
 	expectedBackends := []string{
@@ -250,5 +287,42 @@ func TestBackendImageSelection(t *testing.T) {
 		if img == "" {
 			t.Errorf("GetImage(%q, %v) returned empty string", tt.backend, tt.gpuVendor)
 		}
+	}
+}
+
+func TestRegisterAliasConflictDoesNotPartiallyRegister(t *testing.T) {
+	const name = "test-alias-conflict"
+
+	err := Register(&testBackend{
+		name:    name,
+		aliases: []string{"mlc"}, // Existing alias for mlc-llm
+	})
+	if err == nil {
+		t.Fatalf("expected alias conflict error")
+	}
+	if Exists(name) {
+		t.Fatalf("backend %q should not be registered on alias conflict", name)
+	}
+}
+
+func TestMustRegisterCapturesErrorWithoutPanic(t *testing.T) {
+	mu.Lock()
+	previousErr := registrationErr
+	registrationErr = nil
+	mu.Unlock()
+	t.Cleanup(func() {
+		mu.Lock()
+		registrationErr = previousErr
+		mu.Unlock()
+	})
+
+	MustRegister(&testBackend{name: "ollama"}) // duplicate name
+
+	err := RegistrationError()
+	if err == nil {
+		t.Fatalf("expected registration error")
+	}
+	if !strings.Contains(err.Error(), "backend \"ollama\" registration failed") {
+		t.Fatalf("unexpected registration error: %v", err)
 	}
 }

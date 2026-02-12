@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +13,9 @@ var (
 
 	// aliases maps alternative names to canonical names
 	aliases = make(map[string]string)
+
+	// registrationErr tracks backend registration failures during init().
+	registrationErr error
 
 	// mu protects the registry
 	mu sync.RWMutex
@@ -30,14 +34,29 @@ func Register(b Backend) error {
 		return fmt.Errorf("backend %q already registered", name)
 	}
 
-	registry[name] = b
-
-	// Register aliases
+	// Validate aliases before mutating maps so failed registrations do not
+	// leave partial state in the registry.
+	seenAliases := make(map[string]struct{})
 	for _, alias := range b.Aliases() {
 		alias = strings.ToLower(alias)
+		if alias == "" || alias == name {
+			continue
+		}
+		if _, seen := seenAliases[alias]; seen {
+			continue
+		}
+		seenAliases[alias] = struct{}{}
+
+		if _, exists := registry[alias]; exists {
+			return fmt.Errorf("alias %q conflicts with backend name", alias)
+		}
 		if existing, exists := aliases[alias]; exists {
 			return fmt.Errorf("alias %q already registered for backend %q", alias, existing)
 		}
+	}
+
+	registry[name] = b
+	for alias := range seenAliases {
 		aliases[alias] = name
 	}
 
@@ -45,11 +64,22 @@ func Register(b Backend) error {
 }
 
 // MustRegister adds a backend to the registry.
-// Panics if registration fails. Use this only in init() functions.
+// Registration failures are captured for startup validation via RegistrationError.
+// Use this only in init() functions.
 func MustRegister(b Backend) {
 	if err := Register(b); err != nil {
-		panic(err)
+		// Record registration failures so callers can fail startup gracefully.
+		mu.Lock()
+		registrationErr = errors.Join(registrationErr, fmt.Errorf("backend %q registration failed: %w", b.Name(), err))
+		mu.Unlock()
 	}
+}
+
+// RegistrationError returns any backend registration errors captured during init().
+func RegistrationError() error {
+	mu.RLock()
+	defer mu.RUnlock()
+	return registrationErr
 }
 
 // Get retrieves a backend by name.
