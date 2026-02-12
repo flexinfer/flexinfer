@@ -52,6 +52,18 @@ type manager struct {
 	activeExecs sync.Map // map[string]*atomic.Int32
 }
 
+// backendHealthTimeout bounds startup probing so MCP init is never blocked by a hung runtime.
+var backendHealthTimeout = 3 * time.Second
+
+func checkBackendHealth(ctx context.Context, logger *slog.Logger, health func(context.Context) error) {
+	healthCtx, cancel := context.WithTimeout(ctx, backendHealthTimeout)
+	defer cancel()
+
+	if err := health(healthCtx); err != nil {
+		logger.Warn("backend health check failed", "error", err)
+	}
+}
+
 // projectLock returns (or creates) a per-project mutex for lifecycle serialization.
 func (m *manager) projectLock(name string) *sync.Mutex {
 	v, _ := m.projectMu.LoadOrStore(name, &sync.Mutex{})
@@ -135,9 +147,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 		return nil, fmt.Errorf("unsupported backend: %s (use 'docker' or 'k8s')", cfg.backendType)
 	}
 
-	if err := b.Health(ctx); err != nil {
-		logger.Warn("backend health check failed", "error", err)
-	}
+	checkBackendHealth(ctx, logger, b.Health)
 
 	store, err := state.NewStore(cfg.cacheDir)
 	if err != nil {
