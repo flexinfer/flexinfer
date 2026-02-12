@@ -42,6 +42,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
 // ModelCacheReconciler reconciles a ModelCache object
@@ -171,25 +172,27 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 	// 3. Check Job Status
 	if job.Status.Succeeded > 0 {
+		// Path includes both PVC name and model subdirectory
+		modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
+
+		// Set OCI-specific status fields
+		if isOCISource(modelCache.Spec.Source) {
+			now := metav1.Now()
+			modelCache.Status.OCIPulledAt = &now
+			modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
+		}
+
+		// If quantization is requested, handle it before marking Ready
+		if modelCache.Spec.Quantization != nil {
+			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+		}
+
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
-			// Path includes both PVC name and model subdirectory
-			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
-
-			// Set OCI-specific status fields
-			if isOCISource(modelCache.Spec.Source) {
-				now := metav1.Now()
-				modelCache.Status.OCIPulledAt = &now
-				modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
-				// Note: OCIDigest is set by the download job via ConfigMap (see jobForOCIDownload)
-			}
-
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 			log.Info("ModelCache is Ready", "path", modelCache.Status.Path)
-
-			// Record event for successful cache provisioning
 			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
 				fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
 		}
@@ -329,11 +332,11 @@ mkdir -p "$DEST_DIR"
 
 # Clone from HuggingFace with LFS
 echo "Cloning $MODEL_ID to $DEST_DIR..."
-GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+GIT_LFS_SKIP_SMUDGE=0 git clone "%s/$MODEL_ID" "$DEST_DIR"
 
 echo "Download complete."
 ls -la "$DEST_DIR"
-`, modelID, modelPath)
+`, modelID, modelPath, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models use huggingface_hub snapshot_download (more stable than huggingface-cli)
 		image = "python:3.10-slim"
@@ -775,11 +778,11 @@ apt-get update && apt-get install -y git git-lfs ca-certificates
 git lfs install
 mkdir -p "$DEST_DIR"
 echo "Cloning $MODEL_ID to $DEST_DIR..."
-GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+GIT_LFS_SKIP_SMUDGE=0 git clone "%s/$MODEL_ID" "$DEST_DIR"
 touch "$MARKER"
 echo "Sync complete, entering sleep"
 while true; do sleep 3600; done
-`, modelPath, modelID)
+`, modelPath, modelID, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models
 		image = "python:3.10-slim"
@@ -1277,11 +1280,11 @@ apt-get update && apt-get install -y git git-lfs ca-certificates
 git lfs install
 mkdir -p "$DEST_DIR"
 echo "Cloning $MODEL_ID to $DEST_DIR (RAM cache)..."
-GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+GIT_LFS_SKIP_SMUDGE=0 git clone "%s/$MODEL_ID" "$DEST_DIR"
 touch "$MARKER"
 echo "Sync complete to RAM cache, entering sleep"
 while true; do sleep 3600; done
-`, modelPath, modelID)
+`, modelPath, modelID, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models
 		image = "python:3.10-slim"
@@ -1746,7 +1749,7 @@ func (r *ModelCacheReconciler) updateCacheMetrics(cache *aiv1alpha1.ModelCache, 
 	}
 
 	// Update phase metric (set 1 for current phase, 0 for others)
-	phases := []string{"Pending", "Initializing", "Provisioning", "Ready", "Failed"}
+	phases := []string{"Pending", "Initializing", "Provisioning", "Quantizing", "Ready", "Failed"}
 	for _, phase := range phases {
 		val := 0.0
 		if string(cache.Status.Phase) == phase {
@@ -1763,6 +1766,123 @@ func (r *ModelCacheReconciler) recordEvictionMetric(cache *aiv1alpha1.ModelCache
 		policy = "LRU" // default
 	}
 	metrics.ModelCacheEvictionsTotal.WithLabelValues(cache.Name, nodeName, policy).Inc()
+}
+
+// reconcileQuantization handles the quantization phase of the ModelCache lifecycle.
+// It is called after the download job succeeds, when spec.quantization is set.
+// Lifecycle: Provisioning (download done) → Quantizing → Ready
+func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// If already Ready or already has quantization status, skip
+	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Quantization != nil {
+		return ctrl.Result{}, nil
+	}
+
+	quantJobName := modelCache.Name + "-quantize"
+	quantJob := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, quantJob)
+	if err != nil && errors.IsNotFound(err) {
+		// Build and create the quantization job
+		builder, builderErr := quantization.GetBuilder(modelCache.Spec.Quantization.Format)
+		if builderErr != nil {
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
+				fmt.Sprintf("Unsupported quantization format: %s", builderErr))
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{}, nil
+		}
+
+		params := quantization.JobParams{
+			Name:      modelCache.Name,
+			Namespace: modelCache.Namespace,
+			PVCName:   pvcName,
+			ModelPath: modelPath,
+			Spec:      modelCache.Spec.Quantization,
+		}
+
+		newJob, buildErr := builder.BuildJob(params)
+		if buildErr != nil {
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
+				fmt.Sprintf("Failed to build quantization job: %s", buildErr))
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{}, nil
+		}
+
+		// Set owner reference so job status changes trigger reconcile
+		if err := ctrl.SetControllerReference(modelCache, newJob, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		log.Info("Creating quantization job", "Job", newJob.Name, "format", modelCache.Spec.Quantization.Format)
+		if err := r.Create(ctx, newJob); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// Transition to Quantizing phase
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationStarted",
+			fmt.Sprintf("Quantization job created: format=%s type=%s",
+				modelCache.Spec.Quantization.Format,
+				modelCache.Spec.Quantization.GGUFType))
+
+		// Requeue after 30s to check job status
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	} else if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Check quantization job status
+	if quantJob.Status.Succeeded > 0 {
+		log.Info("Quantization job succeeded", "cache", modelCache.Name)
+
+		// Populate quantization status
+		ggufType := modelCache.Spec.Quantization.GGUFType
+		if ggufType == "" {
+			ggufType = "Q4_K_M"
+		}
+		modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+			Format: string(modelCache.Spec.Quantization.Format),
+			Type:   ggufType,
+		}
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
+			fmt.Sprintf("Model quantized (%s/%s) and cached at %s",
+				modelCache.Spec.Quantization.Format, ggufType, modelCache.Status.Path))
+
+		// Update quantization metrics
+		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "succeeded").Inc()
+
+		return ctrl.Result{}, nil
+	}
+
+	if quantJob.Status.Failed > 0 {
+		log.Info("Quantization job failed", "cache", modelCache.Name)
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
+			"Quantization job failed - check job logs for details")
+		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
+		return ctrl.Result{}, nil
+	}
+
+	// Job still running — requeue to check later
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

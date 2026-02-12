@@ -2135,10 +2135,10 @@ git lfs install
 
 mkdir -p "$DEST_DIR"
 echo "Cloning $MODEL_ID to $DEST_DIR..."
-GIT_LFS_SKIP_SMUDGE=0 git clone "https://huggingface.co/$MODEL_ID" "$DEST_DIR"
+GIT_LFS_SKIP_SMUDGE=0 git clone "%s/$MODEL_ID" "$DEST_DIR"
 touch "$MARKER"
 echo "Download complete."
-`, modelID, destDir)
+`, modelID, destDir, huggingFaceRepositoryBaseURL)
 	} else {
 		image = "python:3.10-slim"
 		downloadScript = fmt.Sprintf(`
