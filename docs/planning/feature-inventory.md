@@ -5,9 +5,9 @@ description: Current feature status (what's shipped, what's partial, what's miss
 
 # Feature Inventory
 
-> Last updated: 2026-02-08
+> Last updated: 2026-02-10
 
-This is a pragmatic inventory of "what works in practice" and "what's next". **Phases 1-4 are now complete** - see phase planning docs for details.
+This is a pragmatic inventory of "what works in practice" and "what's next". **Phases 1-4 plus 6 Advanced Features are now complete** — the project is at 95%+ production readiness. See phase planning docs for details.
 
 ## Core components (binaries)
 
@@ -18,6 +18,7 @@ This is a pragmatic inventory of "what works in practice" and "what's next". **P
 | Scheduler | `flexinfer-sched` | kube-scheduler extender scoring/filtering | Working |
 | Benchmarker | `flexinfer-bench` | Measure perf for scheduling inputs | Working (backend-dependent) |
 | Proxy | `flexinfer-proxy` | Request routing + "activator" for serverless | Working (Phase 2-3 hardened) |
+| Flash-Loader | `flexinfer-flash-loader` | Parallel model preloading (PVC→tmpfs, P2P) | Working (init container) |
 
 ## CRDs / APIs
 
@@ -32,6 +33,11 @@ This is a pragmatic inventory of "what works in practice" and "what's next". **P
   - Supports LiteLLM discovery via `spec.litellm` + `spec.serviceLabels`.
 
 Docs: `docs/user/models-v1alpha2.md`
+
+### v1alpha2 (new CRDs)
+
+- `LoRAAdapter` (`ai.flexinfer/v1alpha2`) — Declarative hot-swapping of LoRA adapters on running models.
+- `ModelCatalog` (`ai.flexinfer/v1alpha2`) — Syncs model metadata from OCI, HuggingFace, and Ollama registries.
 
 ### v1alpha1 (legacy / advanced)
 
@@ -52,12 +58,18 @@ Common backends used in homelab:
 
 Docs: `docs/dev/backends.md`
 
-## What’s solid today
+## What's solid today
 
 - Running **multi-replica models** behind a single Kubernetes Service (simple load-balancing via Service endpoints).
-- Shared GPU groups for “one active model at a time” workflows (demand-based swapping).
+- Shared GPU groups for "one active model at a time" workflows (demand-based swapping).
 - Caching strategies that work for homelab (notably `pvc://...` sources and SharedPVC patterns).
 - LiteLLM discovery metadata (annotations + service labels) for external routing/proxying.
+- **KV-Cache tiering** with LRU/LFU/FIFO eviction policies and /dev/shm Memory strategy.
+- **Dynamic Multi-LoRA** hot-swapping via `LoRAAdapter` CRD with vLLM backend integration.
+- **OCI model registry** support (Harbor, GHCR, ECR) via `ModelCatalog` CRD and `pkg/registry/` adapters.
+- **Flash-Loader sidecar** for parallel model preloading from PVC to tmpfs, reducing cold start I/O.
+- **Spot-instance resilience** with termination detectors for AWS, Azure, GCP, and Harvester.
+- **CNCF compliance artifacts**: GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning.
 
 ## Recent operational learnings (k3s)
 
@@ -78,7 +90,7 @@ Docs: `docs/dev/backends.md`
 ### Still Open
 
 5. **Backend build + distribution ergonomics** (ROCm `gfx1100` image builds are resolved; remaining work is making backend build/publish paths more reproducible and documenting digest pinning patterns end-to-end.)
-6. **Error handling tech debt** - 13+ locations with ignored error returns
+6. **Error handling tech debt** - Reduced from 13+ to a handful of locations (proxy JSON-encode-after-header-sent and scheduler handlers fixed via pre-marshal pattern)
 7. **E2E GPU scenarios** - Expand coverage for real GPU scheduling/placement paths (many are currently skipped or too slow for CI)
 
 ### Recently Resolved ✅
@@ -86,8 +98,17 @@ Docs: `docs/dev/backends.md`
 1. ~~**CLI test coverage**~~ → `cmd/flexinfer/commands` is now 78.6% covered (target was 50%+).
 2. ~~**v1alpha1 → v1alpha2 migration guide**~~ → `docs/migration/v1alpha1-to-v1alpha2.md`.
 
+### Recently Shipped (Advanced Features) ✅
+
+- ✅ **KV-Cache tiering** — LRU/LFU/FIFO eviction policies, /dev/shm Memory strategy
+- ✅ **Dynamic Multi-LoRA** — `LoRAAdapter` CRD, hot-swap adapters on running vLLM deployments
+- ✅ **OCI Model Registry** — `ModelCatalog` CRD, Harbor/GHCR/ECR via `pkg/registry/`
+- ✅ **Flash-Loader Sidecar** — `flexinfer-flash-loader` binary, parallel PVC→tmpfs preloading
+- ✅ **Spot-Instance Resilience** — Termination detectors for AWS, Azure, GCP, Harvester
+- ✅ **CNCF Sandbox Prep** — Governance, security, adopters, SBOM, license scanning
+
 ### Future Phases
 
 - **Multi-cluster federation** - See `docs/design/multi-cluster.md`
-- **Dynamic Multi-LoRA** - Hot-swap adapters
-- **KV-Cache tiering** - Advanced memory management
+- **Multi-tenancy** - Namespace isolation features (no design doc yet)
+- **Context-aware router** - Full L7 prefix-caching router for "Chat with Doc" workloads

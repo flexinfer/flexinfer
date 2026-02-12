@@ -87,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(scaleCmd)
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(catalogCmd)
+	rootCmd.AddCommand(quantizeCmd)
 }
 
 // Execute runs the root command

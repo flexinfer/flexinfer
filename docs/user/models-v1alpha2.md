@@ -53,6 +53,13 @@ Model source URI. Supported formats:
 Notes:
 
 - For `backend: llamacpp` with `HF://` sources, set `spec.config.ggufFile: <file>.gguf` to select a GGUF file within the downloaded repo.
+- FlexInfer now auto-prefetches only required llama.cpp files for HF GGUF repos:
+  - If `spec.config.ggufFile` is set, the prefetch job downloads just that GGUF (plus optional relative `spec.config.mmproj`).
+  - This avoids pulling full multi-quant repos by default.
+- Optional advanced download controls (all in `spec.config`):
+  - `hfAllowPatterns`: list (or comma-separated string) passed to `snapshot_download(..., allow_patterns=...)`
+  - `hfIgnorePatterns`: list (or comma-separated string) passed to `snapshot_download(..., ignore_patterns=...)`
+  - `hfRevision`: revision/tag/commit passed to `snapshot_download(..., revision=...)`
 
 ### `spec.gpu` (optional)
 

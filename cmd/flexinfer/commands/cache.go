@@ -88,8 +88,8 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 	})
 
 	// Print header
-	_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n", "NAME", "STRATEGY", "PATH", "READY", "SOURCE")
-	_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n", "----", "--------", "----", "-----", "------")
+	_, _ = fmt.Fprintf(out, "%-25s %-12s %-35s %-10s %-8s %-12s %s\n", "NAME", "STRATEGY", "PATH", "PHASE", "FORMAT", "COMPRESSION", "SOURCE")
+	_, _ = fmt.Fprintf(out, "%-25s %-12s %-35s %-10s %-8s %-12s %s\n", "----", "--------", "----", "-----", "------", "-----------", "------")
 
 	for _, mc := range cacheList.Items {
 		strategy := string(mc.Spec.StorageStrategy)
@@ -103,25 +103,44 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 		}
 
 		path := mc.Status.Path
-		if len(path) > 45 {
-			path = "..." + path[len(path)-42:]
+		if len(path) > 35 {
+			path = "..." + path[len(path)-32:]
 		}
 
-		ready := fmt.Sprintf("%d/%d", mc.Status.ReadyNodes, mc.Status.TotalNodes)
-		switch mc.Status.Phase {
-		case aiv1alpha1.ModelCachePhaseReady:
-			ready = "Ready"
-		case aiv1alpha1.ModelCachePhaseFailed:
-			ready = "Failed"
+		phase := string(mc.Status.Phase)
+		if phase == "" {
+			phase = fmt.Sprintf("%d/%d", mc.Status.ReadyNodes, mc.Status.TotalNodes)
 		}
 
-		source := truncate(mc.Spec.Source, 40)
+		// Quantization info
+		quantFormat := "-"
+		compression := "-"
+		if mc.Status.Quantization != nil {
+			quantFormat = mc.Status.Quantization.Format
+			if mc.Status.Quantization.Type != "" {
+				quantFormat = mc.Status.Quantization.Type
+			}
+			if mc.Status.Quantization.CompressionRatio != "" {
+				compression = mc.Status.Quantization.CompressionRatio + "x"
+			}
+		} else if mc.Spec.Quantization != nil {
+			// Quantization requested but not yet complete
+			quantFormat = string(mc.Spec.Quantization.Format)
+			if mc.Spec.Quantization.GGUFType != "" {
+				quantFormat = mc.Spec.Quantization.GGUFType
+			}
+			compression = "pending"
+		}
 
-		_, _ = fmt.Fprintf(out, "%-25s %-12s %-45s %-8s %s\n",
+		source := truncate(mc.Spec.Source, 35)
+
+		_, _ = fmt.Fprintf(out, "%-25s %-12s %-35s %-10s %-8s %-12s %s\n",
 			truncate(mc.Name, 25),
 			strategy,
 			path,
-			ready,
+			phase,
+			quantFormat,
+			compression,
 			source,
 		)
 	}

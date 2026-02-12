@@ -135,9 +135,48 @@ var (
 	ModelCachePhase = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "flexinfer_modelcache_phase",
-			Help: "Current phase of the model cache (1=Pending, 2=Initializing, 3=Provisioning, 4=Ready, 5=Failed).",
+			Help: "Current phase of the model cache (1=Pending, 2=Initializing, 3=Provisioning, 4=Quantizing, 5=Ready, 6=Failed).",
 		},
 		[]string{"cache", "namespace", "phase"},
+	)
+
+	// === Quantization Metrics ===
+
+	// QuantizationDurationSeconds tracks quantization job duration.
+	QuantizationDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_quantization_duration_seconds",
+			Help:    "Duration of quantization jobs in seconds.",
+			Buckets: []float64{60, 120, 300, 600, 1200, 1800, 3600, 7200},
+		},
+		[]string{"model", "format", "type"},
+	)
+
+	// QuantizationCompressionRatio tracks the compression ratio achieved.
+	QuantizationCompressionRatio = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_quantization_compression_ratio",
+			Help: "Compression ratio achieved by quantization (original/compressed).",
+		},
+		[]string{"model", "format"},
+	)
+
+	// QuantizationJobsTotal counts quantization jobs by status.
+	QuantizationJobsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_quantization_jobs_total",
+			Help: "Total number of quantization jobs by status.",
+		},
+		[]string{"model", "status"},
+	)
+
+	// QuantizationCacheSizeBytes tracks the size of quantized model files.
+	QuantizationCacheSizeBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_quantization_cache_size_bytes",
+			Help: "Size of quantized model files in bytes.",
+		},
+		[]string{"model", "format"},
 	)
 )
 
@@ -161,6 +200,12 @@ func init() {
 	prometheus.MustRegister(ModelCacheSizeBytes)
 	prometheus.MustRegister(ModelCacheAccessCount)
 	prometheus.MustRegister(ModelCachePhase)
+
+	// Quantization metrics
+	prometheus.MustRegister(QuantizationDurationSeconds)
+	prometheus.MustRegister(QuantizationCompressionRatio)
+	prometheus.MustRegister(QuantizationJobsTotal)
+	prometheus.MustRegister(QuantizationCacheSizeBytes)
 }
 
 // Exporter handles serving the Prometheus metrics.

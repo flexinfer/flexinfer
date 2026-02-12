@@ -198,6 +198,14 @@ type LoRASupporter interface {
 	UnloadLoRAEndpoint() string
 }
 
+// QuantizationSupporter is an optional interface that backends can implement
+// to declare which quantization formats they can consume. The controller uses
+// this to validate that a quantized model is compatible with the target backend.
+type QuantizationSupporter interface {
+	// SupportedQuantFormats returns the quantization formats this backend accepts.
+	SupportedQuantFormats() []string
+}
+
 // BaseBackend provides common default implementations for Backend methods.
 // Embed this in concrete backend implementations to inherit defaults.
 type BaseBackend struct{}

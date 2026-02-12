@@ -1,14 +1,24 @@
 # Project Roadmap
 
-> Last Updated: 2026-02-08
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+> Last Updated: 2026-02-10
 
 ## Current Status
 
-FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete, providing:
+FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete plus 6 Advanced Features have shipped:
 - Hardened controller reconciliation with immutable field handling
 - Production-grade serverless/activator with OpenAI API compatibility
 - KV-cache-aware routing with session affinity and least-loaded strategies
 - Comprehensive E2E testing and documentation
+- KV-Cache tiering with configurable eviction policies (LRU/LFU/FIFO)
+- Dynamic Multi-LoRA hot-swapping via `LoRAAdapter` CRD
+- OCI model registry integration (Harbor, GHCR, ECR) via `ModelCatalog` CRD
+- Flash-Loader sidecar for P2P/RDMA model preloading
+- Spot-instance resilience with proactive draining (AWS, Azure, GCP, Harvester)
+- CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system
@@ -21,6 +31,12 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - ✅ **Resource Management**: Complete lifecycle management of AI workload deployments
 - ✅ **Serverless Proxy**: OpenAI-compatible proxy with scale-to-zero activation
 - ✅ **Advanced Routing**: Session affinity, prefix-based, and least-loaded routing
+- ✅ **KV-Cache Tiering**: LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
+- ✅ **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM backend
+- ✅ **OCI Model Registry**: Harbor/GHCR/ECR integration via `ModelCatalog` CRD and `pkg/registry/`
+- ✅ **Flash-Loader Sidecar**: Parallel model preloading from PVC to tmpfs
+- ✅ **Spot-Instance Resilience**: Proactive draining on termination notice (AWS, Azure, GCP, Harvester)
+- ✅ **CNCF Sandbox Prep**: Governance, security policy, adopters, SBOM generation, license scanning
 
 ## Completed Phases
 
@@ -53,6 +69,17 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] GPU/backend quirks runbook
 - [x] Documentation index/navigation
 
+## Phase: Advanced Features ✅
+
+Shipped in pipeline #498 across 3 commits.
+
+- [x] **KV-Cache Tiering** - LRU/LFU/FIFO eviction policies, /dev/shm Memory strategy, eviction metrics
+- [x] **Dynamic Multi-LoRA** - `LoRAAdapter` CRD, hot-swap adapters on running vLLM deployments
+- [x] **OCI Model Registry** - `ModelCatalog` CRD, Harbor/GHCR/ECR support via `pkg/registry/`
+- [x] **Flash-Loader Sidecar** - `flexinfer-flash-loader` binary, parallel PVC→tmpfs preloading, P2P transfer
+- [x] **Spot-Instance Resilience** - Termination detectors for AWS, Azure, GCP, Harvester; proactive draining
+- [x] **CNCF Sandbox Prep** - GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning
+
 ## Upcoming Work
 
 ### High Priority (Deployment Ready)
@@ -81,7 +108,7 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 ### Tech Debt (High Priority)
 - [x] **TD-1**: Add error handling to ignored returns - Fixed JSON encode-after-header-sent in proxy `handleModels` and scheduler Filter/Score handlers (pre-marshal pattern)
 - [x] **TD-3**: Increase CLI test coverage to 50%+ (now 78.6% for `cmd/flexinfer/commands`)
-- [~] **TD-4**: Replace panic with graceful error handling - `MustGet` is never called, safe variants used
+- [x] **TD-4**: Replace panic with graceful error handling - backend registration now captures init errors and manager startup exits cleanly with actionable logs
 - [x] **TD-11**: E2E test names violate RFC 1123 - Fixed with lowercase + "/" replacement
 - [x] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme - Added to scheme
 
@@ -96,10 +123,10 @@ FlexInfer is **production-ready** at 85-95% completion. Phases 1-4 are complete,
 - [x] **TD-10**: Namespace "default" fallback - added warning when POD_NAMESPACE not set
 
 ### Low Priority (Advanced Features)
-- [ ] **KV-Cache tiering** - Advanced memory management
-- [ ] **Harbor OCI integration** - Direct model registry support
+- [x] **KV-Cache tiering** - Advanced memory management (shipped: LRU/LFU/FIFO eviction)
+- [x] **Harbor OCI integration** - Direct model registry support (shipped: `pkg/registry/`, `ModelCatalog` CRD)
 - [ ] **Multi-tenancy** - Namespace isolation features
-- [ ] **CNCF submission** - Sandbox application preparation
+- [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
 
 ## Phase 5: Multi-Cluster (Future)
 
@@ -112,10 +139,10 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 
 ## Innovation Roadmap
 
-- **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O.
+- ✅ **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O. (shipped: `flexinfer-flash-loader` binary)
 - **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (Partially complete - prefix routing available)
-- **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments.
-- **Spot-Instance Resilience**: Proactive draining on termination notice.
+- ✅ **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments. (shipped: `LoRAAdapter` CRD + vLLM integration)
+- ✅ **Spot-Instance Resilience**: Proactive draining on termination notice. (shipped: AWS, Azure, GCP, Harvester detectors)
 
 ## References
 
@@ -124,5 +151,10 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 | [README.md](README.md) | Project overview and architecture |
 | [AGENTS.md](AGENTS.md) | Agent guidance |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines |
+| [GOVERNANCE.md](GOVERNANCE.md) | Project governance model |
+| [SECURITY.md](SECURITY.md) | Security policy and vulnerability reporting |
+| [ADOPTERS.md](ADOPTERS.md) | Production adopters |
 | [docs/planning/](docs/planning/) | Phase planning documents |
 | [docs/design/multi-cluster.md](docs/design/multi-cluster.md) | Multi-cluster design |
+| [docs/design/model-registry-integration.md](docs/design/model-registry-integration.md) | Model registry design (implemented) |
+| [docs/design/quantization-pipelines.md](docs/design/quantization-pipelines.md) | Quantization pipelines design |

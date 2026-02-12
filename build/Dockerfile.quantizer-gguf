@@ -1,0 +1,64 @@
+# Dockerfile.quantizer-gguf
+# Builds a container with llama.cpp quantization tools:
+# - convert_hf_to_gguf.py (HuggingFace → GGUF FP16 conversion)
+# - llama-quantize (FP16 → quantized GGUF)
+#
+# Usage: Used by the FlexInfer ModelCache controller for GGUF quantization jobs.
+# Runs on CPU only — no GPU dependencies required.
+
+FROM python:3.11-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build llama.cpp
+ARG LLAMA_CPP_VERSION=master
+RUN git clone --depth 1 --branch ${LLAMA_CPP_VERSION} \
+    https://github.com/ggerganov/llama.cpp /build/llama.cpp
+
+WORKDIR /build/llama.cpp
+
+# Build only the quantize tool (CPU-only, no CUDA/ROCm)
+RUN cmake -B build \
+    -DGGML_CUDA=OFF \
+    -DGGML_METAL=OFF \
+    -DGGML_HIPBLAS=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target llama-quantize -j$(nproc)
+
+# Install Python dependencies for convert_hf_to_gguf.py
+RUN pip install --no-cache-dir \
+    numpy \
+    sentencepiece \
+    transformers \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    safetensors \
+    gguf
+
+# --- Runtime stage ---
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries
+COPY --from=builder /build/llama.cpp/build/bin/llama-quantize /opt/llama.cpp/llama-quantize
+
+# Copy conversion script and its dependencies
+COPY --from=builder /build/llama.cpp/convert_hf_to_gguf.py /opt/llama.cpp/convert_hf_to_gguf.py
+COPY --from=builder /build/llama.cpp/gguf-py /opt/llama.cpp/gguf-py
+
+# Copy Python packages
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Set PATH
+ENV PATH="/opt/llama.cpp:${PATH}"
+
+# Default entrypoint for debugging; Jobs override with their script
+ENTRYPOINT ["/bin/sh"]

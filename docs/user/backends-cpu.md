@@ -56,6 +56,8 @@ Supported patterns:
 
 - `HF://org/repo` with `spec.config.ggufFile: <file>.gguf`
   - FlexInfer downloads the repo to `/models/<modelName>/` and passes `/models/<modelName>/<ggufFile>` to llama.cpp.
+  - For llama.cpp, FlexInfer now defaults to selective HF prefetch and downloads only the configured GGUF (and optional relative `mmproj`) instead of the full repo.
+  - Advanced options: `spec.config.hfAllowPatterns`, `spec.config.hfIgnorePatterns`, `spec.config.hfRevision`.
 - `pvc://pvc-name/path/to/model.gguf`
   - FlexInfer mounts the PVC at `/models` and passes `/models/path/to/model.gguf` to llama.cpp.
 - `file:///absolute/path/to/model.gguf`
@@ -86,4 +88,8 @@ CPU inference is typically **10-50x slower** than modern GPUs. Real performance 
 - `metrics` (bool): `--metrics`
 - `chatTemplate` (string): `--chat-template`
 - `mmproj` (string): `--mmproj` (multimodal projection file)
-
+- `reasoningFormat` (string): `--reasoning-format` (`none`, `deepseek`, `deepseek-legacy`)
+- `reasoningBudget` (int): `--reasoning-budget` (`-1` or `0` in current llama-server builds)
+- `device` (string): `--device` (explicit device selection on multi-GPU nodes)
+- `hipVisibleDevices` / `rocrVisibleDevices` (string): AMD device pinning env vars
+- `gpuDeviceOrdinal` (string): sets `GPU_DEVICE_ORDINAL`; also used as fallback for `--device`

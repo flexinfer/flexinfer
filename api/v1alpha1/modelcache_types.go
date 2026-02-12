@@ -60,11 +60,80 @@ const (
 	ModelCachePhaseInitializing ModelCachePhase = "Initializing"
 	// ModelCachePhaseProvisoning means the model is being downloaded/synced
 	ModelCachePhaseProvisioning ModelCachePhase = "Provisioning"
+	// ModelCachePhaseQuantizing means the model is being quantized
+	ModelCachePhaseQuantizing ModelCachePhase = "Quantizing"
 	// ModelCachePhaseReady means the model is ready to be used
 	ModelCachePhaseReady ModelCachePhase = "Ready"
 	// ModelCachePhaseFailed means something went wrong
 	ModelCachePhaseFailed ModelCachePhase = "Failed"
 )
+
+// QuantizationFormat identifies the quantization format to produce.
+// +kubebuilder:validation:Enum=GGUF;AWQ;GPTQ;EXL2;FP8
+type QuantizationFormat string
+
+const (
+	QuantizationFormatGGUF QuantizationFormat = "GGUF"
+	QuantizationFormatAWQ  QuantizationFormat = "AWQ"
+	QuantizationFormatGPTQ QuantizationFormat = "GPTQ"
+	QuantizationFormatEXL2 QuantizationFormat = "EXL2"
+	QuantizationFormatFP8  QuantizationFormat = "FP8"
+)
+
+// QuantizationSpec configures post-download quantization of model weights.
+// When set on a ModelCache, the controller creates a quantization Job after
+// the download completes.
+// +kubebuilder:object:generate=true
+type QuantizationSpec struct {
+	// Format is the target quantization format.
+	// +kubebuilder:validation:Required
+	Format QuantizationFormat `json:"format"`
+
+	// GGUFType is the GGUF quantization level (e.g., Q4_K_M, Q5_K_M, Q8_0).
+	// Only used when Format is GGUF.
+	// +optional
+	GGUFType string `json:"ggufType,omitempty"`
+
+	// Bits is the quantization bit width for AWQ/GPTQ formats.
+	// +optional
+	Bits *int32 `json:"bits,omitempty"`
+
+	// GroupSize is the quantization group size for AWQ/GPTQ formats.
+	// +optional
+	GroupSize *int32 `json:"groupSize,omitempty"`
+
+	// UseGPU enables GPU-accelerated quantization (required for AWQ/GPTQ).
+	// GGUF quantization runs on CPU only.
+	// +optional
+	UseGPU bool `json:"useGPU,omitempty"`
+
+	// MaxMemoryGB limits the memory available to the quantization job.
+	// Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+}
+
+// QuantizationStatus records the result of quantization.
+// +kubebuilder:object:generate=true
+type QuantizationStatus struct {
+	// Format is the quantization format that was applied.
+	Format string `json:"format,omitempty"`
+
+	// Type is the specific quantization type (e.g., Q4_K_M for GGUF).
+	Type string `json:"type,omitempty"`
+
+	// OriginalSizeBytes is the size of the model before quantization.
+	OriginalSizeBytes int64 `json:"originalSizeBytes,omitempty"`
+
+	// CompressedSizeBytes is the size of the model after quantization.
+	CompressedSizeBytes int64 `json:"compressedSizeBytes,omitempty"`
+
+	// CompressionRatio is the ratio of original to compressed size (e.g., "3.75").
+	CompressionRatio string `json:"compressionRatio,omitempty"`
+
+	// QuantizationTime is the wall-clock duration of the quantization job.
+	QuantizationTime string `json:"quantizationTime,omitempty"`
+}
 
 // ModelCacheSpec defines the desired state of ModelCache
 // +kubebuilder:object:generate=true
@@ -167,6 +236,12 @@ type ModelCacheSpec struct {
 	// the inference container starts, dramatically reducing cold start time.
 	// +optional
 	FlashLoader *FlashLoaderSpec `json:"flashLoader,omitempty"`
+
+	// Quantization configures post-download quantization of model weights.
+	// When set, the controller creates a quantization Job after the download
+	// completes, converting the model to the specified format before marking Ready.
+	// +optional
+	Quantization *QuantizationSpec `json:"quantization,omitempty"`
 }
 
 // FlashLoaderSpec configures the flash-loader init container for fast model loading.
@@ -267,6 +342,13 @@ type ModelCacheStatus struct {
 	// Used for LFU eviction policy and hit rate calculations.
 	// +optional
 	AccessCount int64 `json:"accessCount,omitempty"`
+
+	// === Quantization Status ===
+
+	// Quantization records the result of model quantization.
+	// Only populated when spec.quantization is set and the job completes.
+	// +optional
+	Quantization *QuantizationStatus `json:"quantization,omitempty"`
 
 	// === OCI Registry Status ===
 

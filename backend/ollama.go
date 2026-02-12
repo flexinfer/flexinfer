@@ -81,3 +81,8 @@ func (b *OllamaBackend) StartupTimeout() time.Duration {
 func (b *OllamaBackend) NeedsVolume() bool {
 	return false
 }
+
+// SupportedQuantFormats returns GGUF — Ollama natively consumes GGUF models.
+func (b *OllamaBackend) SupportedQuantFormats() []string {
+	return []string{"GGUF"}
+}

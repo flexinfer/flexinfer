@@ -180,3 +180,8 @@ func (b *VLLMBackend) LoadLoRAEndpoint() string {
 func (b *VLLMBackend) UnloadLoRAEndpoint() string {
 	return "/v1/unload_lora_adapter"
 }
+
+// SupportedQuantFormats returns AWQ, GPTQ, and FP8 — the formats vLLM natively loads.
+func (b *VLLMBackend) SupportedQuantFormats() []string {
+	return []string{"AWQ", "GPTQ", "FP8"}
+}

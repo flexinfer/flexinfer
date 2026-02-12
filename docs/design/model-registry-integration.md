@@ -1,8 +1,17 @@
 # Model Registry Integration Design
 
-**Status:** Proposed
+**Status:** Implemented
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
+**Implemented:** 2026-02-08
+
+> **Implementation Note:** The core registry adapter pattern, `ModelCatalog` CRD, and OCI/HuggingFace/Ollama adapters shipped in pipeline #498. Key implementation files:
+> - `pkg/registry/registry.go` — Registry interface and factory pattern
+> - `pkg/registry/oci.go` — OCI registry adapter (uses `oras` CLI)
+> - `pkg/registry/huggingface.go` — HuggingFace Hub adapter
+> - `pkg/registry/ollama.go` — Ollama library adapter
+> - `api/v1alpha2/catalog_types.go` — `ModelCatalog` CRD types
+> - `controllers/catalog_controller.go` — Catalog reconciliation
 
 ## Overview
 
@@ -377,6 +386,20 @@ flexinfer_cache_misses_total{registry}
 3. **Gated Models**: How to handle HuggingFace gated models (require agreement)?
 
 4. **Local Mirroring**: Should we support mirroring registries for air-gapped environments?
+
+## Implementation Deviations
+
+The shipped implementation differs from this proposal in several areas:
+
+1. **CachePolicy CRD deferred** — Smart caching and popularity-based pre-fetching (Phase 4 of this design) are not yet implemented. Eviction is handled at the `ModelCache` level via `spec.evictionPolicy`.
+
+2. **ModelSearch CLI deferred** — The `flexinfer search` and `flexinfer info` commands are not yet implemented. The `flexinfer catalog` command provides basic catalog listing instead.
+
+3. **Simplified ModelCatalog spec** — The shipped `ModelCatalogSpec` uses a `Registries []RegistrySource` array with `Type`, `URL`, and `SecretRef` fields, rather than the more complex sync/filter structure proposed. Filtering uses `CatalogFilter` with `Tags` and `NamePattern`.
+
+4. **Registry adapters use CLI tools** — The OCI adapter shells out to the `oras` CLI rather than using a Go library directly. This was a pragmatic choice for the initial implementation.
+
+5. **Version tracking not implemented** — The `updateAvailable` / `latestVersion` status fields from the proposal are not implemented yet. The catalog tracks model entries but does not compare versions.
 
 ## References
 

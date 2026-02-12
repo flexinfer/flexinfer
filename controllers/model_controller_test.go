@@ -244,6 +244,121 @@ func TestBuildBackendModelSpec_LlamaCppHFUsesGGUFFile(t *testing.T) {
 	}
 }
 
+func TestResolveHFDownloadOptions_LlamaCppAddsGGUFAndMmproj(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{
+					"ggufFile":"models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+					"mmproj":"proj/mmproj-Q8_0.gguf"
+				}`),
+			},
+		},
+	}
+
+	opts := resolveHFDownloadOptions(model)
+	if got, want := len(opts.allowPatterns), 2; got != want {
+		t.Fatalf("allowPatterns len = %d, want %d (%v)", got, want, opts.allowPatterns)
+	}
+	if opts.allowPatterns[0] != "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" {
+		t.Fatalf("allowPatterns[0] = %q", opts.allowPatterns[0])
+	}
+	if opts.allowPatterns[1] != "proj/mmproj-Q8_0.gguf" {
+		t.Fatalf("allowPatterns[1] = %q", opts.allowPatterns[1])
+	}
+	if opts.revision != "" {
+		t.Fatalf("revision = %q, want empty", opts.revision)
+	}
+}
+
+func TestResolveHFDownloadOptions_RespectsPatternOverrides(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{
+					"ggufFile":"glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf",
+					"hfAllowPatterns":["README.md","/glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf","README.md"],
+					"hfIgnorePatterns":"*.png, .gitattributes",
+					"hfRevision":"main"
+				}`),
+			},
+		},
+	}
+
+	opts := resolveHFDownloadOptions(model)
+
+	if got, want := len(opts.allowPatterns), 2; got != want {
+		t.Fatalf("allowPatterns len = %d, want %d (%v)", got, want, opts.allowPatterns)
+	}
+	if opts.allowPatterns[0] != "README.md" {
+		t.Fatalf("allowPatterns[0] = %q", opts.allowPatterns[0])
+	}
+	if opts.allowPatterns[1] != "glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf" {
+		t.Fatalf("allowPatterns[1] = %q", opts.allowPatterns[1])
+	}
+
+	if got, want := len(opts.ignorePatterns), 2; got != want {
+		t.Fatalf("ignorePatterns len = %d, want %d (%v)", got, want, opts.ignorePatterns)
+	}
+	if opts.ignorePatterns[0] != "*.png" || opts.ignorePatterns[1] != ".gitattributes" {
+		t.Fatalf("ignorePatterns = %v", opts.ignorePatterns)
+	}
+	if opts.revision != "main" {
+		t.Fatalf("revision = %q, want main", opts.revision)
+	}
+}
+
+func TestJobForPrefetch_IncludesHFPatternEnv(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	r := &ModelReconciler{Scheme: s}
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "glm47",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{
+					"ggufFile":"glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf",
+					"hfRevision":"main"
+				}`),
+			},
+		},
+	}
+
+	job, err := r.jobForPrefetch(model, "glm47-cache", "glm47")
+	if err != nil {
+		t.Fatalf("jobForPrefetch() error: %v", err)
+	}
+
+	env := map[string]string{}
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	if env["HF_ALLOW_PATTERNS"] == "" {
+		t.Fatalf("HF_ALLOW_PATTERNS env var missing: %+v", env)
+	}
+	if env["HF_REVISION"] != "main" {
+		t.Fatalf("HF_REVISION = %q, want main", env["HF_REVISION"])
+	}
+	if env["HF_ALLOW_PATTERNS"] != "[\"glm-4.7-flash-claude-4.5-opus.q4_k_m.gguf\"]" {
+		t.Fatalf("HF_ALLOW_PATTERNS = %s", env["HF_ALLOW_PATTERNS"])
+	}
+}
+
 func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
 	r := &ModelReconciler{}
 

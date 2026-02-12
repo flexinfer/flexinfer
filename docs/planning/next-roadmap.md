@@ -5,9 +5,9 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-08
+> Last updated: 2026-02-10
 
-This document tracks the implementation phases for FlexInfer. **Phases 1-4 are complete.** The project is now at 85-95% production readiness.
+This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
 ## Principles
 
@@ -52,6 +52,17 @@ Checklist: `docs/planning/phase-4-operational-polish.md`
 - ✅ User quickstart guide
 - ✅ GPU/backend quirks runbook
 
+## Phase: Advanced Features ✅ COMPLETE
+
+Shipped in pipeline #498 across 3 commits.
+
+- ✅ KV-Cache tiering — LRU/LFU/FIFO eviction policies, /dev/shm Memory strategy, eviction metrics
+- ✅ Dynamic Multi-LoRA — `LoRAAdapter` CRD, hot-swap adapters on running vLLM deployments
+- ✅ OCI Model Registry — `ModelCatalog` CRD, Harbor/GHCR/ECR support via `pkg/registry/`
+- ✅ Flash-Loader sidecar — `flexinfer-flash-loader` binary, parallel PVC→tmpfs preloading, P2P transfer
+- ✅ Spot-Instance Resilience — Termination detectors for AWS, Azure, GCP, Harvester; proactive draining
+- ✅ CNCF Sandbox Prep — GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning
+
 ## Phase 5: Multi-Cluster (Future)
 
 Design: `docs/design/multi-cluster.md`
@@ -66,7 +77,9 @@ Checklist: `docs/planning/phase-5-multi-cluster.md`
 
 See `ROADMAP.md` for full tech debt tracking:
 
-- **TD-1**: Error handling for ignored returns (high priority)
+- **TD-1**: Error handling for ignored returns — ✅ Reduced (proxy + scheduler fixed via pre-marshal pattern)
 - ~~**TD-2**: ROCm GFX1100 image builds~~ ✅ RESOLVED (supplementalGroups fix)
 - ~~**TD-3**: CLI test coverage~~ ✅ RESOLVED (now 78.6% for `cmd/flexinfer/commands`)
 - ~~**TD-5**: v1alpha1 → v1alpha2 migration guide~~ ✅ RESOLVED (`docs/migration/v1alpha1-to-v1alpha2.md`)
+- ~~**TD-11**: E2E test names violate RFC 1123~~ ✅ RESOLVED (lowercase + "/" replacement)
+- ~~**TD-12**: GPUGroup v1alpha1 not registered in e2e scheme~~ ✅ RESOLVED (added to scheme)

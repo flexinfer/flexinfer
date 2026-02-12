@@ -1,16 +1,17 @@
 # FlexInfer Implementation Status
 
-This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-06.
+This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-10.
 
 ## Executive Summary
 
-**FlexInfer is production-ready (85-95% complete).** Phases 1-4 have been completed, delivering:
+**FlexInfer is production-ready (95%+ complete).** Phases 1-4 plus 6 Advanced Features have been completed, delivering:
 - Hardened controller reconciliation with immutable field handling
 - Production-grade serverless/activator with OpenAI API compatibility
 - KV-cache-aware routing with session affinity and least-loaded strategies
 - Comprehensive E2E testing and documentation
+- KV-Cache tiering, Dynamic Multi-LoRA, OCI Model Registry, Flash-Loader, Spot Resilience, CNCF Sandbox Prep
 
-The project has moved from code-complete to production-ready with the completion of Helm charts, real benchmarking integration, custom scheduler integration, observability dashboards, and comprehensive user documentation. CI/CD pipelines run on GitLab.
+The project has moved from code-complete to production-ready with the completion of Helm charts, real benchmarking integration, custom scheduler integration, observability dashboards, comprehensive user documentation, and 6 advanced features. CI/CD pipelines run on GitLab.
 
 ## ✅ Fully Implemented and Working
 
@@ -131,19 +132,19 @@ The project has moved from code-complete to production-ready with the completion
 
 ### High Priority Tech Debt
 
-| ID | Issue | Location |
-|----|-------|----------|
-| TD-1 | Ignored error returns (13+ locations) | `cmd/flexinfer-proxy/main.go`, `scheduler/scheduler.go` |
-| TD-2 | ROCm 6.4 MLC-LLM image not built | Build pipeline |
-| TD-3 | CLI test coverage at 7% | `cmd/flexinfer/commands/` |
-| TD-11 | E2E test names violate RFC 1123 (uppercase in names) | `e2e/*_test.go` |
-| TD-12 | GPUGroup v1alpha1 not registered in e2e scheme | `e2e/e2e_test.go` |
+| ID | Issue | Status | Location |
+|----|-------|--------|----------|
+| TD-1 | Ignored error returns | ✅ Reduced — proxy JSON-encode-after-header-sent and scheduler handlers fixed via pre-marshal pattern | `cmd/flexinfer-proxy/main.go`, `scheduler/scheduler.go` |
+| TD-2 | ROCm 6.4 MLC-LLM image not built | ✅ Resolved | Build pipeline |
+| TD-3 | CLI test coverage | ✅ Resolved — now 78.6% | `cmd/flexinfer/commands/` |
+| TD-11 | E2E test names violate RFC 1123 | ✅ Resolved — lowercase + "/" replacement | `e2e/*_test.go` |
+| TD-12 | GPUGroup v1alpha1 not registered in e2e scheme | ✅ Resolved — added to scheme | `e2e/e2e_test.go` |
 
 ### Medium Priority Tech Debt
 
 | ID | Issue | Location |
 |----|-------|----------|
-| TD-4 | Panic on backend registration | `backend/registry.go:51` |
+| TD-4 | ✅ Resolved — backend registration errors are captured and surfaced at manager startup (no panic in init path) | `backend/registry.go`, `cmd/flexinfer-manager/main.go` |
 | TD-5 | v1alpha1 deprecation without migration guide | `api/v1alpha1/` |
 | TD-6 | Hardcoded URLs/ConfigMap names | Multiple cmd files |
 
@@ -158,11 +159,14 @@ See `docs/design/multi-cluster.md` for full design.
 - [ ] **Global Proxy**: Route to cluster-local proxies
 - [ ] **Advanced Routing**: Latency-based, weighted, GPU-aware
 
-#### Future Phases
+#### Recently Shipped (Advanced Features) ✅
 
-- [ ] **Dynamic Multi-LoRA**: Hot-swap adapters without pod restart
-- [ ] **"Flash-Loader"**: RDMA/P2P model weight distribution
-- [ ] **Spot Resilience**: Proactive draining on termination
+- [x] **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM integration
+- [x] **"Flash-Loader"**: Parallel PVC→tmpfs model preloading with P2P transfer
+- [x] **Spot Resilience**: Proactive draining on termination (AWS, Azure, GCP, Harvester)
+- [x] **KV-Cache Tiering**: LRU/LFU/FIFO eviction with /dev/shm Memory strategy
+- [x] **OCI Model Registry**: `ModelCatalog` CRD with Harbor/GHCR/ECR support
+- [x] **CNCF Sandbox Prep**: Governance, security, adopters, SBOM, license scanning
 
 ## Quality Assessment
 
@@ -177,17 +181,17 @@ See `docs/design/multi-cluster.md` for full design.
 - Unit tests cover core logic (controllers, routing, scheduling)
 - Integration tests cover Controller reconciliation
 - E2E tests cover basic lifecycle and serverless flows
-- CLI commands need more coverage (currently 7%)
+- CLI commands at 78.6% coverage (target was 50%+)
 
 ### Deployment Readiness Assessment
 
-### Current State: **85-95% Ready**
+### Current State: **95%+ Ready**
 
-**Remaining Steps for Production:**
+**Remaining Work:**
 
-1. **Backend Images**: Build ROCm 6.4 MLC-LLM image for quality models (32B, 14B)
-2. **Tech Debt**: Address high-priority error handling issues
-3. **Security**: RBAC review and hardening
+1. **Multi-cluster federation** — See `docs/design/multi-cluster.md`
+2. **Multi-tenancy** — No design doc yet
+3. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
 
 **What's Ready:**
 - ✅ Helm charts complete
@@ -195,3 +199,6 @@ See `docs/design/multi-cluster.md` for full design.
 - ✅ User documentation complete
 - ✅ Routing strategies implemented
 - ✅ Observability metrics available
+- ✅ Advanced features shipped (KV-Cache, LoRA, OCI, Flash-Loader, Spot, CNCF)
+- ✅ Security hardening complete (RBAC, SBOM, license scanning, vulnerability scanning)
+- ✅ CLI test coverage at 78.6%

@@ -1,0 +1,51 @@
+# Example: ModelCache with GGUF quantization
+#
+# Downloads Llama 3 8B from HuggingFace and quantizes it to GGUF Q4_K_M.
+# The quantized model can be served by llamacpp or ollama backends.
+#
+# Lifecycle:
+#   1. Controller creates PVC and download job (Provisioning)
+#   2. After download, controller creates quantization job (Quantizing)
+#   3. llama.cpp tools convert HF → FP16 GGUF → Q4_K_M GGUF
+#   4. Quantized file is stored back on the PVC (Ready)
+#
+# Memory requirements:
+#   - 8B model: ~16GB FP16 intermediate + ~4.5GB Q4_K_M output
+#   - Workspace emptyDir should be 2x maxMemoryGB
+#
+# Usage:
+#   kubectl apply -f examples/quantized-gguf-model.yaml
+#   flexinfer cache status -n flexinfer-system
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama3-8b-q4km
+  namespace: flexinfer-system
+spec:
+  source: "meta-llama/Meta-Llama-3-8B"
+  storageStrategy: SharedPVC
+  storageSize: "30Gi"
+  clusterStorageClassName: longhorn
+  quantization:
+    format: GGUF
+    ggufType: Q4_K_M
+    maxMemoryGB: 32
+---
+# Example: High-quality quantization for a 70B model
+# Requires ~140GB workspace (FP16 intermediate) and 64GB RAM
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama3-70b-q5km
+  namespace: flexinfer-system
+spec:
+  source: "meta-llama/Meta-Llama-3-70B"
+  storageStrategy: SharedPVC
+  storageSize: "200Gi"
+  clusterStorageClassName: longhorn
+  secretRef: "hf-token"
+  quantization:
+    format: GGUF
+    ggufType: Q5_K_M
+    maxMemoryGB: 64

@@ -1,5 +1,9 @@
 # FlexInfer Agents & Runtime Components
 
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
 FlexInfer is split into **five** cooperating executables (all written in Go).
 This document explains what each agent does, how they communicate, and which options you can tune.
 

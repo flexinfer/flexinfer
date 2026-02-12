@@ -38,16 +38,18 @@ The project is ready for homelab deployment via the included Helm chart and the 
 ### 🔄 **Partially Implemented**
 
 - **Integration Testing**: Framework exists but needs more comprehensive scenarios
-- **ModelCache Downloader**: Supports `huggingface-cli` in the controller; OCI-based sources are still TODO.
+- **ModelCache Downloader**: Supports `huggingface-cli` and OCI-based sources via `pkg/registry/` (Harbor, GHCR, ECR).
 - **Scale-to-Zero Proxy**: Implemented and working; needs more real-world burn-in across backends and streaming clients.
 - **Smart Routing (L7)**: Routing strategies exist (session affinity, prefix routing, least-loaded); needs more test coverage and performance validation under load.
 
-### 📋 **Planned Features / Innovation Roadmap**
+### ✅ **Recently Shipped (Advanced Features)**
 
-- **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O.
-- **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads.
-- **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments.
-- **Spot-Instance Resilience**: Proactive draining on termination notice.
+- [x] **KV-Cache Tiering**: LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
+- [x] **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM backend
+- [x] **OCI Model Registry**: `ModelCatalog` CRD with Harbor/GHCR/ECR support (`pkg/registry/`)
+- [x] **Flash-Loader Sidecar**: Parallel model preloading from PVC to tmpfs (`flexinfer-flash-loader`)
+- [x] **Spot-Instance Resilience**: Proactive draining on termination (AWS, Azure, GCP, Harvester)
+- [x] **CNCF Sandbox Prep**: Governance, security policy, adopters, SBOM, license scanning
 
 ## Architecture
 
@@ -184,6 +186,8 @@ CPU-only inference:
 
 - Set `spec.gpu.vendor: cpu` (and omit `spec.gpu.count`).
 - For `llamacpp` + `HF://` GGUF repos, set `spec.config.ggufFile: <file>.gguf` to select the model file under `/models/<modelName>/...`.
+- `llamacpp` + HF GGUF prefetch is selective by default: FlexInfer downloads the configured `ggufFile` (and optional relative `mmproj`) instead of the full HF repo.
+- Optional `spec.config` download controls: `hfAllowPatterns`, `hfIgnorePatterns`, `hfRevision`.
 - See `docs/user/backends-cpu.md`.
 
 #### GPU Sharing
@@ -264,24 +268,24 @@ go test ./agents/...
 
 ### High Priority (Deployment Ready)
 
-- [ ] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
-- [ ] **Installation documentation** - Step-by-step deployment guides
-- [ ] **Integration tests** - End-to-end testing scenarios
+- [x] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
+- [x] **Installation documentation** - Step-by-step deployment guides
+- [x] **Integration tests** - End-to-end testing scenarios
 - [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
 
 ### Medium Priority (Production Ready)
 
-- [ ] **Performance optimization** - Memory usage and startup time improvements
-- [ ] **Security hardening** - RBAC refinements and security scanning
-- [ ] **Monitoring dashboards** - Grafana dashboards for operational visibility
-- [ ] **Documentation** - API documentation and troubleshooting guides
+- [x] **Performance optimization** - Flash-Loader sidecar for fast model loading
+- [x] **Security hardening** - RBAC reviewed, SBOM generation, license scanning
+- [x] **Monitoring dashboards** - Grafana dashboards for operational visibility
+- [x] **Documentation** - API documentation and troubleshooting guides
 
 ### Low Priority (Advanced Features)
 
-- [ ] **KV-Cache tiering** - Advanced memory management
-- [ ] **Harbor OCI integration** - Direct model registry support
+- [x] **KV-Cache tiering** - LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
+- [x] **Harbor OCI integration** - `ModelCatalog` CRD with `pkg/registry/` adapters
 - [ ] **Multi-tenancy** - Namespace isolation features
-- [ ] **CNCF submission** - Sandbox application preparation
+- [x] **CNCF submission** - Sandbox application preparation (GOVERNANCE.md, SECURITY.md, ADOPTERS.md)
 
 ## Contributing
 
