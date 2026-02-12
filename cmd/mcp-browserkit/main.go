@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -266,10 +267,14 @@ func handleScreenshot(ctx context.Context, args map[string]any) (*mcp.CallToolRe
 	if out.Format == "jpeg" {
 		mimeType = "image/jpeg"
 	}
+	imageDataURL, err := normalizeImageDataURL(mimeType, out.Base64)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("helper returned invalid image data: %w", err)), nil
+	}
 
 	result := &mcp.CallToolResult{
 		Content: []mcp.Content{
-			{Type: "image", MimeType: mimeType, Data: out.Base64},
+			{Type: "image", MimeType: mimeType, Data: imageDataURL},
 			{Type: "text", Text: fmt.Sprintf("Captured %s (%s). Title: %s", out.FinalURL, out.Format, out.Title)},
 		},
 	}
@@ -412,4 +417,49 @@ func errorsLikeMissingChromium(msg string) bool {
 	return strings.Contains(l, "playwright install") ||
 		strings.Contains(l, "executable doesn't exist") ||
 		strings.Contains(l, "browser_type.launch")
+}
+
+func normalizeImageDataURL(mimeType, data string) (string, error) {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return "", errors.New("empty image payload")
+	}
+
+	lower := strings.ToLower(data)
+	if strings.HasPrefix(lower, "data:image/") {
+		comma := strings.Index(data, ",")
+		if comma <= 0 || comma == len(data)-1 {
+			return "", errors.New("invalid data URL image payload")
+		}
+		meta := data[:comma]
+		if !strings.Contains(strings.ToLower(meta), ";base64") {
+			return "", errors.New("image data URL must use base64 encoding")
+		}
+		b64, err := normalizeBase64(data[comma+1:])
+		if err != nil {
+			return "", err
+		}
+		return meta + "," + b64, nil
+	}
+
+	b64, err := normalizeBase64(data)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, b64), nil
+}
+
+func normalizeBase64(data string) (string, error) {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return "", errors.New("empty base64 image payload")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(data)
+		if err != nil {
+			return "", fmt.Errorf("invalid base64 image payload: %w", err)
+		}
+	}
+	return base64.StdEncoding.EncodeToString(decoded), nil
 }
