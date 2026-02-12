@@ -25,7 +25,7 @@ func (d *GCPDetector) Watch(ctx context.Context) (time.Duration, error) {
 		case <-ticker.C:
 			// Check for preemption via maintenance event
 			body, err := fetchURL(ctx,
-				"http://169.254.169.254/computeMetadata/v1/instance/maintenance-event",
+				gcpMaintenanceEventURL(),
 				headers,
 			)
 			if err != nil {
@@ -40,7 +40,7 @@ func (d *GCPDetector) Watch(ctx context.Context) (time.Duration, error) {
 
 			// Also check the preempted metadata key
 			preempted, err := fetchURL(ctx,
-				"http://169.254.169.254/computeMetadata/v1/instance/preempted",
+				gcpPreemptedURL(),
 				headers,
 			)
 			if err == nil && strings.TrimSpace(preempted) == "TRUE" {

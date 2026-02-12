@@ -30,12 +30,12 @@ func AutoDetect(ctx context.Context) TerminationDetector {
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	// Try AWS IMDS
-	if isReachable(probeCtx, client, "http://169.254.169.254/latest/meta-data/", "PUT") {
+	if isReachable(probeCtx, client, awsProbeURL(), "PUT") {
 		return &AWSDetector{}
 	}
 
 	// Try GCP metadata
-	req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://169.254.169.254/computeMetadata/v1/", nil)
+	req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, gcpProbeURL(), nil)
 	if req != nil {
 		req.Header.Set("Metadata-Flavor", "Google")
 		resp, err := client.Do(req)
@@ -48,7 +48,7 @@ func AutoDetect(ctx context.Context) TerminationDetector {
 	}
 
 	// Try Azure IMDS
-	if isReachable(probeCtx, client, "http://169.254.169.254/metadata/instance?api-version=2021-02-01", "GET") {
+	if isReachable(probeCtx, client, azureProbeURL(), "GET") {
 		return &AzureDetector{}
 	}
 

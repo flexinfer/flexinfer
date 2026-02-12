@@ -30,7 +30,7 @@ func (d *AWSDetector) Watch(ctx context.Context) (time.Duration, error) {
 			return 0, ctx.Err()
 		case <-ticker.C:
 			body, err := fetchURL(ctx,
-				"http://169.254.169.254/latest/meta-data/spot/instance-action",
+				awsSpotActionURL(),
 				map[string]string{"X-aws-ec2-metadata-token": token},
 			)
 			if err != nil {
@@ -50,7 +50,7 @@ func (d *AWSDetector) Watch(ctx context.Context) (time.Duration, error) {
 func (d *AWSDetector) getToken(ctx context.Context) (string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		"http://169.254.169.254/latest/api/token", nil)
+		awsTokenURL(), nil)
 	if err != nil {
 		return "", err
 	}

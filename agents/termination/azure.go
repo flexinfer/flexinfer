@@ -25,7 +25,7 @@ func (d *AzureDetector) Watch(ctx context.Context) (time.Duration, error) {
 		case <-ticker.C:
 			// Check scheduled events for Preempt events
 			body, err := fetchURL(ctx,
-				"http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01",
+				azureScheduledEventsURL(),
 				headers,
 			)
 			if err != nil {
