@@ -171,6 +171,31 @@ guardrails:docs-cli:
     - go run ./cmd/loom --help >/dev/null
     - go run ./cmd/loom proxy --help >/dev/null
 
+security:gosec:
+  <<: *go-template
+  stage: lint
+  script:
+    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    - $(go env GOPATH)/bin/gosec -fmt json -out gosec-report.json ./...
+  artifacts:
+    when: always
+    paths:
+      - gosec-report.json
+    expire_in: 1 week
+
+security:govulncheck:
+  <<: *go-template
+  stage: lint
+  script:
+    - go install golang.org/x/vuln/cmd/govulncheck@latest
+    - $(go env GOPATH)/bin/govulncheck ./... > govulncheck-report.txt
+    - cat govulncheck-report.txt
+  artifacts:
+    when: always
+    paths:
+      - govulncheck-report.txt
+    expire_in: 1 week
+
 # =============================================================================
 # BUILD STAGE
 # Build binaries before tests to enable integration testing

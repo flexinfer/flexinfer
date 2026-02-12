@@ -1,6 +1,7 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
 		install-core install-all bootstrap-local dev-upgrade \
-		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark \
+		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark ci-security ci-baseline \
+		security security-gosec security-vuln \
 		docker-build docker-build-loom-core docker-build-custom-server \
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
@@ -14,6 +15,8 @@ GOPATH := $(shell go env GOPATH)
 GOLANGCI_LINT := $(GOPATH)/bin/golangci-lint
 GOIMPORTS := $(GOPATH)/bin/goimports
 GOSEC := $(GOPATH)/bin/gosec
+GOVULNCHECK := $(GOPATH)/bin/govulncheck
+BASELINE_DIR ?= .loom/baselines
 
 # Docker settings
 REGISTRY ?= registry.harbor.lan
@@ -73,6 +76,8 @@ help:
 	@echo "  make ci-test-unit    - Run unit tests with coverage threshold"
 	@echo "  make ci-test-integration - Run integration tests"
 	@echo "  make ci-benchmark    - Run benchmarks"
+	@echo "  make ci-security     - Run CI security stage (gosec + govulncheck)"
+	@echo "  make ci-baseline     - Capture benchmark + health baseline artifacts"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-build              - Build all Docker images"
@@ -340,6 +345,7 @@ tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 	go install github.com/boumenot/gocover-cobertura@v1.4.0
 	@echo "Tools installed to $(GOPATH)/bin"
 
@@ -375,9 +381,17 @@ browserkit-setup:
 	bash scripts/browserkit/install_deps.sh
 
 # Security scanning
-security:
-	$(GOSEC) -fmt json -out gosec-report.json ./... || true
+security: security-gosec security-vuln
+	@echo "✓ Security checks passed"
+
+security-gosec:
+	$(GOSEC) -fmt json -out gosec-report.json ./...
 	@echo "Security report: gosec-report.json"
+
+security-vuln:
+	$(GOVULNCHECK) ./... > govulncheck-report.txt
+	@cat govulncheck-report.txt
+	@echo "Vulnerability report: govulncheck-report.txt"
 
 # Development mode
 .PHONY: dev
@@ -407,7 +421,7 @@ mod-update:
 COVERAGE_THRESHOLD ?= 24
 
 # Full CI pipeline
-ci: ci-lint ci-build ci-test
+ci: ci-lint ci-build ci-test ci-security
 	@echo ""
 	@echo "✓ CI pipeline passed!"
 
@@ -510,6 +524,28 @@ ci-benchmark: ci-build
 	export PATH="$$(pwd)/bin:$$PATH"; \
 	go test -bench=. -benchmem -run=^$$ ./internal/... ./pkg/... 2>&1 | tee benchmark.txt
 	@echo "Benchmark results saved to benchmark.txt"
+
+# Security stage (mirrors CI security jobs)
+ci-security:
+	@echo "Running security checks..."
+	@if [ ! -x "$(GOSEC)" ]; then go install github.com/securego/gosec/v2/cmd/gosec@latest; fi
+	@if [ ! -x "$(GOVULNCHECK)" ]; then go install golang.org/x/vuln/cmd/govulncheck@latest; fi
+	@PATH="$(GOPATH)/bin:$$PATH" $(MAKE) security
+
+# Baseline capture for perf/health tracking
+ci-baseline: ci-build
+	@echo "Capturing benchmark + health baseline..."
+	@mkdir -p $(BASELINE_DIR)
+	@TS=$$(date +%Y%m%d-%H%M%S); \
+	export LOOM_REPO_ROOT="$$(pwd)"; \
+	export PATH="$$(pwd)/bin:$$PATH"; \
+	go test -bench=. -benchmem -run=^$$ ./internal/... ./pkg/... 2>&1 | tee "$(BASELINE_DIR)/benchmark-$$TS.txt"; \
+	if command -v curl >/dev/null 2>&1 && curl -fsS http://localhost:9876/health > "$(BASELINE_DIR)/health-$$TS.json"; then \
+		echo "Saved daemon health snapshot: $(BASELINE_DIR)/health-$$TS.json"; \
+	else \
+		echo "Skipped daemon health snapshot (loomd not running on http://localhost:9876/health)"; \
+	fi
+	@echo "Baseline artifacts saved in $(BASELINE_DIR)/"
 
 # =============================================================================
 # HUD TARGETS - Agent Command Center (Go HTTP + Svelte 5)
