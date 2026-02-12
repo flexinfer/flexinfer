@@ -111,6 +111,14 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--chat-template", chatTemplate)
 	}
 
+	// Explicit device selection (useful on multi-GPU nodes).
+	// If "device" is unset, fall back to gpuDeviceOrdinal for compatibility.
+	if device := spec.ConfigString("device", ""); device != "" {
+		args = append(args, "--device", device)
+	} else if ordinal := spec.ConfigString("gpuDeviceOrdinal", ""); ordinal != "" {
+		args = append(args, "--device", ordinal)
+	}
+
 	// Parallel requests
 	if parallel := spec.ConfigInt("parallel", 0); parallel > 0 {
 		args = append(args, "--parallel", fmt.Sprintf("%d", parallel))
@@ -129,6 +137,14 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--ubatch-size", fmt.Sprintf("%d", ubatchSize))
 	}
 
+	// Thinking/reasoning output format for OpenAI-compatible responses.
+	if reasoningFormat := spec.ConfigString("reasoningFormat", ""); reasoningFormat != "" {
+		args = append(args, "--reasoning-format", reasoningFormat)
+	}
+	if reasoningBudget, ok := configOptionalInt(spec, "reasoningBudget"); ok {
+		args = append(args, "--reasoning-budget", fmt.Sprintf("%d", reasoningBudget))
+	}
+
 	// Enable metrics endpoint
 	if spec.ConfigBool("metrics", false) {
 		args = append(args, "--metrics")
@@ -143,9 +159,54 @@ func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars()...)
+
+		// Optional device pinning for systems exposing multiple AMD GPUs.
+		// Keep behavior aligned with MLC-LLM config keys for easier migration.
+		hipVisible := spec.ConfigString("hipVisibleDevices", "")
+		rocrVisible := spec.ConfigString("rocrVisibleDevices", "")
+		ordinal := spec.ConfigString("gpuDeviceOrdinal", "")
+		if hipVisible == "" && rocrVisible == "" && ordinal != "" {
+			hipVisible = ordinal
+			rocrVisible = ordinal
+		}
+		if hipVisible != "" && rocrVisible == "" {
+			rocrVisible = hipVisible
+		}
+		if rocrVisible != "" && hipVisible == "" {
+			hipVisible = rocrVisible
+		}
+		if rocrVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "ROCR_VISIBLE_DEVICES", Value: rocrVisible})
+		}
+		if hipVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "HIP_VISIBLE_DEVICES", Value: hipVisible})
+		}
+		if ordinal != "" {
+			env = append(env, corev1.EnvVar{Name: "GPU_DEVICE_ORDINAL", Value: ordinal})
+		}
 	}
 
 	return env
+}
+
+func configOptionalInt(spec *ModelSpec, key string) (int, bool) {
+	if spec.Config == nil {
+		return 0, false
+	}
+	raw, ok := spec.Config[key]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
 
 func (b *LlamaCppBackend) ReadinessProbe() *corev1.Probe {
@@ -160,4 +221,9 @@ func (b *LlamaCppBackend) StartupTimeout() time.Duration {
 // llama.cpp is unique in supporting efficient CPU-only inference.
 func (b *LlamaCppBackend) SupportsGPUVendor(vendor GPUVendor) bool {
 	return vendor == GPUVendorNVIDIA || vendor == GPUVendorAMD || vendor == GPUVendorCPU
+}
+
+// SupportedQuantFormats returns GGUF — the native format for llama.cpp.
+func (b *LlamaCppBackend) SupportedQuantFormats() []string {
+	return []string{"GGUF"}
 }
