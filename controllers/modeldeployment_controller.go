@@ -43,6 +43,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
+	"github.com/flexinfer/flexinfer/pkg/k8surl"
 )
 
 func canonicalBackend(backend string) string {
@@ -1079,8 +1081,8 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 	}
 
 	// Proxy URL - benchmark calls through proxy which signals GPUGroup for scale-up
-	// The proxy service is in the flexinfer-system namespace
-	proxyURL := "http://flexinfer-proxy.flexinfer-system.svc:80"
+	// Default targets the in-cluster proxy service; can be overridden by env.
+	proxyURL := benchmarkconfig.ProxyURL()
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1148,7 +1150,7 @@ func (r *ModelDeploymentReconciler) benchmarkJobName(m *aiv1alpha1.ModelDeployme
 }
 
 func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDeployment) string {
-	return fmt.Sprintf("%s-benchmark-results", m.Name)
+	return benchmarkconfig.DeploymentResultsConfigMapName(m.Name)
 }
 
 // getBackendImage returns the backend image based on spec and GPU vendor
@@ -2694,8 +2696,7 @@ func (r *ModelDeploymentReconciler) updateEndpointStatus(ctx context.Context, m 
 	}
 
 	// Set internal endpoint on fresh copy
-	fresh.Status.Endpoints.Internal = fmt.Sprintf("%s.%s.svc.cluster.local:%d",
-		service.Name, service.Namespace, service.Spec.Ports[0].Port)
+	fresh.Status.Endpoints.Internal = k8surl.ServiceAddress(service.Name, service.Namespace, service.Spec.Ports[0].Port, true)
 
 	// Update endpoint ready condition (updateCondition will re-fetch again, but that's ok)
 	if err := r.updateCondition(ctx, fresh, aiv1alpha1.ConditionTypeEndpointReady, metav1.ConditionTrue, aiv1alpha1.ReasonServiceReady, "Service endpoint is ready"); err != nil {
@@ -2742,7 +2743,7 @@ func (r *ModelDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			if !ok {
 				return nil
 			}
-			const suffix = "-benchmark-results"
+			const suffix = benchmarkconfig.BenchmarkResultsSuffix
 			if !strings.HasSuffix(cm.Name, suffix) {
 				return nil
 			}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const defaultBenchmarkResultsConfigMap = "flexinfer-benchmark-results"
+const defaultBenchmarkResultsConfigMap = benchmarkconfig.DefaultBenchmarkResultsConfigMap
 
 type Options struct {
 	WarmupIterations int
@@ -94,10 +95,7 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 	}
 
 	// Use proxy URL for routing through the FlexInfer proxy
-	proxyURL := os.Getenv("PROXY_URL")
-	if proxyURL == "" {
-		proxyURL = "http://flexinfer-proxy.flexinfer-system.svc:80"
-	}
+	proxyURL := benchmarkconfig.ProxyURL()
 
 	// Model name for proxy routing (falls back to option if env not set)
 	modelName := os.Getenv("MODEL_NAME")
@@ -126,15 +124,8 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 		httpClient:  &http.Client{},
 		now:         time.Now,
 		nodeName:    os.Getenv("NODE_NAME"),
-		resultsCM:   envOrDefault("BENCHMARK_RESULTS_CONFIGMAP", defaultBenchmarkResultsConfigMap),
+		resultsCM:   benchmarkconfig.GlobalResultsConfigMapName(),
 	}, nil
-}
-
-func envOrDefault(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 // buildModelURL returns the URL for a specific path routed through the proxy.

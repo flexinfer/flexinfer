@@ -16,6 +16,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -297,7 +298,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 
 	// Fall back to Service DNS if no routing target
 	if targetURL == "" {
-		targetURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", resolvedModel, p.namespace, port)
+		targetURL = k8surl.ServiceURL(resolvedModel, p.namespace, port, true)
 	}
 
 	// Rewrite model name in request body if needed

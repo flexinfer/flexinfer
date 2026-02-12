@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/flexinfer/flexinfer/internal/cache"
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -37,7 +38,7 @@ type Scheduler struct {
 	vramFreeWeight            float64
 }
 
-const defaultBenchmarkResultsConfigMap = "flexinfer-benchmark-results"
+const defaultBenchmarkResultsConfigMap = benchmarkconfig.DefaultBenchmarkResultsConfigMap
 
 // NewScheduler creates a new Scheduler.
 func NewScheduler() (*Scheduler, error) {
@@ -54,7 +55,7 @@ func NewScheduler() (*Scheduler, error) {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 	s := &Scheduler{cache: cache.NewCache(clientset)}
-	s.benchmarkResultsConfigMap = envOrDefault("BENCHMARK_RESULTS_CONFIGMAP", defaultBenchmarkResultsConfigMap)
+	s.benchmarkResultsConfigMap = benchmarkconfig.GlobalResultsConfigMapName()
 	s.tpsWeight = parseWeight("SCHED_TPS_WEIGHT", 0.7)
 	s.utilWeight = parseWeight("SCHED_UTIL_WEIGHT", 0.2)
 	s.costWeight = parseWeight("SCHED_COST_WEIGHT", 0.1)
@@ -63,13 +64,6 @@ func NewScheduler() (*Scheduler, error) {
 	// Keep the default in the same magnitude as util/cache penalties.
 	s.vramFreeWeight = parseWeight("SCHED_VRAM_FREE_WEIGHT", 10.0)
 	return s, nil
-}
-
-func envOrDefault(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 func canonicalBackend(backend string) string {
@@ -243,7 +237,7 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 	// Backwards-compatible fallback: use per-deployment benchmark results.
 	var fallbackTPS float64
 	if md := args.Pod.Labels["modeldeployment_cr"]; md != "" {
-		cmName := fmt.Sprintf("%s-benchmark-results", md)
+		cmName := benchmarkconfig.DeploymentResultsConfigMapName(md)
 		cm, err := s.cache.GetConfigMap(args.Pod.Namespace, cmName)
 		if err == nil {
 			raw := strings.TrimSpace(cm.Data["tokensPerSecond"])

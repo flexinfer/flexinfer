@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"sort"
@@ -46,6 +47,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/k8surl"
 )
 
 type noMatchingNodesError struct {
@@ -1600,7 +1602,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	} else {
 		log.Error(fmt.Errorf("backend %q not found", model.Spec.Backend), "failed to resolve backend port for endpoint", "backend", model.Spec.Backend)
 	}
-	model.Status.Endpoint = fmt.Sprintf("http://%s.%s.svc:%d", model.Name, model.Namespace, port)
+	model.Status.Endpoint = k8surl.ServiceURL(model.Name, model.Namespace, port, false)
 
 	// If the cache is not ready, keep the model in Pending regardless of deployment replicas.
 	if model.Status.Cache != nil && !model.Status.Cache.Ready {
@@ -1957,8 +1959,117 @@ func isMlcModelSource(source string) bool {
 	return strings.HasPrefix(source, "HF://mlc-ai/") || strings.Contains(source, "-MLC")
 }
 
+type hfDownloadOptions struct {
+	allowPatterns  []string
+	ignorePatterns []string
+	revision       string
+}
+
+func configStringValue(cfg map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := cfg[key]
+		if !ok {
+			continue
+		}
+		if s, ok := raw.(string); ok {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func configStringListValue(cfg map[string]interface{}, key string) []string {
+	raw, ok := cfg[key]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	out := make([]string, 0)
+	appendItem := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+
+	switch v := raw.(type) {
+	case string:
+		if strings.Contains(v, ",") {
+			for _, item := range strings.Split(v, ",") {
+				appendItem(item)
+			}
+		} else {
+			appendItem(v)
+		}
+	case []string:
+		for _, item := range v {
+			appendItem(item)
+		}
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				appendItem(s)
+			}
+		}
+	}
+
+	return out
+}
+
+func sanitizeHFPatterns(patterns []string) []string {
+	seen := make(map[string]struct{}, len(patterns))
+	out := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		p = strings.TrimLeft(p, "/")
+		if p == "" || strings.Contains(p, "..") {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
+	cfg := model.Spec.GetConfigMap()
+	opts := hfDownloadOptions{
+		allowPatterns:  configStringListValue(cfg, "hfAllowPatterns"),
+		ignorePatterns: configStringListValue(cfg, "hfIgnorePatterns"),
+		revision:       configStringValue(cfg, "hfRevision"),
+	}
+
+	backendName := strings.ToLower(strings.TrimSpace(model.Spec.Backend))
+	if backendName == "llamacpp" || backendName == "llama.cpp" {
+		ggufFile := configStringValue(cfg, "ggufFile", "modelFile")
+		if ggufFile != "" {
+			opts.allowPatterns = append(opts.allowPatterns, ggufFile)
+		}
+
+		// mmproj is optional for multimodal models and can live in the same repo.
+		mmproj := configStringValue(cfg, "mmproj")
+		if mmproj != "" && !strings.HasPrefix(mmproj, "/") {
+			opts.allowPatterns = append(opts.allowPatterns, mmproj)
+		}
+	}
+
+	opts.allowPatterns = sanitizeHFPatterns(opts.allowPatterns)
+	opts.ignorePatterns = sanitizeHFPatterns(opts.ignorePatterns)
+	return opts
+}
+
 func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destSubdir string) (*batchv1.Job, error) {
 	modelID := extractModelFromSource(model.Spec.Source)
+	hfOpts := resolveHFDownloadOptions(model)
 
 	envVars := []corev1.EnvVar{
 		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
@@ -1967,6 +2078,23 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 		{Name: "HF_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
 		{Name: "HUGGINGFACE_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
 		{Name: "TRANSFORMERS_CACHE", Value: "/models/.cache/huggingface/transformers"},
+	}
+	if len(hfOpts.allowPatterns) > 0 {
+		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
+		if err != nil {
+			return nil, fmt.Errorf("marshal HF allow patterns: %w", err)
+		}
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_ALLOW_PATTERNS", Value: string(allowJSON)})
+	}
+	if len(hfOpts.ignorePatterns) > 0 {
+		ignoreJSON, err := json.Marshal(hfOpts.ignorePatterns)
+		if err != nil {
+			return nil, fmt.Errorf("marshal HF ignore patterns: %w", err)
+		}
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_IGNORE_PATTERNS", Value: string(ignoreJSON)})
+	}
+	if hfOpts.revision != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_REVISION", Value: hfOpts.revision})
 	}
 
 	destSubdir = strings.Trim(destSubdir, "/")
@@ -2027,6 +2155,7 @@ fi
 pip install --no-cache-dir huggingface_hub
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
+import json
 import os
 
 from huggingface_hub import snapshot_download
@@ -2035,14 +2164,25 @@ repo_id = os.environ["MODEL_ID"]
 local_dir = os.environ["DEST_DIR"]
 token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 cache_dir = os.environ.get("HF_HOME")
+allow_patterns = json.loads(os.environ.get("HF_ALLOW_PATTERNS", "[]") or "[]")
+ignore_patterns = json.loads(os.environ.get("HF_IGNORE_PATTERNS", "[]") or "[]")
+revision = (os.environ.get("HF_REVISION") or "").strip() or None
 
-snapshot_download(
-    repo_id=repo_id,
-    local_dir=local_dir,
-    local_dir_use_symlinks=False,
-    cache_dir=cache_dir,
-    token=token,
-)
+download_kwargs = {
+    "repo_id": repo_id,
+    "local_dir": local_dir,
+    "local_dir_use_symlinks": False,
+    "cache_dir": cache_dir,
+    "token": token,
+}
+if allow_patterns:
+    download_kwargs["allow_patterns"] = allow_patterns
+if ignore_patterns:
+    download_kwargs["ignore_patterns"] = ignore_patterns
+if revision:
+    download_kwargs["revision"] = revision
+
+snapshot_download(**download_kwargs)
 PY
 touch "$MARKER"
 echo "Download complete."
