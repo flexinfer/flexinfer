@@ -866,6 +866,7 @@ make build-cli
 | `flexinfer logs <name>` | Stream logs from a deployment's pods |
 | `flexinfer delete <name>` | Delete a ModelDeployment |
 | `flexinfer scale <name> <replicas>` | Scale a deployment |
+| `flexinfer benchmark <name>` | Trigger a fresh benchmark run (recreates benchmark Job + results ConfigMap) |
 | `flexinfer cache status` | Show status of all ModelCaches (strategy, path, ready state) |
 
 ### Examples
@@ -888,6 +889,9 @@ flexinfer scale qwen3-8b-amd 0
 
 # Scale back up
 flexinfer scale qwen3-8b-amd 1
+
+# Trigger a new benchmark run (updates TPS)
+flexinfer benchmark qwen3-8b-amd
 
 # Delete a deployment
 flexinfer delete qwen3-8b-amd

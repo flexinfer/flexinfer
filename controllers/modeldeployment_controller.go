@@ -94,8 +94,12 @@ const (
 // getLiteLLMAnnotations builds the LiteLLM discovery annotations for a ModelDeployment.
 // Returns nil if LiteLLM integration is disabled.
 func getLiteLLMAnnotations(m *aiv1alpha1.ModelDeployment) map[string]string {
-	// LiteLLM is enabled by default if the field is nil or Enabled is nil/true
-	if m.Spec.LiteLLM != nil && m.Spec.LiteLLM.Enabled != nil && !*m.Spec.LiteLLM.Enabled {
+	// LiteLLM integration is opt-in: only apply when spec.litellm is provided.
+	// (The CRD default only applies once the object exists.)
+	if m.Spec.LiteLLM == nil {
+		return nil
+	}
+	if m.Spec.LiteLLM.Enabled != nil && !*m.Spec.LiteLLM.Enabled {
 		return nil
 	}
 
@@ -411,12 +415,22 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		needsUpdate = true
 	}
 
-	// Ensure LiteLLM annotations are present on the Deployment
+	// Ensure LiteLLM annotations are correct on the Deployment.
+	// LiteLLM discovery is service-based, but we also mirror annotations on the Deployment
+	// for consistency/diagnostics.
 	desiredAnnotations := getLiteLLMAnnotations(modelDeployment)
-	if desiredAnnotations != nil {
-		if found.Annotations == nil {
-			found.Annotations = make(map[string]string)
+	if found.Annotations == nil {
+		found.Annotations = make(map[string]string)
+	}
+	// Remove any stale LiteLLM annotations if integration is disabled.
+	if desiredAnnotations == nil {
+		for _, k := range []string{liteLLMAnnotationServedModel, liteLLMAnnotationAliases, liteLLMAnnotationCopilot} {
+			if _, ok := found.Annotations[k]; ok {
+				delete(found.Annotations, k)
+				needsUpdate = true
+			}
 		}
+	} else {
 		for k, v := range desiredAnnotations {
 			if found.Annotations[k] != v {
 				found.Annotations[k] = v
@@ -526,6 +540,43 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		service.Labels["app"] = modelDeployment.Name
 		svcNeedsUpdate = true
 	}
+
+	// Ensure LiteLLM annotations (and service label routing metadata) are present on the Service.
+	// LiteLLM discovers models via Service annotations.
+	if service.Annotations == nil {
+		service.Annotations = make(map[string]string)
+	}
+	desiredSvcAnnotations := make(map[string]string)
+	if llm := getLiteLLMAnnotations(modelDeployment); llm != nil {
+		for k, v := range llm {
+			desiredSvcAnnotations[k] = v
+		}
+	}
+	if len(modelDeployment.Spec.ServiceLabels) > 0 {
+		desiredSvcAnnotations["flexinfer.ai/service-labels"] = strings.Join(modelDeployment.Spec.ServiceLabels, ",")
+	}
+
+	// Remove stale keys we own when disabled.
+	for _, k := range []string{
+		liteLLMAnnotationServedModel,
+		liteLLMAnnotationAliases,
+		liteLLMAnnotationCopilot,
+		"flexinfer.ai/service-labels",
+	} {
+		if _, want := desiredSvcAnnotations[k]; !want {
+			if _, ok := service.Annotations[k]; ok {
+				delete(service.Annotations, k)
+				svcNeedsUpdate = true
+			}
+		}
+	}
+	for k, v := range desiredSvcAnnotations {
+		if service.Annotations[k] != v {
+			service.Annotations[k] = v
+			svcNeedsUpdate = true
+		}
+	}
+
 	if svcNeedsUpdate {
 		if err = r.Update(ctx, service); err != nil {
 			log.Error(err, "Failed to update Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
@@ -985,11 +1036,25 @@ func (r *ModelDeploymentReconciler) serviceForModelDeployment(m *aiv1alpha1.Mode
 	// Add 'app' label for LiteLLM service discovery (must match pod labels)
 	ls["app"] = m.Name
 
+	annotations := make(map[string]string)
+	if llm := getLiteLLMAnnotations(m); llm != nil {
+		for k, v := range llm {
+			annotations[k] = v
+		}
+	}
+	if len(m.Spec.ServiceLabels) > 0 {
+		annotations["flexinfer.ai/service-labels"] = strings.Join(m.Spec.ServiceLabels, ",")
+	}
+	if len(annotations) == 0 {
+		annotations = nil
+	}
+
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name,
-			Namespace: m.Namespace,
-			Labels:    map[string]string{"app": m.Name},
+			Name:        m.Name,
+			Namespace:   m.Namespace,
+			Labels:      ls,
+			Annotations: annotations,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: ls,

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -495,5 +496,48 @@ func TestRunLogs_NoPods(t *testing.T) {
 	err := runLogs(cmd, []string{"qwen3-8b-amd"})
 	if err == nil || !strings.Contains(err.Error(), "no pods found") {
 		t.Fatalf("expected no pods error, got: %v", err)
+	}
+}
+
+func TestRunBenchmark_DeletesJobAndResultsConfigMap(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	md := &aiv1alpha1.ModelDeployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen3-8b-amd", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelDeploymentSpec{Backend: "llamacpp", Model: "x"},
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen3-8b-amd-benchmark", Namespace: "flexinfer-system"},
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen3-8b-amd-benchmark-results", Namespace: "flexinfer-system"},
+		Data:       map[string]string{"tokensPerSecond": "123"},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(md, job, cm).Build()
+	stubClient(t, c)
+
+	cmd, _, _ := newTestCmd()
+
+	origAll := allNs
+	origNs := namespace
+	t.Cleanup(func() {
+		allNs = origAll
+		namespace = origNs
+	})
+	allNs = false
+	namespace = "flexinfer-system"
+
+	if err := runBenchmark(cmd, []string{"qwen3-8b-amd"}); err != nil {
+		t.Fatalf("runBenchmark() error: %v", err)
+	}
+
+	// Job and results ConfigMap should be deleted.
+	if err := c.Get(ctx(), types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, &batchv1.Job{}); err == nil {
+		t.Fatalf("expected benchmark job to be deleted")
+	}
+	if err := c.Get(ctx(), types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, &corev1.ConfigMap{}); err == nil {
+		t.Fatalf("expected benchmark results configmap to be deleted")
 	}
 }
