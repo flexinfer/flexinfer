@@ -89,6 +89,16 @@ type Config struct {
 	TaskReconcilerInterval           int // seconds, default 300
 	TaskReconcilerCompletedRetention int // hours, default 168 (7 days)
 	TaskReconcilerStaleTimeout       int // hours, default 4
+
+	// Worktree reconciler
+	WorktreeReconcilerEnabled       bool
+	WorktreeReconcilerInterval      int // seconds, default 300
+	WorktreeOrphanGracePeriod       int // minutes, default 30
+	WorktreeMaxTTLHours             int // hours, default 0 (unlimited)
+	WorktreeArtifactCleanupEnabled  bool
+	WorktreeArtifactCleanupPatterns string // comma-separated, default ".next,node_modules,target,dist,.cache,__pycache__,.tox"
+	WorktreeDiskScanEnabled         bool
+	WorktreeDetectUntracked         bool
 }
 
 // TrustedSource defines a trusted source pattern for context weighting
@@ -180,6 +190,16 @@ func LoadConfigFromEnv() (Config, error) {
 		TaskReconcilerInterval:           intEnv("AGENT_CONTEXT_TASK_RECONCILER_INTERVAL", 300),
 		TaskReconcilerCompletedRetention: intEnv("AGENT_CONTEXT_TASK_COMPLETED_RETENTION_HOURS", 168),
 		TaskReconcilerStaleTimeout:       intEnv("AGENT_CONTEXT_TASK_STALE_TIMEOUT_HOURS", 4),
+
+		// Worktree reconciler
+		WorktreeReconcilerEnabled:       boolEnv("AGENT_CONTEXT_WORKTREE_RECONCILER_ENABLED", true),
+		WorktreeReconcilerInterval:      intEnv("AGENT_CONTEXT_WORKTREE_RECONCILER_INTERVAL", 300),
+		WorktreeOrphanGracePeriod:       intEnv("AGENT_CONTEXT_WORKTREE_ORPHAN_GRACE_PERIOD", 30),
+		WorktreeMaxTTLHours:             intEnv("AGENT_CONTEXT_WORKTREE_MAX_TTL_HOURS", 0),
+		WorktreeArtifactCleanupEnabled:  boolEnv("AGENT_CONTEXT_WORKTREE_ARTIFACT_CLEANUP_ENABLED", true),
+		WorktreeArtifactCleanupPatterns: firstNonEmptyEnv([]string{"AGENT_CONTEXT_WORKTREE_ARTIFACT_CLEANUP_PATTERNS"}, ".next,node_modules,target,dist,.cache,__pycache__,.tox"),
+		WorktreeDiskScanEnabled:         boolEnv("AGENT_CONTEXT_WORKTREE_DISK_SCAN_ENABLED", true),
+		WorktreeDetectUntracked:         boolEnv("AGENT_CONTEXT_WORKTREE_DETECT_UNTRACKED", true),
 	}
 
 	// Validate visibility

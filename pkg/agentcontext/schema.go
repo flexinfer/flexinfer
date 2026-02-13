@@ -1103,4 +1103,10 @@ type WorktreeAssignment struct {
 	Status       WorktreeStatus `json:"status"`
 	CreatedAt    time.Time      `json:"created_at"`
 	ReleasedAt   *time.Time     `json:"released_at,omitempty"`
+
+	// Lifecycle management
+	OrphanedAt     *time.Time `json:"orphaned_at,omitempty"`      // When worktree was orphaned (for grace period)
+	TTL            int        `json:"ttl_hours,omitempty"`        // Max lifetime in hours (0 = no limit)
+	DiskUsage      int64      `json:"disk_usage_bytes,omitempty"` // Last measured disk usage in bytes
+	DiskMeasuredAt *time.Time `json:"disk_measured_at,omitempty"` // When disk was last measured
 }

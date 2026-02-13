@@ -57,6 +57,13 @@ type Metrics struct {
 	StaleEntriesFound atomic.Int64
 	EntriesRefreshed  atomic.Int64
 
+	// Worktree reconciler
+	WorktreeOrphansRemoved   atomic.Int64
+	WorktreeArtifactsCleaned atomic.Int64
+	WorktreeBytesFreed       atomic.Int64
+	WorktreeUntrackedFound   atomic.Int64
+	WorktreeReconcileRuns    atomic.Int64
+
 	// Session tracking
 	SessionsActive atomic.Int64
 	SessionsTotal  atomic.Int64
@@ -180,6 +187,13 @@ type MetricsSnapshot struct {
 	StaleEntriesFound int64 `json:"stale_entries_found"`
 	EntriesRefreshed  int64 `json:"entries_refreshed"`
 
+	// Worktree reconciler
+	WorktreeOrphansRemoved   int64 `json:"worktree_orphans_removed"`
+	WorktreeArtifactsCleaned int64 `json:"worktree_artifacts_cleaned"`
+	WorktreeBytesFreed       int64 `json:"worktree_bytes_freed"`
+	WorktreeUntrackedFound   int64 `json:"worktree_untracked_found"`
+	WorktreeReconcileRuns    int64 `json:"worktree_reconcile_runs"`
+
 	// Sessions
 	SessionsActive int64 `json:"sessions_active"`
 	SessionsTotal  int64 `json:"sessions_total"`
@@ -222,33 +236,38 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 			Items:  m.LongTermMemoryItems.Load(),
 			Tokens: m.LongTermMemoryTokens.Load(),
 		},
-		SearchLatency:          m.GetSearchLatencyStats(),
-		EmbeddingRequests:      m.EmbeddingRequests.Load(),
-		EmbeddingTokens:        m.EmbeddingTokens.Load(),
-		EmbeddingErrors:        m.EmbeddingErrors.Load(),
-		RecallRequests:         recallReqs,
-		RecallHits:             recallHits,
-		RecallMisses:           m.RecallMisses.Load(),
-		RecallHitRate:          recallHitRate,
-		RecallTruncated:        m.RecallTruncated.Load(),
-		GraphEntities:          m.GraphEntitiesAdded.Load(),
-		GraphRelations:         m.GraphRelationsAdded.Load(),
-		GraphQueries:           m.GraphQueriesExecuted.Load(),
-		WorkflowsStarted:       m.WorkflowsStarted.Load(),
-		WorkflowsCompleted:     m.WorkflowsCompleted.Load(),
-		WorkflowsFailed:        m.WorkflowsFailed.Load(),
-		WorkflowSteps:          m.WorkflowStepsTotal.Load(),
-		CompressionJobs:        m.CompressionJobs.Load(),
-		CompressionTokensSaved: m.CompressionTokensSaved.Load(),
-		DedupChecks:            dedupChecks,
-		DedupHits:              dedupHits,
-		DedupHitRate:           dedupHitRate,
-		StalenessChecks:        m.StalenessChecks.Load(),
-		StaleEntriesFound:      m.StaleEntriesFound.Load(),
-		EntriesRefreshed:       m.EntriesRefreshed.Load(),
-		SessionsActive:         m.SessionsActive.Load(),
-		SessionsTotal:          m.SessionsTotal.Load(),
-		UptimeSeconds:          int64(time.Since(m.StartTime).Seconds()),
+		SearchLatency:            m.GetSearchLatencyStats(),
+		EmbeddingRequests:        m.EmbeddingRequests.Load(),
+		EmbeddingTokens:          m.EmbeddingTokens.Load(),
+		EmbeddingErrors:          m.EmbeddingErrors.Load(),
+		RecallRequests:           recallReqs,
+		RecallHits:               recallHits,
+		RecallMisses:             m.RecallMisses.Load(),
+		RecallHitRate:            recallHitRate,
+		RecallTruncated:          m.RecallTruncated.Load(),
+		GraphEntities:            m.GraphEntitiesAdded.Load(),
+		GraphRelations:           m.GraphRelationsAdded.Load(),
+		GraphQueries:             m.GraphQueriesExecuted.Load(),
+		WorkflowsStarted:         m.WorkflowsStarted.Load(),
+		WorkflowsCompleted:       m.WorkflowsCompleted.Load(),
+		WorkflowsFailed:          m.WorkflowsFailed.Load(),
+		WorkflowSteps:            m.WorkflowStepsTotal.Load(),
+		CompressionJobs:          m.CompressionJobs.Load(),
+		CompressionTokensSaved:   m.CompressionTokensSaved.Load(),
+		DedupChecks:              dedupChecks,
+		DedupHits:                dedupHits,
+		DedupHitRate:             dedupHitRate,
+		StalenessChecks:          m.StalenessChecks.Load(),
+		StaleEntriesFound:        m.StaleEntriesFound.Load(),
+		EntriesRefreshed:         m.EntriesRefreshed.Load(),
+		WorktreeOrphansRemoved:   m.WorktreeOrphansRemoved.Load(),
+		WorktreeArtifactsCleaned: m.WorktreeArtifactsCleaned.Load(),
+		WorktreeBytesFreed:       m.WorktreeBytesFreed.Load(),
+		WorktreeUntrackedFound:   m.WorktreeUntrackedFound.Load(),
+		WorktreeReconcileRuns:    m.WorktreeReconcileRuns.Load(),
+		SessionsActive:           m.SessionsActive.Load(),
+		SessionsTotal:            m.SessionsTotal.Load(),
+		UptimeSeconds:            int64(time.Since(m.StartTime).Seconds()),
 	}
 }
 
@@ -292,6 +311,12 @@ func (m *Metrics) Reset() {
 	m.StalenessChecks.Store(0)
 	m.StaleEntriesFound.Store(0)
 	m.EntriesRefreshed.Store(0)
+
+	m.WorktreeOrphansRemoved.Store(0)
+	m.WorktreeArtifactsCleaned.Store(0)
+	m.WorktreeBytesFreed.Store(0)
+	m.WorktreeUntrackedFound.Store(0)
+	m.WorktreeReconcileRuns.Store(0)
 
 	m.SessionsActive.Store(0)
 	m.SessionsTotal.Store(0)
@@ -363,6 +388,22 @@ agent_context_compression_tokens_saved ` + formatInt64(snap.CompressionTokensSav
 # HELP agent_context_dedup_hit_rate Deduplication hit rate
 # TYPE agent_context_dedup_hit_rate gauge
 agent_context_dedup_hit_rate ` + formatFloat64(snap.DedupHitRate) + `
+
+# HELP agent_context_worktree_orphans_removed_total Worktrees removed by reconciler
+# TYPE agent_context_worktree_orphans_removed_total counter
+agent_context_worktree_orphans_removed_total ` + formatInt64(snap.WorktreeOrphansRemoved) + `
+
+# HELP agent_context_worktree_bytes_freed_total Bytes freed by worktree cleanup
+# TYPE agent_context_worktree_bytes_freed_total counter
+agent_context_worktree_bytes_freed_total ` + formatInt64(snap.WorktreeBytesFreed) + `
+
+# HELP agent_context_worktree_untracked_found_total Untracked worktrees detected
+# TYPE agent_context_worktree_untracked_found_total counter
+agent_context_worktree_untracked_found_total ` + formatInt64(snap.WorktreeUntrackedFound) + `
+
+# HELP agent_context_worktree_reconcile_runs_total Worktree reconciliation runs
+# TYPE agent_context_worktree_reconcile_runs_total counter
+agent_context_worktree_reconcile_runs_total ` + formatInt64(snap.WorktreeReconcileRuns) + `
 
 # HELP agent_context_sessions_active Active sessions
 # TYPE agent_context_sessions_active gauge

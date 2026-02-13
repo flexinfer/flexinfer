@@ -727,6 +727,18 @@ func toInt(v any) int {
 	return 0
 }
 
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return 0
+}
+
 func toStringSlice(v any) []string {
 	if v == nil {
 		return nil

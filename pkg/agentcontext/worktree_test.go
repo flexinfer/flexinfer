@@ -140,3 +140,67 @@ func TestOrphanWorktreesForAgent(t *testing.T) {
 		t.Errorf("wt-3 status = %q, want %q (should be unaffected)", wt3.Status, WorktreeStatusActive)
 	}
 }
+
+func TestOrphanWorktreesForAgent_SetsOrphanedAt(t *testing.T) {
+	svc := newTestService()
+
+	wt := &WorktreeAssignment{
+		ID:        "wt-orphan-at",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+		Branch:    "branch-x",
+		Status:    WorktreeStatusActive,
+		CreatedAt: time.Now(),
+	}
+	svc.worktreeAssns["wt-orphan-at"] = wt
+
+	before := time.Now()
+	svc.orphanWorktreesForAgent("agent-1")
+	after := time.Now()
+
+	if wt.OrphanedAt == nil {
+		t.Fatal("OrphanedAt should be set after orphaning")
+	}
+	if wt.OrphanedAt.Before(before) || wt.OrphanedAt.After(after) {
+		t.Errorf("OrphanedAt = %v, should be between %v and %v", *wt.OrphanedAt, before, after)
+	}
+}
+
+func TestWorktreePayloadRoundtrip_NewFields(t *testing.T) {
+	now := time.Now().Truncate(time.Nanosecond)
+	orphanedAt := now.Add(30 * time.Minute)
+	measuredAt := now.Add(1 * time.Hour)
+
+	original := &WorktreeAssignment{
+		ID:             "wt-new-fields",
+		AgentID:        "agent-1",
+		SessionID:      "session-1",
+		WorktreePath:   "/workspace/.worktrees/test",
+		Branch:         "test-branch",
+		Status:         WorktreeStatusOrphaned,
+		CreatedAt:      now,
+		OrphanedAt:     &orphanedAt,
+		TTL:            24,
+		DiskUsage:      1048576, // 1 MiB
+		DiskMeasuredAt: &measuredAt,
+	}
+
+	payload := worktreeAssignmentToPayload(original)
+	restored := payloadToWorktreeAssignment(payload)
+
+	if restored == nil {
+		t.Fatal("payloadToWorktreeAssignment returned nil")
+	}
+	if restored.OrphanedAt == nil {
+		t.Fatal("OrphanedAt should not be nil")
+	}
+	if restored.TTL != 24 {
+		t.Errorf("TTL = %d, want 24", restored.TTL)
+	}
+	if restored.DiskUsage != 1048576 {
+		t.Errorf("DiskUsage = %d, want 1048576", restored.DiskUsage)
+	}
+	if restored.DiskMeasuredAt == nil {
+		t.Fatal("DiskMeasuredAt should not be nil")
+	}
+}

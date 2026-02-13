@@ -94,6 +94,7 @@ type Service struct {
 	// Background services
 	compactionScheduler *CompactionScheduler
 	taskReconciler      *TaskReconciler
+	worktreeReconciler  *WorktreeReconciler
 	memoryExporter      *MemoryExporter
 	memoryImporter      *MemoryImporter
 	bgCancel            context.CancelFunc
@@ -208,6 +209,24 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	}
 	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.tasksQdrant, svc, svc.logger)
 
+	// Initialize worktree reconciler
+	wtReconcilerConfig := DefaultWorktreeReconcilerConfig()
+	wtReconcilerConfig.Enabled = cfg.WorktreeReconcilerEnabled
+	if cfg.WorktreeReconcilerInterval > 0 {
+		wtReconcilerConfig.CheckInterval = time.Duration(cfg.WorktreeReconcilerInterval) * time.Second
+	}
+	if cfg.WorktreeOrphanGracePeriod > 0 {
+		wtReconcilerConfig.OrphanGracePeriod = time.Duration(cfg.WorktreeOrphanGracePeriod) * time.Minute
+	}
+	wtReconcilerConfig.MaxTTLHours = cfg.WorktreeMaxTTLHours
+	wtReconcilerConfig.ArtifactCleanupEnabled = cfg.WorktreeArtifactCleanupEnabled
+	if cfg.WorktreeArtifactCleanupPatterns != "" {
+		wtReconcilerConfig.ArtifactPatterns = parseArtifactPatterns(cfg.WorktreeArtifactCleanupPatterns)
+	}
+	wtReconcilerConfig.DiskScanEnabled = cfg.WorktreeDiskScanEnabled
+	wtReconcilerConfig.DetectUntracked = cfg.WorktreeDetectUntracked
+	svc.worktreeReconciler = NewWorktreeReconciler(wtReconcilerConfig, svc, svc.logger)
+
 	// Initialize memory exporter/importer
 	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
 	svc.memoryImporter = NewMemoryImporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
@@ -301,6 +320,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 	s.logger.Info("starting background services",
 		"compaction_enabled", s.cfg.CompactionEnabled,
 		"task_reconciler_enabled", s.cfg.TaskReconcilerEnabled,
+		"worktree_reconciler_enabled", s.cfg.WorktreeReconcilerEnabled,
 		"presence_cleanup_interval_s", s.cfg.PresenceCleanupInterval,
 	)
 
@@ -316,6 +336,11 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 		s.taskReconciler.Start(bgCtx)
 	}
 
+	// Start worktree reconciler
+	if s.worktreeReconciler != nil && s.cfg.WorktreeReconcilerEnabled {
+		s.worktreeReconciler.Start(bgCtx)
+	}
+
 	// Start presence cleanup goroutine
 	go s.runPresenceCleanup(bgCtx)
 }
@@ -328,6 +353,9 @@ func (s *Service) StopBackgroundServices() {
 	}
 	if s.taskReconciler != nil {
 		s.taskReconciler.Stop()
+	}
+	if s.worktreeReconciler != nil {
+		s.worktreeReconciler.Stop()
 	}
 	if s.bgCancel != nil {
 		s.bgCancel()

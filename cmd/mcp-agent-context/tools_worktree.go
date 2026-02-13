@@ -45,6 +45,10 @@ func registerWorktreeTools(server *mcp.Server, svc *agentcontext.Service, tracer
 					"type":        "string",
 					"description": "Custom worktree path (default: auto-generated).",
 				},
+				"ttl_hours": map[string]any{
+					"type":        "integer",
+					"description": "Max lifetime in hours. Worktree is auto-orphaned after this period (0 = no limit).",
+				},
 			},
 			Required: []string{"agent_id", "session_id", "branch_name"},
 		},
@@ -96,6 +100,14 @@ func registerWorktreeTools(server *mcp.Server, svc *agentcontext.Service, tracer
 					"type":        "boolean",
 					"description": "Include git status for active worktrees (default: false).",
 				},
+				"include_disk_usage": map[string]any{
+					"type":        "boolean",
+					"description": "Include disk usage per worktree and total (default: false).",
+				},
+				"include_untracked": map[string]any{
+					"type":        "boolean",
+					"description": "Detect and include worktrees not tracked by agent-context (default: false).",
+				},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -137,5 +149,16 @@ func registerWorktreeTools(server *mcp.Server, svc *agentcontext.Service, tracer
 		},
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleWorktreeCleanup(ctx, args)
+	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_worktree_reconcile",
+		Description: "Manually trigger worktree lifecycle reconciliation: disk scan, TTL expiration, orphan removal, untracked detection, and git prune.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleWorktreeReconcile(ctx, args)
 	})
 }
