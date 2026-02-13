@@ -35,7 +35,7 @@ func TestAgentBridge_CallAgentTool_PropagatesToolErrorEnvelope(t *testing.T) {
 	defer client.Close()
 
 	bridge := NewAgentBridge(client)
-	err := bridge.PresenceHeartbeat("codex", "active")
+	_, err := bridge.PresenceHeartbeat("codex", PresenceHeartbeatParams{Status: "active"})
 	if err == nil {
 		t.Fatal("expected tool-level error to be propagated")
 	}
@@ -63,7 +63,7 @@ func TestAgentBridge_CallAgentTool_SucceedsWithTargetNil(t *testing.T) {
 	defer client.Close()
 
 	bridge := NewAgentBridge(client)
-	if err := bridge.PresenceHeartbeat("codex", "active"); err != nil {
+	if _, err := bridge.PresenceHeartbeat("codex", PresenceHeartbeatParams{Status: "active"}); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 }

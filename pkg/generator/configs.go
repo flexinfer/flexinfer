@@ -137,11 +137,18 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 		if cmd == "" {
 			cmd = "loom"
 		}
+		args := []any{"proxy"}
+		// For platforms with no native hook support, add --agent-hint so the
+		// proxy fires heartbeats on each tool call, providing universal presence.
+		switch target {
+		case "kilocode", "antigravity":
+			args = append(args, "--agent-hint", target)
+		}
 		return map[string]*registry.TargetSpec{
 			"loom": {
 				Description: "Loom MCP proxy - unified access to all servers",
 				Command:     cmd,
-				Args:        []any{"proxy"},
+				Args:        args,
 				Hint:        "network",
 				Timeout:     300,
 				AlwaysAllow: []string{"*"},
@@ -340,10 +347,12 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 	sb.WriteString("# Source: mcp/context/registry.yaml\n\n")
 
 	// Codex supports a notify hook that fires on agent-turn-complete.
-	// This is the only lifecycle hook Codex provides.
+	// This is the only lifecycle hook Codex provides. Combined with --infer-namespace
+	// and --ensure-session, the first heartbeat auto-bootstraps a session with
+	// git-derived namespace context. The session reaper handles cleanup on idle.
 	if target == "codex" {
 		sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
+		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
 	}
 
 	// Sort keys for deterministic output

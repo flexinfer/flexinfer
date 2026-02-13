@@ -77,6 +77,9 @@ type App struct {
 
 	// Coordinator — optional LLM-powered agent context intelligence.
 	coordinator *coordinator.Coordinator
+
+	// Timeline event log — ring buffer for unified activity timeline.
+	eventLog *EventLog
 }
 
 // Run creates and starts the HUD application. This is the main entry point
@@ -134,6 +137,14 @@ func Run(cfg Config) error {
 
 	// Initialize SSE fan-out hub for browser clients.
 	app.sseHub = NewSSEHub(logger)
+
+	// Initialize timeline event log (ring buffer for activity timeline).
+	app.eventLog = NewEventLog(1000)
+
+	// Start session reaper — auto-ends orphaned sessions for offline agents.
+	reaperCtx, reaperCancel := context.WithCancel(context.Background())
+	defer reaperCancel()
+	go app.sessionReaper(reaperCtx)
 
 	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
 	// This enables "SSE-first" data flow: stores apply data directly from
@@ -432,6 +443,12 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
 	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
+
+	// API routes — command center (KPIs, timeline, dispatch, claims).
+	mux.HandleFunc("GET /api/kpis", a.withCORS(a.handleKPIs))
+	mux.HandleFunc("GET /api/timeline", a.withCORS(a.handleTimeline))
+	mux.HandleFunc("POST /api/agent/dispatch", a.withCORS(a.handleAgentDispatch))
+	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", a.withCORS(a.handleClaimRelease))
 
 	// API routes — agent lifecycle (CLI hooks call these).
 	mux.HandleFunc("POST /api/agent/session-start", a.withCORS(a.handleAgentSessionStart))
@@ -1462,6 +1479,190 @@ func (a *App) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+// --- Session reaper ---
+
+// sessionReaper periodically checks for offline agents with active sessions
+// and auto-ends them. This ensures heartbeat-only agents (like Codex) get
+// reliable session cleanup without native session-end hooks.
+func (a *App) sessionReaper(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	const offlineThreshold = 5 * time.Minute
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snap := a.fleetMonitor.Snapshot()
+			now := time.Now()
+
+			for _, agent := range snap.Agents {
+				if agent.Status != "offline" {
+					continue
+				}
+				// Check if agent has been offline long enough.
+				hb, err := time.Parse(time.RFC3339, agent.LastHeartbeat)
+				if err != nil {
+					continue
+				}
+				if now.Sub(hb) < offlineThreshold {
+					continue
+				}
+
+				// Find active session for this agent.
+				session, err := a.agent.GetActiveSession(agent.AgentID)
+				if err != nil || session == nil {
+					continue
+				}
+
+				a.logger.Info("session reaper: ending orphaned session",
+					"agent_id", agent.AgentID,
+					"session_id", session.ID,
+					"offline_since", agent.LastHeartbeat)
+
+				_, endErr := a.agent.EndSession(bridge.SessionEndParams{
+					SessionID: session.ID,
+					AgentID:   agent.AgentID,
+					Summarize: true,
+				})
+				if endErr != nil {
+					a.logger.Warn("session reaper: failed to end session",
+						"agent_id", agent.AgentID, "error", endErr)
+					continue
+				}
+
+				a.broadcastAgentEvent("agent.session.reaped", map[string]any{
+					"agent_id":   agent.AgentID,
+					"session_id": session.ID,
+					"reason":     "offline_timeout",
+				})
+
+				go a.fleetMonitor.Refresh()
+			}
+		}
+	}
+}
+
+// --- Command center API handlers ---
+
+// handleKPIs returns daily aggregate KPI metrics for the overview panel.
+// GET /api/kpis
+func (a *App) handleKPIs(w http.ResponseWriter, _ *http.Request) {
+	snap := a.fleetMonitor.Snapshot()
+
+	kpis := a.fleetMonitor.KPIs()
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"sessions_today":        kpis.SessionsToday,
+		"tokens_today":          kpis.TokensToday,
+		"tasks_completed_today": kpis.TasksCompletedToday,
+		"active_agents":         snap.ActiveAgents,
+		"pending_approvals":     snap.PendingApprovals,
+		"file_conflicts":        kpis.FileConflicts,
+	})
+}
+
+// handleTimeline returns chronological agent lifecycle events from the ring buffer.
+// GET /api/timeline?since=<RFC3339>&limit=<int>
+func (a *App) handleTimeline(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	var entries []TimelineEntry
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			entries = a.eventLog.Since(t, limit)
+		} else {
+			entries = a.eventLog.All(limit)
+		}
+	} else {
+		entries = a.eventLog.All(limit)
+	}
+
+	if entries == nil {
+		entries = []TimelineEntry{}
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"entries": entries,
+		"count":   len(entries),
+	})
+}
+
+// handleAgentDispatch dispatches a task to a specific agent from the HUD.
+// POST /api/agent/dispatch
+func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TargetAgentID string `json:"target_agent_id"`
+		Title         string `json:"title"`
+		Context       string `json:"context"`
+		Priority      string `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.TargetAgentID == "" || body.Title == "" {
+		a.writeError(w, http.StatusBadRequest, "target_agent_id and title are required", nil)
+		return
+	}
+	if body.Priority == "" {
+		body.Priority = "medium"
+	}
+
+	result, err := a.agent.DispatchTask(bridge.DispatchTaskParams{
+		TargetAgentID: body.TargetAgentID,
+		Title:         body.Title,
+		Context:       body.Context,
+		Priority:      body.Priority,
+	})
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to dispatch task", err)
+		return
+	}
+
+	a.broadcastAgentEvent("agent.task.dispatched", map[string]any{
+		"target_agent_id": body.TargetAgentID,
+		"title":           body.Title,
+		"priority":        body.Priority,
+	})
+
+	go a.fleetMonitor.Refresh()
+
+	a.writeJSON(w, http.StatusOK, result)
+}
+
+// handleClaimRelease force-releases a file claim for an agent.
+// DELETE /api/claims/{agent_id}/{file_path...}
+func (a *App) handleClaimRelease(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent_id")
+	filePath := r.PathValue("file_path")
+	if agentID == "" || filePath == "" {
+		a.writeError(w, http.StatusBadRequest, "agent_id and file_path are required", nil)
+		return
+	}
+
+	if err := a.agent.ReleaseFileClaim(agentID, filePath); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to release claim", err)
+		return
+	}
+
+	a.broadcastAgentEvent("hud.claim.released", map[string]any{
+		"agent_id":  agentID,
+		"file_path": filePath,
+	})
+
+	go a.fleetMonitor.Refresh()
+
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "released"})
 }
 
 // --- Middleware and helpers ---

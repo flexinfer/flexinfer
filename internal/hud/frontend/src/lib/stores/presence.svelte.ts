@@ -10,6 +10,7 @@ export interface AgentPresence {
   current_task: string;
   active_files: string[];
   branch: string;
+  pr_url?: string;
   worktree_id: string;
   last_heartbeat: string;
   registered_at: string;
@@ -131,8 +132,20 @@ class PresenceStore {
         const agentId = data.agent_id as string;
         const status = (data.status as string) || 'active';
         const ts = (data.timestamp as string) || new Date().toISOString();
+        const currentTask = (data.current_task as string) || '';
+        const branch = (data.branch as string) || '';
+        const activeFiles = (data.active_files as string[]) || [];
         this.agents = this.agents.map((a) =>
-          a.agent_id === agentId ? { ...a, status, last_heartbeat: ts } : a,
+          a.agent_id === agentId
+            ? {
+                ...a,
+                status,
+                current_task: currentTask || a.current_task,
+                branch: branch || a.branch,
+                active_files: activeFiles.length > 0 ? activeFiles : a.active_files,
+                last_heartbeat: ts,
+              }
+            : a,
         );
         this.lastUpdated = new Date();
       }),

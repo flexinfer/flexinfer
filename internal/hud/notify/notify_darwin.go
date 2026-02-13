@@ -66,6 +66,28 @@ func NotifyHandoff(sourceAgent, targetAgent, instructions string) error {
 	)
 }
 
+// NotifyConflict sends a notification when file claim conflicts are detected.
+func NotifyConflict(count int) error {
+	msg := fmt.Sprintf("%d file(s) claimed by multiple agents", count)
+	return NotifyWithSound(
+		"File Conflict Detected",
+		"Multi-Agent Coordination",
+		msg,
+		"Purr",
+	)
+}
+
+// NotifyApproval sends a notification when workflow approvals are pending.
+func NotifyApproval(count int) error {
+	msg := fmt.Sprintf("%d workflow step(s) awaiting approval", count)
+	return NotifyWithSound(
+		"Approval Required",
+		"Workflow Coordination",
+		msg,
+		"Glass",
+	)
+}
+
 // sendNotification executes osascript to display a macOS notification.
 func sendNotification(title, subtitle, message, sound string) error {
 	// Escape double quotes in all user-provided strings.

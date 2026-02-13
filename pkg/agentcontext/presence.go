@@ -71,6 +71,7 @@ func (s *Service) HandlePresenceHeartbeat(ctx context.Context, args map[string]a
 	activeFiles := v.StringSlice("active_files")
 	currentTask := v.String("current_task", "")
 	branch := v.String("branch", "")
+	statusRaw := v.String("status", "")
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -88,6 +89,18 @@ func (s *Service) HandlePresenceHeartbeat(ctx context.Context, args map[string]a
 	presence.CurrentTask = currentTask
 	if branch != "" {
 		presence.Branch = branch
+	}
+	if prURL := v.String("pr_url", ""); prURL != "" {
+		presence.PRUrl = prURL
+	}
+	if statusRaw != "" {
+		switch PresenceStatus(statusRaw) {
+		case PresenceStatusActive, PresenceStatusIdle:
+			presence.Status = PresenceStatus(statusRaw)
+		default:
+			s.presenceMu.Unlock()
+			return mcp.ErrorResult(fmt.Errorf("invalid status %q (must be 'active' or 'idle')", statusRaw)), nil
+		}
 	}
 	s.presenceMu.Unlock()
 
@@ -127,7 +140,7 @@ func (s *Service) HandlePresenceList(ctx context.Context, args map[string]any) (
 	s.presenceMu.RLock()
 	defer s.presenceMu.RUnlock()
 
-	var agents []map[string]any
+	agents := make([]map[string]any, 0)
 	now := time.Now()
 
 	for _, p := range s.presenceMap {
@@ -142,14 +155,20 @@ func (s *Service) HandlePresenceList(ctx context.Context, args map[string]any) (
 			status = PresenceStatusOffline
 		}
 
+		activeFiles := p.ActiveFiles
+		if activeFiles == nil {
+			activeFiles = []string{}
+		}
+
 		entry := map[string]any{
 			"agent_id":       p.AgentID,
 			"status":         string(status),
 			"agent_type":     p.AgentType,
 			"description":    p.Description,
 			"current_task":   p.CurrentTask,
-			"active_files":   p.ActiveFiles,
+			"active_files":   activeFiles,
 			"branch":         p.Branch,
+			"pr_url":         p.PRUrl,
 			"worktree_id":    p.WorktreeID,
 			"last_heartbeat": p.LastHeartbeat.Format(time.RFC3339),
 			"registered_at":  p.RegisteredAt.Format(time.RFC3339),
@@ -372,6 +391,7 @@ func presenceToPayload(p *AgentPresence) map[string]any {
 		"branch":         p.Branch,
 		"worktree_id":    p.WorktreeID,
 		"agent_type":     p.AgentType,
+		"pr_url":         p.PRUrl,
 		"last_heartbeat": p.LastHeartbeat.Format(time.RFC3339Nano),
 		"heartbeat_ttl":  p.HeartbeatTTL,
 		"registered_at":  p.RegisteredAt.Format(time.RFC3339Nano),
@@ -398,6 +418,7 @@ func payloadToPresence(payload map[string]any) *AgentPresence {
 		Branch:       toString(payload["branch"]),
 		WorktreeID:   toString(payload["worktree_id"]),
 		AgentType:    toString(payload["agent_type"]),
+		PRUrl:        toString(payload["pr_url"]),
 		HeartbeatTTL: toInt(payload["heartbeat_ttl"]),
 	}
 	if ts := toString(payload["last_heartbeat"]); ts != "" {

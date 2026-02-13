@@ -374,3 +374,54 @@ func TestDaemonClient_ErrorResponse(t *testing.T) {
 		t.Fatal("expected error from daemon error response")
 	}
 }
+
+func TestDaemonClient_DoesNotReconnectOnDaemonError(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	callCount := 0
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		callCount++
+		return nil, fmt.Errorf("server unavailable: backend timeout")
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	_, err := client.Status()
+	if err == nil {
+		t.Fatal("expected error from daemon error response")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected exactly one RPC attempt on daemon error, got %d", callCount)
+	}
+}
+
+func TestDaemonClient_DoesNotReconnectOnDaemonErrorContainingBrokenPipe(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	callCount := 0
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		callCount++
+		// Simulate an application-level daemon error that mentions a downstream
+		// broken pipe. The client should NOT treat this as a transport error and
+		// should not reconnect.
+		return nil, fmt.Errorf("write body: write |1: broken pipe")
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	_, err := client.Status()
+	if err == nil {
+		t.Fatal("expected error from daemon error response")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected exactly one RPC attempt on daemon error, got %d", callCount)
+	}
+}

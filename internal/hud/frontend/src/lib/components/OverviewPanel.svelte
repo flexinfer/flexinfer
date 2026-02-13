@@ -10,9 +10,25 @@
   import SparkLine from '../widgets/SparkLine.svelte';
 
   /**
-   * OverviewPanel renders all panels simultaneously as a compact
-   * mini-dashboard grid. Each tile is clickable → navigates to full panel.
+   * OverviewPanel renders a KPI strip at the top followed by all panels
+   * simultaneously as a compact mini-dashboard grid.
    */
+
+  // --- Daily KPIs ---
+  let kpis = $state({ sessions_today: 0, tokens_today: 0, tasks_completed_today: 0, active_agents: 0, pending_approvals: 0, file_conflicts: 0 });
+
+  async function fetchKPIs() {
+    try {
+      const res = await globalThis.fetch('/api/kpis');
+      if (res.ok) kpis = await res.json();
+    } catch { /* non-critical */ }
+  }
+
+  $effect(() => {
+    fetchKPIs();
+    const t = setInterval(fetchKPIs, 15000);
+    return () => clearInterval(t);
+  });
 
   let sessionCount = $derived(fleetStore.activeSessions.length);
   let agentCount = $derived(fleetStore.agents.filter(a => a.status === 'active').length);
@@ -96,6 +112,34 @@
 </script>
 
 <div class="panel overview-panel">
+  <!-- Daily KPI Strip -->
+  <div class="kpi-strip">
+    <div class="kpi-tile">
+      <div class="kpi-value">{kpis.sessions_today}</div>
+      <div class="kpi-label">Sessions Today</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{kpis.tokens_today?.toLocaleString?.() ?? kpis.tokens_today}</div>
+      <div class="kpi-label">Tokens Today</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{kpis.tasks_completed_today}</div>
+      <div class="kpi-label">Tasks Done</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-value">{kpis.active_agents}</div>
+      <div class="kpi-label">Active Agents</div>
+    </div>
+    <div class="kpi-tile" class:kpi-alert={kpis.file_conflicts > 0}>
+      <div class="kpi-value">{kpis.file_conflicts}</div>
+      <div class="kpi-label">Conflicts</div>
+    </div>
+    <div class="kpi-tile" class:kpi-alert={kpis.pending_approvals > 0}>
+      <div class="kpi-value">{kpis.pending_approvals}</div>
+      <div class="kpi-label">Approvals</div>
+    </div>
+  </div>
+
   <div class="overview-grid">
     <!-- Fleet tile -->
     <button class="tile" onclick={() => navigate('fleet')}>
@@ -210,9 +254,53 @@
 <style>
   .overview-panel {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 24px;
+    gap: 16px;
+  }
+
+  /* KPI Strip */
+  .kpi-strip {
+    display: flex;
+    gap: 8px;
+    max-width: 720px;
+    width: 100%;
+  }
+
+  .kpi-tile {
+    flex: 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  .kpi-value {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    font-feature-settings: 'tnum';
+    color: var(--fg-primary);
+    line-height: 1.2;
+  }
+
+  .kpi-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin-top: 2px;
+  }
+
+  .kpi-alert .kpi-value {
+    color: var(--warning);
+  }
+
+  .kpi-alert {
+    border-color: rgba(231, 179, 18, 0.3);
   }
 
   .overview-grid {

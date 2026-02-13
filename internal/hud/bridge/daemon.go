@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -169,6 +170,15 @@ func (c *DaemonClient) call(method string, params any) (json.RawMessage, error) 
 
 	result, err := c.callLocked(method, params)
 	if err != nil {
+		// Only reconnect on transport-level failures. Daemon error responses
+		// indicate the daemon is reachable and reconnecting would just retry
+		// the same failing RPC, creating avoidable churn.
+		if !isTransportError(err) {
+			c.recordFailure(err)
+			return nil, fmt.Errorf("%s: %w", method, err)
+		}
+		c.logger.Warn("daemon transport call failed; reconnecting", "method", method, "error", err)
+
 		// Attempt reconnect and retry once.
 		c.logger.Debug("call failed, attempting reconnect", "method", method, "error", err)
 		if reconnErr := c.reconnect(); reconnErr != nil {
@@ -221,6 +231,37 @@ func isServerUnavailable(err error) bool {
 	return strings.Contains(msg, "server unavailable") ||
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "bad handshake")
+}
+
+// isTransportError checks if the error is from socket/transport I/O rather
+// than an application-level daemon RPC error.
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	msg := err.Error()
+	// Daemon RPC error responses mean we successfully talked to the daemon.
+	// Even if the message mentions "broken pipe", that refers to a downstream
+	// server transport, not the HUD<->daemon socket.
+	if strings.Contains(msg, "daemon error") {
+		return false
+	}
+
+	return strings.Contains(msg, "not connected") ||
+		strings.Contains(msg, "send:") ||
+		strings.Contains(msg, "recv:") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "use of closed network connection")
 }
 
 // triggerDaemonReload sends a loom/reload to the daemon to clear stale

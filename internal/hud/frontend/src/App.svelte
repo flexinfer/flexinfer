@@ -16,6 +16,7 @@
   import PresencePanel from './lib/components/PresencePanel.svelte';
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
+  import TimelinePanel from './lib/components/TimelinePanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
   import OverviewPanel from './lib/components/OverviewPanel.svelte';
@@ -29,7 +30,7 @@
     { id: 'workflows', label: 'Workflows', key: '4', icon: '\u2699' },
     { id: 'memory',    label: 'Memory',    key: '5', icon: '\u29BE' },
     { id: 'graph',     label: 'Graph',     key: '6', icon: '\u2B21' },
-    { id: 'stream',    label: 'Stream',    key: '7', icon: '\u2261' },
+    { id: 'timeline',  label: 'Timeline',  key: '7', icon: '\u2261' },
     { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
     { id: 'sandbox',   label: 'Sandbox',   key: '9', icon: '\u2B22' },
     { id: 'reasoning', label: 'Reasoning', key: '0', icon: '\u2726' },
@@ -235,8 +236,8 @@
           <MemoryPanel />
         {:else if router.panel === 'graph'}
           <GraphPanel />
-        {:else if router.panel === 'stream'}
-          <StreamPanel />
+        {:else if router.panel === 'timeline'}
+          <TimelinePanel />
         {:else if router.panel === 'presence'}
           <PresencePanel />
         {:else if router.panel === 'sandbox'}

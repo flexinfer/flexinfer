@@ -45,6 +45,10 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, sessionID string) (*S
 	if err != nil {
 		return nil, fmt.Errorf("fetch session entries: %w", err)
 	}
+	return s.summarizeFromEntries(ctx, sessionID, entries)
+}
+
+func (s *Summarizer) summarizeFromEntries(ctx context.Context, sessionID string, entries []bridge.ContextEntryInfo) (*SessionSummaryResult, error) {
 	if len(entries) == 0 {
 		return &SessionSummaryResult{
 			SessionID: sessionID,
@@ -70,16 +74,7 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, sessionID string) (*S
 	}
 	result.SessionID = sessionID
 
-	// Store the summary as a context entry.
-	if err := s.agent.MemoryAdd(
-		"Session Summary: "+sessionID,
-		result.Summary,
-		"long_term",
-		"high",
-		"summary",
-	); err != nil {
-		s.logger.Warn("failed to store session summary", "error", err)
-	}
+	s.storeSummary(sessionID, result)
 
 	return result, nil
 }
@@ -105,8 +100,9 @@ func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (i
 			continue
 		}
 
-		// Check if we already have a summary for this session.
-		entries, err := s.agent.SessionEntries(sess.ID, 5)
+		// Fetch session entries once and reuse for both summary detection and
+		// summarization input to avoid duplicate context-search calls.
+		entries, err := s.agent.SessionEntries(sess.ID, 100)
 		if err != nil {
 			continue
 		}
@@ -114,7 +110,7 @@ func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (i
 			continue
 		}
 
-		if _, err := s.SummarizeSession(ctx, sess.ID); err != nil {
+		if _, err := s.summarizeFromEntries(ctx, sess.ID, entries); err != nil {
 			s.logger.Debug("sweep summarize failed", "session_id", sess.ID, "error", err)
 			continue
 		}
@@ -213,4 +209,70 @@ func stripCodeFence(s string) string {
 		s = strings.TrimSpace(s)
 	}
 	return s
+}
+
+func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult) {
+	title := "Session Summary: " + sessionID
+	content := summaryContent(result)
+
+	if err := s.agent.ContextAdd(sessionID, []map[string]any{
+		{
+			"entry_type": "summary",
+			"title":      title,
+			"content":    content,
+			"tags":       result.Tags,
+		},
+	}); err != nil {
+		s.logger.Warn("failed to store session summary context entry", "session_id", sessionID, "error", err)
+	}
+
+	if err := s.agent.MemoryAdd(
+		title,
+		content,
+		"long_term",
+		"high",
+		"summary",
+	); err != nil {
+		s.logger.Warn("failed to store session summary memory", "session_id", sessionID, "error", err)
+	}
+}
+
+func summaryContent(result *SessionSummaryResult) string {
+	if result == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(result.Summary)
+
+	if len(result.KeyFindings) > 0 {
+		b.WriteString("\n\nKey findings:")
+		for _, finding := range result.KeyFindings {
+			b.WriteString("\n- ")
+			b.WriteString(finding)
+		}
+	}
+
+	if len(result.KeyDecisions) > 0 {
+		b.WriteString("\n\nKey decisions:")
+		for _, decision := range result.KeyDecisions {
+			b.WriteString("\n- ")
+			b.WriteString(decision)
+		}
+	}
+
+	if len(result.Unresolved) > 0 {
+		b.WriteString("\n\nUnresolved:")
+		for _, item := range result.Unresolved {
+			b.WriteString("\n- ")
+			b.WriteString(item)
+		}
+	}
+
+	if len(result.FilesTouched) > 0 {
+		b.WriteString("\n\nFiles touched: ")
+		b.WriteString(strings.Join(result.FilesTouched, ", "))
+	}
+
+	return b.String()
 }

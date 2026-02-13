@@ -477,9 +477,20 @@ type PresenceInfo struct {
 	CurrentTask   string   `json:"current_task"`
 	ActiveFiles   []string `json:"active_files"`
 	Branch        string   `json:"branch"`
+	PRUrl         string   `json:"pr_url,omitempty"`
 	WorktreeID    string   `json:"worktree_id"`
 	LastHeartbeat string   `json:"last_heartbeat"`
 	RegisteredAt  string   `json:"registered_at"`
+}
+
+// PresenceHeartbeatResult is the response from agent_presence_heartbeat.
+type PresenceHeartbeatResult struct {
+	OK            bool             `json:"ok"`
+	AgentID       string           `json:"agent_id"`
+	LastHeartbeat string           `json:"last_heartbeat"`
+	HasConflicts  bool             `json:"has_conflicts,omitempty"`
+	Conflicts     []map[string]any `json:"conflicts,omitempty"`
+	Warning       string           `json:"_warning,omitempty"`
 }
 
 // FileClaimInfo describes a file claim (advisory lock).
@@ -1092,11 +1103,14 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 
 	// Register presence.
 	presenceArgs := map[string]any{
-		"agent_id": p.AgentID,
-		"status":   "active",
+		"agent_id":   p.AgentID,
+		"session_id": sessionResult.SessionID,
 	}
 	if p.AgentType != "" {
 		presenceArgs["agent_type"] = p.AgentType
+	}
+	if p.Description != "" {
+		presenceArgs["description"] = p.Description
 	}
 	_ = a.callAgentTool("agent_presence_register", presenceArgs, nil)
 
@@ -1168,14 +1182,56 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 }
 
 // PresenceHeartbeat updates the heartbeat timestamp for an agent.
-func (a *AgentBridge) PresenceHeartbeat(agentID, status string) error {
+type PresenceHeartbeatParams struct {
+	Status      string
+	ActiveFiles []string
+	CurrentTask string
+	Branch      string
+}
+
+func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParams) (*PresenceHeartbeatResult, error) {
 	args := map[string]any{
 		"agent_id": agentID,
 	}
-	if status != "" {
-		args["status"] = status
+	if p.Status != "" {
+		args["status"] = p.Status
 	}
-	return a.callAgentTool("agent_presence_heartbeat", args, nil)
+	if len(p.ActiveFiles) > 0 {
+		args["active_files"] = p.ActiveFiles
+	}
+	if p.CurrentTask != "" {
+		args["current_task"] = p.CurrentTask
+	}
+	if p.Branch != "" {
+		args["branch"] = p.Branch
+	}
+
+	var result PresenceHeartbeatResult
+	if err := a.callAgentTool("agent_presence_heartbeat", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PresenceRegister registers an agent's presence without starting a session.
+// This is useful for clients that only want heartbeat-style liveness tracking.
+func (a *AgentBridge) PresenceRegister(agentID, sessionID, agentType, description string, heartbeatTTLSeconds int) error {
+	args := map[string]any{
+		"agent_id": agentID,
+	}
+	if sessionID != "" {
+		args["session_id"] = sessionID
+	}
+	if agentType != "" {
+		args["agent_type"] = agentType
+	}
+	if description != "" {
+		args["description"] = description
+	}
+	if heartbeatTTLSeconds > 0 {
+		args["heartbeat_ttl_seconds"] = heartbeatTTLSeconds
+	}
+	return a.callAgentTool("agent_presence_register", args, nil)
 }
 
 // GetActiveSession finds the currently active session for an agent.
@@ -1191,6 +1247,82 @@ func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
 		}
 	}
 	return nil, nil
+}
+
+// --- Dispatch + Claim methods ---
+
+// DispatchTaskParams holds parameters for dispatching a task to an agent.
+type DispatchTaskParams struct {
+	TargetAgentID string
+	Title         string
+	Context       string
+	Priority      string
+}
+
+// DispatchTask creates a task and a handoff targeting a specific agent.
+// This enables the HUD or CLI to push work to an active agent.
+func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error) {
+	// Find target agent's active session for task creation.
+	session, err := a.GetActiveSession(p.TargetAgentID)
+	if err != nil {
+		return nil, fmt.Errorf("find target session: %w", err)
+	}
+
+	sessionID := ""
+	if session != nil {
+		sessionID = session.ID
+	}
+
+	// Create the task.
+	if sessionID != "" {
+		if err := a.CreateTask(CreateTaskParams{
+			SessionID: sessionID,
+			Title:     p.Title,
+			Context:   p.Context,
+			Priority:  p.Priority,
+			Tags:      []string{"dispatched"},
+		}); err != nil {
+			return nil, fmt.Errorf("create task: %w", err)
+		}
+	}
+
+	// Create a handoff targeting the agent.
+	handoffSummary := fmt.Sprintf("[Dispatched] %s", p.Title)
+	if err := a.HandoffCreate(p.TargetAgentID, handoffSummary, p.Context); err != nil {
+		return nil, fmt.Errorf("create handoff: %w", err)
+	}
+
+	return map[string]any{
+		"ok":              true,
+		"target_agent_id": p.TargetAgentID,
+		"session_id":      sessionID,
+		"title":           p.Title,
+		"priority":        p.Priority,
+	}, nil
+}
+
+// ReleaseFileClaim releases a specific file claim for an agent.
+func (a *AgentBridge) ReleaseFileClaim(agentID, filePath string) error {
+	args := map[string]any{
+		"agent_id":  agentID,
+		"file_path": filePath,
+	}
+	return a.callAgentTool("agent_file_claim_release", args, nil)
+}
+
+// HandoffListForAgent returns pending handoffs targeted at a specific agent.
+func (a *AgentBridge) HandoffListForAgent(agentID string) ([]HandoffInfo, error) {
+	all, err := a.HandoffList()
+	if err != nil {
+		return nil, err
+	}
+	var result []HandoffInfo
+	for _, h := range all {
+		if h.Status == "pending" && (h.ToAgent == agentID || h.ToAgent == "") {
+			result = append(result, h)
+		}
+	}
+	return result, nil
 }
 
 // --- Tunnel/cache methods ---

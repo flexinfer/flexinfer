@@ -197,13 +197,15 @@ Example config.toml:
 Example mcp.json:
   {"mcpServers":{"loom":{"command":"loom","args":["proxy"]}}}`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProxy(socketPath)
+			agentHint, _ := cmd.Flags().GetString("agent-hint")
+			return runProxyWithHint(socketPath, agentHint)
 		},
 	}
 	// Backwards compatibility: older generated configs included `--registry` on `loom proxy`.
 	// The proxy itself doesn't need a registry path (the daemon loads it), but accepting the
 	// flag prevents immediate exit with "unknown flag" which breaks MCP initialization.
 	proxyCmd.Flags().String("registry", "", "Path to registry.yaml (accepted for compatibility; ignored)")
+	proxyCmd.Flags().String("agent-hint", "", "Agent type hint for proxy-level heartbeats (e.g., kilocode, antigravity)")
 
 	// Generate command
 	generateCmd := &cobra.Command{

@@ -46,6 +46,7 @@ export interface PresenceInfo {
   current_task: string;
   active_files?: string[];
   branch: string;
+  pr_url?: string;
   worktree_id?: string;
   last_heartbeat: string;
   registered_at: string;
@@ -289,6 +290,16 @@ class FleetStore {
       eventStore.on('process.stop', () => this.fetch()),
       // Granular agent events — trigger re-derive of namespaceGroups immediately.
       eventStore.on('agent.session.start', () => { this.lastUpdated = new Date(); }),
+      // Reaped sessions should be treated the same as ended.
+      eventStore.on('agent.session.reaped', (e) => {
+        const sessionId = (e.data as Record<string, unknown>).session_id as string;
+        if (sessionId) {
+          this.sessions = this.sessions.map((s) =>
+            s.id === sessionId ? { ...s, status: 'ended', ended_at: new Date().toISOString(), active: false } : s,
+          );
+        }
+        this.lastUpdated = new Date();
+      }),
       eventStore.on('agent.session.end', (e) => {
         const sessionId = (e.data as Record<string, unknown>).session_id as string;
         if (sessionId) {

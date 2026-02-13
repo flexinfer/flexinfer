@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,17 @@ import (
 
 	"github.com/crb2nu/loom/pkg/registry"
 )
+
+// agentHintGlobal stores the --agent-hint flag value for proxy-level heartbeats.
+var agentHintGlobal string
+
+// runProxyWithHint wraps runProxy with agent-hint support.
+// When agentHint is set, the proxy fires async heartbeats to the HUD
+// on each tool call, providing universal presence for hookless platforms.
+func runProxyWithHint(socketPath, agentHint string) error {
+	agentHintGlobal = agentHint
+	return runProxy(socketPath)
+}
 
 // runProxy runs loom as an MCP server, bridging stdio to the daemon
 func runProxy(socketPath string) error {
@@ -283,6 +295,12 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
+	}
+
+	// Proxy-level heartbeat: fire async heartbeat on each tool call for
+	// platforms with zero hook support (Kilocode, Antigravity, etc.).
+	if agentHintGlobal != "" {
+		go proxyHeartbeat(agentHintGlobal)
 	}
 
 	// Parse server__toolname format
@@ -718,4 +736,33 @@ func splitToolName(name string) []string {
 		}
 	}
 	return []string{name}
+}
+
+// proxyHeartbeat fires an async heartbeat to the HUD for proxy-level agent identification.
+// This provides universal heartbeat coverage for any agent using loom proxy.
+func proxyHeartbeat(agentType string) {
+	body := fmt.Sprintf(`{"agent_id":"%s","status":"active","agent_type":"%s"}`, agentType, agentType)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Try port file first, fall back to default.
+	port := "3333"
+	if data, err := os.ReadFile(filepath.Join(os.TempDir(), "loom-hud.port")); err == nil {
+		if p := strings.TrimSpace(string(data)); p != "" {
+			port = p
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://127.0.0.1:"+port+"/api/agent/heartbeat",
+		strings.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }

@@ -96,6 +96,89 @@
     }
   }
 
+  // --- Dispatch task ---
+  let showDispatchModal = $state(false);
+  let dispatchTargetAgent = $state('');
+  let dispatchTitle = $state('');
+  let dispatchContext = $state('');
+  let dispatchPriority = $state('medium');
+  let dispatchSubmitting = $state(false);
+
+  async function submitDispatch() {
+    if (!dispatchTargetAgent || !dispatchTitle.trim()) return;
+    dispatchSubmitting = true;
+    try {
+      const res = await globalThis.fetch('/api/agent/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_agent_id: dispatchTargetAgent,
+          title: dispatchTitle.trim(),
+          context: dispatchContext.trim() || undefined,
+          priority: dispatchPriority,
+        }),
+      });
+      if (!res.ok) throw new Error(`Dispatch: ${res.status}`);
+      toastStore.success(`Task dispatched to ${dispatchTargetAgent}`);
+      showDispatchModal = false;
+      dispatchTitle = '';
+      dispatchContext = '';
+      dispatchPriority = 'medium';
+    } catch (e) {
+      toastStore.error('Failed to dispatch task');
+    } finally {
+      dispatchSubmitting = false;
+    }
+  }
+
+  function openDispatch(agentId) {
+    dispatchTargetAgent = agentId;
+    showDispatchModal = true;
+  }
+
+  // --- Release claim ---
+  async function releaseClaim(agentId, filePath) {
+    try {
+      const res = await globalThis.fetch(`/api/claims/${encodeURIComponent(agentId)}/${encodeURIComponent(filePath)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(`Release: ${res.status}`);
+      toastStore.success('Claim released');
+      presenceStore.fetch();
+    } catch (e) {
+      toastStore.error('Failed to release claim');
+    }
+  }
+
+  // --- Relative time helper ---
+  let _tick = $state(0);
+  $effect(() => {
+    const t = setInterval(() => { _tick++ }, 5000);
+    return () => clearInterval(t);
+  });
+
+  function relativeTime(ts) {
+    void _tick;
+    if (!ts) return '---';
+    const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (diff < 10) return 'just now';
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
+
+  // --- Branch collision detection ---
+  let branchCollisions = $derived.by(() => {
+    const branchAgents = {};
+    agents.filter(a => a.status === 'active' && a.branch).forEach(a => {
+      if (!branchAgents[a.branch]) branchAgents[a.branch] = [];
+      branchAgents[a.branch].push(a.agent_id);
+    });
+    return Object.entries(branchAgents)
+      .filter(([, agents]) => agents.length > 1)
+      .map(([branch, agents]) => ({ branch, agents }));
+  });
+
   // --- File conflict detection ---
   let fileConflicts = $derived.by(() => {
     const fileCounts = {};
@@ -207,6 +290,18 @@
             <span class="card-title">Agent Presence</span>
             <span class="count-badge">{presenceStore.activeCount + presenceStore.idleCount}</span>
           </div>
+          {#if branchCollisions.length > 0}
+            <div class="conflict-banner">
+              <span class="conflict-icon">⚠</span>
+              <span>Branch collision: multiple agents on same branch</span>
+              {#each branchCollisions as col}
+                <div class="conflict-detail">
+                  <span class="text-mono text-xs">{col.branch}</span>
+                  <span class="text-muted text-xs">→ {col.agents.join(', ')}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
           <div class="table-wrap">
             <table>
               <thead>
@@ -215,16 +310,18 @@
                   <th>Status</th>
                   <th>Type</th>
                   <th>Current Task</th>
-                  <th>Branch</th>
+                  <th>Branch / PR</th>
                   <th>Heartbeat</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {#each agents as agent (agent.agent_id)}
-                  <tr>
+                  <tr class="agent-row agent-row--{agent.status}">
                     <td class="text-mono">{agent.agent_id}</td>
                     <td>
                       <StatusDot status={presenceStatus(agent.status)} />
+                      <span class="status-label">{agent.status}</span>
                     </td>
                     <td>
                       <span class="agent-type-chip" style:color={agentColor(agent.agent_type)}>
@@ -232,12 +329,26 @@
                       </span>
                     </td>
                     <td class="truncate" title={agent.current_task}>{agent.current_task || '---'}</td>
-                    <td class="text-mono text-muted">{agent.branch || '---'}</td>
-                    <td class="text-mono text-muted">{formatTime(agent.last_heartbeat)}</td>
+                    <td class="text-mono text-muted">
+                      {#if agent.pr_url}
+                        <a href={agent.pr_url} target="_blank" rel="noopener" class="pr-link" title={agent.pr_url}>
+                          PR
+                        </a>
+                      {/if}
+                      {agent.branch || '---'}
+                    </td>
+                    <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{relativeTime(agent.last_heartbeat)}</td>
+                    <td>
+                      {#if agent.status === 'active'}
+                        <button class="btn btn-xs btn-dispatch" onclick={() => openDispatch(agent.agent_id)} title="Dispatch task to agent">
+                          Dispatch
+                        </button>
+                      {/if}
+                    </td>
                   </tr>
                 {:else}
                   <tr>
-                    <td colspan="6" class="empty-cell">No registered agents</td>
+                    <td colspan="7" class="empty-cell">No registered agents</td>
                   </tr>
                 {/each}
               </tbody>
@@ -304,6 +415,7 @@
                 <th>Type</th>
                 <th>Reason</th>
                 <th>Since</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -314,10 +426,15 @@
                   <td><Badge text={claim.claim_type} variant={claimVariant(claim.claim_type)} /></td>
                   <td class="truncate text-muted" title={claim.reason}>{claim.reason || '---'}</td>
                   <td class="text-mono text-muted">{formatTime(claim.created_at)}</td>
+                  <td>
+                    <button class="btn btn-xs btn-danger" onclick={() => releaseClaim(claim.agent_id, claim.file_path)} title="Force-release this claim">
+                      Release
+                    </button>
+                  </td>
                 </tr>
               {:else}
                 <tr>
-                  <td colspan="5" class="empty-cell">No active file claims</td>
+                  <td colspan="6" class="empty-cell">No active file claims</td>
                 </tr>
               {/each}
             </tbody>
@@ -435,6 +552,37 @@
     {/if}
   </div>
 </div>
+
+<!-- Dispatch Task Modal -->
+<Modal title="Dispatch Task" open={showDispatchModal} onclose={() => { showDispatchModal = false; }}>
+  <div class="form-group">
+    <label class="form-label" for="dispatch-target">Target Agent</label>
+    <input id="dispatch-target" type="text" bind:value={dispatchTargetAgent} class="form-input" readonly />
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="dispatch-title">Title *</label>
+    <input id="dispatch-title" type="text" bind:value={dispatchTitle} placeholder="Task title..." class="form-input" />
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="dispatch-context">Context</label>
+    <textarea id="dispatch-context" bind:value={dispatchContext} placeholder="Additional instructions..." class="form-input" rows="4"></textarea>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="dispatch-priority">Priority</label>
+    <select id="dispatch-priority" bind:value={dispatchPriority} class="form-input">
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="critical">Critical</option>
+    </select>
+  </div>
+  <div class="form-actions">
+    <button class="btn btn-ghost" onclick={() => { showDispatchModal = false; }}>Cancel</button>
+    <button class="btn btn-primary" onclick={submitDispatch} disabled={dispatchSubmitting || !dispatchTitle.trim()}>
+      {dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}
+    </button>
+  </div>
+</Modal>
 
 <!-- Create Handoff Modal -->
 <Modal title="Create Handoff" open={showHandoffModal} onclose={() => { showHandoffModal = false; }}>
@@ -740,5 +888,67 @@
     justify-content: flex-end;
     gap: 8px;
     margin-top: 16px;
+  }
+
+  /* Agent row color-coding */
+  .agent-row--active {
+    border-left: 3px solid var(--success);
+  }
+
+  .agent-row--idle {
+    border-left: 3px solid var(--warning);
+    opacity: 0.85;
+  }
+
+  .agent-row--offline {
+    border-left: 3px solid var(--fg-muted);
+    opacity: 0.6;
+  }
+
+  .status-label {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    margin-left: 4px;
+    text-transform: uppercase;
+  }
+
+  .pr-link {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    background: rgba(129, 240, 254, 0.1);
+    color: var(--accent);
+    text-decoration: none;
+    margin-right: 4px;
+    border: 1px solid rgba(129, 240, 254, 0.2);
+  }
+
+  .pr-link:hover {
+    background: rgba(129, 240, 254, 0.2);
+    text-decoration: none;
+  }
+
+  /* Dispatch button */
+  .btn-dispatch {
+    background: rgba(129, 240, 254, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(129, 240, 254, 0.25);
+  }
+
+  .btn-dispatch:hover {
+    background: rgba(129, 240, 254, 0.2);
+  }
+
+  /* Release/danger button */
+  .btn-danger {
+    background: rgba(233, 93, 116, 0.12);
+    color: var(--error);
+    border: 1px solid rgba(233, 93, 116, 0.3);
+  }
+
+  .btn-danger:hover {
+    background: rgba(233, 93, 116, 0.22);
   }
 </style>

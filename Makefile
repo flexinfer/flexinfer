@@ -1,4 +1,5 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
+		loom loomd \
 		install-core install-all bootstrap-local dev-upgrade \
 		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark ci-security ci-baseline \
 		security security-gosec security-vuln \

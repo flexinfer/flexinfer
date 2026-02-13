@@ -71,6 +71,11 @@ func registerPresenceTools(server *mcp.Server, svc *agentcontext.Service, tracer
 					"type":        "string",
 					"description": "Current git branch.",
 				},
+				"status": map[string]any{
+					"type":        "string",
+					"enum":        []string{"active", "idle"},
+					"description": "Optional presence status update: 'active' or 'idle'.",
+				},
 			},
 			Required: []string{"agent_id"},
 		},

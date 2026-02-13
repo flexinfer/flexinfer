@@ -1466,6 +1466,24 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		d.router.RecordFailure(serverName, target, err)
 		d.metrics.RecordServerFailure(serverName, targetStr, "send")
 		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
+
+		// For stdio-based local servers, a broken pipe/EOF usually means the
+		// underlying process died. Restart it and clear any stale idle pool
+		// entries so subsequent calls can recover cleanly.
+		if target == router.TargetLocal {
+			d.logger.Warn("local server send failed; restarting",
+				"server", serverName, "error", err)
+			d.pool.ClearServer(serverName)
+			_ = d.procMgr.Stop(serverName)
+			d.runningServers.Delete(serverName)
+			if d.eventBus != nil {
+				d.eventBus.Publish(EventProcessStop, map[string]any{
+					"server": serverName,
+					"reason": "transport_send_error",
+				})
+			}
+		}
+
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
@@ -1475,6 +1493,21 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		d.router.RecordFailure(serverName, target, err)
 		d.metrics.RecordServerFailure(serverName, targetStr, "recv")
 		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
+
+		if target == router.TargetLocal {
+			d.logger.Warn("local server recv failed; restarting",
+				"server", serverName, "error", err)
+			d.pool.ClearServer(serverName)
+			_ = d.procMgr.Stop(serverName)
+			d.runningServers.Delete(serverName)
+			if d.eventBus != nil {
+				d.eventBus.Publish(EventProcessStop, map[string]any{
+					"server": serverName,
+					"reason": "transport_recv_error",
+				})
+			}
+		}
+
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 

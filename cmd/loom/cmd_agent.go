@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -309,7 +310,7 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status stri
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
-				if err := agentBridge.PresenceHeartbeat(agentID, status); err != nil {
+				if _, err := agentBridge.PresenceHeartbeat(agentID, bridge.PresenceHeartbeatParams{Status: status}); err != nil {
 					return nil, err
 				}
 				return json.Marshal(map[string]bool{"ok": true})
@@ -404,6 +405,7 @@ not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
 		newAgentWorkflowSyncCmd(),
+		newAgentDispatchCmd(),
 	)
 
 	return agentCmd
@@ -513,13 +515,15 @@ Designed for use in Claude Code Stop hooks.`,
 // newAgentHeartbeatCmd creates the `loom agent heartbeat` command.
 func newAgentHeartbeatCmd() *cobra.Command {
 	var (
-		agentID       string
-		status        string
-		ensureSession bool
-		namespace     string
-		agentType     string
-		description   string
-		quiet         bool
+		agentID        string
+		status         string
+		ensureSession  bool
+		inferNamespace bool
+		namespace      string
+		agentType      string
+		description    string
+		prURL          string
+		quiet          bool
 	)
 
 	cmd := &cobra.Command{
@@ -529,9 +533,18 @@ func newAgentHeartbeatCmd() *cobra.Command {
 
 Designed for use in Claude Code PostToolUse hooks to keep presence alive
 during active tool use. Use --ensure-session for clients that only have
-heartbeat hooks (for example Codex notify).`,
+heartbeat hooks (for example Codex notify).
+
+Use --infer-namespace to automatically derive the namespace from the current
+git repo (repo-name/branch). This is useful for Codex and other agents that
+don't have native session-start hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
+
+			// Infer namespace from git context if requested.
+			if inferNamespace && namespace == "" {
+				namespace = inferGitNamespace()
+			}
 
 			err := heartbeatWithFallback(cmd, port, agentID, status)
 			if err != nil && ensureSession {
@@ -577,12 +590,40 @@ heartbeat hooks (for example Codex notify).`,
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
 	cmd.Flags().StringVar(&status, "status", "", "Agent status (active, idle)")
 	cmd.Flags().BoolVar(&ensureSession, "ensure-session", false, "Auto-start session if heartbeat fails due to missing presence/session")
+	cmd.Flags().BoolVar(&inferNamespace, "infer-namespace", false, "Derive namespace from git repo/branch context")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace used with --ensure-session")
 	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type used with --ensure-session")
 	cmd.Flags().StringVar(&description, "description", "", "Session description used with --ensure-session")
+	cmd.Flags().StringVar(&prURL, "pr-url", "", "URL of the active pull request")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd
+}
+
+// inferGitNamespace derives a namespace from the current git repository and branch.
+// Returns "repo-name/branch" or empty string if git context is unavailable.
+func inferGitNamespace() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Get repo root directory name.
+	toplevel, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	repoName := filepath.Base(strings.TrimSpace(string(toplevel)))
+
+	// Get current branch.
+	branch, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output()
+	if err != nil {
+		return repoName
+	}
+	branchName := strings.TrimSpace(string(branch))
+	if branchName == "" {
+		return repoName
+	}
+
+	return repoName + "/" + branchName
 }
 
 // newAgentTaskUpdateCmd creates the `loom agent task-update` command.
@@ -762,6 +803,60 @@ Definitions are stored in-memory and must be re-synced after daemon restart.`,
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Override namespace for all definitions")
 	cmd.Flags().StringVar(&createdBy, "created-by", "loom-cli", "Creator agent ID")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
+
+	return cmd
+}
+
+// newAgentDispatchCmd creates the `loom agent dispatch` command.
+func newAgentDispatchCmd() *cobra.Command {
+	var (
+		targetAgent string
+		title       string
+		ctx         string
+		priority    string
+		quiet       bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "dispatch",
+		Short: "Dispatch a task to a specific agent",
+		Long: `Create a task and handoff targeting a specific agent. The target agent
+will see the dispatched task in its next heartbeat response.
+
+This enables the HUD or CLI to push work to active agents.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+
+			body := map[string]any{
+				"target_agent_id": targetAgent,
+				"title":           title,
+				"context":         ctx,
+				"priority":        priority,
+			}
+
+			result, err := hudPost(port, "/api/agent/dispatch", body)
+			if err != nil {
+				if quiet {
+					fmt.Fprintf(os.Stderr, "loom: dispatch: %v\n", err)
+					return nil
+				}
+				return err
+			}
+
+			if !quiet {
+				fmt.Println(string(result))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&targetAgent, "to", "", "Target agent identifier (required)")
+	cmd.Flags().StringVar(&title, "title", "", "Task title (required)")
+	cmd.Flags().StringVar(&ctx, "context", "", "Additional context for the task")
+	cmd.Flags().StringVar(&priority, "priority", "medium", "Priority (low, medium, high, critical)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
+	_ = cmd.MarkFlagRequired("to")
+	_ = cmd.MarkFlagRequired("title")
 
 	return cmd
 }

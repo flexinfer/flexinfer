@@ -165,6 +165,34 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+func TestSummaryContent(t *testing.T) {
+	result := &SessionSummaryResult{
+		Summary:      "Session implemented coordinator retries.",
+		KeyFindings:  []string{"Qdrant search was unstable"},
+		KeyDecisions: []string{"Persist summary as context entry"},
+		Unresolved:   []string{"Tune model timeout"},
+		FilesTouched: []string{"internal/hud/coordinator/summarizer.go"},
+	}
+
+	content := summaryContent(result)
+
+	if !contains(content, "Session implemented coordinator retries.") {
+		t.Fatal("expected base summary text in rendered content")
+	}
+	if !contains(content, "Key findings:") {
+		t.Fatal("expected key findings section")
+	}
+	if !contains(content, "Persist summary as context entry") {
+		t.Fatal("expected key decisions content")
+	}
+	if !contains(content, "Unresolved:") {
+		t.Fatal("expected unresolved section")
+	}
+	if !contains(content, "Files touched: internal/hud/coordinator/summarizer.go") {
+		t.Fatal("expected files touched line")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
 }

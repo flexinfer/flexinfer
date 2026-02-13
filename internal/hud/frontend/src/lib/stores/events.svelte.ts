@@ -95,7 +95,10 @@ class EventStore {
       'hud.fleet', 'hud.health', 'hud.memory', 'hud.workflows', 'hud.stream',
       'hud.sandbox', 'hud.sandbox.event',
       // Granular agent lifecycle events (real-time deltas, <100ms latency).
-      'agent.session.start', 'agent.session.end', 'agent.heartbeat', 'agent.task.update',
+      'agent.session.start', 'agent.session.end', 'agent.session.reaped',
+      'agent.heartbeat', 'agent.task.update', 'agent.task.dispatched',
+      // Proactive notification events.
+      'hud.conflict', 'hud.approval_needed', 'hud.claim.released',
       // Granular memory mutation events.
       'hud.memory.add', 'hud.memory.delete', 'hud.memory.promote', 'hud.memory.demote',
       // Granular workflow/task mutation events.

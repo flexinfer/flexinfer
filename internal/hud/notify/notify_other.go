@@ -21,3 +21,9 @@ func NotifyServerRecovered(serverName string) error { return nil }
 
 // NotifyHandoff is a no-op on non-darwin platforms.
 func NotifyHandoff(sourceAgent, targetAgent, instructions string) error { return nil }
+
+// NotifyConflict is a no-op on non-darwin platforms.
+func NotifyConflict(count int) error { return nil }
+
+// NotifyApproval is a no-op on non-darwin platforms.
+func NotifyApproval(count int) error { return nil }

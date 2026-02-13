@@ -62,6 +62,17 @@ type FleetSnapshot struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// KPICounters tracks daily aggregate metrics for the HUD dashboard.
+type KPICounters struct {
+	SessionsToday       int `json:"sessions_today"`
+	TokensToday         int `json:"tokens_today"`
+	TasksCompletedToday int `json:"tasks_completed_today"`
+	FileConflicts       int `json:"file_conflicts"`
+
+	// Internal tracking.
+	resetDate string // YYYY-MM-DD of last reset
+}
+
 // FleetMonitor aggregates data from the daemon client and agent bridge
 // into a FleetSnapshot. It runs a background goroutine that polls all
 // data sources at a configurable interval.
@@ -76,6 +87,13 @@ type FleetMonitor struct {
 
 	// Handoff notification dedup: tracks handoff IDs already notified.
 	notifiedHandoffs map[string]bool
+
+	// KPI counters — daily aggregate metrics.
+	kpis KPICounters
+
+	// Previous snapshot for diff-based notifications.
+	prevFileClaims []bridge.FileClaimInfo
+	prevApprovals  int
 
 	onRefresh func(FleetSnapshot)
 
@@ -123,6 +141,58 @@ func (m *FleetMonitor) Snapshot() FleetSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.snapshot
+}
+
+// KPIs returns the current daily KPI counters.
+func (m *FleetMonitor) KPIs() KPICounters {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.kpis
+}
+
+// IncrementKPI atomically increments a specific KPI counter.
+func (m *FleetMonitor) IncrementKPI(field string, delta int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Auto-reset on day change.
+	today := time.Now().Format("2006-01-02")
+	if m.kpis.resetDate != today {
+		m.kpis = KPICounters{resetDate: today}
+	}
+
+	switch field {
+	case "sessions":
+		m.kpis.SessionsToday += delta
+	case "tokens":
+		m.kpis.TokensToday += delta
+	case "tasks_completed":
+		m.kpis.TasksCompletedToday += delta
+	}
+}
+
+// OfflineAgentsWithActiveSessions returns agents that are offline but still
+// have active sessions — candidates for session reaping.
+func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
+	m.mu.RLock()
+	snap := m.snapshot
+	m.mu.RUnlock()
+
+	// Build set of agents with active sessions.
+	activeSessionAgents := make(map[string]bool)
+	for _, s := range snap.Sessions {
+		if s.Status == "active" {
+			activeSessionAgents[s.AgentID] = true
+		}
+	}
+
+	var result []bridge.PresenceInfo
+	for _, a := range snap.Agents {
+		if a.Status == "offline" && activeSessionAgents[a.AgentID] {
+			result = append(result, a)
+		}
+	}
+	return result
 }
 
 // Refresh forces an immediate refresh of all data sources and updates
@@ -247,6 +317,45 @@ func (m *FleetMonitor) Refresh() error {
 		snap.ActiveWorktrees = len(worktrees)
 	}
 
+	// --- KPI daily counter reset ---
+	m.mu.Lock()
+	today := time.Now().Format("2006-01-02")
+	if m.kpis.resetDate != today {
+		m.kpis = KPICounters{resetDate: today}
+	}
+	// Update token counter from current snapshot.
+	m.kpis.TokensToday = snap.TotalTokens
+	// Update file conflicts count.
+	m.kpis.FileConflicts = detectConflictCount(snap.FileClaims)
+	m.mu.Unlock()
+
+	// --- Proactive notifications: conflict detection ---
+	newConflicts := detectConflictCount(snap.FileClaims)
+	m.mu.RLock()
+	prevConflicts := detectConflictCount(m.prevFileClaims)
+	m.mu.RUnlock()
+	if newConflicts > prevConflicts {
+		go func() {
+			if err := notify.NotifyConflict(newConflicts); err != nil {
+				m.logger.Debug("conflict notification failed", "error", err)
+			}
+		}()
+	}
+
+	// --- Proactive notifications: pending approvals ---
+	if snap.PendingApprovals > 0 {
+		m.mu.RLock()
+		prevApprovals := m.prevApprovals
+		m.mu.RUnlock()
+		if snap.PendingApprovals > prevApprovals {
+			go func() {
+				if err := notify.NotifyApproval(snap.PendingApprovals); err != nil {
+					m.logger.Debug("approval notification failed", "error", err)
+				}
+			}()
+		}
+	}
+
 	// Check for new handoffs and send desktop notifications.
 	if handoffs, err := m.agent.HandoffList(); err != nil {
 		m.logger.Debug("fleet: failed to fetch handoffs for notification", "error", err)
@@ -265,8 +374,10 @@ func (m *FleetMonitor) Refresh() error {
 		m.mu.Unlock()
 	}
 
-	// Commit the snapshot atomically.
+	// Commit the snapshot atomically and save previous state for diff-based notifications.
 	m.mu.Lock()
+	m.prevFileClaims = m.snapshot.FileClaims
+	m.prevApprovals = m.snapshot.PendingApprovals
 	m.snapshot = snap
 	m.lastRefresh = time.Now()
 	m.mu.Unlock()
@@ -277,6 +388,24 @@ func (m *FleetMonitor) Refresh() error {
 	}
 
 	return nil
+}
+
+// detectConflictCount counts the number of files claimed by multiple agents.
+func detectConflictCount(claims []bridge.FileClaimInfo) int {
+	fileAgents := make(map[string]map[string]bool)
+	for _, c := range claims {
+		if fileAgents[c.FilePath] == nil {
+			fileAgents[c.FilePath] = make(map[string]bool)
+		}
+		fileAgents[c.FilePath][c.AgentID] = true
+	}
+	conflicts := 0
+	for _, agents := range fileAgents {
+		if len(agents) > 1 {
+			conflicts++
+		}
+	}
+	return conflicts
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.

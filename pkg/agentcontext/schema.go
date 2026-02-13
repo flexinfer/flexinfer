@@ -1044,6 +1044,7 @@ type AgentPresence struct {
 	Branch      string         `json:"branch,omitempty"`
 	WorktreeID  string         `json:"worktree_id,omitempty"`
 	AgentType   string         `json:"agent_type,omitempty"` // "claude-code", "codex", "gemini"
+	PRUrl       string         `json:"pr_url,omitempty"`     // URL of the active PR (if any)
 
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 	HeartbeatTTL  int       `json:"heartbeat_ttl"` // seconds, default 120
