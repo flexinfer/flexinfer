@@ -108,6 +108,12 @@ rules:
       - models
       - models/status
       - models/finalizers
+      - modelcatalogs
+      - modelcatalogs/status
+      - modelcatalogs/finalizers
+      - loraadapters
+      - loraadapters/status
+      - loraadapters/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
