@@ -379,7 +379,7 @@ kubectl get modeldeployments -n flexinfer-system -o custom-columns=\
 
 **Symptoms**: Model not appearing in LiteLLM proxy, or requests to aliases (e.g., `dall-e-3`) fail.
 
-**Root Cause**: Missing or incorrect LiteLLM annotations on the ModelDeployment.
+**Root Cause**: `spec.litellm` not configured (or stale/missing `litellm.flexinfer.ai/*` annotations on the Service).
 
 **Solution**: Add `litellm` section to ModelDeployment spec:
 ```yaml

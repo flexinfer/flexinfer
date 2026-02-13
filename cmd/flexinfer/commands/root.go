@@ -25,7 +25,11 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -52,7 +56,10 @@ var (
 )
 
 func init() {
-	_ = aiv1alpha1.AddToScheme(scheme)
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+	utilruntime.Must(batchv1.AddToScheme(scheme))
+	utilruntime.Must(aiv1alpha1.AddToScheme(scheme))
 }
 
 var rootCmd = &cobra.Command{
@@ -88,6 +95,7 @@ func init() {
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(catalogCmd)
 	rootCmd.AddCommand(quantizeCmd)
+	rootCmd.AddCommand(benchmarkCmd)
 }
 
 // Execute runs the root command
