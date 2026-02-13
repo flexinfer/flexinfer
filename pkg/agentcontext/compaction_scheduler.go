@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 )
@@ -538,17 +539,15 @@ func (cs *CompactionScheduler) sortItemsForCompaction(items []MemoryItem) []Memo
 	sorted := make([]MemoryItem, len(items))
 	copy(sorted, items)
 
-	// Simple bubble sort by (age descending, priority ascending)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			// Compare: prefer older items and lower priority items
-			iScore := cs.compactionScore(sorted[i])
-			jScore := cs.compactionScore(sorted[j])
-			if jScore > iScore {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
+	// Pre-compute scores to avoid redundant calls during sort
+	scores := make([]float64, len(sorted))
+	for i := range sorted {
+		scores[i] = cs.compactionScore(sorted[i])
 	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		return scores[i] > scores[j]
+	})
 
 	return sorted
 }

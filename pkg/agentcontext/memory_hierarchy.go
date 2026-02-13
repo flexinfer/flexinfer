@@ -446,17 +446,16 @@ func (mh *MemoryHierarchy) matchesRecallRequest(item *MemoryItem, req MemoryReca
 		}
 	}
 
-	// Tag filter
+	// Tag filter (map lookup for O(1) per tag)
 	if len(req.Tags) > 0 {
+		tagSet := make(map[string]struct{}, len(item.Tags))
+		for _, t := range item.Tags {
+			tagSet[t] = struct{}{}
+		}
 		found := false
 		for _, reqTag := range req.Tags {
-			for _, itemTag := range item.Tags {
-				if itemTag == reqTag {
-					found = true
-					break
-				}
-			}
-			if found {
+			if _, ok := tagSet[reqTag]; ok {
+				found = true
 				break
 			}
 		}

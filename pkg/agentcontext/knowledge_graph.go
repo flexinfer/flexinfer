@@ -220,15 +220,10 @@ func (g *KnowledgeGraph) FindEntities(entityType EntityType, namespace, namePatt
 		}
 	}
 
-	// Compile name pattern
+	// Compile name pattern (cached)
 	var nameRE *regexp.Regexp
 	if namePattern != "" {
-		var err error
-		nameRE, err = regexp.Compile("(?i)" + namePattern)
-		if err != nil {
-			// Fall back to substring match
-			nameRE = nil
-		}
+		nameRE = getCachedRegexp("(?i)" + namePattern)
 	}
 
 	// Build result
@@ -1227,4 +1222,19 @@ func (pg *persistedGraph) LoadReasoningChainsFromQdrant(ctx context.Context) err
 	}
 
 	return nil
+}
+
+// regexpCache caches compiled regexps to avoid recompilation on repeated queries.
+var regexpCache sync.Map // map[string]*regexp.Regexp
+
+func getCachedRegexp(pattern string) *regexp.Regexp {
+	if v, ok := regexpCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	regexpCache.Store(pattern, re)
+	return re
 }
