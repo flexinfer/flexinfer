@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -382,29 +383,84 @@ func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
 // This allows clients to use FlexInfer model names/aliases while backends receive their native model IDs.
+//
+// Uses surgical byte-level replacement when possible to avoid full JSON parse/remarshal overhead.
+// Falls back to full parse when the fast path cannot locate the field.
 func (p *Proxy) rewriteModelInBody(body []byte, backendModelName string) []byte {
-	// Parse the JSON
-	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
-		// Not valid JSON or parse error, return original
-		return body
+	// Fast path: locate "model" key and splice the value
+	if result := spliceModelField(body, backendModelName); result != nil {
+		return result
 	}
 
-	// Check if there's a model field
+	// Slow path: full JSON parse
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return body
+	}
 	if _, ok := data["model"]; !ok {
 		return body
 	}
-
-	// Replace the model field with the backend model name
 	data["model"] = backendModelName
-
-	// Re-marshal
 	modified, err := json.Marshal(data)
 	if err != nil {
 		return body
 	}
-
 	return modified
+}
+
+// spliceModelField performs surgical byte-level replacement of the "model" JSON value.
+// Returns nil if the fast path is not applicable (no "model" key, nested object, etc.).
+func spliceModelField(body []byte, replacement string) []byte {
+	// Find "model" key — must be a top-level key (before any nested object).
+	needle := []byte(`"model"`)
+	idx := bytes.Index(body, needle)
+	if idx < 0 {
+		return nil
+	}
+
+	// Walk past the key and the colon
+	pos := idx + len(needle)
+	for pos < len(body) && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\n' || body[pos] == '\r') {
+		pos++
+	}
+	if pos >= len(body) || body[pos] != ':' {
+		return nil
+	}
+	pos++ // skip ':'
+	for pos < len(body) && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\n' || body[pos] == '\r') {
+		pos++
+	}
+	if pos >= len(body) || body[pos] != '"' {
+		return nil // value isn't a string — bail to full parse
+	}
+
+	// Find the end of the quoted value, handling escaped quotes
+	valStart := pos
+	pos++ // skip opening '"'
+	for pos < len(body) {
+		if body[pos] == '\\' {
+			pos += 2 // skip escaped char
+			continue
+		}
+		if body[pos] == '"' {
+			break
+		}
+		pos++
+	}
+	if pos >= len(body) {
+		return nil // unterminated string
+	}
+	valEnd := pos + 1 // include closing '"'
+
+	// Build replacement value (JSON-escaped string)
+	newVal := []byte(strconv.Quote(replacement))
+
+	// Splice: body[:valStart] + newVal + body[valEnd:]
+	result := make([]byte, 0, len(body)-valEnd+valStart+len(newVal))
+	result = append(result, body[:valStart]...)
+	result = append(result, newVal...)
+	result = append(result, body[valEnd:]...)
+	return result
 }
 
 // updateLastAccess updates the LastAccessTime for a model.

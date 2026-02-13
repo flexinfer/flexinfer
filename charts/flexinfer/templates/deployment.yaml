@@ -15,10 +15,11 @@ spec:
       app.kubernetes.io/component: controller
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        flexinfer.ai/chart-version: {{ .Chart.Version | quote }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "flexinfer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: controller
