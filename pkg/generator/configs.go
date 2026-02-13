@@ -457,8 +457,9 @@ func generateHooksConfig(outputDir, target string) error {
 	return os.WriteFile(filepath.Join(destDir, "settings.json"), []byte(buf.String()), 0644)
 }
 
-// claudeHooksConfig returns a Claude Code settings.json with lifecycle and
-// guardrail hooks using the correct three-level nesting:
+// claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks,
+// guardrail hooks, and default-allow permissions using the correct three-level
+// nesting:
 //
 //	event → matcher group (with "hooks" array) → handler objects
 //
@@ -471,8 +472,13 @@ func generateHooksConfig(outputDir, target string) error {
 //   - PreToolUse (Bash): deny kubectl edit/set env (GitOps violation)
 //   - PostToolUse (Write|Edit): auto-format Python files with black
 //   - PostToolUse (Write|Edit): warn on image:latest tags
+//
+// Permissions:
+//   - Default-allow for loom MCP proxy tools, common dev CLIs, and file ops
+//   - Deny kubectl edit/set env (enforced by hook, belt-and-suspenders)
 func claudeHooksConfig() map[string]any {
 	return map[string]any{
+		"permissions": claudePermissions(),
 		"hooks": map[string]any{
 			// SessionStart has no matcher — fires on every session start.
 			"SessionStart": []map[string]any{
@@ -535,6 +541,126 @@ func claudeHooksConfig() map[string]any {
 					},
 				},
 			},
+		},
+	}
+}
+
+// claudePermissions returns the permissions block for Claude Code settings.json.
+// This configures default-allow for the loom MCP proxy, common development CLIs,
+// and file operations — suitable for a personal dev machine where approval prompts
+// for routine operations are unwanted friction.
+func claudePermissions() map[string]any {
+	return map[string]any{
+		"allow": []string{
+			// ── MCP: all tools via loom proxy ──
+			"mcp__loom",
+
+			// ── Build & language toolchains ──
+			"Bash(go *)",
+			"Bash(make *)",
+			"Bash(cargo *)",
+			"Bash(npm *)",
+			"Bash(npx *)",
+			"Bash(pnpm *)",
+			"Bash(yarn *)",
+			"Bash(node *)",
+			"Bash(python *)",
+			"Bash(python3 *)",
+			"Bash(pip *)",
+			"Bash(uv *)",
+			"Bash(poetry *)",
+			"Bash(pytest *)",
+			"Bash(black *)",
+			"Bash(ruff *)",
+			"Bash(golangci-lint *)",
+
+			// ── Git & SCM ──
+			"Bash(git *)",
+			"Bash(gh *)",
+
+			// ── Kubernetes & infrastructure ──
+			"Bash(kubectl *)",
+			"Bash(helm *)",
+			"Bash(flux *)",
+			"Bash(kustomize *)",
+			"Bash(docker *)",
+			"Bash(docker-compose *)",
+
+			// ── Loom CLI ──
+			"Bash(loom *)",
+			"Bash(loomd *)",
+
+			// ── Common unix utilities ──
+			"Bash(ls *)",
+			"Bash(cat *)",
+			"Bash(head *)",
+			"Bash(tail *)",
+			"Bash(wc *)",
+			"Bash(grep *)",
+			"Bash(rg *)",
+			"Bash(find *)",
+			"Bash(sort *)",
+			"Bash(diff *)",
+			"Bash(which *)",
+			"Bash(echo *)",
+			"Bash(yes *)",
+			"Bash(mkdir *)",
+			"Bash(cp *)",
+			"Bash(mv *)",
+			"Bash(rm *)",
+			"Bash(touch *)",
+			"Bash(chmod *)",
+			"Bash(pwd)",
+			"Bash(env *)",
+			"Bash(export *)",
+			"Bash(sed *)",
+			"Bash(awk *)",
+			"Bash(tr *)",
+			"Bash(cut *)",
+			"Bash(xargs *)",
+			"Bash(tee *)",
+			"Bash(date *)",
+			"Bash(hostname)",
+			"Bash(whoami)",
+			"Bash(readlink *)",
+			"Bash(realpath *)",
+			"Bash(basename *)",
+			"Bash(dirname *)",
+			"Bash(stat *)",
+			"Bash(file *)",
+			"Bash(du *)",
+			"Bash(df *)",
+
+			// ── Data processing & network ──
+			"Bash(jq *)",
+			"Bash(yq *)",
+			"Bash(curl *)",
+			"Bash(wget *)",
+			"Bash(ssh *)",
+			"Bash(scp *)",
+			"Bash(rsync *)",
+
+			// ── Testing & quality ──
+			"Bash(gofmt *)",
+			"Bash(goimports *)",
+			"Bash(eslint *)",
+			"Bash(prettier *)",
+			"Bash(shellcheck *)",
+
+			// ── File operations ──
+			"Read",
+			"Edit",
+			"Write",
+
+			// ── Web access ──
+			"WebFetch",
+			"WebSearch",
+		},
+		"deny": []string{
+			// GitOps policy: never allow direct cluster mutations that bypass git.
+			// Also enforced by PreToolUse hook as belt-and-suspenders.
+			"Bash(kubectl edit *)",
+			"Bash(kubectl set env *)",
 		},
 	}
 }
