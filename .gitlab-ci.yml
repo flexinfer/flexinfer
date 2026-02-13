@@ -292,6 +292,18 @@ publish:
       proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
       flash_loader_tags="${REGISTRY}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
 
+      # "master" tags are used for continuous deployment in homelab clusters.
+      # The Helm chart forces a rollout on each revision, and imagePullPolicy=Always
+      # ensures we always pull the latest "master" image.
+      if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
+        controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:master"
+        agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:master"
+        scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:master"
+        bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:master"
+        proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:master"
+        flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master"
+      fi
+
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
         controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
         agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:latest"
