@@ -1,11 +1,13 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { router } from './lib/stores/router.svelte.ts';
+  import { router, views, overviewId } from './lib/stores/router.svelte.ts';
   import { fleetStore } from './lib/stores/fleet.svelte.ts';
   import { healthStore } from './lib/stores/health.svelte.ts';
   import { streamStore } from './lib/stores/stream.svelte.ts';
   import { eventStore } from './lib/stores/events.svelte.ts';
   import { overlayStore } from './lib/stores/overlay.svelte.ts';
+  import { formatTime as fmtTime } from './lib/utils/format.ts';
+  import ViewShell from './lib/components/shared/ViewShell.svelte';
   import FleetPanel from './lib/components/FleetPanel.svelte';
   import ServersPanel from './lib/components/ServersPanel.svelte';
   import TasksPanel from './lib/components/TasksPanel.svelte';
@@ -25,35 +27,14 @@
   import OverlayShell from './lib/components/OverlayShell.svelte';
   import Toast from './lib/widgets/Toast.svelte';
 
-  const panels = [
-    { id: 'fleet',     label: 'Fleet',     key: '1', icon: '\u25C8' },
-    { id: 'servers',   label: 'Servers',   key: '2', icon: '\u2665' },
-    { id: 'tasks',     label: 'Tasks',     key: '3', icon: '\u2611' },
-    { id: 'workflows', label: 'Workflows', key: '4', icon: '\u2699' },
-    { id: 'memory',    label: 'Memory',    key: '5', icon: '\u29BE' },
-    { id: 'graph',     label: 'Graph',     key: '6', icon: '\u2B21' },
-    { id: 'timeline',  label: 'Timeline',  key: '7', icon: '\u2261' },
-    { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
-    { id: 'sandbox',   label: 'Sandbox',   key: '9', icon: '\u2B22' },
-    { id: 'reasoning', label: 'Reasoning', key: '0', icon: '\u2726' },
-    { id: 'topology', label: 'Topology', key: 't', icon: '\u2B53' },
-    { id: 'lifecycle', label: 'Lifecycle', key: 'l', icon: '\u21C6' },
-  ];
-
   let showCommandPalette = $state(false);
   let showKeyboardHelp = $state(false);
 
   onMount(() => {
-    // Detect overlay mode from URL query parameter (?overlay=1).
     overlayStore.init();
-
-    // In overlay mode, OverlayShell manages its own store lifecycle.
     if (overlayStore.enabled) return;
 
-    // Initialize hash-based router.
     router.init();
-
-    // Connect SSE and start stores with 30s fallback polling.
     eventStore.connect();
     fleetStore.fetch();
     healthStore.fetch();
@@ -62,81 +43,66 @@
     eventStore.disconnect();
   });
 
-  // Keyboard shortcuts (number keys for panel switching — disabled in overlay mode)
+  // Keyboard shortcuts — view switching + sub-view switching
   function handleKeydown(e) {
     if (overlayStore.enabled) return;
     const tag = e.target?.tagName;
     const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-    // Escape: close any open modal/detail view
     if (e.key === 'Escape') {
-      if (showCommandPalette) {
-        showCommandPalette = false;
-        return;
-      }
-      if (showKeyboardHelp) {
-        showKeyboardHelp = false;
-        return;
-      }
+      if (showCommandPalette) { showCommandPalette = false; return; }
+      if (showKeyboardHelp) { showKeyboardHelp = false; return; }
+      // Clear detail if open
+      if (router.detail) { router.back(); return; }
       return;
     }
 
-    // Number keys 1-8, 0 for panel switching, ` or o for overview (only when not in an input)
     if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (e.key === '0') {
-        router.navigate('reasoning');
-        return;
-      }
+      // ` or o → Overview
       if (e.key === '`' || e.key === 'o') {
-        router.navigate('overview');
+        router.navigate(overviewId);
         return;
       }
-      // / → focus search/filter in current panel
+      // / → focus search
       if (e.key === '/') {
         e.preventDefault();
         const searchInput = document.querySelector('.panel-search-input');
         if (searchInput) searchInput.focus();
         return;
       }
-      // r → force refresh current panel data
+      // r → refresh
       if (e.key === 'r') {
         fleetStore.fetch();
         healthStore.fetch();
         return;
       }
-      // ? → show keyboard shortcut overlay
+      // ? → keyboard help
       if (e.key === '?') {
         showKeyboardHelp = !showKeyboardHelp;
         return;
       }
-      // t → topology panel
-      if (e.key === 't') {
-        router.navigate('topology');
-        return;
-      }
-      // l → lifecycle panel
-      if (e.key === 'l') {
-        router.navigate('lifecycle');
-        return;
-      }
+
+      // 1-6 → view switching
       const num = parseInt(e.key);
-      if (num >= 1 && num <= 9) {
-        router.navigate(panels[num - 1].id);
+      if (num >= 1 && num <= views.length) {
+        router.navigate(views[num - 1].id);
         return;
+      }
+
+      // a-d → sub-view switching within current view
+      const subIdx = e.key.charCodeAt(0) - 'a'.charCodeAt(0);
+      if (subIdx >= 0 && subIdx <= 3) {
+        const vd = router.currentViewDef;
+        if (vd && subIdx < vd.subViews.length) {
+          router.navigateSub(vd.subViews[subIdx].id);
+          return;
+        }
       }
     }
   }
 
-  // Handle command palette selections
+  // Command palette handler — uses legacy navigate (auto-redirects)
   function handleCommand(item) {
-    // Panel navigation
-    const panelIds = panels.map(p => p.id);
-    if (panelIds.includes(item.id)) {
-      router.navigate(item.id);
-      return;
-    }
-
-    // Actions
     switch (item.id) {
       case 'refresh-all':
         fleetStore.fetch();
@@ -145,34 +111,19 @@
       case 'pause-stream':
         streamStore.togglePause();
         break;
-      case 'create-task':
-        router.navigate('tasks');
-        break;
-      case 'seed-entity':
-        router.navigate('graph');
-        break;
-      case 'create-handoff':
-        router.navigate('presence');
-        break;
-      case 'approve-workflow':
-        router.navigate('workflows');
-        break;
-      case 'reject-workflow':
-        router.navigate('workflows');
-        break;
-      case 'promote-memory':
-        router.navigate('memory');
-        break;
-      case 'demote-memory':
-        router.navigate('memory');
-        break;
-      case 'add-memory':
-        router.navigate('memory');
-        break;
       case 'toggle-scanlines':
         document.body.classList.toggle('scanlines');
         break;
+      default:
+        // Navigate: works for both view IDs and legacy panel IDs
+        router.navigate(item.id);
+        break;
     }
+  }
+
+  // Render the correct sub-panel based on router.subView (router.panel alias)
+  function renderSubPanel(subView) {
+    return subView;
   }
 
   // Status bar derived values
@@ -183,11 +134,6 @@
   let availableSrv = $derived(healthStore.availableCount);
   let degradedSrv = $derived(healthStore.degradedCount);
   let downSrv = $derived(healthStore.downCount);
-
-  function formatTime(d) {
-    if (!d) return '--:--';
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -195,6 +141,7 @@
 {#if overlayStore.enabled}
   <OverlayShell />
 {:else}
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="hud-shell">
   <!-- Top navigation bar -->
   <header class="nav-bar">
@@ -203,17 +150,34 @@
       <span class="nav-title">LOOM HUD</span>
     </div>
 
-    <nav class="nav-tabs">
-      {#each panels as panel}
+    <nav class="nav-tabs" aria-label="Main navigation">
+      <!-- Overview tab -->
+      <button
+        class="nav-tab"
+        class:active={router.view === overviewId}
+        onclick={() => { router.navigate(overviewId); }}
+        aria-current={router.view === overviewId ? 'page' : undefined}
+        title="Overview (` or o)"
+      >
+        <span class="nav-tab-icon">{'\u25A3'}</span>
+        <span class="nav-tab-label">Overview</span>
+        <kbd class="nav-tab-key">o</kbd>
+      </button>
+
+      <span class="nav-divider"></span>
+
+      <!-- Grouped view tabs -->
+      {#each views as v}
         <button
           class="nav-tab"
-          class:active={router.panel === panel.id}
-          onclick={() => { router.navigate(panel.id); }}
-          title="{panel.label} ({panel.key})"
+          class:active={router.view === v.id}
+          onclick={() => { router.navigate(v.id); }}
+          aria-current={router.view === v.id ? 'page' : undefined}
+          title="{v.label} ({v.key})"
         >
-          <span class="nav-tab-icon">{panel.icon}</span>
-          <span class="nav-tab-label">{panel.label}</span>
-          <span class="nav-tab-key">{panel.key}</span>
+          <span class="nav-tab-icon">{v.icon}</span>
+          <span class="nav-tab-label">{v.label}</span>
+          <kbd class="nav-tab-key">{v.key}</kbd>
         </button>
       {/each}
     </nav>
@@ -223,52 +187,67 @@
         class="btn btn-ghost"
         onclick={() => { showCommandPalette = true; }}
         title="Command Palette (Cmd+K)"
+        aria-label="Open command palette"
       >
         {'\u2318'}K
       </button>
     </div>
   </header>
 
-  <!-- Connection state banner (hidden when connected) -->
   <ConnectionBanner />
 
-  <!-- Panel content area (keyed block triggers crossfade animation on panel switch) -->
-  <main class="panel-area">
-    {#key router.panel}
+  <!-- Main content area -->
+  <main class="panel-area" id="main-content">
+    {#key router.view}
       <div class="panel-enter">
-        {#if router.panel === 'overview'}
+        {#if router.view === overviewId}
           <OverviewPanel />
-        {:else if router.panel === 'fleet'}
-          <FleetPanel />
-        {:else if router.panel === 'servers'}
-          <ServersPanel />
-        {:else if router.panel === 'tasks'}
-          <TasksPanel />
-        {:else if router.panel === 'workflows'}
-          <WorkflowsPanel />
-        {:else if router.panel === 'memory'}
-          <MemoryPanel />
-        {:else if router.panel === 'graph'}
-          <GraphPanel />
-        {:else if router.panel === 'timeline'}
-          <TimelinePanel />
-        {:else if router.panel === 'presence'}
-          <PresencePanel />
-        {:else if router.panel === 'sandbox'}
-          <SandboxPanel />
-        {:else if router.panel === 'reasoning'}
-          <ReasoningPanel />
-        {:else if router.panel === 'topology'}
-          <TopologyPanel />
-        {:else if router.panel === 'lifecycle'}
-          <LifecyclePanel />
+        {:else}
+          {#key router.subView}
+            {@const vd = router.currentViewDef}
+            {#if vd}
+              <ViewShell
+                subViews={vd.subViews}
+                activeSubView={router.subView}
+                onSwitch={(id) => router.navigateSub(id)}
+              >
+                {#if router.subView === 'fleet'}
+                  <FleetPanel />
+                {:else if router.subView === 'servers'}
+                  <ServersPanel />
+                {:else if router.subView === 'tasks'}
+                  <TasksPanel />
+                {:else if router.subView === 'workflows'}
+                  <WorkflowsPanel />
+                {:else if router.subView === 'memory'}
+                  <MemoryPanel />
+                {:else if router.subView === 'graph'}
+                  <GraphPanel />
+                {:else if router.subView === 'timeline'}
+                  <TimelinePanel />
+                {:else if router.subView === 'stream'}
+                  <StreamPanel />
+                {:else if router.subView === 'presence'}
+                  <PresencePanel />
+                {:else if router.subView === 'sandbox'}
+                  <SandboxPanel />
+                {:else if router.subView === 'reasoning'}
+                  <ReasoningPanel />
+                {:else if router.subView === 'topology'}
+                  <TopologyPanel />
+                {:else if router.subView === 'lifecycle'}
+                  <LifecyclePanel />
+                {/if}
+              </ViewShell>
+            {/if}
+          {/key}
         {/if}
       </div>
     {/key}
   </main>
 
   <!-- Status bar -->
-  <footer class="status-bar">
+  <footer class="status-bar" role="status" aria-label="System status">
     <div class="status-bar-left">
       <span class="status-indicator" class:online={daemonOnline} class:offline={!daemonOnline}></span>
       <span class="status-text">{daemonOnline ? 'Connected' : 'Disconnected'}</span>
@@ -286,11 +265,10 @@
         <span class="status-text" style="color: var(--error);">({downSrv} down)</span>
       {/if}
       <span class="status-divider"></span>
-      <span class="status-text text-mono">{formatTime(fleetStore.lastUpdated)}</span>
+      <span class="status-text text-mono">{fmtTime(fleetStore.lastUpdated)}</span>
     </div>
   </footer>
 
-  <!-- Command Palette (standalone component with fuzzy search, grouping, arrow-key nav) -->
   <CommandPalette bind:open={showCommandPalette} onselect={handleCommand} />
 
   <!-- Keyboard shortcut help overlay -->
@@ -302,36 +280,52 @@
         <div class="help-title">Keyboard Shortcuts</div>
         <div class="help-grid">
           <div class="help-section">
-            <div class="help-section-title">Navigation</div>
-            <div class="help-row"><kbd>1</kbd>-<kbd>9</kbd> <span>Switch panels</span></div>
-            <div class="help-row"><kbd>9</kbd> <span>Sandbox</span></div>
-            <div class="help-row"><kbd>0</kbd> <span>Reasoning</span></div>
+            <div class="help-section-title">Views</div>
             <div class="help-row"><kbd>`</kbd> / <kbd>o</kbd> <span>Overview</span></div>
-            <div class="help-row"><kbd>t</kbd> <span>Topology</span></div>
-            <div class="help-row"><kbd>l</kbd> <span>Lifecycle</span></div>
+            {#each views as v}
+              <div class="help-row"><kbd>{v.key}</kbd> <span>{v.label}</span></div>
+            {/each}
           </div>
           <div class="help-section">
-            <div class="help-section-title">Actions</div>
+            <div class="help-section-title">Sub-views</div>
+            <div class="help-row"><kbd>a</kbd>-<kbd>d</kbd> <span>Switch within view</span></div>
+            <div class="help-section-title" style="margin-top: var(--space-3);">Actions</div>
             <div class="help-row"><kbd>/</kbd> <span>Focus search</span></div>
             <div class="help-row"><kbd>r</kbd> <span>Refresh data</span></div>
-            <div class="help-row"><kbd>⌘K</kbd> <span>Command palette</span></div>
+            <div class="help-row"><kbd>{'\u2318'}K</kbd> <span>Command palette</span></div>
           </div>
           <div class="help-section">
             <div class="help-section-title">General</div>
             <div class="help-row"><kbd>?</kbd> <span>Toggle this help</span></div>
-            <div class="help-row"><kbd>Esc</kbd> <span>Close modal</span></div>
+            <div class="help-row"><kbd>Esc</kbd> <span>Close / back</span></div>
           </div>
         </div>
       </div>
     </div>
   {/if}
 
-  <!-- Toast notifications overlay -->
   <Toast />
 </div>
 {/if}
 
 <style>
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    padding: 8px 16px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    font-weight: 600;
+    font-size: 13px;
+    z-index: 1000;
+    transition: top 0.15s ease;
+  }
+
+  .skip-link:focus {
+    top: 0;
+  }
+
   .hud-shell {
     display: flex;
     flex-direction: column;
@@ -347,26 +341,26 @@
     height: var(--header-height);
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
-    padding: 0 12px;
+    padding: 0 var(--space-3);
     flex-shrink: 0;
-    gap: 12px;
+    gap: var(--space-3);
     z-index: 100;
   }
 
   .nav-brand {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-1);
     flex-shrink: 0;
   }
 
   .nav-logo {
-    font-size: 16px;
+    font-size: var(--text-lg);
     color: var(--accent);
   }
 
   .nav-title {
-    font-size: 11px;
+    font-size: var(--text-sm);
     font-weight: 700;
     letter-spacing: 1.5px;
     color: var(--fg-secondary);
@@ -378,18 +372,29 @@
     gap: 2px;
     flex: 1;
     justify-content: center;
+    align-items: center;
+  }
+
+  .nav-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+    margin: 0 var(--space-1);
   }
 
   .nav-tab {
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 4px 10px;
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
-    transition: background var(--transition-fast, 0.12s), color var(--transition-fast, 0.12s);
+    transition: background var(--transition-fast), color var(--transition-fast);
     position: relative;
+    cursor: pointer;
+    background: none;
+    border: none;
   }
 
   .nav-tab:hover {
@@ -407,15 +412,15 @@
     content: '';
     position: absolute;
     bottom: -1px;
-    left: 8px;
-    right: 8px;
+    left: var(--space-2);
+    right: var(--space-2);
     height: 2px;
     background: var(--accent);
     border-radius: 1px;
   }
 
   .nav-tab-icon {
-    font-size: 12px;
+    font-size: var(--text-sm);
     opacity: 0.7;
   }
 
@@ -431,6 +436,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     line-height: 1;
+    background: none;
   }
 
   .nav-actions {
@@ -453,7 +459,7 @@
     height: var(--statusbar-height);
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
-    padding: 0 12px;
+    padding: 0 var(--space-3);
     flex-shrink: 0;
     z-index: 100;
   }
@@ -462,7 +468,7 @@
   .status-bar-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .status-indicator {
@@ -484,7 +490,7 @@
   }
 
   .status-text {
-    font-size: 11px;
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
   }
 
@@ -511,48 +517,48 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 20px 24px;
-    max-width: 480px;
+    padding: var(--space-6) var(--space-6);
+    max-width: 520px;
     width: 90%;
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--elevation-3);
   }
 
   .help-title {
-    font-size: 14px;
+    font-size: var(--text-base);
     font-weight: 700;
     color: var(--fg-primary);
-    margin-bottom: 16px;
-    letter-spacing: 0.04em;
+    margin-bottom: var(--space-4);
+    letter-spacing: var(--tracking-normal);
     text-shadow: 0 0 8px rgba(129, 240, 254, 0.2);
   }
 
   .help-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   .help-section-title {
-    font-size: 10px;
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-muted);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
   }
 
   .help-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
-    margin-bottom: 4px;
+    margin-bottom: var(--space-1);
   }
 
   .help-row kbd {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-xs);
     padding: 2px 5px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);

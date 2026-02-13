@@ -208,7 +208,7 @@ class TaskStore {
     this.stopPolling();
     this.fetch();
     // 30s fallback poll (SSE is the primary data source).
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply task list directly from hud.fleet snapshots.
     // The FleetMonitor fetches all tasks on its 15s cadence and broadcasts them.

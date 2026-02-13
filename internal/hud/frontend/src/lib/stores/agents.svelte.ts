@@ -61,7 +61,7 @@ class AgentStore {
   startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // SSE-first: extract agents from fleet snapshots.
     this.eventUnsubs.push(

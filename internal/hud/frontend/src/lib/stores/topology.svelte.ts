@@ -80,7 +80,7 @@ class TopologyStore {
   startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Fleet snapshot updates node statuses in-place.
     this.eventUnsubs.push(

@@ -108,6 +108,13 @@
     selectedServer = selectedServer?.name === server.name ? null : server;
   }
 
+  function handleRowKeydown(e, server) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      selectServer(server);
+    }
+  }
+
   function formatLatency(ms) {
     if (ms == null) return '---';
     if (ms < 1) return '<1ms';
@@ -183,16 +190,16 @@
       <table>
         <thead>
           <tr>
-            <th class="sortable" onclick={() => toggleSort('name')}>
+            <th class="sortable" tabindex="0" onclick={() => toggleSort('name')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('name'))} aria-sort={sortColumn === 'name' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
               Server{sortIndicator('name')}
             </th>
-            <th class="sortable" onclick={() => toggleSort('status')}>
+            <th class="sortable" tabindex="0" onclick={() => toggleSort('status')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('status'))} aria-sort={sortColumn === 'status' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
               Status{sortIndicator('status')}
             </th>
-            <th class="sortable" onclick={() => toggleSort('latency')}>
+            <th class="sortable" tabindex="0" onclick={() => toggleSort('latency')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('latency'))} aria-sort={sortColumn === 'latency' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
               Latency{sortIndicator('latency')}
             </th>
-            <th class="sortable" onclick={() => toggleSort('tool_count')}>
+            <th class="sortable" tabindex="0" onclick={() => toggleSort('tool_count')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('tool_count'))} aria-sort={sortColumn === 'tool_count' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
               Tools{sortIndicator('tool_count')}
             </th>
             <th>Target</th>
@@ -204,7 +211,10 @@
             <tr
               class="server-row"
               class:selected={selectedServer?.name === server.name}
+              role="button"
+              tabindex="0"
               onclick={() => selectServer(server)}
+              onkeydown={(e) => handleRowKeydown(e, server)}
             >
               <td class="text-mono server-name">{server.name}</td>
               <td>

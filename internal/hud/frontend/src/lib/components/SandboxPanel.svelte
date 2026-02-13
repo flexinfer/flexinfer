@@ -1,5 +1,6 @@
 <script>
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
+  import { formatTime } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
 
   $effect(() => {
@@ -35,13 +36,9 @@
     }
   }
 
+  // eventTime: delegate to shared formatTime
   function eventTime(ts) {
-    if (!ts) return '--:--';
-    try {
-      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch {
-      return '--:--';
-    }
+    return formatTime(ts);
   }
 </script>
 

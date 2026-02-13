@@ -1,6 +1,7 @@
 <script>
   import { memoryStore } from '../stores/memory.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
+  import { formatNumber, relativeTime, statusVariant } from '../utils/format.ts';
   import Gauge from '../widgets/Gauge.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
@@ -193,37 +194,6 @@
     return map[importance] ?? 0.3;
   }
 
-  function statusVariant(status) {
-    const map = {
-      active: 'success',
-      compressed: 'accent',
-      expired: 'error',
-      pending: 'warning',
-    };
-    return map[status] ?? 'info';
-  }
-
-  function formatNumber(n) {
-    if (n == null) return '0';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-    return String(n);
-  }
-
-  function relativeTime(ts) {
-    if (!ts) return '---';
-    const now = Date.now();
-    const then = new Date(ts).getTime();
-    const diff = now - then;
-    const secs = Math.floor(diff / 1000);
-    if (secs < 60) return secs + 's ago';
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return mins + 'm ago';
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + 'h ago';
-    const days = Math.floor(hours / 24);
-    return days + 'd ago';
-  }
 </script>
 
 <div class="panel memory-panel">

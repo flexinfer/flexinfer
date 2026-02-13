@@ -98,7 +98,7 @@ class SandboxStore {
   startPolling(intervalMs = 15000): void {
     this.stopPolling();
     this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events.
     this.eventUnsubs.push(

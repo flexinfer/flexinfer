@@ -121,7 +121,7 @@ class PresenceStore {
   startPolling(intervalMs = 30000): void {
     this.stopPolling();
     this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     this.eventUnsubs.push(
       eventStore.on('process.start', () => this.fetch()),

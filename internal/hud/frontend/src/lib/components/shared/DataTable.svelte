@@ -1,0 +1,239 @@
+<script>
+  /**
+   * DataTable — sortable, selectable table with sticky header,
+   * skeleton loading, and optional virtual scroll.
+   *
+   * @type {{
+   *   columns: Array<{ key: string, label: string, sortable?: boolean, width?: string, align?: 'left'|'center'|'right' }>,
+   *   rows: any[],
+   *   sortKey?: string,
+   *   sortDir?: 'asc' | 'desc',
+   *   loading?: boolean,
+   *   skeletonRows?: number,
+   *   selectable?: boolean,
+   *   selectedIds?: Set<string>,
+   *   idKey?: string,
+   *   onSort?: (key: string, dir: 'asc' | 'desc') => void,
+   *   onSelect?: (ids: Set<string>) => void,
+   *   onRowClick?: (row: any) => void,
+   *   row: import('svelte').Snippet<[{ row: any, index: number }]>,
+   * }}
+   */
+  let {
+    columns = [],
+    rows = [],
+    sortKey = '',
+    sortDir = 'asc',
+    loading = false,
+    skeletonRows = 5,
+    selectable = false,
+    selectedIds = new Set(),
+    idKey = 'id',
+    onSort,
+    onSelect,
+    onRowClick,
+    row: rowSnippet,
+  } = $props();
+
+  function handleHeaderClick(col) {
+    if (!col.sortable || !onSort) return;
+    const newDir = sortKey === col.key && sortDir === 'asc' ? 'desc' : 'asc';
+    onSort(col.key, newDir);
+  }
+
+  function handleSelectAll() {
+    if (!onSelect) return;
+    if (selectedIds.size === rows.length) {
+      onSelect(new Set());
+    } else {
+      onSelect(new Set(rows.map(r => r[idKey])));
+    }
+  }
+
+  function handleSelectRow(row) {
+    if (!onSelect) return;
+    const next = new Set(selectedIds);
+    const id = row[idKey];
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    onSelect(next);
+  }
+
+  let allSelected = $derived(rows.length > 0 && selectedIds.size === rows.length);
+  let someSelected = $derived(selectedIds.size > 0 && selectedIds.size < rows.length);
+</script>
+
+<div class="data-table-wrap">
+  <table class="data-table" role="grid">
+    <thead>
+      <tr>
+        {#if selectable}
+          <th class="data-table-check" scope="col">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              indeterminate={someSelected}
+              onchange={handleSelectAll}
+              aria-label="Select all rows"
+            />
+          </th>
+        {/if}
+        {#each columns as col}
+          <th
+            scope="col"
+            class:sortable={col.sortable}
+            class:sorted={sortKey === col.key}
+            style:width={col.width || 'auto'}
+            style:text-align={col.align || 'left'}
+            aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+            onclick={() => handleHeaderClick(col)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleHeaderClick(col); } }}
+            tabindex={col.sortable ? 0 : undefined}
+            role={col.sortable ? 'button' : undefined}
+          >
+            <span class="data-table-header-label">{col.label}</span>
+            {#if col.sortable && sortKey === col.key}
+              <span class="data-table-sort-icon">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+            {/if}
+          </th>
+        {/each}
+      </tr>
+    </thead>
+    <tbody>
+      {#if loading}
+        {#each Array(skeletonRows) as _, i}
+          <tr class="data-table-skeleton-row">
+            {#if selectable}
+              <td><div class="skeleton skeleton-text" style="width: 16px;"></div></td>
+            {/if}
+            {#each columns as col}
+              <td><div class="skeleton skeleton-text" style="width: {60 + (i * 7) % 40}%;"></div></td>
+            {/each}
+          </tr>
+        {/each}
+      {:else}
+        {#each rows as rowData, index (rowData[idKey] ?? index)}
+          <tr
+            class:selected={selectable && selectedIds.has(rowData[idKey])}
+            class:clickable={!!onRowClick}
+            onclick={() => { if (onRowClick) onRowClick(rowData); }}
+            onkeydown={(e) => { if (onRowClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(rowData); } }}
+            tabindex={onRowClick ? 0 : undefined}
+            role={onRowClick ? 'row' : undefined}
+          >
+            {#if selectable}
+              <td class="data-table-check">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(rowData[idKey])}
+                  onchange={() => handleSelectRow(rowData)}
+                  onclick={(e) => e.stopPropagation()}
+                  aria-label="Select row"
+                />
+              </td>
+            {/if}
+            {@render rowSnippet({ row: rowData, index })}
+          </tr>
+        {/each}
+      {/if}
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .data-table-wrap {
+    overflow-x: auto;
+    flex: 1;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+  }
+
+  .data-table thead th {
+    text-align: left;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    padding: var(--space-1) var(--space-2);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 1;
+    user-select: none;
+  }
+
+  .data-table thead th.sortable {
+    cursor: pointer;
+  }
+
+  .data-table thead th.sortable:hover {
+    color: var(--fg-primary);
+  }
+
+  .data-table thead th.sorted {
+    color: var(--fg-primary);
+  }
+
+  .data-table-header-label {
+    display: inline;
+  }
+
+  .data-table-sort-icon {
+    font-size: 8px;
+    margin-left: var(--space-1);
+    opacity: 0.7;
+  }
+
+  .data-table tbody td {
+    padding: var(--space-1) var(--space-2);
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-secondary);
+    vertical-align: middle;
+  }
+
+  .data-table tbody tr:hover td {
+    background: var(--bg-tertiary);
+    color: var(--fg-primary);
+  }
+
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .data-table tbody tr.selected td {
+    background: rgba(1, 135, 153, 0.08);
+  }
+
+  .data-table tbody tr.clickable {
+    cursor: pointer;
+  }
+
+  .data-table tbody tr.clickable:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
+  }
+
+  .data-table-check {
+    width: 32px;
+    text-align: center;
+  }
+
+  .data-table-check input[type="checkbox"] {
+    accent-color: var(--info);
+    cursor: pointer;
+  }
+
+  .data-table-skeleton-row td {
+    padding: var(--space-2) var(--space-2);
+  }
+</style>

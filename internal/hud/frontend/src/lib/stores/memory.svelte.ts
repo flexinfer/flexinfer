@@ -246,7 +246,7 @@ class MemoryStore {
     this.stopPolling();
     this.fetch();
     // 30s fallback poll (SSE is the primary data source for stats).
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply stats directly from hud.memory snapshots.
     this.eventUnsubs.push(

@@ -1,6 +1,7 @@
 <script>
   import { topologyStore } from '../stores/topology.svelte.ts';
   import { presenceStore } from '../stores/presence.svelte.ts';
+  import { truncatePath } from '../utils/format.ts';
   import AgentTopology from '../widgets/AgentTopology.svelte';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -49,10 +50,7 @@
   }
 
   function shortPath(path) {
-    if (!path) return '---';
-    const parts = path.split('/');
-    if (parts.length <= 3) return path;
-    return '.../' + parts.slice(-3).join('/');
+    return truncatePath(path, 50);
   }
 </script>
 

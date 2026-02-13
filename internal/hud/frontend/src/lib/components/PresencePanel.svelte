@@ -2,6 +2,7 @@
   import { presenceStore } from '../stores/presence.svelte.ts';
   import { timelineStore } from '../stores/timeline.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
+  import { formatTime, relativeTime, agentColor, truncatePath } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
@@ -152,21 +153,16 @@
     }
   }
 
-  // --- Relative time helper ---
+  // --- Relative time tick (forces re-render) ---
   let _tick = $state(0);
   $effect(() => {
     const t = setInterval(() => { _tick++ }, 5000);
     return () => clearInterval(t);
   });
-
-  function relativeTime(ts) {
+  // Force dependency on _tick for relativeTime reactivity
+  function reactiveRelativeTime(ts) {
     void _tick;
-    if (!ts) return '---';
-    const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-    if (diff < 10) return 'just now';
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
+    return relativeTime(ts);
   }
 
   // --- Branch collision detection ---
@@ -193,22 +189,6 @@
       .map(([path, agents]) => ({ path, agents: [...new Set(agents)] }));
   });
 
-  // --- Agent type colors ---
-  const AGENT_COLORS = {
-    claude: 'var(--agent-claude, #E95D74)',
-    codex: 'var(--agent-codex, #22B255)',
-    gemini: 'var(--agent-gemini, #018799)',
-    copilot: 'var(--agent-copilot, #E7B312)',
-  };
-
-  function agentColor(agentType) {
-    if (!agentType) return 'var(--fg-secondary)';
-    const lower = agentType.toLowerCase();
-    for (const [key, color] of Object.entries(AGENT_COLORS)) {
-      if (lower.includes(key)) return color;
-    }
-    return 'var(--fg-secondary)';
-  }
 
   // --- View toggle: table vs cards ---
   let agentView = $state('cards');
@@ -302,17 +282,8 @@
     return map[status] ?? 'info';
   }
 
-  function formatTime(ts) {
-    if (!ts) return '--:--:--';
-    const d = new Date(ts);
-    return d.toLocaleTimeString('en-US', { hour12: false });
-  }
-
   function shortPath(path) {
-    if (!path) return '---';
-    const parts = path.split('/');
-    if (parts.length <= 3) return path;
-    return '.../' + parts.slice(-3).join('/');
+    return truncatePath(path, 50);
   }
 </script>
 
@@ -429,7 +400,7 @@
                       {/if}
                       {agent.branch || '---'}
                     </td>
-                    <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{relativeTime(agent.last_heartbeat)}</td>
+                    <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{reactiveRelativeTime(agent.last_heartbeat)}</td>
                     <td>
                       {#if agent.status === 'active'}
                         <button class="btn btn-xs btn-dispatch" onclick={() => openDispatch(agent.agent_id)} title="Dispatch task to agent">

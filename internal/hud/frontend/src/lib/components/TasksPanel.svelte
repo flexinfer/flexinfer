@@ -2,6 +2,7 @@
   import { taskStore } from '../stores/tasks.svelte.ts';
   import { agentStore } from '../stores/agents.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
+  import { relativeTime, statusVariant, priorityVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
 
@@ -107,27 +108,6 @@
       next.add(status);
     }
     collapsedGroups = next;
-  }
-
-  function statusVariant(status) {
-    const map = {
-      pending: 'warning',
-      in_progress: 'info',
-      blocked: 'error',
-      completed: 'success',
-      cancelled: 'error',
-    };
-    return map[status] ?? 'info';
-  }
-
-  function priorityVariant(priority) {
-    const map = {
-      critical: 'error',
-      high: 'warning',
-      medium: 'info',
-      low: 'accent',
-    };
-    return map[priority] ?? 'info';
   }
 
   const PRIORITY_CYCLE = ['low', 'medium', 'high', 'critical'];
@@ -247,20 +227,6 @@
     closeResolve();
   }
 
-  function relativeTime(ts) {
-    if (!ts) return '---';
-    const now = Date.now();
-    const then = new Date(ts).getTime();
-    const diff = now - then;
-    const secs = Math.floor(diff / 1000);
-    if (secs < 60) return secs + 's ago';
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return mins + 'm ago';
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + 'h ago';
-    const days = Math.floor(hours / 24);
-    return days + 'd ago';
-  }
 </script>
 
 <div class="panel tasks-panel">

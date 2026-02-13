@@ -1,5 +1,6 @@
 <script>
   import { streamStore } from '../stores/stream.svelte.ts';
+  import { formatTime, entryVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
 
   $effect(() => {
@@ -52,24 +53,6 @@
   function setAgentFilter(agent) {
     agentFilter = agent;
     streamStore.filterAgent = agent;
-  }
-
-  function formatTime(ts) {
-    if (!ts) return '--:--:--';
-    const d = new Date(ts);
-    return d.toLocaleTimeString('en-US', { hour12: false });
-  }
-
-  function typeVariant(type) {
-    const map = {
-      decision: 'accent',
-      finding: 'info',
-      error: 'error',
-      task: 'warning',
-      file_read: 'info',
-      note: 'success',
-    };
-    return map[type] ?? 'info';
   }
 
   function typeBorderColor(type) {
@@ -145,7 +128,7 @@
           style="border-left: 3px solid {typeBorderColor(entry.entry_type)}"
         >
           <span class="stream-time text-mono">{formatTime(entry.timestamp)}</span>
-          <Badge text={entry.entry_type ?? 'note'} variant={typeVariant(entry.entry_type)} />
+          <Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} />
           <span class="stream-agent">
             <Badge text={entry.agent ?? '---'} variant="info" />
           </span>

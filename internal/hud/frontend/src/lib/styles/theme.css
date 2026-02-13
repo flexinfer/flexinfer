@@ -1,5 +1,7 @@
 :root {
-  /* Base — WebDevCody deep teal palette */
+  /* ---- Color Palette ---- */
+
+  /* Base — deep teal */
   --bg-primary: #00171A;
   --bg-secondary: #002227;
   --bg-tertiary: #002E34;
@@ -9,7 +11,7 @@
   --border: #035964;
   --border-focus: #007180;
 
-  /* Semantic — teal / pink accent palette */
+  /* Semantic */
   --success: #22B255;
   --warning: #E7B312;
   --error: #E61E3F;
@@ -28,49 +30,90 @@
   --tier-short: #9B5CD0;
   --tier-long: #22B255;
 
-  /* Typography */
+  /* Agent type */
+  --agent-claude: #E95D74;
+  --agent-codex: #22B255;
+  --agent-gemini: #018799;
+  --agent-copilot: #E7B312;
+
+  /* ---- Type Scale ---- */
+
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
-  /* Sizing */
+  --text-xs: 10px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+
+  --tracking-tight: 0.01em;
+  --tracking-normal: 0.02em;
+  --tracking-wide: 0.08em;
+
+  /* ---- Spacing Scale (4px base) ---- */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* ---- Layout ---- */
+
   --header-height: 40px;
   --statusbar-height: 28px;
-  --panel-padding: 12px;
-  --border-radius: 8px;
+  --panel-padding: var(--space-3);
+  --drawer-width: 400px;
 
-  /* Radius scale */
+  /* ---- Radius Scale ---- */
+
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
 
-  /* Glass effects */
+  /* legacy alias */
+  --border-radius: var(--radius-md);
+
+  /* ---- Elevation ---- */
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  --elevation-1: var(--shadow-sm);   /* cards */
+  --elevation-2: var(--shadow-md);   /* dropdowns, drawers */
+  --elevation-3: var(--shadow-lg);   /* modals, overlays */
+
+  /* ---- Glass ---- */
+
   --glass-bg: rgba(0, 34, 39, 0.65);
   --glass-bg-subtle: rgba(0, 34, 39, 0.4);
   --glass-blur: 12px;
   --glass-blur-heavy: 20px;
   --glass-border: rgba(3, 89, 100, 0.4);
 
-  /* Elevation shadows */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  /* ---- Motion ---- */
 
-  /* Transitions */
   --transition-fast: 0.1s ease;
   --transition-normal: 0.2s ease;
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
 
-  /* Glow effects */
+  /* ---- Effects ---- */
+
   --scanline-opacity: 0.03;
   --glow-accent: rgba(233, 93, 116, 0.15);
   --glow-success: rgba(34, 178, 85, 0.12);
   --glow-error: rgba(230, 30, 63, 0.12);
-
-  /* Agent type colors */
-  --agent-claude: #E95D74;
-  --agent-codex: #22B255;
-  --agent-gemini: #018799;
-  --agent-copilot: #E7B312;
 }
 
 *,

@@ -37,7 +37,7 @@ class TimelineStore {
     this.fetch();
 
     // 30s fallback poll.
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to all agent.* SSE events for live updates.
     const agentEvents = [

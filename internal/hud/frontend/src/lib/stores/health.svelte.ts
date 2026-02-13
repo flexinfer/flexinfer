@@ -243,7 +243,7 @@ class HealthStore {
     this.stopPolling();
     this.fetch();
     // 30s fallback poll (SSE is the primary data source).
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply data directly from hud.health snapshots.
     this.eventUnsubs.push(

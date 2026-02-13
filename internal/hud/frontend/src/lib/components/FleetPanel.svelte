@@ -7,6 +7,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { healthStore } from '../stores/health.svelte.ts';
   import { router } from '../stores/router.svelte.ts';
+  import { formatTime, relativeTime, formatNumber, entryVariant } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Gauge from '../widgets/Gauge.svelte';
@@ -127,54 +128,21 @@
     router.navigate('fleet', sessionId);
   }
 
+  function handleRowKeydown(e, sessionId) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      navigateToSession(sessionId);
+    }
+  }
+
   function backToFleet() {
     router.back();
-  }
-
-  function formatTime(ts) {
-    if (!ts) return '--:--:--';
-    const d = new Date(ts);
-    return d.toLocaleTimeString('en-US', { hour12: false });
-  }
-
-  function relativeTime(ts) {
-    if (!ts) return '---';
-    const now = Date.now();
-    const then = new Date(ts).getTime();
-    const diff = now - then;
-    const secs = Math.floor(diff / 1000);
-    if (secs < 60) return secs + 's ago';
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return mins + 'm ago';
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + 'h ago';
-    const days = Math.floor(hours / 24);
-    return days + 'd ago';
-  }
-
-  function entryVariant(type) {
-    const map = {
-      decision: 'accent',
-      finding: 'info',
-      error: 'error',
-      task: 'warning',
-      file_read: 'info',
-      note: 'success',
-    };
-    return map[type] ?? 'info';
   }
 
   function sessionStatus(session) {
     if (session.ended_at) return 'down';
     if (session.active) return 'healthy';
     return 'degraded';
-  }
-
-  function formatNumber(n) {
-    if (n == null) return '0';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-    return String(n);
   }
 </script>
 
@@ -277,7 +245,7 @@
             </thead>
             <tbody>
               {#each sessions as session (session.id)}
-                <tr class="clickable-row" onclick={() => navigateToSession(session.id)}>
+                <tr class="clickable-row" role="button" tabindex="0" onclick={() => navigateToSession(session.id)} onkeydown={(e) => handleRowKeydown(e, session.id)}>
                   <td class="text-mono">
                     {session.agent ?? session.id?.slice(0, 8) ?? '---'}
                     {#if expiringClaims.has(session.agent_id)}

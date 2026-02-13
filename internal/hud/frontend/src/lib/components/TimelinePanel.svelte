@@ -1,5 +1,6 @@
 <script>
   import { timelineStore } from '../stores/timeline.svelte.ts';
+  import { formatTime, agentColor, eventIcon, statusVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
 
   $effect(() => {
@@ -22,25 +23,6 @@
     );
   });
 
-  // Agent type colors (same as PresencePanel).
-  const AGENT_COLORS = {
-    claude: 'var(--agent-claude, #E95D74)',
-    codex: 'var(--agent-codex, #22B255)',
-    gemini: 'var(--agent-gemini, #018799)',
-    copilot: 'var(--agent-copilot, #E7B312)',
-    kilocode: 'var(--fg-secondary)',
-    antigravity: 'var(--fg-secondary)',
-  };
-
-  function agentColor(agentType) {
-    if (!agentType) return 'var(--fg-muted)';
-    const lower = agentType.toLowerCase();
-    for (const [key, color] of Object.entries(AGENT_COLORS)) {
-      if (lower.includes(key)) return color;
-    }
-    return 'var(--fg-secondary)';
-  }
-
   function eventVariant(type) {
     if (type.includes('session.start')) return 'success';
     if (type.includes('session.end') || type.includes('reaped')) return 'error';
@@ -50,25 +32,6 @@
     if (type.includes('approval')) return 'warning';
     if (type.includes('dispatch')) return 'accent';
     return 'info';
-  }
-
-  function eventIcon(type) {
-    if (type.includes('session.start')) return '\u25B6'; // play
-    if (type.includes('session.end')) return '\u25A0'; // stop
-    if (type.includes('reaped')) return '\u2620'; // skull
-    if (type.includes('heartbeat')) return '\u2665'; // heart
-    if (type.includes('task.update')) return '\u2611'; // checkbox
-    if (type.includes('dispatch')) return '\u2709'; // envelope
-    if (type.includes('conflict')) return '\u26A0'; // warning
-    if (type.includes('approval')) return '\u2705'; // check
-    if (type.includes('claim')) return '\u2702'; // scissors
-    return '\u25CF'; // dot
-  }
-
-  function formatTimestamp(ts) {
-    if (!ts) return '--:--:--';
-    const d = new Date(ts);
-    return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   function shortEventType(type) {
@@ -93,7 +56,7 @@
   <div class="timeline-list">
     {#each filtered as entry, i (entry.timestamp + '-' + i)}
       <div class="timeline-entry">
-        <div class="timeline-time">{formatTimestamp(entry.timestamp)}</div>
+        <div class="timeline-time">{formatTime(entry.timestamp)}</div>
         <div class="timeline-icon" style:color={agentColor(entry.agent_type)}>
           {eventIcon(entry.event_type)}
         </div>

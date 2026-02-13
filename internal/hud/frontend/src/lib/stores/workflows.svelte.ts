@@ -199,7 +199,7 @@ class WorkflowStore {
     this.stopPolling();
     this.fetch();
     // 30s fallback poll (SSE is the primary data source).
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply data directly from hud.workflows snapshots.
     this.eventUnsubs.push(

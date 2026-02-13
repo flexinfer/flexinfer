@@ -130,7 +130,7 @@ class StreamStore {
 
     // Initial HTTP fetch + slow fallback polling.
     this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
   }
 
   stopPolling(): void {
