@@ -126,8 +126,12 @@ func BenchmarkRewriteModelInBody_FullParse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var data map[string]interface{}
-		json.Unmarshal(body, &data)
+		if err := json.Unmarshal(body, &data); err != nil {
+			b.Fatal(err)
+		}
 		data["model"] = "Qwen/Qwen2.5-7B-Instruct"
-		json.Marshal(data)
+		if _, err := json.Marshal(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
