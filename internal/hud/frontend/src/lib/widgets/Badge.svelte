@@ -26,13 +26,13 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    padding: 1px 7px;
+    padding: 1px 6px;
     border-radius: var(--radius-lg);
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.3px;
     white-space: nowrap;
     border: 1px solid;
-    line-height: 1.6;
+    line-height: 1.3;
   }
 </style>

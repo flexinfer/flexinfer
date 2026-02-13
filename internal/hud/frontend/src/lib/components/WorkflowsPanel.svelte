@@ -49,6 +49,16 @@
     return `${done}/${wf.steps.length}`;
   }
 
+  function stepProgressPct(wf) {
+    // Use explicit progress field if available.
+    if (typeof wf.progress === 'number') return wf.progress * 100;
+    if (!wf.steps?.length) return 0;
+    const done = wf.steps.filter(s =>
+      s.status === 'completed' || s.status === 'approved'
+    ).length;
+    return (done / wf.steps.length) * 100;
+  }
+
   function dagSteps(wf) {
     if (!wf.steps) return [];
     return wf.steps.map(s => ({
@@ -154,6 +164,9 @@
             <div class="wf-item-bottom">
               <span class="wf-progress text-mono text-xs">{stepProgress(wf)} steps</span>
               <span class="wf-time text-mono text-xs text-muted">{relativeTime(wf.started_at)}</span>
+            </div>
+            <div class="wf-progress-track">
+              <div class="wf-progress-fill" style="width: {stepProgressPct(wf).toFixed(0)}%"></div>
             </div>
           </button>
         {/each}
@@ -379,7 +392,7 @@
     flex-direction: column;
     gap: 4px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: left;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
@@ -630,5 +643,20 @@
   .no-selection-icon {
     font-size: 40px;
     opacity: 0.3;
+  }
+
+  .wf-progress-track {
+    height: 3px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 2px;
+  }
+
+  .wf-progress-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: 2px;
+    transition: width 0.3s ease;
   }
 </style>

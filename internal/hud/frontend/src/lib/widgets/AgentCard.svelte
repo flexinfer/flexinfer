@@ -35,14 +35,6 @@
     return '\u25C6';
   }
 
-  // Lifecycle state dots: registered -> active -> idle -> offline
-  const LIFECYCLE_STATES = ['registered', 'active', 'idle', 'offline'];
-  function stateIndex(status) {
-    const map = { active: 1, idle: 2, offline: 3 };
-    return map[status] ?? 0;
-  }
-  let currentIdx = $derived(stateIndex(agent.status));
-
   // Relative time.
   let _tick = $state(0);
   $effect(() => {
@@ -76,34 +68,8 @@
     </div>
   </div>
   <div class="card-subheader">
-    <span class="agent-type">{agent.agent_type || 'unknown'}</span>
+    <span class="agent-type">{agent.agent_type || 'unknown'}{#if agent.active_files?.length} · {agent.active_files.length} files{/if}</span>
     <span class="heartbeat-time">{relativeTime(agent.last_heartbeat)}</span>
-  </div>
-
-  <!-- Lifecycle state dots -->
-  <div class="lifecycle-dots">
-    <svg width="120" height="14" viewBox="0 0 120 14" class="lifecycle-svg">
-      {#each LIFECYCLE_STATES as state, i}
-        {@const cx = 10 + i * 33}
-        <!-- Connecting line -->
-        {#if i > 0}
-          <line x1={cx - 33 + 6} y1="7" x2={cx - 6} y2="7" stroke="var(--border)" stroke-width="1.5" />
-        {/if}
-        <!-- State dot -->
-        <circle
-          {cx}
-          cy="7"
-          r={i === currentIdx ? 5 : 4}
-          fill={i <= currentIdx ? color : 'transparent'}
-          stroke={i <= currentIdx ? color : 'var(--border)'}
-          stroke-width="1.5"
-          opacity={i === currentIdx ? 1 : i < currentIdx ? 0.5 : 0.3}
-        />
-        {#if i === currentIdx}
-          <circle {cx} cy="7" r="7" fill="none" stroke={color} stroke-width="1" opacity="0.3" class="glow-ring" />
-        {/if}
-      {/each}
-    </svg>
   </div>
 
   <!-- Sparkline: heartbeat frequency -->
@@ -131,20 +97,18 @@
         {/if}
       </div>
     {/if}
-    {#if agent.active_files && agent.active_files.length > 0}
+    {#if sharedFileAgents.length > 0}
       <div class="detail-row">
         <span class="detail-icon">{'\u2637'}</span>
-        <span class="detail-text">{agent.active_files.length} claimed</span>
-        {#if sharedFileAgents.length > 0}
-          <span class="overlap-dots">
-            {#each sharedFileAgents.slice(0, 3) as overlapAgent}
-              <span class="overlap-dot" title={overlapAgent} style="background: {agentColor('')}"></span>
-            {/each}
-            {#if sharedFileAgents.length > 3}
-              <span class="overlap-more">+{sharedFileAgents.length - 3}</span>
-            {/if}
-          </span>
-        {/if}
+        <span class="detail-text">shared files</span>
+        <span class="overlap-dots">
+          {#each sharedFileAgents.slice(0, 3) as overlapAgent}
+            <span class="overlap-dot" title={overlapAgent} style="background: {agentColor('')}"></span>
+          {/each}
+          {#if sharedFileAgents.length > 3}
+            <span class="overlap-more">+{sharedFileAgents.length - 3}</span>
+          {/if}
+        </span>
       </div>
     {/if}
   </div>
@@ -181,11 +145,6 @@
   .card-subheader { display: flex; align-items: center; justify-content: space-between; }
   .agent-type { font-size: 11px; color: var(--fg-secondary); }
   .heartbeat-time { font-size: 10px; font-family: var(--font-mono); color: var(--fg-muted); }
-
-  .lifecycle-dots { display: flex; align-items: center; }
-  .lifecycle-svg { display: block; }
-  .glow-ring { animation: pulseGlow 2s ease-in-out infinite; }
-  @keyframes pulseGlow { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.5; } }
 
   .sparkline-row { display: flex; align-items: center; gap: 8px; }
   .sparkline-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; width: 48px; flex-shrink: 0; }

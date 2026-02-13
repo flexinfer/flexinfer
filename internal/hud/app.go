@@ -1591,6 +1591,7 @@ func (a *App) handleKPIs(w http.ResponseWriter, _ *http.Request) {
 		"active_agents":         snap.ActiveAgents,
 		"pending_approvals":     snap.PendingApprovals,
 		"file_conflicts":        kpis.FileConflicts,
+		"conflict_details":      kpis.ConflictDetails,
 	})
 }
 

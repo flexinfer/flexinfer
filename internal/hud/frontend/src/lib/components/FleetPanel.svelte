@@ -10,6 +10,7 @@
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Gauge from '../widgets/Gauge.svelte';
+  import SparkLine from '../widgets/SparkLine.svelte';
 
   $effect(() => {
     fleetStore.startPolling(5000);
@@ -80,6 +81,36 @@
     loadInfra();
     const timer = setInterval(loadInfra, 30000);
     return () => clearInterval(timer);
+  });
+
+  // Token sparkline buffers per session.
+  let tokenBuffers = new Map();
+  let tokenHistories = $state(new Map());
+
+  $effect(() => {
+    for (const s of sessions) {
+      const buf = tokenBuffers.get(s.id) ?? [];
+      buf.push(s.tokens_used ?? 0);
+      if (buf.length > 20) buf.shift();
+      tokenBuffers.set(s.id, buf);
+    }
+    tokenHistories = new Map(tokenBuffers);
+  });
+
+  // Expiring claims: claims expiring within 5 minutes.
+  let expiringClaims = $derived.by(() => {
+    const map = new Map();
+    const cutoff = Date.now() + 5 * 60 * 1000;
+    for (const claim of fleetStore.fileClaims) {
+      if (!claim.expires_at) continue;
+      const exp = new Date(claim.expires_at).getTime();
+      if (exp > Date.now() && exp <= cutoff) {
+        const arr = map.get(claim.agent_id) ?? [];
+        arr.push(claim.file_path);
+        map.set(claim.agent_id, arr);
+      }
+    }
+    return map;
   });
 
   let workingItems = $derived(memStats.tiers?.working?.items ?? 0);
@@ -247,13 +278,23 @@
             <tbody>
               {#each sessions as session (session.id)}
                 <tr class="clickable-row" onclick={() => navigateToSession(session.id)}>
-                  <td class="text-mono">{session.agent ?? session.id?.slice(0, 8) ?? '---'}</td>
+                  <td class="text-mono">
+                    {session.agent ?? session.id?.slice(0, 8) ?? '---'}
+                    {#if expiringClaims.has(session.agent_id)}
+                      <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
+                    {/if}
+                  </td>
                   <td>
                     <StatusDot status={sessionStatus(session)} />
                   </td>
                   <td class="text-mono text-muted">{session.namespace ?? '---'}</td>
                   <td class="text-mono">{session.task_count ?? 0}</td>
-                  <td class="text-mono">{#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}</td>
+                  <td class="text-mono token-cell">
+                    {#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
+                    {#if tokenHistories.get(session.id)?.length >= 2}
+                      <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
+                    {/if}
+                  </td>
                   <td class="text-mono">{session.memory_items ?? 0}</td>
                 </tr>
               {:else}
@@ -306,12 +347,8 @@
           <div class="metric-label">Graph Entities</div>
         </div>
         <div class="stat-card" style="--accent-color: var(--fg-muted)">
-          {#key tunnelCount}<div class="metric-value data-updated">{tunnelCount}</div>{/key}
-          <div class="metric-label">Tunnels</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--info)">
-          {#key cacheHitRate}<div class="metric-value data-updated">{(cacheHitRate * 100).toFixed(0)}%</div>{/key}
-          <div class="metric-label">Cache Hit</div>
+          {#key tunnelCount + cacheHitRate}<div class="metric-value data-updated">{tunnelCount}<span class="metric-unit">t</span> · {(cacheHitRate * 100).toFixed(0)}%</div>{/key}
+          <div class="metric-label">Infrastructure</div>
         </div>
       </div>
 
@@ -437,7 +474,6 @@
   .stats-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr 1fr;
     gap: 12px;
   }
 
@@ -445,7 +481,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
-    padding: 14px 16px;
+    padding: 10px 12px;
     border-left: 3px solid var(--accent-color, var(--info));
     display: flex;
     flex-direction: column;
@@ -453,7 +489,7 @@
   }
 
   .stat-card .metric-value {
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
     font-family: var(--font-mono);
     color: var(--fg-primary);
@@ -528,14 +564,15 @@
 
   .gauges-container {
     display: flex;
-    flex-direction: column;
-    gap: 16px;
+    flex-direction: row;
+    gap: 12px;
     flex: 1;
     justify-content: center;
     padding: 8px 0;
   }
 
   .gauge-item {
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -651,5 +688,24 @@
     margin-top: 2px;
     line-height: 1.4;
     word-break: break-word;
+  }
+
+  .token-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .expiring-icon {
+    color: var(--warning);
+    font-size: 12px;
+    margin-left: 4px;
+    cursor: help;
+  }
+
+  .metric-unit {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--fg-muted);
   }
 </style>

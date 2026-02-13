@@ -8,6 +8,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
+  import Gauge from '../widgets/Gauge.svelte';
 
   /**
    * OverviewPanel renders a KPI strip at the top followed by all panels
@@ -15,7 +16,7 @@
    */
 
   // --- Daily KPIs ---
-  let kpis = $state({ sessions_today: 0, tokens_today: 0, tasks_completed_today: 0, active_agents: 0, pending_approvals: 0, file_conflicts: 0 });
+  let kpis = $state({ sessions_today: 0, tokens_today: 0, tasks_completed_today: 0, active_agents: 0, pending_approvals: 0, file_conflicts: 0, conflict_details: [] });
 
   async function fetchKPIs() {
     try {
@@ -89,6 +90,37 @@
     }
   });
 
+  // Rolling token trend buffer.
+  const _tokenBuf = [];
+  let tokenHistory = $state([]);
+
+  $effect(() => {
+    const t = kpis.tokens_today;
+    if (t > 0 || _tokenBuf.length > 0) {
+      _tokenBuf.push(t);
+      if (_tokenBuf.length > 20) _tokenBuf.shift();
+      tokenHistory = [..._tokenBuf];
+    }
+  });
+
+  // Nearest-to-completion active workflow progress.
+  let bestWorkflowProgress = $derived.by(() => {
+    const active = workflowStore.activeWorkflows;
+    if (!active.length) return -1;
+    let best = -1;
+    for (const wf of active) {
+      const p = wf.progress;
+      if (typeof p === 'number' && p > best) best = p;
+      // Fallback: derive from steps if no progress field.
+      if (p == null && wf.steps?.length) {
+        const done = wf.steps.filter(s => s.status === 'completed' || s.status === 'approved').length;
+        const derived = done / wf.steps.length;
+        if (derived > best) best = derived;
+      }
+    }
+    return best;
+  });
+
   // Tick counter to refresh "last updated" text periodically.
   let _tick = $state(0);
   $effect(() => {
@@ -119,7 +151,12 @@
       <div class="kpi-label">Sessions Today</div>
     </div>
     <div class="kpi-tile">
-      <div class="kpi-value">{kpis.tokens_today?.toLocaleString?.() ?? kpis.tokens_today}</div>
+      <div class="kpi-value-row">
+        <div class="kpi-value">{kpis.tokens_today?.toLocaleString?.() ?? kpis.tokens_today}</div>
+        {#if tokenHistory.length >= 2}
+          <SparkLine data={tokenHistory} width={40} height={16} color="var(--accent)" />
+        {/if}
+      </div>
       <div class="kpi-label">Tokens Today</div>
     </div>
     <div class="kpi-tile">
@@ -133,6 +170,16 @@
     <div class="kpi-tile" class:kpi-alert={kpis.file_conflicts > 0}>
       <div class="kpi-value">{kpis.file_conflicts}</div>
       <div class="kpi-label">Conflicts</div>
+      {#if kpis.conflict_details?.length > 0}
+        <div class="conflict-details">
+          {#each kpis.conflict_details.slice(0, 3) as cd}
+            <div class="conflict-line">{cd.path}: {cd.agents.join(', ')}</div>
+          {/each}
+          {#if kpis.conflict_details.length > 3}
+            <div class="conflict-line conflict-more">+{kpis.conflict_details.length - 3} more</div>
+          {/if}
+        </div>
+      {/if}
     </div>
     <div class="kpi-tile" class:kpi-alert={kpis.pending_approvals > 0}>
       <div class="kpi-value">{kpis.pending_approvals}</div>
@@ -245,6 +292,11 @@
         <div class="tile-detail" class:tile-alert={pendingApprovals > 0}>
           {pendingApprovals > 0 ? `${pendingApprovals} awaiting approval` : 'none waiting'}
         </div>
+        {#if bestWorkflowProgress >= 0}
+          <div class="tile-progress-track">
+            <div class="tile-progress-fill" style="width: {(bestWorkflowProgress * 100).toFixed(0)}%"></div>
+          </div>
+        {/if}
       </div>
       {#if agoText(workflowStore.lastUpdated)}<div class="tile-footer">{agoText(workflowStore.lastUpdated)}</div>{/if}
     </button>
@@ -255,17 +307,14 @@
   .overview-panel {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    gap: 16px;
+    padding: 16px;
+    gap: 12px;
   }
 
   /* KPI Strip */
   .kpi-strip {
     display: flex;
     gap: 8px;
-    max-width: 720px;
     width: 100%;
   }
 
@@ -305,9 +354,8 @@
 
   .overview-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
-    max-width: 720px;
     width: 100%;
   }
 
@@ -315,7 +363,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: 14px 16px;
+    padding: 10px 12px;
     cursor: pointer;
     text-align: left;
     transition: border-color var(--transition-normal),
@@ -333,7 +381,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
   }
 
   .tile-icon {
@@ -404,6 +452,47 @@
   .tier-w { color: var(--tier-working); }
   .tier-s { color: var(--tier-short); }
   .tier-l { color: var(--tier-long); }
+
+  .kpi-value-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .conflict-details {
+    margin-top: 4px;
+    text-align: left;
+  }
+
+  .conflict-line {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--warning);
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conflict-more {
+    opacity: 0.7;
+  }
+
+  .tile-progress-track {
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+
+  .tile-progress-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
 
   @media (max-width: 600px) {
     .overview-grid {

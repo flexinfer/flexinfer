@@ -67,6 +67,17 @@ export interface TaskInfo {
   updated_at: string;
 }
 
+export interface FileClaimInfo {
+  id: string;
+  agent_id: string;
+  session_id: string;
+  file_path: string;
+  claim_type: string;
+  reason: string;
+  created_at: string;
+  expires_at?: string;
+}
+
 export interface EnrichedSession extends Session {
   agentStatus?: string;
   agentType?: string;
@@ -102,6 +113,7 @@ class FleetStore {
   sessions = $state<Session[]>([]);
   agents = $state<PresenceInfo[]>([]);
   tasks = $state<TaskInfo[]>([]);
+  fileClaims = $state<FileClaimInfo[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
@@ -257,6 +269,9 @@ class FleetStore {
     }
     if (data.tasks) {
       this.tasks = data.tasks as TaskInfo[];
+    }
+    if (data.file_claims) {
+      this.fileClaims = data.file_claims as FileClaimInfo[];
     }
     this.lastUpdated = new Date();
     this.error = null;

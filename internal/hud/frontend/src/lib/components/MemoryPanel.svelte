@@ -57,6 +57,9 @@
       );
     }
 
+    // Default sort by importance (highest first).
+    result.sort((a, b) => importanceScore(b.importance) - importanceScore(a.importance));
+
     return result;
   });
 
@@ -167,6 +170,27 @@
       low: 'var(--fg-muted)',
     };
     return map[importance] ?? 'var(--fg-secondary)';
+  }
+
+  function importanceBorderColor(importance) {
+    if (typeof importance === 'number') {
+      if (importance >= 0.7) return 'var(--accent)';
+      if (importance >= 0.4) return 'var(--info)';
+      return 'var(--fg-muted)';
+    }
+    const map = {
+      critical: 'var(--accent)',
+      high: 'var(--accent)',
+      medium: 'var(--info)',
+      low: 'var(--fg-muted)',
+    };
+    return map[importance] ?? 'var(--fg-muted)';
+  }
+
+  function importanceScore(importance) {
+    if (typeof importance === 'number') return importance;
+    const map = { critical: 1.0, high: 0.8, medium: 0.5, low: 0.2 };
+    return map[importance] ?? 0.3;
   }
 
   function statusVariant(status) {
@@ -374,7 +398,7 @@
           </thead>
           <tbody>
             {#each filteredItems as item (item.id)}
-              <tr class="row-enter" class:expanded-row={expandedItems.has(item.id)}>
+              <tr class="row-enter memory-row" class:expanded-row={expandedItems.has(item.id)} style="border-left: 3px solid {importanceBorderColor(item.importance)}">
                 <td class="item-title">
                   <button class="expand-btn" onclick={() => toggleExpand(item.id)} title="Expand">
                     <span class="expand-icon">{expandedItems.has(item.id) ? '\u25BC' : '\u25B6'}</span>
@@ -759,6 +783,10 @@
 
   .delete-btn:hover {
     background: rgba(230, 30, 63, 0.15);
+  }
+
+  .memory-row {
+    transition: border-left-color 0.15s;
   }
 
   .empty-cell {

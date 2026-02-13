@@ -62,12 +62,19 @@ type FleetSnapshot struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ConflictDetail describes a single file claimed by multiple agents.
+type ConflictDetail struct {
+	Path   string   `json:"path"`
+	Agents []string `json:"agents"`
+}
+
 // KPICounters tracks daily aggregate metrics for the HUD dashboard.
 type KPICounters struct {
-	SessionsToday       int `json:"sessions_today"`
-	TokensToday         int `json:"tokens_today"`
-	TasksCompletedToday int `json:"tasks_completed_today"`
-	FileConflicts       int `json:"file_conflicts"`
+	SessionsToday       int              `json:"sessions_today"`
+	TokensToday         int              `json:"tokens_today"`
+	TasksCompletedToday int              `json:"tasks_completed_today"`
+	FileConflicts       int              `json:"file_conflicts"`
+	ConflictDetails     []ConflictDetail `json:"conflict_details,omitempty"`
 
 	// Internal tracking.
 	resetDate string // YYYY-MM-DD of last reset
@@ -325,14 +332,16 @@ func (m *FleetMonitor) Refresh() error {
 	}
 	// Update token counter from current snapshot.
 	m.kpis.TokensToday = snap.TotalTokens
-	// Update file conflicts count.
-	m.kpis.FileConflicts = detectConflictCount(snap.FileClaims)
+	// Update file conflicts count and details.
+	conflictCount, conflictDetails := detectConflicts(snap.FileClaims)
+	m.kpis.FileConflicts = conflictCount
+	m.kpis.ConflictDetails = conflictDetails
 	m.mu.Unlock()
 
 	// --- Proactive notifications: conflict detection ---
-	newConflicts := detectConflictCount(snap.FileClaims)
+	newConflicts := conflictCount
 	m.mu.RLock()
-	prevConflicts := detectConflictCount(m.prevFileClaims)
+	prevConflicts, _ := detectConflicts(m.prevFileClaims)
 	m.mu.RUnlock()
 	if newConflicts > prevConflicts {
 		go func() {
@@ -390,8 +399,9 @@ func (m *FleetMonitor) Refresh() error {
 	return nil
 }
 
-// detectConflictCount counts the number of files claimed by multiple agents.
-func detectConflictCount(claims []bridge.FileClaimInfo) int {
+// detectConflicts counts the number of files claimed by multiple agents
+// and returns up to 5 conflict details.
+func detectConflicts(claims []bridge.FileClaimInfo) (int, []ConflictDetail) {
 	fileAgents := make(map[string]map[string]bool)
 	for _, c := range claims {
 		if fileAgents[c.FilePath] == nil {
@@ -400,12 +410,20 @@ func detectConflictCount(claims []bridge.FileClaimInfo) int {
 		fileAgents[c.FilePath][c.AgentID] = true
 	}
 	conflicts := 0
-	for _, agents := range fileAgents {
+	var details []ConflictDetail
+	for path, agents := range fileAgents {
 		if len(agents) > 1 {
 			conflicts++
+			if len(details) < 5 {
+				agentList := make([]string, 0, len(agents))
+				for a := range agents {
+					agentList = append(agentList, a)
+				}
+				details = append(details, ConflictDetail{Path: path, Agents: agentList})
+			}
 		}
 	}
-	return conflicts
+	return conflicts, details
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.
