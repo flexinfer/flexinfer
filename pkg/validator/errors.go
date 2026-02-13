@@ -9,5 +9,7 @@ const (
 	SeverityWarning = kitval.SeverityWarning
 )
 
+const CodeUpstreamSchema = kitval.CodeUpstreamSchema
+
 type ValidationError = kitval.ValidationError
 type ValidationResult = kitval.ValidationResult

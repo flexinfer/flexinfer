@@ -415,7 +415,28 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 		perm = 0600
 		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for %s (file contains sensitive values)\n", target)
 	}
-	return os.WriteFile(filepath.Join(destDir, "config.toml"), []byte(sb.String()), perm)
+
+	configPath := filepath.Join(destDir, "config.toml")
+	content := []byte(sb.String())
+
+	if err := os.WriteFile(configPath, content, perm); err != nil {
+		return err
+	}
+
+	// Validate Codex configs against upstream schema.
+	if target == "codex" {
+		result := validator.ValidateCodexConfig(configPath, content)
+		if result != nil {
+			if !result.HasErrors() && !result.HasWarnings() {
+				fmt.Fprintf(os.Stderr, "  [%s] config.toml validated against upstream schema\n", target)
+			}
+			for _, verr := range result.Errors {
+				fmt.Fprintf(os.Stderr, "WARN  [%s] upstream schema: %s - %s\n", target, verr.Field, verr.Message)
+			}
+		}
+	}
+
+	return nil
 }
 
 func sortStrings(s []string) {
@@ -454,7 +475,46 @@ func generateHooksConfig(outputDir, target string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(destDir, "settings.json"), []byte(buf.String()), 0644)
+	settingsPath := filepath.Join(destDir, "settings.json")
+	content := []byte(buf.String())
+
+	if err := os.WriteFile(settingsPath, content, 0644); err != nil {
+		return err
+	}
+
+	// Validate generated settings against upstream schema.
+	validateSettingsAgainstUpstream(target, settingsPath, content)
+
+	return nil
+}
+
+// validateSettingsAgainstUpstream validates a generated settings file against
+// the vendored upstream JSON schema. Validation failures are reported as
+// non-blocking warnings to stderr.
+func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
+	var result *validator.ValidationResult
+
+	switch target {
+	case "claude":
+		result = validator.ValidateClaudeSettings(filePath, content)
+	case "gemini":
+		result = validator.ValidateGeminiSettings(filePath, content)
+	default:
+		return
+	}
+
+	if result == nil {
+		return
+	}
+
+	if !result.HasErrors() && !result.HasWarnings() {
+		fmt.Fprintf(os.Stderr, "  [%s] settings.json validated against upstream schema\n", target)
+		return
+	}
+
+	for _, verr := range result.Errors {
+		fmt.Fprintf(os.Stderr, "WARN  [%s] upstream schema: %s - %s\n", target, verr.Field, verr.Message)
+	}
 }
 
 // claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks,
