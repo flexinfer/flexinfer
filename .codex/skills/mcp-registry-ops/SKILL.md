@@ -10,11 +10,11 @@ Maintain the workspace's canonical MCP server registry and regenerate downstream
 ## Quick Start (Workspace Layout)
 
 - Find the registry:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/mcp-registry-ops/scripts/registry_discover.py --root .`
+  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_discover.py --root .`
 - Generate client configs (Go generator via `loom`):
-  - `bash ${CODEX_HOME:-$HOME/.codex}/skills/mcp-registry-ops/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode`
+  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode`
 - Generate hub manifests (when changing hub deployments):
-  - `bash ${CODEX_HOME:-$HOME/.codex}/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/mcp-hub/servers`
+  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/mcp-hub/servers`
 
 ## Core Workflow
 
@@ -27,9 +27,9 @@ Maintain the workspace's canonical MCP server registry and regenerate downstream
 ### 2) Update an Allowlist (always_allow)
 
 - Edit `common.always_allow`:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope common --add create_issue`
+  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope common --add create_issue`
 - Edit `targets.<target>.always_allow`:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope target:codex --set verify_token list_projects`
+  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope target:codex --set verify_token list_projects`
 
 Use `--dry-run` to preview and `--sort` to normalize.
 

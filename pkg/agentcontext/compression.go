@@ -101,11 +101,12 @@ type scoredSentence struct {
 	position int
 }
 
+// sentenceSplitRe is compiled once and reused across all splitSentences calls.
+var sentenceSplitRe = regexp.MustCompile(`[.!?]+\s+`)
+
 // splitSentences splits text into sentences
 func splitSentences(text string) []string {
-	// Simple sentence splitting on . ! ? followed by space or end
-	re := regexp.MustCompile(`[.!?]+\s+`)
-	parts := re.Split(text, -1)
+	parts := sentenceSplitRe.Split(text, -1)
 
 	var sentences []string
 	for _, p := range parts {
@@ -119,64 +120,49 @@ func splitSentences(text string) []string {
 
 // extractKeywords extracts keywords using TF-IDF scoring
 func (fc *FallbackCompressor) extractKeywords(content string, maxKeywords int) []string {
-	// Tokenize
 	words := tokenize(content)
 	if len(words) == 0 {
 		return nil
 	}
 
-	// Calculate term frequency
-	tf := make(map[string]float64)
+	// Count raw frequencies in a single pass (O(n))
+	rawCount := make(map[string]float64)
 	for _, w := range words {
 		w = strings.ToLower(w)
 		if fc.stopwords[w] || len(w) < 3 {
 			continue
 		}
-		tf[w]++
+		rawCount[w]++
 	}
 
-	// Normalize TF
+	// Find max frequency for TF normalization
 	maxTF := 0.0
-	for _, count := range tf {
-		if count > maxTF {
-			maxTF = count
+	for _, c := range rawCount {
+		if c > maxTF {
+			maxTF = c
 		}
 	}
-	if maxTF > 0 {
-		for word := range tf {
-			tf[word] /= maxTF
-		}
+	if maxTF == 0 {
+		return nil
 	}
 
-	// Simple IDF approximation (penalize very common terms)
-	// Using log(total_words / term_count) approximation
+	// Compute TF-IDF using rawCount directly (O(unique words), not O(n^2))
 	totalWords := float64(len(words))
-	tfidf := make(map[string]float64)
-	for word, tfScore := range tf {
-		count := 0.0
-		for _, w := range words {
-			if strings.ToLower(w) == word {
-				count++
-			}
-		}
-		idf := math.Log(totalWords / (1 + count))
-		tfidf[word] = tfScore * idf
-	}
-
-	// Sort by TF-IDF score
 	type scoredWord struct {
 		word  string
 		score float64
 	}
-	var scored []scoredWord
-	for word, score := range tfidf {
-		scored = append(scored, scoredWord{word, score})
+	scored := make([]scoredWord, 0, len(rawCount))
+	for word, count := range rawCount {
+		tf := count / maxTF
+		idf := math.Log(totalWords / (1 + count))
+		scored = append(scored, scoredWord{word, tf * idf})
 	}
+
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].score > scored[j].score
 	})
 
-	// Return top keywords
 	result := make([]string, 0, maxKeywords)
 	for i := 0; i < len(scored) && i < maxKeywords; i++ {
 		result = append(result, scored[i].word)

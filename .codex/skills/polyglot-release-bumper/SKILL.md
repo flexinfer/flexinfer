@@ -10,11 +10,11 @@ Standardize a safe release routine across repos that don't share one build syste
 ## Quick Start
 
 - Detect project type(s) and suggested commands:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/polyglot-release-bumper/scripts/detect_project.py --root .`
+  - `python $CODEX_HOME/skills/polyglot-release-bumper/scripts/detect_project.py --root .`
 - Bump versions (Python/Node only) with preview:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/polyglot-release-bumper/scripts/bump_version.py --root . --bump patch --dry-run`
+  - `python $CODEX_HOME/skills/polyglot-release-bumper/scripts/bump_version.py --root . --bump patch --dry-run`
 - Apply the bump:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/polyglot-release-bumper/scripts/bump_version.py --root . --bump patch`
+  - `python $CODEX_HOME/skills/polyglot-release-bumper/scripts/bump_version.py --root . --bump patch`
 
 ## What Gets Updated
 

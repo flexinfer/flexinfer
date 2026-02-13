@@ -3,7 +3,10 @@ package agentcontext
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sync"
 	"time"
+
+	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 )
 
 const SchemaVersion = "v1"
@@ -243,8 +246,31 @@ func ContentHashFunc(content string) string {
 	return hex.EncodeToString(hash[:])[:16]
 }
 
-// EstimateTokens provides a rough token count estimate (4 chars per token)
+// tokenizer singleton for accurate BPE counting
+var (
+	tokenizerOnce   sync.Once
+	globalTokenizer fiaccel.Tokenizer
+)
+
+func getTokenizer() fiaccel.Tokenizer {
+	tokenizerOnce.Do(func() {
+		tok, err := fiaccel.NewTokenizer("gpt-4")
+		if err != nil {
+			return
+		}
+		globalTokenizer = tok
+	})
+	return globalTokenizer
+}
+
+// EstimateTokens returns an accurate BPE token count when the fi-accel
+// native library is available, falling back to a ~4 chars/token heuristic.
 func EstimateTokens(text string) int {
+	if tok := getTokenizer(); tok != nil {
+		if n, err := tok.Count(text); err == nil {
+			return n
+		}
+	}
 	return (len(text) + 3) / 4
 }
 

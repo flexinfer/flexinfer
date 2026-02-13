@@ -10,11 +10,11 @@ Use `libs/banner-kit` as the canonical implementation for generating and fixing 
 ## Quick Start
 
 - Scan for missing assets / README banner drift:
-  - `python ${CODEX_HOME:-$HOME/.codex}/skills/workspace-branding-maintenance/scripts/scan_branding.py --root .`
+  - `python $CODEX_HOME/skills/workspace-branding-maintenance/scripts/scan_branding.py --root .`
 - Run banner-kit maintenance in dry-run mode (default):
-  - `bash ${CODEX_HOME:-$HOME/.codex}/skills/workspace-branding-maintenance/scripts/run_workspace_branding.sh . --stash`
+  - `bash $CODEX_HOME/skills/workspace-branding-maintenance/scripts/run_workspace_branding.sh . --stash`
 - Apply changes (explicit opt-in):
-  - `APPLY=1 bash ${CODEX_HOME:-$HOME/.codex}/skills/workspace-branding-maintenance/scripts/run_workspace_branding.sh . --stash`
+  - `APPLY=1 bash $CODEX_HOME/skills/workspace-branding-maintenance/scripts/run_workspace_branding.sh . --stash`
 
 ## Core Workflow
 

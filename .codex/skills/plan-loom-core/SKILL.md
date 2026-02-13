@@ -12,9 +12,9 @@ Create and maintain an evidence-backed "Loom Context Pack" (usually in `.loom/`)
 ## Quick Start
 
 1. Initialize templates into `.loom/`:
-   - `python ${CODEX_HOME:-$HOME/.codex}/skills/plan-loom-core/scripts/init_loom_context.py --root .`
+   - `python $CODEX_HOME/skills/plan-loom-core/scripts/init_loom_context.py --root .`
 2. Generate a workspace snapshot:
-   - `python ${CODEX_HOME:-$HOME/.codex}/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+   - `python $CODEX_HOME/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
 3. Inventory MCP tools (in `.loom/00-mcp-inventory.md`):
    - Use `functions.list_mcp_resources` and `functions.list_mcp_resource_templates`
 4. Fill in the docs you need:

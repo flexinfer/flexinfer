@@ -34,13 +34,13 @@ Standardize safe GitOps operations in `platform/gitops` (Flux-managed clusters),
 - Reconcile the relevant kustomization (often `apps`):
   - `flux reconcile kustomization apps -n flux-system`
 - Or use the wrapper:
-  - `bash ${CODEX_HOME:-$HOME/.codex}/skills/flux-gitops-operator/scripts/flux_reconcile_kustomization.sh apps flux-system`
+  - `bash $CODEX_HOME/skills/flux-gitops-operator/scripts/flux_reconcile_kustomization.sh apps flux-system`
 
 ### 3) Verify Rollout
 
 - Use the checklist: `assets/templates/rollout-checklist.md`
 - Produce a quick namespace snapshot:
-  - `bash ${CODEX_HOME:-$HOME/.codex}/skills/flux-gitops-operator/scripts/k8s_rollout_report.sh <namespace> > /tmp/rollout.md`
+  - `bash $CODEX_HOME/skills/flux-gitops-operator/scripts/k8s_rollout_report.sh <namespace> > /tmp/rollout.md`
 
 ## References / Templates
 

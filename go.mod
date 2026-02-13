@@ -31,6 +31,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
+	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0
 	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.0.0
 	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260116221656-df35197c2d46
 	go.mongodb.org/mongo-driver v1.17.8
@@ -49,6 +50,7 @@ require (
 )
 
 replace (
+	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel => ../../libs/fi-accel/go/fiaccel
 	gitlab.flexinfer.ai/libs/fi-mcp-kit => ../../libs/fi-mcp-kit
 	gitlab.flexinfer.ai/libs/mcp-go => ../../libs/mcp-go
 )

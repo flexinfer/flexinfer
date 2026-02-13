@@ -110,9 +110,9 @@ func TestEstimateTokens(t *testing.T) {
 	}{
 		{"empty", "", 0, 1},
 		{"short", "hi", 0, 2},
-		{"four chars", "abcd", 1, 2},
-		{"eight chars", "abcdefgh", 2, 3},
-		{"long text", "The quick brown fox jumps over the lazy dog", 10, 15},
+		{"four chars", "abcd", 1, 3},
+		{"eight chars", "abcdefgh", 1, 4},
+		{"long text", "The quick brown fox jumps over the lazy dog", 8, 15},
 	}
 
 	for _, tt := range tests {

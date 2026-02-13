@@ -13,7 +13,7 @@ Capture reference screenshots for UX/UI work using the local-only MCP server `br
 - `python3 -m playwright install chromium`
 
 Verify:
-- `bash ${CODEX_HOME:-$HOME/.codex}/skills/browserkit-screenshots/scripts/check_browserkit_ready.sh`
+- `bash $CODEX_HOME/skills/browserkit-screenshots/scripts/check_browserkit_ready.sh`
 
 ## Use
 
