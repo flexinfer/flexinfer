@@ -17,6 +17,8 @@
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
+  import TopologyPanel from './lib/components/TopologyPanel.svelte';
+  import LifecyclePanel from './lib/components/LifecyclePanel.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
   import OverviewPanel from './lib/components/OverviewPanel.svelte';
@@ -34,6 +36,8 @@
     { id: 'presence',  label: 'Presence',  key: '8', icon: '\u25C9' },
     { id: 'sandbox',   label: 'Sandbox',   key: '9', icon: '\u2B22' },
     { id: 'reasoning', label: 'Reasoning', key: '0', icon: '\u2726' },
+    { id: 'topology', label: 'Topology', key: 't', icon: '\u2B53' },
+    { id: 'lifecycle', label: 'Lifecycle', key: 'l', icon: '\u21C6' },
   ];
 
   let showCommandPalette = $state(false);
@@ -103,6 +107,16 @@
       // ? → show keyboard shortcut overlay
       if (e.key === '?') {
         showKeyboardHelp = !showKeyboardHelp;
+        return;
+      }
+      // t → topology panel
+      if (e.key === 't') {
+        router.navigate('topology');
+        return;
+      }
+      // l → lifecycle panel
+      if (e.key === 'l') {
+        router.navigate('lifecycle');
         return;
       }
       const num = parseInt(e.key);
@@ -244,6 +258,10 @@
           <SandboxPanel />
         {:else if router.panel === 'reasoning'}
           <ReasoningPanel />
+        {:else if router.panel === 'topology'}
+          <TopologyPanel />
+        {:else if router.panel === 'lifecycle'}
+          <LifecyclePanel />
         {/if}
       </div>
     {/key}
@@ -289,6 +307,8 @@
             <div class="help-row"><kbd>9</kbd> <span>Sandbox</span></div>
             <div class="help-row"><kbd>0</kbd> <span>Reasoning</span></div>
             <div class="help-row"><kbd>`</kbd> / <kbd>o</kbd> <span>Overview</span></div>
+            <div class="help-row"><kbd>t</kbd> <span>Topology</span></div>
+            <div class="help-row"><kbd>l</kbd> <span>Lifecycle</span></div>
           </div>
           <div class="help-section">
             <div class="help-section-title">Actions</div>

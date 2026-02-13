@@ -1,9 +1,11 @@
 <script>
   import { presenceStore } from '../stores/presence.svelte.ts';
+  import { timelineStore } from '../stores/timeline.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
+  import AgentCard from '../widgets/AgentCard.svelte';
 
   $effect(() => {
     presenceStore.startPolling(5000);
@@ -208,6 +210,62 @@
     return 'var(--fg-secondary)';
   }
 
+  // --- View toggle: table vs cards ---
+  let agentView = $state('cards');
+
+  // Start timeline polling for heartbeat data in card view.
+  $effect(() => {
+    if (agentView === 'cards') {
+      timelineStore.startPolling(30000);
+      return () => timelineStore.stopPolling();
+    }
+  });
+
+  // Compute agent file overlaps: Map<agent_id, string[]> of agents sharing files.
+  let agentOverlaps = $derived.by(() => {
+    const fileCounts = {};
+    claims.forEach(c => {
+      if (!fileCounts[c.file_path]) fileCounts[c.file_path] = [];
+      fileCounts[c.file_path].push(c.agent_id);
+    });
+    const result = new Map();
+    for (const [, claimAgents] of Object.entries(fileCounts)) {
+      if (claimAgents.length < 2) continue;
+      for (const a of claimAgents) {
+        const others = claimAgents.filter(x => x !== a);
+        const existing = result.get(a) ?? [];
+        for (const o of others) {
+          if (!existing.includes(o)) existing.push(o);
+        }
+        result.set(a, existing);
+      }
+    }
+    return result;
+  });
+
+  // Compute heartbeat frequency data per agent from timeline entries (12 buckets of 5min = 60min).
+  let heartbeatDataMap = $derived.by(() => {
+    const now = Date.now();
+    const bucketSize = 5 * 60_000;
+    const bucketCount = 12;
+    const result = new Map();
+    const entries = timelineStore.entries ?? [];
+
+    for (const agent of agents) {
+      const buckets = new Array(bucketCount).fill(0);
+      for (const e of entries) {
+        if (e.agent_id !== agent.agent_id) continue;
+        if (e.event_type !== 'agent.heartbeat') continue;
+        const ts = new Date(e.timestamp).getTime();
+        const age = now - ts;
+        const idx = bucketCount - 1 - Math.floor(age / bucketSize);
+        if (idx >= 0 && idx < bucketCount) buckets[idx]++;
+      }
+      result.set(agent.agent_id, buckets);
+    }
+    return result;
+  });
+
   function presenceStatus(status) {
     const map = {
       active: 'healthy',
@@ -279,11 +337,45 @@
         ⚠ {fileConflicts.length} conflicts
       </span>
     {/if}
+    {#if activeTab === 'agents'}
+      <div class="view-toggle">
+        <button class="toggle-btn" class:active={agentView === 'cards'} onclick={() => { agentView = 'cards'; }} title="Card view">{'\u25A3'}</button>
+        <button class="toggle-btn" class:active={agentView === 'table'} onclick={() => { agentView = 'table'; }} title="Table view">{'\u2261'}</button>
+      </div>
+    {/if}
   </div>
 
   <div class="tab-content">
     {#if activeTab === 'agents'}
       <!-- Agent Presence -->
+      {#if agentView === 'cards'}
+        <!-- Card View -->
+        {#if branchCollisions.length > 0}
+          <div class="conflict-banner">
+            <span class="conflict-icon">⚠</span>
+            <span>Branch collision: multiple agents on same branch</span>
+            {#each branchCollisions as col}
+              <div class="conflict-detail">
+                <span class="text-mono text-xs">{col.branch}</span>
+                <span class="text-muted text-xs">→ {col.agents.join(', ')}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div class="cards-grid">
+          {#each agents as agent (agent.agent_id)}
+            <AgentCard
+              {agent}
+              heartbeatData={heartbeatDataMap.get(agent.agent_id) ?? []}
+              sharedFileAgents={agentOverlaps.get(agent.agent_id) ?? []}
+              ondispatch={openDispatch}
+            />
+          {:else}
+            <div class="empty-state">No registered agents</div>
+          {/each}
+        </div>
+      {:else}
+      <!-- Table View -->
       <div class="presence-grid">
         <div class="card agents-card">
           <div class="card-header">
@@ -384,6 +476,7 @@
           </div>
         </div>
       </div>
+      {/if}
 
     {:else if activeTab === 'claims'}
       <!-- File Claims -->
@@ -658,6 +751,53 @@
   }
 
   .tab-spacer { flex: 1; }
+
+  /* View toggle */
+  .view-toggle {
+    display: flex;
+    gap: 2px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+  }
+
+  .toggle-btn {
+    padding: 3px 8px;
+    font-size: 12px;
+    color: var(--fg-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .toggle-btn:hover {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
+  }
+
+  .toggle-btn.active {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
+  }
+
+  /* Cards grid */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+    padding: 4px 0;
+  }
+
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
 
   .conflict-badge {
     font-size: 11px;

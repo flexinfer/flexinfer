@@ -103,6 +103,8 @@ class EventStore {
       'hud.memory.add', 'hud.memory.delete', 'hud.memory.promote', 'hud.memory.demote',
       // Granular workflow/task mutation events.
       'hud.workflow.approve', 'hud.workflow.reject', 'hud.task.create',
+      // Handoff events.
+      'hud.handoff.created',
     ];
     for (const type of knownTypes) {
       this.source.addEventListener(type, (e: MessageEvent) => {

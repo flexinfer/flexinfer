@@ -444,6 +444,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
+	// API routes — topology graph.
+	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
+
 	// API routes — command center (KPIs, timeline, dispatch, claims).
 	mux.HandleFunc("GET /api/kpis", a.withCORS(a.handleKPIs))
 	mux.HandleFunc("GET /api/timeline", a.withCORS(a.handleTimeline))
@@ -844,12 +847,33 @@ func (a *App) handleMemoryDemote(w http.ResponseWriter, r *http.Request) {
 
 // --- API handlers: Direct bridge calls (parameterized queries) ---
 
-func (a *App) handleSessions(w http.ResponseWriter, _ *http.Request) {
+func (a *App) handleSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := a.agent.Sessions()
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to list sessions", err)
 		return
 	}
+
+	// Optional time filter: ?since=<RFC3339> — return only sessions started
+	// after the given time or still active (ended_at is empty).
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		if since, parseErr := time.Parse(time.RFC3339, sinceStr); parseErr == nil {
+			filtered := make([]bridge.SessionInfo, 0, len(sessions))
+			for _, s := range sessions {
+				// Keep active sessions (no end time).
+				if s.EndedAt == "" {
+					filtered = append(filtered, s)
+					continue
+				}
+				// Keep sessions started after the since time.
+				if started, err := time.Parse(time.RFC3339, s.StartedAt); err == nil && !started.Before(since) {
+					filtered = append(filtered, s)
+				}
+			}
+			sessions = filtered
+		}
+	}
+
 	a.writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
@@ -1424,6 +1448,10 @@ func (a *App) handleHandoffCreate(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadGateway, "failed to create handoff", err)
 		return
 	}
+	a.broadcastAgentEvent("hud.handoff.created", map[string]any{
+		"to_agent": body.ToAgent,
+		"summary":  body.Summary,
+	})
 	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
