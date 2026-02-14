@@ -11,7 +11,7 @@ func TestTruncateCallToolResult_NoChangeWhenUnderLimit(t *testing.T) {
 	r := &mcp.CallToolResult{
 		Content: []mcp.Content{{Type: "text", Text: "hello"}},
 	}
-	if truncateCallToolResult(r, 1024) {
+	if truncateCallToolResult(r, 1024, 1024) {
 		t.Fatalf("expected no truncation")
 	}
 	if got := r.Content[0].Text; got != "hello" {
@@ -26,7 +26,7 @@ func TestTruncateCallToolResult_TruncatesAndAddsSuffix(t *testing.T) {
 		Content: []mcp.Content{{Type: "text", Text: huge}},
 	}
 
-	if !truncateCallToolResult(r, maxBytes) {
+	if !truncateCallToolResult(r, maxBytes, 1024) {
 		t.Fatalf("expected truncation")
 	}
 	if len(r.Content) != 1 {
@@ -49,7 +49,7 @@ func TestTruncateCallToolResult_DropsExtraContentAndHonorsBudget(t *testing.T) {
 		},
 	}
 
-	if !truncateCallToolResult(r, maxBytes) {
+	if !truncateCallToolResult(r, maxBytes, 1024) {
 		t.Fatalf("expected truncation")
 	}
 
@@ -62,5 +62,41 @@ func TestTruncateCallToolResult_DropsExtraContentAndHonorsBudget(t *testing.T) {
 	}
 	if len(r.Content) != 2 {
 		t.Fatalf("expected second content item to remain (truncated), got %d items", len(r.Content))
+	}
+}
+
+func TestTruncateCallToolResult_ImageNeverTruncatesBase64(t *testing.T) {
+	maxText := 512
+	maxImg := 1024
+	hugeImg := "data:image/png;base64," + strings.Repeat("A", maxImg*2)
+
+	r := &mcp.CallToolResult{
+		Content: []mcp.Content{
+			{Type: "image", MimeType: "image/png", Data: hugeImg},
+			{Type: "text", Text: "after"},
+		},
+	}
+
+	if !truncateCallToolResult(r, maxText, maxImg) {
+		t.Fatalf("expected truncation due to oversized image")
+	}
+	// Image should be dropped, not truncated.
+	for _, c := range r.Content {
+		if c.Type == "image" {
+			t.Fatalf("expected image to be omitted, got image content")
+		}
+		if strings.Contains(c.Data, "data:image") {
+			t.Fatalf("expected no image data URL remnants in truncated output")
+		}
+	}
+	// Ensure we still keep the trailing text content.
+	foundAfter := false
+	for _, c := range r.Content {
+		if c.Type == "text" && c.Text == "after" {
+			foundAfter = true
+		}
+	}
+	if !foundAfter {
+		t.Fatalf("expected to keep trailing text content")
 	}
 }

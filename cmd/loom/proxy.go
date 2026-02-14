@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -194,6 +195,44 @@ func startDaemonInBackground(socketPath string) error {
 		}
 	}
 
+	// If a LaunchAgent exists, try to start it instead of spawning a second daemon.
+	// This is critical for GUI clients (Codex/Zed/VS Code) to avoid stale/duplicate daemons.
+	if home, err := os.UserHomeDir(); err == nil {
+		plist := filepath.Join(home, "Library", "LaunchAgents", "com.loom.daemon.plist")
+		if _, statErr := os.Stat(plist); statErr == nil {
+			uid := os.Getuid()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			// kickstart is the most reliable way to (re)start launchd jobs.
+			kick := exec.CommandContext(ctx, "launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/com.loom.daemon", uid))
+			kick.Stdin = nil
+			kick.Stdout = nil
+			kick.Stderr = nil
+			_ = kick.Run()
+
+			// Wait briefly for socket to become available.
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				cctx, ccancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				d := net.Dialer{Timeout: 200 * time.Millisecond}
+				conn, derr := d.DialContext(cctx, "unix", socketPath)
+				ccancel()
+				if derr == nil {
+					_ = conn.Close()
+					return nil
+				}
+				// Only keep waiting on "not ready yet" errors.
+				var ne *net.OpError
+				if errors.As(derr, &ne) {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}
+
 	loomdPath := ""
 	if p, err := exec.LookPath("loomd"); err == nil {
 		loomdPath = p
@@ -347,7 +386,7 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	if resp.Error == nil && len(resp.Result) > 0 {
 		var result mcp.CallToolResult
 		if err := json.Unmarshal(resp.Result, &result); err == nil {
-			if truncateCallToolResult(&result, proxyMaxToolResultBytes()) {
+			if truncateCallToolResult(&result, proxyMaxToolResultBytes(), proxyMaxImageResultBytes()) {
 				return mcp.NewResponse(resp.ID, result)
 			}
 		}
