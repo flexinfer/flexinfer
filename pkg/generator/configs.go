@@ -13,6 +13,45 @@ import (
 	"github.com/crb2nu/loom/pkg/validator"
 )
 
+func isExecutableFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
+}
+
+func preferWorkspaceLoomBinary(loomBinary string, workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return loomBinary
+	}
+
+	// In this monorepo, prefer the workspace-built loom binary so GUI clients
+	// don't depend on PATH and we avoid known issues with ~/.local/bin/loom.
+	candidate := filepath.Join(workspaceRoot, "services", "loom-core", "bin", "loom")
+	if !isExecutableFile(candidate) {
+		return loomBinary
+	}
+
+	// If unset, or explicitly pointing at ~/.local/bin/loom, force the workspace binary.
+	if loomBinary == "" {
+		return candidate
+	}
+	home, _ := os.UserHomeDir()
+	local := filepath.Join(home, ".local", "bin", "loom")
+	if filepath.Clean(loomBinary) == filepath.Clean(local) {
+		return candidate
+	}
+
+	return loomBinary
+}
+
 // GenerateConfigs generates MCP client configurations.
 // registryPath is used to determine the repo root for resolving ${repo} tokens.
 func GenerateConfigs(reg *registry.Registry, outputDir string, targets []string, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets bool) error {
@@ -73,7 +112,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	}
 
 	if len(targets) == 0 || targets[0] == "all" {
-		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity"}
+		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity", "zed"}
 	}
 
 	// Resolve repo root from registry path
@@ -83,8 +122,8 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	for _, target := range targets {
 		var err error
 		switch target {
-		case "vscode", "antigravity":
-			// VSCode and Antigravity (VSCode fork) use mcp.json format
+		case "vscode", "antigravity", "zed":
+			// VSCode, Antigravity (VSCode fork), and Zed use mcp.json format
 			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
 		case "claude":
 			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
@@ -99,7 +138,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		}
 
 		// Generate lifecycle hook configs for platforms that support them.
-		if err := generateHooksConfig(outputDir, target); err != nil {
+		if err := generateHooksConfig(reg, outputDir, target); err != nil {
 			return fmt.Errorf("generate hooks for %s: %w", target, err)
 		}
 	}
@@ -133,7 +172,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 
 func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) (map[string]*registry.TargetSpec, error) {
 	if loomMode {
-		cmd := loomBinary
+		cmd := preferWorkspaceLoomBinary(loomBinary, workspaceRoot)
 		if cmd == "" {
 			cmd = "loom"
 		}
@@ -351,8 +390,7 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 	// and --ensure-session, the first heartbeat auto-bootstraps a session with
 	// git-derived namespace context. The session reaper handles cleanup on idle.
 	if target == "codex" {
-		sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-		sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
+		emitCodexPreamble(&sb, reg, workspaceRoot)
 	}
 
 	// Sort keys for deterministic output
@@ -373,18 +411,27 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 		argsJSON, _ := json.Marshal(spec.Args)
 		sb.WriteString(fmt.Sprintf("args = %s\n", string(argsJSON)))
 
-		if spec.Description != "" {
-			sb.WriteString(fmt.Sprintf("description = %q\n", spec.Description))
-		}
-		if spec.Hint != "" {
-			sb.WriteString(fmt.Sprintf("hint = %q\n", spec.Hint))
-		}
-		if spec.Timeout > 0 {
-			sb.WriteString(fmt.Sprintf("timeout = %d\n", spec.Timeout))
-		}
-		if len(spec.AlwaysAllow) > 0 {
-			allowJSON, _ := json.Marshal(spec.AlwaysAllow)
-			sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
+		// NOTE: Codex has a strict upstream schema for mcp_servers entries.
+		// Keep Codex server blocks schema-compliant to avoid breaking config load.
+		if target != "codex" {
+			if spec.Description != "" {
+				sb.WriteString(fmt.Sprintf("description = %q\n", spec.Description))
+			}
+			if spec.Hint != "" {
+				sb.WriteString(fmt.Sprintf("hint = %q\n", spec.Hint))
+			}
+			if spec.Timeout > 0 {
+				sb.WriteString(fmt.Sprintf("timeout = %d\n", spec.Timeout))
+			}
+			if len(spec.AlwaysAllow) > 0 {
+				allowJSON, _ := json.Marshal(spec.AlwaysAllow)
+				sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
+			}
+		} else {
+			// Best-effort mapping of our registry timeout to Codex's per-tool timeout.
+			if spec.Timeout > 0 {
+				sb.WriteString(fmt.Sprintf("tool_timeout_sec = %d\n", spec.Timeout))
+			}
 		}
 
 		if len(spec.Env) > 0 {
@@ -448,12 +495,12 @@ func sortStrings(s []string) {
 // generateHooksConfig writes a settings.json with lifecycle hooks for platforms
 // that support them (Claude Code and Gemini CLI). The hooks call `loom agent`
 // subcommands to ensure consistent session tracking and presence management.
-func generateHooksConfig(outputDir, target string) error {
+func generateHooksConfig(reg *registry.Registry, outputDir, target string) error {
 	var config map[string]any
 
 	switch target {
 	case "claude":
-		config = claudeHooksConfig()
+		config = claudeHooksConfig(reg)
 	case "gemini":
 		config = geminiHooksConfig()
 	default:
@@ -518,86 +565,70 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 }
 
 // claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks,
-// guardrail hooks, and default-allow permissions using the correct three-level
-// nesting:
-//
-//	event → matcher group (with "hooks" array) → handler objects
-//
-// Lifecycle hooks:
-//   - SessionStart: create session + register presence + recall context
-//   - Stop: end session + summarize + deregister presence
-//   - PostToolUse (Bash|Task): heartbeat to keep presence alive
-//
-// Guardrail hooks:
-//   - PreToolUse (Bash): deny kubectl edit/set env (GitOps violation)
-//   - PostToolUse (Write|Edit): auto-format Python files with black
-//   - PostToolUse (Write|Edit): warn on image:latest tags
-//
-// Permissions:
-//   - Default-allow for loom MCP proxy tools, common dev CLIs, and file ops
-//   - Deny kubectl edit/set env (enforced by hook, belt-and-suspenders)
-func claudeHooksConfig() map[string]any {
+// guardrail hooks, and default-allow permissions. Permissions are read from the
+// registry's platform_permissions.claude section; hooks remain in Go because
+// they are structural (event names, matcher groups) rather than data.
+func claudeHooksConfig(reg *registry.Registry) map[string]any {
 	return map[string]any{
-		"permissions": claudePermissions(),
-		"hooks": map[string]any{
-			// SessionStart has no matcher — fires on every session start.
-			"SessionStart": []map[string]any{
-				{
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
-						},
+		"permissions": claudePermissions(reg),
+		"hooks":       claudeHooks(),
+	}
+}
+
+// claudeHooks returns the hooks block for Claude Code settings.json.
+func claudeHooks() map[string]any {
+	return map[string]any{
+		"SessionStart": []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
 					},
 				},
 			},
-			// Stop has no matcher — fires on every stop.
-			"Stop": []map[string]any{
-				{
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
-						},
+		},
+		"Stop": []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
 					},
 				},
 			},
-			// PreToolUse matcher group: Bash commands only.
-			"PreToolUse": []map[string]any{
-				{
-					"matcher": "Bash",
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; exit 0`,
-						},
+		},
+		"PreToolUse": []map[string]any{
+			{
+				"matcher": "Bash",
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; exit 0`,
 					},
 				},
 			},
-			// PostToolUse has two matcher groups:
-			//   1. Bash|Task → heartbeat
-			//   2. Write|Edit → black + image tag warning
-			"PostToolUse": []map[string]any{
-				{
-					"matcher": "Bash|Task",
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": "loom agent heartbeat --agent-id claude-code --status active --ensure-session --agent-type claude-code --quiet 2>/dev/null || true",
-						},
+		},
+		"PostToolUse": []map[string]any{
+			{
+				"matcher": "Bash|Task",
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": "loom agent heartbeat --agent-id claude-code --status active --ensure-session --agent-type claude-code --quiet 2>/dev/null || true",
 					},
 				},
-				{
-					"matcher": "Write|Edit",
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.py ]] && black "$f" 2>/dev/null; exit 0; }`,
-						},
-						{
-							"type":    "command",
-							"command": `jq -r '.tool_input.new_string // .tool_input.content // ""' | { read content; if echo "$content" | grep -qE 'image:.*:latest'; then echo '{"systemMessage":"Noticed :latest tag - consider pinning to a specific version for reproducibility."}'; fi; exit 0; }`,
-						},
+			},
+			{
+				"matcher": "Write|Edit",
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.py ]] && black "$f" 2>/dev/null; exit 0; }`,
+					},
+					{
+						"type":    "command",
+						"command": `jq -r '.tool_input.new_string // .tool_input.content // ""' | { read content; if echo "$content" | grep -qE 'image:.*:latest'; then echo '{"systemMessage":"Noticed :latest tag - consider pinning to a specific version for reproducibility."}'; fi; exit 0; }`,
 					},
 				},
 			},
@@ -605,124 +636,97 @@ func claudeHooksConfig() map[string]any {
 	}
 }
 
-// claudePermissions returns the permissions block for Claude Code settings.json.
-// This configures default-allow for the loom MCP proxy, common development CLIs,
-// and file operations — suitable for a personal dev machine where approval prompts
-// for routine operations are unwanted friction.
-func claudePermissions() map[string]any {
-	return map[string]any{
-		"allow": []string{
-			// ── MCP: all tools via loom proxy ──
-			"mcp__loom",
+// claudePermissions builds the permissions block for Claude Code settings.json.
+// It reads from the registry's platform_permissions.claude section so the allow/deny
+// lists are maintained in YAML rather than Go code. Falls back to a minimal default
+// if the registry has no claude entry.
+func claudePermissions(reg *registry.Registry) map[string]any {
+	perms := map[string]any{}
 
-			// ── Build & language toolchains ──
-			"Bash(go *)",
-			"Bash(make *)",
-			"Bash(cargo *)",
-			"Bash(npm *)",
-			"Bash(npx *)",
-			"Bash(pnpm *)",
-			"Bash(yarn *)",
-			"Bash(node *)",
-			"Bash(python *)",
-			"Bash(python3 *)",
-			"Bash(pip *)",
-			"Bash(uv *)",
-			"Bash(poetry *)",
-			"Bash(pytest *)",
-			"Bash(black *)",
-			"Bash(ruff *)",
-			"Bash(golangci-lint *)",
-
-			// ── Git & SCM ──
-			"Bash(git *)",
-			"Bash(gh *)",
-
-			// ── Kubernetes & infrastructure ──
-			"Bash(kubectl *)",
-			"Bash(helm *)",
-			"Bash(flux *)",
-			"Bash(kustomize *)",
-			"Bash(docker *)",
-			"Bash(docker-compose *)",
-
-			// ── Loom CLI ──
-			"Bash(loom *)",
-			"Bash(loomd *)",
-
-			// ── Common unix utilities ──
-			"Bash(ls *)",
-			"Bash(cat *)",
-			"Bash(head *)",
-			"Bash(tail *)",
-			"Bash(wc *)",
-			"Bash(grep *)",
-			"Bash(rg *)",
-			"Bash(find *)",
-			"Bash(sort *)",
-			"Bash(diff *)",
-			"Bash(which *)",
-			"Bash(echo *)",
-			"Bash(yes *)",
-			"Bash(mkdir *)",
-			"Bash(cp *)",
-			"Bash(mv *)",
-			"Bash(rm *)",
-			"Bash(touch *)",
-			"Bash(chmod *)",
-			"Bash(pwd)",
-			"Bash(env *)",
-			"Bash(export *)",
-			"Bash(sed *)",
-			"Bash(awk *)",
-			"Bash(tr *)",
-			"Bash(cut *)",
-			"Bash(xargs *)",
-			"Bash(tee *)",
-			"Bash(date *)",
-			"Bash(hostname)",
-			"Bash(whoami)",
-			"Bash(readlink *)",
-			"Bash(realpath *)",
-			"Bash(basename *)",
-			"Bash(dirname *)",
-			"Bash(stat *)",
-			"Bash(file *)",
-			"Bash(du *)",
-			"Bash(df *)",
-
-			// ── Data processing & network ──
-			"Bash(jq *)",
-			"Bash(yq *)",
-			"Bash(curl *)",
-			"Bash(wget *)",
-			"Bash(ssh *)",
-			"Bash(scp *)",
-			"Bash(rsync *)",
-
-			// ── Testing & quality ──
-			"Bash(gofmt *)",
-			"Bash(goimports *)",
-			"Bash(eslint *)",
-			"Bash(prettier *)",
-			"Bash(shellcheck *)",
-
-			// ── File operations ──
-			"Read",
-			"Edit",
-			"Write",
-
-			// ── Web access ──
-			"WebFetch",
-			"WebSearch",
-		},
-		"deny": []string{
-			// GitOps policy: never allow direct cluster mutations that bypass git.
-			// Also enforced by PreToolUse hook as belt-and-suspenders.
-			"Bash(kubectl edit *)",
-			"Bash(kubectl set env *)",
-		},
+	pp := registryPlatformPerms(reg, "claude")
+	if pp == nil {
+		// Minimal fallback: allow loom proxy tools only.
+		return map[string]any{
+			"allow": []string{"mcp__loom"},
+		}
 	}
+
+	if len(pp.AdditionalDirectories) > 0 {
+		perms["additionalDirectories"] = pp.AdditionalDirectories
+	}
+	if len(pp.Allow) > 0 {
+		perms["allow"] = pp.Allow
+	}
+	if len(pp.Deny) > 0 {
+		perms["deny"] = pp.Deny
+	}
+	return perms
+}
+
+// emitCodexPreamble writes Codex-specific top-level TOML settings.
+// Settings are read from the registry's platform_permissions.codex section.
+func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoot string) {
+	pp := registryPlatformPerms(reg, "codex")
+
+	// Defaults when registry has no codex entry.
+	approvalPolicy := "never"
+	suppressWarning := true
+	sandboxMode := "workspace-write"
+	features := map[string]any{
+		"include_apply_patch_tool": true,
+		"apply_patch_freeform":     true,
+		"unified_exec":             true,
+	}
+
+	// Override from registry settings if present.
+	if pp != nil && pp.Settings != nil {
+		if v, ok := pp.Settings["approval_policy"].(string); ok {
+			approvalPolicy = v
+		}
+		if v, ok := pp.Settings["suppress_unstable_features_warning"].(bool); ok {
+			suppressWarning = v
+		}
+		if v, ok := pp.Settings["sandbox_mode"].(string); ok {
+			sandboxMode = v
+		}
+		if v, ok := pp.Settings["features"].(map[string]any); ok {
+			features = v
+		}
+	}
+
+	fmt.Fprintf(sb, "approval_policy = %q\n\n", approvalPolicy)
+
+	if suppressWarning {
+		sb.WriteString("suppress_unstable_features_warning = true\n")
+	}
+
+	// Emit features as inline TOML table.
+	var featureParts []string
+	for k, v := range features {
+		switch val := v.(type) {
+		case bool:
+			featureParts = append(featureParts, fmt.Sprintf("%s = %t", k, val))
+		case string:
+			featureParts = append(featureParts, fmt.Sprintf("%s = %q", k, val))
+		}
+	}
+	sort.Strings(featureParts)
+	fmt.Fprintf(sb, "features = { %s }\n\n", strings.Join(featureParts, ", "))
+
+	fmt.Fprintf(sb, "sandbox_mode = %q\n", sandboxMode)
+	fmt.Fprintf(sb, "sandbox_workspace_write = { network_access = true, writable_roots = [%q] }\n\n", workspaceRoot)
+
+	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
+	sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
+}
+
+// registryPlatformPerms returns the PlatformPermission for a given platform,
+// or nil if the registry has no entry.
+func registryPlatformPerms(reg *registry.Registry, platform string) *registry.PlatformPermission {
+	if reg == nil || reg.PlatformPermissions == nil {
+		return nil
+	}
+	return reg.PlatformPermissions[platform]
 }
 
 // geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks.
