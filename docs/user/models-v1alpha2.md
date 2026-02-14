@@ -13,6 +13,12 @@ description: The recommended single-resource API for running models.
 - Optional scale-to-zero via `spec.serverless`
 - Optional proxy/LiteLLM discovery via annotations
 
+## Cluster snapshot (homelab)
+
+For a point-in-time view of what is currently deployed in `flexinfer-system` (models, shared groups, LiteLLM aliases, benchmarks), see:
+
+- `docs/user/flexinfer-system-snapshot.md`
+
 ## Minimal example
 
 ```yaml

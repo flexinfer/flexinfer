@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 var (
@@ -181,31 +182,32 @@ var (
 )
 
 func init() {
-	// Register the metrics with the default registry.
-	prometheus.MustRegister(TokensPerSecond)
-	prometheus.MustRegister(ModelLoadSeconds)
-	prometheus.MustRegister(GPUTemperature)
+	// Register the metrics with controller-runtime's registry so they are exposed by
+	// the manager's /metrics endpoint (and any component that serves ctrlmetrics.Registry).
+	ctrlmetrics.Registry.MustRegister(TokensPerSecond)
+	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
+	ctrlmetrics.Registry.MustRegister(GPUTemperature)
 
 	// GPU VRAM metrics
-	prometheus.MustRegister(GPUVRAMFreeBytes)
-	prometheus.MustRegister(GPUVRAMTotalBytes)
-	prometheus.MustRegister(GPUVRAMUsedBytes)
-	prometheus.MustRegister(GPUVRAMUtilizationPercent)
+	ctrlmetrics.Registry.MustRegister(GPUVRAMFreeBytes)
+	ctrlmetrics.Registry.MustRegister(GPUVRAMTotalBytes)
+	ctrlmetrics.Registry.MustRegister(GPUVRAMUsedBytes)
+	ctrlmetrics.Registry.MustRegister(GPUVRAMUtilizationPercent)
 
 	// ModelCache LRU eviction metrics
-	prometheus.MustRegister(ModelCacheResidentSeconds)
-	prometheus.MustRegister(DevShmUtilizationPercent)
-	prometheus.MustRegister(ModelCacheEvictionsTotal)
-	prometheus.MustRegister(ModelCacheHitRate)
-	prometheus.MustRegister(ModelCacheSizeBytes)
-	prometheus.MustRegister(ModelCacheAccessCount)
-	prometheus.MustRegister(ModelCachePhase)
+	ctrlmetrics.Registry.MustRegister(ModelCacheResidentSeconds)
+	ctrlmetrics.Registry.MustRegister(DevShmUtilizationPercent)
+	ctrlmetrics.Registry.MustRegister(ModelCacheEvictionsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelCacheHitRate)
+	ctrlmetrics.Registry.MustRegister(ModelCacheSizeBytes)
+	ctrlmetrics.Registry.MustRegister(ModelCacheAccessCount)
+	ctrlmetrics.Registry.MustRegister(ModelCachePhase)
 
 	// Quantization metrics
-	prometheus.MustRegister(QuantizationDurationSeconds)
-	prometheus.MustRegister(QuantizationCompressionRatio)
-	prometheus.MustRegister(QuantizationJobsTotal)
-	prometheus.MustRegister(QuantizationCacheSizeBytes)
+	ctrlmetrics.Registry.MustRegister(QuantizationDurationSeconds)
+	ctrlmetrics.Registry.MustRegister(QuantizationCompressionRatio)
+	ctrlmetrics.Registry.MustRegister(QuantizationJobsTotal)
+	ctrlmetrics.Registry.MustRegister(QuantizationCacheSizeBytes)
 }
 
 // Exporter handles serving the Prometheus metrics.
@@ -221,9 +223,12 @@ func NewExporter() *Exporter {
 // Run starts an HTTP server to expose the metrics.
 // The server runs in a goroutine and logs errors instead of panicking.
 func (e *Exporter) Run(addr string) {
-	http.Handle("/metrics", promhttp.Handler())
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(ctrlmetrics.Registry, promhttp.HandlerOpts{
+		ErrorHandling: promhttp.HTTPErrorOnError,
+	}))
 	go func() {
-		if err := http.ListenAndServe(addr, nil); err != nil && err != http.ErrServerClosed {
+		if err := http.ListenAndServe(addr, mux); err != nil && err != http.ErrServerClosed {
 			// Log error but don't panic - this is a background goroutine
 			// The main application should continue even if metrics fail
 			// This allows debugging without crashing the entire process

@@ -125,17 +125,17 @@ Shipped in pipeline #498 across 3 commits.
 ### Low Priority (Advanced Features)
 - [x] **KV-Cache tiering** - Advanced memory management (shipped: LRU/LFU/FIFO eviction)
 - [x] **Harbor OCI integration** - Direct model registry support (shipped: `pkg/registry/`, `ModelCatalog` CRD)
-- [ ] **Multi-tenancy** - Namespace isolation features
+- [ ] **Multi-tenancy** - Namespace isolation features ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2))
 - [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
 
 ## Phase 5: Multi-Cluster (Future)
 
 See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` for details.
 
-- [ ] Cluster Registry (MVP)
-- [ ] Cross-Cluster Model Sync
-- [ ] Global Routing
-- [ ] Advanced Features (weighted routing, cross-cluster GPU sharing)
+- [ ] Cluster Registry (MVP) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3))
+- [ ] Cross-Cluster Model Sync ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4))
+- [ ] Global Routing ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5))
+- [ ] Advanced Features (weighted routing, cross-cluster GPU sharing) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6))
 
 ## Innovation Roadmap
 

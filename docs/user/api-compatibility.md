@@ -305,31 +305,31 @@ The proxy exports Prometheus metrics at `/metrics`:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `proxy_requests_total` | counter | model, status | Total requests processed |
-| `proxy_request_duration_seconds` | histogram | model | Request latency distribution |
-| `proxy_active_connections` | gauge | model | Current active connections per model |
+| `flexinfer_proxy_requests_total` | counter | model, status | Total requests processed |
+| `flexinfer_proxy_request_duration_seconds` | histogram | model | Request latency distribution |
+| `flexinfer_proxy_active_connections` | gauge | model | Current active connections per model |
 
 ### Cold Start / Queue Metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `proxy_scale_ups_total` | counter | model | Cold start activations triggered |
-| `proxy_queued_requests_total` | counter | model | Requests queued during cold start |
-| `proxy_queue_rejected_total` | counter | model | Requests rejected (queue full) |
-| `proxy_queue_wait_seconds` | histogram | model | Time spent waiting in queue |
-| `proxy_queue_depth` | gauge | model | Current queue depth per model |
+| `flexinfer_proxy_scale_ups_total` | counter | model | Cold start activations triggered |
+| `flexinfer_proxy_queued_requests_total` | counter | model | Requests queued during cold start |
+| `flexinfer_proxy_queue_rejected_total` | counter | model | Requests rejected (queue full) |
+| `flexinfer_proxy_queue_wait_duration_seconds` | histogram | model | Time spent waiting in queue |
+| `flexinfer_proxy_queue_depth` | gauge | model | Current queue depth per model |
 
 ### Endpoint Routing Metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `proxy_endpoint_changes_total` | counter | model, change_type | Endpoint additions/removals (change_type: added, removed) |
-| `proxy_endpoint_count` | gauge | model | Current number of endpoints per model |
-| `proxy_endpoint_refresh_seconds` | histogram | - | Time spent refreshing endpoints |
+| `flexinfer_proxy_endpoint_changes_total` | counter | model, change_type | Endpoint additions/removals (change_type: added, removed) |
+| `flexinfer_proxy_endpoint_count` | gauge | model | Current number of endpoints per model |
+| `flexinfer_proxy_endpoint_refresh_duration_seconds` | histogram | - | Time spent refreshing endpoints |
 
 ### GPUGroup Metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `proxy_gpugroup_swap_signals_total` | counter | gpugroup, model | Swap signals sent to controller |
-| `proxy_gpugroup_queued_requests_total` | counter | gpugroup, model | Requests queued for model swap |
+| `flexinfer_proxy_gpugroup_swap_signals_total` | counter | gpugroup, model | Swap signals sent to controller |
+| `flexinfer_proxy_gpugroup_queued_requests_total` | counter | gpugroup, model | Requests queued for model swap |
