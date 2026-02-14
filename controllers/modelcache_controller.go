@@ -205,6 +205,9 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			"Model download job failed - check job logs for details")
 	}
 
+	// Emit metrics for SharedPVC caches as well (the Memory strategy already does this).
+	r.updateCacheMetrics(modelCache, "")
+
 	return ctrl.Result{}, nil
 }
 
@@ -252,6 +255,17 @@ func parseModelSource(source string) string {
 	source = strings.TrimPrefix(source, "huggingface://")
 	source = strings.TrimPrefix(source, "mlc://")
 	source = strings.TrimPrefix(source, "HF://")
+	return source
+}
+
+func isLocalSource(source string) bool {
+	return strings.HasPrefix(source, "local://")
+}
+
+func parseLocalSource(source string) string {
+	// local:// paths are relative to the mounted model store root ("/models").
+	source = strings.TrimPrefix(source, "local://")
+	source = strings.TrimPrefix(source, "/")
 	return source
 }
 
@@ -308,7 +322,50 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName,
 	var downloadScript string
 	var image string
 
-	if isMlcModel(m.Spec.Source) {
+	if isLocalSource(m.Spec.Source) {
+		// local:// sources are paths that should already exist in the mounted model store.
+		// If the source is already under the destination dir, just verify it exists (avoid copying onto itself).
+		image = "alpine:3.19"
+		srcRel := parseLocalSource(m.Spec.Source)
+		downloadScript = fmt.Sprintf(`
+set -ex
+SRC_REL="%s"
+MODEL_PATH="%s"
+DEST_DIR="/models/%s"
+SRC_PATH="/models/%s"
+
+case "$SRC_REL" in
+  "$MODEL_PATH"|"$MODEL_PATH"/*)
+    if [ ! -e "$SRC_PATH" ]; then
+      echo "Local source missing: $SRC_PATH"
+      exit 1
+    fi
+    if [ -d "$SRC_PATH" ]; then
+      test "$(ls -A "$SRC_PATH" 2>/dev/null)" || (echo "Local source directory is empty: $SRC_PATH" && exit 1)
+    else
+      test -s "$SRC_PATH" || (echo "Local source file is empty: $SRC_PATH" && exit 1)
+    fi
+    echo "Local source already present under $DEST_DIR"
+    exit 0
+    ;;
+esac
+
+if [ ! -e "$SRC_PATH" ]; then
+  echo "Local source missing: $SRC_PATH"
+  exit 1
+fi
+
+mkdir -p "$DEST_DIR"
+if [ -d "$SRC_PATH" ]; then
+  cp -a "$SRC_PATH/." "$DEST_DIR/"
+else
+  cp -a "$SRC_PATH" "$DEST_DIR/"
+fi
+
+echo "Local sync complete."
+ls -la "$DEST_DIR"
+`, srcRel, modelPath, modelPath, srcRel)
+	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS support
 		// Use debian:bookworm-slim as stable base with apt-get support
 		image = "debian:bookworm-slim"
