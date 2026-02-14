@@ -17,11 +17,26 @@ spec:
     metadata:
       annotations:
         flexinfer.ai/chart-version: {{ .Chart.Version | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "flexinfer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: scheduler
     spec:
       serviceAccountName: {{ include "flexinfer.schedulerServiceAccountName" . }}
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: kubeconfig-init
           image: "{{ .Values.scheduler.kubeconfigInit.image.repository }}:{{ .Values.scheduler.kubeconfigInit.image.tag }}"

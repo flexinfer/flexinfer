@@ -194,6 +194,11 @@ scheduler:
     repository: ghcr.io/flexinfer/flexinfer-scheduler
     pullPolicy: IfNotPresent
     tag: "latest"
+  # Optional scheduling controls for the scheduler Deployment.
+  # Useful when your cluster has mixed architectures (e.g., arm64 nodes).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
   kubeScheduler:
     image:
       repository: registry.k8s.io/kube-scheduler
