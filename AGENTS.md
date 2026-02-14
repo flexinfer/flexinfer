@@ -62,6 +62,61 @@ curl http://localhost:9876/health
 ./bin/loom tunnel status
 ```
 
+## Development Workflow
+
+### Iterating on loom-core
+
+After making code changes, use one of these targets to rebuild, install, and reload:
+
+```bash
+# Safe reload — skips daemon restart if active proxy connections exist
+make dev-upgrade
+
+# Force reload — always restarts daemon; all proxy clients auto-reconnect
+make dev-reload
+```
+
+Both targets execute the same pipeline:
+1. Build `loom` + `loomd` binaries
+2. Atomic install to `~/.local/bin` (no window where binaries are missing)
+3. Regenerate + sync platform configs (`loom sync all --regen --loom-mode`)
+4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
+5. Restart HUD if running on port 3333
+6. Smoke test (proxy initialize round-trip)
+
+### How proxy reconnection works
+
+Each platform client (Claude Code, Codex, Zed, Gemini, etc.) spawns its own `loom proxy` process. The proxy connects to `loomd` via Unix socket. When the daemon restarts:
+
+1. The proxy detects a broken pipe or EOF on the next tool call
+2. It clears its daemon connection and calls `ensureDaemon()` on the next message
+3. `ensureDaemon()` re-dials the socket (with autostart fallback)
+4. The client sees no interruption — the tool call succeeds after a brief reconnect
+
+No manual action is needed from any connected agent or IDE.
+
+### First-time setup
+
+```bash
+make bootstrap-local    # Build + install + sync + environment check
+```
+
+### Individual platform config sync
+
+```bash
+loom sync claude --regen      # Regenerate .claude/mcp.json + .claude/settings.json
+loom sync codex --regen       # Regenerate .codex/config.toml
+loom sync gemini --regen      # Regenerate .gemini/config.toml + .gemini/settings.json
+loom sync zed --regen         # Regenerate .zed/mcp.json
+loom sync all --regen         # All platforms at once
+```
+
+### Platform permissions
+
+Platform-specific allow/deny lists and settings are defined in the registry YAML under `platform_permissions`. Changes to permissions take effect after `loom sync` (no daemon restart required — only the platform config files change).
+
+Registry location: `platform/gitops/mcp/context/registry.yaml`
+
 ## Daemon Features
 
 ### Health Monitoring

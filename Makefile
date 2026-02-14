@@ -1,6 +1,6 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
 		loom loomd \
-		install-core install-all bootstrap-local dev-upgrade \
+		install-core install-all bootstrap-local dev-upgrade dev-reload \
 		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark ci-security ci-baseline \
 		security security-gosec security-vuln \
 		docker-build docker-build-loom-core docker-build-custom-server \
@@ -47,6 +47,8 @@ help:
 	@echo "  make setup      - Install dev dependencies and git hooks"
 	@echo "  make hooks      - Install git pre-commit hooks"
 	@echo "  make dev        - Build and run daemon in debug mode"
+	@echo "  make dev-upgrade - Build, install, sync, restart daemon (safe: skips if active connections)"
+	@echo "  make dev-reload  - Build, install, sync, force-restart daemon (all proxies auto-reconnect)"
 	@echo "  make bootstrap-local - Build + install core binaries + sync configs + check setup"
 	@echo "  make check      - Run all checks (fmt, vet, lint, test)"
 	@echo ""
@@ -307,6 +309,12 @@ install-all: build
 dev-upgrade:
 	@chmod +x scripts/dev/upgrade_local.sh
 	@scripts/dev/upgrade_local.sh
+
+# Force rebuild + restart: always restarts daemon regardless of active connections.
+# Proxy connections (Claude, Codex, Zed, etc.) auto-reconnect on the next tool call.
+dev-reload:
+	@chmod +x scripts/dev/upgrade_local.sh
+	@RESTART_DAEMON=always scripts/dev/upgrade_local.sh
 
 # First-run/local onboarding:
 # - build + atomic install loom/loomd
