@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/registry"
@@ -40,7 +43,7 @@ func startDaemon(socketPath, registryPath string) error {
 			fmt.Printf("launchctl start failed: %v, falling back to direct start\n", err)
 		} else {
 			// Wait for daemon to be ready
-			for i := 0; i < 50; i++ {
+			for i := 0; i < 150; i++ {
 				time.Sleep(100 * time.Millisecond)
 				if conn, err := dial(socketPath); err == nil {
 					conn.Close()
@@ -48,6 +51,9 @@ func startDaemon(socketPath, registryPath string) error {
 					return nil
 				}
 			}
+			// If launchd is installed, do not auto-spawn a second daemon. That can leave
+			// multiple loomd processes running (especially if the socket path is stale).
+			return fmt.Errorf("daemon did not become ready after launchctl start (check %s)", filepath.Join(home, ".config", "loom", "logs", "daemon.err"))
 		}
 	}
 
@@ -104,6 +110,11 @@ func stopDaemon(socketPath string) error {
 				time.Sleep(100 * time.Millisecond)
 				if c, err := dial(socketPath); err != nil {
 					fmt.Println("Daemon stopped via launchctl")
+					// Best-effort: if a previous daemon instance unlinked its socket path,
+					// there may still be a stray loomd running. Clean those up too.
+					_ = killLoomdBySocket(socketPath)
+					// Ensure the daemon has fully exited (lock released) before returning.
+					_ = waitForDaemonLockRelease(5 * time.Second)
 					return nil
 				} else {
 					c.Close()
@@ -112,17 +123,60 @@ func stopDaemon(socketPath string) error {
 		}
 	}
 
-	// Fallback: remove socket to signal shutdown
-	conn, err := dial(socketPath)
-	if err != nil {
-		fmt.Println("Daemon is not running")
-		return nil
+	// Fallback: terminate by PID match rather than unlinking the socket. Unlinking
+	// does not stop the daemon and can leave a stale process "alive" and unreachable.
+	if err := killLoomdBySocket(socketPath); err != nil {
+		// If we can't find a process and can't dial, it's effectively stopped.
+		if _, dialErr := dial(socketPath); dialErr != nil {
+			fmt.Println("Daemon is not running")
+			return nil
+		}
+		return err
 	}
-	conn.Close()
-
-	os.Remove(socketPath)
-	fmt.Println("Daemon stopped")
+	// Give it a moment to exit and remove its socket.
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if _, err := dial(socketPath); err != nil {
+			fmt.Println("Daemon stopped")
+			return nil
+		}
+	}
+	fmt.Println("Daemon stop requested (still shutting down)")
 	return nil
+}
+
+func killLoomdBySocket(socketPath string) error {
+	// macOS and Linux both support pkill; it is the safest way here without a PID file.
+	// We match on the explicit --socket arg to avoid killing unrelated processes.
+	pattern := fmt.Sprintf("loomd.*--socket[[:space:]]+%s", socketPath)
+	if runtime.GOOS == "darwin" {
+		// launchd jobs can omit --socket (default path); if so, use a looser match.
+		if strings.TrimSpace(socketPath) != "" && strings.Contains(socketPath, "/.config/loom/loom.sock") {
+			pattern = "loomd([[:space:]]|$)"
+		}
+	}
+	cmd := exec.Command("pkill", "-TERM", "-f", pattern) //nolint:noctx
+	_ = cmd.Run()                                        // pkill returns non-zero when no matches
+	return nil
+}
+
+func waitForDaemonLockRelease(timeout time.Duration) error {
+	home, _ := os.UserHomeDir()
+	lockPath := filepath.Join(home, ".config", "loom", "loomd.lock")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+		if err == nil {
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				_ = f.Close()
+				return nil
+			}
+			_ = f.Close()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for daemon lock release")
 }
 
 func installService() error {

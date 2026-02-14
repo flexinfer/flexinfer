@@ -12,9 +12,12 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -57,6 +60,9 @@ type DaemonClient struct {
 	cbFailures    int
 	cbLastFailure time.Time
 	cbCooldown    time.Duration
+
+	// Autostart rate-limit to avoid spamming launchctl on repeated failures.
+	lastAutostart time.Time
 }
 
 // NewDaemonClient creates a new client for the given daemon socket path.
@@ -97,13 +103,39 @@ func (c *DaemonClient) connectLocked() error {
 	d := net.Dialer{Timeout: timeout}
 	conn, err := d.DialContext(ctx, "unix", c.socketPath)
 	if err != nil {
-		return fmt.Errorf("connect to daemon at %s: %w", c.socketPath, err)
+		// Best-effort autostart for launchctl-managed daemons (e.g., the HUD TUI).
+		// If the socket is missing/refused, try to start the service and retry once.
+		if c.maybeAutostart(err) {
+			retryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			conn, err = (&net.Dialer{Timeout: 2 * time.Second}).DialContext(retryCtx, "unix", c.socketPath)
+		}
+		if err != nil {
+			return fmt.Errorf("connect to daemon at %s: %w", c.socketPath, err)
+		}
 	}
 
 	c.conn = conn
 	c.transport = mcp.NewStdioTransport(conn, conn)
 	c.logger.Debug("connected to daemon", "socket", c.socketPath)
 	return nil
+}
+
+func (c *DaemonClient) maybeAutostart(err error) bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	// Only autostart on "socket missing" or "connection refused" errors.
+	if !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	// Rate-limit to keep logs and launchctl quiet.
+	if time.Since(c.lastAutostart) < 5*time.Second {
+		return false
+	}
+	c.lastAutostart = time.Now()
+	_ = exec.Command("launchctl", "start", "com.loom.daemon").Run() //nolint:noctx // best-effort
+	return true
 }
 
 // Close closes the underlying connection.

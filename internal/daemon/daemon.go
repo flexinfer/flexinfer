@@ -91,6 +91,9 @@ type Daemon struct {
 	runningServers gosync.Map         // serverName -> true; tracks process starts for event emission
 	wg             gosync.WaitGroup
 	done           chan struct{}
+
+	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
+	lockFile *os.File
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
@@ -100,6 +103,22 @@ func (d *Daemon) callLock(serverName string) *gosync.Mutex {
 	}
 	v, _ := d.callLocks.LoadOrStore(serverName, &gosync.Mutex{})
 	return v.(*gosync.Mutex)
+}
+
+func (d *Daemon) acquireLock() error {
+	home, _ := os.UserHomeDir()
+	lockPath := filepath.Join(home, ".config", "loom", "loomd.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("open lock file: %w", err)
+	}
+	// Non-blocking exclusive lock. If another daemon holds it, do not touch the socket.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("daemon already running (lock held): %w", err)
+	}
+	d.lockFile = f
+	return nil
 }
 
 // New creates a new daemon instance.
@@ -322,6 +341,20 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("registry not loaded (pass --registry /path/to/registry.yaml)")
 	}
 
+	// Prevent multiple daemons from unlinking/rebinding the same socket path.
+	if err := d.acquireLock(); err != nil {
+		return err
+	}
+	started := false
+	defer func() {
+		// If we fail during startup, release the lock so the user can retry.
+		// On success, keep it held for the process lifetime; Stop() releases it.
+		if !started && d.lockFile != nil {
+			_ = d.lockFile.Close()
+			d.lockFile = nil
+		}
+	}()
+
 	// Load cached manifest for instant tool availability
 	if err := d.manifest.Load(); err != nil {
 		d.logger.Warn("failed to load manifest", "error", err)
@@ -343,8 +376,19 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
 
-	// Remove stale socket
-	os.Remove(d.cfg.SocketPath)
+	// Only unlink the socket if it's stale. Unlinking an active daemon socket
+	// makes the existing daemon unreachable while it keeps running, which can
+	// lead to multiple daemons "working" at once.
+	if _, err := os.Stat(d.cfg.SocketPath); err == nil {
+		dialCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		conn, dialErr := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(dialCtx, "unix", d.cfg.SocketPath)
+		if dialErr == nil {
+			_ = conn.Close()
+			return fmt.Errorf("daemon already running (socket active): %s", d.cfg.SocketPath)
+		}
+		_ = os.Remove(d.cfg.SocketPath)
+	}
 
 	// Listen on Unix socket
 	lc := net.ListenConfig{}
@@ -420,6 +464,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.wg.Add(1)
 	go d.acceptLoop(ctx)
 
+	started = true
 	return nil
 }
 
@@ -588,6 +633,7 @@ func (d *Daemon) Stop() error {
 	if d.listener != nil {
 		d.listener.Close()
 	}
+	_ = os.Remove(d.cfg.SocketPath)
 
 	d.pool.Close()
 	if d.hubPool != nil {
@@ -621,6 +667,11 @@ func (d *Daemon) Stop() error {
 
 	d.wg.Wait()
 	d.logger.Info("daemon stopped")
+
+	if d.lockFile != nil {
+		_ = d.lockFile.Close()
+		d.lockFile = nil
+	}
 	return nil
 }
 
