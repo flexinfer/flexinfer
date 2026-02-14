@@ -53,5 +53,8 @@ claude_desktop_config/
 /flexinfer-agent
 /flexinfer-bench
 /flexinfer-scheduler
+/flexinfer
+/flexinfer-flash-loader
+/flexinfer-sched
 /seed-issues
 bin/

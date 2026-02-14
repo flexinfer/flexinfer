@@ -41,7 +41,7 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - Tests verify request/response format against OpenAI spec.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
 - `docs/user/api-compatibility.md` (new)
 
 **Status**: Documentation complete. Created `docs/user/api-compatibility.md` covering supported endpoints, request routing, model name rewriting, streaming behavior, error responses, cold start behavior, and backend-specific notes. Future work: add request validation and OpenAI-format error responses.
@@ -60,7 +60,7 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - Documentation explains streaming behavior and any limitations.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
 - `docs/user/api-compatibility.md`
 
 **Status**: Complete. Streaming behavior documented in `docs/user/api-compatibility.md` including passthrough proxying, SSE handling, and cold start behavior. Current policy: requests share activation queue but each is processed independently once model is ready (no request coalescing).
@@ -80,7 +80,7 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - Failed activations don't cause infinite retry loops.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
 - `docs/user/api-compatibility.md`
 - `docs/CONFIGURATION.md`
 
@@ -99,19 +99,20 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - Excess requests receive clear error (503 with retry-after hint).
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
+- `internal/proxy/metrics.go`
 - `docs/user/api-compatibility.md`
 
-**Status**: Complete. Queue is implemented as bounded buffered channel. When full, new requests get 503 "Service overloaded, please retry". Queue depth tracked via `proxy_queue_depth` gauge metric. Documented in api-compatibility.md.
+**Status**: Complete. Queue is implemented as bounded buffered channel. When full, new requests get 503 "Service overloaded, please retry". Queue depth tracked via `flexinfer_proxy_queue_depth` gauge metric. Documented in api-compatibility.md.
 
 ### 5) Activation metrics ✅
 
 - [x] Add/verify Prometheus metrics for:
-  - `proxy_queue_wait_seconds` (histogram) - time spent waiting during cold start
-  - `proxy_scale_ups_total` (counter) - activation triggers
-  - `proxy_queue_depth` (gauge) - current queue depth per model
-  - `proxy_queue_rejected_total` (counter) - rejected due to full queue
-  - `proxy_queued_requests_total` (counter) - total requests queued
+  - `flexinfer_proxy_queue_wait_duration_seconds` (histogram) - time spent waiting during cold start
+  - `flexinfer_proxy_scale_ups_total` (counter) - activation triggers
+  - `flexinfer_proxy_queue_depth` (gauge) - current queue depth per model
+  - `flexinfer_proxy_queue_rejected_total` (counter) - rejected due to full queue
+  - `flexinfer_proxy_queued_requests_total` (counter) - total requests queued
 - [x] Document metrics in operations guide
 
 **Acceptance**
@@ -119,10 +120,11 @@ This is the concrete checklist for Phase 2: make the proxy and activation behavi
 - Grafana dashboards can visualize cold start latency distribution.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
+- `internal/proxy/metrics.go`
 - `docs/user/api-compatibility.md`
 
-**Status**: Complete. 10 metric families exported at `/metrics`. Cold start latency available via `proxy_queue_wait_seconds` histogram with buckets from 0.1s to 60s. Activation success/failure trackable via `proxy_scale_ups_total` and `proxy_queue_rejected_total`. All metrics documented in api-compatibility.md.
+**Status**: Complete. Metric families exported at `/metrics`. Cold start latency available via `flexinfer_proxy_queue_wait_duration_seconds` histogram with buckets from 0.1s to 60s. Activation success/failure trackable via `flexinfer_proxy_scale_ups_total` and `flexinfer_proxy_queue_rejected_total`. All metrics documented in api-compatibility.md.
 
 ## Tracking
 

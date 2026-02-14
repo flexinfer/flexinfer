@@ -85,16 +85,17 @@ The proxy currently uses Kubernetes Service load balancing (round-robin by defau
 - [x] Maintain in-memory pod list per model
 - [x] Update hash ring when endpoints change
 - [x] Add metrics for endpoint churn:
-  - `proxy_endpoint_changes_total{model, change_type}` (counter)
-  - `proxy_endpoint_count{model}` (gauge)
-  - `proxy_endpoint_refresh_seconds` (histogram)
+  - `flexinfer_proxy_endpoint_changes_total{model,change_type}` (counter)
+  - `flexinfer_proxy_endpoint_count{model}` (gauge)
+  - `flexinfer_proxy_endpoint_refresh_duration_seconds` (histogram)
 
 **Acceptance**
 - Proxy discovers all ready pods for multi-replica models.
 - Endpoint changes are reflected within seconds.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
+- `internal/proxy/metrics.go`
 
 **Status**: Complete. Added `watchEndpoints` goroutine that refreshes every 10 seconds. The `refreshEndpoints` function lists Services with `flexinfer.ai/model` selector, fetches their Endpoints, and updates the router's hash ring with ready pod addresses.
 
@@ -112,7 +113,7 @@ The proxy currently uses Kubernetes Service load balancing (round-robin by defau
 - Fallback to round-robin if metrics unavailable.
 
 **Primary files**
-- `cmd/flexinfer-proxy/main.go`
+- `internal/proxy/proxy.go`
 - `internal/routing/router.go`
 
 **Status**: Complete. Added `selectLeastLoaded` function to router, per-pod connection tracking to proxy via `podConnectionCount` map, and `RouteWithLoad` function that accepts a load function. Tests verify correct selection of least-loaded pod.

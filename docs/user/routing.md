@@ -182,8 +182,8 @@ Monitor routing effectiveness with these metrics:
 
 | Metric | Description |
 |--------|-------------|
-| `proxy_requests_total{model}` | Total requests per model |
-| `proxy_active_connections{model}` | Current connections per model |
+| `flexinfer_proxy_requests_total{model,status}` | Total requests per model (by status) |
+| `flexinfer_proxy_active_connections{model}` | Current connections per model |
 
 ### Logs
 
