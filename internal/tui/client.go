@@ -23,8 +23,10 @@ type Client struct {
 // NewClient creates a TUI client connected to the daemon socket.
 func NewClient(socketPath string, logger *slog.Logger) (*Client, error) {
 	d := bridge.NewDaemonClient(socketPath, logger)
+	// Don't fail hard if the daemon isn't up yet. The daemon client can
+	// reconnect (and the bridge can autostart) on the first poll/call.
 	if err := d.Connect(); err != nil {
-		return nil, err
+		logger.Warn("daemon connect failed; continuing in disconnected mode", "error", err)
 	}
 	a := bridge.NewAgentBridge(d)
 	c := &Client{

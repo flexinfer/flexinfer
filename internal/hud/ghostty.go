@@ -74,10 +74,13 @@ func GenerateGhosttyConfig() string {
 	// Quick terminal settings (right-side HUD sidebar).
 	b.WriteString("# ── Quick Terminal (HUD sidebar) ──\n")
 	b.WriteString("quick-terminal-position = right\n")
-	b.WriteString("quick-terminal-size = 380\n")
+	// Ghostty expects a unit for quick-terminal-size (e.g., px, %).
+	b.WriteString("quick-terminal-size = 380px\n")
 	b.WriteString("quick-terminal-animation-duration = 0.15\n")
-	b.WriteString("quick-terminal-shell-integration = none\n")
-	b.WriteString(fmt.Sprintf("quick-terminal-command = %s\n\n", strconv.Quote("loom hud --tui")))
+	// Some Ghostty builds don't recognize these fields; keep them as
+	// optional (commented) so the snippet is broadly compatible.
+	b.WriteString("# quick-terminal-shell-integration = none\n")
+	b.WriteString(fmt.Sprintf("# quick-terminal-command = %s\n\n", strconv.Quote("loom hud --tui")))
 
 	// Global keybind for quick terminal toggle.
 	b.WriteString("# ── Global Keybind ──\n")

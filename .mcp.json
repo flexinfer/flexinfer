@@ -2,7 +2,7 @@
   "mcpServers": {
     "loom": {
       "type": "stdio",
-      "command": "/Users/cblevins/.local/bin/loom",
+      "command": "/Users/cblevins/workspace/services/loom-core/bin/loom",
       "args": [
         "proxy"
       ],

@@ -107,53 +107,71 @@ func (p HealthPanel) renderSummary() string {
 
 func (p HealthPanel) renderTable() string {
 	compact := p.width < 60
-	colStatus := 3
-	colName := 24
-	colLatency := 10
-	colFails := 7
-	colSpark := 20
+	gap := 2 // spaces between columns
+
+	colStatus := 2
+	colLatency := 8
+	colFails := 5
+	colTrend := 16
 	if compact {
-		colName = 18
-		colSpark = 0
+		colTrend = 0
+	}
+	// Name gets the remainder.
+	colName := p.width - (colStatus + colLatency + colFails + colTrend) - gap*3
+	if !compact {
+		colName -= gap // extra separator before Trend
+	}
+	if colName < 12 {
+		colName = 12
 	}
 
-	headerStyle := theme.Styles.TableHeader
-	header := headerStyle.Render(padRight("", colStatus)) +
-		headerStyle.Render(padRight("Name", colName)) +
-		headerStyle.Render(padRight("Latency", colLatency)) +
-		headerStyle.Render(padRight("Fails", colFails))
-	if !compact {
-		header += headerStyle.Render(padRight("Trend", colSpark))
+	headerTextStyle := lipgloss.NewStyle().Foreground(theme.ColorFgSecondary).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(theme.ColorBorder)
+
+	cols := []string{
+		padRight("", colStatus),
+		padRight("Name", colName),
+		padRight("Latency", colLatency),
+		padRight("Fails", colFails),
 	}
+	if !compact {
+		cols = append(cols, padRight("Trend", colTrend))
+	}
+	header := strings.Join(cols, spaces(gap))
 
 	var b strings.Builder
-	b.WriteString(header)
+	b.WriteString(headerTextStyle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(sepStyle.Render(strings.Repeat("─", min(p.width, lipgloss.Width(header)))))
 	b.WriteString("\n")
 
 	for i, s := range p.servers {
-		style := theme.Styles.TableRow
+		rowStyle := lipgloss.NewStyle().Foreground(theme.ColorFgPrimary)
 		if i%2 == 1 {
-			style = theme.Styles.TableRowAlt
+			rowStyle = rowStyle.Background(theme.ColorBgTertiary)
 		}
 
 		dot := widgets.StatusDot(serverStatus(s))
 		latencyStr := formatLatency(s.Latency)
 		latencyStyled := colorLatency(latencyStr, s.Latency)
 
-		row := style.Render(padRight(dot, colStatus)) +
-			style.Render(padRight(truncate(s.Name, colName-1), colName)) +
-			style.Render(padRight(latencyStyled, colLatency)) +
-			style.Render(padRight(fmt.Sprintf("%d", s.ConsecFails), colFails))
+		cols := []string{
+			padRight(dot, colStatus),
+			padRight(truncate(s.Name, colName), colName),
+			padRight(latencyStyled, colLatency),
+			padRight(fmt.Sprintf("%d", s.ConsecFails), colFails),
+		}
 		if !compact {
 			spark := widgets.Sparkline{
 				Data:  s.LatencyHistory,
-				Width: colSpark,
+				Width: colTrend,
 				Color: sparkColor(s),
 			}.Render()
-			row += style.Render(spark)
+			cols = append(cols, padRight(spark, colTrend))
 		}
 
-		b.WriteString(row)
+		row := strings.Join(cols, spaces(gap))
+		b.WriteString(rowStyle.Render(truncate(row, p.width)))
 		b.WriteString("\n")
 
 		// Show error line if present

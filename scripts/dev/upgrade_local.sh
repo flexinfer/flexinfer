@@ -53,6 +53,24 @@ case "$RESTART_DAEMON" in
     ;;
 esac
 
+echo "== HUD =="
+HUD_PID=$(lsof -ti :3333 2>/dev/null | head -1 || true)
+if [ -n "$HUD_PID" ]; then
+  kill "$HUD_PID" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$HUD_PID" 2>/dev/null; then kill -9 "$HUD_PID" 2>/dev/null || true; fi
+  echo "Killed old HUD (PID $HUD_PID)"
+  nohup "$INSTALL_DIR/loom" hud --port 3333 > /tmp/loom-hud.log 2>&1 &
+  sleep 2
+  if lsof -ti :3333 >/dev/null 2>&1; then
+    echo "HUD restarted — http://127.0.0.1:3333"
+  else
+    echo "WARNING: HUD failed to restart. Check /tmp/loom-hud.log"
+  fi
+else
+  echo "No HUD process on port 3333; skipping"
+fi
+
 echo "== Smoke (proxy initialize) =="
 python3 - "$INSTALL_DIR/loom" <<'PY'
 import json, subprocess, sys

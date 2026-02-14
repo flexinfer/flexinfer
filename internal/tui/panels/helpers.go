@@ -1,13 +1,22 @@
 package panels
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
+)
 
 // padRight pads a string to the given width with spaces.
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	if width <= 0 {
+		return ""
+	}
+	// Use lipgloss.Width so ANSI escape sequences don't break column alignment.
+	if lipgloss.Width(s) >= width {
 		return s
 	}
-	return s + spaces(width-len(s))
+	return s + spaces(width-lipgloss.Width(s))
 }
 
 // spaces returns a string of n spaces.
@@ -27,13 +36,8 @@ func truncate(s string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
 	}
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
+	// runewidth.Truncate is display-width aware (handles wide runes).
+	return runewidth.Truncate(s, maxLen, "...")
 }
 
 // formatNumber formats an integer with K/M suffixes for readability.

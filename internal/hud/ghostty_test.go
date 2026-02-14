@@ -21,8 +21,11 @@ func TestShaderInstallPath(t *testing.T) {
 
 func TestGenerateGhosttyConfig_HasQuotedPaths(t *testing.T) {
 	cfg := GenerateGhosttyConfig()
-	if !strings.Contains(cfg, `quick-terminal-command = "loom hud --tui"`) {
-		t.Fatalf("expected quoted quick-terminal command in config:\n%s", cfg)
+	if !strings.Contains(cfg, `quick-terminal-size = 380px`) {
+		t.Fatalf("expected quick-terminal-size to include px unit in config:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, `# quick-terminal-command = "loom hud --tui"`) {
+		t.Fatalf("expected commented quoted quick-terminal command in config:\n%s", cfg)
 	}
 
 	shaderPath := shaderInstallPath()

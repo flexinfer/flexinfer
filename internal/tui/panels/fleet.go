@@ -216,31 +216,38 @@ func (p FleetPanel) renderSessionTable() string {
 	}
 	sort.Strings(namespaces)
 
-	// Column widths — compact mode drops namespace and shortens columns.
+	// Column widths (fluid). Namespace is already the group header, so the table
+	// focuses on per-session fields to avoid redundant + wrap-prone layouts.
 	compact := p.width < 60
-	colStatus := 3
-	colAgent := 16
-	colNS := 20
-	colTokens := 10
+	gap := 2 // spaces between columns
+	colCursor := 2
+	colStatus := 2
+	colTokens := 8
 	colAge := 8
 	if compact {
-		colAgent = 12
-		colNS = 0
-		colTokens = 8
+		colTokens = 6
 		colAge = 7
 	}
-
-	headerStyle := theme.Styles.TableHeader
-	header := headerStyle.Render(padRight("", colStatus)) +
-		headerStyle.Render(padRight("Agent", colAgent))
-	if !compact {
-		header += headerStyle.Render(padRight("Namespace", colNS))
+	// Whatever remains goes to Agent (truncate as needed).
+	colAgent := p.width - (colCursor + colStatus + colTokens + colAge) - gap*3
+	if colAgent < 10 {
+		colAgent = 10
 	}
-	header += headerStyle.Render(padRight("Tokens", colTokens)) +
-		headerStyle.Render(padRight("Age", colAge))
+
+	headerTextStyle := lipgloss.NewStyle().Foreground(theme.ColorFgSecondary).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(theme.ColorBorder)
+
+	header := strings.Join([]string{
+		padRight("", colCursor+colStatus),
+		padRight("Agent", colAgent),
+		padRight("Tokens", colTokens),
+		padRight("Age", colAge),
+	}, spaces(gap))
 
 	var b strings.Builder
-	b.WriteString(header)
+	b.WriteString(headerTextStyle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(sepStyle.Render(strings.Repeat("─", min(p.width, lipgloss.Width(header)))))
 	b.WriteString("\n")
 
 	flatIdx := 0
@@ -256,9 +263,9 @@ func (p FleetPanel) renderSessionTable() string {
 		for _, s := range groups[ns] {
 			isSelected := flatIdx == p.selectedIdx
 
-			style := theme.Styles.TableRow
+			rowStyle := lipgloss.NewStyle().Foreground(theme.ColorFgPrimary)
 			if flatIdx%2 == 1 {
-				style = theme.Styles.TableRowAlt
+				rowStyle = rowStyle.Background(theme.ColorBgTertiary)
 			}
 
 			cursor := "  "
@@ -267,21 +274,21 @@ func (p FleetPanel) renderSessionTable() string {
 					Foreground(theme.ColorAccent).
 					Bold(true).
 					Render("▸ ")
-				style = style.Foreground(theme.ColorFgPrimary).Bold(true)
+				rowStyle = rowStyle.Bold(true)
 			}
 
 			dot := widgets.StatusDot(normalizeSessionStatus(s.Status))
 			age := relativeTime(s.StartedAt)
-			row := cursor +
-				style.Render(padRight(dot, colStatus)) +
-				style.Render(padRight(truncate(s.AgentID, colAgent-1), colAgent))
-			if !compact {
-				row += style.Render(padRight(truncate(s.Namespace, colNS-1), colNS))
-			}
-			row += style.Render(padRight(formatNumber(s.TokenCount), colTokens)) +
-				style.Render(padRight(age, colAge))
+			agent := truncate(s.AgentID, colAgent)
+			row := strings.Join([]string{
+				cursor + padRight(dot, colStatus),
+				padRight(agent, colAgent),
+				padRight(formatNumber(s.TokenCount), colTokens),
+				padRight(age, colAge),
+			}, spaces(gap))
 
-			b.WriteString(row)
+			// Render as a single styled line to avoid per-cell padding/border oddities.
+			b.WriteString(rowStyle.Render(truncate(row, p.width)))
 			b.WriteString("\n")
 
 			// Show description if selected

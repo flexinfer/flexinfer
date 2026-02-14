@@ -5,7 +5,10 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -494,11 +497,11 @@ func (m Model) tabFromX(x int) Panel {
 
 // Run starts the TUI dashboard. This is the main entry point called from the CLI.
 func Run(socketPath string) error {
-	logger := slog.Default().With("component", "tui")
+	logger := newTUILogger().With("component", "tui")
 
 	client, err := NewClient(socketPath, logger)
 	if err != nil {
-		return fmt.Errorf("connect to daemon: %w", err)
+		return fmt.Errorf("create TUI client: %w", err)
 	}
 	client.Start()
 	defer client.Stop()
@@ -510,4 +513,17 @@ func Run(socketPath string) error {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 	return nil
+}
+
+func newTUILogger() *slog.Logger {
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".config", "loom", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+
+	// Never write logs to stderr/stdout while bubbletea is running; it corrupts the UI.
+	f, err := os.OpenFile(filepath.Join(logDir, "tui.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	}
+	return slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{}))
 }

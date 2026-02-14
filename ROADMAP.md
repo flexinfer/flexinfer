@@ -29,19 +29,19 @@ Loom Core is the production backend for Loom’s local MCP runtime:
 
 ## Near-Term Priorities
 
-- [ ] **Quality gates for new MCP servers**
+- [ ] **Quality gates for new MCP servers** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2))
   - Ensure each newly added `mcp-*` server has baseline tests and lint-clean handlers.
   - Standardize error handling (`pkg/mcperror`) and argument validation (`pkg/validate`).
 
-- [ ] **Devbox maturity**
+- [ ] **Devbox maturity** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/4))
   - Expand integration tests for Docker + K8s backends under realistic monorepo layouts.
   - Add stronger safeguards for long-running async exec cleanup/recovery.
 
-- [ ] **Onboarding and docs consistency**
+- [ ] **Onboarding and docs consistency** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/6))
   - Keep README/docs/changelog synchronized with shipped command and tool surface.
   - Maintain one canonical docs entrypoint for user/developer/operator tasks.
 
-- [ ] **Observability expansion**
+- [ ] **Observability expansion** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/5))
   - Broaden `pkg/mcpotel` adoption across additional MCP servers.
   - Keep HUD health/sandbox/fleet views aligned with backend metrics and events.
 

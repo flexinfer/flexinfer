@@ -7,7 +7,7 @@
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-install hud-frontend hud-clean
+		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -94,6 +94,7 @@ help:
 	@echo ""
 	@echo "HUD (Agent Command Center):"
 	@echo "  make hud           - Build frontend + Go binary, then launch HUD"
+	@echo "  make hud-reload    - Full cycle: build frontend, install, restart HUD"
 	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + Go API)"
 	@echo "  make hud-build     - Build frontend (pnpm build) + Go binary"
 	@echo "  make hud-install   - Build + install to ~/.local/bin"
@@ -114,6 +115,16 @@ loomd:
 	go build $(LDFLAGS) -o bin/loomd ./cmd/loomd
 
 loom:
+	@# cmd/loom embeds internal/hud/frontend/dist via //go:embed.
+	@# Go's build cache doesn't track embedded file content changes,
+	@# so we must flush the cache when dist/ is newer than bin/loom.
+	@if [ -d "$(HUD_FRONTEND)/dist" ] && [ -f bin/loom ]; then \
+		newest_dist=$$(find $(HUD_FRONTEND)/dist -type f -newer bin/loom 2>/dev/null | head -1); \
+		if [ -n "$$newest_dist" ]; then \
+			echo "Embedded assets changed — flushing Go build cache for cmd/loom"; \
+			go clean -cache; \
+		fi; \
+	fi
 	go build $(LDFLAGS) -o bin/loom ./cmd/loom
 
 servers: $(MCP_SERVERS)
@@ -571,20 +582,43 @@ hud-frontend:
 	@echo "✓ Frontend built to $(HUD_FRONTEND)/dist/"
 
 # Build frontend + Go binary with HUD embedded.
-# Flushes Go's build cache so the new dist/ is always re-embedded,
-# then does a full rebuild with -a.
-hud-build: hud-frontend
-	go clean -cache
-	go build $(LDFLAGS) -o bin/loom ./cmd/loom
+# The loom target auto-detects stale embedded assets and flushes the
+# Go build cache when needed, so a plain `make loom` is sufficient.
+hud-build: hud-frontend loom
 	@echo "✓ HUD build complete (bin/loom)"
 
 # Build + install to ~/.local/bin in one step.
-# Remove before copy: macOS cp over an in-use binary can leave it broken.
 hud-install: hud-build
 	@chmod +x scripts/install_atomic.sh
 	@scripts/install_atomic.sh bin/loom $(INSTALL_DIR)/loom
 	@echo "✓ Installed to $(INSTALL_DIR)/loom"
 	@echo "  Restart HUD: loom hud --port 3333 --overlay"
+
+# Full cycle: build frontend, rebuild+install loom binary, restart running HUD.
+# This is the one-command target for HUD development iteration.
+hud-reload: hud-install
+	@echo "Restarting HUD process..."
+	@HUD_PID=$$(lsof -ti :3333 2>/dev/null | head -1); \
+	if [ -n "$$HUD_PID" ]; then \
+		HUD_ARGS=$$(ps -p $$HUD_PID -o args= 2>/dev/null || true); \
+		kill $$HUD_PID 2>/dev/null || true; \
+		sleep 1; \
+		if kill -0 $$HUD_PID 2>/dev/null; then kill -9 $$HUD_PID 2>/dev/null || true; fi; \
+		echo "Killed old HUD (PID $$HUD_PID)"; \
+	else \
+		HUD_ARGS=""; \
+		echo "No HUD process found on port 3333"; \
+	fi; \
+	echo "Starting HUD..."; \
+	nohup $(INSTALL_DIR)/loom hud --port 3333 > /tmp/loom-hud.log 2>&1 & \
+	NEW_PID=$$!; \
+	sleep 2; \
+	if kill -0 $$NEW_PID 2>/dev/null; then \
+		echo "✓ HUD restarted (PID $$NEW_PID) — http://127.0.0.1:3333"; \
+	else \
+		echo "ERROR: HUD failed to start. Check /tmp/loom-hud.log"; \
+		exit 1; \
+	fi
 
 # Launch HUD (builds first if needed)
 hud: hud-build
