@@ -47,6 +47,9 @@ func main() {
 	var socketPath string
 	home, _ := os.UserHomeDir()
 	defaultSocket := filepath.Join(home, ".config", "loom", "loom.sock")
+	if envSocket := os.Getenv("LOOM_SOCKET"); envSocket != "" {
+		defaultSocket = envSocket
+	}
 
 	rootCmd := &cobra.Command{
 		Use:     "loom",
@@ -54,12 +57,15 @@ func main() {
 		Version: version,
 	}
 
-	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", defaultSocket, "Daemon socket path")
+	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", defaultSocket, "Daemon socket path (env: LOOM_SOCKET)")
 
 	// Status command
 	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show daemon status",
+		Long:  "Show daemon status including uptime, connected MCP servers, and active proxy sessions.",
+		Example: `  loom status
+  loom status --socket /tmp/loom.sock`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return showStatus(socketPath)
 		},
@@ -69,6 +75,9 @@ func main() {
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon via launchctl",
+		Long:  "Start the Loom daemon. Uses launchctl on macOS. Optionally specify a custom registry.yaml.",
+		Example: `  loom start
+  loom start --registry /path/to/registry.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reg, _ := cmd.Flags().GetString("registry")
 			return startDaemon(socketPath, reg)
@@ -78,8 +87,10 @@ func main() {
 
 	// Stop command
 	stopCmd := &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the daemon via launchctl",
+		Use:     "stop",
+		Short:   "Stop the daemon via launchctl",
+		Long:    "Stop the running Loom daemon. Uses launchctl on macOS.",
+		Example: `  loom stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return stopDaemon(socketPath)
 		},
@@ -155,6 +166,9 @@ func main() {
 	serversCmd := &cobra.Command{
 		Use:   "servers",
 		Short: "List available MCP servers",
+		Long:  "List all MCP servers registered with the daemon and their current status.",
+		Example: `  loom servers
+  loom servers --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return listServers(socketPath, serversJSON)
 		},
@@ -176,6 +190,11 @@ func main() {
 	checkCmd := &cobra.Command{
 		Use:   "check",
 		Short: "Check Loom configuration and dependencies",
+		Long: `Check Loom configuration, daemon connectivity, and MCP server health.
+
+Reports issues with the registry, missing binaries, and unreachable servers.`,
+		Example: `  loom check
+  loom check --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCheck(socketPath, checkJSON)
 		},
@@ -364,7 +383,51 @@ Example session:
 
 	schemasCmd := newSchemasCmd()
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, schemasCmd, newHudCmd(socketPath), newAgentCmd())
+	// Completion command - generates shell completion scripts
+	completionCmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion scripts",
+		Long: `Generate shell completion scripts for loom.
+
+To load completions:
+
+Bash:
+  $ source <(loom completion bash)
+  # Or add to ~/.bashrc:
+  $ loom completion bash > /usr/local/etc/bash_completion.d/loom
+
+Zsh:
+  $ source <(loom completion zsh)
+  # Or install permanently:
+  $ loom completion zsh > "${fpath[1]}/_loom"
+
+Fish:
+  $ loom completion fish | source
+  # Or install permanently:
+  $ loom completion fish > ~/.config/fish/completions/loom.fish
+
+PowerShell:
+  PS> loom completion powershell | Out-String | Invoke-Expression`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return rootCmd.GenBashCompletionV2(os.Stdout, true)
+			case "zsh":
+				return rootCmd.GenZshCompletion(os.Stdout)
+			case "fish":
+				return rootCmd.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell: %s", args[0])
+			}
+		},
+	}
+
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, schemasCmd, completionCmd, newHudCmd(socketPath), newAgentCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
