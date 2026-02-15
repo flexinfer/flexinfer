@@ -17,6 +17,7 @@
   let projects = $derived(sandboxStore.projects);
   let totalExecs = $derived(sandboxStore.totalExecs);
   let totalBuilds = $derived(sandboxStore.totalBuilds);
+  let policy = $derived(sandboxStore.policy);
 
   function formatUptime(seconds) {
     if (!seconds || seconds <= 0) return '---';
@@ -36,7 +37,6 @@
     }
   }
 
-  // eventTime: delegate to shared formatTime
   function eventTime(ts) {
     return formatTime(ts);
   }
@@ -84,7 +84,7 @@
       </div>
     </div>
 
-    <!-- Two-column layout: projects + activity -->
+    <!-- Main content: projects + policy + activity -->
     <div class="sandbox-content">
       <!-- Project list -->
       <div class="projects-section">
@@ -99,6 +99,41 @@
                 <span class="project-name text-mono">{project}</span>
               </div>
             {/each}
+          </div>
+        {/if}
+
+        <!-- Sandbox Policy -->
+        {#if policy?.configured}
+          <div class="section-title" style="margin-top: 8px;">Policy</div>
+          <div class="policy-section">
+            {#if policy.auto_provision}
+              <div class="policy-row">
+                <span class="policy-icon">{'\u2713'}</span>
+                <span class="policy-text">Auto-provision on session start</span>
+              </div>
+            {/if}
+            {#if policy.default_backend}
+              <div class="policy-row">
+                <span class="policy-icon">{'\u2B22'}</span>
+                <span class="policy-text">Backend: <span class="text-mono">{policy.default_backend}</span></span>
+              </div>
+            {/if}
+            {#if policy.require_sandbox?.length}
+              <div class="policy-group">
+                <span class="policy-group-label">Required</span>
+                {#each policy.require_sandbox as cmd}
+                  <span class="policy-tag policy-tag-require">{cmd}</span>
+                {/each}
+              </div>
+            {/if}
+            {#if policy.recommend_sandbox?.length}
+              <div class="policy-group">
+                <span class="policy-group-label">Recommended</span>
+                {#each policy.recommend_sandbox as cmd}
+                  <span class="policy-tag policy-tag-recommend">{cmd}</span>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -280,6 +315,67 @@
   .project-name {
     color: var(--fg-primary);
     font-weight: 500;
+  }
+
+  /* ---- Policy ---- */
+  .policy-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 0;
+  }
+
+  .policy-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--fg-secondary);
+  }
+
+  .policy-icon {
+    font-size: 11px;
+    color: var(--fg-muted);
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .policy-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+  }
+
+  .policy-group-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+    width: 100%;
+    margin-top: 2px;
+  }
+
+  .policy-tag {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+  }
+
+  .policy-tag-require {
+    background: rgba(233, 93, 116, 0.1);
+    color: var(--error);
+    border: 1px solid rgba(233, 93, 116, 0.2);
+  }
+
+  .policy-tag-recommend {
+    background: rgba(231, 179, 18, 0.1);
+    color: var(--warning);
+    border: 1px solid rgba(231, 179, 18, 0.2);
   }
 
   /* ---- Activity ---- */

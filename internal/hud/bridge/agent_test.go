@@ -469,3 +469,55 @@ func TestAgentBridge_GraphFindPath_UsesSourceTargetAndEnriches(t *testing.T) {
 		t.Fatalf("unexpected path types: %#v", path)
 	}
 }
+
+func TestAgentBridge_KnowledgeRecall_SetsCrossAgent(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_context_recall_enhanced" {
+			t.Fatalf("unexpected tool name: %s", req.Name)
+		}
+		crossAgent, _ := req.Arguments["cross_agent"].(bool)
+		if !crossAgent {
+			t.Fatalf("expected cross_agent=true, got %v", crossAgent)
+		}
+		query, _ := req.Arguments["query"].(string)
+		if query != "test query" {
+			t.Fatalf("expected query 'test query', got %q", query)
+		}
+		return map[string]any{
+			"isError": false,
+			"content": []map[string]any{
+				{"type": "text", "text": `{"ok":true,"entries":[{"id":"e1","agent_id":"claude","entry_type":"decision","title":"Chose JWT","content":"Because reasons","token_count":50}],"count":1,"total_tokens":50,"token_budget":8000}`},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.KnowledgeRecall("test query", "", 8000)
+	if err != nil {
+		t.Fatalf("knowledge recall failed: %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("expected 1 entry, got %d", result.Count)
+	}
+	if result.Entries[0].AgentID != "claude" {
+		t.Fatalf("expected agent_id 'claude', got %q", result.Entries[0].AgentID)
+	}
+	if result.Entries[0].EntryType != "decision" {
+		t.Fatalf("expected entry_type 'decision', got %q", result.Entries[0].EntryType)
+	}
+}

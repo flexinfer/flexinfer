@@ -2,8 +2,8 @@
   import StatusDot from './StatusDot.svelte';
   import SparkLine from './SparkLine.svelte';
 
-  /** @type {{ agent: import('../stores/presence.svelte.ts').AgentPresence, heartbeatData?: number[], sharedFileAgents?: string[], ondispatch?: (agentId: string) => void }} */
-  let { agent, heartbeatData = [], sharedFileAgents = [], ondispatch } = $props();
+  /** @type {{ agent: import('../stores/presence.svelte.ts').AgentPresence, heartbeatData?: number[], sharedFileAgents?: string[], ondispatch?: (agentId: string) => void, onnudge?: (agentId: string) => void }} */
+  let { agent, heartbeatData = [], sharedFileAgents = [], ondispatch, onnudge } = $props();
 
   const AGENT_COLORS = {
     claude: '#E95D74',
@@ -114,9 +114,14 @@
   </div>
 
   <!-- Actions -->
-  {#if agent.status === 'active' && ondispatch}
+  {#if agent.status === 'active' && (ondispatch || onnudge)}
     <div class="card-actions">
-      <button class="btn btn-xs btn-dispatch" onclick={() => ondispatch(agent.agent_id)}>Dispatch</button>
+      {#if onnudge}
+        <button class="btn btn-xs btn-nudge" onclick={() => onnudge(agent.agent_id)}>Nudge</button>
+      {/if}
+      {#if ondispatch}
+        <button class="btn btn-xs btn-dispatch" onclick={() => ondispatch(agent.agent_id)}>Dispatch</button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -163,6 +168,8 @@
 
   .card-actions { display: flex; justify-content: flex-end; padding-top: 4px; border-top: 1px solid var(--border); }
   .btn-xs { padding: 2px 8px; font-size: 11px; }
+  .btn-nudge { background: rgba(231, 179, 18, 0.1); color: var(--warning); border: 1px solid rgba(231, 179, 18, 0.25); border-radius: var(--radius-sm); cursor: pointer; }
+  .btn-nudge:hover { background: rgba(231, 179, 18, 0.2); }
   .btn-dispatch { background: rgba(129, 240, 254, 0.1); color: var(--accent); border: 1px solid rgba(129, 240, 254, 0.25); border-radius: var(--radius-sm); cursor: pointer; }
   .btn-dispatch:hover { background: rgba(129, 240, 254, 0.2); }
 </style>

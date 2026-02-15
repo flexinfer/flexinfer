@@ -24,6 +24,7 @@ func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any)
 	symbolContext := v.String("symbol_context", "")
 	recencyWeight := v.Float("recency_weight", s.cfg.DefaultRecencyWeight)
 	includeTasks := v.Bool("include_tasks", true)
+	crossAgent := v.Bool("cross_agent", false)
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -43,6 +44,7 @@ func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any)
 		SymbolContext: symbolContext,
 		RecencyWeight: recencyWeight,
 		IncludeTasks:  includeTasks,
+		CrossAgent:    crossAgent,
 	}
 
 	entries, err := s.enhancedRecallContext(ctx, opts)
@@ -80,9 +82,19 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 	seen := make(map[string]bool)
 	remainingBudget := opts.TokenBudget
 
+	// When cross_agent is true, clear agent/session filters so all entries
+	// across all sessions are searched. Individual entries still carry their
+	// source agent_id and session_id for attribution.
+	agentID := opts.AgentID
+	sessionID := opts.SessionID
+	if opts.CrossAgent {
+		agentID = ""
+		sessionID = ""
+	}
+
 	// Phase 1 (NEW): Active tasks - highest priority
 	if opts.IncludeTasks && remainingBudget > 0 {
-		tasks, _ := s.getActiveTasks(ctx, opts.AgentID, opts.SessionID, 5)
+		tasks, _ := s.getActiveTasks(ctx, agentID, sessionID, 5)
 		for _, task := range tasks {
 			// Convert task to context entry for unified return type
 			entry := ContextEntry{
@@ -112,7 +124,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 2: Recent decisions
 	if opts.IncludeDecisions && remainingBudget > 0 {
-		decisions, _ := s.getRecentByType(ctx, opts.AgentID, opts.SessionID, EntryTypeDecision, 5)
+		decisions, _ := s.getRecentByType(ctx, agentID, sessionID, EntryTypeDecision, 5)
 		for _, d := range decisions {
 			if remainingBudget >= d.TokenCount && !seen[d.ID] {
 				results = append(results, d)
@@ -124,7 +136,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 3: Session summaries
 	if opts.IncludeSummaries && remainingBudget > 0 {
-		summaries, _ := s.getRecentByType(ctx, opts.AgentID, opts.SessionID, EntryTypeSummary, 3)
+		summaries, _ := s.getRecentByType(ctx, agentID, sessionID, EntryTypeSummary, 3)
 		for _, sum := range summaries {
 			if remainingBudget >= sum.TokenCount && !seen[sum.ID] {
 				results = append(results, sum)
@@ -136,7 +148,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 4 (NEW): Symbol-context boosting
 	if opts.SymbolContext != "" && remainingBudget > 500 {
-		symbolEntries, _ := s.getEntriesForSymbol(ctx, opts.AgentID, opts.SymbolContext, 5)
+		symbolEntries, _ := s.getEntriesForSymbol(ctx, agentID, opts.SymbolContext, 5)
 		for _, se := range symbolEntries {
 			if remainingBudget >= se.TokenCount && !seen[se.ID] {
 				results = append(results, se)
@@ -155,11 +167,11 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 		}
 		if err == nil {
 			var conds []any
-			if opts.AgentID != "" {
-				conds = append(conds, Match("agent_id", opts.AgentID))
+			if agentID != "" {
+				conds = append(conds, Match("agent_id", agentID))
 			}
-			if opts.SessionID != "" {
-				conds = append(conds, Match("session_id", opts.SessionID))
+			if sessionID != "" {
+				conds = append(conds, Match("session_id", sessionID))
 			}
 
 			var filter map[string]any
@@ -196,7 +208,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 6: File-context boosting
 	if opts.FileContext != "" && remainingBudget > 200 {
-		fileEntries, _ := s.getEntriesForFile(ctx, opts.AgentID, opts.FileContext, 5)
+		fileEntries, _ := s.getEntriesForFile(ctx, agentID, opts.FileContext, 5)
 		for _, fe := range fileEntries {
 			if remainingBudget >= fe.TokenCount && !seen[fe.ID] {
 				results = append(results, fe)
@@ -208,7 +220,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 	// Phase 7 (NEW): Code annotations for current file
 	if opts.FileContext != "" && remainingBudget > 100 {
-		annotations, _ := s.getAnnotationsForFile(ctx, opts.AgentID, opts.FileContext, 5)
+		annotations, _ := s.getAnnotationsForFile(ctx, agentID, opts.FileContext, 5)
 		for _, ann := range annotations {
 			entry := ContextEntry{
 				ID:         ann.ID,

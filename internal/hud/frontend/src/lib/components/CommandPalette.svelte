@@ -11,6 +11,7 @@
     { id: 'tasks', label: 'Task Command Board', category: 'Panels', icon: '\u2611' },
     { id: 'stream', label: 'Context Stream', category: 'Panels', icon: '\u21C9' },
     { id: 'workflows', label: 'Workflow DAG Monitor', category: 'Panels', icon: '\u2699' },
+    { id: 'feed', label: 'Knowledge Feed', category: 'Panels', icon: '\u29BE' },
     { id: 'memory', label: 'Memory Inspector', category: 'Panels', icon: '\u29BF' },
     { id: 'graph', label: 'Knowledge Graph', category: 'Panels', icon: '\u25C9' },
     { id: 'presence', label: 'Agent Presence', category: 'Panels', icon: '\u25C9' },

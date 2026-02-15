@@ -21,6 +21,14 @@ export interface SandboxEvent {
   timestamp: Date;
 }
 
+export interface SandboxPolicy {
+  configured: boolean;
+  require_sandbox?: string[];
+  recommend_sandbox?: string[];
+  auto_provision?: boolean;
+  default_backend?: string;
+}
+
 const MAX_EVENTS = 20;
 
 class SandboxStore {
@@ -30,6 +38,7 @@ class SandboxStore {
   error = $state<string | null>(null);
   recentEvents = $state<SandboxEvent[]>([]);
   lastUpdated = $state<Date | null>(null);
+  policy = $state<SandboxPolicy | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
@@ -95,9 +104,22 @@ class SandboxStore {
     this.recentEvents = [evt, ...this.recentEvents].slice(0, MAX_EVENTS);
   }
 
+  async fetchPolicy(): Promise<void> {
+    try {
+      const res = await globalThis.fetch('/api/sandbox/policy');
+      if (!res.ok) return;
+      const data = await res.json();
+      // If it has require_sandbox or recommend_sandbox, it's configured.
+      this.policy = { configured: !!(data.require_sandbox || data.recommend_sandbox), ...data };
+    } catch {
+      // Policy is optional — silently ignore errors.
+    }
+  }
+
   startPolling(intervalMs = 15000): void {
     this.stopPolling();
     this.fetch();
+    this.fetchPolicy();
     this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events.

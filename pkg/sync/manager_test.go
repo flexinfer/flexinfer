@@ -38,6 +38,7 @@ func TestNewManager_RegistersAllProfiles(t *testing.T) {
 		"gemini",
 		"antigravity",
 		"vscode",
+		"opencode",
 	}
 
 	for _, name := range expectedProfiles {
@@ -171,6 +172,7 @@ func TestList_ReturnsAllProfileNames(t *testing.T) {
 		"codex",
 		"gemini",
 		"kilocode",
+		"opencode",
 		"vscode",
 		"zed",
 	}

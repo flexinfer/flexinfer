@@ -139,6 +139,44 @@
     showDispatchModal = true;
   }
 
+  // --- Nudge agent ---
+  let showNudgeModal = $state(false);
+  let nudgeTargetAgent = $state('');
+  let nudgeType = $state('message');
+  let nudgeContent = $state('');
+  let nudgeSubmitting = $state(false);
+
+  function openNudge(agentId) {
+    nudgeTargetAgent = agentId;
+    nudgeType = 'message';
+    nudgeContent = '';
+    showNudgeModal = true;
+  }
+
+  async function submitNudge() {
+    if (!nudgeTargetAgent || !nudgeContent.trim()) return;
+    nudgeSubmitting = true;
+    try {
+      const res = await globalThis.fetch('/api/agent/nudge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_agent_id: nudgeTargetAgent,
+          type: nudgeType,
+          content: nudgeContent.trim(),
+          from_agent: 'hud',
+        }),
+      });
+      if (!res.ok) throw new Error(`Nudge: ${res.status}`);
+      toastStore.success(`Nudge sent to ${nudgeTargetAgent}`);
+      showNudgeModal = false;
+    } catch (e) {
+      toastStore.error('Failed to send nudge');
+    } finally {
+      nudgeSubmitting = false;
+    }
+  }
+
   // --- Release claim ---
   async function releaseClaim(agentId, filePath) {
     try {
@@ -340,6 +378,7 @@
               heartbeatData={heartbeatDataMap.get(agent.agent_id) ?? []}
               sharedFileAgents={agentOverlaps.get(agent.agent_id) ?? []}
               ondispatch={openDispatch}
+              onnudge={openNudge}
             />
           {:else}
             <div class="empty-state">No registered agents</div>
@@ -401,8 +440,11 @@
                       {agent.branch || '---'}
                     </td>
                     <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{reactiveRelativeTime(agent.last_heartbeat)}</td>
-                    <td>
+                    <td class="actions-cell">
                       {#if agent.status === 'active'}
+                        <button class="btn btn-xs btn-nudge" onclick={() => openNudge(agent.agent_id)} title="Send nudge to agent">
+                          Nudge
+                        </button>
                         <button class="btn btn-xs btn-dispatch" onclick={() => openDispatch(agent.agent_id)} title="Dispatch task to agent">
                           Dispatch
                         </button>
@@ -644,6 +686,36 @@
     <button class="btn btn-ghost" onclick={() => { showDispatchModal = false; }}>Cancel</button>
     <button class="btn btn-primary" onclick={submitDispatch} disabled={dispatchSubmitting || !dispatchTitle.trim()}>
       {dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}
+    </button>
+  </div>
+</Modal>
+
+<!-- Nudge Agent Modal -->
+<Modal title="Nudge Agent" open={showNudgeModal} onclose={() => { showNudgeModal = false; }}>
+  <div class="form-group">
+    <label class="form-label" for="nudge-target">Target Agent</label>
+    <input id="nudge-target" type="text" bind:value={nudgeTargetAgent} class="form-input" readonly />
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="nudge-type">Type</label>
+    <select id="nudge-type" bind:value={nudgeType} class="form-input">
+      <option value="message">Message</option>
+      <option value="context_inject">Context Inject</option>
+      <option value="task_redirect">Task Redirect</option>
+      <option value="pause_request">Pause Request</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="nudge-content">Content *</label>
+    <textarea id="nudge-content" bind:value={nudgeContent} placeholder="Message or context to send to the agent..." class="form-input" rows="4"></textarea>
+  </div>
+  <div class="nudge-hint">
+    Nudge delivered on the agent's next heartbeat (5-15s latency).
+  </div>
+  <div class="form-actions">
+    <button class="btn btn-ghost" onclick={() => { showNudgeModal = false; }}>Cancel</button>
+    <button class="btn btn-primary" onclick={submitNudge} disabled={nudgeSubmitting || !nudgeContent.trim()}>
+      {nudgeSubmitting ? 'Sending...' : 'Send Nudge'}
     </button>
   </div>
 </Modal>
@@ -1039,6 +1111,29 @@
   .pr-link:hover {
     background: rgba(129, 240, 254, 0.2);
     text-decoration: none;
+  }
+
+  .actions-cell {
+    display: flex;
+    gap: 4px;
+  }
+
+  /* Nudge button */
+  .btn-nudge {
+    background: rgba(231, 179, 18, 0.1);
+    color: var(--warning);
+    border: 1px solid rgba(231, 179, 18, 0.25);
+  }
+
+  .btn-nudge:hover {
+    background: rgba(231, 179, 18, 0.2);
+  }
+
+  .nudge-hint {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-style: italic;
+    margin-top: 8px;
   }
 
   /* Dispatch button */

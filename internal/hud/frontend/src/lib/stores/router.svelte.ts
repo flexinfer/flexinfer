@@ -59,11 +59,12 @@ export const views: ViewDef[] = [
     label: 'Knowledge',
     icon: '\u29BE',
     key: '4',
-    default: 'memory',
+    default: 'feed',
     subViews: [
-      { id: 'memory',    label: 'Memory',    key: 'a' },
-      { id: 'graph',     label: 'Graph',     key: 'b' },
-      { id: 'reasoning', label: 'Reasoning', key: 'c' },
+      { id: 'feed',      label: 'Feed',      key: 'a' },
+      { id: 'memory',    label: 'Memory',    key: 'b' },
+      { id: 'graph',     label: 'Graph',     key: 'c' },
+      { id: 'reasoning', label: 'Reasoning', key: 'd' },
     ],
   },
   {
@@ -107,6 +108,7 @@ legacyRedirects['topology'] = { view: 'agents', subView: 'topology' };
 legacyRedirects['lifecycle'] = { view: 'agents', subView: 'lifecycle' };
 legacyRedirects['servers'] = { view: 'infra', subView: 'servers' };
 legacyRedirects['workflows'] = { view: 'tasks', subView: 'workflows' };
+legacyRedirects['feed'] = { view: 'knowledge', subView: 'feed' };
 legacyRedirects['memory'] = { view: 'knowledge', subView: 'memory' };
 legacyRedirects['graph'] = { view: 'knowledge', subView: 'graph' };
 legacyRedirects['reasoning'] = { view: 'knowledge', subView: 'reasoning' };

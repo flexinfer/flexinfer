@@ -1343,6 +1343,48 @@ type CacheStatsInfo struct {
 	HitRate float64 `json:"hit_rate"`
 }
 
+// KnowledgeRecall performs a cross-agent enhanced recall, searching across all
+// sessions and agents. It returns entries with source agent_id attribution.
+func (a *AgentBridge) KnowledgeRecall(query string, category string, tokenBudget int) (*KnowledgeResult, error) {
+	args := map[string]any{
+		"query":       query,
+		"cross_agent": true,
+	}
+	if tokenBudget > 0 {
+		args["token_budget"] = tokenBudget
+	}
+	var result KnowledgeResult
+	if err := a.callAgentTool("agent_context_recall_enhanced", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// KnowledgeResult is the response from cross-agent enhanced recall.
+type KnowledgeResult struct {
+	OK          bool             `json:"ok"`
+	Entries     []KnowledgeEntry `json:"entries"`
+	Count       int              `json:"count"`
+	TotalTokens int              `json:"total_tokens"`
+	TokenBudget int              `json:"token_budget"`
+}
+
+// KnowledgeEntry represents a context entry with source attribution.
+type KnowledgeEntry struct {
+	ID         string         `json:"id"`
+	AgentID    string         `json:"agent_id"`
+	SessionID  string         `json:"session_id"`
+	Namespace  string         `json:"namespace,omitempty"`
+	EntryType  string         `json:"entry_type"`
+	Title      string         `json:"title"`
+	Content    string         `json:"content"`
+	FilePath   string         `json:"file_path,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
+	Timestamp  string         `json:"timestamp"`
+	TokenCount int            `json:"token_count"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
 // ContextStream returns context entries since a given time, up to limit.
 func (a *AgentBridge) ContextStream(since time.Time, limit int) ([]ContextEntryInfo, error) {
 	args := map[string]any{

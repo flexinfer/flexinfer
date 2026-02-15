@@ -91,6 +91,14 @@ type Service struct {
 	worktreeMu    sync.RWMutex
 	worktreeAssns map[string]*WorktreeAssignment
 
+	// Presence event callback — HUD wires this to broadcast SSE events
+	// when presence state transitions occur (idle, offline, expired).
+	onPresenceEvent func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)
+
+	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
+	nudgeMu sync.Mutex
+	nudges  map[string][]*Nudge // agentID -> pending nudges
+
 	// Background services
 	compactionScheduler *CompactionScheduler
 	taskReconciler      *TaskReconciler
@@ -103,6 +111,38 @@ type Service struct {
 // Tracer returns the service's OTel tracer. Returns a noop tracer if none was configured.
 func (s *Service) Tracer() trace.Tracer {
 	return s.tracer
+}
+
+// OnPresenceEvent registers a callback invoked when an agent's presence
+// state transitions (e.g., active → idle, idle → offline).
+func (s *Service) OnPresenceEvent(fn func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)) {
+	s.onPresenceEvent = fn
+}
+
+// AddNudge enqueues a nudge for the given agent, delivered on next heartbeat.
+func (s *Service) AddNudge(agentID string, nudge *Nudge) {
+	s.nudgeMu.Lock()
+	defer s.nudgeMu.Unlock()
+	if s.nudges == nil {
+		s.nudges = make(map[string][]*Nudge)
+	}
+	s.nudges[agentID] = append(s.nudges[agentID], nudge)
+}
+
+// DrainNudges returns and clears all pending nudges for the given agent.
+func (s *Service) DrainNudges(agentID string) []*Nudge {
+	s.nudgeMu.Lock()
+	defer s.nudgeMu.Unlock()
+	nudges := s.nudges[agentID]
+	delete(s.nudges, agentID)
+	return nudges
+}
+
+// PendingNudgeCount returns the number of pending nudges for the given agent.
+func (s *Service) PendingNudgeCount(agentID string) int {
+	s.nudgeMu.Lock()
+	defer s.nudgeMu.Unlock()
+	return len(s.nudges[agentID])
 }
 
 func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
@@ -140,6 +180,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		presenceMap:   make(map[string]*AgentPresence),
 		fileClaims:    make(map[string]map[string]*FileClaim),
 		worktreeAssns: make(map[string]*WorktreeAssignment),
+		nudges:        make(map[string][]*Nudge),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size

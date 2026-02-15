@@ -384,6 +384,10 @@ type EnhancedRecallOptions struct {
 	SymbolContext string  `json:"symbol_context,omitempty"`
 	RecencyWeight float64 `json:"recency_weight,omitempty"` // 0.0-1.0, default 0.2
 	IncludeTasks  bool    `json:"include_tasks"`
+
+	// CrossAgent searches across all sessions/agents instead of filtering
+	// to a single agent_id/session_id. Results include source attribution.
+	CrossAgent bool `json:"cross_agent"`
 }
 
 // =========================================================================
@@ -1055,7 +1059,28 @@ const (
 	PresenceStatusActive  PresenceStatus = "active"
 	PresenceStatusIdle    PresenceStatus = "idle"
 	PresenceStatusOffline PresenceStatus = "offline"
+	PresenceStatusExpired PresenceStatus = "expired"
 )
+
+// NudgeType defines the kind of nudge sent to an agent.
+type NudgeType string
+
+const (
+	NudgeTypeContextInject NudgeType = "context_inject"
+	NudgeTypeTaskRedirect  NudgeType = "task_redirect"
+	NudgeTypePauseRequest  NudgeType = "pause_request"
+	NudgeTypeMessage       NudgeType = "message"
+)
+
+// Nudge represents a pending message or directive for an agent,
+// delivered via heartbeat response.
+type Nudge struct {
+	ID        string    `json:"id"`
+	Type      NudgeType `json:"type"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+	FromAgent string    `json:"from_agent,omitempty"` // source agent or "hud"
+}
 
 // AgentPresence represents an agent's live presence in the system
 type AgentPresence struct {

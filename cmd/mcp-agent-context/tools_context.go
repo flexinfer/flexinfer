@@ -421,6 +421,10 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 					"type":        "boolean",
 					"description": "Include active tasks (default: true).",
 				},
+				"cross_agent": map[string]any{
+					"type":        "boolean",
+					"description": "Search across all agents/sessions instead of filtering to one. Returns entries with source agent_id attribution (default: false).",
+				},
 			},
 			Required: []string{"query"},
 		},

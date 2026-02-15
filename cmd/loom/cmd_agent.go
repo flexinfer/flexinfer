@@ -292,7 +292,14 @@ func endSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionEnd
 	)
 }
 
-func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status string) error {
+// heartbeatResponse holds the parsed heartbeat response.
+type heartbeatResponse struct {
+	OK         bool              `json:"ok"`
+	Directives map[string]any    `json:"directives,omitempty"`
+	Nudges     []json.RawMessage `json:"nudges,omitempty"`
+}
+
+func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status string) (*heartbeatResponse, error) {
 	body := map[string]any{
 		"agent_id": agentID,
 	}
@@ -300,7 +307,7 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status stri
 		body["status"] = status
 	}
 
-	_, err := withAgentFallback(
+	data, err := withAgentFallback(
 		"agent heartbeat",
 		func() (json.RawMessage, error) {
 			return hudPostWithRetry(port, "/api/agent/heartbeat", body,
@@ -317,7 +324,15 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status stri
 			})
 		},
 	)
-	return err
+	if err != nil {
+		return nil, err
+	}
+
+	var resp heartbeatResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return &heartbeatResponse{OK: true}, nil
+	}
+	return &resp, nil
 }
 
 func updateTaskWithFallback(cmd *cobra.Command, port string, p bridge.UpdateTaskParams) (json.RawMessage, error) {
@@ -546,7 +561,7 @@ don't have native session-start hooks.`,
 				namespace = inferGitNamespace()
 			}
 
-			err := heartbeatWithFallback(cmd, port, agentID, status)
+			resp, err := heartbeatWithFallback(cmd, port, agentID, status)
 			if err != nil && ensureSession {
 				startNamespace := namespace
 				startAgentType := agentType
@@ -566,7 +581,7 @@ don't have native session-start hooks.`,
 					AutoRecall:  false,
 				})
 				if ensureErr == nil {
-					err = heartbeatWithFallback(cmd, port, agentID, status)
+					resp, err = heartbeatWithFallback(cmd, port, agentID, status)
 				} else {
 					err = fmt.Errorf("%v (ensure-session failed: %w)", err, ensureErr)
 				}
@@ -578,6 +593,13 @@ don't have native session-start hooks.`,
 					return nil
 				}
 				return err
+			}
+
+			// Print nudges to stderr (visible even in quiet mode via 2> redirect).
+			if resp != nil && len(resp.Nudges) > 0 {
+				for _, n := range resp.Nudges {
+					fmt.Fprintf(os.Stderr, "loom: nudge: %s\n", string(n))
+				}
 			}
 
 			if !quiet {

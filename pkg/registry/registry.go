@@ -16,6 +16,7 @@ type InputSchema = kitreg.InputSchema
 type TargetSpec = kitreg.TargetSpec
 type SSHSpec = kitreg.SSHSpec
 type PlatformPermission = kitreg.PlatformPermission
+type SandboxPolicy = kitreg.SandboxPolicy
 
 func LoadConfig() (*Config, error)                { return kitreg.LoadConfig() }
 func GetRepoRoot(registryPath string) string      { return kitreg.GetRepoRoot(registryPath) }

@@ -182,6 +182,17 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly: true,
 		DefaultLoomMode:   true,
 	}
+
+	m.Profiles["opencode"] = &Profile{
+		Name:                "opencode",
+		RepoDir:             ".opencode",
+		HomeDir:             ".config/opencode",
+		GeneratorTarget:     "opencode",
+		GeneratedFile:       "opencode.json",
+		ExtraGeneratedFiles: []string{filepath.Join("plugins", "loom-hooks.ts")},
+		SyncGeneratedOnly:   true,
+		DefaultLoomMode:     true,
+	}
 }
 
 // GetProfile returns a profile by name.

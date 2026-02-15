@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +122,61 @@ func (a *App) handleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
 	// Async fleet refresh for full snapshot consistency (non-blocking).
 	go a.fleetMonitor.Refresh()
 
+	// Async sandbox auto-provision: if policy says auto_provision, detect + build sandbox.
+	go a.maybeAutoProvisionSandbox(body.Namespace)
+
 	a.writeJSON(w, http.StatusOK, result)
+}
+
+// maybeAutoProvisionSandbox checks sandbox policy and triggers devbox_detect + devbox_build
+// for the project namespace. Runs asynchronously; errors are logged but not propagated.
+func (a *App) maybeAutoProvisionSandbox(namespace string) {
+	// Check cached sandbox policy.
+	cached, ok := a.cache.Get("sandbox_policy")
+	if !ok {
+		return
+	}
+	policy, ok := cached.(map[string]any)
+	if !ok {
+		return
+	}
+	autoProvision, _ := policy["auto_provision"].(bool)
+	if !autoProvision {
+		return
+	}
+
+	// Extract project from namespace (format: "project/branch" or just "project").
+	project := namespace
+	if i := strings.Index(namespace, "/"); i > 0 {
+		project = namespace[:i]
+	}
+	if project == "" {
+		return
+	}
+
+	// Call devbox_detect to check if project has a recognizable fingerprint.
+	detectResult, err := a.client.CallTool("devbox_detect", map[string]any{"project": project})
+	if err != nil {
+		a.logger.Debug("sandbox auto-provision: detect failed", "project", project, "error", err)
+		return
+	}
+
+	// Parse detect result to check if a fingerprint exists.
+	var detect map[string]any
+	if err := json.Unmarshal(detectResult, &detect); err != nil {
+		return
+	}
+	if detect["fingerprint_hash"] == nil || detect["fingerprint_hash"] == "" {
+		return
+	}
+
+	// Trigger async build (non-blocking, devbox handles idempotency).
+	_, err = a.client.CallTool("devbox_build", map[string]any{"project": project})
+	if err != nil {
+		a.logger.Debug("sandbox auto-provision: build failed", "project", project, "error", err)
+		return
+	}
+	a.logger.Info("sandbox auto-provisioned", "project", project)
 }
 
 // handleAgentSessionEnd ends an agent session.
@@ -287,9 +342,12 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp["conflicts"] = result.Conflicts
 	}
 
-	// Heartbeat enrichment: include pending handoffs and dispatched tasks.
+	// Build directives block with actionable info for the agent.
+	directives := make(map[string]any)
+
+	// Include pending handoffs and dispatched tasks.
 	if handoffs, err := a.agent.HandoffListForAgent(body.AgentID); err == nil && len(handoffs) > 0 {
-		resp["pending_handoffs"] = len(handoffs)
+		directives["pending_handoffs"] = len(handoffs)
 		dispatched := make([]map[string]any, 0)
 		for _, h := range handoffs {
 			if strings.HasPrefix(h.Summary, "[Dispatched] ") {
@@ -300,8 +358,17 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(dispatched) > 0 {
-			resp["dispatched_tasks"] = dispatched
+			directives["dispatched_tasks"] = dispatched
 		}
+	}
+
+	if len(directives) > 0 {
+		resp["directives"] = directives
+	}
+
+	// Include pending nudges drained from the HUD nudge queue.
+	if nudges := a.nudgeQueue.Drain(body.AgentID); len(nudges) > 0 {
+		resp["nudges"] = nudges
 	}
 
 	a.writeJSON(w, http.StatusOK, resp)
@@ -485,4 +552,98 @@ func (a *App) handleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAgentNudge creates a nudge for delivery to a target agent.
+// POST /api/agent/nudge
+func (a *App) handleAgentNudge(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TargetAgentID string `json:"target_agent_id"`
+		Type          string `json:"type"`    // context_inject, task_redirect, pause_request, message
+		Content       string `json:"content"` // nudge payload
+		FromAgent     string `json:"from_agent,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.TargetAgentID == "" || body.Content == "" {
+		a.writeError(w, http.StatusBadRequest, "target_agent_id and content are required", nil)
+		return
+	}
+	if body.Type == "" {
+		body.Type = "message"
+	}
+	if body.FromAgent == "" {
+		body.FromAgent = "hud"
+	}
+
+	nudgeID := NewNudgeID(body.TargetAgentID)
+	entry := NudgeEntry{
+		ID:        nudgeID,
+		Type:      body.Type,
+		Content:   body.Content,
+		FromAgent: body.FromAgent,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+
+	a.nudgeQueue.Add(body.TargetAgentID, entry)
+
+	a.broadcastAgentEvent("agent.nudge.created", map[string]any{
+		"nudge_id":        nudgeID,
+		"target_agent_id": body.TargetAgentID,
+		"type":            body.Type,
+		"from_agent":      body.FromAgent,
+	})
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"nudge_id": nudgeID,
+		"status":   "pending",
+	})
+}
+
+// handleKnowledge performs a cross-agent knowledge search.
+// GET /api/knowledge?query=...&category=...&budget=...
+func (a *App) handleKnowledge(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("query")
+	if query == "" {
+		query = "recent decisions and findings"
+	}
+	category := r.URL.Query().Get("category")
+	budget := 8000
+	if b := r.URL.Query().Get("budget"); b != "" {
+		if parsed, err := strconv.Atoi(b); err == nil && parsed > 0 {
+			budget = parsed
+		}
+	}
+
+	result, err := a.agent.KnowledgeRecall(query, category, budget)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "knowledge recall failed", err)
+		return
+	}
+
+	// Group entries by category for the frontend.
+	grouped := make(map[string][]bridge.KnowledgeEntry)
+	for _, e := range result.Entries {
+		cat := e.EntryType
+		if cat == "" {
+			cat = "note"
+		}
+		// Filter by category if specified.
+		if category != "" && cat != category {
+			continue
+		}
+		grouped[cat] = append(grouped[cat], e)
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"entries":      result.Entries,
+		"grouped":      grouped,
+		"count":        result.Count,
+		"total_tokens": result.TotalTokens,
+		"token_budget": result.TokenBudget,
+	})
 }

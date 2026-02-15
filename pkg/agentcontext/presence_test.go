@@ -1,6 +1,7 @@
 package agentcontext
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func newTestPresence(agentID string, ttl int) *AgentPresence {
 func newTestService() *Service {
 	return &Service{
 		cfg: Config{
-			PresenceHeartbeatTTL:    120,
+			PresenceHeartbeatTTL:    45,
 			PresenceCleanupInterval: 60,
 		},
 		logger:        slog.Default(),
@@ -32,13 +33,14 @@ func newTestService() *Service {
 		fileClaims:    make(map[string]map[string]*FileClaim),
 		worktreeAssns: make(map[string]*WorktreeAssignment),
 		sessions:      make(map[string]*Session),
+		nudges:        make(map[string][]*Nudge),
 	}
 }
 
 func TestPresenceRegister(t *testing.T) {
 	svc := newTestService()
 
-	p := newTestPresence("agent-1", 120)
+	p := newTestPresence("agent-1", 45)
 	svc.presenceMap[p.AgentID] = p
 
 	if len(svc.presenceMap) != 1 {
@@ -52,8 +54,8 @@ func TestPresenceRegister(t *testing.T) {
 	if got.Status != PresenceStatusActive {
 		t.Errorf("status = %q, want %q", got.Status, PresenceStatusActive)
 	}
-	if got.HeartbeatTTL != 120 {
-		t.Errorf("heartbeat_ttl = %d, want 120", got.HeartbeatTTL)
+	if got.HeartbeatTTL != 45 {
+		t.Errorf("heartbeat_ttl = %d, want 45", got.HeartbeatTTL)
 	}
 }
 
@@ -194,6 +196,112 @@ func TestPresenceMinTTL(t *testing.T) {
 	}
 }
 
+func TestPresenceStateMachine(t *testing.T) {
+	svc := newTestService()
+
+	// Register an agent with a short TTL for testing.
+	ttl := 10 // 10 seconds
+	p := newTestPresence("agent-sm", ttl)
+	svc.presenceMap[p.AgentID] = p
+
+	// Track state transitions via the callback.
+	var transitions []struct{ from, to PresenceStatus }
+	svc.onPresenceEvent = func(eventType, agentID string, oldStatus, newStatus PresenceStatus) {
+		transitions = append(transitions, struct{ from, to PresenceStatus }{oldStatus, newStatus})
+	}
+
+	// 1. After 1×TTL: active → idle
+	p.LastHeartbeat = time.Now().Add(-time.Duration(ttl+1) * time.Second)
+	svc.cleanupExpiredPresence(context.TODO())
+
+	if p.Status != PresenceStatusIdle {
+		t.Errorf("expected idle after 1×TTL, got %s", p.Status)
+	}
+	if len(transitions) != 1 || transitions[0].to != PresenceStatusIdle {
+		t.Errorf("expected 1 transition to idle, got %+v", transitions)
+	}
+
+	// 2. After 2×TTL: idle → offline
+	p.LastHeartbeat = time.Now().Add(-time.Duration(2*ttl+1) * time.Second)
+	svc.cleanupExpiredPresence(context.TODO())
+
+	if p.Status != PresenceStatusOffline {
+		t.Errorf("expected offline after 2×TTL, got %s", p.Status)
+	}
+	if len(transitions) != 2 || transitions[1].to != PresenceStatusOffline {
+		t.Errorf("expected transition to offline, got %+v", transitions)
+	}
+
+	// 3. After 3×TTL: offline → expired (removed from map)
+	p.LastHeartbeat = time.Now().Add(-time.Duration(3*ttl+1) * time.Second)
+	svc.cleanupExpiredPresence(context.TODO())
+
+	if _, exists := svc.presenceMap["agent-sm"]; exists {
+		t.Error("expected agent to be removed from presenceMap after 3×TTL")
+	}
+	if len(transitions) != 3 || transitions[2].to != PresenceStatusExpired {
+		t.Errorf("expected transition to expired, got %+v", transitions)
+	}
+}
+
+func TestPresenceHeartbeatResetsToActive(t *testing.T) {
+	svc := newTestService()
+
+	p := newTestPresence("agent-idle", 45)
+	p.Status = PresenceStatusIdle
+	svc.presenceMap[p.AgentID] = p
+
+	// Simulate heartbeat (no explicit status) — should reset to active.
+	p.LastHeartbeat = time.Now()
+	if p.Status == PresenceStatusIdle || p.Status == PresenceStatusOffline {
+		p.Status = PresenceStatusActive
+	}
+
+	if p.Status != PresenceStatusActive {
+		t.Errorf("expected active after heartbeat, got %s", p.Status)
+	}
+}
+
+func TestNudgeDrainAndAdd(t *testing.T) {
+	svc := newTestService()
+
+	// Add nudges for an agent.
+	svc.AddNudge("agent-1", &Nudge{
+		ID:      "nudge-1",
+		Type:    NudgeTypeMessage,
+		Content: "hello",
+	})
+	svc.AddNudge("agent-1", &Nudge{
+		ID:      "nudge-2",
+		Type:    NudgeTypeContextInject,
+		Content: "context data",
+	})
+
+	if svc.PendingNudgeCount("agent-1") != 2 {
+		t.Errorf("expected 2 pending nudges, got %d", svc.PendingNudgeCount("agent-1"))
+	}
+
+	// Drain should return all and clear.
+	nudges := svc.DrainNudges("agent-1")
+	if len(nudges) != 2 {
+		t.Fatalf("expected 2 drained nudges, got %d", len(nudges))
+	}
+	if nudges[0].ID != "nudge-1" {
+		t.Errorf("expected nudge-1, got %s", nudges[0].ID)
+	}
+
+	// After drain, should be empty.
+	if svc.PendingNudgeCount("agent-1") != 0 {
+		t.Errorf("expected 0 pending nudges after drain, got %d", svc.PendingNudgeCount("agent-1"))
+	}
+
+	// Drain on empty should return nil.
+	empty := svc.DrainNudges("agent-1")
+	if len(empty) != 0 {
+		t.Errorf("expected 0 nudges on second drain, got %d", len(empty))
+	}
+}
+
 func TestPresencePayloadRoundtrip(t *testing.T) {
 	now := time.Now().Truncate(time.Nanosecond)
 	original := &AgentPresence{
@@ -209,7 +317,7 @@ func TestPresencePayloadRoundtrip(t *testing.T) {
 		WorktreeID:    "wt-456",
 		AgentType:     "claude-code",
 		LastHeartbeat: now,
-		HeartbeatTTL:  120,
+		HeartbeatTTL:  45,
 		RegisteredAt:  now,
 		Metadata:      map[string]any{"key": "value"},
 	}

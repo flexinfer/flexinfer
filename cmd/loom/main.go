@@ -176,14 +176,7 @@ func main() {
 	serversCmd.Flags().BoolVar(&serversJSON, "json", false, "Output in JSON format")
 
 	// Doctor command
-	doctorCmd := &cobra.Command{
-		Use:   "doctor",
-		Short: "Diagnose issues",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Backwards-compatible alias for `loom check`.
-			return runCheck(socketPath, false)
-		},
-	}
+	doctorCmd := newDoctorCmd()
 
 	// Check command
 	var checkJSON bool

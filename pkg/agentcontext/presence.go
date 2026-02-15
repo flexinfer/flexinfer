@@ -306,37 +306,80 @@ func (s *Service) runPresenceCleanup(ctx context.Context) {
 	}
 }
 
-// cleanupExpiredPresence removes expired presence entries and auto-releases resources
+// cleanupExpiredPresence implements the presence state machine:
+//
+//	active → idle    (no heartbeat for 1× TTL)
+//	idle   → offline (no heartbeat for 2× TTL)
+//	offline→ expired (no heartbeat for 3× TTL, then remove)
+//
+// On each transition, broadcasts an SSE event via the onPresenceEvent callback.
 func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 	now := time.Now()
+
+	type transition struct {
+		agentID   string
+		oldStatus PresenceStatus
+		newStatus PresenceStatus
+	}
+
+	var transitions []transition
 	var expired []string
 
-	s.presenceMu.RLock()
+	s.presenceMu.Lock()
 	for agentID, p := range s.presenceMap {
-		if now.After(p.LastHeartbeat.Add(time.Duration(p.HeartbeatTTL) * time.Second)) {
+		ttl := time.Duration(p.HeartbeatTTL) * time.Second
+		elapsed := now.Sub(p.LastHeartbeat)
+
+		switch {
+		case elapsed >= 3*ttl:
+			// Expired: remove entirely.
+			if p.Status != PresenceStatusExpired {
+				transitions = append(transitions, transition{agentID, p.Status, PresenceStatusExpired})
+			}
 			expired = append(expired, agentID)
+		case elapsed >= 2*ttl:
+			// Offline: missed 2 heartbeat windows.
+			if p.Status != PresenceStatusOffline {
+				transitions = append(transitions, transition{agentID, p.Status, PresenceStatusOffline})
+				p.Status = PresenceStatusOffline
+			}
+		case elapsed >= ttl:
+			// Idle: missed 1 heartbeat window.
+			if p.Status == PresenceStatusActive {
+				transitions = append(transitions, transition{agentID, p.Status, PresenceStatusIdle})
+				p.Status = PresenceStatusIdle
+			}
 		}
 	}
-	s.presenceMu.RUnlock()
 
+	// Remove fully expired entries.
 	for _, agentID := range expired {
-		s.logger.Info("cleaning up expired agent presence", "agent_id", agentID)
-
-		s.presenceMu.Lock()
 		delete(s.presenceMap, agentID)
-		s.presenceMu.Unlock()
+	}
+	s.presenceMu.Unlock()
 
-		// Auto-release file claims
+	// Fire callbacks outside the lock.
+	for _, t := range transitions {
+		eventType := "agent.presence." + string(t.newStatus)
+		s.logger.Info("presence state transition",
+			"agent_id", t.agentID,
+			"from", string(t.oldStatus),
+			"to", string(t.newStatus))
+		if s.onPresenceEvent != nil {
+			s.onPresenceEvent(eventType, t.agentID, t.oldStatus, t.newStatus)
+		}
+	}
+
+	// Cleanup resources for fully expired agents.
+	for _, agentID := range expired {
 		s.releaseAllClaimsForAgent(agentID)
-
-		// Auto-orphan worktrees
 		if s.cfg.GitAutoCleanupWorktrees {
 			s.orphanWorktreesForAgent(agentID)
 		}
-
-		// Clean from Qdrant
-		if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
-			s.logger.Warn("failed to delete expired presence from Qdrant", "agent_id", agentID, "error", err)
+		if s.presenceQdrant != nil {
+			if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+				s.logger.Warn("failed to delete expired presence from Qdrant", "agent_id", agentID, "error", err)
+			}
 		}
 	}
 }

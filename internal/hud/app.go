@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -80,6 +81,9 @@ type App struct {
 
 	// Timeline event log — ring buffer for unified activity timeline.
 	eventLog *EventLog
+
+	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
+	nudgeQueue *NudgeQueue
 }
 
 // Run creates and starts the HUD application. This is the main entry point
@@ -101,11 +105,12 @@ func Run(cfg Config) error {
 	agent := bridge.NewAgentBridge(client)
 
 	app := &App{
-		config: cfg,
-		client: client,
-		agent:  agent,
-		cache:  bridge.NewCache(),
-		logger: logger,
+		config:     cfg,
+		client:     client,
+		agent:      agent,
+		cache:      bridge.NewCache(),
+		logger:     logger,
+		nudgeQueue: NewNudgeQueue(),
 	}
 
 	// Initialize and start background monitors.
@@ -442,6 +447,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/annotations", a.withCORS(a.handleAnnotationList))
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
 	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
+	mux.HandleFunc("GET /api/sandbox/policy", a.withCORS(a.handleSandboxPolicy))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// API routes — topology graph.
@@ -460,6 +466,8 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
 	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
+	mux.HandleFunc("POST /api/agent/nudge", a.withCORS(a.handleAgentNudge))
+	mux.HandleFunc("GET /api/knowledge", a.withCORS(a.handleKnowledge))
 	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
 
@@ -1376,6 +1384,43 @@ func (a *App) handleSandbox(w http.ResponseWriter, _ *http.Request) {
 	summary["available"] = true
 	a.cache.Set("sandbox_summary", summary, 5*time.Second)
 	a.writeJSON(w, http.StatusOK, summary)
+}
+
+// handleSandboxPolicy serves the sandbox policy from .sandbox-policy.json.
+// Searches cwd and common profile directories for the policy file.
+func (a *App) handleSandboxPolicy(w http.ResponseWriter, _ *http.Request) {
+	if cached, ok := a.cache.Get("sandbox_policy"); ok {
+		a.writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	// Search well-known locations for the policy file.
+	cwd, _ := os.Getwd()
+	candidates := []string{
+		filepath.Join(cwd, ".sandbox-policy.json"),
+		filepath.Join(cwd, ".claude", ".sandbox-policy.json"),
+		filepath.Join(cwd, ".codex", ".sandbox-policy.json"),
+		filepath.Join(cwd, ".gemini", ".sandbox-policy.json"),
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var policy map[string]any
+		if err := json.Unmarshal(data, &policy); err != nil {
+			continue
+		}
+		a.cache.Set("sandbox_policy", policy, 60*time.Second)
+		a.writeJSON(w, http.StatusOK, policy)
+		return
+	}
+
+	// No policy found — return empty.
+	empty := map[string]any{"configured": false}
+	a.cache.Set("sandbox_policy", empty, 30*time.Second)
+	a.writeJSON(w, http.StatusOK, empty)
 }
 
 func (a *App) handleReasoningChainList(w http.ResponseWriter, _ *http.Request) {

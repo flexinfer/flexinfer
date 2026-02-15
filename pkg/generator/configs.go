@@ -114,7 +114,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	}
 
 	if len(targets) == 0 || targets[0] == "all" {
-		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity", "zed"}
+		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity", "zed", "opencode"}
 	}
 
 	// Resolve repo root from registry path
@@ -131,6 +131,8 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
 		case "claude_desktop":
 			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+		case "opencode":
+			err = generateOpenCodeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
 		default:
 			// Codex, Kilocode, Gemini use TOML format
 			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
@@ -142,6 +144,13 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		// Generate lifecycle hook configs for platforms that support them.
 		if err := generateHooksConfig(reg, outputDir, target); err != nil {
 			return fmt.Errorf("generate hooks for %s: %w", target, err)
+		}
+	}
+
+	// Emit sandbox policy advisory file if defined in registry.
+	if reg.SandboxPolicy != nil {
+		if err := emitSandboxPolicy(reg.SandboxPolicy, outputDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: sandbox policy emission failed: %v\n", err)
 		}
 	}
 
@@ -510,6 +519,9 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string) error
 		config = claudeHooksConfig(reg)
 	case "gemini":
 		config = geminiHooksConfig()
+	case "opencode":
+		// OpenCode uses JS/TS plugins for hooks, not a JSON settings file.
+		return generateOpenCodeHooksPlugin(outputDir)
 	default:
 		return nil // Platform doesn't support hooks.
 	}
@@ -901,4 +913,20 @@ func geminiHooksConfig() map[string]any {
 			},
 		},
 	}
+}
+
+// emitSandboxPolicy writes a .sandbox-policy.json file for the HUD and agents.
+func emitSandboxPolicy(policy *registry.SandboxPolicy, outputDir string) error {
+	data := map[string]any{
+		"require_sandbox":   policy.RequireSandbox,
+		"recommend_sandbox": policy.RecommendSandbox,
+		"auto_provision":    policy.AutoProvision,
+		"default_backend":   policy.DefaultBackend,
+	}
+	out, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal sandbox policy: %w", err)
+	}
+	path := filepath.Join(outputDir, ".sandbox-policy.json")
+	return os.WriteFile(path, append(out, '\n'), 0644)
 }

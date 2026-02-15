@@ -17,6 +17,7 @@
   import StreamPanel from './lib/components/StreamPanel.svelte';
   import PresencePanel from './lib/components/PresencePanel.svelte';
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
+  import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
   import TopologyPanel from './lib/components/TopologyPanel.svelte';
@@ -219,6 +220,8 @@
                   <TasksPanel />
                 {:else if router.subView === 'workflows'}
                   <WorkflowsPanel />
+                {:else if router.subView === 'feed'}
+                  <KnowledgePanel />
                 {:else if router.subView === 'memory'}
                   <MemoryPanel />
                 {:else if router.subView === 'graph'}
