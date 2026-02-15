@@ -22,6 +22,7 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	command := v.Required("command")
 	timeoutStr := v.String("timeout", "2m")
 	maxLines := v.Int("max_lines", m.cfg.maxTailLines)
+	agentID := v.String("agent_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -39,7 +40,7 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	// Per-project lock prevents concurrent ensureRunning TOCTOU races
 	mu := m.projectLock(projectName)
 	mu.Lock()
-	containerID, err := m.ensureRunning(ctx, projectDir, projectName)
+	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
 	if err != nil {
 		if m.metrics != nil {
@@ -105,6 +106,7 @@ func (m *manager) handleBuild(ctx context.Context, args map[string]any) (*mcp.Ca
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	force := v.Bool("force", false)
+	_ = v.String("agent_id", "") // accepted but not used for build-only operations
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -286,6 +288,7 @@ func (m *manager) handleReadFile(ctx context.Context, args map[string]any) (*mcp
 	path := v.Required("path")
 	maxLines := v.Int("max_lines", 200)
 	offset := v.Int("offset", 0)
+	agentID := v.String("agent_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -297,7 +300,7 @@ func (m *manager) handleReadFile(ctx context.Context, args map[string]any) (*mcp
 
 	mu := m.projectLock(projectName)
 	mu.Lock()
-	containerID, err := m.ensureRunning(ctx, projectDir, projectName)
+	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil
@@ -340,6 +343,7 @@ func (m *manager) handleWriteFile(ctx context.Context, args map[string]any) (*mc
 	path := v.Required("path")
 	content := v.Required("content")
 	mode := v.String("mode", "0644")
+	agentID := v.String("agent_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -351,7 +355,7 @@ func (m *manager) handleWriteFile(ctx context.Context, args map[string]any) (*mc
 
 	mu := m.projectLock(projectName)
 	mu.Lock()
-	containerID, err := m.ensureRunning(ctx, projectDir, projectName)
+	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil

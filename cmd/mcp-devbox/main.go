@@ -50,18 +50,20 @@ func run(ctx context.Context) error {
 	}
 
 	mgr, err := newManager(ctx, logger, managerConfig{
-		workspaceRoot: workspaceRoot,
-		cacheDir:      cacheDir,
-		backendType:   env.String("DEVBOX_BACKEND", "docker"),
-		registry:      env.String("DEVBOX_REGISTRY", "registry.harbor.lan"),
-		imagePrefix:   env.String("DEVBOX_IMAGE_PREFIX", "mcp/devbox"),
-		maxTailLines:  env.Int("DEVBOX_MAX_TAIL_LINES", 20),
-		idleTimeout:   env.Duration("DEVBOX_IDLE_TIMEOUT", 30*60*1e9), // 30m
-		defaultCPU:    2.0,
-		defaultMemMB:  env.Int("DEVBOX_DEFAULT_MEMORY_MB", 1024),
-		kubeconfig:    env.String("DEVBOX_KUBECONFIG", ""),
-		k8sNamespace:  env.String("DEVBOX_K8S_NAMESPACE", "devbox"),
-		storageClass:  env.String("DEVBOX_K8S_STORAGE_CLASS", "longhorn"),
+		workspaceRoot:      workspaceRoot,
+		cacheDir:           cacheDir,
+		backendType:        env.String("DEVBOX_BACKEND", "docker"),
+		registry:           env.String("DEVBOX_REGISTRY", "registry.harbor.lan"),
+		imagePrefix:        env.String("DEVBOX_IMAGE_PREFIX", "mcp/devbox"),
+		maxTailLines:       env.Int("DEVBOX_MAX_TAIL_LINES", 20),
+		idleTimeout:        env.Duration("DEVBOX_IDLE_TIMEOUT", 30*60*1e9), // 30m
+		defaultCPU:         2.0,
+		defaultMemMB:       env.Int("DEVBOX_DEFAULT_MEMORY_MB", 1024),
+		kubeconfig:         env.String("DEVBOX_KUBECONFIG", ""),
+		k8sNamespace:       env.String("DEVBOX_K8S_NAMESPACE", "devbox"),
+		storageClass:       env.String("DEVBOX_K8S_STORAGE_CLASS", "longhorn"),
+		k8sWorkspacePVC:    env.String("DEVBOX_K8S_WORKSPACE_PVC", "devbox-workspace-nfs"),
+		k8sImagePullSecret: env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
 	})
 	if err != nil {
 		return fmt.Errorf("init manager: %w", err)

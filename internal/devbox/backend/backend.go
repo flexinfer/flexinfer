@@ -67,6 +67,7 @@ type StartOpts struct {
 	MemoryMB int               // memory limit in MB (0 = no limit)
 	CPUs     float64           // CPU limit (0 = no limit)
 	Network  bool              // enable networking
+	AgentID  string            // owning agent ID (used as pod label in K8s backend)
 }
 
 // Mount describes a bind mount.

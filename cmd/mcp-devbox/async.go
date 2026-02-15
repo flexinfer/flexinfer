@@ -87,6 +87,7 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 	project := v.Required("project")
 	command := v.Required("command")
 	timeoutStr := v.String("timeout", "10m")
+	agentID := v.String("agent_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -103,7 +104,7 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 
 	mu := m.projectLock(projectName)
 	mu.Lock()
-	containerID, err := m.ensureRunning(ctx, projectDir, projectName)
+	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil

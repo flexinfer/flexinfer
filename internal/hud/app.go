@@ -448,6 +448,8 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
 	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
 	mux.HandleFunc("GET /api/sandbox/policy", a.withCORS(a.handleSandboxPolicy))
+	mux.HandleFunc("POST /api/sandbox/start", a.withCORS(a.handleSandboxStart))
+	mux.HandleFunc("POST /api/sandbox/stop", a.withCORS(a.handleSandboxStop))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// API routes — topology graph.
@@ -1421,6 +1423,71 @@ func (a *App) handleSandboxPolicy(w http.ResponseWriter, _ *http.Request) {
 	empty := map[string]any{"configured": false}
 	a.cache.Set("sandbox_policy", empty, 30*time.Second)
 	a.writeJSON(w, http.StatusOK, empty)
+}
+
+// handleSandboxStart triggers devbox_build for a project via the daemon.
+// POST /api/sandbox/start
+func (a *App) handleSandboxStart(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Project string `json:"project"`
+		AgentID string `json:"agent_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Project == "" {
+		a.writeError(w, http.StatusBadRequest, "project is required", nil)
+		return
+	}
+
+	args := map[string]any{"project": body.Project}
+	if body.AgentID != "" {
+		args["agent_id"] = body.AgentID
+	}
+	result, err := a.client.CallTool("devbox_build", args)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to start sandbox", err)
+		return
+	}
+
+	// Invalidate summary cache so next poll picks up the new sandbox.
+	a.cache.Invalidate("sandbox_summary")
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	parsed["ok"] = true
+	a.writeJSON(w, http.StatusOK, parsed)
+}
+
+// handleSandboxStop stops a running sandbox container for a project.
+// POST /api/sandbox/stop
+func (a *App) handleSandboxStop(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Project string `json:"project"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if body.Project == "" {
+		a.writeError(w, http.StatusBadRequest, "project is required", nil)
+		return
+	}
+
+	_, err := a.client.CallTool("devbox_stop", map[string]any{"project": body.Project})
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to stop sandbox", err)
+		return
+	}
+
+	// Invalidate summary cache.
+	a.cache.Invalidate("sandbox_summary")
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": body.Project})
 }
 
 func (a *App) handleReasoningChainList(w http.ResponseWriter, _ *http.Request) {

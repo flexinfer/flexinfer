@@ -97,8 +97,26 @@
               <div class="project-row">
                 <StatusDot status="healthy" />
                 <span class="project-name text-mono">{project}</span>
+                {#if summary?.agent_labels?.[project]}
+                  <span class="agent-badge text-mono">{summary.agent_labels[project]}</span>
+                {/if}
+                <span class="project-actions">
+                  <button class="action-btn action-stop" title="Stop sandbox"
+                    onclick={() => sandboxStore.stopSandbox(project)}>
+                    {'\u25A0'}
+                  </button>
+                </span>
               </div>
             {/each}
+          </div>
+          <div class="start-section">
+            <button class="action-btn action-start" title="Start sandbox for project"
+              onclick={() => {
+                const name = prompt('Project name:');
+                if (name) sandboxStore.startSandbox(name);
+              }}>
+              + Start Sandbox
+            </button>
           </div>
         {/if}
 
@@ -315,6 +333,70 @@
   .project-name {
     color: var(--fg-primary);
     font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: rgba(0, 188, 212, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(0, 188, 212, 0.2);
+    flex-shrink: 0;
+  }
+
+  .project-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--transition-fast, 0.1s);
+  }
+
+  .project-row:hover .project-actions {
+    opacity: 1;
+  }
+
+  .action-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    padding: 2px 6px;
+    transition: all var(--transition-fast, 0.1s);
+  }
+
+  .action-btn:hover {
+    color: var(--fg-primary);
+    border-color: var(--fg-secondary);
+  }
+
+  .action-stop:hover {
+    color: var(--error);
+    border-color: var(--error);
+  }
+
+  .start-section {
+    padding: 8px 0;
+  }
+
+  .action-start {
+    width: 100%;
+    padding: 4px 8px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .action-start:hover {
+    color: var(--success);
+    border-color: var(--success);
   }
 
   /* ---- Policy ---- */

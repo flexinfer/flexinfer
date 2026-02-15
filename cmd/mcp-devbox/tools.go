@@ -34,6 +34,10 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 					"type":        "integer",
 					"description": "Max tail lines to return (default: 20)",
 				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Owning agent ID (used as pod label in K8s backend)",
+				},
 			},
 			Required: []string{"project", "command"},
 		},
@@ -56,6 +60,10 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 				"push": map[string]any{
 					"type":        "boolean",
 					"description": "Push image to registry after build (default: false)",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Owning agent ID (used as pod label in K8s backend)",
 				},
 			},
 			Required: []string{"project"},
@@ -179,6 +187,10 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 				"timeout": map[string]any{
 					"type":        "string",
 					"description": "Execution timeout (default: '10m')",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Owning agent ID (used as pod label in K8s backend)",
 				},
 			},
 			Required: []string{"project", "command"},

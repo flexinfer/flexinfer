@@ -366,6 +366,12 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp["directives"] = directives
 	}
 
+	// Sandbox policy nudge: if agent's current task matches require_sandbox patterns
+	// and no active sandbox exists for the agent, queue a context_inject nudge.
+	if body.CurrentTask != "" {
+		a.maybeSandboxNudge(body.AgentID, body.CurrentTask)
+	}
+
 	// Include pending nudges drained from the HUD nudge queue.
 	if nudges := a.nudgeQueue.Drain(body.AgentID); len(nudges) > 0 {
 		resp["nudges"] = nudges
@@ -601,6 +607,59 @@ func (a *App) handleAgentNudge(w http.ResponseWriter, r *http.Request) {
 		"nudge_id": nudgeID,
 		"status":   "pending",
 	})
+}
+
+// maybeSandboxNudge checks the cached sandbox_policy for require_sandbox patterns.
+// If the agent's current task matches and no active sandbox exists, a nudge is queued.
+func (a *App) maybeSandboxNudge(agentID, currentTask string) {
+	cached, ok := a.cache.Get("sandbox_policy")
+	if !ok {
+		return
+	}
+	policy, ok := cached.(map[string]any)
+	if !ok {
+		return
+	}
+	if !matchesSandboxPolicy(currentTask, policy) {
+		return
+	}
+
+	// Check if agent already has an active sandbox (via devbox_summary cache).
+	if summary, ok := a.cache.Get("sandbox_summary"); ok {
+		if m, ok := summary.(map[string]any); ok {
+			if running, _ := m["running"].(float64); running > 0 {
+				return // sandbox already running
+			}
+		}
+	}
+
+	a.nudgeQueue.Add(agentID, NudgeEntry{
+		ID:        NewNudgeID(agentID),
+		Type:      "context_inject",
+		Content:   "Your current task matches sandbox policy (require_sandbox). Consider using devbox_exec instead of running commands directly on the host.",
+		FromAgent: "hud",
+		CreatedAt: time.Now().Format(time.RFC3339),
+	})
+}
+
+// matchesSandboxPolicy returns true if the task string contains any of the
+// require_sandbox patterns from the sandbox policy.
+func matchesSandboxPolicy(task string, policy map[string]any) bool {
+	patterns, ok := policy["require_sandbox"]
+	if !ok {
+		return false
+	}
+	patternList, ok := patterns.([]any)
+	if !ok {
+		return false
+	}
+	taskLower := strings.ToLower(task)
+	for _, p := range patternList {
+		if s, ok := p.(string); ok && strings.Contains(taskLower, strings.ToLower(s)) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleKnowledge performs a cross-agent knowledge search.

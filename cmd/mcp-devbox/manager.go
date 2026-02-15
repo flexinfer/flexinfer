@@ -29,9 +29,11 @@ type managerConfig struct {
 	defaultMemMB  int
 
 	// K8s-specific
-	kubeconfig   string
-	k8sNamespace string
-	storageClass string
+	kubeconfig         string
+	k8sNamespace       string
+	storageClass       string
+	k8sWorkspacePVC    string
+	k8sImagePullSecret string
 }
 
 type manager struct {
@@ -135,9 +137,11 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 		b = db
 	case "k8s", "kubernetes":
 		kb, err := backend.NewK8sBackend(backend.K8sBackendConfig{
-			Kubeconfig: cfg.kubeconfig,
-			Namespace:  cfg.k8sNamespace,
-			Registry:   cfg.registry,
+			Kubeconfig:      cfg.kubeconfig,
+			Namespace:       cfg.k8sNamespace,
+			Registry:        cfg.registry,
+			WorkspacePVC:    cfg.k8sWorkspacePVC,
+			ImagePullSecret: cfg.k8sImagePullSecret,
 		})
 		if err != nil {
 			return nil, err
@@ -197,7 +201,7 @@ func (m *manager) containerName(projectName string) string {
 
 // ensureRunning ensures a sandbox is built and running for a project.
 // Returns the container ID.
-func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName string) (string, error) {
+func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, agentID string) (string, error) {
 	// Fingerprint the project
 	fp, err := detect.Fingerprint(projectDir)
 	if err != nil {
@@ -292,6 +296,7 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName str
 		MemoryMB: memMB,
 		CPUs:     cpu,
 		Network:  network,
+		AgentID:  agentID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("start container: %w", err)
@@ -327,7 +332,13 @@ func (m *manager) projectWorkDir(projectDir string) string {
 }
 
 // buildMounts creates the standard bind mounts for a sandbox.
+// For K8s backend, returns empty slice — NFS PVC handles workspace mounting.
 func (m *manager) buildMounts(projectDir string) []backend.Mount {
+	// K8s backend uses NFS PVC for workspace; host mounts are not available on cluster nodes.
+	if m.cfg.backendType == "k8s" || m.cfg.backendType == "kubernetes" {
+		return nil
+	}
+
 	home, _ := os.UserHomeDir()
 
 	// Mount workspace root so sibling projects (Go replace directives) are accessible

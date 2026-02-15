@@ -21,19 +21,23 @@ import (
 
 // K8sBackend implements Backend using a Kubernetes cluster.
 type K8sBackend struct {
-	clientset  *kubernetes.Clientset
-	restConfig *rest.Config
-	namespace  string
-	registry   string
-	dockerPath string // local docker CLI for building+pushing images
+	clientset       *kubernetes.Clientset
+	restConfig      *rest.Config
+	namespace       string
+	registry        string
+	dockerPath      string // local docker CLI for building+pushing images
+	workspacePVC    string // PVC name for NFS workspace volume
+	imagePullSecret string // image pull secret name for private registry
 }
 
 // K8sBackendConfig holds configuration for the K8s backend.
 type K8sBackendConfig struct {
-	Kubeconfig   string // path to kubeconfig file
-	Namespace    string // namespace for sandbox pods (default: "devbox")
-	Registry     string // image registry (e.g., "registry.harbor.lan")
-	StorageClass string // storage class for PVCs (default: "longhorn")
+	Kubeconfig      string // path to kubeconfig file
+	Namespace       string // namespace for sandbox pods (default: "devbox")
+	Registry        string // image registry (e.g., "registry.harbor.lan")
+	StorageClass    string // storage class for PVCs (default: "longhorn")
+	WorkspacePVC    string // PVC name for NFS workspace (default: "devbox-workspace-nfs")
+	ImagePullSecret string // image pull secret name (default: "harbor-creds")
 }
 
 // NewK8sBackend creates a new Kubernetes backend.
@@ -43,6 +47,12 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	}
 	if cfg.Registry == "" {
 		cfg.Registry = "registry.harbor.lan"
+	}
+	if cfg.WorkspacePVC == "" {
+		cfg.WorkspacePVC = "devbox-workspace-nfs"
+	}
+	if cfg.ImagePullSecret == "" {
+		cfg.ImagePullSecret = "harbor-creds"
 	}
 
 	restConfig, err := buildRestConfig(cfg.Kubeconfig)
@@ -59,11 +69,13 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	dockerPath, _ := exec.LookPath("docker")
 
 	return &K8sBackend{
-		clientset:  clientset,
-		restConfig: restConfig,
-		namespace:  cfg.Namespace,
-		registry:   cfg.Registry,
-		dockerPath: dockerPath,
+		clientset:       clientset,
+		restConfig:      restConfig,
+		namespace:       cfg.Namespace,
+		registry:        cfg.Registry,
+		dockerPath:      dockerPath,
+		workspacePVC:    cfg.WorkspacePVC,
+		imagePullSecret: cfg.ImagePullSecret,
 	}, nil
 }
 
@@ -354,12 +366,14 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		resources.Requests[corev1.ResourceCPU] = cpu
 	}
 
-	// Volumes: emptyDir for workspace (agent copies files via exec)
+	// Volumes: NFS workspace via PVC (shared across all sandbox pods)
 	volumes := []corev1.Volume{
 		{
 			Name: "workspace",
 			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: k.workspacePVC,
+				},
 			},
 		},
 	}
@@ -367,7 +381,7 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		{Name: "workspace", MountPath: "/workspace"},
 	}
 
-	// Add host-path mounts if requested (for NFS-backed workspace access)
+	// Add host-path mounts if requested (for additional bind mounts)
 	for i, m := range opts.Mounts {
 		volName := fmt.Sprintf("mount-%d", i)
 		hostPathType := corev1.HostPathDirectoryOrCreate
@@ -387,17 +401,29 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		})
 	}
 
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": "mcp-devbox",
+		"devbox/project":               opts.Name,
+	}
+	if opts.AgentID != "" {
+		labels["devbox/agent-id"] = opts.AgentID
+	}
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      opts.Name,
 			Namespace: k.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "mcp-devbox",
-				"devbox/project":               opts.Name,
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
+			RestartPolicy:      corev1.RestartPolicyNever,
+			ServiceAccountName: "mcp-devbox",
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: k.imagePullSecret},
+			},
+			NodeSelector: map[string]string{
+				"kubernetes.io/arch": "amd64",
+			},
 			Containers: []corev1.Container{
 				{
 					Name:            "devbox",

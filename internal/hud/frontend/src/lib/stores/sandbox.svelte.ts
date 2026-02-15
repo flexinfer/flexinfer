@@ -104,6 +104,36 @@ class SandboxStore {
     this.recentEvents = [evt, ...this.recentEvents].slice(0, MAX_EVENTS);
   }
 
+  async startSandbox(project: string): Promise<void> {
+    try {
+      const res = await globalThis.fetch('/api/sandbox/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project }),
+      });
+      if (!res.ok) throw new Error(`Start sandbox: ${res.status}`);
+      // Refresh after starting.
+      await this.fetch();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async stopSandbox(project: string): Promise<void> {
+    try {
+      const res = await globalThis.fetch('/api/sandbox/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project }),
+      });
+      if (!res.ok) throw new Error(`Stop sandbox: ${res.status}`);
+      // Refresh after stopping.
+      await this.fetch();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async fetchPolicy(): Promise<void> {
     try {
       const res = await globalThis.fetch('/api/sandbox/policy');
