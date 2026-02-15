@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/templatevars"
@@ -663,14 +665,121 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 		if mode, ok := pp.Settings["default_mode"].(string); ok && mode != "" {
 			perms["defaultMode"] = mode
 		}
+		// Optional keys stored under platform_permissions.claude.settings until the
+		// registry schema grows first-class fields.
+		if ask := coerceStringSlice(pp.Settings["ask"]); len(ask) > 0 {
+			perms["ask"] = ask
+		}
+		if v, ok := pp.Settings["disable_bypass_permissions_mode"].(string); ok && v != "" {
+			perms["disableBypassPermissionsMode"] = v
+		}
 	}
+
+	// Claude Code rejects settings.json when permission rules don't match its
+	// upstream schema regex. Filter invalid entries so we always emit a schema-valid
+	// settings.json, and warn so the registry can be corrected.
 	if len(pp.Allow) > 0 {
-		perms["allow"] = pp.Allow
+		allow, dropped := filterClaudePermissionRules(pp.Allow)
+		if len(dropped) > 0 {
+			fmt.Fprintf(os.Stderr, "WARN  [claude] dropping %d invalid permissions.allow entries: %s\n", len(dropped), strings.Join(dropped, ", "))
+		}
+		if len(allow) > 0 {
+			perms["allow"] = allow
+		}
 	}
 	if len(pp.Deny) > 0 {
-		perms["deny"] = pp.Deny
+		deny, dropped := filterClaudePermissionRules(pp.Deny)
+		if len(dropped) > 0 {
+			fmt.Fprintf(os.Stderr, "WARN  [claude] dropping %d invalid permissions.deny entries: %s\n", len(dropped), strings.Join(dropped, ", "))
+		}
+		if len(deny) > 0 {
+			perms["deny"] = deny
+		}
+	}
+	if askAny, ok := perms["ask"].([]string); ok && len(askAny) > 0 {
+		ask, dropped := filterClaudePermissionRules(askAny)
+		if len(dropped) > 0 {
+			fmt.Fprintf(os.Stderr, "WARN  [claude] dropping %d invalid permissions.ask entries: %s\n", len(dropped), strings.Join(dropped, ", "))
+		}
+		if len(ask) > 0 {
+			perms["ask"] = ask
+		} else {
+			delete(perms, "ask")
+		}
 	}
 	return perms
+}
+
+func coerceStringSlice(v any) []string {
+	switch vv := v.(type) {
+	case nil:
+		return nil
+	case []string:
+		return vv
+	case []any:
+		out := make([]string, 0, len(vv))
+		for _, x := range vv {
+			if s, ok := x.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+var (
+	claudePermRuleOnce sync.Once
+	claudePermRuleRE   *regexp.Regexp
+)
+
+func claudePermissionRuleRegexp() *regexp.Regexp {
+	claudePermRuleOnce.Do(func() {
+		// Default to a conservative RE2-compatible regex. Claude's upstream schema
+		// uses lookaheads that Go's regexp doesn't support, so we cannot compile it
+		// verbatim.
+		pattern := `^((Bash|Edit|ExitPlanMode|Glob|Grep|KillShell|LS|LSP|MultiEdit|NotebookEdit|NotebookRead|Read|Skill|Task|TaskCreate|TaskGet|TaskList|TaskOutput|TaskStop|TaskUpdate|TodoWrite|ToolSearch|WebFetch|WebSearch|Write)(\([^)]*\))?|mcp__.*)$`
+
+		if schemaBytes, ok := validator.GetEmbeddedSchema("claude_settings.json"); ok && len(schemaBytes) > 0 {
+			var raw map[string]any
+			if err := json.Unmarshal(schemaBytes, &raw); err == nil {
+				if defs, ok := raw["$defs"].(map[string]any); ok {
+					if pr, ok := defs["permissionRule"].(map[string]any); ok {
+						if p, ok := pr["pattern"].(string); ok && p != "" {
+							// Skip patterns with unsupported tokens (lookaheads/lookbehinds).
+							if !strings.Contains(p, "(?") {
+								pattern = p
+							}
+						}
+					}
+				}
+			}
+		}
+
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			// Fall back to a minimal safe regex rather than failing generation.
+			re = regexp.MustCompile(`^(mcp__.*|Bash(\([^)]*\))?|Read(\([^)]*\))?|Write(\([^)]*\))?|Edit(\([^)]*\))?|MultiEdit(\([^)]*\))?|Task(\([^)]*\))?|Glob(\([^)]*\))?|Grep(\([^)]*\))?|ToolSearch(\([^)]*\))?|LS(\([^)]*\))?|WebFetch(\([^)]*\))?|WebSearch(\([^)]*\))?)$`)
+		}
+		claudePermRuleRE = re
+	})
+	return claudePermRuleRE
+}
+
+func filterClaudePermissionRules(rules []string) (kept []string, dropped []string) {
+	re := claudePermissionRuleRegexp()
+	for _, r := range rules {
+		if r == "" {
+			continue
+		}
+		if re.MatchString(r) {
+			kept = append(kept, r)
+		} else {
+			dropped = append(dropped, r)
+		}
+	}
+	return kept, dropped
 }
 
 // emitCodexPreamble writes Codex-specific top-level TOML settings.
@@ -682,6 +791,7 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	approvalPolicy := "never"
 	suppressWarning := true
 	sandboxMode := "workspace-write"
+	webSearchMode := "live"
 	features := map[string]any{
 		"include_apply_patch_tool": true,
 		"apply_patch_freeform":     true,
@@ -698,6 +808,9 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		}
 		if v, ok := pp.Settings["sandbox_mode"].(string); ok {
 			sandboxMode = v
+		}
+		if v, ok := pp.Settings["web_search"].(string); ok && v != "" {
+			webSearchMode = v
 		}
 		if v, ok := pp.Settings["features"].(map[string]any); ok {
 			features = v
@@ -725,6 +838,12 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 
 	fmt.Fprintf(sb, "sandbox_mode = %q\n", sandboxMode)
 	fmt.Fprintf(sb, "sandbox_workspace_write = { network_access = true, writable_roots = [%q] }\n\n", workspaceRoot)
+
+	// Enable Codex builtin web search tool (controls internet access for web.run/web_search).
+	// Values: disabled, cached, live.
+	if webSearchMode != "" {
+		fmt.Fprintf(sb, "web_search = %q\n\n", webSearchMode)
+	}
 
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
 	sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
