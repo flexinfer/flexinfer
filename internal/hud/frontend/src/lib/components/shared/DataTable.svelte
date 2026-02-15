@@ -1,7 +1,7 @@
 <script>
   /**
    * DataTable — sortable, selectable table with sticky header,
-   * skeleton loading, and optional virtual scroll.
+   * skeleton loading, expandable rows, and optional virtual scroll.
    *
    * @type {{
    *   columns: Array<{ key: string, label: string, sortable?: boolean, width?: string, align?: 'left'|'center'|'right' }>,
@@ -12,11 +12,14 @@
    *   skeletonRows?: number,
    *   selectable?: boolean,
    *   selectedIds?: Set<string>,
+   *   expandedIds?: Set<string>,
    *   idKey?: string,
    *   onSort?: (key: string, dir: 'asc' | 'desc') => void,
    *   onSelect?: (ids: Set<string>) => void,
    *   onRowClick?: (row: any) => void,
-   *   row: import('svelte').Snippet<[{ row: any, index: number }]>,
+   *   onToggleExpand?: (row: any) => void,
+   *   row: import('svelte').Snippet<[{ row: any, index: number, expanded: boolean }]>,
+   *   expandedRow?: import('svelte').Snippet<[{ row: any, index: number }]>,
    * }}
    */
   let {
@@ -28,12 +31,17 @@
     skeletonRows = 5,
     selectable = false,
     selectedIds = new Set(),
+    expandedIds = new Set(),
     idKey = 'id',
     onSort,
     onSelect,
     onRowClick,
+    onToggleExpand,
     row: rowSnippet,
+    expandedRow: expandedRowSnippet,
   } = $props();
+
+  let colSpan = $derived((selectable ? 1 : 0) + columns.length);
 
   function handleHeaderClick(col) {
     if (!col.sortable || !onSort) return;
@@ -116,13 +124,15 @@
         {/each}
       {:else}
         {#each rows as rowData, index (rowData[idKey] ?? index)}
+          {@const isExpanded = expandedIds.has(rowData[idKey])}
           <tr
             class:selected={selectable && selectedIds.has(rowData[idKey])}
-            class:clickable={!!onRowClick}
-            onclick={() => { if (onRowClick) onRowClick(rowData); }}
-            onkeydown={(e) => { if (onRowClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(rowData); } }}
-            tabindex={onRowClick ? 0 : undefined}
-            role={onRowClick ? 'row' : undefined}
+            class:clickable={!!onRowClick || !!onToggleExpand}
+            class:expanded-row={isExpanded}
+            onclick={() => { if (onRowClick) onRowClick(rowData); else if (onToggleExpand) onToggleExpand(rowData); }}
+            onkeydown={(e) => { if ((onRowClick || onToggleExpand) && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); if (onRowClick) onRowClick(rowData); else if (onToggleExpand) onToggleExpand(rowData); } }}
+            tabindex={(onRowClick || onToggleExpand) ? 0 : undefined}
+            role={(onRowClick || onToggleExpand) ? 'row' : undefined}
           >
             {#if selectable}
               <td class="data-table-check">
@@ -135,8 +145,15 @@
                 />
               </td>
             {/if}
-            {@render rowSnippet({ row: rowData, index })}
+            {@render rowSnippet({ row: rowData, index, expanded: isExpanded })}
           </tr>
+          {#if isExpanded && expandedRowSnippet}
+            <tr class="data-table-expand-row">
+              <td colspan={colSpan}>
+                {@render expandedRowSnippet({ row: rowData, index })}
+              </td>
+            </tr>
+          {/if}
         {/each}
       {/if}
     </tbody>
@@ -235,5 +252,20 @@
 
   .data-table-skeleton-row td {
     padding: var(--space-2) var(--space-2);
+  }
+
+  /* Expandable row support */
+  .data-table tbody tr.expanded-row td {
+    border-bottom: none;
+  }
+
+  .data-table tbody tr.data-table-expand-row td {
+    padding: 0 var(--space-2) var(--space-2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .data-table tbody tr.data-table-expand-row:hover td {
+    background: transparent;
+    color: inherit;
   }
 </style>

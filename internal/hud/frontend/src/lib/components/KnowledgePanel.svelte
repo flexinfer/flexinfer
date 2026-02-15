@@ -2,6 +2,9 @@
   import { knowledgeStore } from '../stores/knowledge.svelte.ts';
   import { formatNumber, relativeTime } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
+  import DataTable from './shared/DataTable.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     knowledgeStore.startPolling(30000);
@@ -13,20 +16,80 @@
   let agents = $derived(knowledgeStore.agents);
 
   let searchInput = $state('');
-  let expandedItems = $state(new Set());
+  let expandedIds = $state(new Set());
 
-  function handleSearch() {
-    knowledgeStore.search(searchInput);
+  // Sort state
+  let sortKey = $state('timestamp');
+  let sortDir = $state('desc');
+
+  let sortedEntries = $derived.by(() => {
+    const sorted = [...entries];
+    sorted.sort((a, b) => {
+      let va = a[sortKey] ?? '';
+      let vb = b[sortKey] ?? '';
+      if (sortKey === 'token_count') {
+        va = a.token_count ?? 0;
+        vb = b.token_count ?? 0;
+      }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  });
+
+  const columns = [
+    { key: 'entry_type', label: 'Type', sortable: true, width: '90px' },
+    { key: 'title', label: 'Title', sortable: true },
+    { key: 'agent_id', label: 'Agent', sortable: true, width: '110px' },
+    { key: 'file_path', label: 'File', sortable: true, width: '120px' },
+    { key: 'token_count', label: 'Tokens', sortable: true, width: '70px', align: 'right' },
+    { key: 'timestamp', label: 'Time', sortable: true, width: '80px' },
+  ];
+
+  let filterDefs = $derived([
+    {
+      key: 'category',
+      label: 'All types',
+      options: categories.map(c => ({ value: c, label: c })),
+      value: knowledgeStore.filterCategory === 'all' ? '' : knowledgeStore.filterCategory,
+    },
+    {
+      key: 'agent',
+      label: 'All agents',
+      options: agents.map(a => ({ value: a, label: a })),
+      value: knowledgeStore.filterAgent === 'all' ? '' : knowledgeStore.filterAgent,
+    },
+  ]);
+
+  function handleSearch(val) {
+    searchInput = val;
+    knowledgeStore.search(val);
   }
 
-  function toggleExpand(id) {
-    const next = new Set(expandedItems);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
+  function handleFilter(key, value) {
+    if (key === 'category') {
+      knowledgeStore.filterCategory = value || 'all';
+      knowledgeStore.fetch();
+    } else if (key === 'agent') {
+      knowledgeStore.filterAgent = value || 'all';
+      knowledgeStore.fetch();
     }
-    expandedItems = next;
+  }
+
+  function handleSort(key, dir) {
+    sortKey = key;
+    sortDir = dir;
+  }
+
+  function toggleExpand(row) {
+    const next = new Set(expandedIds);
+    if (next.has(row.id)) {
+      next.delete(row.id);
+    } else {
+      next.add(row.id);
+    }
+    expandedIds = next;
   }
 
   function entryTypeColor(type) {
@@ -79,114 +142,80 @@
   </div>
 
   <!-- Search + filters -->
-  <div class="toolbar">
-    <input
-      type="text"
-      placeholder="Semantic search across all agents..."
-      bind:value={searchInput}
-      onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-      class="search-input"
-    />
-    <button class="btn btn-accent" onclick={handleSearch} disabled={knowledgeStore.loading}>
-      {knowledgeStore.loading ? 'Searching...' : 'Search'}
-    </button>
+  <FilterBar
+    search={searchInput}
+    placeholder="Semantic search across all agents..."
+    filters={filterDefs}
+    resultCount={entries.length}
+    onSearch={handleSearch}
+    onFilter={handleFilter}
+  >
+    {#snippet actions()}
+      <button class="btn btn-accent" onclick={() => handleSearch(searchInput)} disabled={knowledgeStore.loading}>
+        {knowledgeStore.loading ? 'Searching...' : 'Search'}
+      </button>
+    {/snippet}
+  </FilterBar>
 
-    <select bind:value={knowledgeStore.filterCategory} onchange={() => knowledgeStore.fetch()}>
-      <option value="all">All types</option>
-      {#each categories as cat}
-        <option value={cat}>{cat}</option>
-      {/each}
-    </select>
-
-    <select bind:value={knowledgeStore.filterAgent} onchange={() => knowledgeStore.fetch()}>
-      <option value="all">All agents</option>
-      {#each agents as agent}
-        <option value={agent}>{agent}</option>
-      {/each}
-    </select>
-
-    <span class="text-muted text-xs text-mono">{entries.length} results</span>
-  </div>
-
-  <!-- Entry list -->
+  <!-- Entry table -->
   <div class="entry-list">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Title</th>
-            <th>Agent</th>
-            <th>File</th>
-            <th>Tokens</th>
-            <th>Time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each entries as entry (entry.id)}
-            <tr
-              class="row-enter entry-row"
-              class:expanded-row={expandedItems.has(entry.id)}
-              style="border-left: 3px solid {entryTypeColor(entry.entry_type)}"
-            >
-              <td>
-                <Badge text={entry.entry_type} variant={entryTypeVariant(entry.entry_type)} />
-              </td>
-              <td class="entry-title">
-                <button class="expand-btn" onclick={() => toggleExpand(entry.id)} title="Expand">
-                  <span class="expand-icon">{expandedItems.has(entry.id) ? '\u25BC' : '\u25B6'}</span>
-                  {entry.title ?? '---'}
-                </button>
-              </td>
-              <td class="text-mono text-xs">{entry.agent_id || '---'}</td>
-              <td class="text-mono text-xs text-muted" title={entry.file_path}>
-                {#if entry.file_path}
-                  {entry.file_path.split('/').pop()}
-                {:else}
-                  ---
-                {/if}
-              </td>
-              <td class="text-mono text-xs">{formatNumber(entry.token_count ?? 0)}</td>
-              <td class="text-mono text-xs text-muted">{relativeTime(entry.timestamp)}</td>
-            </tr>
-            {#if expandedItems.has(entry.id)}
-              <tr class="expand-content-row">
-                <td colspan="6">
-                  <div class="expand-content">
-                    <div class="expand-meta">
-                      <span class="meta-item">Agent: <strong>{entry.agent_id}</strong></span>
-                      <span class="meta-item">Session: <strong>{entry.session_id?.slice(0, 8) ?? '---'}</strong></span>
-                      {#if entry.namespace}
-                        <span class="meta-item">Namespace: <strong>{entry.namespace}</strong></span>
-                      {/if}
-                      {#if entry.file_path}
-                        <span class="meta-item">File: <strong>{entry.file_path}</strong></span>
-                      {/if}
-                      {#if entry.tags?.length}
-                        <span class="meta-item">Tags: {entry.tags.join(', ')}</span>
-                      {/if}
-                    </div>
-                    <pre class="content-pre">{entry.content ?? '(no content)'}</pre>
-                  </div>
-                </td>
-              </tr>
+    {#if sortedEntries.length === 0 && !knowledgeStore.loading}
+      <EmptyState
+        icon={knowledgeStore.error ? '\u26A0' : '\u{1F4D6}'}
+        heading={knowledgeStore.error ? `Error: ${knowledgeStore.error}` : 'No knowledge entries found'}
+        description={knowledgeStore.error ? '' : 'Agents need active sessions with context.'}
+      />
+    {:else}
+      <DataTable
+        {columns}
+        rows={sortedEntries}
+        {sortKey}
+        {sortDir}
+        {expandedIds}
+        idKey="id"
+        loading={knowledgeStore.loading}
+        onSort={handleSort}
+        onToggleExpand={toggleExpand}
+      >
+        {#snippet row({ row: entry, expanded })}
+          <td style="border-left: 3px solid {entryTypeColor(entry.entry_type)}">
+            <Badge text={entry.entry_type} variant={entryTypeVariant(entry.entry_type)} />
+          </td>
+          <td class="entry-title">
+            <span class="expand-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
+            {entry.title ?? '---'}
+          </td>
+          <td class="text-mono text-xs">{entry.agent_id || '---'}</td>
+          <td class="text-mono text-xs text-muted" title={entry.file_path}>
+            {#if entry.file_path}
+              {entry.file_path.split('/').pop()}
+            {:else}
+              ---
             {/if}
-          {:else}
-            <tr>
-              <td colspan="6" class="empty-cell">
-                {#if knowledgeStore.loading}
-                  Loading cross-agent knowledge...
-                {:else if knowledgeStore.error}
-                  Error: {knowledgeStore.error}
-                {:else}
-                  No knowledge entries found. Agents need active sessions with context.
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+          </td>
+          <td class="text-mono text-xs" style="text-align: right">{formatNumber(entry.token_count ?? 0)}</td>
+          <td class="text-mono text-xs text-muted">{relativeTime(entry.timestamp)}</td>
+        {/snippet}
+        {#snippet expandedRow({ row: entry })}
+          <div class="expand-content">
+            <div class="expand-meta">
+              <span class="meta-item">Agent: <strong>{entry.agent_id}</strong></span>
+              <span class="meta-item">Session: <strong>{entry.session_id?.slice(0, 8) ?? '---'}</strong></span>
+              {#if entry.namespace}
+                <span class="meta-item">Namespace: <strong>{entry.namespace}</strong></span>
+              {/if}
+              {#if entry.file_path}
+                <span class="meta-item">File: <strong>{entry.file_path}</strong></span>
+              {/if}
+              {#if entry.tags?.length}
+                <span class="meta-item">Tags: {entry.tags.join(', ')}</span>
+              {/if}
+            </div>
+            <pre class="content-pre">{entry.content ?? '(no content)'}</pre>
+          </div>
+        {/snippet}
+      </DataTable>
+    {/if}
   </div>
 </div>
 
@@ -227,25 +256,6 @@
     margin-top: 4px;
   }
 
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .toolbar select {
-    max-width: 140px;
-  }
-
   .entry-list {
     flex: 1;
     display: flex;
@@ -257,15 +267,6 @@
     overflow: hidden;
   }
 
-  .table-wrap {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .entry-row {
-    transition: border-left-color 0.15s;
-  }
-
   .entry-title {
     max-width: 300px;
     overflow: hidden;
@@ -273,40 +274,10 @@
     white-space: nowrap;
   }
 
-  .expand-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--fg-primary);
-    font-weight: 500;
-    font-size: 12px;
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .expand-btn:hover {
-    color: var(--info);
-  }
-
   .expand-icon {
     font-size: 8px;
-    flex-shrink: 0;
-    width: 10px;
     color: var(--fg-muted);
-  }
-
-  .expanded-row td {
-    border-bottom: none !important;
-  }
-
-  .expand-content-row td {
-    padding: 0 10px 10px !important;
+    margin-right: 6px;
   }
 
   .expand-content {
@@ -326,7 +297,7 @@
     color: var(--fg-secondary);
   }
 
-  .meta-item strong {
+  .expand-meta .meta-item strong {
     color: var(--fg-primary);
   }
 
@@ -338,11 +309,5 @@
     word-break: break-word;
     line-height: 1.5;
     margin: 0;
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 24px 10px !important;
   }
 </style>

@@ -5,6 +5,7 @@
   import EntityGraph from '../widgets/EntityGraph.svelte';
   import Modal from '../widgets/Modal.svelte';
   import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     graphStore.startPolling(10000);
@@ -409,9 +410,7 @@
           {/if}
         </div>
       {:else}
-        <div class="empty-state">
-          <span class="text-muted">Search for entities or browse the graph</span>
-        </div>
+        <EmptyState icon={'\u25C8'} heading="No entities" description="Search for entities or browse the graph" compact />
       {/each}
     </div>
 

@@ -2,6 +2,7 @@
   import { timelineStore } from '../stores/timeline.svelte.ts';
   import { formatTime, agentColor, eventIcon, statusVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     timelineStore.startPolling(30000);
@@ -94,7 +95,7 @@
         </div>
       </div>
     {:else}
-      <div class="empty-state">No timeline events</div>
+      <EmptyState icon={'\u23F0'} heading="No timeline events" compact />
     {/each}
   </div>
 </div>
@@ -208,10 +209,4 @@
     color: var(--fg-secondary);
   }
 
-  .empty-state {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 32px;
-    font-size: 13px;
-  }
 </style>

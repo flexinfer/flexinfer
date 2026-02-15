@@ -2,6 +2,7 @@
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import { formatTime } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     sandboxStore.startPolling(15000);
@@ -90,7 +91,7 @@
       <div class="projects-section">
         <div class="section-title">Projects</div>
         {#if projects.length === 0}
-          <div class="empty-state">No sandbox projects</div>
+          <EmptyState icon={'\u2B22'} heading="No sandbox projects" compact />
         {:else}
           <div class="project-list">
             {#each projects as project}
@@ -160,7 +161,7 @@
       <div class="activity-section">
         <div class="section-title">Recent Activity</div>
         {#if events.length === 0}
-          <div class="empty-state">No recent activity</div>
+          <EmptyState icon={'\u25B6'} heading="No recent activity" compact />
         {:else}
           <div class="activity-list">
             {#each events as evt, i}
@@ -294,14 +295,6 @@
     color: var(--fg-muted);
     padding: 10px 0 6px;
     border-bottom: 1px solid var(--border);
-  }
-
-  .empty-state {
-    padding: 24px 0;
-    text-align: center;
-    color: var(--fg-muted);
-    font-size: 12px;
-    font-style: italic;
   }
 
   /* ---- Projects ---- */

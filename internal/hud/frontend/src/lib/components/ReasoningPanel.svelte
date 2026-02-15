@@ -4,6 +4,7 @@
   import { formatTime, relativeTime, statusVariant, confidenceColor } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     reasoningStore.startPolling(15000);
@@ -125,10 +126,7 @@
         {/if}
       </div>
     {:else}
-      <div class="empty-state">
-        <span class="text-muted">No reasoning chains</span>
-        <span class="text-muted text-xs">Create a chain or seed one via MCP tool</span>
-      </div>
+      <EmptyState icon={'\u2699'} heading="No reasoning chains" description="Create a chain or seed one via MCP tool" />
     {/each}
   </div>
 </div>
@@ -372,14 +370,6 @@
   @keyframes loadingSlide {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(300%); }
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 48px 16px;
   }
 
   /* Form styles */

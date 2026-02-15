@@ -2,6 +2,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { formatTime, entryVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     streamStore.startPolling(2000);
@@ -115,11 +116,7 @@
     {/if}
 
     {#if filtered.length === 0}
-      <div class="empty-state">
-        <div class="empty-state-icon">&#9673;</div>
-        <span>No activity yet</span>
-        <span class="text-xs text-muted">Context entries will appear here in real-time</span>
-      </div>
+      <EmptyState icon={'\u25C9'} heading="No activity yet" description="Context entries will appear here in real-time" />
     {:else}
       {#each filtered as entry, i (entry.id ?? `${entry.timestamp}-${i}`)}
         <div

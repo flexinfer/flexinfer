@@ -3,6 +3,7 @@
   import { formatTime, formatDateTime, relativeTime, statusVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
   import DagView from '../widgets/DagView.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     workflowStore.startPolling(5000);
@@ -153,9 +154,7 @@
 
       <!-- Empty state -->
       {#if workflows.length === 0 && definitions.length === 0}
-        <div class="empty-state">
-          <span class="text-muted text-sm">No workflows</span>
-        </div>
+        <EmptyState icon={'\u2699'} heading="No workflows" compact />
       {/if}
     </div>
   </div>
@@ -209,9 +208,7 @@
               </div>
             {/each}
           {:else}
-            <div class="empty-state">
-              <span class="text-muted text-sm">No events yet</span>
-            </div>
+            <EmptyState icon={'\u25B6'} heading="No events yet" compact />
           {/if}
         </div>
       </div>

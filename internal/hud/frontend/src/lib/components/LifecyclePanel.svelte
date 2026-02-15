@@ -3,6 +3,7 @@
   import { fleetStore } from '../stores/fleet.svelte.ts';
   import { timelineStore } from '../stores/timeline.svelte.ts';
   import SwimLaneTimeline from '../widgets/SwimLaneTimeline.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     timelineStore.startPolling(30000);
@@ -49,7 +50,7 @@
   </div>
   <div class="lifecycle-body" bind:this={containerEl}>
     {#if lanes.length === 0}
-      <div class="empty-state"><span class="text-muted">No agent activity in the selected time range</span></div>
+      <EmptyState icon={'\u21C6'} heading="No agent activity" description="No agent activity in the selected time range" compact />
     {:else}
       <SwimLaneTimeline {lanes} {timeRange} width={containerWidth} />
     {/if}
@@ -73,5 +74,4 @@
   .lifecycle-body { flex: 1; overflow: auto; padding: 8px 0; }
   .lifecycle-footer { display: flex; align-items: center; gap: 14px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--bg-secondary); flex-shrink: 0; }
   .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg-secondary); }
-  .empty-state { display: flex; align-items: center; justify-content: center; height: 200px; }
 </style>
