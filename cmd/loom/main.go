@@ -153,9 +153,12 @@ func main() {
 
 	daemonStatusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show daemon status",
+		Short: "Show detailed daemon status (lock, socket, PID, health)",
+		Long: `Show detailed daemon status including lock state, holder PID,
+socket state, server count, and health summary.`,
+		Example: `  loom daemon status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return showStatus(socketPath)
+			return statusDaemon(socketPath)
 		},
 	}
 

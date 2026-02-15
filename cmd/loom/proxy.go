@@ -4,12 +4,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,7 +15,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
-	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/internal/daemon"
 )
 
 // agentHintGlobal stores the --agent-hint flag value for proxy-level heartbeats.
@@ -182,102 +180,13 @@ func runProxy(socketPath string) error {
 }
 
 func startDaemonInBackground(socketPath string) error {
-	// Prefer an existing launchctl-managed daemon; if one isn't installed or isn't running,
-	// start a best-effort loomd process with stdout/stderr redirected away from the MCP stream.
-	{
-		timeout := 200 * time.Millisecond
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		d := net.Dialer{Timeout: timeout}
-		if conn, err := d.DialContext(ctx, "unix", socketPath); err == nil {
-			_ = conn.Close()
-			return nil
-		}
-	}
-
-	// If a LaunchAgent exists, try to start it instead of spawning a second daemon.
-	// This is critical for GUI clients (Codex/Zed/VS Code) to avoid stale/duplicate daemons.
-	if home, err := os.UserHomeDir(); err == nil {
-		plist := filepath.Join(home, "Library", "LaunchAgents", "com.loom.daemon.plist")
-		if _, statErr := os.Stat(plist); statErr == nil {
-			uid := os.Getuid()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-
-			// kickstart is the most reliable way to (re)start launchd jobs.
-			kick := exec.CommandContext(ctx, "launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/com.loom.daemon", uid))
-			kick.Stdin = nil
-			kick.Stdout = nil
-			kick.Stderr = nil
-			_ = kick.Run()
-
-			// Wait briefly for socket to become available.
-			deadline := time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) {
-				cctx, ccancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-				d := net.Dialer{Timeout: 200 * time.Millisecond}
-				conn, derr := d.DialContext(cctx, "unix", socketPath)
-				ccancel()
-				if derr == nil {
-					_ = conn.Close()
-					return nil
-				}
-				// Only keep waiting on "not ready yet" errors.
-				var ne *net.OpError
-				if errors.As(derr, &ne) {
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-	}
-
-	loomdPath := ""
-	if p, err := exec.LookPath("loomd"); err == nil {
-		loomdPath = p
-	} else if exe, err := os.Executable(); err == nil {
-		sibling := filepath.Join(filepath.Dir(exe), "loomd")
-		if _, statErr := os.Stat(sibling); statErr == nil {
-			loomdPath = sibling
-		}
-	}
-	if loomdPath == "" {
-		return fmt.Errorf("loomd not found in PATH (or alongside loom)")
-	}
-
 	home, _ := os.UserHomeDir()
-	logDir := filepath.Join(home, ".config", "loom", "logs")
-	_ = os.MkdirAll(logDir, 0755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "loomd-proxy.out"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		// If we can't open a log file, don't start the daemon (it would inherit stdout).
-		return fmt.Errorf("open daemon log file: %w", err)
-	}
-
-	args := []string{"--socket", socketPath}
-	if regPath, found := registry.FindRegistry(); found {
-		args = append(args, "--registry", regPath)
-	}
-
-	cmd := exec.Command(loomdPath, args...) //nolint:noctx // daemon runs in background
-	cmd.Stdin = nil
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return fmt.Errorf("start loomd: %w", err)
-	}
-
-	// Detach so we don't have to Wait() (proxy is long-lived and should not leak zombies).
-	if err := cmd.Process.Release(); err != nil {
-		_ = logFile.Close()
-		return fmt.Errorf("release loomd process: %w", err)
-	}
-
-	_ = logFile.Close()
-	return nil
+	logFile := filepath.Join(home, ".config", "loom", "logs", "loomd-proxy.out")
+	return daemon.EnsureRunning(daemon.StartConfig{
+		SocketPath: socketPath,
+		LogFile:    logFile,
+		Timeout:    3 * time.Second,
+	})
 }
 
 func handleProxyInitialize(msg *mcp.Message) *mcp.Message {

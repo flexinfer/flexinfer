@@ -117,6 +117,12 @@ func (d *Daemon) acquireLock() error {
 		_ = f.Close()
 		return fmt.Errorf("daemon already running (lock held): %w", err)
 	}
+	// Prevent child MCP server processes from inheriting the lock FD.
+	// If loomd crashes while children run, orphans must not hold the lock.
+	syscall.CloseOnExec(int(f.Fd()))
+	// Write PID to lock file for status reporting.
+	_ = f.Truncate(0)
+	_, _ = f.WriteAt([]byte(fmt.Sprintf("%d\n", os.Getpid())), 0)
 	d.lockFile = f
 	return nil
 }
@@ -376,19 +382,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
 
-	// Only unlink the socket if it's stale. Unlinking an active daemon socket
-	// makes the existing daemon unreachable while it keeps running, which can
-	// lead to multiple daemons "working" at once.
-	if _, err := os.Stat(d.cfg.SocketPath); err == nil {
-		dialCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		defer cancel()
-		conn, dialErr := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(dialCtx, "unix", d.cfg.SocketPath)
-		if dialErr == nil {
-			_ = conn.Close()
-			return fmt.Errorf("daemon already running (socket active): %s", d.cfg.SocketPath)
-		}
-		_ = os.Remove(d.cfg.SocketPath)
-	}
+	// Lock is held — any existing socket is stale. The "daemon already running"
+	// check is handled entirely by acquireLock(). Remove unconditionally.
+	_ = os.Remove(d.cfg.SocketPath)
 
 	// Listen on Unix socket
 	lc := net.ListenConfig{}

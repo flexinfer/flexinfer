@@ -2,100 +2,33 @@
 package main
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/crb2nu/loom/pkg/registry"
+	"github.com/crb2nu/loom/internal/daemon"
 )
 
 const launchdLabel = "com.loom.daemon"
 
 func startDaemon(socketPath, registryPath string) error {
-	// Check if already running
-	if conn, err := dial(socketPath); err == nil {
-		conn.Close()
-		fmt.Println("Daemon is already running")
-		return nil
-	}
-
-	// Auto-detect registry if not provided
-	if registryPath == "" {
-		var found bool
-		registryPath, found = registry.FindRegistry()
-		if !found {
-			return fmt.Errorf("registry not found (pass --registry or place at ~/.config/loom/registry.yaml)")
-		}
-	}
-
-	// Try launchctl first (if installed)
-	home, _ := os.UserHomeDir()
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-	if _, err := os.Stat(plistPath); err == nil {
-		cmd := exec.Command("launchctl", "start", launchdLabel) //nolint:noctx // launchctl is a quick fire-and-forget call
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("launchctl start failed: %v, falling back to direct start\n", err)
-		} else {
-			// Wait for daemon to be ready
-			for i := 0; i < 150; i++ {
-				time.Sleep(100 * time.Millisecond)
-				if conn, err := dial(socketPath); err == nil {
-					conn.Close()
-					fmt.Println("Daemon started via launchctl")
-					return nil
-				}
-			}
-			// If launchd is installed, do not auto-spawn a second daemon. That can leave
-			// multiple loomd processes running (especially if the socket path is stale).
-			return fmt.Errorf("daemon did not become ready after launchctl start (check %s)", filepath.Join(home, ".config", "loom", "logs", "daemon.err"))
-		}
-	}
-
-	// Fallback: direct start
-	loomd, err := exec.LookPath("loomd")
+	err := daemon.EnsureRunning(daemon.StartConfig{
+		SocketPath:   socketPath,
+		RegistryPath: registryPath,
+		Timeout:      15 * time.Second,
+	})
 	if err != nil {
-		// Try next to executable
-		exe, _ := os.Executable()
-		loomdPath := filepath.Join(filepath.Dir(exe), "loomd")
-		if _, err := os.Stat(loomdPath); err == nil {
-			loomd = loomdPath
-		} else {
-			// Try relative path
-			loomd = "./bin/loomd"
-		}
+		return err
 	}
-
-	args := []string{"--socket", socketPath}
-	if registryPath != "" {
-		args = append(args, "--registry", registryPath)
-	}
-
-	cmd := exec.Command(loomd, args...) //nolint:noctx // daemon runs in background, context not needed
-	cmd.Stdout = nil
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start daemon: %w", err)
-	}
-
-	// Wait for daemon to be ready
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		if conn, err := dial(socketPath); err == nil {
-			conn.Close()
-			fmt.Println("Daemon started")
-			return nil
-		}
-	}
-
-	return fmt.Errorf("daemon failed to start: %s", stderr.String())
+	fmt.Println("Daemon started")
+	return nil
 }
 
 func stopDaemon(socketPath string) error {
@@ -252,5 +185,94 @@ func uninstallService() error {
 	}
 
 	fmt.Println("Uninstalled launchd service")
+	return nil
+}
+
+// statusDaemon shows detailed daemon status: lock state, socket state, uptime, servers.
+func statusDaemon(socketPath string) error {
+	home, _ := os.UserHomeDir()
+	lockPath := filepath.Join(home, ".config", "loom", "loomd.lock")
+
+	// Check lock state and PID.
+	lockState := "free"
+	lockPID := 0
+	if f, err := os.OpenFile(lockPath, os.O_RDWR, 0644); err == nil {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			lockState = "held"
+			// Read PID from lock file.
+			if data, readErr := os.ReadFile(lockPath); readErr == nil {
+				if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
+					lockPID = pid
+				}
+			}
+		} else {
+			// We got the lock — release it immediately.
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		}
+		_ = f.Close()
+	}
+
+	// Check socket state.
+	socketState := "missing"
+	if _, err := os.Stat(socketPath); err == nil {
+		socketState = "exists (stale)"
+		if conn, dialErr := dial(socketPath); dialErr == nil {
+			conn.Close()
+			socketState = "active"
+		}
+	}
+
+	// Print basic status.
+	fmt.Println("Daemon status:")
+	if lockPID > 0 {
+		fmt.Printf("  Lock:    %s (PID %d)\n", lockState, lockPID)
+	} else {
+		fmt.Printf("  Lock:    %s\n", lockState)
+	}
+	fmt.Printf("  Socket:  %s (%s)\n", socketState, socketPath)
+
+	// If daemon is reachable, get extended info.
+	if socketState != "active" {
+		return nil
+	}
+
+	result, err := call(socketPath, "loom/status", nil)
+	if err == nil {
+		var status struct {
+			Servers   int      `json:"servers"`
+			Processes []string `json:"processes"`
+		}
+		if json.Unmarshal(result, &status) == nil {
+			fmt.Printf("  Servers: %d registered, %d running\n", status.Servers, len(status.Processes))
+		}
+	}
+
+	healthResult, err := call(socketPath, "loom/health", nil)
+	if err == nil {
+		var health struct {
+			Servers map[string]json.RawMessage `json:"servers"`
+		}
+		if json.Unmarshal(healthResult, &health) == nil {
+			healthy, unhealthy := 0, 0
+			for _, raw := range health.Servers {
+				var sh struct {
+					Local *struct {
+						Healthy bool `json:"healthy"`
+					} `json:"local"`
+				}
+				if json.Unmarshal(raw, &sh) == nil && sh.Local != nil {
+					if sh.Local.Healthy {
+						healthy++
+					} else {
+						unhealthy++
+					}
+				}
+			}
+			if healthy+unhealthy > 0 {
+				fmt.Printf("  Health:  %d healthy, %d unhealthy\n", healthy, unhealthy)
+			}
+		}
+	}
+
 	return nil
 }
