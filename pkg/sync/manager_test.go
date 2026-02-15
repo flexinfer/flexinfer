@@ -172,6 +172,7 @@ func TestList_ReturnsAllProfileNames(t *testing.T) {
 		"gemini",
 		"kilocode",
 		"vscode",
+		"zed",
 	}
 	sort.Strings(expected)
 

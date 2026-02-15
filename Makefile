@@ -103,6 +103,11 @@ help:
 	@echo "  make hud-frontend  - Build only the Svelte frontend"
 	@echo "  make hud-clean     - Remove frontend node_modules and dist"
 	@echo ""
+	@echo "Schemas:"
+	@echo "  make schemas-list    - List vendored upstream platform schemas"
+	@echo "  make schemas-check   - Check for upstream schema drift"
+	@echo "  make schemas-update  - Fetch and update vendored schemas from upstream"
+	@echo ""
 	@echo "Other:"
 	@echo "  make install    - Install binaries to ~/.local/bin"
 	@echo "  make clean      - Remove build artifacts"
@@ -412,6 +417,24 @@ security-vuln:
 	$(GOVULNCHECK) ./... > govulncheck-report.txt
 	@cat govulncheck-report.txt
 	@echo "Vulnerability report: govulncheck-report.txt"
+
+# =============================================================================
+# Schema Management
+# =============================================================================
+
+# List vendored upstream platform schemas
+schemas-list: loom
+	./bin/loom schemas list
+
+# Check for upstream schema drift (report only)
+schemas-check: loom
+	./bin/loom schemas update
+
+# Fetch and update vendored schemas from upstream, then rebuild
+schemas-update: loom
+	./bin/loom schemas update --apply
+	@echo "Schemas updated. Rebuilding to embed new schemas..."
+	$(MAKE) build
 
 # Development mode
 .PHONY: dev

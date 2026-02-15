@@ -172,6 +172,16 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly: true,
 		DefaultLoomMode:   true,
 	}
+
+	m.Profiles["zed"] = &Profile{
+		Name:              "zed",
+		RepoDir:           ".zed",
+		HomeDir:           "Library/Application Support/Zed",
+		GeneratorTarget:   "zed",
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+		DefaultLoomMode:   true,
+	}
 }
 
 // GetProfile returns a profile by name.

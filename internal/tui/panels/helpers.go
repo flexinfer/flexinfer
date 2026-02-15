@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // padRight pads a string to the given width with spaces.
@@ -31,13 +31,17 @@ func spaces(n int) string {
 	return string(b)
 }
 
-// truncate shortens a string to maxLen, adding an ellipsis if needed.
+// truncate shortens a string to maxLen visible characters, adding an ellipsis
+// if needed.  Uses ansi.Truncate so ANSI escape sequences (colors, bold, etc.)
+// are not counted as visible width.
 func truncate(s string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
 	}
-	// runewidth.Truncate is display-width aware (handles wide runes).
-	return runewidth.Truncate(s, maxLen, "...")
+	if lipgloss.Width(s) <= maxLen {
+		return s
+	}
+	return ansi.Truncate(s, maxLen, "...")
 }
 
 // formatNumber formats an integer with K/M suffixes for readability.

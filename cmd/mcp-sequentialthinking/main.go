@@ -299,10 +299,8 @@ func (s *ThinkingState) load() error {
 	return nil
 }
 
+// save persists state to disk. Callers must hold s.mu (write lock).
 func (s *ThinkingState) save() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	data := struct {
 		Chains      map[string]*ThoughtChain `json:"chains"`
 		ActiveChain string                   `json:"active_chain"`

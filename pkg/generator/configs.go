@@ -180,7 +180,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 		// For platforms with no native hook support, add --agent-hint so the
 		// proxy fires heartbeats on each tool call, providing universal presence.
 		switch target {
-		case "kilocode", "antigravity":
+		case "kilocode", "antigravity", "zed":
 			args = append(args, "--agent-hint", target)
 		}
 		return map[string]*registry.TargetSpec{
@@ -189,7 +189,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 				Command:     cmd,
 				Args:        args,
 				Hint:        "network",
-				Timeout:     300,
+				Timeout:     600,
 				AlwaysAllow: []string{"*"},
 				Type:        "stdio",
 			},
@@ -290,6 +290,7 @@ func generateJSONConfig(reg *registry.Registry, outputDir string, target string,
 		Command string            `json:"command"`
 		Args    []string          `json:"args"`
 		Env     map[string]string `json:"env,omitempty"`
+		Timeout int               `json:"timeout,omitempty"`
 	}
 
 	// Claude Code CLI expects "mcpServers" as the root key
@@ -300,11 +301,15 @@ func generateJSONConfig(reg *registry.Registry, outputDir string, target string,
 			args = append(args, fmt.Sprintf("%v", a))
 		}
 
-		config["mcpServers"][name] = JSONServer{
+		server := JSONServer{
 			Command: spec.Command,
 			Args:    args,
 			Env:     spec.Env,
 		}
+		if spec.Timeout > 0 {
+			server.Timeout = spec.Timeout
+		}
+		config["mcpServers"][name] = server
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
@@ -653,6 +658,11 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 
 	if len(pp.AdditionalDirectories) > 0 {
 		perms["additionalDirectories"] = pp.AdditionalDirectories
+	}
+	if pp.Settings != nil {
+		if mode, ok := pp.Settings["default_mode"].(string); ok && mode != "" {
+			perms["defaultMode"] = mode
+		}
 	}
 	if len(pp.Allow) > 0 {
 		perms["allow"] = pp.Allow

@@ -192,11 +192,21 @@ func (p TasksPanel) renderColumns() string {
 
 	// Determine column width based on available space.
 	// Use a three-column layout if wide enough, otherwise sequential.
+	//
+	// renderColumn() sets lipgloss.Width(w) which controls *content* width,
+	// but RoundedBorder (+2) and Padding(0,1) (+2) add 4 chars to rendered
+	// output.  We subtract that overhead so the total rendered width fits.
+	const borderPadding = 4 // 2 border chars + 2 padding chars
 	minColWidth := 28
-	useColumns := p.width >= minColWidth*3+4
+	gapWidth := 4 // 2 spaces between each of the 3 columns (2 gaps)
+	useColumns := p.width >= (minColWidth+borderPadding)*3+gapWidth
 
 	if useColumns {
-		colWidth := (p.width - 4) / 3
+		colContent := (p.width - gapWidth) / 3 // rendered width per column
+		colWidth := colContent - borderPadding // content width for lipgloss
+		if colWidth < minColWidth {
+			colWidth = minColWidth
+		}
 		pendingCol := p.renderColumn("PENDING", pending, colWidth)
 		activeCol := p.renderColumn("IN PROGRESS", active, colWidth)
 		blockedCol := p.renderColumn("BLOCKED", blocked, colWidth)
@@ -204,12 +214,16 @@ func (p TasksPanel) renderColumns() string {
 	}
 
 	// Sequential layout for narrow terminals
+	seqWidth := p.width - borderPadding
+	if seqWidth < minColWidth {
+		seqWidth = minColWidth
+	}
 	var b strings.Builder
-	b.WriteString(p.renderColumn("PENDING", pending, p.width))
+	b.WriteString(p.renderColumn("PENDING", pending, seqWidth))
 	b.WriteString("\n")
-	b.WriteString(p.renderColumn("IN PROGRESS", active, p.width))
+	b.WriteString(p.renderColumn("IN PROGRESS", active, seqWidth))
 	b.WriteString("\n")
-	b.WriteString(p.renderColumn("BLOCKED", blocked, p.width))
+	b.WriteString(p.renderColumn("BLOCKED", blocked, seqWidth))
 	return b.String()
 }
 
@@ -237,7 +251,7 @@ func (p TasksPanel) renderColumn(title string, tasks []TaskData, width int) stri
 	for _, t := range tasks {
 		isSelected := p.isTaskSelected(t.ID)
 		badge := priorityBadge(t.Priority)
-		taskTitle := truncate(t.Title, width-10)
+		taskTitle := truncate(t.Title, width-6) // cursor(2) + space(1) + badge(1) + space(1) + buffer(1)
 
 		cursor := " "
 		if isSelected {

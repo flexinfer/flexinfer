@@ -278,17 +278,17 @@ func (p FleetPanel) renderSessionTable() string {
 			}
 
 			dot := widgets.StatusDot(normalizeSessionStatus(s.Status))
-			age := relativeTime(s.StartedAt)
+			age := truncate(relativeTime(s.StartedAt), colAge)
+			tokens := truncate(formatNumber(s.TokenCount), colTokens)
 			agent := truncate(s.AgentID, colAgent)
 			row := strings.Join([]string{
 				cursor + padRight(dot, colStatus),
 				padRight(agent, colAgent),
-				padRight(formatNumber(s.TokenCount), colTokens),
+				padRight(tokens, colTokens),
 				padRight(age, colAge),
 			}, spaces(gap))
 
-			// Render as a single styled line to avoid per-cell padding/border oddities.
-			b.WriteString(rowStyle.Render(truncate(row, p.width)))
+			b.WriteString(rowStyle.Render(row))
 			b.WriteString("\n")
 
 			// Show description if selected
