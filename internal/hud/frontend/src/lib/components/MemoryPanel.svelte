@@ -6,6 +6,8 @@
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
   import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     memoryStore.startPolling(8000);
@@ -341,16 +343,17 @@
           style="--tab-color: var(--tier-long)"
         >Long-Term</button>
       </div>
-      <input
-        type="text"
-        placeholder="Search memories..."
-        bind:value={searchQuery}
-        onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-        class="search-input"
-      />
-      <span class="text-muted text-xs text-mono">{filteredItems.length} items</span>
-      <button class="btn btn-success" onclick={openAddModal}>+ Add Memory</button>
     </div>
+    <FilterBar
+      search={searchQuery}
+      placeholder="Search memories..."
+      resultCount={filteredItems.length}
+      onSearch={(val) => { searchQuery = val; handleSearch(); }}
+    >
+      {#snippet actions()}
+        <button class="btn btn-success" onclick={openAddModal}>+ Add Memory</button>
+      {/snippet}
+    </FilterBar>
 
     <div class="browser-table">
       <div class="table-wrap">
@@ -419,7 +422,9 @@
               {/if}
             {:else}
               <tr>
-                <td colspan="7" class="empty-cell">No items in this tier</td>
+                <td colspan="7" style="padding: 0; border: none;">
+                  <EmptyState icon={'\u25A1'} heading="No items in this tier" compact />
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -601,8 +606,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+    padding: 8px 12px 0;
   }
 
   .tier-tabs {
@@ -630,11 +634,6 @@
     background: var(--bg-secondary) !important;
     color: var(--tab-color, var(--fg-primary)) !important;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 150px;
   }
 
   .browser-table {
@@ -757,12 +756,6 @@
 
   .memory-row {
     transition: border-left-color 0.15s;
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 24px 10px !important;
   }
 
   /* Add memory form */

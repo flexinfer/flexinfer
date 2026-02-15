@@ -7,6 +7,8 @@
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
   import AgentCard from '../widgets/AgentCard.svelte';
+  import DataTable from './shared/DataTable.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     presenceStore.startPolling(5000);
@@ -323,6 +325,44 @@
   function shortPath(path) {
     return truncatePath(path, 50);
   }
+
+  // --- DataTable column definitions ---
+
+  const agentColumns = [
+    { key: 'agent_id', label: 'Agent' },
+    { key: 'status', label: 'Status', width: '100px' },
+    { key: 'agent_type', label: 'Type', width: '90px' },
+    { key: 'current_task', label: 'Current Task' },
+    { key: 'branch', label: 'Branch / PR', width: '120px' },
+    { key: 'last_heartbeat', label: 'Heartbeat', width: '90px' },
+    { key: 'actions', label: 'Actions', width: '120px' },
+  ];
+
+  const claimColumns = [
+    { key: 'file_path', label: 'File' },
+    { key: 'agent_id', label: 'Agent', width: '100px' },
+    { key: 'claim_type', label: 'Type', width: '80px' },
+    { key: 'reason', label: 'Reason' },
+    { key: 'created_at', label: 'Since', width: '90px' },
+    { key: 'actions', label: 'Actions', width: '80px' },
+  ];
+
+  const worktreeColumns = [
+    { key: 'branch', label: 'Branch' },
+    { key: 'agent_id', label: 'Agent', width: '100px' },
+    { key: 'status', label: 'Status', width: '90px' },
+    { key: 'purpose', label: 'Purpose' },
+    { key: 'created_at', label: 'Created', width: '90px' },
+  ];
+
+  const handoffColumns = [
+    { key: 'from_agent', label: 'From', width: '100px' },
+    { key: 'to_agent', label: 'To', width: '100px' },
+    { key: 'summary', label: 'Summary' },
+    { key: 'status', label: 'Status', width: '90px' },
+    { key: 'created_at', label: 'Created', width: '90px' },
+    { key: 'actions', label: 'Actions', width: '80px' },
+  ];
 </script>
 
 <div class="panel presence-panel">
@@ -381,7 +421,7 @@
               onnudge={openNudge}
             />
           {:else}
-            <div class="empty-state">No registered agents</div>
+            <EmptyState icon={'\u25A3'} heading="No registered agents" compact />
           {/each}
         </div>
       {:else}
@@ -404,61 +444,48 @@
               {/each}
             </div>
           {/if}
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Status</th>
-                  <th>Type</th>
-                  <th>Current Task</th>
-                  <th>Branch / PR</th>
-                  <th>Heartbeat</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each agents as agent (agent.agent_id)}
-                  <tr class="agent-row agent-row--{agent.status}">
-                    <td class="text-mono">{agent.agent_id}</td>
-                    <td>
-                      <StatusDot status={presenceStatus(agent.status)} />
-                      <span class="status-label">{agent.status}</span>
-                    </td>
-                    <td>
-                      <span class="agent-type-chip" style:color={agentColor(agent.agent_type)}>
-                        {agent.agent_type || '---'}
-                      </span>
-                    </td>
-                    <td class="truncate" title={agent.current_task}>{agent.current_task || '---'}</td>
-                    <td class="text-mono text-muted">
-                      {#if agent.pr_url}
-                        <a href={agent.pr_url} target="_blank" rel="noopener" class="pr-link" title={agent.pr_url}>
-                          PR
-                        </a>
-                      {/if}
-                      {agent.branch || '---'}
-                    </td>
-                    <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{reactiveRelativeTime(agent.last_heartbeat)}</td>
-                    <td class="actions-cell">
-                      {#if agent.status === 'active'}
-                        <button class="btn btn-xs btn-nudge" onclick={() => openNudge(agent.agent_id)} title="Send nudge to agent">
-                          Nudge
-                        </button>
-                        <button class="btn btn-xs btn-dispatch" onclick={() => openDispatch(agent.agent_id)} title="Dispatch task to agent">
-                          Dispatch
-                        </button>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <tr>
-                    <td colspan="7" class="empty-cell">No registered agents</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          {#if agents.length === 0}
+            <EmptyState icon={'\u25A3'} heading="No registered agents" compact />
+          {:else}
+            <DataTable
+              columns={agentColumns}
+              rows={agents}
+              idKey="agent_id"
+            >
+              {#snippet row({ row: agent })}
+                <td class="text-mono">{agent.agent_id}</td>
+                <td>
+                  <StatusDot status={presenceStatus(agent.status)} />
+                  <span class="status-label">{agent.status}</span>
+                </td>
+                <td>
+                  <span class="agent-type-chip" style:color={agentColor(agent.agent_type)}>
+                    {agent.agent_type || '---'}
+                  </span>
+                </td>
+                <td class="truncate" title={agent.current_task}>{agent.current_task || '---'}</td>
+                <td class="text-mono text-muted">
+                  {#if agent.pr_url}
+                    <a href={agent.pr_url} target="_blank" rel="noopener" class="pr-link" title={agent.pr_url}>
+                      PR
+                    </a>
+                  {/if}
+                  {agent.branch || '---'}
+                </td>
+                <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{reactiveRelativeTime(agent.last_heartbeat)}</td>
+                <td class="actions-cell">
+                  {#if agent.status === 'active'}
+                    <button class="btn btn-xs btn-nudge" onclick={() => openNudge(agent.agent_id)} title="Send nudge to agent">
+                      Nudge
+                    </button>
+                    <button class="btn btn-xs btn-dispatch" onclick={() => openDispatch(agent.agent_id)} title="Dispatch task to agent">
+                      Dispatch
+                    </button>
+                  {/if}
+                </td>
+              {/snippet}
+            </DataTable>
+          {/if}
         </div>
 
         <!-- Quick Stats -->
@@ -512,40 +539,27 @@
           </div>
         {/if}
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>File</th>
-                <th>Agent</th>
-                <th>Type</th>
-                <th>Reason</th>
-                <th>Since</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each claims as claim (claim.id)}
-                <tr>
-                  <td class="text-mono" title={claim.file_path}>{shortPath(claim.file_path)}</td>
-                  <td class="text-mono">{claim.agent_id}</td>
-                  <td><Badge text={claim.claim_type} variant={claimVariant(claim.claim_type)} /></td>
-                  <td class="truncate text-muted" title={claim.reason}>{claim.reason || '---'}</td>
-                  <td class="text-mono text-muted">{formatTime(claim.created_at)}</td>
-                  <td>
-                    <button class="btn btn-xs btn-danger" onclick={() => releaseClaim(claim.agent_id, claim.file_path)} title="Force-release this claim">
-                      Release
-                    </button>
-                  </td>
-                </tr>
-              {:else}
-                <tr>
-                  <td colspan="6" class="empty-cell">No active file claims</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        {#if claims.length === 0}
+          <EmptyState icon={'\u{1F4C1}'} heading="No active file claims" compact />
+        {:else}
+          <DataTable
+            columns={claimColumns}
+            rows={claims}
+          >
+            {#snippet row({ row: claim })}
+              <td class="text-mono" title={claim.file_path}>{shortPath(claim.file_path)}</td>
+              <td class="text-mono">{claim.agent_id}</td>
+              <td><Badge text={claim.claim_type} variant={claimVariant(claim.claim_type)} /></td>
+              <td class="truncate text-muted" title={claim.reason}>{claim.reason || '---'}</td>
+              <td class="text-mono text-muted">{formatTime(claim.created_at)}</td>
+              <td>
+                <button class="btn btn-xs btn-danger" onclick={() => releaseClaim(claim.agent_id, claim.file_path)} title="Force-release this claim">
+                  Release
+                </button>
+              </td>
+            {/snippet}
+          </DataTable>
+        {/if}
       </div>
 
     {:else if activeTab === 'worktrees'}
@@ -555,34 +569,23 @@
           <span class="card-title">Git Worktrees</span>
           <span class="count-badge">{worktrees.length}</span>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Branch</th>
-                <th>Agent</th>
-                <th>Status</th>
-                <th>Purpose</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each worktrees as wt (wt.assignment_id)}
-                <tr>
-                  <td class="text-mono">{wt.branch}</td>
-                  <td class="text-mono">{wt.agent_id}</td>
-                  <td><Badge text={wt.status} variant={worktreeVariant(wt.status)} /></td>
-                  <td class="truncate text-muted" title={wt.purpose}>{wt.purpose || '---'}</td>
-                  <td class="text-mono text-muted">{formatTime(wt.created_at)}</td>
-                </tr>
-              {:else}
-                <tr>
-                  <td colspan="5" class="empty-cell">No active worktrees</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        {#if worktrees.length === 0}
+          <EmptyState icon={'\u{1F333}'} heading="No active worktrees" compact />
+        {:else}
+          <DataTable
+            columns={worktreeColumns}
+            rows={worktrees}
+            idKey="assignment_id"
+          >
+            {#snippet row({ row: wt })}
+              <td class="text-mono">{wt.branch}</td>
+              <td class="text-mono">{wt.agent_id}</td>
+              <td><Badge text={wt.status} variant={worktreeVariant(wt.status)} /></td>
+              <td class="truncate text-muted" title={wt.purpose}>{wt.purpose || '---'}</td>
+              <td class="text-mono text-muted">{formatTime(wt.created_at)}</td>
+            {/snippet}
+          </DataTable>
+        {/if}
       </div>
 
     {:else if activeTab === 'handoffs'}
@@ -600,44 +603,31 @@
           <div class="loading-bar"><div class="loading-bar-inner"></div></div>
         {/if}
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>From</th>
-                <th>To</th>
-                <th>Summary</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each handoffs as handoff (handoff.id)}
-                <tr>
-                  <td class="text-mono">{handoff.from_agent || '---'}</td>
-                  <td class="text-mono">{handoff.to_agent || 'any'}</td>
-                  <td class="truncate" title={handoff.summary}>{handoff.summary}</td>
-                  <td><Badge text={handoff.status} variant={handoffStatusVariant(handoff.status)} /></td>
-                  <td class="text-mono text-muted">{formatTime(handoff.created_at)}</td>
-                  <td>
-                    {#if handoff.status === 'pending'}
-                      <button class="btn btn-xs btn-success" onclick={() => acceptHandoff(handoff.id)}>
-                        Accept
-                      </button>
-                    {:else}
-                      <span class="text-muted text-xs">{handoff.accepted_at ? formatTime(handoff.accepted_at) : '---'}</span>
-                    {/if}
-                  </td>
-                </tr>
-              {:else}
-                <tr>
-                  <td colspan="6" class="empty-cell">No handoffs</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        {#if handoffs.length === 0 && !handoffLoading}
+          <EmptyState icon={'\u{1F91D}'} heading="No handoffs" compact />
+        {:else if handoffs.length > 0}
+          <DataTable
+            columns={handoffColumns}
+            rows={handoffs}
+          >
+            {#snippet row({ row: handoff })}
+              <td class="text-mono">{handoff.from_agent || '---'}</td>
+              <td class="text-mono">{handoff.to_agent || 'any'}</td>
+              <td class="truncate" title={handoff.summary}>{handoff.summary}</td>
+              <td><Badge text={handoff.status} variant={handoffStatusVariant(handoff.status)} /></td>
+              <td class="text-mono text-muted">{formatTime(handoff.created_at)}</td>
+              <td>
+                {#if handoff.status === 'pending'}
+                  <button class="btn btn-xs btn-success" onclick={() => acceptHandoff(handoff.id)}>
+                    Accept
+                  </button>
+                {:else}
+                  <span class="text-muted text-xs">{handoff.accepted_at ? formatTime(handoff.accepted_at) : '---'}</span>
+                {/if}
+              </td>
+            {/snippet}
+          </DataTable>
+        {/if}
 
         {#if templates.length > 0}
           <div class="templates-section">
@@ -833,15 +823,6 @@
     padding: 4px 0;
   }
 
-  .empty-state {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 200px;
-    color: var(--fg-muted);
-    font-size: 13px;
-  }
-
   .conflict-badge {
     font-size: 11px;
     font-weight: 600;
@@ -872,11 +853,6 @@
     flex-direction: column;
   }
 
-  .agents-card .table-wrap {
-    flex: 1;
-    overflow-y: auto;
-  }
-
   .agent-type-chip {
     font-family: var(--font-mono);
     font-size: 12px;
@@ -890,12 +866,6 @@
     color: var(--fg-secondary);
     padding: 1px 6px;
     border-radius: var(--radius-lg);
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 24px 10px !important;
   }
 
   /* Stats grid */
@@ -1073,21 +1043,7 @@
     margin-top: 16px;
   }
 
-  /* Agent row color-coding */
-  .agent-row--active {
-    border-left: 3px solid var(--success);
-  }
-
-  .agent-row--idle {
-    border-left: 3px solid var(--warning);
-    opacity: 0.85;
-  }
-
-  .agent-row--offline {
-    border-left: 3px solid var(--fg-muted);
-    opacity: 0.6;
-  }
-
+  /* Agent row styling (via DataTable row snippet) */
   .status-label {
     font-size: 10px;
     font-family: var(--font-mono);

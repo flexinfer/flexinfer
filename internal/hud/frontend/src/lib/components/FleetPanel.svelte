@@ -12,6 +12,9 @@
   import Badge from '../widgets/Badge.svelte';
   import Gauge from '../widgets/Gauge.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
+  import DataTable from './shared/DataTable.svelte';
+  import DetailDrawer from './shared/DetailDrawer.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     fleetStore.startPolling(5000);
@@ -124,15 +127,67 @@
   let longTokens = $derived(memStats.tiers?.long_term?.tokens ?? 0);
   let longMax = $derived(memStats.tiers?.long_term?.max_items ?? 2000);
 
-  function navigateToSession(sessionId) {
-    router.navigate('fleet', sessionId);
+  // Sort state for fleet DataTable
+  let fleetSortKey = $state('agent');
+  let fleetSortDir = $state('asc');
+
+  function handleFleetSort(key, dir) {
+    fleetSortKey = key;
+    fleetSortDir = dir;
   }
 
-  function handleRowKeydown(e, sessionId) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      navigateToSession(sessionId);
-    }
+  let sortedSessions = $derived.by(() => {
+    const rows = [...sessions];
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (fleetSortKey) {
+        case 'agent':
+          cmp = (a.agent ?? '').localeCompare(b.agent ?? '');
+          break;
+        case 'status': {
+          const order = { healthy: 0, degraded: 1, down: 2 };
+          cmp = (order[sessionStatus(a)] ?? 9) - (order[sessionStatus(b)] ?? 9);
+          break;
+        }
+        case 'namespace':
+          cmp = (a.namespace ?? '').localeCompare(b.namespace ?? '');
+          break;
+        case 'task_count':
+          cmp = (a.task_count ?? 0) - (b.task_count ?? 0);
+          break;
+        case 'tokens_used':
+          cmp = (a.tokens_used ?? 0) - (b.tokens_used ?? 0);
+          break;
+        case 'memory_items':
+          cmp = (a.memory_items ?? 0) - (b.memory_items ?? 0);
+          break;
+        default:
+          break;
+      }
+      return fleetSortDir === 'desc' ? -cmp : cmp;
+    });
+    return rows;
+  });
+
+  const fleetColumns = [
+    { key: 'agent', label: 'Agent', sortable: true },
+    { key: 'status', label: 'Status', sortable: true, width: '70px' },
+    { key: 'namespace', label: 'Namespace', sortable: true },
+    { key: 'task_count', label: 'Tasks', sortable: true, width: '60px' },
+    { key: 'tokens_used', label: 'Tokens', sortable: true, width: '100px' },
+    { key: 'memory_items', label: 'Memory', sortable: true, width: '70px' },
+  ];
+
+  // Activity feed columns (no sort — chronological)
+  const activityColumns = [
+    { key: 'time', label: 'Time', width: '70px' },
+    { key: 'type', label: 'Type', width: '80px' },
+    { key: 'agent', label: 'Agent', width: '90px' },
+    { key: 'title', label: 'Title' },
+  ];
+
+  function navigateToSession(sessionId) {
+    router.navigate('fleet', sessionId);
   }
 
   function backToFleet() {
@@ -147,20 +202,161 @@
 </script>
 
 <div class="panel fleet-panel">
-  {#if detailSessionId}
-    <!-- SESSION DETAIL VIEW -->
-    <div class="session-detail">
-      <div class="detail-header">
-        <button class="btn btn-ghost" onclick={backToFleet}>&#8592; Back</button>
-        <span class="detail-title text-mono">
-          {detailSession?.agent ?? detailSessionId.slice(0, 12)}
-        </span>
-        {#if detailSession}
-          <StatusDot status={sessionStatus(detailSession)} />
-          <span class="text-muted text-xs">{detailSession.namespace ?? ''}</span>
-        {/if}
+  <!-- FLEET OVERVIEW (always visible) -->
+  <div class="fleet-grid">
+    <!-- LEFT TOP: Agent Fleet Table -->
+    <div class="card fleet-table-card">
+      <div class="card-header">
+        <span class="card-title">Agent Fleet</span>
+        <span class="count-badge">{sessions.length}</span>
       </div>
+      {#if sessions.length === 0 && fleetStore.lastUpdated}
+        <EmptyState icon={'\u25C8'} heading="No active agents" compact />
+      {:else}
+        <DataTable
+          columns={fleetColumns}
+          rows={sortedSessions}
+          sortKey={fleetSortKey}
+          sortDir={fleetSortDir}
+          loading={!fleetStore.lastUpdated}
+          skeletonRows={4}
+          onSort={handleFleetSort}
+          onRowClick={(row) => navigateToSession(row.id)}
+        >
+          {#snippet row({ row: session })}
+            <td class="text-mono">
+              {session.agent ?? session.id?.slice(0, 8) ?? '---'}
+              {#if expiringClaims.has(session.agent_id)}
+                <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
+              {/if}
+            </td>
+            <td>
+              <StatusDot status={sessionStatus(session)} />
+            </td>
+            <td class="text-mono text-muted">{session.namespace ?? '---'}</td>
+            <td class="text-mono">{session.task_count ?? 0}</td>
+            <td class="text-mono token-cell">
+              {#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
+              {#if tokenHistories.get(session.id)?.length >= 2}
+                <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
+              {/if}
+            </td>
+            <td class="text-mono">{session.memory_items ?? 0}</td>
+          {/snippet}
+        </DataTable>
+      {/if}
+    </div>
 
+    <!-- RIGHT TOP: Quick Stats -->
+    <div class="stats-grid">
+      <div class="stat-card" style="--accent-color: var(--info)">
+        {#key sessions.length}<div class="metric-value data-updated">{sessions.length}</div>{/key}
+        <div class="metric-label">Sessions</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--warning)">
+        {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
+        <div class="metric-label">Tasks</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--accent)">
+        {#key totalTokens}<div class="metric-value data-updated">{formatNumber(totalTokens)}</div>{/key}
+        <div class="metric-label">Tokens</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--success)">
+        {#key workflows.length}<div class="metric-value data-updated">{workflows.length}</div>{/key}
+        <div class="metric-label">Workflows</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--tier-short)">
+        {#key workingItems + shortItems + longItems}<div class="metric-value data-updated">{formatNumber(workingItems + shortItems + longItems)}</div>{/key}
+        <div class="metric-label">Memory Items</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--tier-long)">
+        {#key graphStats.total_entities}<div class="metric-value data-updated">{formatNumber(graphStats.total_entities ?? 0)}</div>{/key}
+        <div class="metric-label">Graph Entities</div>
+      </div>
+      <div class="stat-card" style="--accent-color: var(--fg-muted)">
+        {#key tunnelCount + cacheHitRate}<div class="metric-value data-updated">{tunnelCount}<span class="metric-unit">t</span> · {(cacheHitRate * 100).toFixed(0)}%</div>{/key}
+        <div class="metric-label">Infrastructure</div>
+      </div>
+    </div>
+
+    <!-- LEFT BOTTOM: Recent Activity -->
+    <div class="card activity-card">
+      <div class="card-header">
+        <span class="card-title">Recent Activity</span>
+        <span class="count-badge">{recentActivity.length}</span>
+      </div>
+      {#if recentActivity.length === 0}
+        <EmptyState icon={'\u25CB'} heading="No recent activity" compact />
+      {:else}
+        <DataTable
+          columns={activityColumns}
+          rows={recentActivity}
+          idKey="id"
+        >
+          {#snippet row({ row: entry })}
+            <td class="activity-time text-mono">{formatTime(entry.timestamp)}</td>
+            <td><Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} /></td>
+            <td class="activity-agent text-mono">{entry.agent ?? '---'}</td>
+            <td class="activity-title truncate">{entry.title ?? entry.content?.slice(0, 60) ?? '---'}</td>
+          {/snippet}
+        </DataTable>
+      {/if}
+    </div>
+
+    <!-- RIGHT BOTTOM: Memory Tier Gauges -->
+    <div class="card memory-gauges-card">
+      <div class="card-header">
+        <span class="card-title">Memory Tiers</span>
+      </div>
+      <div class="gauges-container">
+        <div class="gauge-item">
+          <Gauge
+            value={workingItems}
+            max={workingMax}
+            label="Working"
+            color="var(--tier-working)"
+            showPercentage={true}
+          />
+          <div class="gauge-detail text-mono text-xs">
+            {formatNumber(workingTokens)} tokens
+          </div>
+        </div>
+        <div class="gauge-item">
+          <Gauge
+            value={shortItems}
+            max={shortMax}
+            label="Short-Term"
+            color="var(--tier-short)"
+            showPercentage={true}
+          />
+          <div class="gauge-detail text-mono text-xs">
+            {formatNumber(shortTokens)} tokens
+          </div>
+        </div>
+        <div class="gauge-item">
+          <Gauge
+            value={longItems}
+            max={longMax}
+            label="Long-Term"
+            color="var(--tier-long)"
+            showPercentage={true}
+          />
+          <div class="gauge-detail text-mono text-xs">
+            {formatNumber(longTokens)} tokens
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SESSION DETAIL DRAWER -->
+  <DetailDrawer
+    open={!!detailSessionId}
+    title={detailSession?.agent ?? detailSessionId?.slice(0, 12) ?? ''}
+    subtitle={detailSession?.namespace ?? ''}
+    onClose={backToFleet}
+  >
+    {#snippet header()}
       {#if detailSession}
         <div class="detail-stats">
           <div class="stat-chip">
@@ -188,206 +384,39 @@
           <div class="detail-description text-sm text-secondary">{detailSession.description}</div>
         {/if}
       {/if}
+    {/snippet}
 
-      <div class="section-header" style="margin-top: 12px">
-        <span class="section-title">Context Entries</span>
-        <span class="text-mono text-xs text-muted">{sessionEntries.length} entries</span>
-      </div>
-
-      {#if loadingEntries}
-        <div class="loading-bar"><div class="loading-bar-inner"></div></div>
-      {/if}
-
-      <div class="entries-timeline">
-        {#each sessionEntries as entry (entry.id ?? entry.timestamp)}
-          <div class="timeline-entry">
-            <div class="timeline-dot" style="background: var(--{entryVariant(entry.entry_type) === 'accent' ? 'accent' : entryVariant(entry.entry_type) === 'error' ? 'error' : entryVariant(entry.entry_type) === 'warning' ? 'warning' : entryVariant(entry.entry_type) === 'success' ? 'success' : 'info'})"></div>
-            <div class="timeline-content">
-              <div class="timeline-meta">
-                <span class="text-mono text-xs text-muted">{formatTime(entry.timestamp)}</span>
-                <Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} />
-              </div>
-              <div class="timeline-title">{entry.title ?? '---'}</div>
-              {#if entry.content}
-                <div class="timeline-body text-sm text-muted">{entry.content.slice(0, 200)}{entry.content.length > 200 ? '...' : ''}</div>
-              {/if}
-            </div>
-          </div>
-        {:else}
-          {#if !loadingEntries}
-            <div class="empty-state">
-              <span class="text-muted">No context entries for this session</span>
-            </div>
-          {/if}
-        {/each}
-      </div>
+    <div class="section-header" style="margin-top: 4px">
+      <span class="section-title">Context Entries</span>
+      <span class="text-mono text-xs text-muted">{sessionEntries.length} entries</span>
     </div>
-  {:else}
-    <!-- FLEET OVERVIEW -->
-    <div class="fleet-grid">
-      <!-- LEFT TOP: Agent Fleet Table -->
-      <div class="card fleet-table-card">
-        <div class="card-header">
-          <span class="card-title">Agent Fleet</span>
-          <span class="count-badge">{sessions.length}</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Status</th>
-                <th>Namespace</th>
-                <th>Tasks</th>
-                <th>Tokens</th>
-                <th>Memory</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each sessions as session (session.id)}
-                <tr class="clickable-row" role="button" tabindex="0" onclick={() => navigateToSession(session.id)} onkeydown={(e) => handleRowKeydown(e, session.id)}>
-                  <td class="text-mono">
-                    {session.agent ?? session.id?.slice(0, 8) ?? '---'}
-                    {#if expiringClaims.has(session.agent_id)}
-                      <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
-                    {/if}
-                  </td>
-                  <td>
-                    <StatusDot status={sessionStatus(session)} />
-                  </td>
-                  <td class="text-mono text-muted">{session.namespace ?? '---'}</td>
-                  <td class="text-mono">{session.task_count ?? 0}</td>
-                  <td class="text-mono token-cell">
-                    {#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
-                    {#if tokenHistories.get(session.id)?.length >= 2}
-                      <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
-                    {/if}
-                  </td>
-                  <td class="text-mono">{session.memory_items ?? 0}</td>
-                </tr>
-              {:else}
-                {#if !fleetStore.lastUpdated}
-                  {#each Array(4) as _}
-                    <tr>
-                      <td><div class="skeleton skeleton-text" style="width: 80px"></div></td>
-                      <td><div class="skeleton" style="width: 10px; height: 10px; border-radius: 50%"></div></td>
-                      <td><div class="skeleton skeleton-text" style="width: 100px"></div></td>
-                      <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
-                      <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
-                      <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
-                    </tr>
-                  {/each}
-                {:else}
-                  <tr>
-                    <td colspan="6" class="empty-cell">No active agents</td>
-                  </tr>
-                {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      <!-- RIGHT TOP: Quick Stats -->
-      <div class="stats-grid">
-        <div class="stat-card" style="--accent-color: var(--info)">
-          {#key sessions.length}<div class="metric-value data-updated">{sessions.length}</div>{/key}
-          <div class="metric-label">Sessions</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--warning)">
-          {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
-          <div class="metric-label">Tasks</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--accent)">
-          {#key totalTokens}<div class="metric-value data-updated">{formatNumber(totalTokens)}</div>{/key}
-          <div class="metric-label">Tokens</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--success)">
-          {#key workflows.length}<div class="metric-value data-updated">{workflows.length}</div>{/key}
-          <div class="metric-label">Workflows</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--tier-short)">
-          {#key workingItems + shortItems + longItems}<div class="metric-value data-updated">{formatNumber(workingItems + shortItems + longItems)}</div>{/key}
-          <div class="metric-label">Memory Items</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--tier-long)">
-          {#key graphStats.total_entities}<div class="metric-value data-updated">{formatNumber(graphStats.total_entities ?? 0)}</div>{/key}
-          <div class="metric-label">Graph Entities</div>
-        </div>
-        <div class="stat-card" style="--accent-color: var(--fg-muted)">
-          {#key tunnelCount + cacheHitRate}<div class="metric-value data-updated">{tunnelCount}<span class="metric-unit">t</span> · {(cacheHitRate * 100).toFixed(0)}%</div>{/key}
-          <div class="metric-label">Infrastructure</div>
-        </div>
-      </div>
+    {#if loadingEntries}
+      <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+    {/if}
 
-      <!-- LEFT BOTTOM: Recent Activity -->
-      <div class="card activity-card">
-        <div class="card-header">
-          <span class="card-title">Recent Activity</span>
-          <span class="count-badge">{recentActivity.length}</span>
-        </div>
-        <div class="activity-feed">
-          {#each recentActivity as entry (entry.id ?? entry.timestamp)}
-            <div class="activity-row">
-              <span class="activity-time text-mono">{formatTime(entry.timestamp)}</span>
+    <div class="entries-timeline">
+      {#each sessionEntries as entry (entry.id ?? entry.timestamp)}
+        <div class="timeline-entry">
+          <div class="timeline-dot" style="background: var(--{entryVariant(entry.entry_type) === 'accent' ? 'accent' : entryVariant(entry.entry_type) === 'error' ? 'error' : entryVariant(entry.entry_type) === 'warning' ? 'warning' : entryVariant(entry.entry_type) === 'success' ? 'success' : 'info'})"></div>
+          <div class="timeline-content">
+            <div class="timeline-meta">
+              <span class="text-mono text-xs text-muted">{formatTime(entry.timestamp)}</span>
               <Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} />
-              <span class="activity-agent text-mono">{entry.agent ?? '---'}</span>
-              <span class="activity-title truncate">{entry.title ?? entry.content?.slice(0, 60) ?? '---'}</span>
             </div>
-          {:else}
-            <div class="empty-state">
-              <span class="text-muted">No recent activity</span>
-            </div>
-          {/each}
-        </div>
-      </div>
-
-      <!-- RIGHT BOTTOM: Memory Tier Gauges -->
-      <div class="card memory-gauges-card">
-        <div class="card-header">
-          <span class="card-title">Memory Tiers</span>
-        </div>
-        <div class="gauges-container">
-          <div class="gauge-item">
-            <Gauge
-              value={workingItems}
-              max={workingMax}
-              label="Working"
-              color="var(--tier-working)"
-              showPercentage={true}
-            />
-            <div class="gauge-detail text-mono text-xs">
-              {formatNumber(workingTokens)} tokens
-            </div>
-          </div>
-          <div class="gauge-item">
-            <Gauge
-              value={shortItems}
-              max={shortMax}
-              label="Short-Term"
-              color="var(--tier-short)"
-              showPercentage={true}
-            />
-            <div class="gauge-detail text-mono text-xs">
-              {formatNumber(shortTokens)} tokens
-            </div>
-          </div>
-          <div class="gauge-item">
-            <Gauge
-              value={longItems}
-              max={longMax}
-              label="Long-Term"
-              color="var(--tier-long)"
-              showPercentage={true}
-            />
-            <div class="gauge-detail text-mono text-xs">
-              {formatNumber(longTokens)} tokens
-            </div>
+            <div class="timeline-title">{entry.title ?? '---'}</div>
+            {#if entry.content}
+              <div class="timeline-body text-sm text-muted">{entry.content.slice(0, 200)}{entry.content.length > 200 ? '...' : ''}</div>
+            {/if}
           </div>
         </div>
-      </div>
+      {:else}
+        {#if !loadingEntries}
+          <EmptyState icon={'\u25CB'} heading="No context entries for this session" compact />
+        {/if}
+      {/each}
     </div>
-  {/if}
+  </DetailDrawer>
 </div>
 
 <style>
@@ -410,19 +439,6 @@
     flex-direction: column;
   }
 
-  .fleet-table-card .table-wrap {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .clickable-row {
-    cursor: pointer;
-  }
-
-  .clickable-row:hover td {
-    background: var(--bg-tertiary);
-  }
-
   .count-badge {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -430,12 +446,6 @@
     color: var(--fg-secondary);
     padding: 1px 6px;
     border-radius: var(--radius-lg);
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 24px 10px !important;
   }
 
   /* Stats grid */
@@ -472,46 +482,21 @@
     margin-top: 4px;
   }
 
-  /* Activity feed */
+  /* Activity card */
   .activity-card {
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
-  .activity-feed {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .activity-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-  }
-
-  .activity-row:nth-child(even) {
-    background: rgba(0, 34, 39, 0.5);
-  }
-
-  .activity-row:last-child {
-    border-bottom: none;
-  }
-
   .activity-time {
     color: var(--fg-muted);
     font-size: 11px;
-    flex-shrink: 0;
-    width: 65px;
   }
 
   .activity-agent {
     color: var(--fg-secondary);
     font-size: 11px;
-    flex-shrink: 0;
     max-width: 80px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -520,8 +505,6 @@
 
   .activity-title {
     color: var(--fg-primary);
-    flex: 1;
-    min-width: 0;
   }
 
   /* Memory gauges */
@@ -551,31 +534,10 @@
     color: var(--fg-muted);
   }
 
-  /* Session detail view */
-  .session-detail {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
-
-  .detail-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .detail-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--fg-primary);
-  }
-
+  /* Detail drawer content */
   .detail-stats {
     display: flex;
     gap: 12px;
-    padding: 10px 0;
     flex-wrap: wrap;
   }
 
@@ -583,7 +545,7 @@
     display: flex;
     align-items: baseline;
     gap: 4px;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
     padding: 6px 10px;
@@ -610,8 +572,6 @@
 
   /* Timeline */
   .entries-timeline {
-    flex: 1;
-    overflow-y: auto;
     padding: 8px 0;
   }
 
@@ -675,5 +635,27 @@
     font-size: 11px;
     font-weight: 400;
     color: var(--fg-muted);
+  }
+
+  /* Loading bar (for drawer entries) */
+  .loading-bar {
+    height: 2px;
+    background: var(--bg-tertiary);
+    border-radius: 1px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+
+  .loading-bar-inner {
+    width: 40%;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 1px;
+    animation: loadingSlide 1s ease-in-out infinite;
+  }
+
+  @keyframes loadingSlide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
   }
 </style>
