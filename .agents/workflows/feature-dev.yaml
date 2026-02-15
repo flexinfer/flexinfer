@@ -1,0 +1,127 @@
+# Feature Development Workflow
+#
+# Standard feature development loop with enforced session tracking.
+# Hooks handle session start/end automatically; this workflow adds
+# structure to the implementation steps in between.
+#
+# Includes an optional morph_fast_apply step for AI-assisted code edits
+# between the implement approval and sandbox testing.
+#
+# Usage:
+#   agent_workflow_start(definition_id="feature-dev", input={
+#     namespace: "project/feature-branch",
+#     agent_id: "claude-code",
+#     description: "Add user authentication"
+#   })
+
+name: "feature-dev"
+description: "Standard feature development loop with enforced session tracking"
+
+steps:
+  - id: init
+    name: "Initialize Session"
+    step_type: tool
+    tool_name: agent_session_start
+    server_name: agent-context
+    tool_args:
+      namespace: "${input.namespace}"
+      agent_id: "${input.agent_id}"
+      description: "Feature: ${input.description}"
+
+  - id: recall
+    name: "Recall Context"
+    step_type: tool
+    tool_name: agent_context_recall_enhanced
+    server_name: agent-context
+    tool_args:
+      query: "${input.description}"
+      session_id: "${init.session_id}"
+      token_budget: 4000
+    depends_on: [init]
+
+  - id: implement
+    name: "Implement Feature"
+    step_type: approval
+    approval_message: "Context recalled. Ready to begin implementation?"
+    depends_on: [recall]
+
+  - id: apply-changes
+    name: "Apply Code Changes"
+    step_type: tool
+    tool_name: edit_file
+    server_name: morph_fast_apply
+    tool_args:
+      file_path: "${input.file_path}"
+      instruction: "${input.description}"
+      code_update: "${input.code_update}"
+    depends_on: [implement]
+    condition: "input.file_path != ''"
+
+  - id: sandbox-test
+    name: "Sandbox Test"
+    step_type: tool
+    tool_name: devbox_exec
+    server_name: devbox
+    tool_args:
+      project: "${input.namespace}"
+      command: "make test"
+      agent_id: "${input.agent_id}"
+    depends_on: [apply-changes]
+
+  - id: test
+    name: "Run Tests"
+    step_type: approval
+    approval_message: "Sandbox tests complete. All tests passing?"
+    depends_on: [sandbox-test]
+
+  - id: precommit
+    name: "Pre-commit Checks"
+    step_type: approval
+    approval_message: "Tests pass. Lint, fmt, and pre-commit hooks clean?"
+    depends_on: [test]
+
+  - id: commit
+    name: "Commit Changes"
+    step_type: approval
+    approval_message: "Pre-commit checks pass. Changes committed?"
+    depends_on: [precommit]
+
+  - id: push
+    name: "Push & Check CI"
+    step_type: approval
+    approval_message: "Committed. Pushed to remote and CI pipeline passing?"
+    depends_on: [commit]
+
+  - id: end
+    name: "End Session"
+    step_type: tool
+    tool_name: agent_session_end
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      summarize: true
+    depends_on: [push]
+
+input_schema:
+  namespace:
+    type: string
+    required: true
+    description: "Session namespace (e.g., project/feature-branch)"
+  agent_id:
+    type: string
+    required: true
+    description: "Agent identifier (e.g., claude-code)"
+  description:
+    type: string
+    required: true
+    description: "Feature description"
+  file_path:
+    type: string
+    required: false
+    description: "Optional file path for morph_fast_apply edits"
+  code_update:
+    type: string
+    required: false
+    description: "Optional code content for morph_fast_apply"
+
+rollback_on_failure: false

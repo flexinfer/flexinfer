@@ -16,7 +16,7 @@ type Config struct {
 	QdrantCollection string
 	QdrantDistance   string
 
-	// EmbedProvider selects the embedding backend: "morph" (default), "ollama", or "dummy"
+	// EmbedProvider selects the embedding backend: "morph" (default), "flexinfer", "ollama", or "dummy"
 	EmbedProvider string
 	EmbedAPIKey   string
 	EmbedBaseURL  string
@@ -50,13 +50,13 @@ func LoadConfigFromEnv() (Config, error) {
 		QdrantDistance:   firstNonEmptyEnv([]string{"CODEBASE_QDRANT_DISTANCE"}, "Cosine"),
 
 		EmbedProvider: strings.ToLower(firstNonEmptyEnv([]string{"CODEBASE_EMBED_PROVIDER"}, "morph")),
-		EmbedAPIKey:   firstNonEmptyEnv([]string{"CODEBASE_EMBED_API_KEY", "MORPH_API_KEY", "OPENAI_API_KEY"}, ""),
+		EmbedAPIKey:   firstNonEmptyEnv([]string{"CODEBASE_EMBED_API_KEY", "MORPH_API_KEY", "FLEXINFER_API_KEY", "OPENAI_API_KEY"}, ""),
 		EmbedBaseURL: strings.TrimRight(firstNonEmptyEnv(
-			[]string{"CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OLLAMA_BASE_URL"},
+			[]string{"CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL", "FLEXINFER_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OLLAMA_BASE_URL"},
 			"https://api.morphllm.com/v1",
 		), "/"),
 		EmbedModel: firstNonEmptyEnv(
-			[]string{"CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL", "OPENAI_EMBED_MODEL", "OPENAI_EMBEDDING_MODEL", "OLLAMA_EMBED_MODEL"},
+			[]string{"CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL", "FLEXINFER_EMBED_MODEL", "OPENAI_EMBED_MODEL", "OPENAI_EMBEDDING_MODEL", "OLLAMA_EMBED_MODEL"},
 			"morph-embedding-v3",
 		),
 

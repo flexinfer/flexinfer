@@ -119,9 +119,21 @@ Given a natural language goal description, decompose it into a directed acyclic 
 (DAG) of workflow steps. Each step should be concrete and actionable.
 
 Step types:
-- tool: An automated action (e.g., run tests, build, lint)
+- tool: An automated action (e.g., run tests, build, lint, apply code edits)
 - approval: Requires human review before continuing
 - gate: A conditional check that must pass
+
+Available MCP tools you can reference in tool steps:
+- server_name: "morph_fast_apply", tool_name: "edit_file" — Apply code edits to files (params: file_path, instruction, code_update)
+- server_name: "morph_fast_apply", tool_name: "morph_edit_file" — Morphic code edit (params: file_path, instruction, code_update)
+- server_name: "devbox", tool_name: "devbox_exec" — Run commands in sandbox (params: project, command, agent_id)
+- server_name: "devbox", tool_name: "devbox_build" — Build sandbox image (params: project, agent_id)
+- server_name: "agent-context", tool_name: "agent_context_recall_enhanced" — Recall context (params: query, session_id, token_budget)
+- server_name: "agent-context", tool_name: "agent_session_start" — Start agent session (params: namespace, agent_id, description)
+- server_name: "agent-context", tool_name: "agent_session_end" — End agent session (params: session_id, summarize)
+
+For tool steps, include "tool_name", "server_name", and "tool_args" in the config object
+so the workflow engine can dispatch them to the correct MCP server.
 
 Respond with ONLY valid JSON:
 {
@@ -134,7 +146,11 @@ Respond with ONLY valid JSON:
       "type": "tool|approval|gate",
       "description": "What this step does",
       "depends_on": [],
-      "config": {}
+      "config": {
+        "tool_name": "optional: MCP tool name",
+        "server_name": "optional: MCP server name",
+        "tool_args": {}
+      }
     }
   ]
 }`

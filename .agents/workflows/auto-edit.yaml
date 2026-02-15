@@ -1,0 +1,102 @@
+# Auto-Edit Workflow
+#
+# AI-assisted code editing with morph_fast_apply and approval gates.
+# Uses session tracking for context recall before and after edits.
+#
+# Usage:
+#   agent_workflow_start(definition_id="auto-edit", input={
+#     namespace: "project/feature-branch",
+#     agent_id: "claude-code",
+#     file_path: "pkg/service.go",
+#     edit_instruction: "Add error handling to the Connect method",
+#     code_update: "func Connect(...) error { ... }"
+#   })
+
+name: "auto-edit"
+description: "AI-assisted code editing with morph_fast_apply and approval gates"
+
+steps:
+  - id: init
+    name: "Initialize Session"
+    step_type: tool
+    tool_name: agent_session_start
+    server_name: agent-context
+    tool_args:
+      namespace: "${input.namespace}"
+      agent_id: "${input.agent_id}"
+      description: "Auto-edit: ${input.edit_instruction}"
+
+  - id: recall
+    name: "Recall Context"
+    step_type: tool
+    tool_name: agent_context_recall_enhanced
+    server_name: agent-context
+    tool_args:
+      query: "${input.edit_instruction}"
+      session_id: "${init.session_id}"
+      file_context: "${input.file_path}"
+      token_budget: 4000
+    depends_on: [init]
+
+  - id: plan-edit
+    name: "Review Edit Plan"
+    step_type: approval
+    approval_message: "Context recalled. Apply edit to ${input.file_path}? Instruction: ${input.edit_instruction}"
+    depends_on: [recall]
+
+  - id: apply-edit
+    name: "Apply Code Edit"
+    step_type: tool
+    tool_name: edit_file
+    server_name: morph_fast_apply
+    tool_args:
+      file_path: "${input.file_path}"
+      instruction: "${input.edit_instruction}"
+      code_update: "${input.code_update}"
+    depends_on: [plan-edit]
+
+  - id: validate
+    name: "Validate Changes"
+    step_type: approval
+    approval_message: "Edit applied. Review the changes and confirm they are correct."
+    depends_on: [apply-edit]
+
+  - id: commit
+    name: "Commit Changes"
+    step_type: approval
+    approval_message: "Changes validated. Commit to repository?"
+    depends_on: [validate]
+
+  - id: end
+    name: "End Session"
+    step_type: tool
+    tool_name: agent_session_end
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      summarize: true
+    depends_on: [commit]
+
+input_schema:
+  namespace:
+    type: string
+    required: true
+    description: "Session namespace (e.g., project/feature-branch)"
+  agent_id:
+    type: string
+    required: true
+    description: "Agent identifier (e.g., claude-code)"
+  file_path:
+    type: string
+    required: true
+    description: "Path to the file to edit"
+  edit_instruction:
+    type: string
+    required: true
+    description: "Natural language description of the edit"
+  code_update:
+    type: string
+    required: false
+    description: "Optional code content to apply"
+
+rollback_on_failure: false

@@ -46,7 +46,7 @@ type Service struct {
 	annotationsQdrant *QdrantClient
 	handoffsQdrant    *QdrantClient
 	templatesQdrant   *QdrantClient
-	embed             *embed.MorphClient
+	embed             embed.Embedder
 
 	// Persistence collections (Phase 1)
 	graphEntitiesQdrant  *QdrantClient
@@ -153,6 +153,35 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 
 	hc := httpclient.NewDefault()
 
+	// Select embedder based on provider configuration
+	var embedder embed.Embedder
+	switch cfg.EmbedProvider {
+	case "flexinfer":
+		baseURL := cfg.EmbedBaseURL
+		if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
+			baseURL = firstNonEmptyEnv([]string{"FLEXINFER_URL"}, "http://localhost:8080") + "/v1"
+		}
+		model := cfg.EmbedModel
+		if model == "" || model == "morph-embedding-v3" {
+			model = "BAAI/bge-large-en-v1.5"
+		}
+		embedder = embed.NewFlexInferClient(hc, baseURL, cfg.EmbedAPIKey, model)
+	case "ollama":
+		baseURL := cfg.EmbedBaseURL
+		if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
+			baseURL = "http://localhost:11434"
+		}
+		model := cfg.EmbedModel
+		if model == "" || model == "morph-embedding-v3" {
+			model = "nomic-embed-text"
+		}
+		embedder = embed.NewOllamaClient(hc, baseURL, model)
+	case "dummy", "none":
+		embedder = embed.NewDummyEmbedder(1)
+	default:
+		embedder = embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel)
+	}
+
 	svc := &Service{
 		cfg:               cfg,
 		contextQdrant:     NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.ContextCollection, cfg.QdrantDistance),
@@ -161,7 +190,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		annotationsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.AnnotationsCollection, cfg.QdrantDistance),
 		handoffsQdrant:    NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.HandoffsCollection, cfg.QdrantDistance),
 		templatesQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TemplatesCollection, cfg.QdrantDistance),
-		embed:             embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel),
+		embed:             embedder,
 		sessions:          make(map[string]*Session),
 
 		// Persistence collections (Phase 1)

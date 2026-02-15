@@ -65,6 +65,17 @@ func NewServiceFromEnv() (*Service, error) {
 		embedder = embed.NewDummyEmbedder(1)
 	} else {
 		switch cfg.EmbedProvider {
+		case "flexinfer":
+			// FlexInfer TEI backend (OpenAI-compatible)
+			baseURL := cfg.EmbedBaseURL
+			if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
+				baseURL = firstNonEmptyEnv([]string{"FLEXINFER_URL"}, "http://localhost:8080") + "/v1"
+			}
+			model := cfg.EmbedModel
+			if model == "" || model == "morph-embedding-v3" {
+				model = "BAAI/bge-large-en-v1.5"
+			}
+			embedder = embed.NewFlexInferClient(hc, baseURL, cfg.EmbedAPIKey, model)
 		case "ollama":
 			// Ollama local embeddings
 			baseURL := cfg.EmbedBaseURL

@@ -92,6 +92,21 @@ func (p *Planner) RegisterPlan(ctx context.Context, plan *WorkflowPlan, namespac
 		if len(s.Config) > 0 {
 			step["config"] = s.Config
 		}
+
+		// Propagate MCP tool routing fields from config to top-level step fields
+		// so the workflow engine can dispatch tool steps correctly.
+		if len(s.Config) > 0 {
+			if tn, ok := s.Config["tool_name"].(string); ok && tn != "" {
+				step["tool_name"] = tn
+			}
+			if sn, ok := s.Config["server_name"].(string); ok && sn != "" {
+				step["server_name"] = sn
+			}
+			if ta, ok := s.Config["tool_args"].(map[string]any); ok && len(ta) > 0 {
+				step["tool_args"] = ta
+			}
+		}
+
 		steps[i] = step
 	}
 

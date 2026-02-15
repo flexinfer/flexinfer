@@ -15,9 +15,11 @@ type Config struct {
 	QdrantDistance     string
 
 	// Embeddings configuration (reuses codebase-memory patterns)
-	EmbedAPIKey  string
-	EmbedBaseURL string
-	EmbedModel   string
+	// EmbedProvider selects the embedding backend: "morph" (default), "flexinfer", "ollama", or "dummy"
+	EmbedProvider string
+	EmbedAPIKey   string
+	EmbedBaseURL  string
+	EmbedModel    string
 
 	// Batching
 	EmbedBatchSize  int
@@ -119,16 +121,20 @@ func LoadConfigFromEnv() (Config, error) {
 		SessionsCollection: firstNonEmptyEnv([]string{"AGENT_CONTEXT_SESSIONS_COLLECTION"}, "agent_sessions_v1"),
 		QdrantDistance:     firstNonEmptyEnv([]string{"AGENT_CONTEXT_QDRANT_DISTANCE"}, "Cosine"),
 
+		EmbedProvider: strings.ToLower(firstNonEmptyEnv(
+			[]string{"AGENT_CONTEXT_EMBED_PROVIDER", "CODEBASE_EMBED_PROVIDER"},
+			"morph",
+		)),
 		EmbedAPIKey: firstNonEmptyEnv(
-			[]string{"AGENT_CONTEXT_EMBED_API_KEY", "CODEBASE_EMBED_API_KEY", "MORPH_API_KEY", "OPENAI_API_KEY"},
+			[]string{"AGENT_CONTEXT_EMBED_API_KEY", "CODEBASE_EMBED_API_KEY", "MORPH_API_KEY", "FLEXINFER_API_KEY", "OPENAI_API_KEY"},
 			"",
 		),
 		EmbedBaseURL: strings.TrimRight(firstNonEmptyEnv(
-			[]string{"AGENT_CONTEXT_EMBED_BASE_URL", "CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL", "OPENAI_BASE_URL"},
+			[]string{"AGENT_CONTEXT_EMBED_BASE_URL", "CODEBASE_EMBED_BASE_URL", "MORPH_BASE_URL", "FLEXINFER_URL", "OPENAI_BASE_URL"},
 			"https://api.morphllm.com/v1",
 		), "/"),
 		EmbedModel: firstNonEmptyEnv(
-			[]string{"AGENT_CONTEXT_EMBED_MODEL", "CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL"},
+			[]string{"AGENT_CONTEXT_EMBED_MODEL", "CODEBASE_EMBED_MODEL", "MORPH_EMBED_MODEL", "FLEXINFER_EMBED_MODEL"},
 			"morph-embedding-v3",
 		),
 
