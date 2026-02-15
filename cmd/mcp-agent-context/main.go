@@ -11,6 +11,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/toolexec"
 )
 
 var version = "1.0.0"
@@ -39,6 +40,16 @@ func run(ctx context.Context) error {
 	if err != nil {
 		logger.Error("Failed to initialize service", "error", err)
 		return err
+	}
+
+	// Wire workflow tool executor when running under the daemon.
+	if socketPath := os.Getenv("LOOM_SOCKET"); socketPath != "" {
+		toolClient := toolexec.New(toolexec.Config{SocketPath: socketPath})
+		if toolClient != nil {
+			svc.SetToolExecutor(toolClient.Execute)
+			defer toolClient.Close()
+			logger.Info("workflow tool executor configured", "socket", socketPath)
+		}
 	}
 
 	// Start background services (compaction scheduler, presence cleanup)

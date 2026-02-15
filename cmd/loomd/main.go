@@ -56,6 +56,10 @@ func run(cfg daemon.Config, metricsAddr string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Export socket path so child MCP servers (e.g., mcp-agent-context) can
+	// dial back to the daemon for tool execution (workflow loopback).
+	os.Setenv("LOOM_SOCKET", cfg.SocketPath)
+
 	d, err := daemon.New(cfg)
 	if err != nil {
 		return fmt.Errorf("create daemon: %w", err)
