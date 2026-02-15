@@ -33,9 +33,10 @@ const (
 	PanelTasks
 	PanelMemory
 	PanelStream
+	PanelPresence
 )
 
-var panelNames = []string{"Fleet", "Health", "Tasks", "Memory", "Stream"}
+var panelNames = []string{"Fleet", "Health", "Tasks", "Memory", "Stream", "Presence"}
 
 // msgTick is sent on each refresh interval to trigger data fetches.
 type msgTick time.Time
@@ -54,11 +55,12 @@ type Model struct {
 	quitting bool
 
 	// Sub-models
-	fleet  panels.FleetPanel
-	health panels.HealthPanel
-	tasks  panels.TasksPanel
-	memory panels.MemoryPanel
-	stream panels.StreamPanel
+	fleet    panels.FleetPanel
+	health   panels.HealthPanel
+	tasks    panels.TasksPanel
+	memory   panels.MemoryPanel
+	stream   panels.StreamPanel
+	presence panels.PresencePanel
 
 	// UI components
 	spinner spinner.Model
@@ -81,15 +83,16 @@ func New(client *Client) Model {
 	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(ColorFgMuted)
 
 	return Model{
-		client:  client,
-		active:  PanelFleet,
-		fleet:   panels.NewFleetPanel(),
-		health:  panels.NewHealthPanel(),
-		tasks:   panels.NewTasksPanel(),
-		memory:  panels.NewMemoryPanel(),
-		stream:  panels.NewStreamPanel(),
-		spinner: s,
-		help:    h,
+		client:   client,
+		active:   PanelFleet,
+		fleet:    panels.NewFleetPanel(),
+		health:   panels.NewHealthPanel(),
+		tasks:    panels.NewTasksPanel(),
+		memory:   panels.NewMemoryPanel(),
+		stream:   panels.NewStreamPanel(),
+		presence: panels.NewPresencePanel(),
+		spinner:  s,
+		help:     h,
 	}
 }
 
@@ -121,6 +124,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = PanelMemory
 		case key.Matches(msg, Keys.Stream):
 			m.active = PanelStream
+		case key.Matches(msg, Keys.Presence):
+			m.active = PanelPresence
 
 		case key.Matches(msg, Keys.Refresh):
 			m.refreshing = true
@@ -146,6 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasks, _ = m.tasks.Update(sizeMsg)
 		m.memory, _ = m.memory.Update(sizeMsg)
 		m.stream, _ = m.stream.Update(sizeMsg)
+		m.presence, _ = m.presence.Update(sizeMsg)
 
 	case msgTick:
 		cmds = append(cmds, m.fetchAll(), m.tickCmd())
@@ -161,6 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasks, _ = m.tasks.Update(msg.tasks)
 		m.memory, _ = m.memory.Update(msg.memory)
 		m.stream, _ = m.stream.Update(msg.stream)
+		m.presence, _ = m.presence.Update(msg.presence)
 		m.refreshing = false
 		m.lastRefresh = time.Now()
 
@@ -175,6 +182,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.memory, _ = m.memory.Update(msg)
 	case panels.MsgStreamData:
 		m.stream, _ = m.stream.Update(msg)
+	case panels.MsgPresenceData:
+		m.presence, _ = m.presence.Update(msg)
 
 	case tea.MouseMsg:
 		// Handle mouse clicks on the tab bar (row 1, after header).
@@ -209,6 +218,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.memory, _ = m.memory.Update(keyMsg)
 		case PanelStream:
 			m.stream, _ = m.stream.Update(keyMsg)
+		case PanelPresence:
+			m.presence, _ = m.presence.Update(keyMsg)
 		}
 	}
 
@@ -277,12 +288,14 @@ func (m Model) activeView() string {
 		return m.memory.View()
 	case PanelStream:
 		return m.stream.View()
+	case PanelPresence:
+		return m.presence.View()
 	default:
 		return ""
 	}
 }
 
-var compactPanelNames = []string{"F", "H", "T", "M", "S"}
+var compactPanelNames = []string{"F", "H", "T", "M", "S", "P"}
 
 func (m Model) renderTabs() string {
 	compact := m.width < 60
@@ -432,6 +445,40 @@ func (m Model) fetchAll() tea.Cmd {
 			}
 		}
 
+		// Build presence data.
+		presenceAgents := make([]panels.PresenceAgentData, len(snap.Agents))
+		for i, a := range snap.Agents {
+			presenceAgents[i] = panels.PresenceAgentData{
+				AgentID:       a.AgentID,
+				Status:        a.Status,
+				AgentType:     a.AgentType,
+				Description:   a.Description,
+				CurrentTask:   a.CurrentTask,
+				Branch:        a.Branch,
+				LastHeartbeat: a.LastHeartbeat,
+			}
+		}
+		presenceClaims := make([]panels.ClaimData, len(snap.FileClaims))
+		for i, c := range snap.FileClaims {
+			presenceClaims[i] = panels.ClaimData{
+				FilePath:  c.FilePath,
+				AgentID:   c.AgentID,
+				ClaimType: c.ClaimType,
+				Reason:    c.Reason,
+				CreatedAt: c.CreatedAt,
+			}
+		}
+		presenceWorktrees := make([]panels.WorktreeData, len(snap.Worktrees))
+		for i, w := range snap.Worktrees {
+			presenceWorktrees[i] = panels.WorktreeData{
+				Branch:    w.Branch,
+				AgentID:   w.AgentID,
+				Status:    w.Status,
+				Purpose:   w.Purpose,
+				CreatedAt: w.CreatedAt,
+			}
+		}
+
 		// Return a batch message. We use a wrapper to send multiple messages.
 		return batchDataMsg{
 			fleet: panels.MsgFleetData{
@@ -452,6 +499,14 @@ func (m Model) fetchAll() tea.Cmd {
 			},
 			memory: memData,
 			stream: panels.MsgStreamData{Entries: streamEntries},
+			presence: panels.MsgPresenceData{
+				Agents:       presenceAgents,
+				Claims:       presenceClaims,
+				Worktrees:    presenceWorktrees,
+				ActiveAgents: snap.ActiveAgents,
+				IdleAgents:   snap.IdleAgents,
+				TotalClaims:  len(snap.FileClaims),
+			},
 		}
 	}
 }
@@ -470,11 +525,12 @@ func (m Model) updateTaskStatus(taskID, status string) tea.Cmd {
 // batchDataMsg carries all panel data in a single message.
 // The Update loop unpacks it and routes to individual panels.
 type batchDataMsg struct {
-	fleet  panels.MsgFleetData
-	health panels.MsgHealthData
-	tasks  panels.MsgTasksData
-	memory panels.MsgMemoryData
-	stream panels.MsgStreamData
+	fleet    panels.MsgFleetData
+	health   panels.MsgHealthData
+	tasks    panels.MsgTasksData
+	memory   panels.MsgMemoryData
+	stream   panels.MsgStreamData
+	presence panels.MsgPresenceData
 }
 
 // tabFromX returns the Panel index for a mouse click at the given X coordinate

@@ -4,14 +4,15 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines the key bindings for the TUI dashboard.
 type KeyMap struct {
-	Fleet   key.Binding
-	Health  key.Binding
-	Tasks   key.Binding
-	Memory  key.Binding
-	Stream  key.Binding
-	Refresh key.Binding
-	Help    key.Binding
-	Quit    key.Binding
+	Fleet    key.Binding
+	Health   key.Binding
+	Tasks    key.Binding
+	Memory   key.Binding
+	Stream   key.Binding
+	Presence key.Binding
+	Refresh  key.Binding
+	Help     key.Binding
+	Quit     key.Binding
 
 	// Panel interaction keys
 	Enter  key.Binding
@@ -40,6 +41,10 @@ var Keys = KeyMap{
 	Stream: key.NewBinding(
 		key.WithKeys("5"),
 		key.WithHelp("5", "stream"),
+	),
+	Presence: key.NewBinding(
+		key.WithKeys("6"),
+		key.WithHelp("6", "presence"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
@@ -75,7 +80,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 // FullHelp returns key bindings shown in the expanded help view.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream},
+		{k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream, k.Presence},
 		{k.Refresh, k.Enter, k.Escape, k.Filter},
 		{k.Help, k.Quit},
 	}
