@@ -3,6 +3,7 @@
   import { router, views, overviewId } from './lib/stores/router.svelte.ts';
   import { fleetStore } from './lib/stores/fleet.svelte.ts';
   import { healthStore } from './lib/stores/health.svelte.ts';
+  import { taskStore } from './lib/stores/tasks.svelte.ts';
   import { streamStore } from './lib/stores/stream.svelte.ts';
   import { eventStore } from './lib/stores/events.svelte.ts';
   import { overlayStore } from './lib/stores/overlay.svelte.ts';
@@ -135,6 +136,13 @@
   let availableSrv = $derived(healthStore.availableCount);
   let degradedSrv = $derived(healthStore.degradedCount);
   let downSrv = $derived(healthStore.downCount);
+
+  // Badge counts for nav tabs
+  let badgeCounts = $derived({
+    agents: fleetStore.activeSessions.length,
+    infra: healthStore.degradedCount + healthStore.downCount,
+    tasks: taskStore.pendingCount + taskStore.inProgressCount,
+  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -178,6 +186,9 @@
         >
           <span class="nav-tab-icon">{v.icon}</span>
           <span class="nav-tab-label">{v.label}</span>
+          {#if badgeCounts[v.id] > 0}
+            <span class="nav-badge">{badgeCounts[v.id]}</span>
+          {/if}
           <kbd class="nav-tab-key">{v.key}</kbd>
         </button>
       {/each}
@@ -429,6 +440,22 @@
 
   .nav-tab-label {
     font-weight: 500;
+  }
+
+  .nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    line-height: 1;
+    color: var(--bg-primary);
+    background: var(--accent);
+    border-radius: 8px;
   }
 
   .nav-tab-key {

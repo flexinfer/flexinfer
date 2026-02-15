@@ -5,6 +5,9 @@
   import { relativeTime, statusVariant, priorityVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
+  import DataTable from './shared/DataTable.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     taskStore.startPolling(5000);
@@ -19,11 +22,15 @@
   let availableAgents = $derived(agentStore.agents ?? []);
 
   let searchQuery = $state('');
-  let priorityFilter = $state('all');
-  let agentFilter = $state('all');
-  let statusFilter = $state('all');
+  let priorityFilter = $state('');
+  let agentFilter = $state('');
+  let statusFilter = $state('');
   let viewMode = $state('flat'); // 'flat' | 'grouped'
   let collapsedGroups = $state(new Set());
+
+  // Sort state for DataTable
+  let sortKey = $state('created_at');
+  let sortDir = $state('desc');
 
   // Create task modal
   let showCreateModal = $state(false);
@@ -51,12 +58,65 @@
   let blockedCt = $derived(tasks.filter(t => t.status === 'blocked').length);
   let completedCt = $derived(tasks.filter(t => t.status === 'completed').length);
 
-  // Unique agents
-  let agents = $derived.by(() => {
+  // Unique agents for filter dropdown
+  let agentOptions = $derived.by(() => {
     const set = new Set();
     tasks.forEach(t => { if (t.agent) set.add(t.agent); });
-    return ['all', ...Array.from(set).sort()];
+    return Array.from(set).sort().map(a => ({ value: a, label: a }));
   });
+
+  // FilterBar filter definitions
+  let filterDefs = $derived([
+    {
+      key: 'priority',
+      label: 'All Priority',
+      value: priorityFilter,
+      options: [
+        { value: 'critical', label: 'Critical' },
+        { value: 'high', label: 'High' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'low', label: 'Low' },
+      ],
+    },
+    {
+      key: 'agent',
+      label: 'All Agents',
+      value: agentFilter,
+      options: agentOptions,
+    },
+    {
+      key: 'status',
+      label: 'All Status',
+      value: statusFilter,
+      options: [
+        { value: 'pending', label: 'Pending' },
+        { value: 'in_progress', label: 'In Progress' },
+        { value: 'blocked', label: 'Blocked' },
+        { value: 'completed', label: 'Completed' },
+      ],
+    },
+  ]);
+
+  function handleSearch(val) {
+    searchQuery = val;
+  }
+
+  function handleFilter(key, val) {
+    if (key === 'priority') priorityFilter = val;
+    else if (key === 'agent') agentFilter = val;
+    else if (key === 'status') statusFilter = val;
+  }
+
+  function clearFilters() {
+    searchQuery = '';
+    priorityFilter = '';
+    agentFilter = '';
+    statusFilter = '';
+  }
+
+  let hasActiveFilters = $derived(
+    searchQuery.trim() !== '' || priorityFilter !== '' || agentFilter !== '' || statusFilter !== ''
+  );
 
   // Filtered tasks
   let filtered = $derived.by(() => {
@@ -70,20 +130,65 @@
       );
     }
 
-    if (priorityFilter !== 'all') {
+    if (priorityFilter) {
       result = result.filter(t => t.priority === priorityFilter);
     }
 
-    if (agentFilter !== 'all') {
+    if (agentFilter) {
       result = result.filter(t => t.agent === agentFilter);
     }
 
-    if (statusFilter !== 'all') {
+    if (statusFilter) {
       result = result.filter(t => t.status === statusFilter);
     }
 
     return result;
   });
+
+  // Sorted tasks for DataTable (flat view)
+  const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+  const STATUS_ORDER = { in_progress: 0, blocked: 1, pending: 2, completed: 3, cancelled: 4 };
+
+  let sorted = $derived.by(() => {
+    const rows = [...filtered];
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case 'title':
+          cmp = (a.title ?? '').localeCompare(b.title ?? '');
+          break;
+        case 'priority':
+          cmp = (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9);
+          break;
+        case 'status':
+          cmp = (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
+          break;
+        case 'created_at':
+          cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
+        default:
+          break;
+      }
+      return sortDir === 'desc' ? -cmp : cmp;
+    });
+    return rows;
+  });
+
+  function handleSort(key, dir) {
+    sortKey = key;
+    sortDir = dir;
+  }
+
+  // DataTable column definitions
+  const columns = [
+    { key: 'title', label: 'Title', sortable: true },
+    { key: 'agent', label: 'Agent' },
+    { key: 'priority', label: 'Priority', sortable: true, width: '90px' },
+    { key: 'status', label: 'Status', sortable: true, width: '110px' },
+    { key: 'blocked_by', label: 'Blocked By', width: '100px' },
+    { key: 'created_at', label: 'Created', sortable: true, width: '90px' },
+    { key: 'actions', label: 'Actions', width: '60px' },
+  ];
 
   // Grouped tasks
   let grouped = $derived.by(() => {
@@ -256,119 +361,87 @@
     </div>
   </div>
 
-  <!-- Filter row -->
-  <div class="toolbar">
-    <input
-      type="text"
-      placeholder="Search tasks..."
-      bind:value={searchQuery}
-      class="search-input"
-    />
-    <select bind:value={priorityFilter}>
-      <option value="all">All Priority</option>
-      <option value="critical">Critical</option>
-      <option value="high">High</option>
-      <option value="medium">Medium</option>
-      <option value="low">Low</option>
-    </select>
-    <select bind:value={agentFilter}>
-      {#each agents as agent}
-        <option value={agent}>{agent === 'all' ? 'All Agents' : agent}</option>
-      {/each}
-    </select>
-    <select bind:value={statusFilter}>
-      <option value="all">All Status</option>
-      <option value="pending">Pending</option>
-      <option value="in_progress">In Progress</option>
-      <option value="blocked">Blocked</option>
-      <option value="completed">Completed</option>
-    </select>
-    <div class="toolbar-spacer"></div>
-    <span class="text-muted text-xs text-mono">{filtered.length} results</span>
-  </div>
+  <!-- Filter row (shared component) -->
+  <FilterBar
+    search={searchQuery}
+    placeholder="Search tasks..."
+    filters={filterDefs}
+    resultCount={filtered.length}
+    onSearch={handleSearch}
+    onFilter={handleFilter}
+  />
 
   <!-- Content -->
   <div class="task-content">
     {#if viewMode === 'flat'}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Agent</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>Blocked By</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each filtered as task (task.id)}
-              <tr class="row-enter">
-                <td class="task-title" title={task.context || task.title}>
-                  {task.title ?? '---'}
-                  {#if task.context}
-                    <span class="context-hint" title={task.context}>📋</span>
-                  {/if}
-                </td>
-                <td class="text-mono text-muted">{task.agent ?? '---'}</td>
-                <td>
-                  <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
-                    <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
-                  </button>
-                </td>
-                <td>
-                  <select
-                    class="status-select"
-                    value={task.status ?? 'pending'}
-                    onchange={(e) => changeStatus(task, e.target.value)}
-                  >
-                    {#each STATUS_OPTIONS as s}
-                      <option value={s}>{s.replaceAll('_', ' ')}</option>
-                    {/each}
-                  </select>
-                </td>
-                <td class="text-mono blocked-col">
-                  {#if task.blocked_by?.length}
-                    {#each task.blocked_by as dep}
-                      <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
-                        {dep.slice(0, 8)}
-                      </span>
-                    {/each}
-                  {:else}
-                    <span class="text-muted">---</span>
-                  {/if}
-                </td>
-                <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
-                <td class="actions-col">
-                  {#if task.status !== 'completed' && task.status !== 'cancelled'}
-                    <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">✓</button>
-                  {/if}
-                </td>
-              </tr>
-            {:else}
-              {#if !taskStore.lastUpdated}
-                {#each Array(3) as _}
-                  <tr>
-                    <td><div class="skeleton skeleton-text" style="width: 140px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 40px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 70px"></div></td>
-                    <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
-                  </tr>
+      {#if filtered.length === 0 && taskStore.lastUpdated}
+        <EmptyState
+          icon={'\u2611'}
+          heading="No tasks match filters"
+          description="Try adjusting your search or filter criteria."
+          compact
+        >
+          {#snippet action()}
+            {#if hasActiveFilters}
+              <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
+            {/if}
+          {/snippet}
+        </EmptyState>
+      {:else}
+        <DataTable
+          {columns}
+          rows={sorted}
+          {sortKey}
+          {sortDir}
+          loading={!taskStore.lastUpdated}
+          skeletonRows={3}
+          onSort={handleSort}
+        >
+          {#snippet row({ row: task })}
+            <td class="task-title" title={task.context || task.title}>
+              {task.title ?? '---'}
+              {#if task.context}
+                <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
+              {/if}
+            </td>
+            <td class="text-mono text-muted">{task.agent ?? '---'}</td>
+            <td>
+              <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
+                <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+              </button>
+            </td>
+            <td>
+              <select
+                class="status-select"
+                value={task.status ?? 'pending'}
+                onchange={(e) => changeStatus(task, e.target.value)}
+                onclick={(e) => e.stopPropagation()}
+              >
+                {#each STATUS_OPTIONS as s}
+                  <option value={s}>{s.replaceAll('_', ' ')}</option>
+                {/each}
+              </select>
+            </td>
+            <td class="text-mono blocked-col">
+              {#if task.blocked_by?.length}
+                {#each task.blocked_by as dep}
+                  <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
+                    {dep.slice(0, 8)}
+                  </span>
                 {/each}
               {:else}
-                <tr>
-                  <td colspan="7" class="empty-cell">No tasks match filters</td>
-                </tr>
+                <span class="text-muted">---</span>
               {/if}
-            {/each}
-          </tbody>
-        </table>
-      </div>
+            </td>
+            <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
+            <td class="actions-col">
+              {#if task.status !== 'completed' && task.status !== 'cancelled'}
+                <button class="btn-resolve" onclick={(e) => { e.stopPropagation(); openResolve(task); }} title="Resolve task">{'\u2713'}</button>
+              {/if}
+            </td>
+          {/snippet}
+        </DataTable>
+      {/if}
     {:else}
       <!-- Grouped view -->
       <div class="grouped-view">
@@ -400,7 +473,7 @@
                           <td class="task-title" title={task.context || task.title}>
                             {task.title ?? '---'}
                             {#if task.context}
-                              <span class="context-hint" title={task.context}>📋</span>
+                              <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
                             {/if}
                           </td>
                           <td class="text-mono text-muted">{task.agent ?? '---'}</td>
@@ -434,7 +507,7 @@
                           <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
                           <td class="actions-col">
                             {#if task.status !== 'completed' && task.status !== 'cancelled'}
-                              <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">✓</button>
+                              <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">{'\u2713'}</button>
                             {/if}
                           </td>
                         </tr>
@@ -446,9 +519,17 @@
             {/if}
           </div>
         {:else}
-          <div class="empty-state">
-            <span class="text-muted">No tasks match filters</span>
-          </div>
+          <EmptyState
+            icon={'\u2611'}
+            heading="No tasks match filters"
+            compact
+          >
+            {#snippet action()}
+              {#if hasActiveFilters}
+                <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
+              {/if}
+            {/snippet}
+          </EmptyState>
         {/each}
       </div>
     {/if}
@@ -497,7 +578,7 @@
     </div>
 
     <button type="button" class="optional-toggle" onclick={() => showOptional = !showOptional}>
-      {showOptional ? '▼' : '▶'} Optional fields
+      {showOptional ? '\u25BC' : '\u25B6'} Optional fields
     </button>
 
     {#if showOptional}
@@ -526,7 +607,7 @@
                 {#each newBlockedBy as depId}
                   <span class="dep-chip">
                     {depId.slice(0, 8)}
-                    <button type="button" class="chip-remove" onclick={() => removeBlockedBy(depId)}>×</button>
+                    <button type="button" class="chip-remove" onclick={() => removeBlockedBy(depId)}>{'\u00D7'}</button>
                   </span>
                 {/each}
               </div>
@@ -621,10 +702,6 @@
     color: var(--fg-primary) !important;
   }
 
-  .search-input {
-    width: 200px;
-  }
-
   .task-content {
     flex: 1;
     overflow-y: auto;
@@ -660,12 +737,6 @@
   .blocked-id.resolved {
     opacity: 0.4;
     text-decoration: line-through;
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 32px 10px !important;
   }
 
   /* Inline status dropdown */

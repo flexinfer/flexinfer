@@ -3,6 +3,9 @@
   import StatusDot from '../widgets/StatusDot.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Badge from '../widgets/Badge.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
+  import DataTable from './shared/DataTable.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
     healthStore.startPolling(5000);
@@ -35,19 +38,58 @@
 
   // --- Filters & Sort ---
   let searchQuery = $state('');
-  let categoryFilter = $state('all');
-  let statusFilter = $state('all');
-  let sortColumn = $state('name');
-  let sortAsc = $state(true);
+  let categoryFilter = $state('');
+  let statusFilter = $state('');
+  let sortKey = $state('name');
+  let sortDir = $state('asc');
   let selectedServer = $state(null);
 
-  let categories = $derived.by(() => {
+  let categoryOptions = $derived.by(() => {
     const cats = new Set();
     servers.forEach(s => {
       (s.categories ?? []).forEach(c => cats.add(c));
     });
-    return ['all', ...Array.from(cats).sort()];
+    return Array.from(cats).sort().map(c => ({ value: c, label: c }));
   });
+
+  let filterDefs = $derived([
+    {
+      key: 'category',
+      label: 'All Categories',
+      value: categoryFilter,
+      options: categoryOptions,
+    },
+    {
+      key: 'status',
+      label: 'All Status',
+      value: statusFilter,
+      options: [
+        { value: 'healthy', label: 'Running' },
+        { value: 'idle', label: 'Idle' },
+        { value: 'degraded', label: 'Degraded' },
+        { value: 'down', label: 'Down' },
+      ],
+    },
+  ]);
+
+  function handleSearch(val) {
+    searchQuery = val;
+  }
+
+  function handleFilter(key, val) {
+    if (key === 'category') categoryFilter = val;
+    else if (key === 'status') statusFilter = val;
+  }
+
+  function clearFilters() {
+    searchQuery = '';
+    categoryFilter = '';
+    statusFilter = '';
+  }
+
+  let hasActiveFilters = $derived(
+    searchQuery.trim() !== '' || categoryFilter !== '' || statusFilter !== ''
+  );
 
   let healthyCt = $derived(servers.filter(s => s.status === 'healthy').length);
   let idleCt = $derived(servers.filter(s => s.status === 'idle').length);
@@ -66,53 +108,59 @@
       );
     }
 
-    if (categoryFilter !== 'all') {
+    if (categoryFilter) {
       result = result.filter(s => (s.categories ?? []).includes(categoryFilter));
     }
 
-    if (statusFilter !== 'all') {
+    if (statusFilter) {
       result = result.filter(s => s.status === statusFilter);
     }
-
-    result = [...result].sort((a, b) => {
-      let av = a[sortColumn] ?? '';
-      let bv = b[sortColumn] ?? '';
-      if (typeof av === 'number' && typeof bv === 'number') {
-        return sortAsc ? av - bv : bv - av;
-      }
-      av = String(av).toLowerCase();
-      bv = String(bv).toLowerCase();
-      if (av < bv) return sortAsc ? -1 : 1;
-      if (av > bv) return sortAsc ? 1 : -1;
-      return 0;
-    });
 
     return result;
   });
 
-  function toggleSort(col) {
-    if (sortColumn === col) {
-      sortAsc = !sortAsc;
-    } else {
-      sortColumn = col;
-      sortAsc = true;
-    }
+  // Sorted rows for DataTable
+  const STATUS_SORT_ORDER = { healthy: 0, idle: 1, degraded: 2, down: 3 };
+
+  let sorted = $derived.by(() => {
+    const rows = [...filtered];
+    rows.sort((a, b) => {
+      let av, bv;
+      if (sortKey === 'status') {
+        av = STATUS_SORT_ORDER[a.status] ?? 9;
+        bv = STATUS_SORT_ORDER[b.status] ?? 9;
+      } else {
+        av = a[sortKey] ?? '';
+        bv = b[sortKey] ?? '';
+      }
+      let cmp;
+      if (typeof av === 'number' && typeof bv === 'number') {
+        cmp = av - bv;
+      } else {
+        cmp = String(av).toLowerCase().localeCompare(String(bv).toLowerCase());
+      }
+      return sortDir === 'desc' ? -cmp : cmp;
+    });
+    return rows;
+  });
+
+  function handleSort(key, dir) {
+    sortKey = key;
+    sortDir = dir;
   }
 
-  function sortIndicator(col) {
-    if (sortColumn !== col) return '';
-    return sortAsc ? ' ▲' : ' ▼';
-  }
+  // DataTable column definitions
+  const columns = [
+    { key: 'name', label: 'Server', sortable: true },
+    { key: 'status', label: 'Status', sortable: true, width: '80px' },
+    { key: 'latency', label: 'Latency', sortable: true, width: '80px' },
+    { key: 'tool_count', label: 'Tools', sortable: true, width: '60px' },
+    { key: 'target', label: 'Target' },
+    { key: 'sparkline', label: 'Sparkline', width: '130px' },
+  ];
 
   function selectServer(server) {
     selectedServer = selectedServer?.name === server.name ? null : server;
-  }
-
-  function handleRowKeydown(e, server) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      selectServer(server);
-    }
   }
 
   function formatLatency(ms) {
@@ -154,109 +202,72 @@
         </span>
       {/if}
       <span class="header-stat tools-stat">
-        <span class="tools-icon">⚙</span>
+        <span class="tools-icon">{'\u2699'}</span>
         {totalTools} tools
       </span>
     </div>
   </div>
 
-  <!-- Filter row -->
-  <div class="toolbar">
-    <input
-      type="text"
-      placeholder="Search servers..."
-      bind:value={searchQuery}
-      class="search-input"
-    />
-    <select bind:value={categoryFilter}>
-      {#each categories as cat}
-        <option value={cat}>{cat === 'all' ? 'All Categories' : cat}</option>
-      {/each}
-    </select>
-    <select bind:value={statusFilter}>
-      <option value="all">All Status</option>
-      <option value="healthy">Running</option>
-      <option value="idle">Idle</option>
-      <option value="degraded">Degraded</option>
-      <option value="down">Down</option>
-    </select>
-    <div class="toolbar-spacer"></div>
-    <span class="text-muted text-xs text-mono">{filtered.length} results</span>
-  </div>
+  <!-- Filter row (shared component) -->
+  <FilterBar
+    search={searchQuery}
+    placeholder="Search servers..."
+    filters={filterDefs}
+    resultCount={filtered.length}
+    onSearch={handleSearch}
+    onFilter={handleFilter}
+  />
 
   <!-- Sortable table -->
   <div class="table-container">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th class="sortable" tabindex="0" onclick={() => toggleSort('name')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('name'))} aria-sort={sortColumn === 'name' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
-              Server{sortIndicator('name')}
-            </th>
-            <th class="sortable" tabindex="0" onclick={() => toggleSort('status')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('status'))} aria-sort={sortColumn === 'status' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
-              Status{sortIndicator('status')}
-            </th>
-            <th class="sortable" tabindex="0" onclick={() => toggleSort('latency')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('latency'))} aria-sort={sortColumn === 'latency' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
-              Latency{sortIndicator('latency')}
-            </th>
-            <th class="sortable" tabindex="0" onclick={() => toggleSort('tool_count')} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleSort('tool_count'))} aria-sort={sortColumn === 'tool_count' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
-              Tools{sortIndicator('tool_count')}
-            </th>
-            <th>Target</th>
-            <th>Sparkline</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filtered as server (server.name)}
-            <tr
-              class="server-row"
-              class:selected={selectedServer?.name === server.name}
-              role="button"
-              tabindex="0"
-              onclick={() => selectServer(server)}
-              onkeydown={(e) => handleRowKeydown(e, server)}
-            >
-              <td class="text-mono server-name">{server.name}</td>
-              <td>
-                <StatusDot status={server.status ?? 'unknown'} />
-              </td>
-              <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
-              <td class="text-mono">{server.tool_count ?? 0}</td>
-              <td class="text-mono text-muted target-cell">{server.target ?? '---'}</td>
-              <td class="sparkline-cell">
-                {#if server.latencyHistory?.length}
-                  <SparkLine
-                    data={server.latencyHistory}
-                    width={120}
-                    height={24}
-                    color={server.status === 'healthy' ? 'var(--success)' : server.status === 'degraded' ? 'var(--warning)' : 'var(--error)'}
-                  />
-                {:else}
-                  <span class="text-muted text-xs">no data</span>
-                {/if}
-              </td>
-            </tr>
-          {:else}
-            {#if !healthStore.lastUpdated}
-              {#each Array(5) as _}
-                <tr>
-                  <td><div class="skeleton" style="width: 10px; height: 10px; border-radius: 50%"></div></td>
-                  <td><div class="skeleton skeleton-text" style="width: 120px"></div></td>
-                  <td><div class="skeleton skeleton-text" style="width: 50px"></div></td>
-                  <td><div class="skeleton skeleton-text" style="width: 30px"></div></td>
-                  <td><div class="skeleton skeleton-text" style="width: 60px"></div></td>
-                  <td><div class="skeleton skeleton-bar" style="width: 80px; height: 16px"></div></td>
-                </tr>
-              {/each}
+    {#if filtered.length === 0 && healthStore.lastUpdated}
+      <EmptyState
+        icon={'\u2665'}
+        heading="No servers match filters"
+        description="Try adjusting your search or filter criteria."
+        compact
+      >
+        {#snippet action()}
+          {#if hasActiveFilters}
+            <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
+          {/if}
+        {/snippet}
+      </EmptyState>
+    {:else}
+      <DataTable
+        {columns}
+        rows={sorted}
+        {sortKey}
+        {sortDir}
+        loading={!healthStore.lastUpdated}
+        skeletonRows={5}
+        idKey="name"
+        onSort={handleSort}
+        onRowClick={selectServer}
+      >
+        {#snippet row({ row: server })}
+          <td class="text-mono server-name">{server.name}</td>
+          <td>
+            <StatusDot status={server.status ?? 'unknown'} />
+          </td>
+          <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
+          <td class="text-mono">{server.tool_count ?? 0}</td>
+          <td class="text-mono text-muted target-cell">{server.target ?? '---'}</td>
+          <td class="sparkline-cell">
+            {#if server.latencyHistory?.length}
+              <SparkLine
+                data={server.latencyHistory}
+                width={120}
+                height={24}
+                color={server.status === 'healthy' ? 'var(--success)' : server.status === 'degraded' ? 'var(--warning)' : 'var(--error)'}
+              />
             {:else}
-              <tr>
-                <td colspan="6" class="empty-cell">No servers match filters</td>
-              </tr>
+              <span class="text-muted text-xs">no data</span>
             {/if}
-          {/each}
-        </tbody>
-      </table>
-    </div>
+          </td>
+        {/snippet}
+      </DataTable>
+    {/if}
   </div>
 
   <!-- Infrastructure cards row: Tunnels + Cache -->
@@ -284,7 +295,7 @@
                   <span class="text-muted text-xs">up {tunnel.uptime}</span>
                 {/if}
                 {#if tunnel.reconnects > 0}
-                  <span class="text-xs reconnect-count">↻ {tunnel.reconnects}</span>
+                  <span class="text-xs reconnect-count">{'\u21BB'} {tunnel.reconnects}</span>
                 {/if}
               </div>
             {/each}
@@ -406,35 +417,12 @@
     font-size: 11px;
   }
 
-  .search-input {
-    width: 200px;
-  }
-
   .table-container {
     flex: 1;
     overflow-y: auto;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
-  }
-
-  .sortable {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .sortable:hover {
-    color: var(--fg-primary);
-  }
-
-  .server-row {
-    cursor: pointer;
-    transition: background 0.1s ease;
-  }
-
-  .server-row.selected td {
-    background: rgba(1, 135, 153, 0.08);
-    border-color: rgba(1, 135, 153, 0.2);
   }
 
   .server-name {
@@ -452,12 +440,6 @@
   .sparkline-cell {
     width: 130px;
     padding: 4px 10px;
-  }
-
-  .empty-cell {
-    text-align: center;
-    color: var(--fg-muted);
-    padding: 32px 10px !important;
   }
 
   /* --- Infrastructure Cards --- */
