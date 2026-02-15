@@ -13,6 +13,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 var version = "0.2.0"
@@ -26,6 +27,14 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-devbox", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-devbox")
+
 	logger.Info("starting server", "name", "mcp-devbox", "version", version)
 
 	workspaceRoot := env.String("DEVBOX_WORKSPACE_ROOT", "")
@@ -74,7 +83,7 @@ func run(ctx context.Context) error {
 		"devbox_read_file, devbox_write_file, devbox_exec_async, devbox_exec_poll, " +
 		"devbox_metrics, devbox_summary")
 
-	registerTools(server, mgr)
+	registerTools(server, mgr, tracer)
 
 	// Start idle reaper
 	go mgr.reapLoop(ctx)

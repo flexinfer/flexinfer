@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestRegisterTools_RegistersExpectedToolset(t *testing.T) {
 	t.Parallel()
 
 	server := mcp.NewServer("test", "test")
-	registerTools(server, &manager{})
+	registerTools(server, &manager{}, noop.NewTracerProvider().Tracer("test"))
 
 	tools := server.Tools()
 	if len(tools) != 11 {

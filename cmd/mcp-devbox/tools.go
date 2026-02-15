@@ -1,8 +1,13 @@
 package main
 
-import "gitlab.flexinfer.ai/libs/mcp-go"
+import (
+	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/trace"
 
-func registerTools(server *mcp.Server, mgr *manager) {
+	"github.com/crb2nu/loom/pkg/mcpotel"
+)
+
+func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_exec",
 		Description: "Execute a command in a project sandbox. Auto-builds the sandbox if needed. Returns structured result with exit code and truncated output.",
@@ -32,7 +37,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project", "command"},
 		},
-	}, mgr.handleExec)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_exec", mgr.handleExec))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_build",
@@ -55,7 +60,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project"},
 		},
-	}, mgr.handleBuild)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_build", mgr.handleBuild))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_status",
@@ -69,7 +74,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 				},
 			},
 		},
-	}, mgr.handleStatus)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_status", mgr.handleStatus))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_stop",
@@ -84,7 +89,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project"},
 		},
-	}, mgr.handleStop)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_stop", mgr.handleStop))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_detect",
@@ -99,7 +104,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project"},
 		},
-	}, mgr.handleDetect)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_detect", mgr.handleDetect))
 
 	// File read/write tools
 	server.AddTool(mcp.Tool{
@@ -127,7 +132,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project", "path"},
 		},
-	}, mgr.handleReadFile)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_read_file", mgr.handleReadFile))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_write_file",
@@ -154,7 +159,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project", "path", "content"},
 		},
-	}, mgr.handleWriteFile)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_write_file", mgr.handleWriteFile))
 
 	// Async exec tools
 	server.AddTool(mcp.Tool{
@@ -178,7 +183,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"project", "command"},
 		},
-	}, mgr.handleExecAsync)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_exec_async", mgr.handleExecAsync))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_exec_poll",
@@ -193,7 +198,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			},
 			Required: []string{"exec_id"},
 		},
-	}, mgr.handleExecPoll)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_exec_poll", mgr.handleExecPoll))
 
 	// Observability tools
 	server.AddTool(mcp.Tool{
@@ -203,7 +208,7 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mgr.handleMetrics)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_metrics", mgr.handleMetrics))
 
 	server.AddTool(mcp.Tool{
 		Name:        "devbox_summary",
@@ -212,5 +217,5 @@ func registerTools(server *mcp.Server, mgr *manager) {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mgr.handleSummary)
+	}, mcpotel.TracedToolHandler(tracer, "devbox_summary", mgr.handleSummary))
 }

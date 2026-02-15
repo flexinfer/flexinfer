@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -55,6 +56,13 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-memory", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-memory")
 
 	// Get persist path from env or default
 	persistPath := os.Getenv("MEMORY_PERSIST_PATH")
@@ -107,7 +115,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"entities"},
 		},
-	}, mem.handleCreateEntities)
+	}, mcpotel.TracedToolHandler(tracer, "create_entities", mem.handleCreateEntities))
 
 	// create_relations
 	server.AddTool(mcp.Tool{
@@ -132,7 +140,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"relations"},
 		},
-	}, mem.handleCreateRelations)
+	}, mcpotel.TracedToolHandler(tracer, "create_relations", mem.handleCreateRelations))
 
 	// add_observations
 	server.AddTool(mcp.Tool{
@@ -156,7 +164,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"observations"},
 		},
-	}, mem.handleAddObservations)
+	}, mcpotel.TracedToolHandler(tracer, "add_observations", mem.handleAddObservations))
 
 	// delete_entities
 	server.AddTool(mcp.Tool{
@@ -173,7 +181,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"names"},
 		},
-	}, mem.handleDeleteEntities)
+	}, mcpotel.TracedToolHandler(tracer, "delete_entities", mem.handleDeleteEntities))
 
 	// delete_relations
 	server.AddTool(mcp.Tool{
@@ -198,7 +206,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"relations"},
 		},
-	}, mem.handleDeleteRelations)
+	}, mcpotel.TracedToolHandler(tracer, "delete_relations", mem.handleDeleteRelations))
 
 	// delete_observations
 	server.AddTool(mcp.Tool{
@@ -222,7 +230,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"deletions"},
 		},
-	}, mem.handleDeleteObservations)
+	}, mcpotel.TracedToolHandler(tracer, "delete_observations", mem.handleDeleteObservations))
 
 	// read_graph
 	server.AddTool(mcp.Tool{
@@ -232,7 +240,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mem.handleReadGraph)
+	}, mcpotel.TracedToolHandler(tracer, "read_graph", mem.handleReadGraph))
 
 	// search_nodes
 	server.AddTool(mcp.Tool{
@@ -248,7 +256,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, mem.handleSearchNodes)
+	}, mcpotel.TracedToolHandler(tracer, "search_nodes", mem.handleSearchNodes))
 
 	// open_nodes
 	server.AddTool(mcp.Tool{
@@ -265,7 +273,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"names"},
 		},
-	}, mem.handleOpenNodes)
+	}, mcpotel.TracedToolHandler(tracer, "open_nodes", mem.handleOpenNodes))
 
 	return server.Run(ctx)
 }

@@ -4,12 +4,18 @@ import (
 	"context"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/pkg/codebase"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
-func registerTools(server *mcp.Server, svc *codebase.Service) {
+func registerTools(server *mcp.Server, svc *codebase.Service, tracer trace.Tracer) {
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
+
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_stats",
 		Description: "Get basic stats about an indexed repo (counts by language/chunk_type).",
@@ -32,7 +38,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_stats", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "")      // optional
 		_ = v.StringSlice("languages")   // optional
@@ -41,7 +47,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleStats(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_delete_repo",
@@ -58,7 +64,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"repo_id", "confirm"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_delete_repo", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.Required("repo_id")
 		_ = v.RequiredBool("confirm")
@@ -70,7 +76,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleDeleteRepo(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_index_start",
@@ -110,7 +116,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_index_start", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("root", ".")         // optional with default
 		_ = v.String("repo_id", "")       // optional
@@ -123,7 +129,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleIndexStart(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_watch_start",
@@ -163,7 +169,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_watch_start", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("root", ".")         // optional with default
 		_ = v.String("repo_id", "")       // optional
@@ -176,7 +182,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleWatchStart(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_watch_poll",
@@ -188,14 +194,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"watch_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_watch_poll", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.Required("watch_id")
 		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleWatchPoll(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_watch_stop",
@@ -207,14 +213,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"watch_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_watch_stop", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.Required("watch_id")
 		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleWatchStop(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_index_poll",
@@ -226,14 +232,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"job_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_index_poll", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.Required("job_id")
 		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleIndexPoll(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_index_cancel",
@@ -245,14 +251,14 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"job_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_index_cancel", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.Required("job_id")
 		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleIndexCancel(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_search",
@@ -289,7 +295,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"query"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_search", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("query")
@@ -303,7 +309,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleSearch(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_text_search",
@@ -352,7 +358,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"query"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_text_search", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("query")
@@ -367,7 +373,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleTextSearch(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_definition",
@@ -397,7 +403,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"symbol"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_get_definition", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("symbol")
@@ -409,7 +415,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleGetDefinition(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_references",
@@ -451,7 +457,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"symbol"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_get_references", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("symbol")
@@ -466,7 +472,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleGetReferences(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_get_context",
@@ -502,7 +508,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"file_path", "line_number"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_get_context", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("file_path")
@@ -515,7 +521,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleGetContext(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_find_callers",
@@ -536,7 +542,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"symbol"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_find_callers", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("symbol")
@@ -546,7 +552,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleFindCallers(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_find_callees",
@@ -567,7 +573,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"symbol"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_find_callees", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("symbol")
@@ -577,7 +583,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleFindCallees(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_call_graph",
@@ -629,7 +635,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			},
 			Required: []string{"symbol"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_call_graph", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "") // optional
 		_ = v.Required("symbol")
@@ -645,7 +651,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleCallGraph(ctx, args)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "codebase_module_graph",
@@ -680,7 +686,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 				},
 			},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("codebase_module_graph", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		_ = v.String("repo_id", "")          // optional
 		_ = v.StringSlice("languages")       // optional
@@ -692,5 +698,5 @@ func registerTools(server *mcp.Server, svc *codebase.Service) {
 			return mcp.ErrorResult(err), nil
 		}
 		return svc.HandleModuleGraph(ctx, args)
-	})
+	}))
 }

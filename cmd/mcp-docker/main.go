@@ -15,9 +15,12 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -42,28 +45,36 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-docker", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-docker")
+
 	logger.Info("starting server", "name", "mcp-docker", "version", version)
 
 	server := mcp.NewServer("mcp-docker", version)
 	server.SetInstructions("Docker CLI operations. Tools: docker_version, docker_info, docker_ps, docker_images, docker_inspect, docker_logs, docker_exec")
 
-	registerTools(server)
+	registerTools(server, tracer)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, tracer trace.Tracer) {
 	server.AddTool(mcp.Tool{
 		Name:        "docker_version",
 		Description: "Get Docker client/server version information",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleDockerVersion)
+	}, mcpotel.TracedToolHandler(tracer, "docker_version", handleDockerVersion))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_info",
 		Description: "Get Docker daemon information",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleDockerInfo)
+	}, mcpotel.TracedToolHandler(tracer, "docker_info", handleDockerInfo))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_ps",
@@ -86,7 +97,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleDockerPs)
+	}, mcpotel.TracedToolHandler(tracer, "docker_ps", handleDockerPs))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_images",
@@ -105,7 +116,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleDockerImages)
+	}, mcpotel.TracedToolHandler(tracer, "docker_images", handleDockerImages))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_inspect",
@@ -125,7 +136,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"targets"},
 		},
-	}, handleDockerInspect)
+	}, mcpotel.TracedToolHandler(tracer, "docker_inspect", handleDockerInspect))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_logs",
@@ -160,7 +171,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"container"},
 		},
-	}, handleDockerLogs)
+	}, mcpotel.TracedToolHandler(tracer, "docker_logs", handleDockerLogs))
 
 	server.AddTool(mcp.Tool{
 		Name:        "docker_exec",
@@ -197,7 +208,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"container", "command"},
 		},
-	}, handleDockerExec)
+	}, mcpotel.TracedToolHandler(tracer, "docker_exec", handleDockerExec))
 }
 
 func handleDockerVersion(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

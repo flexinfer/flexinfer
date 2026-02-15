@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - docs drift check (`scripts/ci/check_docs_guardrails.sh`)
   - flexinfer-site integration check (`scripts/ci/check_flexinfer_site_integration.sh`)
   - CLI help smoke checks (`go run ./cmd/loom --help`, `go run ./cmd/loom proxy --help`)
+- `loom completion bash|zsh|fish|powershell` command for shell completion generation.
+- `Long` and `Example` fields for `status`, `start`, `stop`, `servers`, and `check` commands.
+- `LOOM_SOCKET` env var support for `--socket` flag.
+- Error handling guardrail (`scripts/ci/check_error_handling.sh`) prevents `return nil, err` count from increasing in MCP handler files.
+- Migration tracker in `docs/ERROR_HANDLING.md` covering all 40 MCP servers.
+- OTel tracing for `mcp-memory`, `mcp-docker`, `mcp-k8s`, `mcp-devbox`, `mcp-codebase-memory` via `pkg/mcpotel`.
+- Test suites for MCP servers: `mcp-docker` (60% coverage), `mcp-cloudflare` (70%), `mcp-grafana` (73%), `mcp-helm` (22%), `mcp-redis` (22%).
+- TUI test foundation: pure function tests for panels, widgets, helpers, layout, and bubbletea Update routing.
+- MCP server test coverage Batch 1: `mcp-git`, `mcp-memory`, `mcp-sequentialthinking`.
 
 ### Changed
 - Devbox now mounts workspace root and sets project-relative container workdirs for better monorepo support.
@@ -28,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.
 - Hook-only clients (for example Codex `notify`) can now bootstrap agent session/presence via `loom agent heartbeat --ensure-session`, preventing repeated heartbeat failures when no explicit session-start hook exists.
 - `loom sync <profile|all> --regen` now prefers workspace-local registry discovery across ancestor directories (including `platform/gitops/mcp/context/registry.yaml`), avoiding stale regeneration from `~/.config/loom/registry.yaml` when run from `services/*` repos.
+- TUI log bleed-through: stderr redirected during bubbletea rendering to prevent daemon reconnection messages from overlaying the fleet panel.
+- TUI Tasks panel broken borders: column width calculation now accounts for border+padding overhead.
+- TUI Fleet panel column misalignment: replaced rune-width truncation with ANSI-aware truncation from `charmbracelet/x/ansi`.
 
 ## [0.9.7] - 2026-02-10
 

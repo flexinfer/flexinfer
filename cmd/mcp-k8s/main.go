@@ -22,6 +22,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -93,6 +94,13 @@ func main() {
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-k8s", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-k8s")
+
 	// Get kubeconfig from env or default
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
@@ -132,7 +140,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, k8s.handleListPods)
+	}, mcpotel.TracedToolHandler(tracer, "list_pods", k8s.handleListPods))
 
 	// get_pod
 	server.AddTool(mcp.Tool{
@@ -152,7 +160,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, k8s.handleGetPod)
+	}, mcpotel.TracedToolHandler(tracer, "get_pod", k8s.handleGetPod))
 
 	// get_logs
 	server.AddTool(mcp.Tool{
@@ -184,7 +192,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, k8s.handleGetLogs)
+	}, mcpotel.TracedToolHandler(tracer, "get_logs", k8s.handleGetLogs))
 
 	// list_deployments
 	server.AddTool(mcp.Tool{
@@ -199,7 +207,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, k8s.handleListDeployments)
+	}, mcpotel.TracedToolHandler(tracer, "list_deployments", k8s.handleListDeployments))
 
 	// list_services
 	server.AddTool(mcp.Tool{
@@ -214,7 +222,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, k8s.handleListServices)
+	}, mcpotel.TracedToolHandler(tracer, "list_services", k8s.handleListServices))
 
 	// get_resource
 	server.AddTool(mcp.Tool{
@@ -238,7 +246,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"kind", "name"},
 		},
-	}, k8s.handleGetResource)
+	}, mcpotel.TracedToolHandler(tracer, "get_resource", k8s.handleGetResource))
 
 	// list_namespaces
 	server.AddTool(mcp.Tool{
@@ -248,7 +256,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, k8s.handleListNamespaces)
+	}, mcpotel.TracedToolHandler(tracer, "list_namespaces", k8s.handleListNamespaces))
 
 	// scale_deployment
 	server.AddTool(mcp.Tool{
@@ -272,7 +280,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name", "replicas"},
 		},
-	}, k8s.handleScaleDeployment)
+	}, mcpotel.TracedToolHandler(tracer, "scale_deployment", k8s.handleScaleDeployment))
 
 	// restart_deployment
 	server.AddTool(mcp.Tool{
@@ -292,7 +300,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, k8s.handleRestartDeployment)
+	}, mcpotel.TracedToolHandler(tracer, "restart_deployment", k8s.handleRestartDeployment))
 
 	// list_events
 	server.AddTool(mcp.Tool{
@@ -315,7 +323,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, k8s.handleListEvents)
+	}, mcpotel.TracedToolHandler(tracer, "list_events", k8s.handleListEvents))
 
 	// get_configmap
 	server.AddTool(mcp.Tool{
@@ -335,7 +343,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, k8s.handleGetConfigMap)
+	}, mcpotel.TracedToolHandler(tracer, "get_configmap", k8s.handleGetConfigMap))
 
 	// get_secret
 	server.AddTool(mcp.Tool{
@@ -359,7 +367,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, k8s.handleGetSecret)
+	}, mcpotel.TracedToolHandler(tracer, "get_secret", k8s.handleGetSecret))
 
 	// list_ingresses
 	server.AddTool(mcp.Tool{
@@ -374,7 +382,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, k8s.handleListIngresses)
+	}, mcpotel.TracedToolHandler(tracer, "list_ingresses", k8s.handleListIngresses))
 
 	// describe_resource
 	server.AddTool(mcp.Tool{
@@ -398,7 +406,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"kind", "name"},
 		},
-	}, k8s.handleDescribeResource)
+	}, mcpotel.TracedToolHandler(tracer, "describe_resource", k8s.handleDescribeResource))
 
 	return server.Run(ctx)
 }
