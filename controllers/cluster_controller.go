@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -47,6 +49,8 @@ import (
 const (
 	defaultClusterProbeInterval = 30 * time.Second
 	defaultClusterProbeTimeout  = 10 * time.Second
+	remoteModelWatchRetryDelay  = 5 * time.Second
+	remoteModelNoMatchRetry     = 30 * time.Second
 
 	clusterConditionReady     = "Ready"
 	clusterConditionSpecValid = "SpecValid"
@@ -58,11 +62,99 @@ var gpuResourceKeys = []corev1.ResourceName{
 	corev1.ResourceName("gpu.intel.com/i915"),
 }
 
+var remoteModelGVR = schema.GroupVersionResource{
+	Group:    "ai.flexinfer",
+	Version:  "v1alpha2",
+	Resource: "models",
+}
+
 // ClusterReconciler reconciles a Cluster object.
 type ClusterReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	watchMu      sync.Mutex
+	modelWatches map[string]*remoteModelWatch
+}
+
+type remoteModelWatch struct {
+	cancel     context.CancelFunc
+	configHash string
+
+	mu     sync.RWMutex
+	models map[string]aiv1alpha2.ClusterModelStatus
+	ready  bool
+}
+
+func newRemoteModelWatch(configHash string, cancel context.CancelFunc) *remoteModelWatch {
+	return &remoteModelWatch{
+		cancel:     cancel,
+		configHash: configHash,
+		models:     make(map[string]aiv1alpha2.ClusterModelStatus),
+	}
+}
+
+func (w *remoteModelWatch) keyForModel(model aiv1alpha2.ClusterModelStatus) string {
+	return model.Namespace + "/" + model.Name
+}
+
+func (w *remoteModelWatch) replaceFromList(items []unstructured.Unstructured) {
+	next := make(map[string]aiv1alpha2.ClusterModelStatus, len(items))
+	for i := range items {
+		model := clusterModelStatusFromUnstructured(items[i])
+		next[w.keyForModel(model)] = model
+	}
+
+	w.mu.Lock()
+	w.models = next
+	w.ready = true
+	w.mu.Unlock()
+}
+
+func (w *remoteModelWatch) applyWatchEvent(event watch.Event) {
+	if event.Type == watch.Bookmark {
+		return
+	}
+
+	item, ok := event.Object.(*unstructured.Unstructured)
+	if !ok || item == nil {
+		return
+	}
+
+	model := clusterModelStatusFromUnstructured(*item)
+	key := w.keyForModel(model)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch event.Type {
+	case watch.Added, watch.Modified:
+		w.models[key] = model
+		w.ready = true
+	case watch.Deleted:
+		delete(w.models, key)
+		w.ready = true
+	}
+}
+
+func (w *remoteModelWatch) snapshot() ([]aiv1alpha2.ClusterModelStatus, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if !w.ready {
+		return nil, false
+	}
+
+	out := make([]aiv1alpha2.ClusterModelStatus, 0, len(w.models))
+	for _, model := range w.models {
+		out = append(out, model)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace == out[j].Namespace {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Namespace < out[j].Namespace
+	})
+	return out, true
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=clusters,verbs=get;list;watch;create;update;patch;delete
@@ -76,6 +168,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	cluster := &aiv1alpha2.Cluster{}
 	if err := r.Get(ctx, req.NamespacedName, cluster); err != nil {
 		if errors.IsNotFound(err) {
+			r.stopRemoteModelWatch(req.NamespacedName.String())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -88,6 +181,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	if err := cluster.Spec.ValidateBasic(); err != nil {
 		msg := fmt.Sprintf("invalid cluster spec: %v", err)
+		r.stopRemoteModelWatch(req.NamespacedName.String())
 		cluster.Status.Phase = aiv1alpha2.ClusterPhaseNotReady
 		cluster.Status.Message = msg
 		now := metav1.Now()
@@ -159,6 +253,12 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 	restConfig.Host = cluster.Spec.NormalizedAPIEndpoint()
 	restConfig.Timeout = defaultClusterProbeTimeout
 
+	watchConfigHash := fmt.Sprintf("%s|%s|%s", restConfig.Host, secret.Name, secret.ResourceVersion)
+	modelWatch, err := r.ensureRemoteModelWatch(cluster, restConfig, watchConfigHash)
+	if err != nil {
+		return nil, fmt.Errorf("ensure remote model watch: %w", err)
+	}
+
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create kubernetes client: %w", err)
@@ -173,6 +273,15 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 	if err != nil {
 		return nil, err
 	}
+	if models, ok := modelWatch.snapshot(); ok {
+		return &clusterObservation{
+			ServerVersion: version.GitVersion,
+			Capacity:      capacity,
+			Available:     available,
+			Models:        models,
+		}, nil
+	}
+
 	models, err := collectRemoteModels(ctx, restConfig)
 	if err != nil {
 		return nil, err
@@ -184,6 +293,127 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 		Available:     available,
 		Models:        models,
 	}, nil
+}
+
+func (r *ClusterReconciler) ensureRemoteModelWatch(cluster *aiv1alpha2.Cluster, restConfig *rest.Config, configHash string) (*remoteModelWatch, error) {
+	key := client.ObjectKeyFromObject(cluster).String()
+
+	r.watchMu.Lock()
+	if r.modelWatches == nil {
+		r.modelWatches = make(map[string]*remoteModelWatch)
+	}
+	if existing, ok := r.modelWatches[key]; ok {
+		if existing.configHash == configHash {
+			r.watchMu.Unlock()
+			return existing, nil
+		}
+		existing.cancel()
+		delete(r.modelWatches, key)
+	}
+
+	cfg := rest.CopyConfig(restConfig)
+	cfg.Timeout = 0
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		r.watchMu.Unlock()
+		return nil, fmt.Errorf("create dynamic client: %w", err)
+	}
+
+	watchCtx, cancel := context.WithCancel(context.Background())
+	modelWatch := newRemoteModelWatch(configHash, cancel)
+	r.modelWatches[key] = modelWatch
+	r.watchMu.Unlock()
+
+	go runRemoteModelWatchLoop(watchCtx, dynClient, modelWatch)
+	return modelWatch, nil
+}
+
+func (r *ClusterReconciler) stopRemoteModelWatch(key string) {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	if r.modelWatches == nil {
+		return
+	}
+	if existing, ok := r.modelWatches[key]; ok {
+		existing.cancel()
+		delete(r.modelWatches, key)
+	}
+}
+
+func runRemoteModelWatchLoop(ctx context.Context, dynClient dynamic.Interface, modelWatch *remoteModelWatch) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		list, err := dynClient.Resource(remoteModelGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) || metautil.IsNoMatchError(err) {
+				modelWatch.replaceFromList(nil)
+				if !waitForContextOrTimeout(ctx, remoteModelNoMatchRetry) {
+					return
+				}
+				continue
+			}
+			if !waitForContextOrTimeout(ctx, remoteModelWatchRetryDelay) {
+				return
+			}
+			continue
+		}
+
+		modelWatch.replaceFromList(list.Items)
+		modelWatcher, err := dynClient.Resource(remoteModelGVR).Namespace(metav1.NamespaceAll).Watch(ctx, metav1.ListOptions{
+			ResourceVersion:     list.GetResourceVersion(),
+			AllowWatchBookmarks: true,
+		})
+		if err != nil {
+			if !waitForContextOrTimeout(ctx, remoteModelWatchRetryDelay) {
+				return
+			}
+			continue
+		}
+
+		shouldRestart := consumeRemoteModelWatch(ctx, modelWatcher, modelWatch)
+		if !shouldRestart {
+			return
+		}
+	}
+}
+
+func consumeRemoteModelWatch(ctx context.Context, watcher watch.Interface, modelWatch *remoteModelWatch) bool {
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return true
+			}
+			if event.Type == watch.Error {
+				return true
+			}
+			modelWatch.applyWatchEvent(event)
+		}
+	}
+}
+
+func waitForContextOrTimeout(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func extractKubeconfig(secret *corev1.Secret) ([]byte, error) {
@@ -270,13 +500,7 @@ func collectRemoteModels(ctx context.Context, restConfig *rest.Config) ([]aiv1al
 		return nil, fmt.Errorf("create dynamic client: %w", err)
 	}
 
-	modelGVR := schema.GroupVersionResource{
-		Group:    "ai.flexinfer",
-		Version:  "v1alpha2",
-		Resource: "models",
-	}
-
-	list, err := dynClient.Resource(modelGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	list, err := dynClient.Resource(remoteModelGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		// Some clusters may not have v1alpha2 installed yet; treat as empty inventory.
 		if errors.IsNotFound(err) || metautil.IsNoMatchError(err) {
@@ -290,12 +514,7 @@ func collectRemoteModels(ctx context.Context, restConfig *rest.Config) ([]aiv1al
 func buildClusterModelStatus(items []unstructured.Unstructured) []aiv1alpha2.ClusterModelStatus {
 	out := make([]aiv1alpha2.ClusterModelStatus, 0, len(items))
 	for _, item := range items {
-		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
-		out = append(out, aiv1alpha2.ClusterModelStatus{
-			Name:      item.GetName(),
-			Namespace: item.GetNamespace(),
-			Phase:     phase,
-		})
+		out = append(out, clusterModelStatusFromUnstructured(item))
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -305,6 +524,15 @@ func buildClusterModelStatus(items []unstructured.Unstructured) []aiv1alpha2.Clu
 		return out[i].Namespace < out[j].Namespace
 	})
 	return out
+}
+
+func clusterModelStatusFromUnstructured(item unstructured.Unstructured) aiv1alpha2.ClusterModelStatus {
+	phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+	return aiv1alpha2.ClusterModelStatus{
+		Name:      item.GetName(),
+		Namespace: item.GetNamespace(),
+		Phase:     phase,
+	}
 }
 
 func clusterRegion(cluster *aiv1alpha2.Cluster) string {

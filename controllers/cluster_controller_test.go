@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -202,5 +203,99 @@ func TestBuildClusterModelStatusSorted(t *testing.T) {
 	}
 	if got[1].Namespace != "ns-b" || got[1].Name != "zeta" || got[1].Phase != "Ready" {
 		t.Fatalf("second model = %+v, want ns-b/zeta Ready", got[1])
+	}
+}
+
+func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
+	w := newRemoteModelWatch("cfg", func() {})
+	if _, ok := w.snapshot(); ok {
+		t.Fatal("snapshot should not be ready before initial list")
+	}
+
+	initial := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name":      "zeta",
+					"namespace": "ns-b",
+				},
+				"status": map[string]interface{}{
+					"phase": "Pending",
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name":      "alpha",
+					"namespace": "ns-a",
+				},
+				"status": map[string]interface{}{
+					"phase": "Loading",
+				},
+			},
+		},
+	}
+	w.replaceFromList(initial)
+
+	got, ok := w.snapshot()
+	if !ok {
+		t.Fatal("snapshot should be ready after initial list")
+	}
+	if len(got) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(got))
+	}
+	if got[0].Namespace != "ns-a" || got[0].Name != "alpha" || got[0].Phase != "Loading" {
+		t.Fatalf("first model = %+v, want ns-a/alpha Loading", got[0])
+	}
+
+	modified := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name":      "alpha",
+				"namespace": "ns-a",
+			},
+			"status": map[string]interface{}{
+				"phase": "Ready",
+			},
+		},
+	}
+	w.applyWatchEvent(watch.Event{Type: watch.Modified, Object: modified})
+	deleted := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name":      "zeta",
+				"namespace": "ns-b",
+			},
+		},
+	}
+	w.applyWatchEvent(watch.Event{Type: watch.Deleted, Object: deleted})
+
+	got, ok = w.snapshot()
+	if !ok {
+		t.Fatal("snapshot should remain ready after watch events")
+	}
+	if len(got) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(got))
+	}
+	if got[0].Namespace != "ns-a" || got[0].Name != "alpha" || got[0].Phase != "Ready" {
+		t.Fatalf("remaining model = %+v, want ns-a/alpha Ready", got[0])
+	}
+}
+
+func TestStopRemoteModelWatch(t *testing.T) {
+	canceled := false
+	r := &ClusterReconciler{
+		modelWatches: map[string]*remoteModelWatch{
+			"flexinfer-system/cluster-a": newRemoteModelWatch("cfg", func() { canceled = true }),
+		},
+	}
+
+	r.stopRemoteModelWatch("flexinfer-system/cluster-a")
+	if !canceled {
+		t.Fatal("expected watch cancel to be invoked")
+	}
+	if _, ok := r.modelWatches["flexinfer-system/cluster-a"]; ok {
+		t.Fatal("expected watch entry to be removed")
 	}
 }

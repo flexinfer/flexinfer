@@ -150,7 +150,7 @@ The project has moved from code-complete to production-ready with the completion
 
 ### Innovation Roadmap
 
-#### Phase 5: Multi-Cluster (Delivered with One Open Gap)
+#### Phase 5: Multi-Cluster (Delivered)
 
 See `docs/design/multi-cluster.md` for full design.
 
@@ -159,7 +159,6 @@ See `docs/design/multi-cluster.md` for full design.
 - [x] **Global Proxy**: Route to cluster-local proxies
 - [x] **Advanced Routing**: Latency-based, weighted, GPU-aware
 - [x] **Cross-cluster aggregate metrics**: Global proxy cluster totals + per-vendor GPU inventory + unified Grafana dashboard
-- [ ] **Remaining gap**: Watch FlexInfer resources in remote clusters via client (phase-5 checklist item 5.1.3)
 
 #### Recently Shipped (Advanced Features) ✅
 
@@ -192,8 +191,7 @@ See `docs/design/multi-cluster.md` for full design.
 **Remaining Work:**
 
 1. **Multi-tenancy hardening** — MT-3 tenant fair-share scheduling remains (MT-2 admission guardrails shipped in `888a1fe`); see `docs/planning/multi-tenancy-followups.md` and roadmap issue [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
-2. **Multi-cluster final gap (Phase 5)** — watch-based remote inventory updates remain; see `docs/planning/phase-5-multi-cluster.md` item 5.1.3
-3. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
+2. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
 
 **What's Ready:**
 - ✅ Helm charts complete

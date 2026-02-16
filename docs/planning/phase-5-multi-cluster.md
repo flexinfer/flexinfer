@@ -72,7 +72,7 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 3) Cluster inventory aggregation
 
-- [ ] Watch FlexInfer resources in remote clusters via client
+- [x] Watch FlexInfer resources in remote clusters via client
 - [x] Aggregate GPU capacity from remote nodes (allocatable GPU resources)
 - [x] Aggregate model inventory from remote Model resources
 - [x] Update `Cluster.status.models` with remote model list
@@ -82,7 +82,6 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 **Primary files**
 - `controllers/cluster_controller.go`
-- `internal/cluster/inventory.go` (new)
 
 ### Phase 5.2: Cross-Cluster Model Sync
 

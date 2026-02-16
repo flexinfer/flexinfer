@@ -22,7 +22,6 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 
 Open roadmap scope is now concentrated on:
 - Multi-tenancy hardening follow-ups (MT-2/MT-3) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2))
-- Phase 5 completion gap: watch-based remote inventory updates (`docs/planning/phase-5-multi-cluster.md` item 5.1.3)
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system
@@ -140,7 +139,6 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 - [x] Cross-Cluster Model Sync ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4))
 - [x] Global Routing ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5))
 - [x] Advanced Features (weighted routing, cross-cluster GPU sharing, aggregate metrics/dashboard) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6))
-- [ ] Remaining gap: watch FlexInfer resources in remote clusters via client (`docs/planning/phase-5-multi-cluster.md` item 5.1.3)
 
 ## Innovation Roadmap
 
