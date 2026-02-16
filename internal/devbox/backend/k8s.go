@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,15 +21,19 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
+const defaultKanikoImage = "gcr.io/kaniko-project/executor:v1.23.2"
+
 // K8sBackend implements Backend using a Kubernetes cluster.
+// Builds are performed in-cluster via Kaniko pods — no local Docker daemon required.
 type K8sBackend struct {
 	clientset       *kubernetes.Clientset
 	restConfig      *rest.Config
 	namespace       string
 	registry        string
-	dockerPath      string // local docker CLI for building+pushing images
 	workspacePVC    string // PVC name for NFS workspace volume
 	imagePullSecret string // image pull secret name for private registry
+	workspaceRoot   string // host path to workspace (NFS export source)
+	kanikoImage     string // Kaniko executor image
 }
 
 // K8sBackendConfig holds configuration for the K8s backend.
@@ -38,6 +44,8 @@ type K8sBackendConfig struct {
 	StorageClass    string // storage class for PVCs (default: "longhorn")
 	WorkspacePVC    string // PVC name for NFS workspace (default: "devbox-workspace-nfs")
 	ImagePullSecret string // image pull secret name (default: "harbor-creds")
+	WorkspaceRoot   string // host path to workspace (for NFS-relative path computation)
+	KanikoImage     string // Kaniko executor image (default: gcr.io/kaniko-project/executor:v1.23.2)
 }
 
 // NewK8sBackend creates a new Kubernetes backend.
@@ -54,6 +62,13 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	if cfg.ImagePullSecret == "" {
 		cfg.ImagePullSecret = "harbor-creds"
 	}
+	if cfg.KanikoImage == "" {
+		cfg.KanikoImage = defaultKanikoImage
+	}
+	if cfg.WorkspaceRoot == "" {
+		home, _ := os.UserHomeDir()
+		cfg.WorkspaceRoot = filepath.Join(home, "workspace")
+	}
 
 	restConfig, err := buildRestConfig(cfg.Kubeconfig)
 	if err != nil {
@@ -65,17 +80,15 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		return nil, fmt.Errorf("create clientset: %w", err)
 	}
 
-	// Docker CLI needed for building and pushing images
-	dockerPath, _ := exec.LookPath("docker")
-
 	return &K8sBackend{
 		clientset:       clientset,
 		restConfig:      restConfig,
 		namespace:       cfg.Namespace,
 		registry:        cfg.Registry,
-		dockerPath:      dockerPath,
 		workspacePVC:    cfg.WorkspacePVC,
 		imagePullSecret: cfg.ImagePullSecret,
+		workspaceRoot:   cfg.WorkspaceRoot,
+		kanikoImage:     cfg.KanikoImage,
 	}, nil
 }
 
@@ -100,40 +113,55 @@ func (k *K8sBackend) Health(ctx context.Context) error {
 }
 
 func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, error) {
-	if k.dockerPath == "" {
-		return nil, fmt.Errorf("docker CLI not found — required for building images to push to registry")
-	}
-
-	// Prefix the tag with the registry for push
 	registryTag := k.registryTag(opts.Tag)
 
-	// Write Dockerfile to temp dir
-	tmpDir, err := os.MkdirTemp("", "devbox-k8s-build-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
+	// Compute NFS-relative paths so the Kaniko pod can find files via the shared PVC.
+	contextRel, err := filepath.Rel(k.workspaceRoot, opts.ContextDir)
+	if err != nil || strings.HasPrefix(contextRel, "..") {
+		return nil, fmt.Errorf("context dir %q is not under workspace root %q", opts.ContextDir, k.workspaceRoot)
 	}
-	defer os.RemoveAll(tmpDir)
 
-	dockerfilePath := tmpDir + "/Dockerfile"
-	if err := os.WriteFile(dockerfilePath, opts.Dockerfile, 0600); err != nil {
+	// Write Dockerfile to a build staging area on the NFS volume.
+	buildName := sanitizeBuildName(opts.Tag)
+	buildDir := filepath.Join(k.workspaceRoot, ".devbox-build", buildName)
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return nil, fmt.Errorf("create build dir: %w", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	dockerfilePath := filepath.Join(buildDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, opts.Dockerfile, 0644); err != nil {
 		return nil, fmt.Errorf("write Dockerfile: %w", err)
 	}
 
-	// Build locally
-	buildCmd := exec.CommandContext(ctx, k.dockerPath,
-		"build", "-t", registryTag, "-f", dockerfilePath, opts.ContextDir)
-	out, err := buildCmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("docker build failed: %w\n%s", err, string(out))
-	}
-	cached := strings.Contains(string(out), "CACHED")
+	// NFS-relative paths for the Kaniko pod
+	dockerfileRel := filepath.Join(".devbox-build", buildName, "Dockerfile")
+	cacheRepo := k.registry + "/cache/devbox"
 
-	// Push to registry
-	pushCmd := exec.CommandContext(ctx, k.dockerPath, "push", registryTag)
-	pushOut, err := pushCmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("docker push failed: %w\n%s", err, string(pushOut))
+	// Create the Kaniko build pod
+	podName := "kaniko-build-" + buildName
+	pod := k.buildKanikoPodSpec(podName, registryTag, dockerfileRel, contextRel, cacheRepo)
+
+	// Delete any leftover build pod with the same name
+	_ = k.deletePod(ctx, podName)
+
+	if _, err := k.clientset.CoreV1().Pods(k.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return nil, fmt.Errorf("create kaniko pod: %w", err)
 	}
+	defer func() {
+		_ = k.deletePod(context.Background(), podName)
+	}()
+
+	// Wait for the build to complete
+	if err := k.waitForPodDone(ctx, podName, 10*time.Minute); err != nil {
+		logs, _ := k.getPodLogs(ctx, podName)
+		return nil, fmt.Errorf("kaniko build failed: %w\n%s", err, logs)
+	}
+
+	// Read build logs and check for cache hits
+	logs, _ := k.getPodLogs(ctx, podName)
+	cached := strings.Contains(logs, "Found layer in cache") ||
+		strings.Contains(logs, "Using caching version of cmd")
 
 	return &BuildResult{ImageTag: registryTag, Cached: cached}, nil
 }
@@ -462,6 +490,159 @@ func (k *K8sBackend) waitForPodRunning(ctx context.Context, name string, timeout
 		}
 	}
 	return fmt.Errorf("pod %s did not reach Running within %s", name, timeout)
+}
+
+// buildKanikoPodSpec creates a Pod spec for a Kaniko in-cluster build.
+func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileRel, contextRel, cacheRepo string) *corev1.Pod {
+	gracePeriod := int64(0)
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: k.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "mcp-devbox",
+				"devbox/build":                 "kaniko",
+			},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy:                 corev1.RestartPolicyNever,
+			ServiceAccountName:            "mcp-devbox",
+			TerminationGracePeriodSeconds: &gracePeriod,
+			NodeSelector: map[string]string{
+				"kubernetes.io/arch": "amd64",
+			},
+			Containers: []corev1.Container{
+				{
+					Name:  "kaniko",
+					Image: k.kanikoImage,
+					Args: []string{
+						"--context=dir:///workspace/" + contextRel,
+						"--dockerfile=/workspace/" + dockerfileRel,
+						"--destination=" + destination,
+						"--cache=true",
+						"--cache-repo=" + cacheRepo,
+						"--cache-copy-layers",
+						"--snapshot-mode=redo",
+						"--use-new-run",
+					},
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("512Mi"),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("2Gi"),
+						},
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "workspace", MountPath: "/workspace"},
+						{Name: "docker-config", MountPath: "/kaniko/.docker", ReadOnly: true},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "workspace",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: k.workspacePVC,
+						},
+					},
+				},
+				{
+					Name: "docker-config",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName: k.imagePullSecret,
+							Items: []corev1.KeyToPath{
+								{Key: ".dockerconfigjson", Path: "config.json"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// waitForPodDone polls until the pod reaches Succeeded or Failed, or timeout.
+// Returns early on image pull errors to avoid waiting the full timeout.
+func (k *K8sBackend) waitForPodDone(ctx context.Context, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pod, err := k.clientset.CoreV1().Pods(k.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get pod: %w", err)
+		}
+		switch pod.Status.Phase {
+		case corev1.PodSucceeded:
+			return nil
+		case corev1.PodFailed:
+			return fmt.Errorf("build pod failed (phase: %s)", pod.Status.Phase)
+		}
+		// Check for image pull errors (early exit)
+		for _, cs := range pod.Status.ContainerStatuses {
+			if w := cs.State.Waiting; w != nil {
+				if w.Reason == "ErrImagePull" || w.Reason == "ImagePullBackOff" {
+					return fmt.Errorf("image pull error: %s — %s", w.Reason, w.Message)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+	return fmt.Errorf("build pod %s did not complete within %s", name, timeout)
+}
+
+// getPodLogs reads the last 100 lines from the kaniko container.
+func (k *K8sBackend) getPodLogs(ctx context.Context, podName string) (string, error) {
+	tailLines := int64(100)
+	req := k.clientset.CoreV1().Pods(k.namespace).GetLogs(podName, &corev1.PodLogOptions{
+		Container: "kaniko",
+		TailLines: &tailLines,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get logs: %w", err)
+	}
+	defer stream.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, stream); err != nil {
+		return "", fmt.Errorf("read logs: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// deletePod deletes a pod with zero grace period (immediate).
+func (k *K8sBackend) deletePod(ctx context.Context, name string) error {
+	gracePeriod := int64(0)
+	err := k.clientset.CoreV1().Pods(k.namespace).Delete(ctx, name, metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+	})
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("delete pod: %w", err)
+	}
+	return nil
+}
+
+// sanitizeBuildName extracts a filesystem-safe name from an image tag.
+var buildNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)
+
+func sanitizeBuildName(tag string) string {
+	// Use the last path component, strip the registry prefix
+	parts := strings.Split(tag, "/")
+	name := parts[len(parts)-1]
+	// Replace colons and other unsafe chars
+	name = buildNameRe.ReplaceAllString(name, "-")
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
 }
 
 // registryTag prepends the registry to a local image tag.
