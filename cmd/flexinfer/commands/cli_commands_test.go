@@ -651,17 +651,26 @@ func TestRunQuantize_RejectsUnsupportedFormat(t *testing.T) {
 	origNs := namespace
 	origFormat := quantFormat
 	origType := quantType
+	origBits := quantBits
+	origGroupSize := quantGroupSize
+	origUseGPU := quantUseGPU
 	origMem := quantMaxMemGB
 	t.Cleanup(func() {
 		namespace = origNs
 		quantFormat = origFormat
 		quantType = origType
+		quantBits = origBits
+		quantGroupSize = origGroupSize
+		quantUseGPU = origUseGPU
 		quantMaxMemGB = origMem
 	})
 
 	namespace = "flexinfer-system"
-	quantFormat = "AWQ"
+	quantFormat = "EXL2"
 	quantType = ""
+	quantBits = 4
+	quantGroupSize = 128
+	quantUseGPU = true
 	quantMaxMemGB = 0
 
 	err := runQuantize(cmd, []string{"test-cache"})
@@ -689,17 +698,26 @@ func TestRunQuantize_AppliesGGUFSpec(t *testing.T) {
 	origNs := namespace
 	origFormat := quantFormat
 	origType := quantType
+	origBits := quantBits
+	origGroupSize := quantGroupSize
+	origUseGPU := quantUseGPU
 	origMem := quantMaxMemGB
 	t.Cleanup(func() {
 		namespace = origNs
 		quantFormat = origFormat
 		quantType = origType
+		quantBits = origBits
+		quantGroupSize = origGroupSize
+		quantUseGPU = origUseGPU
 		quantMaxMemGB = origMem
 	})
 
 	namespace = "flexinfer-system"
 	quantFormat = "gguf"
 	quantType = "q5_k_m"
+	quantBits = 4
+	quantGroupSize = 128
+	quantUseGPU = true
 	quantMaxMemGB = 64
 
 	if err := runQuantize(cmd, []string{"test-cache"}); err != nil {
@@ -725,6 +743,77 @@ func TestRunQuantize_AppliesGGUFSpec(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "Format: GGUF") {
 		t.Fatalf("expected output to include normalized format, got: %q", stdout.String())
+	}
+}
+
+func TestRunQuantize_AppliesAWQSpec(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelCacheSpec{Source: "huggingface://meta-llama/Llama-3-8B"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origFormat := quantFormat
+	origType := quantType
+	origBits := quantBits
+	origGroupSize := quantGroupSize
+	origUseGPU := quantUseGPU
+	origMem := quantMaxMemGB
+	t.Cleanup(func() {
+		namespace = origNs
+		quantFormat = origFormat
+		quantType = origType
+		quantBits = origBits
+		quantGroupSize = origGroupSize
+		quantUseGPU = origUseGPU
+		quantMaxMemGB = origMem
+	})
+
+	namespace = "flexinfer-system"
+	quantFormat = "awq"
+	quantType = ""
+	quantBits = 4
+	quantGroupSize = 128
+	quantUseGPU = true
+	quantMaxMemGB = 48
+
+	if err := runQuantize(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantize() error: %v", err)
+	}
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := c.Get(ctx(), types.NamespacedName{Name: "test-cache", Namespace: "flexinfer-system"}, updated); err != nil {
+		t.Fatalf("Get updated ModelCache: %v", err)
+	}
+	if updated.Spec.Quantization == nil {
+		t.Fatal("expected quantization spec to be set")
+	}
+	if updated.Spec.Quantization.Format != aiv1alpha1.QuantizationFormatAWQ {
+		t.Fatalf("Format = %q, want %q", updated.Spec.Quantization.Format, aiv1alpha1.QuantizationFormatAWQ)
+	}
+	if updated.Spec.Quantization.Bits == nil || *updated.Spec.Quantization.Bits != 4 {
+		t.Fatalf("Bits = %v, want 4", updated.Spec.Quantization.Bits)
+	}
+	if updated.Spec.Quantization.GroupSize == nil || *updated.Spec.Quantization.GroupSize != 128 {
+		t.Fatalf("GroupSize = %v, want 128", updated.Spec.Quantization.GroupSize)
+	}
+	if !updated.Spec.Quantization.UseGPU {
+		t.Fatalf("UseGPU = %v, want true", updated.Spec.Quantization.UseGPU)
+	}
+	if updated.Spec.Quantization.MaxMemoryGB == nil || *updated.Spec.Quantization.MaxMemoryGB != 48 {
+		t.Fatalf("MaxMemoryGB = %v, want 48", updated.Spec.Quantization.MaxMemoryGB)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Format: AWQ") || !strings.Contains(out, "Type:   W4_G128") {
+		t.Fatalf("expected AWQ output in stdout, got: %q", out)
 	}
 }
 

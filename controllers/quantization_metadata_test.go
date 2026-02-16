@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,5 +101,34 @@ func TestQuantizationCompressionRatioAndFormatting(t *testing.T) {
 	}
 	if got := formatCompressionRatio(ratio); got != "3.75" {
 		t.Fatalf("formatCompressionRatio = %q, want %q", got, "3.75")
+	}
+}
+
+func TestQuantizationTypeFromSpec(t *testing.T) {
+	gguf := &aiv1alpha1.QuantizationSpec{
+		Format:   aiv1alpha1.QuantizationFormatGGUF,
+		GGUFType: "Q5_K_M",
+	}
+	if got := quantizationTypeFromSpec(gguf); got != "Q5_K_M" {
+		t.Fatalf("GGUF type = %q, want %q", got, "Q5_K_M")
+	}
+
+	awqBits := int32(4)
+	awqGroup := int32(128)
+	awq := &aiv1alpha1.QuantizationSpec{
+		Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Bits:      &awqBits,
+		GroupSize: &awqGroup,
+		UseGPU:    true,
+	}
+	if got := quantizationTypeFromSpec(awq); got != "W4_G128" {
+		t.Fatalf("AWQ type = %q, want %q", got, "W4_G128")
+	}
+
+	gptq := &aiv1alpha1.QuantizationSpec{
+		Format: aiv1alpha1.QuantizationFormatGPTQ,
+	}
+	if got := quantizationTypeFromSpec(gptq); got != "W4_G128" {
+		t.Fatalf("GPTQ default type = %q, want %q", got, "W4_G128")
 	}
 }

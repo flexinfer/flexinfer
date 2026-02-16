@@ -1892,7 +1892,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationStarted",
 			fmt.Sprintf("Quantization job created: format=%s type=%s",
 				modelCache.Spec.Quantization.Format,
-				modelCache.Spec.Quantization.GGUFType))
+				quantizationTypeFromSpec(modelCache.Spec.Quantization)))
 
 		// Requeue after 30s to check job status
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -1905,13 +1905,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		log.Info("Quantization job succeeded", "cache", modelCache.Name)
 
 		// Populate quantization status and metrics from quantizer output.
-		ggufType := modelCache.Spec.Quantization.GGUFType
-		if ggufType == "" {
-			ggufType = "Q4_K_M"
-		}
+		quantType := quantizationTypeFromSpec(modelCache.Spec.Quantization)
 		quantStatus := &aiv1alpha1.QuantizationStatus{
 			Format: string(modelCache.Spec.Quantization.Format),
-			Type:   ggufType,
+			Type:   quantType,
 		}
 
 		quantDurationSeconds := int64(0)
@@ -1955,7 +1952,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
 			fmt.Sprintf("Model quantized (%s/%s) and cached at %s",
-				modelCache.Spec.Quantization.Format, ggufType, modelCache.Status.Path))
+				modelCache.Spec.Quantization.Format, quantStatus.Type, modelCache.Status.Path))
 
 		// Update quantization metrics
 		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "succeeded").Inc()
@@ -2102,6 +2099,42 @@ func formatCompressionRatio(ratio float64) string {
 	formatted = strings.TrimRight(formatted, "0")
 	formatted = strings.TrimRight(formatted, ".")
 	return formatted
+}
+
+func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
+	if spec == nil {
+		return ""
+	}
+
+	switch spec.Format {
+	case aiv1alpha1.QuantizationFormatGGUF:
+		if spec.GGUFType != "" {
+			return spec.GGUFType
+		}
+		return quantization.DefaultGGUFType
+	case aiv1alpha1.QuantizationFormatAWQ:
+		bits := int32(quantization.DefaultAWQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return fmt.Sprintf("W%d_G%d", bits, groupSize)
+	case aiv1alpha1.QuantizationFormatGPTQ:
+		bits := int32(quantization.DefaultGPTQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return fmt.Sprintf("W%d_G%d", bits, groupSize)
+	default:
+		return string(spec.Format)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

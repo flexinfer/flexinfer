@@ -3,6 +3,9 @@ package quantization
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
@@ -41,10 +44,28 @@ func TestGetBuilder(t *testing.T) {
 		t.Errorf("builder.Format() = %v, want GGUF", builder.Format())
 	}
 
-	// AWQ should return an error (not yet implemented)
-	_, err = GetBuilder(aiv1alpha1.QuantizationFormatAWQ)
+	// AWQ should return a builder
+	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatAWQ)
+	if err != nil {
+		t.Fatalf("GetBuilder(AWQ) returned error: %v", err)
+	}
+	if builder.Format() != aiv1alpha1.QuantizationFormatAWQ {
+		t.Errorf("builder.Format() = %v, want AWQ", builder.Format())
+	}
+
+	// GPTQ should return a builder
+	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatGPTQ)
+	if err != nil {
+		t.Fatalf("GetBuilder(GPTQ) returned error: %v", err)
+	}
+	if builder.Format() != aiv1alpha1.QuantizationFormatGPTQ {
+		t.Errorf("builder.Format() = %v, want GPTQ", builder.Format())
+	}
+
+	// EXL2 is still not implemented
+	_, err = GetBuilder(aiv1alpha1.QuantizationFormatEXL2)
 	if err == nil {
-		t.Error("GetBuilder(AWQ) should return error for unimplemented format")
+		t.Error("GetBuilder(EXL2) should return error for unimplemented format")
 	}
 }
 
@@ -241,6 +262,111 @@ func TestGGUFJobBuilder_BuildJob_CustomMemory(t *testing.T) {
 	memLimit := container.Resources.Limits.Memory()
 	if memLimit.String() != "64Gi" {
 		t.Errorf("memory limit = %q, want %q", memLimit.String(), "64Gi")
+	}
+}
+
+func TestAWQJobBuilder_Validate(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+
+	valid := &aiv1alpha1.QuantizationSpec{
+		Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Bits:      &bits,
+		GroupSize: &groupSize,
+		UseGPU:    true,
+	}
+	if err := builder.Validate(valid); err != nil {
+		t.Fatalf("Validate(valid AWQ) returned error: %v", err)
+	}
+
+	invalidBits := int32(8)
+	invalidSpec := &aiv1alpha1.QuantizationSpec{
+		Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Bits:      &invalidBits,
+		GroupSize: &groupSize,
+		UseGPU:    true,
+	}
+	if err := builder.Validate(invalidSpec); err == nil {
+		t.Fatal("Validate(invalid AWQ bits) should return error")
+	}
+}
+
+func TestAWQJobBuilder_BuildJob(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "llama3-awq",
+		Namespace: "flexinfer-system",
+		PVCName:   "llama3-awq",
+		ModelPath: "llama3-awq",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatAWQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	if container.Image != DefaultAWQImage {
+		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultAWQImage)
+	}
+	gpuResource := corev1.ResourceName("nvidia.com/gpu")
+	gpuLimit, ok := container.Resources.Limits[gpuResource]
+	if !ok {
+		t.Fatal("expected GPU limit to be set")
+	}
+	if gpuLimit.Cmp(resource.MustParse("1")) != 0 {
+		t.Fatalf("GPU limit = %q, want 1", gpuLimit.String())
+	}
+	script := container.Args[0]
+	if !contains(script, "AutoAWQForCausalLM") {
+		t.Fatal("expected AWQ script to reference AutoAWQForCausalLM")
+	}
+	if !contains(script, "/dev/termination-log") {
+		t.Fatal("expected AWQ script to write termination metadata")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(8)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "llama3-gptq",
+		Namespace: "flexinfer-system",
+		PVCName:   "llama3-gptq",
+		ModelPath: "llama3-gptq",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	if container.Image != DefaultGPTQImage {
+		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQImage)
+	}
+	script := container.Args[0]
+	if !contains(script, "AutoGPTQForCausalLM") {
+		t.Fatal("expected GPTQ script to reference AutoGPTQForCausalLM")
+	}
+	if !contains(script, "W${BITS}_G${GROUP_SIZE}") {
+		t.Fatal("expected GPTQ script type marker")
 	}
 }
 
