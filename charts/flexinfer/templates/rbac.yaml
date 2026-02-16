@@ -117,6 +117,9 @@ rules:
       - clusters
       - clusters/status
       - clusters/finalizers
+      - federatedmodels
+      - federatedmodels/status
+      - federatedmodels/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]

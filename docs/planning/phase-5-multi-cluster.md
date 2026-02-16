@@ -107,7 +107,7 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 5) Model propagation
 
-- [ ] Watch FederatedModel resources
+- [x] Watch FederatedModel resources (status/placement scaffold controller)
 - [ ] Create/update/delete Model resources in target clusters
 - [ ] Handle cluster membership changes (add/remove clusters)
 - [ ] Aggregate status from remote Models

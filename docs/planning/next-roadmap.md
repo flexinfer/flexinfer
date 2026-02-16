@@ -88,6 +88,7 @@ Progress note:
 - Cluster health probing + status transitions + probe metrics are implemented (`controllers/cluster_controller.go`).
 - Cluster status now aggregates remote model inventory into `Cluster.status.models` (best-effort).
 - FederatedModel CRD scaffold has landed (`api/v1alpha2/federatedmodel_types.go`, `config/crd/ai.flexinfer_federatedmodels.yaml`).
+- FederatedModel controller scaffold now resolves placement and updates aggregated cluster readiness status (`controllers/federatedmodel_controller.go`).
 - Remaining Cluster Registry work is controller hardening (timeouts/retries/backoff and richer conditions).
 
 ## Tech Debt (Ongoing)
