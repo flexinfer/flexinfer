@@ -148,6 +148,7 @@ func main() {
 		slog.Error("failed to initialize proxy state", "error", err)
 		os.Exit(1)
 	}
+	metrics := newRoutingMetrics()
 
 	if strings.TrimSpace(globalProxyName) != "" {
 		k8sClient, err := newGlobalProxyClient()
@@ -157,7 +158,7 @@ func main() {
 		}
 
 		ctx := context.Background()
-		if err := syncFromGlobalProxy(ctx, k8sClient, globalProxyNamespace, globalProxyName, state); err != nil {
+		if err := syncFromGlobalProxy(ctx, k8sClient, globalProxyNamespace, globalProxyName, state, metrics); err != nil {
 			slog.Warn("initial GlobalProxy sync failed; continuing with flag/env config",
 				"namespace", globalProxyNamespace,
 				"name", globalProxyName,
@@ -170,10 +171,9 @@ func main() {
 			)
 		}
 
-		go runGlobalProxySyncLoop(ctx, k8sClient, globalProxyNamespace, globalProxyName, state, globalProxySyncInterval)
+		go runGlobalProxySyncLoop(ctx, k8sClient, globalProxyNamespace, globalProxyName, state, metrics, globalProxySyncInterval)
 	}
 
-	metrics := newRoutingMetrics()
 	prober := newClusterProber(probePath, probeTimeout)
 	prober.probeAll(state.registry, metrics)
 	go runProbeLoop(state.registry, metrics, prober, probeEvery)
@@ -269,7 +269,7 @@ func newGlobalProxyClient() (crclient.Client, error) {
 	return k8sClient, nil
 }
 
-func runGlobalProxySyncLoop(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState, interval time.Duration) {
+func runGlobalProxySyncLoop(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState, metrics *routingMetrics, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
@@ -278,13 +278,13 @@ func runGlobalProxySyncLoop(ctx context.Context, k8sClient crclient.Client, name
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if err := syncFromGlobalProxy(ctx, k8sClient, namespace, name, state); err != nil {
+		if err := syncFromGlobalProxy(ctx, k8sClient, namespace, name, state, metrics); err != nil {
 			slog.Warn("GlobalProxy sync failed", "namespace", namespace, "name", name, "error", err)
 		}
 	}
 }
 
-func syncFromGlobalProxy(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState) error {
+func syncFromGlobalProxy(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState, metrics *routingMetrics) error {
 	globalProxy := &aiv1alpha2.GlobalProxy{}
 	if err := k8sClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: name}, globalProxy); err != nil {
 		return fmt.Errorf("get GlobalProxy %s/%s: %w", namespace, name, err)
@@ -294,7 +294,7 @@ func syncFromGlobalProxy(ctx context.Context, k8sClient crclient.Client, namespa
 	if err != nil {
 		return fmt.Errorf("build runtime config from GlobalProxy %s/%s: %w", namespace, name, err)
 	}
-	cfg.clusters = enrichClusterCapabilities(ctx, k8sClient, namespace, cfg.clusters)
+	cfg.clusters = enrichClusterCapabilities(ctx, k8sClient, namespace, cfg.clusters, metrics)
 	if err := state.applyConfig(cfg); err != nil {
 		return fmt.Errorf("apply GlobalProxy runtime config %s/%s: %w", namespace, name, err)
 	}
@@ -358,7 +358,7 @@ func runtimeConfigFromGlobalProxy(gp *aiv1alpha2.GlobalProxy) (runtimeConfig, er
 	}, nil
 }
 
-func enrichClusterCapabilities(ctx context.Context, k8sClient crclient.Client, namespace string, clusters []globalrouting.ClusterEndpoint) []globalrouting.ClusterEndpoint {
+func enrichClusterCapabilities(ctx context.Context, k8sClient crclient.Client, namespace string, clusters []globalrouting.ClusterEndpoint, metrics *routingMetrics) []globalrouting.ClusterEndpoint {
 	out := make([]globalrouting.ClusterEndpoint, len(clusters))
 	copy(out, clusters)
 
@@ -375,6 +375,9 @@ func enrichClusterCapabilities(ctx context.Context, k8sClient crclient.Client, n
 			out[i].GPUVendor = vendor
 		}
 		out[i].FreeGPUs = extractAvailableGPUCount(cluster.Status.Available)
+		if metrics != nil {
+			metrics.recordClusterInventory(cluster.Name, cluster.Status.Available, cluster.Status.Capacity)
+		}
 	}
 
 	return out
@@ -394,10 +397,21 @@ func extractAvailableGPUCount(available corev1.ResourceList) int64 {
 	return total
 }
 
+func resourceValue(resources corev1.ResourceList, name corev1.ResourceName) int64 {
+	if quantity, ok := resources[name]; ok {
+		return quantity.Value()
+	}
+	return 0
+}
+
 type routingMetrics struct {
 	routingDecisionsTotal *prometheus.CounterVec
 	clusterLatencySeconds *prometheus.GaugeVec
 	clusterHealth         *prometheus.GaugeVec
+	clusterTotal          prometheus.Gauge
+	clusterHealthyTotal   prometheus.Gauge
+	clusterAvailableGPUs  *prometheus.GaugeVec
+	clusterCapacityGPUs   *prometheus.GaugeVec
 }
 
 func newRoutingMetrics() *routingMetrics {
@@ -423,11 +437,41 @@ func newRoutingMetrics() *routingMetrics {
 			},
 			[]string{"cluster"},
 		),
+		clusterTotal: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_clusters_total",
+				Help: "Total configured downstream clusters.",
+			},
+		),
+		clusterHealthyTotal: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_clusters_healthy",
+				Help: "Total healthy downstream clusters.",
+			},
+		),
+		clusterAvailableGPUs: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_cluster_available_gpus",
+				Help: "Available GPUs by cluster and vendor from Cluster status.",
+			},
+			[]string{"cluster", "vendor"},
+		),
+		clusterCapacityGPUs: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_cluster_capacity_gpus",
+				Help: "Total GPU capacity by cluster and vendor from Cluster status.",
+			},
+			[]string{"cluster", "vendor"},
+		),
 	}
 
 	prometheus.MustRegister(m.routingDecisionsTotal)
 	prometheus.MustRegister(m.clusterLatencySeconds)
 	prometheus.MustRegister(m.clusterHealth)
+	prometheus.MustRegister(m.clusterTotal)
+	prometheus.MustRegister(m.clusterHealthyTotal)
+	prometheus.MustRegister(m.clusterAvailableGPUs)
+	prometheus.MustRegister(m.clusterCapacityGPUs)
 	return m
 }
 
@@ -442,6 +486,21 @@ func (m *routingMetrics) recordProbe(cluster string, healthy bool, latency time.
 		return
 	}
 	m.clusterHealth.WithLabelValues(cluster).Set(0)
+}
+
+func (m *routingMetrics) recordClusterRollup(total, healthy int) {
+	m.clusterTotal.Set(float64(total))
+	m.clusterHealthyTotal.Set(float64(healthy))
+}
+
+func (m *routingMetrics) recordClusterInventory(cluster string, available, capacity corev1.ResourceList) {
+	m.clusterAvailableGPUs.WithLabelValues(cluster, "nvidia").Set(float64(resourceValue(available, corev1.ResourceName("nvidia.com/gpu"))))
+	m.clusterAvailableGPUs.WithLabelValues(cluster, "amd").Set(float64(resourceValue(available, corev1.ResourceName("amd.com/gpu"))))
+	m.clusterAvailableGPUs.WithLabelValues(cluster, "intel").Set(float64(resourceValue(available, corev1.ResourceName("gpu.intel.com/i915"))))
+
+	m.clusterCapacityGPUs.WithLabelValues(cluster, "nvidia").Set(float64(resourceValue(capacity, corev1.ResourceName("nvidia.com/gpu"))))
+	m.clusterCapacityGPUs.WithLabelValues(cluster, "amd").Set(float64(resourceValue(capacity, corev1.ResourceName("amd.com/gpu"))))
+	m.clusterCapacityGPUs.WithLabelValues(cluster, "intel").Set(float64(resourceValue(capacity, corev1.ResourceName("gpu.intel.com/i915"))))
 }
 
 type clusterProber struct {
@@ -479,14 +538,18 @@ func runProbeLoop(registry *globalrouting.Registry, metrics *routingMetrics, pro
 }
 
 func (p *clusterProber) probeAll(registry *globalrouting.Registry, metrics *routingMetrics) {
-	for _, cluster := range registry.Clusters() {
+	clusters := registry.Clusters()
+	healthyCount := 0
+	for _, cluster := range clusters {
 		healthy, latency := p.probeCluster(cluster)
 		registry.UpdateHealth(cluster.Name, healthy)
 		if healthy {
 			registry.SetLatency(cluster.Name, latency)
+			healthyCount++
 		}
 		metrics.recordProbe(cluster.Name, healthy, latency)
 	}
+	metrics.recordClusterRollup(len(clusters), healthyCount)
 }
 
 func (p *clusterProber) probeCluster(cluster globalrouting.ClusterEndpoint) (bool, time.Duration) {

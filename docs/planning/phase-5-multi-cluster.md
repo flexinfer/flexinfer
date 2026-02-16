@@ -177,8 +177,8 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 11) Cross-cluster metrics aggregation
 
-- [ ] Aggregate metrics from all clusters
-- [ ] Provide unified Grafana dashboard
+- [x] Aggregate metrics from all clusters
+- [x] Provide unified Grafana dashboard
 
 ## Security Considerations
 
