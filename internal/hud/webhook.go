@@ -3,10 +3,13 @@ package hud
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -16,10 +19,11 @@ import (
 // endpoint (e.g., flexdeck running in a K8s cluster). It is called from
 // the fleet monitor's OnRefresh callback.
 type FleetWebhook struct {
-	url        string
-	token      string
-	httpClient *http.Client
-	logger     *slog.Logger
+	url             string
+	token           string
+	resolveOverride string // IP to resolve webhook hostname to (bypass DNS)
+	httpClient      *http.Client
+	logger          *slog.Logger
 
 	// Backoff state: skip pushes after consecutive errors.
 	consecutiveErrors int
@@ -60,14 +64,35 @@ type webhookSession struct {
 }
 
 // NewFleetWebhook creates a webhook pusher targeting the given URL.
-func NewFleetWebhook(url, token string, logger *slog.Logger) *FleetWebhook {
+// If resolveOverride is set, the HTTP client resolves the webhook hostname
+// to the given IP instead of using DNS. This bypasses Cloudflare Access
+// while preserving correct TLS validation (SNI matches the cert).
+func NewFleetWebhook(url, token, resolveOverride string, logger *slog.Logger) *FleetWebhook {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	if resolveOverride != "" {
+		parsed, err := neturl.Parse(url)
+		if err == nil {
+			host := parsed.Hostname()
+			dialer := &net.Dialer{Timeout: 5 * time.Second}
+			client.Transport = &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					_, port, _ := net.SplitHostPort(addr)
+					return dialer.DialContext(ctx, network, net.JoinHostPort(resolveOverride, port))
+				},
+				TLSClientConfig: &tls.Config{
+					ServerName: host,
+				},
+			}
+		}
+	}
+
 	return &FleetWebhook{
-		url:   url,
-		token: token,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-		},
-		logger: logger.With("component", "fleet-webhook"),
+		url:             url,
+		token:           token,
+		resolveOverride: resolveOverride,
+		httpClient:      client,
+		logger:          logger.With("component", "fleet-webhook"),
 	}
 }
 

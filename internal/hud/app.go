@@ -53,8 +53,9 @@ type Config struct {
 	CoordinatorModel string // Default model for coordinator tasks (e.g., "qwen3-8b").
 
 	// Webhook push: forward presence+session snapshots to a remote endpoint.
-	WebhookURL   string // Push URL (e.g., "https://deck.flexinfer.ai/api/agents/hud/push").
-	WebhookToken string // Bearer token for push auth.
+	WebhookURL     string // Push URL (e.g., "https://deck.flexinfer.ai/api/agents/hud/push").
+	WebhookToken   string // Bearer token for push auth.
+	WebhookResolve string // Override DNS resolution for webhook hostname (e.g., LAN IP to bypass Cloudflare).
 
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
@@ -163,8 +164,12 @@ func Run(cfg Config) error {
 	// endpoint (e.g., flexdeck in the K8s cluster).
 	var fleetWebhook *FleetWebhook
 	if cfg.WebhookURL != "" {
-		fleetWebhook = NewFleetWebhook(cfg.WebhookURL, cfg.WebhookToken, logger)
-		logger.Info("fleet webhook enabled", "url", cfg.WebhookURL)
+		fleetWebhook = NewFleetWebhook(cfg.WebhookURL, cfg.WebhookToken, cfg.WebhookResolve, logger)
+		logFields := []any{"url", cfg.WebhookURL}
+		if cfg.WebhookResolve != "" {
+			logFields = append(logFields, "resolve_override", cfg.WebhookResolve)
+		}
+		logger.Info("fleet webhook enabled", logFields...)
 	}
 
 	app.fleetMonitor.OnRefresh(func(snap monitor.FleetSnapshot) {

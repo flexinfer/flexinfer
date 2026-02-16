@@ -23,6 +23,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var coordinatorModel string
 	var webhookURL string
 	var webhookToken string
+	var webhookResolve string
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
@@ -82,6 +83,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				CoordinatorModel:    coordinatorModel,
 				WebhookURL:          webhookURL,
 				WebhookToken:        webhookToken,
+				WebhookResolve:      webhookResolve,
 				TUI:                 tui,
 			})
 		},
@@ -106,6 +108,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	// Webhook push (fleet presence → remote endpoint like flexdeck).
 	cmd.Flags().StringVar(&webhookURL, "webhook-url", os.Getenv("HUD_WEBHOOK_URL"), "Push agent presence to this URL on each fleet refresh [$HUD_WEBHOOK_URL]")
 	cmd.Flags().StringVar(&webhookToken, "webhook-token", os.Getenv("HUD_WEBHOOK_TOKEN"), "Bearer token for webhook auth [$HUD_WEBHOOK_TOKEN]")
+	cmd.Flags().StringVar(&webhookResolve, "webhook-resolve", os.Getenv("HUD_WEBHOOK_RESOLVE"), "Override DNS for webhook hostname (e.g., 192.168.50.227) [$HUD_WEBHOOK_RESOLVE]")
 
 	// Ghostty integration.
 	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")

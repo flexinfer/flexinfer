@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -27,7 +28,7 @@ func TestFleetWebhook_Push(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.Default()
-	wh := NewFleetWebhook(srv.URL, "secret-token", logger)
+	wh := NewFleetWebhook(srv.URL, "secret-token", "", logger)
 
 	snap := monitor.FleetSnapshot{
 		Agents: []bridge.PresenceInfo{
@@ -74,7 +75,7 @@ func TestFleetWebhook_Backoff(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	wh := NewFleetWebhook(srv.URL, "", logger)
+	wh := NewFleetWebhook(srv.URL, "", "", logger)
 
 	snap := monitor.FleetSnapshot{
 		Agents: []bridge.PresenceInfo{{AgentID: "test"}},
@@ -103,7 +104,7 @@ func TestFleetWebhook_NoToken(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	wh := NewFleetWebhook(srv.URL, "", logger)
+	wh := NewFleetWebhook(srv.URL, "", "", logger)
 
 	wh.Push(monitor.FleetSnapshot{})
 
@@ -128,7 +129,7 @@ func TestFleetWebhook_RecoveryResetsBackoff(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	wh := NewFleetWebhook(srv.URL, "", logger)
+	wh := NewFleetWebhook(srv.URL, "", "", logger)
 
 	snap := monitor.FleetSnapshot{}
 
@@ -145,5 +146,50 @@ func TestFleetWebhook_RecoveryResetsBackoff(t *testing.T) {
 	wh.Push(snap)
 	if wh.consecutiveErrors != 0 {
 		t.Fatalf("expected consecutive errors to reset after success, got %d", wh.consecutiveErrors)
+	}
+}
+
+func TestFleetWebhook_ResolveOverride(t *testing.T) {
+	// Start a TLS server to verify the resolve override routes traffic correctly.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Extract host and port from the test server address.
+	addr := srv.Listener.Addr().String()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("failed to parse test server addr %q: %v", addr, err)
+	}
+
+	// Use a fake hostname in the URL. The resolve override points to the
+	// test server's IP so the dialer connects there instead of doing DNS.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wh := NewFleetWebhook(
+		"https://fake-host.example.com:"+port+"/push",
+		"",
+		host,
+		logger,
+	)
+
+	// Extract the client-side TLS root CA from the test server's helper client,
+	// then configure it on our transport while keeping the custom dialer.
+	srvClient := srv.Client()
+	srvTransport := srvClient.Transport.(*http.Transport)
+	if transport, ok := wh.httpClient.Transport.(*http.Transport); ok {
+		transport.TLSClientConfig.RootCAs = srvTransport.TLSClientConfig.RootCAs
+	} else {
+		t.Fatal("expected *http.Transport when resolveOverride is set")
+	}
+
+	wh.Push(monitor.FleetSnapshot{
+		Agents: []bridge.PresenceInfo{
+			{AgentID: "test", Status: "active"},
+		},
+	})
+
+	if wh.consecutiveErrors != 0 {
+		t.Errorf("expected 0 consecutive errors with resolve override, got %d", wh.consecutiveErrors)
 	}
 }
