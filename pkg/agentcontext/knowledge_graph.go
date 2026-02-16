@@ -666,6 +666,15 @@ func (g *KnowledgeGraph) FindPath(sourceID, targetID string, maxDepth int, relTy
 		edges    []string // relation IDs
 	}
 
+	// Self-path: source == target is a zero-length path.
+	if sourceID == targetID {
+		return &GraphPath{
+			Nodes:  []string{sourceID},
+			Edges:  nil,
+			Length: 0,
+		}, nil
+	}
+
 	visited := make(map[string]bool)
 	queue := []queueItem{{entityID: sourceID, path: []string{sourceID}, edges: []string{}}}
 	visited[sourceID] = true
@@ -679,8 +688,9 @@ func (g *KnowledgeGraph) FindPath(sourceID, targetID string, maxDepth int, relTy
 		current := queue[0]
 		queue = queue[1:]
 
-		if len(current.path) > maxDepth+1 {
-			break
+		// Hops from source = len(path)-1. Stop exploring if already at maxDepth.
+		if len(current.path)-1 >= maxDepth {
+			continue
 		}
 
 		// Check outgoing relations

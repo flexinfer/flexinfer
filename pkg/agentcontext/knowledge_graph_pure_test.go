@@ -471,18 +471,30 @@ func TestFindPath_MaxDepthRespected(t *testing.T) {
 	b := &Entity{Type: EntityTypeModule, Name: "B"}
 	c := &Entity{Type: EntityTypeModule, Name: "C"}
 	d := &Entity{Type: EntityTypeModule, Name: "D"}
+	e := &Entity{Type: EntityTypeModule, Name: "E"}
 	g.AddEntity(a)
 	g.AddEntity(b)
 	g.AddEntity(c)
 	g.AddEntity(d)
+	g.AddEntity(e)
 	g.AddRelation(&Relation{Type: RelationDependsOn, SourceID: a.ID, TargetID: b.ID})
 	g.AddRelation(&Relation{Type: RelationDependsOn, SourceID: b.ID, TargetID: c.ID})
 	g.AddRelation(&Relation{Type: RelationDependsOn, SourceID: c.ID, TargetID: d.ID})
+	g.AddRelation(&Relation{Type: RelationDependsOn, SourceID: d.ID, TargetID: e.ID})
 
-	// Path A->D is length 3, but max depth 2 should fail
-	_, err := g.FindPath(a.ID, d.ID, 2, nil)
+	// Path A->E is length 4, but maxDepth=1 should not reach it
+	_, err := g.FindPath(a.ID, e.ID, 1, nil)
 	if err == nil {
 		t.Error("expected error when path exceeds max depth")
+	}
+
+	// Path A->D is length 3, verify it IS found with maxDepth=3
+	path, err := g.FindPath(a.ID, d.ID, 3, nil)
+	if err != nil {
+		t.Fatalf("expected path with maxDepth=3, got error: %v", err)
+	}
+	if path.Length != 3 {
+		t.Errorf("expected path length 3, got %d", path.Length)
 	}
 }
 
