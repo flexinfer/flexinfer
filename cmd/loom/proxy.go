@@ -335,6 +335,7 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 		"method":    "tools/call",
 		"params":    json.RawMessage(paramsJSON),
 		"arguments": params.Arguments,
+		"agent_id":  agentHintGlobal,
 	})
 
 	if err := daemon.Send(ctx, callReq); err != nil {

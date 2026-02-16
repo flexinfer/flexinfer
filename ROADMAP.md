@@ -126,22 +126,22 @@ These address capabilities the market now expects from production MCP infrastruc
   - ~~Add Streamable HTTP transport to `loomd` (MCP v1.0 spec compliance).~~ ✅ Done
   - ~~Add bearer token, OIDC, and mTLS authentication for remote access.~~ ✅ Done
   - ~~Enable hybrid local+remote topology (local proxy connecting to remote daemon).~~ ✅ Done
-  - Remaining: OAuth 2.1 dynamic client registration (OIDC covers static clients today).
+  - Remaining: OAuth 2.1 dynamic client registration ([#11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/11)) (OIDC covers static clients today).
   - *Rationale: Transforms Loom from local dev tool into team/org infrastructure. Every MCP gateway supports this. Biggest single unlock for adoption.*
 
-- [ ] **Lightweight RBAC for tool access**
+- [ ] **Lightweight RBAC for tool access** ([#8](https://gitlab.flexinfer.ai/services/loom-core/-/issues/8))
   - Add role-to-tool mapping in daemon config (e.g., restrict destructive tools per agent).
   - Enforce per-agent tool scoping at the proxy layer.
   - Log access decisions for audit.
   - *Rationale: #1 enterprise requirement. All gateway competitors (Kong, Lunar.dev, TrueFoundry) offer this.*
 
-- [ ] **Cost tracking and attribution**
+- [ ] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10))
   - Track token usage per agent session, per tool, per MCP server at the proxy layer.
   - Expose cost dashboard in HUD (new KPI on Overview panel).
   - Export cost metrics via OTel.
   - *Rationale: The proxy already sees all traffic. Adding token counting is incremental. No local tool provides this today.*
 
-- [ ] **Structured audit trail**
+- [ ] **Structured audit trail** ([#9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/9))
   - Produce structured JSON event for every tool call through the proxy (agent_id, session, tool, server, duration, status).
   - Store in append-only log file, exportable to SIEM/observability tools.
   - *Rationale: Compliance requirement for enterprise adoption. Addresses "Shadow MCP" concerns.*

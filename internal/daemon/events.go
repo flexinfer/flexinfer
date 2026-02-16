@@ -31,6 +31,8 @@ const (
 	EventConfigReload EventType = "config.reload"
 	// EventCacheEvict is emitted when a cache entry is evicted.
 	EventCacheEvict EventType = "cache.evict"
+	// EventAccessDenied is emitted when RBAC denies a tool call.
+	EventAccessDenied EventType = "access.denied"
 )
 
 // Event is a daemon event that can be broadcast to subscribers.

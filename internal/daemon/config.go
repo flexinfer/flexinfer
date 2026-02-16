@@ -34,6 +34,9 @@ type FileConfig struct {
 	// HTTP controls the Streamable HTTP listener
 	HTTP HTTPConfig `yaml:"http,omitempty"`
 
+	// RBAC controls role-based access control for tool calls
+	RBAC RBACConfig `yaml:"rbac,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -221,6 +224,7 @@ func DefaultFileConfig() FileConfig {
 			SessionTimeoutMinutes: 30,
 			MaxSessions:           1000,
 		},
+		RBAC:  DefaultRBACConfig(),
 		Debug: false,
 	}
 }

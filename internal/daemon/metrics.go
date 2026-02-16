@@ -51,6 +51,9 @@ type Metrics struct {
 	HubRequests  *prometheus.CounterVec
 	HubFailures  prometheus.Counter
 
+	// RBAC metrics
+	RBACDenied prometheus.Counter
+
 	registry *prometheus.Registry
 }
 
@@ -316,6 +319,15 @@ func NewMetrics() *Metrics {
 		},
 	)
 
+	m.RBACDenied = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "rbac_denied_total",
+			Help:      "Total number of tool calls denied by RBAC",
+		},
+	)
+
 	// Register all metrics
 	m.registry.MustRegister(
 		m.RequestsTotal,
@@ -344,6 +356,7 @@ func NewMetrics() *Metrics {
 		m.HubLatency,
 		m.HubRequests,
 		m.HubFailures,
+		m.RBACDenied,
 	)
 
 	return m

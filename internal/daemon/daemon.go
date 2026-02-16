@@ -92,6 +92,7 @@ type Daemon struct {
 	runningServers gosync.Map                      // serverName -> true; tracks process starts for event emission
 	httpServer     *http.Server                    // Streamable HTTP listener
 	httpStreamable *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
+	rbac           *RBACEnforcer                   // RBAC enforcer for tool access control
 	authMiddleware func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	wg             gosync.WaitGroup
 	done           chan struct{}
@@ -334,6 +335,12 @@ func New(cfg Config) (*Daemon, error) {
 
 	// Initialize event bus for SSE streaming
 	d.eventBus = NewEventBus(logger)
+
+	// Initialize RBAC enforcer (nil when disabled)
+	d.rbac = NewRBACEnforcer(fileCfg.RBAC, logger)
+	if d.rbac != nil {
+		logger.Info("RBAC enabled", "default_policy", fileCfg.RBAC.DefaultPolicy, "roles", len(fileCfg.RBAC.Roles), "bindings", len(fileCfg.RBAC.Bindings))
+	}
 
 	// Initialize health monitor
 	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
@@ -1373,7 +1380,9 @@ type callParams struct {
 	Name      string          `json:"name,omitempty"` // MCP standard tools/call format
 	Method    string          `json:"method"`
 	Params    json.RawMessage `json:"params,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"` // For smart routing
+	Arguments json.RawMessage `json:"arguments,omitempty"`  // For smart routing
+	AgentID   string          `json:"agent_id,omitempty"`   // Agent identity for RBAC
+	AgentType string          `json:"agent_type,omitempty"` // Agent type for RBAC
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -1426,6 +1435,15 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 
 	if serverName == "" {
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "missing server or tool for call"), nil
+	}
+
+	// RBAC check: enforce tool access control before processing
+	if d.rbac != nil {
+		decision := d.rbac.Check(params.AgentID, params.AgentType, serverName, toolName)
+		d.logAccessDecision(decision)
+		if !decision.Allowed {
+			return d.rbacDeniedResponse(msg.ID, decision), nil
+		}
 	}
 
 	// Check response cache for read-only tools
@@ -1597,6 +1615,38 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	}
 
 	return resp, nil
+}
+
+// logAccessDecision logs an RBAC access decision and publishes deny events.
+func (d *Daemon) logAccessDecision(decision AccessDecision) {
+	if decision.Allowed {
+		d.logger.Debug("rbac allowed",
+			"agent_id", decision.AgentID,
+			"server", decision.Server,
+			"tool", decision.Tool,
+			"role", decision.Role,
+			"reason", decision.Reason,
+		)
+		return
+	}
+	d.logger.Warn("rbac denied",
+		"agent_id", decision.AgentID,
+		"server", decision.Server,
+		"tool", decision.Tool,
+		"role", decision.Role,
+		"reason", decision.Reason,
+	)
+	if d.eventBus != nil {
+		d.eventBus.Publish(EventAccessDenied, decision)
+	}
+	d.metrics.RBACDenied.Inc()
+}
+
+// rbacDeniedResponse returns an MCP error for a denied tool call.
+func (d *Daemon) rbacDeniedResponse(msgID any, decision AccessDecision) *mcp.Message {
+	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
+		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
+	return mcp.NewErrorResponse(msgID, mcp.InvalidRequest, reason)
 }
 
 // handleReload reloads the registry and refreshes the tool cache.
