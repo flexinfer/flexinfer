@@ -96,6 +96,14 @@ spec:
               value: "{{ .Values.scheduler.weights.cache }}"
             - name: SCHED_VRAM_FREE_WEIGHT
               value: "{{ .Values.scheduler.weights.vramFree }}"
+            - name: SCHED_TENANT_FAIRSHARE_ENABLED
+              value: "{{ .Values.scheduler.tenantFairShare.enabled }}"
+            - name: SCHED_TENANT_FAIRSHARE_WEIGHT
+              value: "{{ .Values.scheduler.tenantFairShare.weight }}"
+            - name: SCHED_TENANT_FAIRSHARE_BUDGET_GPUS
+              value: "{{ .Values.scheduler.tenantFairShare.gpuBudget }}"
+            - name: SCHED_TENANT_LABEL_KEY
+              value: "{{ .Values.scheduler.tenantFairShare.tenantLabelKey }}"
         - name: kube-scheduler
           image: "{{ .Values.scheduler.kubeScheduler.image.repository }}:{{ .Values.scheduler.kubeScheduler.image.tag }}"
           imagePullPolicy: {{ .Values.scheduler.kubeScheduler.image.pullPolicy }}

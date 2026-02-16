@@ -15,6 +15,7 @@ import (
 type Cache struct {
 	nodeLister      listers.NodeLister
 	configMapLister listers.ConfigMapLister
+	podLister       listers.PodLister
 	stopCh          chan struct{}
 }
 
@@ -23,10 +24,12 @@ func NewCache(kubeClient kubernetes.Interface) *Cache {
 	factory := informers.NewSharedInformerFactory(kubeClient, 10*time.Minute)
 	nodeInformer := factory.Core().V1().Nodes()
 	configMapInformer := factory.Core().V1().ConfigMaps()
+	podInformer := factory.Core().V1().Pods()
 
 	c := &Cache{
 		nodeLister:      nodeInformer.Lister(),
 		configMapLister: configMapInformer.Lister(),
+		podLister:       podInformer.Lister(),
 		stopCh:          make(chan struct{}),
 	}
 
@@ -54,4 +57,9 @@ func (c *Cache) ListNodes() ([]*corev1.Node, error) {
 // GetConfigMap returns a configmap from the cache.
 func (c *Cache) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
 	return c.configMapLister.ConfigMaps(namespace).Get(name)
+}
+
+// ListPods returns all pods from a namespace.
+func (c *Cache) ListPods(namespace string) ([]*corev1.Pod, error) {
+	return c.podLister.Pods(namespace).List(labels.Everything())
 }

@@ -56,10 +56,10 @@ Goal: reduce starvation by balancing GPU usage across tenants under contention.
 
 ### Deliverables
 
-- Scheduler config updates (`charts/flexinfer/values.yaml` -> `scheduler.tenantFairShare.*`)
-- Scheduler scoring updates in `scheduler/` package
-- Metrics wiring in `pkg/metrics/`
-- Test coverage in `scheduler/*_test.go`
+- [x] Scheduler config updates (`charts/flexinfer/values.yaml` -> `scheduler.tenantFairShare.*`)
+- [x] Scheduler scoring updates in `scheduler/` package
+- [x] Scheduler metrics wiring (`flexinfer_scheduler_tenant_usage_ratio`, `flexinfer_scheduler_tenant_score_adjustment`)
+- [x] Test coverage in `scheduler/*_test.go`
 
 ### Acceptance Criteria
 

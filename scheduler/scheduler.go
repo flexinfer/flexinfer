@@ -14,6 +14,8 @@ import (
 
 	"github.com/flexinfer/flexinfer/internal/cache"
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -26,6 +28,7 @@ import (
 type objectCache interface {
 	GetNode(name string) (*corev1.Node, error)
 	GetConfigMap(namespace, name string) (*corev1.ConfigMap, error)
+	ListPods(namespace string) ([]*corev1.Pod, error)
 }
 
 type Scheduler struct {
@@ -36,9 +39,30 @@ type Scheduler struct {
 	costWeight                float64
 	cacheWeight               float64
 	vramFreeWeight            float64
+	tenantFairShareEnabled    bool
+	tenantFairShareWeight     float64
+	tenantFairShareBudgetGPUs float64
+	tenantLabelKey            string
 }
 
 const defaultBenchmarkResultsConfigMap = benchmarkconfig.DefaultBenchmarkResultsConfigMap
+
+var (
+	tenantUsageRatioMetric = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_scheduler_tenant_usage_ratio",
+			Help: "Current tenant GPU usage ratio relative to configured fair-share budget.",
+		},
+		[]string{"namespace", "tenant"},
+	)
+	tenantScoreAdjustmentMetric = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_scheduler_tenant_score_adjustment",
+			Help: "Tenant fair-share score adjustment applied by the scheduler extender.",
+		},
+		[]string{"namespace", "tenant"},
+	)
+)
 
 // NewScheduler creates a new Scheduler.
 func NewScheduler() (*Scheduler, error) {
@@ -63,6 +87,10 @@ func NewScheduler() (*Scheduler, error) {
 	// This is a 0..1 ratio (free VRAM / total VRAM) multiplied by this weight.
 	// Keep the default in the same magnitude as util/cache penalties.
 	s.vramFreeWeight = parseWeight("SCHED_VRAM_FREE_WEIGHT", 10.0)
+	s.tenantFairShareEnabled = parseBool("SCHED_TENANT_FAIRSHARE_ENABLED", false)
+	s.tenantFairShareWeight = parseWeight("SCHED_TENANT_FAIRSHARE_WEIGHT", 5.0)
+	s.tenantFairShareBudgetGPUs = parseWeight("SCHED_TENANT_FAIRSHARE_BUDGET_GPUS", 1.0)
+	s.tenantLabelKey = strings.TrimSpace(os.Getenv("SCHED_TENANT_LABEL_KEY"))
 	return s, nil
 }
 
@@ -84,6 +112,18 @@ func parseWeight(env string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+func parseBool(env string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(env))
+	if v == "" {
+		return def
+	}
+	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return parsed
 }
 
 func parseGiLabel(s string) (float64, bool) {
@@ -125,6 +165,62 @@ func podRequestedGPUCount(pod *corev1.Pod) int64 {
 		}
 	}
 	return total
+}
+
+func isTerminalPodPhase(phase corev1.PodPhase) bool {
+	return phase == corev1.PodSucceeded || phase == corev1.PodFailed
+}
+
+func tenantKeyForPod(pod *corev1.Pod, tenantLabelKey string) string {
+	if pod == nil {
+		return ""
+	}
+	if tenantLabelKey != "" && pod.Labels != nil {
+		if v := strings.TrimSpace(pod.Labels[tenantLabelKey]); v != "" {
+			return v
+		}
+	}
+	return pod.Namespace
+}
+
+func (s *Scheduler) tenantFairShareForPod(pod *corev1.Pod) (string, float64, float64, error) {
+	if pod == nil {
+		return "", 0, 0, nil
+	}
+	tenantKey := tenantKeyForPod(pod, s.tenantLabelKey)
+	if tenantKey == "" {
+		return "", 0, 0, nil
+	}
+	if s.tenantFairShareBudgetGPUs <= 0 {
+		return tenantKey, 0, 0, nil
+	}
+
+	pods, err := s.cache.ListPods(pod.Namespace)
+	if err != nil {
+		return tenantKey, 0, 0, err
+	}
+
+	usedGPUs := float64(podRequestedGPUCount(pod))
+	for _, existing := range pods {
+		if existing == nil {
+			continue
+		}
+		if existing.Name == pod.Name && existing.Namespace == pod.Namespace {
+			continue
+		}
+		if isTerminalPodPhase(existing.Status.Phase) {
+			continue
+		}
+		if tenantKeyForPod(existing, s.tenantLabelKey) != tenantKey {
+			continue
+		}
+		usedGPUs += float64(podRequestedGPUCount(existing))
+	}
+
+	usageRatio := usedGPUs / s.tenantFairShareBudgetGPUs
+	// Positive when tenant is below budget (boost); negative when above budget (penalty).
+	adjustment := (1.0 - usageRatio) * s.tenantFairShareWeight
+	return tenantKey, usageRatio, adjustment, nil
 }
 
 // Filter is the handler for the /filter endpoint.
@@ -253,6 +349,18 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scores := make([]extenderv1.HostPriority, len(*args.NodeNames))
+	tenantAdjustment := 0.0
+	if s.tenantFairShareEnabled {
+		tenantKey, usageRatio, adjustment, err := s.tenantFairShareForPod(args.Pod)
+		if err != nil {
+			log.V(1).Info("failed to compute tenant fair-share usage; skipping adjustment", "namespace", args.Pod.Namespace, "error", err)
+		} else if tenantKey != "" {
+			tenantAdjustment = adjustment
+			tenantUsageRatioMetric.WithLabelValues(args.Pod.Namespace, tenantKey).Set(usageRatio)
+			tenantScoreAdjustmentMetric.WithLabelValues(args.Pod.Namespace, tenantKey).Set(adjustment)
+		}
+	}
+
 	for i, nodeName := range *args.NodeNames {
 		node, err := s.cache.GetNode(nodeName)
 		if err != nil {
@@ -344,7 +452,7 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		// Higher score is better.
 		// We subtract penalties for utilization, cost, cache usage, and KV-cache pressure.
 		// Use tps as base reward.
-		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight + freeRatio*s.vramFreeWeight - kvPressurePenalty
+		score := tps*s.tpsWeight - util*s.utilWeight - cost*s.costWeight - cacheUsage*s.cacheWeight + freeRatio*s.vramFreeWeight - kvPressurePenalty + tenantAdjustment
 
 		scores[i] = extenderv1.HostPriority{
 			Host:  nodeName,

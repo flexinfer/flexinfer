@@ -17,6 +17,7 @@ import (
 type fakeCache struct {
 	nodes      map[string]*corev1.Node
 	configMaps map[string]*corev1.ConfigMap
+	pods       map[string][]*corev1.Pod
 }
 
 func (f *fakeCache) GetNode(name string) (*corev1.Node, error) {
@@ -32,6 +33,16 @@ func (f *fakeCache) GetConfigMap(namespace, name string) (*corev1.ConfigMap, err
 		return cm, nil
 	}
 	return nil, fmt.Errorf("not found")
+}
+
+func (f *fakeCache) ListPods(namespace string) ([]*corev1.Pod, error) {
+	if f.pods == nil {
+		return []*corev1.Pod{}, nil
+	}
+	if pods, ok := f.pods[namespace]; ok {
+		return pods, nil
+	}
+	return []*corev1.Pod{}, nil
 }
 
 func TestScore(t *testing.T) {
@@ -283,6 +294,213 @@ func TestFilter_FiltersByVRAMEstimateWhenFreeVRAMAvailable(t *testing.T) {
 	if _, ok := result.FailedNodes["node-low"]; !ok {
 		t.Fatalf("expected node-low to be in FailedNodes")
 	}
+}
+
+func TestScore_TenantFairSharePenalizesOverBudgetTenant(t *testing.T) {
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"node1": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node1",
+					Annotations: map[string]string{},
+				},
+			},
+		},
+		configMaps: map[string]*corev1.ConfigMap{
+			"default/md-benchmark-results": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "md-benchmark-results",
+					Namespace: "default",
+				},
+				Data: map[string]string{"tokensPerSecond": "100"},
+			},
+		},
+		pods: map[string][]*corev1.Pod{
+			"default": {
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "existing",
+						Namespace: "default",
+					},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "c",
+								Resources: corev1.ResourceRequirements{
+									Limits: corev1.ResourceList{
+										"nvidia.com/gpu": resource.MustParse("2"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "incoming",
+			Namespace: "default",
+			Labels:    map[string]string{"modeldeployment_cr": "md"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "c",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	schedNoFairShare := &Scheduler{
+		cache:                  cache,
+		tpsWeight:              1,
+		utilWeight:             0,
+		costWeight:             0,
+		cacheWeight:            0,
+		vramFreeWeight:         0,
+		tenantFairShareEnabled: false,
+	}
+	schedFairShare := &Scheduler{
+		cache:                     cache,
+		tpsWeight:                 1,
+		utilWeight:                0,
+		costWeight:                0,
+		cacheWeight:               0,
+		vramFreeWeight:            0,
+		tenantFairShareEnabled:    true,
+		tenantFairShareWeight:     10,
+		tenantFairShareBudgetGPUs: 1,
+	}
+
+	scoreNoFairShare := scoreForSingleNode(t, schedNoFairShare, pod, "node1")
+	scoreFairShare := scoreForSingleNode(t, schedFairShare, pod, "node1")
+
+	if scoreFairShare >= scoreNoFairShare {
+		t.Fatalf("expected fair-share score (%d) < no-fair-share score (%d)", scoreFairShare, scoreNoFairShare)
+	}
+}
+
+func TestTenantFairShareForPod_UsesTenantLabelOverride(t *testing.T) {
+	cache := &fakeCache{
+		pods: map[string][]*corev1.Pod{
+			"default": {
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "a-existing",
+						Namespace: "default",
+						Labels:    map[string]string{"flexinfer.ai/tenant-id": "team-a"},
+					},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "c",
+								Resources: corev1.ResourceRequirements{
+									Limits: corev1.ResourceList{
+										"nvidia.com/gpu": resource.MustParse("1"),
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "b-existing",
+						Namespace: "default",
+						Labels:    map[string]string{"flexinfer.ai/tenant-id": "team-b"},
+					},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "c",
+								Resources: corev1.ResourceRequirements{
+									Limits: corev1.ResourceList{
+										"nvidia.com/gpu": resource.MustParse("5"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	s := &Scheduler{
+		cache:                     cache,
+		tenantFairShareWeight:     5,
+		tenantFairShareBudgetGPUs: 1,
+		tenantLabelKey:            "flexinfer.ai/tenant-id",
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "incoming",
+			Namespace: "default",
+			Labels:    map[string]string{"flexinfer.ai/tenant-id": "team-a"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "c",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tenant, ratio, adjustment, err := s.tenantFairShareForPod(pod)
+	if err != nil {
+		t.Fatalf("tenantFairShareForPod returned error: %v", err)
+	}
+	if tenant != "team-a" {
+		t.Fatalf("tenant key = %s, want team-a", tenant)
+	}
+	if ratio != 2 {
+		t.Fatalf("usage ratio = %f, want 2", ratio)
+	}
+	if adjustment != -5 {
+		t.Fatalf("adjustment = %f, want -5", adjustment)
+	}
+}
+
+func scoreForSingleNode(t *testing.T, sched *Scheduler, pod *corev1.Pod, node string) int64 {
+	t.Helper()
+	args := extenderv1.ExtenderArgs{
+		Pod:       pod,
+		NodeNames: &[]string{node},
+	}
+
+	body, _ := json.Marshal(args)
+	req := httptest.NewRequest("POST", "/score", bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+	sched.Score(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+	var result []extenderv1.HostPriority
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected single score result, got %d", len(result))
+	}
+	return result[0].Score
 }
 
 func getScore(res []extenderv1.HostPriority, host string) int64 {

@@ -21,7 +21,7 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
 Open roadmap scope is now concentrated on:
-- Multi-tenancy hardening follow-ups (MT-2/MT-3) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2))
+- Quantization pipeline execution ([Design](docs/design/quantization-pipelines.md))
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system
@@ -128,7 +128,7 @@ Shipped in pipeline #498 across 3 commits.
 ### Low Priority (Advanced Features)
 - [x] **KV-Cache tiering** - Advanced memory management (shipped: LRU/LFU/FIFO eviction)
 - [x] **Harbor OCI integration** - Direct model registry support (shipped: `pkg/registry/`, `ModelCatalog` CRD)
-- [~] **Multi-tenancy** - Namespace isolation baseline is shipped; admission/scheduler hardening remains ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2), [Design](docs/design/multi-tenancy.md))
+- [x] **Multi-tenancy** - Namespace isolation baseline + admission guardrails + tenant fair-share scheduling shipped ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2), [Design](docs/design/multi-tenancy.md))
 - [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
 
 ## Phase 5: Multi-Cluster (Mostly Complete)

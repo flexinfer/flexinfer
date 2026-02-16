@@ -190,8 +190,7 @@ See `docs/design/multi-cluster.md` for full design.
 
 **Remaining Work:**
 
-1. **Multi-tenancy hardening** — MT-3 tenant fair-share scheduling remains (MT-2 admission guardrails shipped in `888a1fe`); see `docs/planning/multi-tenancy-followups.md` and roadmap issue [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
-2. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
+1. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
 
 **What's Ready:**
 - ✅ Helm charts complete

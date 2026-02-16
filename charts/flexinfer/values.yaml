@@ -224,6 +224,14 @@ scheduler:
     # Bonus term for scheduling headroom: (free_vram / total_vram) * vramFree.
     # Keep this in the same magnitude as util/cache penalties.
     vramFree: 10.0
+  tenantFairShare:
+    enabled: false
+    # Score adjustment magnitude for fair-share balancing.
+    weight: 5.0
+    # Per-tenant GPU budget used to compute usage ratio.
+    gpuBudget: 1.0
+    # Optional tenant label override key (defaults to namespace when empty).
+    tenantLabelKey: ""
 
 benchmarker:
   enabled: true

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/flexinfer/flexinfer/scheduler"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -33,6 +34,7 @@ func main() {
 
 	http.HandleFunc("/filter", sched.Filter)
 	http.HandleFunc("/score", sched.Score)
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

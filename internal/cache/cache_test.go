@@ -115,6 +115,40 @@ func TestGetConfigMap_WrongNamespace(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestListPods(t *testing.T) {
+	podA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-a",
+			Namespace: "tenant-a",
+		},
+	}
+	podB := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-b",
+			Namespace: "tenant-a",
+		},
+	}
+	podOther := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-other",
+			Namespace: "tenant-b",
+		},
+	}
+	c := newTestCache(t, podA, podB, podOther)
+
+	pods, err := c.ListPods("tenant-a")
+	require.NoError(t, err)
+	assert.Len(t, pods, 2)
+
+	names := make(map[string]bool)
+	for _, p := range pods {
+		names[p.Name] = true
+	}
+	assert.True(t, names["pod-a"])
+	assert.True(t, names["pod-b"])
+	assert.False(t, names["pod-other"])
+}
+
 func TestStop_Idempotent(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	c := NewCache(client)
