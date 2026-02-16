@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -163,5 +164,43 @@ func TestCollectGPUInventory(t *testing.T) {
 	nvidiaAvail := available[corev1.ResourceName("nvidia.com/gpu")]
 	if got := nvidiaAvail.String(); got != "1" {
 		t.Fatalf("nvidia available = %s, want 1", got)
+	}
+}
+
+func TestBuildClusterModelStatusSorted(t *testing.T) {
+	items := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name":      "zeta",
+					"namespace": "ns-b",
+				},
+				"status": map[string]interface{}{
+					"phase": "Ready",
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name":      "alpha",
+					"namespace": "ns-a",
+				},
+				"status": map[string]interface{}{
+					"phase": "Pending",
+				},
+			},
+		},
+	}
+
+	got := buildClusterModelStatus(items)
+	if len(got) != 2 {
+		t.Fatalf("buildClusterModelStatus() len = %d, want 2", len(got))
+	}
+	if got[0].Namespace != "ns-a" || got[0].Name != "alpha" || got[0].Phase != "Pending" {
+		t.Fatalf("first model = %+v, want ns-a/alpha Pending", got[0])
+	}
+	if got[1].Namespace != "ns-b" || got[1].Name != "zeta" || got[1].Phase != "Ready" {
+		t.Fatalf("second model = %+v, want ns-b/zeta Ready", got[1])
 	}
 }

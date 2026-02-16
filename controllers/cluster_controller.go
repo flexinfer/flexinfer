@@ -19,15 +19,21 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metautil "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -167,12 +173,16 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 	if err != nil {
 		return nil, err
 	}
+	models, err := collectRemoteModels(ctx, restConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	return &clusterObservation{
 		ServerVersion: version.GitVersion,
 		Capacity:      capacity,
 		Available:     available,
-		Models:        []aiv1alpha2.ClusterModelStatus{},
+		Models:        models,
 	}, nil
 }
 
@@ -252,6 +262,49 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 	}
 
 	return capacity, available, nil
+}
+
+func collectRemoteModels(ctx context.Context, restConfig *rest.Config) ([]aiv1alpha2.ClusterModelStatus, error) {
+	dynClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create dynamic client: %w", err)
+	}
+
+	modelGVR := schema.GroupVersionResource{
+		Group:    "ai.flexinfer",
+		Version:  "v1alpha2",
+		Resource: "models",
+	}
+
+	list, err := dynClient.Resource(modelGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// Some clusters may not have v1alpha2 installed yet; treat as empty inventory.
+		if errors.IsNotFound(err) || metautil.IsNoMatchError(err) {
+			return []aiv1alpha2.ClusterModelStatus{}, nil
+		}
+		return nil, fmt.Errorf("list remote models: %w", err)
+	}
+	return buildClusterModelStatus(list.Items), nil
+}
+
+func buildClusterModelStatus(items []unstructured.Unstructured) []aiv1alpha2.ClusterModelStatus {
+	out := make([]aiv1alpha2.ClusterModelStatus, 0, len(items))
+	for _, item := range items {
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		out = append(out, aiv1alpha2.ClusterModelStatus{
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+			Phase:     phase,
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace == out[j].Namespace {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Namespace < out[j].Namespace
+	})
+	return out
 }
 
 func clusterRegion(cluster *aiv1alpha2.Cluster) string {

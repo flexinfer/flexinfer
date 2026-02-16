@@ -74,8 +74,8 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 - [ ] Watch FlexInfer resources in remote clusters via client
 - [x] Aggregate GPU capacity from remote nodes (allocatable GPU resources)
-- [ ] Aggregate model inventory from remote Model resources
-- [ ] Update `Cluster.status.models` with remote model list
+- [x] Aggregate model inventory from remote Model resources
+- [x] Update `Cluster.status.models` with remote model list
 
 **Acceptance**
 - `kubectl get cluster us-west -o yaml` shows current GPU availability and model list.
