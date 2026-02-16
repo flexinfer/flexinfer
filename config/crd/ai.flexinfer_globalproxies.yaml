@@ -97,6 +97,7 @@ spec:
                 enum:
                 - RoundRobin
                 - Failover
+                - Latency
                 type: string
               tls:
                 description: TLS configures public and downstream TLS behavior.

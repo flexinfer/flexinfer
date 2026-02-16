@@ -16,7 +16,8 @@ func TestParseStrategy(t *testing.T) {
 		{input: "round-robin", want: globalrouting.StrategyRoundRobin, wantErr: false},
 		{input: "roundrobin", want: globalrouting.StrategyRoundRobin, wantErr: false},
 		{input: "failover", want: globalrouting.StrategyFailover, wantErr: false},
-		{input: "latency", wantErr: true},
+		{input: "latency", want: globalrouting.StrategyLatency, wantErr: false},
+		{input: "weighted", wantErr: true},
 	}
 
 	for _, tc := range tests {

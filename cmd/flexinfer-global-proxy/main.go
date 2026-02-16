@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -10,8 +11,11 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -21,13 +25,19 @@ func main() {
 		strategyFlag string
 		clustersFlag string
 		failoverFlag string
+		probePath    string
+		probeTimeout time.Duration
+		probeEvery   time.Duration
 	)
 
 	flag.IntVar(&port, "port", 8090, "Port to listen on")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	flag.StringVar(&strategyFlag, "strategy", "round-robin", "Routing strategy (round-robin, failover)")
+	flag.StringVar(&strategyFlag, "strategy", "round-robin", "Routing strategy (round-robin, failover, latency)")
 	flag.StringVar(&clustersFlag, "clusters", os.Getenv("GLOBAL_PROXY_CLUSTERS"), "Cluster endpoints in the form name=url,name=url")
 	flag.StringVar(&failoverFlag, "failover-order", os.Getenv("GLOBAL_PROXY_FAILOVER_ORDER"), "Failover priority list (comma-separated cluster names)")
+	flag.StringVar(&probePath, "probe-path", "/healthz", "Health probe path on downstream cluster proxies")
+	flag.DurationVar(&probeTimeout, "probe-timeout", 2*time.Second, "HTTP timeout per downstream probe")
+	flag.DurationVar(&probeEvery, "probe-interval", 15*time.Second, "Probe interval for downstream latency/health checks")
 	flag.Parse()
 
 	logger := buildLogger(logLevel)
@@ -48,6 +58,11 @@ func main() {
 
 	registry := globalrouting.NewRegistry(clusters, failoverOrder)
 	router := globalrouting.NewRouter(registry)
+	metrics := newRoutingMetrics()
+	prober := newClusterProber(probePath, probeTimeout)
+	prober.probeAll(registry, metrics)
+	go runProbeLoop(registry, metrics, prober, probeEvery)
+
 	proxies, err := buildReverseProxyMap(clusters)
 	if err != nil {
 		slog.Error("failed to create reverse proxies", "error", err)
@@ -55,6 +70,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -78,16 +94,135 @@ func main() {
 			return
 		}
 
+		metrics.recordDecision(strategy, selected.Name)
 		r.Header.Set("X-FlexInfer-Cluster", selected.Name)
 		proxy.ServeHTTP(w, r)
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	slog.Info("starting global proxy", "addr", addr, "strategy", strategy, "clusters", clusterNames(clusters))
+	slog.Info("starting global proxy",
+		"addr", addr,
+		"strategy", strategy,
+		"clusters", clusterNames(clusters),
+		"probePath", probePath,
+		"probeInterval", probeEvery,
+	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
 	}
+}
+
+type routingMetrics struct {
+	routingDecisionsTotal *prometheus.CounterVec
+	clusterLatencySeconds *prometheus.GaugeVec
+	clusterHealth         *prometheus.GaugeVec
+}
+
+func newRoutingMetrics() *routingMetrics {
+	m := &routingMetrics{
+		routingDecisionsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "flexinfer_global_routing_decisions_total",
+				Help: "Total number of global routing selections by strategy and cluster.",
+			},
+			[]string{"strategy", "cluster"},
+		),
+		clusterLatencySeconds: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_cluster_latency_seconds",
+				Help: "Observed downstream cluster proxy latency in seconds.",
+			},
+			[]string{"cluster"},
+		),
+		clusterHealth: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "flexinfer_global_cluster_health",
+				Help: "Downstream cluster health (1=healthy, 0=unhealthy).",
+			},
+			[]string{"cluster"},
+		),
+	}
+
+	prometheus.MustRegister(m.routingDecisionsTotal)
+	prometheus.MustRegister(m.clusterLatencySeconds)
+	prometheus.MustRegister(m.clusterHealth)
+	return m
+}
+
+func (m *routingMetrics) recordDecision(strategy globalrouting.Strategy, cluster string) {
+	m.routingDecisionsTotal.WithLabelValues(string(strategy), cluster).Inc()
+}
+
+func (m *routingMetrics) recordProbe(cluster string, healthy bool, latency time.Duration) {
+	if healthy {
+		m.clusterHealth.WithLabelValues(cluster).Set(1)
+		m.clusterLatencySeconds.WithLabelValues(cluster).Set(latency.Seconds())
+		return
+	}
+	m.clusterHealth.WithLabelValues(cluster).Set(0)
+}
+
+type clusterProber struct {
+	path   string
+	client *http.Client
+}
+
+func newClusterProber(path string, timeout time.Duration) *clusterProber {
+	normalizedPath := strings.TrimSpace(path)
+	if normalizedPath == "" {
+		normalizedPath = "/healthz"
+	}
+	if !strings.HasPrefix(normalizedPath, "/") {
+		normalizedPath = "/" + normalizedPath
+	}
+
+	return &clusterProber{
+		path: normalizedPath,
+		client: &http.Client{
+			Timeout: timeout,
+		},
+	}
+}
+
+func runProbeLoop(registry *globalrouting.Registry, metrics *routingMetrics, prober *clusterProber, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		prober.probeAll(registry, metrics)
+	}
+}
+
+func (p *clusterProber) probeAll(registry *globalrouting.Registry, metrics *routingMetrics) {
+	for _, cluster := range registry.Clusters() {
+		healthy, latency := p.probeCluster(cluster)
+		registry.UpdateHealth(cluster.Name, healthy)
+		if healthy {
+			registry.SetLatency(cluster.Name, latency)
+		}
+		metrics.recordProbe(cluster.Name, healthy, latency)
+	}
+}
+
+func (p *clusterProber) probeCluster(cluster globalrouting.ClusterEndpoint) (bool, time.Duration) {
+	probeURL := strings.TrimRight(cluster.URL, "/") + p.path
+	start := time.Now()
+	resp, err := p.client.Get(probeURL)
+	latency := time.Since(start)
+	if err != nil {
+		return false, latency
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return false, latency
+	}
+	return true, latency
 }
 
 func buildLogger(logLevel string) *slog.Logger {
@@ -109,6 +244,8 @@ func parseStrategy(raw string) (globalrouting.Strategy, error) {
 		return globalrouting.StrategyRoundRobin, nil
 	case "failover":
 		return globalrouting.StrategyFailover, nil
+	case "latency":
+		return globalrouting.StrategyLatency, nil
 	default:
 		return "", fmt.Errorf("unsupported strategy %q", raw)
 	}

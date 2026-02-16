@@ -84,3 +84,39 @@ func TestRouterNoHealthyClusters(t *testing.T) {
 		t.Fatalf("Select() error = %v, want %v", err, ErrNoHealthyClusters)
 	}
 }
+
+func TestRouterLatencySelectsLowestObservedLatency(t *testing.T) {
+	registry := NewRegistry([]ClusterEndpoint{
+		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true},
+		{Name: "cluster-b", URL: "https://b.example.com", Healthy: true},
+		{Name: "cluster-c", URL: "https://c.example.com", Healthy: true},
+	}, nil)
+	registry.SetLatency("cluster-a", 90)
+	registry.SetLatency("cluster-b", 20)
+	registry.SetLatency("cluster-c", 45)
+
+	router := NewRouter(registry)
+	selected, err := router.Select(StrategyLatency)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	if selected.Name != "cluster-b" {
+		t.Fatalf("selected cluster = %q, want cluster-b", selected.Name)
+	}
+}
+
+func TestRouterLatencyFallsBackWhenNoProbeData(t *testing.T) {
+	registry := NewRegistry([]ClusterEndpoint{
+		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true},
+		{Name: "cluster-b", URL: "https://b.example.com", Healthy: true},
+	}, nil)
+
+	router := NewRouter(registry)
+	selected, err := router.Select(StrategyLatency)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	if selected.Name != "cluster-a" {
+		t.Fatalf("selected cluster = %q, want cluster-a", selected.Name)
+	}
+}

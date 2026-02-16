@@ -31,6 +31,18 @@ func TestGlobalProxySpecValidateBasic(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid latency strategy",
+			spec: GlobalProxySpec{
+				ExternalEndpoint: "global.flexinfer.example.com",
+				Strategy:         GlobalRoutingStrategyLatency,
+				Clusters: []GlobalProxyClusterEndpoint{
+					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com"},
+					{Name: "cluster-b", Endpoint: "https://cluster-b.example.com"},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "missing external endpoint",
 			spec: GlobalProxySpec{
 				Clusters: []GlobalProxyClusterEndpoint{{
@@ -95,6 +107,18 @@ func TestGlobalProxySpecValidateBasic(t *testing.T) {
 					Endpoint: "https://cluster-a.example.com",
 				}},
 				FailoverOrder: []string{"cluster-b"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "latency strategy rejects failover order",
+			spec: GlobalProxySpec{
+				ExternalEndpoint: "global.flexinfer.example.com",
+				Strategy:         GlobalRoutingStrategyLatency,
+				Clusters: []GlobalProxyClusterEndpoint{
+					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com"},
+				},
+				FailoverOrder: []string{"cluster-a"},
 			},
 			wantErr: true,
 		},

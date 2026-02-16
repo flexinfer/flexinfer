@@ -152,9 +152,9 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 8) Latency-based routing
 
-- [ ] Implement latency probing to cluster endpoints
-- [ ] Route to lowest-latency healthy cluster
-- [ ] Add metrics for routing decisions
+- [x] Implement latency probing to cluster endpoints
+- [x] Route to lowest-latency healthy cluster
+- [x] Add metrics for routing decisions
 
 **Acceptance**
 - Traffic shifts to lower-latency clusters automatically.
