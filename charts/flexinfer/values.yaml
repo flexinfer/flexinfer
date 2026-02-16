@@ -320,6 +320,29 @@ tenancy:
   rbac:
     roleName: flexinfer-tenant-operator
 
+  # Optional MT-2 admission guardrails.
+  # Rendered only when:
+  # - tenancy.enabled=true
+  # - tenancy.admission.enabled=true
+  # - cluster supports admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy
+  admission:
+    enabled: false
+    # FailurePolicy for ValidatingAdmissionPolicy: Fail | Ignore
+    failurePolicy: Fail
+    # Validation actions for policy bindings: Deny | Warn | Audit
+    validationActions:
+      - Deny
+    namespaceGuard:
+      # When true, restrict FlexInfer workloads to tenant-labeled namespaces
+      # or explicit allowlisted namespaces.
+      enforceTenantNamespaces: true
+      tenantLabelKey: flexinfer.ai/tenant
+      tenantLabelValue: "true"
+      # Platform namespace allowlist; tenant namespaces from tenancy.tenants[] are added automatically.
+      allowedNamespaces:
+        - flexinfer-system
+        - kube-system
+
   # Tenant definitions.
   # - namespace: required
   # - createNamespace: optional override for this tenant

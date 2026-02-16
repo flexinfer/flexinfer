@@ -1,0 +1,23 @@
+tenancy:
+  enabled: true
+  createNamespaces: true
+  admission:
+    enabled: true
+    failurePolicy: Fail
+    validationActions:
+      - Deny
+    namespaceGuard:
+      enforceTenantNamespaces: true
+      tenantLabelKey: flexinfer.ai/tenant
+      tenantLabelValue: "true"
+      allowedNamespaces:
+        - flexinfer-system
+        - kube-system
+  tenants:
+    - namespace: team-foo
+      labels:
+        owner: team-foo
+      subjects:
+        - kind: ServiceAccount
+          name: team-foo-operator
+          namespace: team-foo

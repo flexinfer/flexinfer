@@ -1,0 +1,9 @@
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: invalid-missing-resources
+  namespace: team-foo
+spec:
+  backend: mlc-llm
+  model: HF://mlc-ai/Qwen3-4B-q4f16_1-MLC
+  replicas: 1

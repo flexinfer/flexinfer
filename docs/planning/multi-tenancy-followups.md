@@ -27,10 +27,10 @@ Goal: prevent tenant workloads from bypassing quota/sizing guardrails by omittin
 
 ### Deliverables
 
-- `charts/flexinfer/templates/tenancy-admission-policies.yaml` (new)
-- `charts/flexinfer/values.yaml` additions under `tenancy.admission.*`
-- Runbook updates in `docs/DEPLOYMENT_RUNBOOK.md`
-- Policy tests/examples in `docs/examples/tenancy/`
+- [x] `charts/flexinfer/templates/tenancy-admission-policies.yaml` (new)
+- [x] `charts/flexinfer/values.yaml` additions under `tenancy.admission.*`
+- [x] Runbook updates in `docs/DEPLOYMENT_RUNBOOK.md`
+- [x] Policy examples in `docs/examples/tenancy/`
 
 ### Acceptance Criteria
 

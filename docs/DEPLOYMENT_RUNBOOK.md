@@ -553,6 +553,62 @@ kubectl describe resourcequota flexinfer-tenant-quota -n team-foo
 
 Deploy tenant `ModelDeployment`/`ModelCache` into the tenant namespace and verify scheduling still works with quota/policy constraints.
 
+## Tenant Admission Guardrails (MT-2)
+
+Enable this only after tenant baseline namespaces/labels are in place.
+
+### 1. Enable policy values
+
+```yaml
+tenancy:
+  enabled: true
+  admission:
+    enabled: true
+    failurePolicy: Fail
+    validationActions:
+      - Deny
+    namespaceGuard:
+      enforceTenantNamespaces: true
+      tenantLabelKey: flexinfer.ai/tenant
+      tenantLabelValue: "true"
+      allowedNamespaces:
+        - flexinfer-system
+        - kube-system
+```
+
+### 2. Validate rendered policy resources
+
+```bash
+helm template flexinfer ./charts/flexinfer -n flexinfer-system \
+  -f values.yaml -f values-tenancy.yaml | rg "ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding"
+```
+
+Expected resources:
+
+- `ValidatingAdmissionPolicy/*-modeldeployment-guardrails`
+- `ValidatingAdmissionPolicyBinding/*-modeldeployment-guardrails`
+- `ValidatingAdmissionPolicy/*-model-guardrails`
+- `ValidatingAdmissionPolicyBinding/*-model-guardrails`
+
+### 3. Validate behavior
+
+```bash
+# Should fail: missing cpu/memory requests+limits
+kubectl apply -f docs/examples/tenancy/modeldeployment-missing-resources.yaml
+
+# Should fail when namespace guard is enabled and namespace is not tenant-labeled/allowlisted
+kubectl apply -f docs/examples/tenancy/model-wrong-namespace.yaml
+```
+
+### 4. Confirm namespace guard labels
+
+```bash
+kubectl get ns -L flexinfer.ai/tenant
+```
+
+Namespaces intended for tenant workloads must have `flexinfer.ai/tenant=true`
+(or be in `tenancy.admission.namespaceGuard.allowedNamespaces`).
+
 ## Future Improvements
 
 ### Completed

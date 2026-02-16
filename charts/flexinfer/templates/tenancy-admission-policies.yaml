@@ -1,0 +1,94 @@
+{{- /*
+MT-2: Admission policy guardrails (opt-in).
+Requires Kubernetes support for ValidatingAdmissionPolicy.
+*/ -}}
+{{- if and .Values.tenancy.enabled .Values.tenancy.admission.enabled (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+{{- $root := . -}}
+{{- $namespaceGuard := default (dict) .Values.tenancy.admission.namespaceGuard -}}
+{{- $enforceTenantNamespaces := default true $namespaceGuard.enforceTenantNamespaces -}}
+{{- $tenantLabelKey := default "flexinfer.ai/tenant" $namespaceGuard.tenantLabelKey -}}
+{{- $tenantLabelValue := default "true" $namespaceGuard.tenantLabelValue -}}
+{{- $validationActions := default (list "Deny") .Values.tenancy.admission.validationActions -}}
+{{- $allowedNamespaces := deepCopy (default (list) $namespaceGuard.allowedNamespaces) -}}
+{{- range $tenant := .Values.tenancy.tenants }}
+{{- if $tenant.namespace }}
+{{- $allowedNamespaces = append $allowedNamespaces $tenant.namespace }}
+{{- end }}
+{{- end }}
+{{- $allowedNamespaces = uniq $allowedNamespaces -}}
+{{- $quotedNamespaces := list -}}
+{{- range $ns := $allowedNamespaces }}
+{{- $quotedNamespaces = append $quotedNamespaces (printf "%q" $ns) -}}
+{{- end }}
+{{- $allowedNamespacesCEL := printf "[%s]" (join ", " $quotedNamespaces) -}}
+{{- $namespaceGuardExpr := printf "(object.metadata.namespace in %s) || (has(namespaceObject.metadata.labels) && ('%s' in namespaceObject.metadata.labels) && namespaceObject.metadata.labels['%s'] == '%s')" $allowedNamespacesCEL $tenantLabelKey $tenantLabelKey $tenantLabelValue -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-modeldeployment-guardrails
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+spec:
+  failurePolicy: {{ default "Fail" .Values.tenancy.admission.failurePolicy }}
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["ai.flexinfer"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["modeldeployments"]
+  validations:
+    - expression: "has(object.spec.resources) && has(object.spec.resources.requests) && has(object.spec.resources.limits) && ('cpu' in object.spec.resources.requests) && ('memory' in object.spec.resources.requests) && ('cpu' in object.spec.resources.limits) && ('memory' in object.spec.resources.limits)"
+      message: "spec.resources requests/limits must include cpu and memory."
+{{- if $enforceTenantNamespaces }}
+    - expression: {{ $namespaceGuardExpr | quote }}
+      message: {{ printf "ModelDeployments must target tenant namespaces (label %s=%s) or an allowed platform namespace." $tenantLabelKey $tenantLabelValue | quote }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-modeldeployment-guardrails
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "flexinfer.fullname" . }}-modeldeployment-guardrails
+  validationActions:
+    {{- toYaml $validationActions | nindent 4 }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-model-guardrails
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+spec:
+  failurePolicy: {{ default "Fail" .Values.tenancy.admission.failurePolicy }}
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["ai.flexinfer"]
+        apiVersions: ["v1alpha2"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["models"]
+  validations:
+    - expression: "has(object.spec.resources) && has(object.spec.resources.requests) && has(object.spec.resources.limits) && ('cpu' in object.spec.resources.requests) && ('memory' in object.spec.resources.requests) && ('cpu' in object.spec.resources.limits) && ('memory' in object.spec.resources.limits)"
+      message: "spec.resources requests/limits must include cpu and memory."
+    - expression: "!has(object.spec.gpu) || object.spec.gpu.vendor == 'cpu' || object.spec.gpu.vendor == 'auto' || has(object.spec.gpu.count)"
+      message: "When spec.gpu.vendor is explicit, spec.gpu.count must also be set."
+    - expression: "!has(object.spec.gpu) || !has(object.spec.gpu.count) || (has(object.spec.gpu.vendor) && (object.spec.gpu.vendor == 'nvidia' || object.spec.gpu.vendor == 'amd'))"
+      message: "spec.gpu.count requires explicit spec.gpu.vendor (nvidia or amd)."
+{{- if $enforceTenantNamespaces }}
+    - expression: {{ $namespaceGuardExpr | quote }}
+      message: {{ printf "Models must target tenant namespaces (label %s=%s) or an allowed platform namespace." $tenantLabelKey $tenantLabelValue | quote }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-model-guardrails
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "flexinfer.fullname" . }}-model-guardrails
+  validationActions:
+    {{- toYaml $validationActions | nindent 4 }}
+{{- end }}

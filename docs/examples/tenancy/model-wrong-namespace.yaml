@@ -1,0 +1,15 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: invalid-wrong-namespace
+  namespace: default
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-4B-q4f16_1-MLC
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
