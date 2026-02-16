@@ -6,6 +6,7 @@
   import Modal from '../widgets/Modal.svelte';
   import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
 
   $effect(() => {
     graphStore.startPolling(10000);
@@ -279,7 +280,7 @@
             <span class="hist-count text-mono">{count}</span>
           </div>
         {:else}
-          <div class="text-muted text-sm" style="padding: 12px">No entity types</div>
+          <EmptyState icon={'\u25C8'} heading="No entity types" compact />
         {/each}
       </div>
     </div>
@@ -297,7 +298,7 @@
             <span class="rel-count text-mono text-muted">{count}</span>
           </div>
         {:else}
-          <div class="text-muted text-sm" style="padding: 12px">No relations</div>
+          <EmptyState icon={'\u25C8'} heading="No relations" compact />
         {/each}
       </div>
     </div>
@@ -314,7 +315,7 @@
             <span class="ns-count text-mono text-muted">{count}</span>
           </div>
         {:else}
-          <div class="text-muted text-sm" style="padding: 12px">No namespaces</div>
+          <EmptyState icon={'\u25C8'} heading="No namespaces" compact />
         {/each}
       </div>
     </div>
@@ -322,22 +323,23 @@
 
   <!-- Right column: Explorer -->
   <div class="explorer-column">
-    <!-- Search bar -->
-    <div class="explorer-search">
-      <input
-        type="text"
-        placeholder="Search entities..."
-        bind:value={searchQuery}
-        onkeydown={handleSearchKey}
-        class="search-input"
-      />
-      <select bind:value={typeFilter}>
-        {#each uniqueTypes as t}
-          <option value={t}>{t === 'all' ? 'All Types' : t}</option>
-        {/each}
-      </select>
-      <button class="btn btn-primary" onclick={doSearch}>Search</button>
-    </div>
+    <FilterBar
+      search={searchQuery}
+      placeholder="Search entities..."
+      filters={[{
+        key: 'type',
+        label: 'All Types',
+        options: uniqueTypes.filter(t => t !== 'all').map(t => ({ value: t, label: t })),
+        value: typeFilter === 'all' ? '' : typeFilter,
+      }]}
+      resultCount={displayEntities.length}
+      onSearch={(val) => { searchQuery = val; }}
+      onFilter={(key, val) => { typeFilter = val || 'all'; }}
+    >
+      {#snippet actions()}
+        <button class="btn btn-primary" onclick={doSearch}>Search</button>
+      {/snippet}
+    </FilterBar>
 
     <!-- Results list -->
     <div class="explorer-results">
@@ -640,19 +642,6 @@
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
-  }
-
-  .explorer-search {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 120px;
   }
 
   .explorer-results {

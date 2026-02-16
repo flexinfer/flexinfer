@@ -8,6 +8,7 @@
   import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
   import FilterBar from './shared/FilterBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import DataTable from './shared/DataTable.svelte';
 
   $effect(() => {
     memoryStore.startPolling(8000);
@@ -19,6 +20,18 @@
 
   let activeTier = $state('working');
   let searchQuery = $state('');
+  let sortKey = $state('');
+  let sortDir = $state('asc');
+
+  const memColumns = [
+    { key: 'title', label: 'Title', sortable: true },
+    { key: 'importance', label: 'Importance', sortable: true, width: '100px' },
+    { key: 'tokens', label: 'Tokens', sortable: true, width: '80px' },
+    { key: 'status', label: 'Status', width: '100px' },
+    { key: 'category', label: 'Category', sortable: true, width: '120px' },
+    { key: 'last_accessed', label: 'Accessed', sortable: true, width: '120px' },
+    { key: 'actions', label: '', width: '90px' },
+  ];
 
   // Expanded items (click to see full content)
   let expandedItems = $state(new Set());
@@ -63,6 +76,20 @@
     // Default sort by importance (highest first).
     result.sort((a, b) => importanceScore(b.importance) - importanceScore(a.importance));
 
+    return result;
+  });
+
+  let sortedItems = $derived.by(() => {
+    if (!sortKey) return filteredItems;
+    const result = [...filteredItems];
+    result.sort((a, b) => {
+      let va = a[sortKey] ?? '';
+      let vb = b[sortKey] ?? '';
+      if (sortKey === 'tokens') { va = a.tokens ?? 0; vb = b.tokens ?? 0; }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
     return result;
   });
 
@@ -355,82 +382,64 @@
       {/snippet}
     </FilterBar>
 
-    <div class="browser-table">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Importance</th>
-              <th>Tokens</th>
-              <th>Status</th>
-              <th>Category</th>
-              <th>Accessed</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each filteredItems as item (item.id)}
-              <tr class="row-enter memory-row" class:expanded-row={expandedItems.has(item.id)} style="border-left: 3px solid {importanceBorderColor(item.importance)}">
-                <td class="item-title">
-                  <button class="expand-btn" onclick={() => toggleExpand(item.id)} title="Expand">
-                    <span class="expand-icon">{expandedItems.has(item.id) ? '\u25BC' : '\u25B6'}</span>
-                    {item.title ?? '---'}
-                  </button>
-                </td>
-                <td>
-                  <span class="importance-text" style="color: {importanceColor(item.importance)}">
-                    {item.importance ?? 'medium'}
-                  </span>
-                </td>
-                <td class="text-mono">{formatNumber(item.tokens ?? 0)}</td>
-                <td>
-                  <Badge text={item.status ?? 'active'} variant={statusVariant(item.status)} />
-                </td>
-                <td class="text-mono text-muted">{item.category ?? '---'}</td>
-                <td class="text-mono text-muted">{relativeTime(item.last_accessed)}</td>
-                <td class="actions-cell">
-                  {#if activeTier !== 'long_term'}
-                    <button
-                      class="action-btn promote-btn"
-                      onclick={() => promoteItem(item.id)}
-                      title="Promote"
-                    >&#8593;</button>
-                  {/if}
-                  {#if activeTier !== 'working'}
-                    <button
-                      class="action-btn demote-btn"
-                      onclick={() => demoteItem(item.id)}
-                      title="Demote"
-                    >&#8595;</button>
-                  {/if}
-                  <button
-                    class="action-btn delete-btn"
-                    onclick={() => confirmDelete(item)}
-                    title="Delete"
-                  >&#10005;</button>
-                </td>
-              </tr>
-              {#if expandedItems.has(item.id)}
-                <tr class="expand-content-row">
-                  <td colspan="7">
-                    <div class="expand-content">
-                      <pre class="content-pre">{item.content ?? '(no content)'}</pre>
-                    </div>
-                  </td>
-                </tr>
-              {/if}
-            {:else}
-              <tr>
-                <td colspan="7" style="padding: 0; border: none;">
-                  <EmptyState icon={'\u25A1'} heading="No items in this tier" compact />
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    {#if sortedItems.length === 0}
+      <EmptyState icon={'\u25A1'} heading="No items in this tier" compact />
+    {:else}
+      <DataTable
+        columns={memColumns}
+        rows={sortedItems}
+        {sortKey}
+        {sortDir}
+        expandedIds={expandedItems}
+        idKey="id"
+        onSort={(key, dir) => { sortKey = key; sortDir = dir; }}
+        onToggleExpand={(item) => toggleExpand(item.id)}
+      >
+        {#snippet row({ row: item, expanded })}
+          <td style="border-left: 3px solid {importanceBorderColor(item.importance)}">
+            <span class="expand-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
+            {item.title ?? '---'}
+          </td>
+          <td>
+            <span class="importance-text" style="color: {importanceColor(item.importance)}">
+              {item.importance ?? 'medium'}
+            </span>
+          </td>
+          <td class="text-mono">{formatNumber(item.tokens ?? 0)}</td>
+          <td>
+            <Badge text={item.status ?? 'active'} variant={statusVariant(item.status)} />
+          </td>
+          <td class="text-mono text-muted">{item.category ?? '---'}</td>
+          <td class="text-mono text-muted">{relativeTime(item.last_accessed)}</td>
+          <td class="actions-cell">
+            {#if activeTier !== 'long_term'}
+              <button
+                class="action-btn promote-btn"
+                onclick={(e) => { e.stopPropagation(); promoteItem(item.id); }}
+                title="Promote"
+              >&#8593;</button>
+            {/if}
+            {#if activeTier !== 'working'}
+              <button
+                class="action-btn demote-btn"
+                onclick={(e) => { e.stopPropagation(); demoteItem(item.id); }}
+                title="Demote"
+              >&#8595;</button>
+            {/if}
+            <button
+              class="action-btn delete-btn"
+              onclick={(e) => { e.stopPropagation(); confirmDelete(item); }}
+              title="Delete"
+            >&#10005;</button>
+          </td>
+        {/snippet}
+        {#snippet expandedRow({ row: item })}
+          <div class="expand-content">
+            <pre class="content-pre">{item.content ?? '(no content)'}</pre>
+          </div>
+        {/snippet}
+      </DataTable>
+    {/if}
   </div>
 </div>
 
@@ -636,46 +645,11 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   }
 
-  .browser-table {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  /* Expandable items */
-  .expand-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--fg-primary);
-    font-weight: 500;
-    font-size: 12px;
-    max-width: 250px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .expand-btn:hover {
-    color: var(--info);
-  }
-
   .expand-icon {
     font-size: 8px;
     flex-shrink: 0;
     width: 10px;
     color: var(--fg-muted);
-  }
-
-  .expanded-row td {
-    border-bottom: none !important;
-  }
-
-  .expand-content-row td {
-    padding: 0 10px 10px !important;
   }
 
   .expand-content {
@@ -694,15 +668,6 @@
     word-break: break-word;
     line-height: 1.5;
     margin: 0;
-  }
-
-  .item-title {
-    color: var(--fg-primary);
-    font-weight: 500;
-    max-width: 250px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .importance-text {
@@ -752,10 +717,6 @@
 
   .delete-btn:hover {
     background: rgba(230, 30, 63, 0.15);
-  }
-
-  .memory-row {
-    transition: border-left-color 0.15s;
   }
 
   /* Add memory form */

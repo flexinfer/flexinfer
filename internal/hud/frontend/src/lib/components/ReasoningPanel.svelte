@@ -133,13 +133,13 @@
 
 <!-- Create Chain Modal -->
 <Modal title="New Reasoning Chain" open={showCreateModal} onclose={() => { showCreateModal = false; }}>
-  <div class="form-group">
+  <div class="form-field">
     <label class="form-label" for="reasoning-chain-title">Title</label>
-    <input id="reasoning-chain-title" type="text" bind:value={newTitle} placeholder="Chain title..." class="form-input" />
+    <input id="reasoning-chain-title" type="text" bind:value={newTitle} placeholder="Chain title..." />
   </div>
-  <div class="form-group">
+  <div class="form-field">
     <label class="form-label" for="reasoning-chain-description">Description</label>
-    <textarea id="reasoning-chain-description" bind:value={newDescription} placeholder="What is being reasoned about..." class="form-input" rows="3"></textarea>
+    <textarea id="reasoning-chain-description" bind:value={newDescription} placeholder="What is being reasoned about..." rows="3"></textarea>
   </div>
   <div class="form-actions">
     <button class="btn btn-ghost" onclick={() => { showCreateModal = false; }}>Cancel</button>
@@ -352,57 +352,4 @@
     padding: 8px 16px;
   }
 
-  .loading-bar {
-    height: 2px;
-    background: var(--bg-tertiary);
-    border-radius: 1px;
-    overflow: hidden;
-  }
-
-  .loading-bar-inner {
-    width: 40%;
-    height: 100%;
-    background: var(--accent);
-    border-radius: 1px;
-    animation: loadingSlide 1s ease-in-out infinite;
-  }
-
-  @keyframes loadingSlide {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(300%); }
-  }
-
-  /* Form styles */
-
-  .form-group {
-    margin-bottom: 12px;
-  }
-
-  .form-label {
-    display: block;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    color: var(--fg-muted);
-    margin-bottom: 4px;
-  }
-
-  .form-input {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  textarea.form-input {
-    resize: vertical;
-    font-family: var(--font-sans);
-    font-size: 13px;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 16px;
-  }
 </style>

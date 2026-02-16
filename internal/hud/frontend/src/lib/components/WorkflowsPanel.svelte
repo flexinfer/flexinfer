@@ -294,11 +294,7 @@
       </div>
 
     {:else}
-      <div class="no-selection">
-        <div class="no-selection-icon">&#9881;</div>
-        <span class="text-muted">Select a workflow</span>
-        <span class="text-xs text-muted">Choose a workflow from the list to view its DAG and events</span>
-      </div>
+      <EmptyState icon={'\u2699'} heading="Select a workflow" description="Choose a workflow from the list to view its DAG and events" />
     {/if}
   </div>
 </div>
@@ -583,21 +579,6 @@
     border: 1px solid var(--border);
     white-space: pre-wrap;
     word-break: break-all;
-  }
-
-  /* No selection */
-  .no-selection {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-  }
-
-  .no-selection-icon {
-    font-size: 40px;
-    opacity: 0.3;
   }
 
   .wf-progress-track {
