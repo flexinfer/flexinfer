@@ -4,14 +4,36 @@
   import Badge from '../widgets/Badge.svelte';
   import DagView from '../widgets/DagView.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import FilterBar from './shared/FilterBar.svelte';
 
   $effect(() => {
     workflowStore.startPolling(5000);
     return () => { workflowStore.stopPolling(); };
   });
 
+  let searchQuery = $state('');
+  let filterStatus = $state('');
+
   let workflows = $derived(workflowStore.workflows ?? []);
   let definitions = $derived(workflowStore.uniqueDefinitions ?? []);
+
+  let filteredWorkflows = $derived.by(() => {
+    let result = workflows;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(w => (w.name ?? w.id).toLowerCase().includes(q));
+    }
+    if (filterStatus) {
+      result = result.filter(w => w.status === filterStatus);
+    }
+    return result;
+  });
+
+  let filteredDefinitions = $derived.by(() => {
+    if (!searchQuery) return definitions;
+    const q = searchQuery.toLowerCase();
+    return definitions.filter(d => d.name.toLowerCase().includes(q));
+  });
   let selected = $derived(workflowStore.selectedWorkflow ?? null);
 
   /** Track whether we're viewing an instance or a definition. */
@@ -102,15 +124,30 @@
 <div class="panel workflows-panel">
   <!-- Left sidebar: workflow list -->
   <div class="wf-sidebar">
-    <div class="sidebar-header">
-      <span class="card-title">Workflows</span>
-      <span class="count-badge">{workflows.length + definitions.length}</span>
+    <div class="sidebar-filter">
+      <FilterBar
+        search={searchQuery}
+        placeholder="Filter workflows..."
+        filters={[
+          { key: 'status', label: 'Status', options: [
+            { value: 'running', label: 'Running' },
+            { value: 'pending', label: 'Pending' },
+            { value: 'waiting_approval', label: 'Waiting' },
+            { value: 'completed', label: 'Completed' },
+            { value: 'failed', label: 'Failed' },
+            { value: 'cancelled', label: 'Cancelled' },
+          ], value: filterStatus },
+        ]}
+        resultCount={filteredWorkflows.length + filteredDefinitions.length}
+        onSearch={(q) => { searchQuery = q; }}
+        onFilter={(key, val) => { if (key === 'status') filterStatus = val; }}
+      />
     </div>
     <div class="wf-list">
       <!-- Running instances -->
-      {#if workflows.length > 0}
+      {#if filteredWorkflows.length > 0}
         <div class="wf-section-label">Running</div>
-        {#each workflows as wf (wf.id)}
+        {#each filteredWorkflows as wf (wf.id)}
           <button
             class="wf-item"
             class:wf-selected={viewMode === 'instance' && selected?.id === wf.id}
@@ -132,9 +169,9 @@
       {/if}
 
       <!-- Registered definitions -->
-      {#if definitions.length > 0}
+      {#if filteredDefinitions.length > 0}
         <div class="wf-section-label">Definitions</div>
-        {#each definitions as def (def.id)}
+        {#each filteredDefinitions as def (def.id)}
           <button
             class="wf-item wf-def-item"
             class:wf-selected={viewMode === 'definition' && selectedDef?.id === def.id}
@@ -153,8 +190,12 @@
       {/if}
 
       <!-- Empty state -->
-      {#if workflows.length === 0 && definitions.length === 0}
-        <EmptyState icon={'\u2699'} heading="No workflows" compact />
+      {#if filteredWorkflows.length === 0 && filteredDefinitions.length === 0}
+        {#if searchQuery || filterStatus}
+          <EmptyState icon={'\u2699'} heading="No matches" description="Try adjusting your search or filters" compact />
+        {:else}
+          <EmptyState icon={'\u2699'} heading="No workflows" compact />
+        {/if}
       {/if}
     </div>
   </div>
@@ -230,7 +271,7 @@
           Reject
         </button>
         <div class="toolbar-spacer"></div>
-        <button class="btn btn-ghost">Cancel Workflow</button>
+        <button class="btn btn-ghost" onclick={() => { if (selected) workflowStore.cancelWorkflow(selected.id); }}>Cancel Workflow</button>
       </div>
 
     {:else if viewMode === 'definition' && selectedDef}
@@ -316,21 +357,8 @@
     background: var(--bg-secondary);
   }
 
-  .sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
+  .sidebar-filter {
     border-bottom: 1px solid var(--border);
-  }
-
-  .count-badge {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    background: var(--bg-tertiary);
-    color: var(--fg-secondary);
-    padding: 1px 6px;
-    border-radius: var(--radius-lg);
   }
 
   .wf-list {

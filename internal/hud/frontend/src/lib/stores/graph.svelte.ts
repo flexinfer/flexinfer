@@ -1,4 +1,5 @@
 // Graph store - knowledge graph visualization
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface Relation {
   source: string;
@@ -84,7 +85,11 @@ class GraphStore {
 
       this.stats = await statsRes.json();
       const data: EntitiesResponse = await entitiesRes.json();
-      this.entities = data.entities || [];
+      const newEntities = data.entities || [];
+      const hashFn = (e: Entity) => `${e.name}|${e.entity_type}`;
+      if (!arraysEqualById(this.entities, newEntities, hashFn)) {
+        this.entities = newEntities;
+      }
       this.lastUpdated = new Date();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
@@ -115,7 +120,11 @@ class GraphStore {
 
         this.stats = await statsRes.json();
         const data: EntitiesResponse = await entitiesRes.json();
-        this.entities = data.entities || [];
+        const newEntities = data.entities || [];
+        const hashFn = (e: Entity) => `${e.name}|${e.entity_type}`;
+        if (!arraysEqualById(this.entities, newEntities, hashFn)) {
+          this.entities = newEntities;
+        }
         this.lastUpdated = new Date();
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e);

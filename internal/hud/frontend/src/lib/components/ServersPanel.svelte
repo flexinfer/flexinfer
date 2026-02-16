@@ -564,45 +564,7 @@
     color: var(--fg-muted);
   }
 
-  /* --- Detail Drawer --- */
-
-  .detail-stats {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2, 8px);
-    flex-wrap: wrap;
-  }
-
-  .stat-chip {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1, 4px);
-    font-size: var(--text-sm, 12px);
-  }
-
-  .stat-chip-value {
-    font-family: var(--font-mono);
-    font-weight: 600;
-    color: var(--fg-primary);
-  }
-
-  .stat-chip-label {
-    font-size: var(--text-xs, 10px);
-    color: var(--fg-muted);
-  }
-
-  .section {
-    margin-bottom: 12px;
-  }
-
-  .section-title {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-muted);
-    margin-bottom: 4px;
-  }
+  /* --- Detail Drawer (shared classes in theme.css) --- */
 
   .detail-cats {
     display: flex;

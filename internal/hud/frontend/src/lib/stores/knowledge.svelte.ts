@@ -1,4 +1,5 @@
 // Knowledge store - cross-agent context aggregation
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface KnowledgeEntry {
   id: string;
@@ -77,8 +78,12 @@ class KnowledgeStore {
       if (!res.ok) throw new Error(`Knowledge API: ${res.status}`);
 
       const data: KnowledgeResponse = await res.json();
-      this.entries = data.entries ?? [];
-      this.grouped = data.grouped ?? {};
+      const newEntries = data.entries ?? [];
+      const hashFn = (e: KnowledgeEntry) => `${e.entry_type}|${e.title}|${e.timestamp}`;
+      if (!arraysEqualById(this.entries, newEntries, hashFn)) {
+        this.entries = newEntries;
+        this.grouped = data.grouped ?? {};
+      }
       this.totalTokens = data.total_tokens ?? 0;
       this.tokenBudget = data.token_budget ?? 0;
       this.lastUpdated = new Date();

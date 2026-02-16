@@ -942,20 +942,8 @@
     color: var(--accent);
   }
 
-  /* DetailDrawer stat chips */
-  .detail-stats {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2, 8px);
-    flex-wrap: wrap;
-  }
-
-  .stat-chip {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1, 4px);
-    font-size: var(--text-sm, 13px);
-  }
+  /* DetailDrawer shared classes in theme.css; stat-chip override for 13px */
+  .stat-chip { font-size: var(--text-sm, 13px); }
 
   /* Drawer properties table */
   .drawer-props-table {
@@ -990,8 +978,5 @@
     font-size: var(--text-sm, 13px);
   }
 
-  /* Section (shared drawer pattern) */
-  .section {
-    margin-bottom: 12px;
-  }
+  /* Section shared in theme.css */
 </style>

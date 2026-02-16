@@ -1,6 +1,7 @@
 // Health store - server health, latency sparklines
 // v2: SSE-first with 30s fallback poll. Applies hud.health snapshots directly.
 import { eventStore } from './events.svelte.ts';
+import { arraysEqualByKey } from '../utils/diff.ts';
 
 export interface HealthEndpoint {
   healthy: boolean;
@@ -154,7 +155,11 @@ class HealthStore {
         };
       });
 
-      this.servers = merged;
+      const keyFn = (s: MergedServer) => s.name;
+      const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}`;
+      if (!arraysEqualByKey(this.servers, merged, keyFn, hashFn)) {
+        this.servers = merged;
+      }
       this.lastUpdated = new Date();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
@@ -234,8 +239,11 @@ class HealthStore {
       };
     });
 
-    this.servers = merged;
-    this.lastUpdated = new Date();
+    const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}`;
+    if (!arraysEqualById(this.servers, merged, hashFn)) {
+      this.servers = merged;
+      this.lastUpdated = new Date();
+    }
     this.error = null;
   }
 

@@ -1,6 +1,7 @@
 // Workflows store - workflow orchestration
 // v2: SSE-first with 30s fallback poll. Applies hud.workflows snapshots directly.
 import { eventStore } from './events.svelte.ts';
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface WorkflowSummary {
   id: string;
@@ -137,7 +138,7 @@ class WorkflowStore {
     if (!workflows) return;
 
     // Map MCP field names (workflow_id, created_at) to frontend field names (id, started_at).
-    this.workflows = workflows.map((wf) => ({
+    const mapped = workflows.map((wf) => ({
       id: (wf.workflow_id as string) ?? (wf.id as string) ?? '',
       definition_id: (wf.definition_id as string) ?? '',
       name: wf.name as string | undefined,
@@ -147,6 +148,9 @@ class WorkflowStore {
       completed_at: wf.completed_at as string | undefined,
       progress: wf.progress as number | undefined,
     })) as WorkflowSummary[];
+    const hashFn = (w: WorkflowSummary) => `${w.status}|${w.current_step}`;
+    if (arraysEqualById(this.workflows, mapped, hashFn)) return;
+    this.workflows = mapped;
     this.lastUpdated = new Date();
     this.error = null;
   }
@@ -189,6 +193,18 @@ class WorkflowStore {
       });
       if (!res.ok) throw new Error(`Reject step: ${res.status}`);
       await this.fetchDetail(workflowId);
+      await this.fetch();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async cancelWorkflow(workflowId: string): Promise<void> {
+    try {
+      const res = await globalThis.fetch(`/api/workflows/${workflowId}/cancel`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(`Cancel workflow: ${res.status}`);
       await this.fetch();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
