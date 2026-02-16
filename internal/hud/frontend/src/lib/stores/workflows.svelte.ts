@@ -225,6 +225,7 @@ class WorkflowStore {
       // Granular workflow mutation events — trigger full refresh.
       eventStore.on('hud.workflow.approve', () => this.fetch()),
       eventStore.on('hud.workflow.reject', () => this.fetch()),
+      eventStore.on('hud.workflow.cancel', () => this.fetch()),
     );
   }
 

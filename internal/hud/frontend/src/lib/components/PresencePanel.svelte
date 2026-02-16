@@ -28,6 +28,7 @@
   let handoffs = $state([]);
   let templates = $state([]);
   let handoffLoading = $state(false);
+  let handoffError = $state('');
   let showHandoffModal = $state(false);
   let newHandoffTo = $state('');
   let newHandoffSummary = $state('');
@@ -36,6 +37,7 @@
 
   async function fetchHandoffs() {
     handoffLoading = true;
+    handoffError = '';
     try {
       const [hRes, tRes] = await Promise.all([
         globalThis.fetch('/api/handoffs'),
@@ -50,7 +52,7 @@
         templates = tData.templates ?? [];
       }
     } catch (e) {
-      // Silently fail — handoffs are supplementary
+      handoffError = e instanceof Error ? e.message : 'Failed to load';
     } finally {
       handoffLoading = false;
     }
@@ -601,6 +603,10 @@
 
         {#if handoffLoading}
           <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+        {/if}
+
+        {#if handoffError}
+          <div class="text-xs text-muted" style="padding: 4px 12px;">Failed to load handoffs</div>
         {/if}
 
         {#if handoffs.length === 0 && !handoffLoading}

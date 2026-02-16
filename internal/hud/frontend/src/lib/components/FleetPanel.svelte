@@ -117,15 +117,15 @@
     return map;
   });
 
-  let workingItems = $derived(memStats.tiers?.working?.items ?? 0);
-  let workingTokens = $derived(memStats.tiers?.working?.tokens ?? 0);
-  let workingMax = $derived(memStats.tiers?.working?.max_items ?? 100);
-  let shortItems = $derived(memStats.tiers?.short_term?.items ?? 0);
-  let shortTokens = $derived(memStats.tiers?.short_term?.tokens ?? 0);
-  let shortMax = $derived(memStats.tiers?.short_term?.max_items ?? 500);
-  let longItems = $derived(memStats.tiers?.long_term?.items ?? 0);
-  let longTokens = $derived(memStats.tiers?.long_term?.tokens ?? 0);
-  let longMax = $derived(memStats.tiers?.long_term?.max_items ?? 2000);
+  let workingItems = $derived(memStats.working_memory?.items ?? 0);
+  let workingTokens = $derived(memStats.working_memory?.tokens ?? 0);
+  let workingMax = $derived(memStats.working_memory?.max_items ?? 100);
+  let shortItems = $derived(memStats.short_term_memory?.items ?? 0);
+  let shortTokens = $derived(memStats.short_term_memory?.tokens ?? 0);
+  let shortMax = $derived(memStats.short_term_memory?.max_items ?? 500);
+  let longItems = $derived(memStats.long_term_memory?.items ?? 0);
+  let longTokens = $derived(memStats.long_term_memory?.tokens ?? 0);
+  let longMax = $derived(memStats.long_term_memory?.max_items ?? 2000);
 
   // Sort state for fleet DataTable
   let fleetSortKey = $state('agent');

@@ -366,8 +366,7 @@
         <div class="entity-card" class:entity-selected={selectedEntity?.id === entity.id}>
           <button class="entity-header" onclick={() => { toggleExpand(entity.id); selectEntity(entity); }}>
             <Badge text={entity.type ?? 'entity'} variant={typeVariant(entity.type)} />
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <span class="entity-name entity-name-link" onclick={(e) => { e.stopPropagation(); openEntityDrawer(entity); }} role="button" tabindex="-1">{entity.name ?? entity.id}</span>
+            <span class="entity-name entity-name-link" onclick={(e) => { e.stopPropagation(); openEntityDrawer(entity); }} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openEntityDrawer(entity); } }} role="button" tabindex="0">{entity.name ?? entity.id}</span>
             <span class="entity-chevron">
               {expandedEntities.has(entity.id) ? '\u25BC' : '\u25B6'}
             </span>

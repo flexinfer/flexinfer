@@ -143,6 +143,14 @@
         onFilter={(key, val) => { if (key === 'status') filterStatus = val; }}
       />
     </div>
+    {#if workflowStore.loading}
+      <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+    {/if}
+    {#if workflowStore.error}
+      <div class="wf-error-banner text-xs text-muted" style="padding: 4px 12px; color: var(--error);">
+        {workflowStore.error}
+      </div>
+    {/if}
     <div class="wf-list">
       <!-- Running instances -->
       {#if filteredWorkflows.length > 0}
@@ -202,6 +210,9 @@
 
   <!-- Right main area: detail -->
   <div class="wf-detail">
+    {#if workflowStore.loading && viewMode === 'instance'}
+      <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+    {/if}
     {#if viewMode === 'instance' && selected}
       <!-- Instance detail view -->
       <div class="detail-top">
@@ -622,5 +633,26 @@
     background: var(--success);
     border-radius: 2px;
     transition: width 0.3s ease;
+  }
+
+  /* Loading bar */
+  .loading-bar {
+    height: 2px;
+    background: var(--bg-tertiary);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+
+  .loading-bar-inner {
+    width: 40%;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 1px;
+    animation: loadingSlide 1s ease-in-out infinite;
+  }
+
+  @keyframes loadingSlide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
   }
 </style>
