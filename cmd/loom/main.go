@@ -217,7 +217,9 @@ Example mcp.json:
   {"mcpServers":{"loom":{"command":"loom","args":["proxy"]}}}`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentHint, _ := cmd.Flags().GetString("agent-hint")
-			return runProxyWithHint(socketPath, agentHint)
+			remoteURL, _ := cmd.Flags().GetString("remote")
+			remoteToken, _ := cmd.Flags().GetString("remote-token")
+			return runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken)
 		},
 	}
 	// Backwards compatibility: older generated configs included `--registry` on `loom proxy`.
@@ -225,6 +227,8 @@ Example mcp.json:
 	// flag prevents immediate exit with "unknown flag" which breaks MCP initialization.
 	proxyCmd.Flags().String("registry", "", "Path to registry.yaml (accepted for compatibility; ignored)")
 	proxyCmd.Flags().String("agent-hint", "", "Agent type hint for proxy-level heartbeats (e.g., kilocode, antigravity)")
+	proxyCmd.Flags().String("remote", "", "Remote daemon URL for Streamable HTTP (e.g., https://host:8088/mcp)")
+	proxyCmd.Flags().String("remote-token", "", "Bearer token for remote daemon (or set LOOM_REMOTE_TOKEN env var)")
 
 	// Generate command
 	generateCmd := &cobra.Command{
@@ -423,7 +427,7 @@ PowerShell:
 		},
 	}
 
-	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, schemasCmd, completionCmd, newHudCmd(socketPath), newAgentCmd())
+	rootCmd.AddCommand(statusCmd, startCmd, stopCmd, restartCmd, installCmd, uninstallCmd, daemonCmd, serversCmd, checkCmd, doctorCmd, proxyCmd, generateCmd, syncCmd, pullCmd, backupCmd, validateCmd, profileCmd, contextCmd, toolsCmd, reloadCmd, secretsCmd, tunnelCmd, cacheCmd, replCmd, schemasCmd, completionCmd, newHudCmd(socketPath), newAgentCmd(), newAuthCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

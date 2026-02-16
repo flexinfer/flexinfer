@@ -21,11 +21,19 @@ import (
 // agentHintGlobal stores the --agent-hint flag value for proxy-level heartbeats.
 var agentHintGlobal string
 
-// runProxyWithHint wraps runProxy with agent-hint support.
+// remoteURLGlobal stores the --remote flag value for remote daemon connections.
+var remoteURLGlobal string
+
+// remoteTokenGlobal stores the --remote-token flag value.
+var remoteTokenGlobal string
+
+// runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
-func runProxyWithHint(socketPath, agentHint string) error {
+func runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken string) error {
 	agentHintGlobal = agentHint
+	remoteURLGlobal = remoteURL
+	remoteTokenGlobal = remoteToken
 	return runProxy(socketPath)
 }
 
@@ -36,7 +44,7 @@ func runProxy(socketPath string) error {
 	// Create stdio transport for client communication
 	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
 
-	var daemon *mcp.StdioTransport
+	var daemon mcp.Transport
 	var daemonConn net.Conn
 
 	var autostartOnce sync.Once
@@ -57,6 +65,49 @@ func runProxy(socketPath string) error {
 	}
 
 	ensureDaemon := func() error {
+		if daemon != nil {
+			return nil
+		}
+
+		// Remote mode: connect via Streamable HTTP
+		if remoteURLGlobal != "" {
+			token := remoteTokenGlobal
+			if token == "" {
+				token = os.Getenv("LOOM_REMOTE_TOKEN")
+			}
+
+			headers := make(map[string]string)
+			if token != "" {
+				headers["Authorization"] = "Bearer " + token
+			}
+
+			transport := mcp.NewStreamableHTTPTransport(mcp.StreamableHTTPClientConfig{
+				Endpoint: remoteURLGlobal,
+				Headers:  headers,
+			})
+
+			// Initialize the remote connection
+			initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
+				ProtocolVersion: mcp.ProtocolVersion20250618,
+				Capabilities:    mcp.Capabilities{},
+				ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
+			})
+			if err := transport.Send(ctx, initReq); err != nil {
+				transport.Close()
+				return fmt.Errorf("remote initialize: %w", err)
+			}
+			if _, err := transport.Recv(ctx); err != nil {
+				transport.Close()
+				return fmt.Errorf("remote initialize recv: %w", err)
+			}
+			// Send initialized notification
+			transport.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
+
+			daemon = transport
+			return nil
+		}
+
+		// Local mode: connect via Unix socket
 		if daemonConn != nil {
 			return nil
 		}
@@ -164,8 +215,13 @@ func runProxy(socketPath string) error {
 		if err != nil {
 			// If it was a connection error, clear daemon so we reconnect next time
 			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
-				daemonConn.Close()
-				daemonConn = nil
+				if daemonConn != nil {
+					daemonConn.Close()
+					daemonConn = nil
+				}
+				if daemon != nil {
+					daemon.Close()
+				}
 				daemon = nil
 			}
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())

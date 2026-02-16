@@ -38,6 +38,7 @@ type Config struct {
 	HubPrefer    bool
 	WarmOnStart  []string
 	Debug        bool
+	HTTPAddr     string // Address for Streamable HTTP listener (e.g., ":8088")
 }
 
 // DefaultConfig returns the default daemon configuration.
@@ -78,17 +79,20 @@ type Daemon struct {
 	listener       net.Listener
 	logger         *slog.Logger
 	toolCache      *ToolCache
-	manifest       *ManifestManager   // Persistent tool cache
-	profiles       *profiles.Manager  // Tool profile manager
-	metadata       *registry.Metadata // Tool metadata for enhanced descriptions
-	watcher        *sync.Watcher      // File watcher for hot reload
-	syncManager    *sync.Manager      // Sync manager for profile operations
-	metrics        *Metrics           // Prometheus metrics
-	healthMonitor  *HealthMonitor     // Server health monitoring
-	tunnelMgr      *TunnelManager     // SSH tunnel management
-	respCache      *ResponseCache     // Response cache for read-only tools
-	eventBus       *EventBus          // Event bus for SSE streaming
-	runningServers gosync.Map         // serverName -> true; tracks process starts for event emission
+	manifest       *ManifestManager                // Persistent tool cache
+	profiles       *profiles.Manager               // Tool profile manager
+	metadata       *registry.Metadata              // Tool metadata for enhanced descriptions
+	watcher        *sync.Watcher                   // File watcher for hot reload
+	syncManager    *sync.Manager                   // Sync manager for profile operations
+	metrics        *Metrics                        // Prometheus metrics
+	healthMonitor  *HealthMonitor                  // Server health monitoring
+	tunnelMgr      *TunnelManager                  // SSH tunnel management
+	respCache      *ResponseCache                  // Response cache for read-only tools
+	eventBus       *EventBus                       // Event bus for SSE streaming
+	runningServers gosync.Map                      // serverName -> true; tracks process starts for event emission
+	httpServer     *http.Server                    // Streamable HTTP listener
+	httpStreamable *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
+	authMiddleware func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	wg             gosync.WaitGroup
 	done           chan struct{}
 
@@ -460,6 +464,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.wg.Add(1)
 	go d.acceptLoop(ctx)
 
+	// Start Streamable HTTP listener if configured
+	if d.cfg.HTTPAddr != "" {
+		if err := d.startHTTPListener(ctx); err != nil {
+			d.logger.Error("failed to start HTTP listener", "error", err)
+			// Non-fatal: Unix socket still works
+		}
+	}
+
 	started = true
 	return nil
 }
@@ -624,6 +636,13 @@ func (d *Daemon) Stop() error {
 	// Stop tunnel manager
 	if d.tunnelMgr != nil {
 		d.tunnelMgr.Stop()
+	}
+
+	// Shutdown HTTP server
+	if d.httpServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		d.httpServer.Shutdown(shutdownCtx)
+		cancel()
 	}
 
 	if d.listener != nil {

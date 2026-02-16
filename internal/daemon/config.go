@@ -31,8 +31,53 @@ type FileConfig struct {
 	// Sandbox controls devbox sandbox settings
 	Sandbox SandboxConfig `yaml:"sandbox,omitempty"`
 
+	// HTTP controls the Streamable HTTP listener
+	HTTP HTTPConfig `yaml:"http,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// HTTPConfig controls the Streamable HTTP listener.
+type HTTPConfig struct {
+	// SessionTimeoutMinutes is how long idle HTTP sessions are kept (default: 30).
+	SessionTimeoutMinutes int `yaml:"session_timeout_minutes,omitempty"`
+
+	// MaxSessions limits concurrent HTTP sessions (default: 1000).
+	MaxSessions int `yaml:"max_sessions,omitempty"`
+
+	// AllowedOrigins restricts which origins can connect (empty = all allowed).
+	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
+
+	// TLSCertFile is the path to the TLS certificate file.
+	TLSCertFile string `yaml:"tls_cert_file,omitempty"`
+
+	// TLSKeyFile is the path to the TLS private key file.
+	TLSKeyFile string `yaml:"tls_key_file,omitempty"`
+
+	// Auth controls authentication for the HTTP listener.
+	Auth HTTPAuthConfig `yaml:"auth,omitempty"`
+}
+
+// HTTPAuthConfig controls authentication for the Streamable HTTP listener.
+type HTTPAuthConfig struct {
+	// Type is the authentication type: "token", "oidc", "mtls", or "" (none/localhost-only).
+	Type string `yaml:"type,omitempty"`
+
+	// TokenSecretKey is the secret store key containing the bearer token (for type=token).
+	TokenSecretKey string `yaml:"token_secret_key,omitempty"`
+
+	// OIDCIssuer is the OIDC provider URL (for type=oidc).
+	OIDCIssuer string `yaml:"oidc_issuer,omitempty"`
+
+	// OIDCClientID is the OIDC client ID (for type=oidc).
+	OIDCClientID string `yaml:"oidc_client_id,omitempty"`
+
+	// TLSClientCA is the path to the CA certificate for client cert validation (for type=mtls).
+	TLSClientCA string `yaml:"tls_client_ca,omitempty"`
+
+	// AllowedCommonNames restricts which client certificate CNs are accepted (for type=mtls).
+	AllowedCommonNames []string `yaml:"allowed_common_names,omitempty"`
 }
 
 // SandboxConfig controls devbox sandbox environments.
@@ -172,6 +217,10 @@ func DefaultFileConfig() FileConfig {
 			EnrichDescriptions: false,
 		},
 		Cache: DefaultCacheConfig(),
+		HTTP: HTTPConfig{
+			SessionTimeoutMinutes: 30,
+			MaxSessions:           1000,
+		},
 		Debug: false,
 	}
 }

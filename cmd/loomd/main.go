@@ -42,6 +42,7 @@ func main() {
 	flags.StringSliceVar(&cfg.WarmOnStart, "warm", nil, "Servers to warm up on start")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 	flags.StringVar(&metricsAddr, "metrics-addr", "", "Address for metrics endpoint (e.g., :9090)")
+	flags.StringVar(&cfg.HTTPAddr, "http-addr", "", "Address for Streamable HTTP listener (e.g., :8088)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
