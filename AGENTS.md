@@ -981,18 +981,15 @@ These variables are automatically injected by the `ROCmEnvVars()` helper in `bac
 - [x] CLI provides easy model management
 - [x] ROCm gfx1100 SIGSEGV crashes fixed via `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
 - [x] Diffusers backend working for image generation on AMD GPUs
+- [x] FlexInfer benchmarker has direct CLI integration (`flexinfer benchmark`)
+- [x] Benchmarks can be triggered from command line (`flexinfer benchmark <name>`)
+- [x] Controller applies LiteLLM service annotations (`litellm.flexinfer.ai/*`)
+- [x] LiteLLM annotations are covered by controller tests
+- [x] End-to-end deployment guide documented (`docs/INSTALL.md`)
+- [x] MLC-LLM compilation workflow documented (`build/README-rocm.md`)
 
-### Benchmarking
-- [ ] FlexInfer benchmarker needs direct CLI integration
-- [ ] No built-in way to trigger benchmarks from command line
-
-### LiteLLM Discovery
-- [ ] Service annotations not always applied by controller
-- [ ] Need to verify controller is adding `litellm.flexinfer.ai/*` annotations
-
-### Documentation
-- [ ] Need end-to-end deployment guide
-- [ ] MLC-LLM compilation workflow not documented
+### Open Focus
+- [ ] Multi-tenancy and multi-cluster roadmap execution tracked in `ROADMAP.md` issues `#2-#6`
 
 ---
 

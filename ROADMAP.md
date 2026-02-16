@@ -4,7 +4,7 @@
 - [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 
-> Last Updated: 2026-02-10
+> Last Updated: 2026-02-16
 
 ## Current Status
 
@@ -19,6 +19,10 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - Flash-Loader sidecar for P2P/RDMA model preloading
 - Spot-instance resilience with proactive draining (AWS, Azure, GCP, Harvester)
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
+
+Open roadmap scope is now concentrated on:
+- Multi-tenancy foundation ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2))
+- Phase 5 multi-cluster execution ([#3](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3), [#4](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4), [#5](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5), [#6](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6))
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system

@@ -1,6 +1,6 @@
 # FlexInfer Implementation Status
 
-This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-10.
+This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-16.
 
 ## Executive Summary
 
@@ -189,8 +189,8 @@ See `docs/design/multi-cluster.md` for full design.
 
 **Remaining Work:**
 
-1. **Multi-cluster federation** — See `docs/design/multi-cluster.md`
-2. **Multi-tenancy** — No design doc yet
+1. **Multi-tenancy foundation** — See roadmap issue [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
+2. **Multi-cluster federation (Phase 5)** — See `docs/design/multi-cluster.md` and roadmap issues [#3](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3), [#4](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4), [#5](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5), [#6](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6)
 3. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
 
 **What's Ready:**
