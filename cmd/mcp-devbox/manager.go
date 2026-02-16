@@ -34,7 +34,7 @@ type managerConfig struct {
 	storageClass       string
 	k8sWorkspacePVC    string
 	k8sImagePullSecret string
-	kanikoImage        string
+	builderImage       string
 }
 
 type manager struct {
@@ -144,7 +144,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			WorkspacePVC:    cfg.k8sWorkspacePVC,
 			ImagePullSecret: cfg.k8sImagePullSecret,
 			WorkspaceRoot:   cfg.workspaceRoot,
-			KanikoImage:     cfg.kanikoImage,
+			BuilderImage:    cfg.builderImage,
 		})
 		if err != nil {
 			return nil, err

@@ -64,7 +64,7 @@ func run(ctx context.Context) error {
 		storageClass:       env.String("DEVBOX_K8S_STORAGE_CLASS", "longhorn"),
 		k8sWorkspacePVC:    env.String("DEVBOX_K8S_WORKSPACE_PVC", "devbox-workspace-nfs"),
 		k8sImagePullSecret: env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
-		kanikoImage:        env.String("DEVBOX_KANIKO_IMAGE", ""),
+		builderImage:       builderImage(),
 	})
 	if err != nil {
 		return fmt.Errorf("init manager: %w", err)
@@ -95,4 +95,13 @@ func run(ctx context.Context) error {
 	defer mgr.shutdownAll(context.Background())
 
 	return server.Run(ctx)
+}
+
+// builderImage returns the builder image, checking DEVBOX_BUILDER_IMAGE first,
+// then falling back to the deprecated DEVBOX_KANIKO_IMAGE for backward compatibility.
+func builderImage() string {
+	if img := env.String("DEVBOX_BUILDER_IMAGE", ""); img != "" {
+		return img
+	}
+	return env.String("DEVBOX_KANIKO_IMAGE", "")
 }
