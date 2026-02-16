@@ -9,6 +9,7 @@
   import FilterBar from './shared/FilterBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import BulkToolbar from './shared/BulkToolbar.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
 
   $effect(() => {
@@ -224,6 +225,55 @@
     return map[importance] ?? 0.3;
   }
 
+  // Bulk selection
+  let selectedMemIds = $state(new Set());
+
+  function handleMemSelect(ids) {
+    selectedMemIds = ids;
+  }
+
+  // Clear selection on tier switch
+  $effect(() => {
+    activeTier;
+    selectedMemIds = new Set();
+  });
+
+  async function bulkPromote() {
+    for (const id of selectedMemIds) {
+      await memoryStore.promote(id);
+    }
+    toastStore.success(`${selectedMemIds.size} items promoted`);
+    selectedMemIds = new Set();
+  }
+
+  async function bulkDemote() {
+    for (const id of selectedMemIds) {
+      await memoryStore.demote(id);
+    }
+    toastStore.success(`${selectedMemIds.size} items demoted`);
+    selectedMemIds = new Set();
+  }
+
+  async function bulkDelete() {
+    for (const id of selectedMemIds) {
+      await memoryStore.deleteItem(id);
+    }
+    toastStore.success(`${selectedMemIds.size} items deleted`);
+    selectedMemIds = new Set();
+  }
+
+  let memBulkActions = $derived(() => {
+    const actions = [];
+    if (activeTier !== 'long_term') {
+      actions.push({ label: 'Promote', variant: 'success', onclick: bulkPromote });
+    }
+    if (activeTier !== 'working') {
+      actions.push({ label: 'Demote', variant: 'warning', onclick: bulkDemote });
+    }
+    actions.push({ label: 'Delete', variant: 'danger', onclick: bulkDelete });
+    return actions;
+  });
+
   // Detail drawer
   let drawerItem = $state(null);
 
@@ -404,6 +454,9 @@
         {sortDir}
         expandedIds={expandedItems}
         idKey="id"
+        selectable={true}
+        selectedIds={selectedMemIds}
+        onSelect={handleMemSelect}
         onSort={(key, dir) => { sortKey = key; sortDir = dir; }}
         onToggleExpand={(item) => toggleExpand(item.id)}
         onRowClick={openItemDrawer}
@@ -452,6 +505,11 @@
           </div>
         {/snippet}
       </DataTable>
+      <BulkToolbar
+        count={selectedMemIds.size}
+        actions={memBulkActions()}
+        onClearSelection={() => { selectedMemIds = new Set(); }}
+      />
     {/if}
   </div>
 </div>

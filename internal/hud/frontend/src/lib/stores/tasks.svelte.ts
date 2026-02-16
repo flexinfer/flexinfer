@@ -1,6 +1,7 @@
 // Tasks store - task management
 // v2: SSE-first with 30s fallback poll. Applies task list from hud.fleet snapshots.
 import { eventStore } from './events.svelte.ts';
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface Task {
   id: string;
@@ -122,7 +123,10 @@ class TaskStore {
   applySnapshot(data: Record<string, unknown>): void {
     const tasks = data.tasks as Task[] | undefined;
     if (!tasks) return;
-    this.tasks = tasks;
+    const hashTask = (t: Task) => `${t.id}|${t.status}|${t.priority}|${t.updated_at}`;
+    if (!arraysEqualById(this.tasks, tasks, hashTask)) {
+      this.tasks = tasks;
+    }
     this.lastUpdated = new Date();
     this.error = null;
   }

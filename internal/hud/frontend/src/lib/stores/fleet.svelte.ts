@@ -1,6 +1,7 @@
 // Fleet store - daemon status and sessions overview
 // v2: SSE-first with 30s fallback poll. Applies hud.fleet snapshots directly.
 import { eventStore } from './events.svelte.ts';
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface Process {
   pid: number;
@@ -262,13 +263,21 @@ class FleetStore {
       };
     }
     if (data.sessions) {
-      this.sessions = data.sessions as Session[];
+      const next = data.sessions as Session[];
+      const hashSession = (s: Session) => `${s.id}|${s.status}|${s.ended_at ?? ''}`;
+      if (!arraysEqualById(this.sessions, next, hashSession)) {
+        this.sessions = next;
+      }
     }
     if (data.agents) {
       this.agents = data.agents as PresenceInfo[];
     }
     if (data.tasks) {
-      this.tasks = data.tasks as TaskInfo[];
+      const next = data.tasks as TaskInfo[];
+      const hashTask = (t: TaskInfo) => `${t.id}|${t.status}|${t.priority}|${t.updated_at}`;
+      if (!arraysEqualById(this.tasks, next, hashTask)) {
+        this.tasks = next;
+      }
     }
     if (data.file_claims) {
       this.fileClaims = data.file_claims as FileClaimInfo[];

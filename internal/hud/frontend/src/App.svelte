@@ -14,15 +14,14 @@
   import TasksPanel from './lib/components/TasksPanel.svelte';
   import WorkflowsPanel from './lib/components/WorkflowsPanel.svelte';
   import MemoryPanel from './lib/components/MemoryPanel.svelte';
-  import GraphPanel from './lib/components/GraphPanel.svelte';
   import StreamPanel from './lib/components/StreamPanel.svelte';
   import PresencePanel from './lib/components/PresencePanel.svelte';
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
-  import TopologyPanel from './lib/components/TopologyPanel.svelte';
   import LifecyclePanel from './lib/components/LifecyclePanel.svelte';
+  import EmptyState from './lib/components/shared/EmptyState.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
   import OverviewPanel from './lib/components/OverviewPanel.svelte';
@@ -236,7 +235,13 @@
                 {:else if router.subView === 'memory'}
                   <MemoryPanel />
                 {:else if router.subView === 'graph'}
-                  <GraphPanel />
+                  {#await import('./lib/components/GraphPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: GraphPanel }}
+                    <GraphPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {:else if router.subView === 'timeline'}
                   <TimelinePanel />
                 {:else if router.subView === 'stream'}
@@ -248,7 +253,13 @@
                 {:else if router.subView === 'reasoning'}
                   <ReasoningPanel />
                 {:else if router.subView === 'topology'}
-                  <TopologyPanel />
+                  {#await import('./lib/components/TopologyPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: TopologyPanel }}
+                    <TopologyPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {:else if router.subView === 'lifecycle'}
                   <LifecyclePanel />
                 {/if}
@@ -596,5 +607,35 @@
     color: var(--fg-primary);
     min-width: 18px;
     text-align: center;
+  }
+
+  /* ---- Lazy panel loading ---- */
+  .panel-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    min-height: 200px;
+  }
+
+  .loading-bar {
+    width: 120px;
+    height: 3px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .loading-bar-inner {
+    width: 40%;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: loadSlide 1s ease-in-out infinite;
+  }
+
+  @keyframes loadSlide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
   }
 </style>

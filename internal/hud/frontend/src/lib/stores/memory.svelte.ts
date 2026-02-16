@@ -1,6 +1,7 @@
 // Memory store - tiered memory management
 // v2: SSE-first for stats with 30s fallback. Items still fetched on demand.
 import { eventStore } from './events.svelte.ts';
+import { arraysEqualById } from '../utils/diff.ts';
 
 export interface TierStats {
   items: number;
@@ -139,7 +140,11 @@ class MemoryStore {
       const res = await globalThis.fetch(`/api/memory/items?${params.toString()}`);
       if (!res.ok) return;
       const data: MemoryItemsResponse = await res.json();
-      this.items = data.items || [];
+      const next = data.items || [];
+      const hashItem = (i: MemoryItem) => `${i.id}|${i.status}|${i.importance}`;
+      if (!arraysEqualById(this.items, next, hashItem)) {
+        this.items = next;
+      }
     } catch {
       // Non-critical: items will refresh on next poll cycle.
     }

@@ -10,7 +10,17 @@
     unknown: 'var(--fg-muted)',
   };
 
+  // Color-blind safe: distinct shapes per status
+  const shapeMap = {
+    healthy:  '\u25CF', // filled circle
+    idle:     '\u25CB', // open circle
+    degraded: '\u25B2', // filled triangle
+    down:     '\u25A0', // filled square
+    unknown:  '\u25C6', // diamond
+  };
+
   let color = $derived(colorMap[status] || colorMap.unknown);
+  let shape = $derived(shapeMap[status] || shapeMap.unknown);
   let shouldPulse = $derived(status === 'degraded' || status === 'down');
 </script>
 
@@ -22,15 +32,21 @@
   title={status}
   role="status"
   aria-label={status}
-></span>
+>{shape}</span>
 
 <style>
   .status-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
+    font-size: 7px;
+    line-height: 10px;
+    text-align: center;
+    color: var(--bg-primary);
   }
 
   .pulse {

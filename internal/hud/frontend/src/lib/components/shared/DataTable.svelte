@@ -1,7 +1,7 @@
 <script>
   /**
    * DataTable — sortable, selectable table with sticky header,
-   * skeleton loading, expandable rows, and optional virtual scroll.
+   * skeleton loading, expandable rows, and optional row pagination.
    *
    * @type {{
    *   columns: Array<{ key: string, label: string, sortable?: boolean, width?: string, align?: 'left'|'center'|'right' }>,
@@ -14,6 +14,7 @@
    *   selectedIds?: Set<string>,
    *   expandedIds?: Set<string>,
    *   idKey?: string,
+   *   maxRows?: number,
    *   onSort?: (key: string, dir: 'asc' | 'desc') => void,
    *   onSelect?: (ids: Set<string>) => void,
    *   onRowClick?: (row: any) => void,
@@ -33,6 +34,7 @@
     selectedIds = new Set(),
     expandedIds = new Set(),
     idKey = 'id',
+    maxRows = undefined,
     onSort,
     onSelect,
     onRowClick,
@@ -42,6 +44,23 @@
   } = $props();
 
   let colSpan = $derived((selectable ? 1 : 0) + columns.length);
+
+  // Row pagination: show maxRows initially, expand on demand
+  let displayCount = $state(maxRows ?? Infinity);
+
+  // Reset display count when rows change
+  $effect(() => {
+    rows;
+    displayCount = maxRows ?? Infinity;
+  });
+
+  let displayRows = $derived(maxRows ? rows.slice(0, displayCount) : rows);
+  let hasMore = $derived(maxRows ? rows.length > displayCount : false);
+  let remainingCount = $derived(rows.length - displayCount);
+
+  function showMore() {
+    displayCount = Math.min(displayCount + (maxRows ?? 50), rows.length);
+  }
 
   function handleHeaderClick(col) {
     if (!col.sortable || !onSort) return;
@@ -123,7 +142,7 @@
           </tr>
         {/each}
       {:else}
-        {#each rows as rowData, index (rowData[idKey] ?? index)}
+        {#each displayRows as rowData, index (rowData[idKey] ?? index)}
           {@const isExpanded = expandedIds.has(rowData[idKey])}
           <tr
             class:selected={selectable && selectedIds.has(rowData[idKey])}
@@ -158,6 +177,13 @@
       {/if}
     </tbody>
   </table>
+  {#if hasMore}
+    <div class="data-table-show-more">
+      <button class="btn btn-ghost btn-sm" onclick={showMore}>
+        Show {Math.min(maxRows ?? 50, remainingCount)} more ({remainingCount} remaining)
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -267,5 +293,12 @@
   .data-table tbody tr.data-table-expand-row:hover td {
     background: transparent;
     color: inherit;
+  }
+
+  .data-table-show-more {
+    display: flex;
+    justify-content: center;
+    padding: var(--space-2);
+    border-top: 1px solid var(--border);
   }
 </style>

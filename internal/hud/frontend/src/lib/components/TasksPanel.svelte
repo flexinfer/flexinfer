@@ -7,6 +7,7 @@
   import Modal from '../widgets/Modal.svelte';
   import FilterBar from './shared/FilterBar.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import BulkToolbar from './shared/BulkToolbar.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
@@ -333,6 +334,50 @@
     closeResolve();
   }
 
+  // Bulk selection
+  let selectedTaskIds = $state(new Set());
+
+  function handleTaskSelect(ids) {
+    selectedTaskIds = ids;
+  }
+
+  // Clear selection on filter change
+  $effect(() => {
+    // Track filter values to clear selection
+    searchQuery; priorityFilter; agentFilter; statusFilter;
+    selectedTaskIds = new Set();
+  });
+
+  async function bulkComplete() {
+    for (const id of selectedTaskIds) {
+      await taskStore.updateStatus(id, 'completed');
+    }
+    toastStore.success(`${selectedTaskIds.size} tasks completed`);
+    selectedTaskIds = new Set();
+  }
+
+  async function bulkCancel() {
+    for (const id of selectedTaskIds) {
+      await taskStore.updateStatus(id, 'cancelled');
+    }
+    toastStore.success(`${selectedTaskIds.size} tasks cancelled`);
+    selectedTaskIds = new Set();
+  }
+
+  async function bulkHighPriority() {
+    for (const id of selectedTaskIds) {
+      await taskStore.setPriority(id, 'high');
+    }
+    toastStore.success(`${selectedTaskIds.size} tasks set to high priority`);
+    selectedTaskIds = new Set();
+  }
+
+  let bulkActions = $derived([
+    { label: 'Complete', variant: 'success', onclick: bulkComplete },
+    { label: 'Cancel', variant: 'danger', onclick: bulkCancel },
+    { label: 'High Priority', variant: 'warning', onclick: bulkHighPriority },
+  ]);
+
   // Detail drawer
   let selectedTask = $state(null);
 
@@ -407,6 +452,9 @@
           {sortDir}
           loading={!taskStore.lastUpdated}
           skeletonRows={3}
+          selectable={true}
+          selectedIds={selectedTaskIds}
+          onSelect={handleTaskSelect}
           onSort={handleSort}
           onRowClick={selectTask}
         >
@@ -454,6 +502,11 @@
             </td>
           {/snippet}
         </DataTable>
+        <BulkToolbar
+          count={selectedTaskIds.size}
+          actions={bulkActions}
+          onClearSelection={() => { selectedTaskIds = new Set(); }}
+        />
       {/if}
     {:else}
       <!-- Grouped view -->
