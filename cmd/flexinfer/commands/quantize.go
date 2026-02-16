@@ -63,11 +63,19 @@ var quantizeFormatsCmd = &cobra.Command{
 	RunE:  runQuantizeFormats,
 }
 
+var quantizeStatusCmd = &cobra.Command{
+	Use:   "status <cache-name>",
+	Short: "Show quantization status for a ModelCache",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runQuantizeStatus,
+}
+
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
 	quantizeCmd.AddCommand(quantizeFormatsCmd)
+	quantizeCmd.AddCommand(quantizeStatusCmd)
 }
 
 func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
@@ -178,6 +186,66 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(out, "  Phase:  %s\n", cache.Status.Phase)
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "Watch progress: flexinfer cache status -n %s\n", namespace)
+
+	return nil
+}
+
+func runQuantizeStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	cacheName := args[0]
+
+	k8sClient, err := getClient()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	cache := &aiv1alpha1.ModelCache{}
+	key := client.ObjectKey{Name: cacheName, Namespace: namespace}
+	if err := k8sClient.Get(ctx(), key, cache); err != nil {
+		return fmt.Errorf("failed to get ModelCache %q: %w", cacheName, err)
+	}
+
+	phase := string(cache.Status.Phase)
+	if phase == "" {
+		phase = "Unknown"
+	}
+
+	requested := "-"
+	if cache.Spec.Quantization != nil {
+		requested = string(cache.Spec.Quantization.Format)
+		if cache.Spec.Quantization.GGUFType != "" {
+			requested = fmt.Sprintf("%s/%s", requested, cache.Spec.Quantization.GGUFType)
+		}
+	}
+
+	_, _ = fmt.Fprintf(out, "ModelCache: %s\n", cache.Name)
+	_, _ = fmt.Fprintf(out, "Namespace:  %s\n", cache.Namespace)
+	_, _ = fmt.Fprintf(out, "Phase:      %s\n", phase)
+	_, _ = fmt.Fprintf(out, "Requested:  %s\n", requested)
+
+	if cache.Status.Quantization == nil {
+		_, _ = fmt.Fprintln(out, "Quantization: pending")
+		return nil
+	}
+
+	q := cache.Status.Quantization
+	applied := q.Format
+	if q.Type != "" {
+		applied = fmt.Sprintf("%s/%s", q.Format, q.Type)
+	}
+	_, _ = fmt.Fprintf(out, "Applied:    %s\n", applied)
+	if q.OriginalSizeBytes > 0 {
+		_, _ = fmt.Fprintf(out, "Original:   %d bytes\n", q.OriginalSizeBytes)
+	}
+	if q.CompressedSizeBytes > 0 {
+		_, _ = fmt.Fprintf(out, "Compressed: %d bytes\n", q.CompressedSizeBytes)
+	}
+	if q.CompressionRatio != "" {
+		_, _ = fmt.Fprintf(out, "Ratio:      %sx\n", q.CompressionRatio)
+	}
+	if q.QuantizationTime != "" {
+		_, _ = fmt.Fprintf(out, "Duration:   %s\n", q.QuantizationTime)
+	}
 
 	return nil
 }

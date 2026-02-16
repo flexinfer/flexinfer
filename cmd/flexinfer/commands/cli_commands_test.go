@@ -653,3 +653,92 @@ func TestRunQuantize_AppliesGGUFSpec(t *testing.T) {
 		t.Fatalf("expected output to include normalized format, got: %q", stdout.String())
 	}
 }
+
+func TestRunQuantizeStatus_PrintsCompletedQuantization(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "huggingface://meta-llama/Llama-3-8B",
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:   aiv1alpha1.QuantizationFormatGGUF,
+				GGUFType: "Q4_K_M",
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase: aiv1alpha1.ModelCachePhaseReady,
+			Quantization: &aiv1alpha1.QuantizationStatus{
+				Format:              "GGUF",
+				Type:                "Q4_K_M",
+				OriginalSizeBytes:   16000000000,
+				CompressedSizeBytes: 4200000000,
+				CompressionRatio:    "3.81",
+				QuantizationTime:    "2m34s",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	t.Cleanup(func() { namespace = origNs })
+	namespace = "flexinfer-system"
+
+	if err := runQuantizeStatus(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantizeStatus() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Applied:    GGUF/Q4_K_M") {
+		t.Fatalf("expected applied quantization in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Ratio:      3.81x") {
+		t.Fatalf("expected ratio in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Duration:   2m34s") {
+		t.Fatalf("expected duration in output, got: %q", out)
+	}
+}
+
+func TestRunQuantizeStatus_PrintsPendingWhenNoStatus(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "huggingface://meta-llama/Llama-3-8B",
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:   aiv1alpha1.QuantizationFormatGGUF,
+				GGUFType: "Q4_K_M",
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase: aiv1alpha1.ModelCachePhaseQuantizing,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	t.Cleanup(func() { namespace = origNs })
+	namespace = "flexinfer-system"
+
+	if err := runQuantizeStatus(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantizeStatus() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Requested:  GGUF/Q4_K_M") {
+		t.Fatalf("expected requested quantization in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Quantization: pending") {
+		t.Fatalf("expected pending marker in output, got: %q", out)
+	}
+}
