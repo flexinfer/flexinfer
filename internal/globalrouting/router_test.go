@@ -85,6 +85,30 @@ func TestRouterNoHealthyClusters(t *testing.T) {
 	}
 }
 
+func TestRouterWeightedDistribution(t *testing.T) {
+	registry := NewRegistry([]ClusterEndpoint{
+		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true, Weight: 3},
+		{Name: "cluster-b", URL: "https://b.example.com", Healthy: true, Weight: 1},
+	}, nil)
+	router := NewRouter(registry)
+
+	counts := map[string]int{
+		"cluster-a": 0,
+		"cluster-b": 0,
+	}
+	for i := 0; i < 8; i++ {
+		selected, err := router.Select(StrategyWeighted)
+		if err != nil {
+			t.Fatalf("Select() error = %v", err)
+		}
+		counts[selected.Name]++
+	}
+
+	if counts["cluster-a"] != 6 || counts["cluster-b"] != 2 {
+		t.Fatalf("weighted counts = %+v, want cluster-a=6 cluster-b=2", counts)
+	}
+}
+
 func TestRouterLatencySelectsLowestObservedLatency(t *testing.T) {
 	registry := NewRegistry([]ClusterEndpoint{
 		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true},

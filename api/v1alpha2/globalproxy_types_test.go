@@ -43,6 +43,18 @@ func TestGlobalProxySpecValidateBasic(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid weighted strategy",
+			spec: GlobalProxySpec{
+				ExternalEndpoint: "global.flexinfer.example.com",
+				Strategy:         GlobalRoutingStrategyWeighted,
+				Clusters: []GlobalProxyClusterEndpoint{
+					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com"},
+					{Name: "cluster-b", Endpoint: "https://cluster-b.example.com"},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "missing external endpoint",
 			spec: GlobalProxySpec{
 				Clusters: []GlobalProxyClusterEndpoint{{

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ func main() {
 		strategyFlag string
 		clustersFlag string
 		failoverFlag string
+		weightsFlag  string
 		probePath    string
 		probeTimeout time.Duration
 		probeEvery   time.Duration
@@ -32,9 +34,10 @@ func main() {
 
 	flag.IntVar(&port, "port", 8090, "Port to listen on")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	flag.StringVar(&strategyFlag, "strategy", "round-robin", "Routing strategy (round-robin, failover, latency)")
+	flag.StringVar(&strategyFlag, "strategy", "round-robin", "Routing strategy (round-robin, failover, latency, weighted)")
 	flag.StringVar(&clustersFlag, "clusters", os.Getenv("GLOBAL_PROXY_CLUSTERS"), "Cluster endpoints in the form name=url,name=url")
 	flag.StringVar(&failoverFlag, "failover-order", os.Getenv("GLOBAL_PROXY_FAILOVER_ORDER"), "Failover priority list (comma-separated cluster names)")
+	flag.StringVar(&weightsFlag, "weights", os.Getenv("GLOBAL_PROXY_WEIGHTS"), "Optional cluster weights in the form name=weight,name=weight")
 	flag.StringVar(&probePath, "probe-path", "/healthz", "Health probe path on downstream cluster proxies")
 	flag.DurationVar(&probeTimeout, "probe-timeout", 2*time.Second, "HTTP timeout per downstream probe")
 	flag.DurationVar(&probeEvery, "probe-interval", 15*time.Second, "Probe interval for downstream latency/health checks")
@@ -52,6 +55,15 @@ func main() {
 	clusters, err := parseClusters(clustersFlag)
 	if err != nil {
 		slog.Error("invalid clusters", "error", err)
+		os.Exit(1)
+	}
+	weights, err := parseWeights(weightsFlag)
+	if err != nil {
+		slog.Error("invalid weights", "error", err)
+		os.Exit(1)
+	}
+	if err := applyClusterWeights(clusters, weights); err != nil {
+		slog.Error("failed to apply weights", "error", err)
 		os.Exit(1)
 	}
 	failoverOrder := parseCSV(failoverFlag)
@@ -246,6 +258,8 @@ func parseStrategy(raw string) (globalrouting.Strategy, error) {
 		return globalrouting.StrategyFailover, nil
 	case "latency":
 		return globalrouting.StrategyLatency, nil
+	case "weighted":
+		return globalrouting.StrategyWeighted, nil
 	default:
 		return "", fmt.Errorf("unsupported strategy %q", raw)
 	}
@@ -287,10 +301,53 @@ func parseClusters(raw string) ([]globalrouting.ClusterEndpoint, error) {
 			Name:    name,
 			URL:     u.String(),
 			Healthy: true,
+			Weight:  1,
 		})
 	}
 
 	return clusters, nil
+}
+
+func parseWeights(raw string) (map[string]int, error) {
+	entries := parseCSV(raw)
+	weights := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid weight entry %q (expected name=weight)", entry)
+		}
+		name := strings.TrimSpace(parts[0])
+		if name == "" {
+			return nil, fmt.Errorf("weight entry has empty cluster name: %q", entry)
+		}
+		value, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || value < 1 {
+			return nil, fmt.Errorf("weight for cluster %q must be integer >= 1", name)
+		}
+		weights[name] = value
+	}
+	return weights, nil
+}
+
+func applyClusterWeights(clusters []globalrouting.ClusterEndpoint, weights map[string]int) error {
+	for i := range clusters {
+		if weight, ok := weights[clusters[i].Name]; ok {
+			clusters[i].Weight = weight
+		}
+	}
+	for name := range weights {
+		found := false
+		for _, c := range clusters {
+			if c.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("weight provided for unknown cluster %q", name)
+		}
+	}
+	return nil
 }
 
 func parseCSV(raw string) []string {

@@ -34,6 +34,8 @@ const (
 	GlobalRoutingStrategyFailover GlobalRoutingStrategy = "Failover"
 	// GlobalRoutingStrategyLatency routes to the healthy cluster with the lowest observed latency.
 	GlobalRoutingStrategyLatency GlobalRoutingStrategy = "Latency"
+	// GlobalRoutingStrategyWeighted distributes requests by cluster weights.
+	GlobalRoutingStrategyWeighted GlobalRoutingStrategy = "Weighted"
 )
 
 // GlobalProxyClusterEndpoint configures one downstream cluster proxy endpoint.
@@ -75,7 +77,7 @@ type GlobalProxySpec struct {
 	ExternalEndpoint string `json:"externalEndpoint"`
 
 	// Strategy configures routing behavior.
-	// +kubebuilder:validation:Enum=RoundRobin;Failover;Latency
+	// +kubebuilder:validation:Enum=RoundRobin;Failover;Latency;Weighted
 	// +kubebuilder:default=RoundRobin
 	// +optional
 	Strategy GlobalRoutingStrategy `json:"strategy,omitempty"`
@@ -152,7 +154,7 @@ func (s GlobalProxySpec) ValidateBasic() error {
 			seen[trimmed] = struct{}{}
 		}
 	}
-	if strategy == GlobalRoutingStrategyLatency && len(s.FailoverOrder) > 0 {
+	if strategy != GlobalRoutingStrategyFailover && len(s.FailoverOrder) > 0 {
 		return fmt.Errorf("spec.failoverOrder is only used when spec.strategy=Failover")
 	}
 

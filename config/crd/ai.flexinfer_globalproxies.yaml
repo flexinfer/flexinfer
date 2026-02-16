@@ -98,6 +98,7 @@ spec:
                 - RoundRobin
                 - Failover
                 - Latency
+                - Weighted
                 type: string
               tls:
                 description: TLS configures public and downstream TLS behavior.

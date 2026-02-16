@@ -167,7 +167,7 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 9) Weighted routing
 
-- [ ] Implement weighted distribution based on cluster weights
+- [x] Implement weighted distribution based on cluster weights
 - [ ] Support dynamic weight adjustment via CRD
 
 #### 10) GPU-aware routing

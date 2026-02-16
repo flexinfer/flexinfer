@@ -17,6 +17,8 @@ const (
 	StrategyFailover Strategy = "Failover"
 	// StrategyLatency routes to the healthy cluster with the lowest observed latency.
 	StrategyLatency Strategy = "Latency"
+	// StrategyWeighted distributes traffic proportionally to configured cluster weights.
+	StrategyWeighted Strategy = "Weighted"
 )
 
 var (
@@ -29,6 +31,7 @@ type ClusterEndpoint struct {
 	Name    string
 	URL     string
 	Healthy bool
+	Weight  int
 }
 
 // Registry stores downstream cluster endpoints, failover preferences, and probe latencies.
@@ -171,6 +174,8 @@ func (r *Router) Select(strategy Strategy) (ClusterEndpoint, error) {
 		return r.selectFailover()
 	case StrategyLatency:
 		return r.selectLatency()
+	case StrategyWeighted:
+		return r.selectWeighted()
 	case StrategyRoundRobin, "":
 		fallthrough
 	default:
@@ -229,4 +234,25 @@ func (r *Router) selectLatency() (ClusterEndpoint, error) {
 	}
 
 	return selected, nil
+}
+
+func (r *Router) selectWeighted() (ClusterEndpoint, error) {
+	healthy := r.registry.HealthyClusters()
+	if len(healthy) == 0 {
+		return ClusterEndpoint{}, ErrNoHealthyClusters
+	}
+
+	weighted := make([]ClusterEndpoint, 0, len(healthy))
+	for _, c := range healthy {
+		weight := c.Weight
+		if weight < 1 {
+			weight = 1
+		}
+		for i := 0; i < weight; i++ {
+			weighted = append(weighted, c)
+		}
+	}
+
+	idx := atomic.AddUint64(&r.rrCounter, 1) - 1
+	return weighted[idx%uint64(len(weighted))], nil
 }
