@@ -55,10 +55,10 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 2) Cluster health checking
 
-- [ ] Implement cluster connectivity check (API server reachable)
-- [ ] Implement periodic health probe (configurable interval)
-- [ ] Update `Cluster.status.phase` based on health
-- [ ] Add metrics:
+- [x] Implement cluster connectivity check (API server reachable)
+- [x] Implement periodic health probe (configurable interval)
+- [x] Update `Cluster.status.phase` based on health
+- [x] Add metrics:
   - `flexinfer_cluster_health{cluster, region}` (gauge: 0/1)
   - `flexinfer_cluster_probe_latency_seconds{cluster}` (histogram)
 
@@ -73,7 +73,7 @@ See `docs/design/multi-cluster.md` for the full design document.
 #### 3) Cluster inventory aggregation
 
 - [ ] Watch FlexInfer resources in remote clusters via client
-- [ ] Aggregate GPU capacity from remote node labels
+- [x] Aggregate GPU capacity from remote nodes (allocatable GPU resources)
 - [ ] Aggregate model inventory from remote Model resources
 - [ ] Update `Cluster.status.models` with remote model list
 

@@ -31,6 +31,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - clusters
   - gpugroups
   - loraadapters
   - modelcaches
@@ -48,6 +49,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - clusters/finalizers
   - gpugroups/finalizers
   - loraadapters/finalizers
   - modelcaches/finalizers
@@ -58,6 +60,7 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
+  - clusters/status
   - gpugroups/status
   - loraadapters/status
   - modelcaches/status

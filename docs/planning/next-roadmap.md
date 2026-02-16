@@ -84,7 +84,9 @@ Checklist: `docs/planning/phase-5-multi-cluster.md`
 - [ ] Advanced Features
 
 Progress note:
-- Cluster CRD API scaffold has landed (`api/v1alpha2/cluster_types.go`, `config/crd/ai.flexinfer_clusters.yaml`), but controller health/inventory reconciliation is still pending.
+- Cluster CRD API scaffold has landed (`api/v1alpha2/cluster_types.go`, `config/crd/ai.flexinfer_clusters.yaml`).
+- Cluster health probing + status transitions + probe metrics are implemented (`controllers/cluster_controller.go`).
+- Remaining Cluster Registry work is remote model inventory aggregation and controller hardening.
 
 ## Tech Debt (Ongoing)
 

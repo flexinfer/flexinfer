@@ -179,6 +179,25 @@ var (
 		},
 		[]string{"model", "format"},
 	)
+
+	// ClusterHealth reports remote cluster readiness (1 ready, 0 not ready).
+	ClusterHealth = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_cluster_health",
+			Help: "Remote cluster health status (1=ready, 0=not ready).",
+		},
+		[]string{"cluster", "region"},
+	)
+
+	// ClusterProbeLatencySeconds tracks probe latency for remote clusters.
+	ClusterProbeLatencySeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_cluster_probe_latency_seconds",
+			Help:    "Latency of remote cluster health probes.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20},
+		},
+		[]string{"cluster"},
+	)
 )
 
 func init() {
@@ -208,6 +227,10 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(QuantizationCompressionRatio)
 	ctrlmetrics.Registry.MustRegister(QuantizationJobsTotal)
 	ctrlmetrics.Registry.MustRegister(QuantizationCacheSizeBytes)
+
+	// Cluster registry metrics
+	ctrlmetrics.Registry.MustRegister(ClusterHealth)
+	ctrlmetrics.Registry.MustRegister(ClusterProbeLatencySeconds)
 }
 
 // Exporter handles serving the Prometheus metrics.

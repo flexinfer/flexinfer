@@ -114,12 +114,15 @@ rules:
       - loraadapters
       - loraadapters/status
       - loraadapters/finalizers
+      - clusters
+      - clusters/status
+      - clusters/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
-    resources: ["services", "persistentvolumeclaims", "configmaps", "events"]
+    resources: ["services", "persistentvolumeclaims", "configmaps", "events", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
