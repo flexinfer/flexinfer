@@ -9,6 +9,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
+  import StatusDot from '../widgets/StatusDot.svelte';
 
   // Make html/body transparent so native NSVisualEffectView vibrancy shows through.
   function transparentBody(_node) {
@@ -115,13 +116,13 @@
     }
   }
 
-  function statusDotClass(status) {
+  function statusDotStatus(status) {
     switch (status) {
-      case 'healthy': return 'dot-healthy';
-      case 'degraded': return 'dot-degraded';
-      case 'down': return 'dot-down';
-      case 'idle': return 'dot-idle';
-      default: return 'dot-idle';
+      case 'healthy': return 'healthy';
+      case 'degraded': return 'degraded';
+      case 'down': return 'down';
+      case 'idle': return 'idle';
+      default: return 'idle';
     }
   }
 
@@ -135,23 +136,23 @@
     }
   }
 
-  function taskStatusDot(status) {
+  function taskStatusDotStatus(status) {
     switch (status) {
-      case 'in_progress': return 'dot-healthy';
-      case 'blocked':     return 'dot-degraded';
-      case 'pending':     return 'dot-idle';
-      case 'completed':   return 'dot-completed';
-      case 'cancelled':   return 'dot-down';
-      default:            return 'dot-idle';
+      case 'in_progress': return 'healthy';
+      case 'blocked':     return 'degraded';
+      case 'pending':     return 'idle';
+      case 'completed':   return 'idle';
+      case 'cancelled':   return 'down';
+      default:            return 'idle';
     }
   }
 
-  function sessionAgentDot(session) {
+  function sessionAgentDotStatus(session) {
     switch (session.agentStatus) {
-      case 'active':  return 'dot-healthy';
-      case 'idle':    return 'dot-idle';
-      case 'offline': return 'dot-down';
-      default:        return session.status === 'active' ? 'dot-healthy' : 'dot-idle';
+      case 'active':  return 'healthy';
+      case 'idle':    return 'idle';
+      case 'offline': return 'down';
+      default:        return session.status === 'active' ? 'healthy' : 'idle';
     }
   }
 
@@ -184,15 +185,15 @@
     prevFleetOpen = isOpen;
   });
 
-  function workflowStatusDot(status) {
+  function workflowStatusDotStatus(status) {
     switch (status) {
-      case 'running':          return 'dot-healthy';
-      case 'waiting_approval': return 'dot-degraded';
-      case 'pending':          return 'dot-idle';
-      case 'completed':        return 'dot-completed';
-      case 'failed':           return 'dot-down';
-      case 'cancelled':        return 'dot-down';
-      default:                 return 'dot-idle';
+      case 'running':          return 'healthy';
+      case 'waiting_approval': return 'degraded';
+      case 'pending':          return 'idle';
+      case 'completed':        return 'idle';
+      case 'failed':           return 'down';
+      case 'cancelled':        return 'down';
+      default:                 return 'idle';
     }
   }
 
@@ -311,7 +312,7 @@
                       class="session-row"
                       onclick={() => overlayStore.toggleSession(session.id)}
                     >
-                      <span class="row-dot {sessionAgentDot(session)}" class:pulsing={overlayStore.activeAgentIds.has(session.agent_id)}></span>
+                      <span class="row-dot-wrap" class:pulsing={overlayStore.activeAgentIds.has(session.agent_id)}><StatusDot status={sessionAgentDotStatus(session)} /></span>
                       <span class="session-chevron">{overlayStore.isSessionExpanded(session.id) ? '\u25BE' : '\u25B8'}</span>
                       <span class="row-primary truncate">{session.agent_id || session.agent || 'unknown'}</span>
                       {#if session.branch}
@@ -324,7 +325,7 @@
                       <!-- Level 3: Tasks under this session -->
                       {#each session.tasks.slice(0, 3) as task (task.id)}
                         <div class="task-row">
-                          <span class="row-dot {taskStatusDot(task.status)}"></span>
+                          <span class="row-dot-wrap"><StatusDot status={taskStatusDotStatus(task.status)} /></span>
                           <span class="row-primary truncate">{task.title}</span>
                           <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
                         </div>
@@ -344,7 +345,7 @@
                   <!-- Orphan tasks (namespace match, no session) -->
                   {#each group.orphanTasks.slice(0, 3) as task (task.id)}
                     <div class="task-row orphan">
-                      <span class="row-dot {taskStatusDot(task.status)}"></span>
+                      <span class="row-dot-wrap"><StatusDot status={taskStatusDotStatus(task.status)} /></span>
                       <span class="row-primary truncate">{task.title}</span>
                       <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
                     </div>
@@ -362,7 +363,7 @@
             {:else}
               {#each healthStore.servers as server}
                 <div class="detail-row">
-                  <span class="row-dot {statusDotClass(server.status)}"></span>
+                  <span class="row-dot-wrap"><StatusDot status={statusDotStatus(server.status)} /></span>
                   <span class="row-primary truncate">{server.name}</span>
                   <span class="row-secondary">{server.latency > 0 ? server.latency + 'ms' : ''}</span>
                   <span class="row-badge">{server.tool_count > 0 ? server.tool_count + ' tools' : ''}</span>
@@ -378,7 +379,7 @@
             {:else}
               {#each sandboxStore.projects as project}
                 <div class="detail-row">
-                  <span class="row-dot dot-healthy"></span>
+                  <span class="row-dot-wrap"><StatusDot status="healthy" /></span>
                   <span class="row-primary truncate">{project}</span>
                 </div>
               {/each}
@@ -390,7 +391,7 @@
             {:else}
               {#each taskStore.filteredTasks.slice(0, 8) as task (task.id)}
                 <div class="detail-row">
-                  <span class="row-dot {taskStatusDot(task.status)}"></span>
+                  <span class="row-dot-wrap"><StatusDot status={taskStatusDotStatus(task.status)} /></span>
                   <span class="row-badge-pill {priorityClass(task.priority)}">{task.priority?.charAt(0).toUpperCase()}</span>
                   <span class="row-primary truncate">{task.title}</span>
                   <span class="row-status-label">{task.status === 'in_progress' ? 'active' : task.status}</span>
@@ -406,7 +407,7 @@
             {#if workflowStore.activeWorkflows.length > 0}
               {#each workflowStore.activeWorkflows.slice(0, 5) as wf (wf.id)}
                 <div class="detail-row">
-                  <span class="row-dot {workflowStatusDot(wf.status)}"></span>
+                  <span class="row-dot-wrap"><StatusDot status={workflowStatusDotStatus(wf.status)} /></span>
                   <span class="row-primary truncate">{wf.name || wf.id}</span>
                   <span class="row-secondary">{wf.current_step || ''}</span>
                   <span class="row-status-label">{wf.status === 'waiting_approval' ? 'approval' : wf.status}</span>
@@ -420,7 +421,7 @@
               {/if}
               {#each workflowStore.uniqueDefinitions as def (def.id)}
                 <div class="detail-row def-row">
-                  <span class="row-dot dot-idle"></span>
+                  <span class="row-dot-wrap"><StatusDot status="idle" /></span>
                   <span class="row-primary truncate">{def.name}</span>
                   <span class="row-secondary">{def.step_count} steps</span>
                 </div>
@@ -657,18 +658,14 @@
     flex-shrink: 0;
   }
 
-  .row-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
+  .row-dot-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+    transform: scale(0.6);
+    transform-origin: center;
   }
-
-  .dot-healthy { background: var(--success); box-shadow: 0 0 3px var(--success); }
-  .dot-degraded { background: var(--warning); box-shadow: 0 0 3px var(--warning); }
-  .dot-down { background: var(--error); }
-  .dot-idle { background: var(--fg-muted); }
-  .dot-completed { background: var(--info, #4a9eff); opacity: 0.5; }
 
   .row-primary {
     flex: 1;

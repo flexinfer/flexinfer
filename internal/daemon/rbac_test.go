@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 )
 
@@ -298,4 +300,137 @@ func TestRBAC_MatchesPattern(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRBAC_ConcurrentAccess(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles: map[string]RBACRole{
+			"admin": {
+				Allow: []string{"*"},
+			},
+			"developer": {
+				Allow: []string{"*"},
+				Deny:  []string{"k8s_apps_k3s__k8s_apply", "server_mgmt__server_execSafe"},
+			},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "admin-bot", Role: "admin"},
+			{AgentID: "*", Role: "developer"},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			agentID := fmt.Sprintf("agent-%d", n%10)
+			server := fmt.Sprintf("server-%d", n%5)
+			tool := fmt.Sprintf("tool-%d", n%3)
+			_ = e.Check(agentID, "", server, tool)
+		}(i)
+	}
+	wg.Wait()
+	// Test passes if no panic occurred during concurrent reads.
+}
+
+func TestRBAC_WildcardOnlyBindings(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles: map[string]RBACRole{
+			"viewer": {
+				Allow: []string{"*__list_*", "*__get_*"},
+			},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "*", Role: "viewer"},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	// Any random agent_id should get the viewer role.
+	d := e.Check("random-agent-xyz", "", "gitlab", "list_issues")
+	if !d.Allowed {
+		t.Errorf("expected list tool allowed for wildcard viewer, got denied: %s", d.Reason)
+	}
+	if d.Role != "viewer" {
+		t.Errorf("role: got %q, want %q", d.Role, "viewer")
+	}
+
+	d = e.Check("another-agent", "", "github", "get_repo")
+	if !d.Allowed {
+		t.Errorf("expected get tool allowed for wildcard viewer, got denied: %s", d.Reason)
+	}
+
+	// Write tools should be denied.
+	d = e.Check("random-agent-xyz", "", "gitlab", "create_issue")
+	if d.Allowed {
+		t.Errorf("expected write tool denied for viewer role, got allowed")
+	}
+
+	d = e.Check("some-agent", "", "k8s_apps_k3s", "k8s_apply")
+	if d.Allowed {
+		t.Errorf("expected k8s_apply denied for viewer role, got allowed")
+	}
+}
+
+func TestRBAC_EmptyRolesMap(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles:         map[string]RBACRole{},
+		Bindings: []RBACBinding{
+			{AgentID: "test-agent", Role: "ghost-role"},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	d := e.Check("test-agent", "", "git", "git_status")
+	if d.Allowed {
+		t.Error("expected denied when bound role is not defined in empty roles map")
+	}
+	if d.Reason == "" {
+		t.Error("expected non-empty reason for denial")
+	}
+	// The reason should indicate the role is not defined.
+	found := false
+	for _, substr := range []string{"not defined", "undefined", "unknown"} {
+		if contains(d.Reason, substr) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected reason to mention role not defined, got: %q", d.Reason)
+	}
+}
+
+// contains checks if s contains substr (case-insensitive-ish, simple check).
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchSubstring(s, substr)
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

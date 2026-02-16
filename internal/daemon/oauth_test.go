@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -456,6 +458,100 @@ func TestOAuth_MetadataMethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status: got %d, want 405", w.Code)
+	}
+}
+
+func TestOAuth_ConcurrentTokenExchange(t *testing.T) {
+	s := newTestOAuthServer(t)
+
+	const concurrency = 10
+
+	// Prepare 10 separate clients, auth codes, and verifiers.
+	type authSetup struct {
+		clientID string
+		code     string
+		verifier string
+	}
+
+	setups := make([]authSetup, concurrency)
+	for i := 0; i < concurrency; i++ {
+		clientID := registerTestClient(t, s, "http://localhost:9999/cb")
+		verifier := strings.Repeat("v", 43) + strings.ReplaceAll(strings.Repeat("0", 5), "0", string(rune('a'+i)))
+		challenge := pkceS256(verifier)
+		code := getAuthCode(t, s, clientID, "http://localhost:9999/cb", challenge)
+		setups[i] = authSetup{clientID: clientID, code: code, verifier: verifier}
+	}
+
+	// Exchange all codes concurrently.
+	tokens := make([]string, concurrency)
+	errors := make([]error, concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			setup := setups[idx]
+			form := url.Values{
+				"grant_type":    {"authorization_code"},
+				"code":          {setup.code},
+				"redirect_uri":  {"http://localhost:9999/cb"},
+				"code_verifier": {setup.verifier},
+				"client_id":     {setup.clientID},
+			}
+			r := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			s.HandleToken(w, r)
+
+			if w.Code != http.StatusOK {
+				errors[idx] = fmt.Errorf("goroutine %d: status %d, body: %s", idx, w.Code, w.Body.String())
+				return
+			}
+			var resp map[string]any
+			json.Unmarshal(w.Body.Bytes(), &resp)
+			tok, _ := resp["access_token"].(string)
+			tokens[idx] = tok
+		}(i)
+	}
+	wg.Wait()
+
+	// Check for errors.
+	for i, err := range errors {
+		if err != nil {
+			t.Errorf("exchange %d failed: %v", i, err)
+		}
+	}
+
+	// Verify all tokens are unique and non-empty.
+	seen := make(map[string]bool)
+	for i, tok := range tokens {
+		if tok == "" {
+			t.Errorf("token %d is empty", i)
+			continue
+		}
+		if seen[tok] {
+			t.Errorf("duplicate token at index %d: %s", i, tok)
+		}
+		seen[tok] = true
+	}
+}
+
+func TestOAuth_ClientIDCollisionResistance(t *testing.T) {
+	s := newTestOAuthServer(t)
+
+	const count = 100
+	ids := make(map[string]bool, count)
+
+	for i := 0; i < count; i++ {
+		clientID := registerTestClient(t, s, "http://localhost:9999/cb")
+		if ids[clientID] {
+			t.Fatalf("duplicate client_id at iteration %d: %s", i, clientID)
+		}
+		ids[clientID] = true
+	}
+
+	if len(ids) != count {
+		t.Errorf("expected %d unique client_ids, got %d", count, len(ids))
 	}
 }
 

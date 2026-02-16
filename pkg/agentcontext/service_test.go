@@ -552,3 +552,125 @@ func TestSchemaVersion(t *testing.T) {
 		t.Errorf("SchemaVersion = %v, want v1", SchemaVersion)
 	}
 }
+
+func TestPayloadToEntry_MissingFields(t *testing.T) {
+	payload := map[string]any{
+		"id": "entry-1",
+	}
+
+	entry, err := PayloadToEntry(payload)
+	if err != nil {
+		t.Fatalf("PayloadToEntry with minimal payload should not error, got: %v", err)
+	}
+
+	if entry.ID != "entry-1" {
+		t.Errorf("expected entry.ID='entry-1', got %q", entry.ID)
+	}
+	if entry.Title != "" {
+		t.Errorf("expected entry.Title='', got %q", entry.Title)
+	}
+	if len(entry.Tags) != 0 {
+		t.Errorf("expected entry.Tags to be empty, got %v", entry.Tags)
+	}
+}
+
+func TestPayloadToEntry_InvalidTimestamp(t *testing.T) {
+	payload := map[string]any{
+		"id":        "entry-2",
+		"timestamp": "not-a-date",
+	}
+
+	entry, err := PayloadToEntry(payload)
+	if err != nil {
+		t.Fatalf("PayloadToEntry should handle invalid timestamp gracefully, got: %v", err)
+	}
+
+	if entry.Timestamp.IsZero() == false {
+		// If the implementation parses the invalid date to a non-zero time,
+		// that is also acceptable behavior -- just document it.
+		t.Logf("note: invalid timestamp parsed to %v (non-zero)", entry.Timestamp)
+	}
+}
+
+func TestEntryToPayload_EmptyEntry(t *testing.T) {
+	entry := ContextEntry{}
+
+	payload := EntryToPayload(entry, "")
+	if payload == nil {
+		t.Fatal("expected non-nil payload from empty entry")
+	}
+
+	// Check that standard keys exist in the payload
+	if _, ok := payload["id"]; !ok {
+		t.Error("expected payload to have 'id' key")
+	}
+	if _, ok := payload["entry_type"]; !ok {
+		t.Error("expected payload to have 'entry_type' key")
+	}
+	if _, ok := payload["title"]; !ok {
+		t.Error("expected payload to have 'title' key")
+	}
+}
+
+func TestSessionToPayload_NilEndedAt(t *testing.T) {
+	session := Session{
+		ID:            "session-nil-times",
+		AgentID:       "agent-1",
+		Namespace:     "test",
+		StartedAt:     time.Now(),
+		EndedAt:       nil,
+		LastSummaryAt: nil,
+		Status:        "active",
+	}
+
+	payload := SessionToPayload(session)
+
+	if payload["ended_at"] != nil {
+		t.Errorf("expected payload ended_at to be nil, got %v", payload["ended_at"])
+	}
+	if payload["last_summary_at"] != nil {
+		t.Errorf("expected payload last_summary_at to be nil, got %v", payload["last_summary_at"])
+	}
+}
+
+func TestPayloadToSession_MissingFields(t *testing.T) {
+	payload := map[string]any{
+		"id":       "s1",
+		"agent_id": "a1",
+	}
+
+	session, err := PayloadToSession(payload)
+	if err != nil {
+		t.Fatalf("PayloadToSession with minimal payload should not error, got: %v", err)
+	}
+
+	if session.ID != "s1" {
+		t.Errorf("expected session.ID='s1', got %q", session.ID)
+	}
+	if session.AgentID != "a1" {
+		t.Errorf("expected session.AgentID='a1', got %q", session.AgentID)
+	}
+	if session.Namespace != "" {
+		t.Errorf("expected session.Namespace='', got %q", session.Namespace)
+	}
+	if session.EntryCount != 0 {
+		t.Errorf("expected session.EntryCount=0, got %d", session.EntryCount)
+	}
+}
+
+func TestGenerateID_DeterministicAcrossCalls(t *testing.T) {
+	ts := time.Date(2026, 2, 16, 12, 0, 0, 0, time.UTC)
+
+	// Same inputs should produce the same ID
+	id1 := GenerateID("agent-x", "session-y", "content-z", ts)
+	id2 := GenerateID("agent-x", "session-y", "content-z", ts)
+	if id1 != id2 {
+		t.Errorf("expected identical IDs for same inputs, got %q and %q", id1, id2)
+	}
+
+	// Changing one input slightly should produce a different ID
+	id3 := GenerateID("agent-x", "session-y", "content-z-changed", ts)
+	if id1 == id3 {
+		t.Error("expected different IDs when content input changes")
+	}
+}

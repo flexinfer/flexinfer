@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -58,6 +59,7 @@ type Config struct {
 	WebhookURL     string // Push URL (e.g., "https://deck.flexinfer.ai/api/agents/hud/push").
 	WebhookToken   string // Bearer token for push auth.
 	WebhookResolve string // Override DNS resolution for webhook hostname (e.g., LAN IP to bypass Cloudflare).
+	AdminToken     string // Token required for admin-only HUD mutations.
 
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
@@ -458,6 +460,15 @@ func Run(cfg Config) error {
 
 // registerRoutes sets up all HTTP routes on the given ServeMux.
 func (a *App) registerRoutes(mux *http.ServeMux) {
+	// Debug profiling endpoint — goroutine dump, heap, etc.
+	// Registered without method prefix so they match both GET and POST,
+	// and the subtree pattern /debug/pprof/ catches profile sub-paths.
+	mux.HandleFunc("/debug/pprof/", pprofIndex)
+	mux.HandleFunc("/debug/pprof/cmdline", pprofCmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprofProfile)
+	mux.HandleFunc("/debug/pprof/symbol", pprofSymbol)
+	mux.HandleFunc("/debug/pprof/trace", pprofTrace)
+
 	// API routes — monitor-backed (cached snapshots).
 	mux.HandleFunc("GET /api/status", a.withCORS(a.handleStatus))
 	mux.HandleFunc("GET /api/health", a.withCORS(a.handleHealth))
@@ -532,7 +543,11 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
 	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
+	mux.HandleFunc("GET /api/agent/context-inspect", a.withCORS(a.handleAgentContextInspect))
 	mux.HandleFunc("POST /api/agent/nudge", a.withCORS(a.handleAgentNudge))
+	mux.HandleFunc("GET /api/agent/nudge-queue", a.withCORS(a.handleAgentNudgeQueue))
+	mux.HandleFunc("GET /api/agent/nudge-queue-policy", a.withCORS(a.handleAgentNudgeQueuePolicy))
+	mux.HandleFunc("POST /api/agent/nudge-queue-policy", a.withCORS(a.handleAgentNudgeQueuePolicyUpdate))
 	mux.HandleFunc("GET /api/knowledge", a.withCORS(a.handleKnowledge))
 	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
@@ -571,7 +586,7 @@ func (a *App) serveFrontend(mux *http.ServeMux) {
 	}
 	fileServer := http.FileServer(http.FS(distFS))
 
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the exact file first.
 		path := r.URL.Path
 		if path == "/" {
@@ -1928,6 +1943,13 @@ func (a *App) writeError(w http.ResponseWriter, status int, message string, err 
 	}
 	a.writeJSON(w, status, map[string]string{"error": message})
 }
+
+// pprof handler wrappers for custom ServeMux registration.
+func pprofIndex(w http.ResponseWriter, r *http.Request)   { pprof.Index(w, r) }
+func pprofCmdline(w http.ResponseWriter, r *http.Request) { pprof.Cmdline(w, r) }
+func pprofProfile(w http.ResponseWriter, r *http.Request) { pprof.Profile(w, r) }
+func pprofSymbol(w http.ResponseWriter, r *http.Request)  { pprof.Symbol(w, r) }
+func pprofTrace(w http.ResponseWriter, r *http.Request)   { pprof.Trace(w, r) }
 
 // newHUDTUILogger creates a logger that writes to ~/.config/loom/logs/tui.log.
 // Used in TUI mode so HUD log output doesn't corrupt the alt-screen.

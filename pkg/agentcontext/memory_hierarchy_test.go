@@ -1,6 +1,8 @@
 package agentcontext
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -584,5 +586,133 @@ func TestMemoryHierarchy_IndexByTags(t *testing.T) {
 
 	if len(result.Items) != 2 {
 		t.Errorf("expected 2 items with golang tag, got %d", len(result.Items))
+	}
+}
+
+func TestMemoryHierarchy_PromoteNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	err := mh.PromoteItem("nonexistent-id")
+	if err == nil {
+		t.Error("expected error when promoting non-existent item")
+	}
+}
+
+func TestMemoryHierarchy_DemoteNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	err := mh.DemoteItem("nonexistent-id")
+	if err == nil {
+		t.Error("expected error when demoting non-existent item")
+	}
+}
+
+func TestMemoryHierarchy_DeleteNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	err := mh.DeleteItem("nonexistent-id")
+	if err == nil {
+		t.Error("expected error when deleting non-existent item")
+	}
+}
+
+func TestMemoryHierarchy_GetNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	_, err := mh.GetItem("nonexistent-id")
+	if err == nil {
+		t.Error("expected error when getting non-existent item")
+	}
+}
+
+func TestMemoryHierarchy_CompressNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	err := mh.CompressItem("nonexistent-id")
+	if err == nil {
+		t.Error("expected error when compressing non-existent item")
+	}
+}
+
+func TestMemoryHierarchy_MergeNonExistent(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	_, err := mh.MergeItems([]string{"nonexistent-1", "nonexistent-2"}, "merged")
+	if err == nil {
+		t.Error("expected error when merging non-existent items")
+	}
+}
+
+func TestMemoryHierarchy_ConcurrentAddAndRecall(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	var wg sync.WaitGroup
+
+	// Launch 50 goroutines each adding an item
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			err := mh.AddItem(&MemoryItem{
+				Title:   fmt.Sprintf("Concurrent Item %d", idx),
+				Content: fmt.Sprintf("Content for concurrent item %d", idx),
+			})
+			if err != nil {
+				t.Errorf("AddItem failed for item %d: %v", idx, err)
+			}
+		}(i)
+	}
+
+	// Simultaneously launch 50 goroutines each doing Recall
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = mh.Recall(MemoryRecallRequest{})
+		}()
+	}
+
+	wg.Wait()
+
+	// Final Recall to verify all 50 items exist
+	result, err := mh.Recall(MemoryRecallRequest{})
+	if err != nil {
+		t.Fatalf("final Recall failed: %v", err)
+	}
+
+	if len(result.Items) != 50 {
+		t.Errorf("expected 50 items after concurrent adds, got %d", len(result.Items))
+	}
+}
+
+func TestMemoryHierarchy_RecallEmptyHierarchy(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	result, err := mh.Recall(MemoryRecallRequest{})
+	if err != nil {
+		t.Fatalf("Recall on empty hierarchy failed: %v", err)
+	}
+
+	if len(result.Items) != 0 {
+		t.Errorf("expected 0 items from empty hierarchy, got %d", len(result.Items))
+	}
+}
+
+func TestMemoryHierarchy_StatsEmpty(t *testing.T) {
+	mh := NewMemoryHierarchy()
+
+	stats := mh.Stats()
+
+	if stats.TotalItems != 0 {
+		t.Errorf("expected TotalItems=0, got %d", stats.TotalItems)
+	}
+	if stats.WorkingMemory.ItemCount != 0 {
+		t.Errorf("expected WorkingMemory.ItemCount=0, got %d", stats.WorkingMemory.ItemCount)
+	}
+	if stats.ShortTermMemory.ItemCount != 0 {
+		t.Errorf("expected ShortTermMemory.ItemCount=0, got %d", stats.ShortTermMemory.ItemCount)
+	}
+	if stats.LongTermMemory.ItemCount != 0 {
+		t.Errorf("expected LongTermMemory.ItemCount=0, got %d", stats.LongTermMemory.ItemCount)
 	}
 }

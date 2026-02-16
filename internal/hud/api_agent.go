@@ -7,6 +7,7 @@ package hud
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -266,7 +267,15 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"branch":       body.Branch,
 				"timestamp":    time.Now().Format(time.RFC3339),
 			})
-			a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+
+			resp := map[string]any{"ok": true}
+			if pending := a.nudgeQueue.Count(body.AgentID); pending > 0 {
+				resp["nudge_queue"] = a.nudgeQueue.Status(body.AgentID)
+			}
+			if nudges := a.nudgeQueue.Drain(body.AgentID); len(nudges) > 0 {
+				resp["nudges"] = nudges
+			}
+			a.writeJSON(w, http.StatusOK, resp)
 			return
 		}
 	}
@@ -309,6 +318,9 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 					resp["has_conflicts"] = true
 					resp["conflicts"] = result.Conflicts
 				}
+				if pending := a.nudgeQueue.Count(body.AgentID); pending > 0 {
+					resp["nudge_queue"] = a.nudgeQueue.Status(body.AgentID)
+				}
 				a.writeJSON(w, http.StatusOK, resp)
 				return
 			}
@@ -340,6 +352,9 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if result != nil && result.HasConflicts {
 		resp["has_conflicts"] = true
 		resp["conflicts"] = result.Conflicts
+	}
+	if pending := a.nudgeQueue.Count(body.AgentID); pending > 0 {
+		resp["nudge_queue"] = a.nudgeQueue.Status(body.AgentID)
 	}
 
 	// Build directives block with actionable info for the agent.
@@ -560,12 +575,47 @@ func (a *App) handleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleAgentContextInspect returns a context budget breakdown for an agent/session.
+// GET /api/agent/context-inspect?agent_id=...&session_id=...&detail=true&limit=200
+func (a *App) handleAgentContextInspect(w http.ResponseWriter, r *http.Request) {
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if agentID == "" && sessionID == "" {
+		a.writeError(w, http.StatusBadRequest, "agent_id or session_id query parameter is required", nil)
+		return
+	}
+
+	detail := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("detail"))) {
+	case "1", "true", "yes", "y":
+		detail = true
+	}
+
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			a.writeError(w, http.StatusBadRequest, "limit must be a positive integer", nil)
+			return
+		}
+		limit = parsed
+	}
+
+	result, err := a.agent.ContextInspect(agentID, sessionID, detail, limit)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "context inspect failed", err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, result)
+}
+
 // handleAgentNudge creates a nudge for delivery to a target agent.
 // POST /api/agent/nudge
 func (a *App) handleAgentNudge(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		TargetAgentID string `json:"target_agent_id"`
 		Type          string `json:"type"`    // context_inject, task_redirect, pause_request, message
+		Lane          string `json:"lane"`    // optional lane override
 		Content       string `json:"content"` // nudge payload
 		FromAgent     string `json:"from_agent,omitempty"`
 	}
@@ -588,6 +638,7 @@ func (a *App) handleAgentNudge(w http.ResponseWriter, r *http.Request) {
 	entry := NudgeEntry{
 		ID:        nudgeID,
 		Type:      body.Type,
+		Lane:      chooseNudgeLane(body.Lane, body.Type),
 		Content:   body.Content,
 		FromAgent: body.FromAgent,
 		CreatedAt: time.Now().Format(time.RFC3339),
@@ -607,6 +658,150 @@ func (a *App) handleAgentNudge(w http.ResponseWriter, r *http.Request) {
 		"nudge_id": nudgeID,
 		"status":   "pending",
 	})
+}
+
+// handleAgentNudgeQueue returns nudge queue status for an agent.
+// GET /api/agent/nudge-queue?agent_id=...
+func (a *App) handleAgentNudgeQueue(w http.ResponseWriter, r *http.Request) {
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if agentID == "" {
+		a.writeError(w, http.StatusBadRequest, "agent_id query parameter is required", nil)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"status": a.nudgeQueue.Status(agentID),
+	})
+}
+
+// handleAgentNudgeQueuePolicy returns current queue policy.
+// GET /api/agent/nudge-queue-policy
+func (a *App) handleAgentNudgeQueuePolicy(w http.ResponseWriter, _ *http.Request) {
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"policy": toNudgeQueuePolicyView(a.nudgeQueue.Config()),
+	})
+}
+
+// handleAgentNudgeQueuePolicyUpdate applies runtime queue policy updates.
+// POST /api/agent/nudge-queue-policy
+func (a *App) handleAgentNudgeQueuePolicyUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdminToken(w, r) {
+		return
+	}
+
+	var body struct {
+		DebounceMs   *int     `json:"debounce_ms,omitempty"`
+		Cap          *int     `json:"cap,omitempty"`
+		DropPolicy   *string  `json:"drop_policy,omitempty"`
+		LanePriority []string `json:"lane_priority,omitempty"`
+		UpdatedBy    string   `json:"updated_by,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	update := NudgeQueuePolicyUpdate{
+		DebounceMs: body.DebounceMs,
+		Cap:        body.Cap,
+		DropPolicy: body.DropPolicy,
+	}
+	if body.LanePriority != nil {
+		update.LanePriority = append([]string(nil), body.LanePriority...)
+	}
+	if update.DebounceMs == nil && update.Cap == nil && update.DropPolicy == nil && update.LanePriority == nil {
+		a.writeError(w, http.StatusBadRequest, "at least one policy field is required", nil)
+		return
+	}
+
+	before := a.nudgeQueue.Config()
+	after, err := a.nudgeQueue.UpdateConfig(update)
+	if err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid nudge queue policy", err)
+		return
+	}
+
+	updatedBy := strings.TrimSpace(body.UpdatedBy)
+	if updatedBy == "" {
+		updatedBy = strings.TrimSpace(r.Header.Get("X-Agent-ID"))
+	}
+	if updatedBy == "" {
+		updatedBy = "hud-admin"
+	}
+
+	beforeView := toNudgeQueuePolicyView(before)
+	afterView := toNudgeQueuePolicyView(after)
+
+	a.logger.Info("nudge queue policy updated",
+		"updated_by", updatedBy,
+		"cap_before", beforeView.Cap,
+		"cap_after", afterView.Cap,
+		"drop_policy_before", beforeView.DropPolicy,
+		"drop_policy_after", afterView.DropPolicy,
+		"debounce_ms_before", beforeView.DebounceMs,
+		"debounce_ms_after", afterView.DebounceMs,
+	)
+
+	a.broadcastAgentEvent("agent.nudge.policy.updated", map[string]any{
+		"updated_by": updatedBy,
+		"before":     beforeView,
+		"after":      afterView,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
+	})
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"policy": afterView,
+	})
+}
+
+type nudgeQueuePolicyView struct {
+	DebounceMs   int             `json:"debounce_ms"`
+	Cap          int             `json:"cap"`
+	DropPolicy   NudgeDropPolicy `json:"drop_policy"`
+	LanePriority []string        `json:"lane_priority"`
+}
+
+func toNudgeQueuePolicyView(cfg NudgeQueueConfig) nudgeQueuePolicyView {
+	return nudgeQueuePolicyView{
+		DebounceMs:   int(cfg.Debounce / time.Millisecond),
+		Cap:          cfg.Cap,
+		DropPolicy:   cfg.DropPolicy,
+		LanePriority: append([]string(nil), cfg.LanePriority...),
+	}
+}
+
+func (a *App) requireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	expected := strings.TrimSpace(a.config.AdminToken)
+	if expected == "" {
+		a.writeError(w, http.StatusForbidden, "admin token is not configured; set HUD_ADMIN_TOKEN", nil)
+		return false
+	}
+	actual := extractAdminToken(r)
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) != 1 {
+		a.writeError(w, http.StatusUnauthorized, "invalid admin token", nil)
+		return false
+	}
+	return true
+}
+
+func extractAdminToken(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Admin-Token")); token != "" {
+		return token
+	}
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" {
+		return ""
+	}
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 // maybeSandboxNudge checks the cached sandbox_policy for require_sandbox patterns.
@@ -636,10 +831,30 @@ func (a *App) maybeSandboxNudge(agentID, currentTask string) {
 	a.nudgeQueue.Add(agentID, NudgeEntry{
 		ID:        NewNudgeID(agentID),
 		Type:      "context_inject",
+		Lane:      "control",
 		Content:   "Your current task matches sandbox policy (require_sandbox). Consider using devbox_exec instead of running commands directly on the host.",
 		FromAgent: "hud",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	})
+}
+
+func chooseNudgeLane(lane, nudgeType string) string {
+	lane = strings.TrimSpace(strings.ToLower(lane))
+	switch lane {
+	case "control", "handoff", "advice", "default":
+		return lane
+	}
+
+	switch strings.ToLower(strings.TrimSpace(nudgeType)) {
+	case "context_inject", "pause_request":
+		return "control"
+	case "task_redirect":
+		return "handoff"
+	case "message":
+		return "advice"
+	default:
+		return "default"
+	}
 }
 
 // matchesSandboxPolicy returns true if the task string contains any of the

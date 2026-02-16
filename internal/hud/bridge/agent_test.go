@@ -192,6 +192,91 @@ func TestAgentBridge_SessionEntries_SetsRequiredQuery(t *testing.T) {
 	}
 }
 
+func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[{"id":"sess-1","agent_id":"codex","namespace":"loom-core/main","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_context_search":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"results":[{"score":1,"entry":{"id":"e1","entry_type":"decision","title":"Short title","content":"small body","timestamp":"2026-02-16T00:00:00Z"}},{"score":1,"entry":{"id":"e2","entry_type":"finding","title":"Longer title","content":"this is a much longer body for context sizing","timestamp":"2026-02-16T00:01:00Z"}}]}`},
+				},
+			}, nil
+		case "agent_context__agent_task_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"tasks":[{"id":"t1","status":"pending"},{"id":"t2","status":"in_progress"},{"id":"t3","status":"completed"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_memory_stats":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"working_memory":{"item_count":2,"token_count":120},"short_term_memory":{"item_count":3,"token_count":300},"long_term_memory":{"item_count":4,"token_count":500},"total_items":9,"total_tokens":920}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.ContextInspect("codex", "", true, 2)
+	if err != nil {
+		t.Fatalf("context inspect failed: %v", err)
+	}
+
+	if result.SessionID != "sess-1" {
+		t.Fatalf("expected session_id sess-1, got %q", result.SessionID)
+	}
+	if result.EntryCount != 2 {
+		t.Fatalf("expected 2 entries, got %d", result.EntryCount)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated=true when entry_count == limit")
+	}
+	if len(result.ByEntryType) != 2 {
+		t.Fatalf("expected 2 entry-type buckets, got %d", len(result.ByEntryType))
+	}
+	if len(result.TopEntries) != 2 {
+		t.Fatalf("expected top entries in detail mode, got %d", len(result.TopEntries))
+	}
+	if result.TopEntries[0].ID != "e2" {
+		t.Fatalf("expected largest entry e2 first, got %q", result.TopEntries[0].ID)
+	}
+	if result.Tasks.Pending != 1 || result.Tasks.InProgress != 1 || result.Tasks.Completed != 1 {
+		t.Fatalf("unexpected task summary: %+v", result.Tasks)
+	}
+	if result.Memory == nil || result.Memory.TotalTokens != 920 {
+		t.Fatalf("expected memory stats to be populated, got %+v", result.Memory)
+	}
+}
+
 func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 

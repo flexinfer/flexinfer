@@ -178,6 +178,30 @@ Optional environment overrides:
 - `LOOM_HUD_PORT`: HUD API port
 - `LOOM_SOCKET`: daemon socket path (fallback path)
 
+Context budget inspection:
+
+```bash
+loom agent context-inspect --agent-id codex --detail --limit 200
+```
+
+Nudge queue status for an agent:
+
+```bash
+curl "http://127.0.0.1:3333/api/agent/nudge-queue?agent_id=codex"
+```
+
+Nudge queue runtime policy (read/update):
+
+```bash
+loom agent nudge-queue-policy
+loom agent nudge-queue-policy --cap 96 --drop-policy summarize --debounce-ms 50 --lane-priority control,handoff,advice,default
+```
+
+Optional auth env for policy mutation:
+
+- `LOOM_HUD_ADMIN_TOKEN` (preferred)
+- `HUD_ADMIN_TOKEN` (fallback, also used by `loom hud --admin-token`)
+
 ## Response Size and Pagination
 
 Many list/search tools support `page` + `per_page` (capped at 100). Several servers also enforce response size limits to prevent tool-call timeouts.

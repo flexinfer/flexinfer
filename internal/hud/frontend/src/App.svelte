@@ -20,7 +20,6 @@
   import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
-  import LifecyclePanel from './lib/components/LifecyclePanel.svelte';
   import EmptyState from './lib/components/shared/EmptyState.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
@@ -261,7 +260,13 @@
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'lifecycle'}
-                  <LifecyclePanel />
+                  {#await import('./lib/components/LifecyclePanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: LifecyclePanel }}
+                    <LifecyclePanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {/if}
               </ViewShell>
             {/if}

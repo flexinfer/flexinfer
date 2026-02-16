@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 )
 
@@ -150,5 +153,129 @@ func TestCost_EmptySnapshot(t *testing.T) {
 	}
 	if snap.Timestamp.IsZero() {
 		t.Error("expected non-zero timestamp")
+	}
+}
+
+func TestCost_ConcurrentRecord(t *testing.T) {
+	cfg := CostConfig{Enabled: true}
+	ct := NewCostTracker(cfg, slog.Default())
+	if ct == nil {
+		t.Fatal("expected non-nil cost tracker")
+	}
+
+	const goroutines = 100
+	const recordsPerGoroutine = 10
+	const totalRecords = goroutines * recordsPerGoroutine
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < recordsPerGoroutine; j++ {
+				ct.Record(UsageRecord{
+					AgentID:       fmt.Sprintf("agent-%d", n%10),
+					Server:        fmt.Sprintf("server-%d", n%5),
+					Tool:          fmt.Sprintf("tool-%d", j),
+					DurationMs:    1,
+					RequestBytes:  10,
+					ResponseBytes: 20,
+					Status:        "success",
+				})
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	snap := ct.Snapshot()
+	if snap.Totals.CallCount != int64(totalRecords) {
+		t.Errorf("call count: got %d, want %d", snap.Totals.CallCount, totalRecords)
+	}
+}
+
+func TestCost_SnapshotSerializationRoundTrip(t *testing.T) {
+	cfg := CostConfig{Enabled: true}
+	ct := NewCostTracker(cfg, slog.Default())
+
+	ct.Record(UsageRecord{
+		AgentID:       "claude-code",
+		Server:        "git",
+		Tool:          "git_status",
+		DurationMs:    50,
+		RequestBytes:  100,
+		ResponseBytes: 500,
+		Status:        "success",
+	})
+	ct.Record(UsageRecord{
+		AgentID:       "codex",
+		Server:        "gitlab",
+		Tool:          "list_issues",
+		DurationMs:    200,
+		RequestBytes:  150,
+		ResponseBytes: 2000,
+		Status:        "error",
+	})
+	ct.Record(UsageRecord{
+		AgentID:       "claude-code",
+		Server:        "gitlab",
+		Tool:          "create_issue",
+		DurationMs:    100,
+		RequestBytes:  300,
+		ResponseBytes: 400,
+		Status:        "success",
+	})
+
+	snap := ct.Snapshot()
+
+	// Marshal to JSON.
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Unmarshal back.
+	var decoded CostSnapshot
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify fields match.
+	if decoded.Totals.CallCount != snap.Totals.CallCount {
+		t.Errorf("CallCount: got %d, want %d", decoded.Totals.CallCount, snap.Totals.CallCount)
+	}
+	if decoded.Totals.ErrorCount != snap.Totals.ErrorCount {
+		t.Errorf("ErrorCount: got %d, want %d", decoded.Totals.ErrorCount, snap.Totals.ErrorCount)
+	}
+	if len(decoded.ByAgent) != len(snap.ByAgent) {
+		t.Errorf("ByAgent len: got %d, want %d", len(decoded.ByAgent), len(snap.ByAgent))
+	}
+	if len(decoded.ByServer) != len(snap.ByServer) {
+		t.Errorf("ByServer len: got %d, want %d", len(decoded.ByServer), len(snap.ByServer))
+	}
+	if decoded.Timestamp.IsZero() {
+		t.Error("expected non-zero timestamp after round-trip")
+	}
+}
+
+func TestCost_ZeroValueRecord(t *testing.T) {
+	cfg := CostConfig{Enabled: true}
+	ct := NewCostTracker(cfg, slog.Default())
+
+	ct.Record(UsageRecord{
+		Status: "success",
+	})
+
+	snap := ct.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Errorf("call count: got %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.TotalDuration != 0 {
+		t.Errorf("duration: got %d, want 0", snap.Totals.TotalDuration)
+	}
+	if snap.Totals.TotalReqBytes != 0 {
+		t.Errorf("req bytes: got %d, want 0", snap.Totals.TotalReqBytes)
+	}
+	if snap.Totals.TotalResBytes != 0 {
+		t.Errorf("res bytes: got %d, want 0", snap.Totals.TotalResBytes)
 	}
 }

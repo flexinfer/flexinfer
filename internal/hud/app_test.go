@@ -3,6 +3,8 @@ package hud
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -92,11 +94,13 @@ func newTestApp(t *testing.T) (*App, *http.ServeMux) {
 	agent := bridge.NewAgentBridge(client)
 
 	app := &App{
-		config: Config{Dev: true},
-		client: client,
-		agent:  agent,
-		cache:  bridge.NewCache(),
-		sseHub: NewSSEHub(nil),
+		config:     Config{Dev: true},
+		client:     client,
+		agent:      agent,
+		cache:      bridge.NewCache(),
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sseHub:     NewSSEHub(nil),
+		nudgeQueue: NewNudgeQueue(),
 	}
 
 	// Create monitors pointing at the mock daemon. Don't start polling —
@@ -360,6 +364,81 @@ func TestHandler_AgentContextAdd_EmptyEntries(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty entries, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_AgentNudgeQueuePolicy_Get(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	req := httptest.NewRequest("GET", "/api/agent/nudge-queue-policy", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		OK     bool                 `json:"ok"`
+		Policy nudgeQueuePolicyView `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected ok=true")
+	}
+	if result.Policy.Cap <= 0 {
+		t.Fatalf("expected policy cap > 0, got %d", result.Policy.Cap)
+	}
+}
+
+func TestHandler_AgentNudgeQueuePolicy_UpdateRequiresToken(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "secret"
+
+	req := httptest.NewRequest("POST", "/api/agent/nudge-queue-policy", strings.NewReader(`{"cap": 32}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_AgentNudgeQueuePolicy_Update(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "secret"
+
+	req := httptest.NewRequest("POST", "/api/agent/nudge-queue-policy", strings.NewReader(`{"cap": 32, "drop_policy": "drop_new", "debounce_ms": 25, "updated_by":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		OK     bool                 `json:"ok"`
+		Policy nudgeQueuePolicyView `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected ok=true")
+	}
+	if result.Policy.Cap != 32 {
+		t.Fatalf("expected cap=32, got %d", result.Policy.Cap)
+	}
+	if result.Policy.DropPolicy != DropPolicyDropNew {
+		t.Fatalf("expected drop_policy=drop_new, got %q", result.Policy.DropPolicy)
+	}
+	if result.Policy.DebounceMs != 25 {
+		t.Fatalf("expected debounce_ms=25, got %d", result.Policy.DebounceMs)
 	}
 }
 

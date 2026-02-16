@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,45 @@ func hudPost(port, path string, body any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
+	}
+
+	return data, nil
+}
+
+// hudPostWithHeaders sends a POST request with optional extra headers.
+func hudPostWithHeaders(port, path string, body any, headers map[string]string) (json.RawMessage, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hudBaseURL(port)+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -378,6 +418,59 @@ func activeSessionWithFallback(cmd *cobra.Command, port, agentID string) (json.R
 	)
 }
 
+func contextInspectWithFallback(cmd *cobra.Command, port, agentID, sessionID string, detail bool, limit int) (json.RawMessage, error) {
+	params := url.Values{}
+	if agentID != "" {
+		params.Set("agent_id", agentID)
+	}
+	if sessionID != "" {
+		params.Set("session_id", sessionID)
+	}
+	if detail {
+		params.Set("detail", "true")
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/api/agent/context-inspect"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	return withAgentFallback(
+		"agent context-inspect",
+		func() (json.RawMessage, error) {
+			return hudGet(port, path)
+		},
+		func() (json.RawMessage, error) {
+			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				result, err := agentBridge.ContextInspect(agentID, sessionID, detail, limit)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(result)
+			})
+		},
+	)
+}
+
+func nudgeQueueStatusWithHUD(port, agentID string) (json.RawMessage, error) {
+	params := url.Values{}
+	params.Set("agent_id", agentID)
+	return hudGet(port, "/api/agent/nudge-queue?"+params.Encode())
+}
+
+func nudgeQueuePolicyWithHUD(port string) (json.RawMessage, error) {
+	return hudGet(port, "/api/agent/nudge-queue-policy")
+}
+
+func nudgeQueuePolicyUpdateWithHUD(port string, body map[string]any, adminToken string) (json.RawMessage, error) {
+	headers := map[string]string{
+		"Authorization": "Bearer " + adminToken,
+	}
+	return hudPostWithHeaders(port, "/api/agent/nudge-queue-policy", body, headers)
+}
+
 func workflowDefineWithFallback(cmd *cobra.Command, port string, body map[string]any) (json.RawMessage, error) {
 	return withAgentFallback(
 		"agent workflow-define",
@@ -419,6 +512,9 @@ not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentHeartbeatCmd(),
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
+		newAgentContextInspectCmd(),
+		newAgentNudgeQueueStatusCmd(),
+		newAgentNudgeQueuePolicyCmd(),
 		newAgentWorkflowSyncCmd(),
 		newAgentDispatchCmd(),
 	)
@@ -721,6 +817,195 @@ func newAgentSessionCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
+
+	return cmd
+}
+
+// newAgentContextInspectCmd creates the `loom agent context-inspect` command.
+func newAgentContextInspectCmd() *cobra.Command {
+	var (
+		agentID   string
+		sessionID string
+		detail    bool
+		limit     int
+		quiet     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "context-inspect",
+		Short: "Inspect context budget for an agent/session",
+		Long: `Return a context budget breakdown for an agent session, including
+entry-type aggregates and optional top-entry detail.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(agentID) == "" && strings.TrimSpace(sessionID) == "" {
+				return fmt.Errorf("agent-id or session-id is required")
+			}
+
+			port := resolvePort(cmd)
+			result, err := contextInspectWithFallback(cmd, port, agentID, sessionID, detail, limit)
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+			if !quiet {
+				fmt.Println(string(result))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier (uses active session when session-id is omitted)")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID to inspect")
+	cmd.Flags().BoolVar(&detail, "detail", false, "Include top entries by estimated token weight")
+	cmd.Flags().IntVar(&limit, "limit", 200, "Maximum context entries to analyze")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
+
+	return cmd
+}
+
+// newAgentNudgeQueueStatusCmd creates the `loom agent nudge-queue` command.
+func newAgentNudgeQueueStatusCmd() *cobra.Command {
+	var (
+		agentID string
+		quiet   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "nudge-queue",
+		Short: "Show queued nudge status for an agent",
+		Long:  `Return lane counts, dropped counters, and runtime queue settings for a specific agent.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(agentID) == "" {
+				return fmt.Errorf("agent-id is required")
+			}
+
+			port := resolvePort(cmd)
+			result, err := nudgeQueueStatusWithHUD(port, agentID)
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+
+			if !quiet {
+				fmt.Println(string(result))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
+
+	return cmd
+}
+
+// newAgentNudgeQueuePolicyCmd creates the `loom agent nudge-queue-policy` command.
+func newAgentNudgeQueuePolicyCmd() *cobra.Command {
+	var (
+		capValue     int
+		debounceMs   int
+		dropPolicy   string
+		lanePriority string
+		updatedBy    string
+		adminToken   string
+		quiet        bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "nudge-queue-policy",
+		Short: "Get or update runtime nudge queue policy",
+		Long: `Get current policy when no mutation flags are set.
+
+Update policy at runtime by passing one or more of:
+--cap, --debounce-ms, --drop-policy, --lane-priority.
+
+Mutations require --admin-token or $LOOM_HUD_ADMIN_TOKEN (fallback: $HUD_ADMIN_TOKEN).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+
+			hasMutation := capValue >= 0 ||
+				debounceMs >= 0 ||
+				strings.TrimSpace(dropPolicy) != "" ||
+				strings.TrimSpace(lanePriority) != ""
+
+			if !hasMutation {
+				result, err := nudgeQueuePolicyWithHUD(port)
+				if err != nil {
+					if quiet {
+						return nil
+					}
+					return err
+				}
+				if !quiet {
+					fmt.Println(string(result))
+				}
+				return nil
+			}
+
+			token := strings.TrimSpace(adminToken)
+			if token == "" {
+				token = strings.TrimSpace(os.Getenv("LOOM_HUD_ADMIN_TOKEN"))
+			}
+			if token == "" {
+				token = strings.TrimSpace(os.Getenv("HUD_ADMIN_TOKEN"))
+			}
+			if token == "" {
+				return fmt.Errorf("admin token is required for policy updates (--admin-token, LOOM_HUD_ADMIN_TOKEN, or HUD_ADMIN_TOKEN)")
+			}
+
+			body := make(map[string]any)
+			if capValue >= 0 {
+				body["cap"] = capValue
+			}
+			if debounceMs >= 0 {
+				body["debounce_ms"] = debounceMs
+			}
+			if strings.TrimSpace(dropPolicy) != "" {
+				body["drop_policy"] = strings.TrimSpace(dropPolicy)
+			}
+			if strings.TrimSpace(lanePriority) != "" {
+				parts := strings.Split(lanePriority, ",")
+				lanes := make([]string, 0, len(parts))
+				for _, p := range parts {
+					lane := strings.TrimSpace(p)
+					if lane != "" {
+						lanes = append(lanes, lane)
+					}
+				}
+				if len(lanes) == 0 {
+					return fmt.Errorf("lane-priority must include at least one non-empty lane")
+				}
+				body["lane_priority"] = lanes
+			}
+			if strings.TrimSpace(updatedBy) != "" {
+				body["updated_by"] = strings.TrimSpace(updatedBy)
+			}
+
+			result, err := nudgeQueuePolicyUpdateWithHUD(port, body, token)
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+			if !quiet {
+				fmt.Println(string(result))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&capValue, "cap", -1, "Queue cap (set to update)")
+	cmd.Flags().IntVar(&debounceMs, "debounce-ms", -1, "Debounce duration in milliseconds (set to update)")
+	cmd.Flags().StringVar(&dropPolicy, "drop-policy", "", "Drop policy: drop_old, drop_new, summarize")
+	cmd.Flags().StringVar(&lanePriority, "lane-priority", "", "Comma-separated lane order (for example: control,handoff,advice,default)")
+	cmd.Flags().StringVar(&updatedBy, "updated-by", "", "Actor label for audit trail")
+	cmd.Flags().StringVar(&adminToken, "admin-token", "", "Admin token for protected mutations (falls back to LOOM_HUD_ADMIN_TOKEN, then HUD_ADMIN_TOKEN)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd

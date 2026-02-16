@@ -3,9 +3,11 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -220,4 +222,98 @@ func TestAudit_CreatesDirectory(t *testing.T) {
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		t.Fatal("expected log file to exist in nested directory")
 	}
+}
+
+func TestAudit_ConcurrentWrites(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit-concurrent.jsonl")
+
+	cfg := AuditConfig{
+		Enabled: true,
+		LogPath: logPath,
+	}
+
+	a, err := NewAuditLogger(cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer a.Close()
+
+	const goroutines = 50
+	const entriesPerGoroutine = 10
+	const totalEntries = goroutines * entriesPerGoroutine
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < entriesPerGoroutine; j++ {
+				a.Log(AuditEntry{
+					AgentID: fmt.Sprintf("agent-%d", n),
+					Server:  "test-server",
+					Tool:    fmt.Sprintf("tool-%d", j),
+					Status:  "success",
+				})
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Read back and count lines.
+	f, err := os.Open(logPath)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	var lineCount int
+	for scanner.Scan() {
+		lineCount++
+		// Verify each line is valid JSON.
+		var entry map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			t.Errorf("line %d is not valid JSON: %v", lineCount, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanner error: %v", err)
+	}
+
+	if lineCount != totalEntries {
+		t.Errorf("expected %d lines, got %d", totalEntries, lineCount)
+	}
+}
+
+func TestAudit_CloseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit-close.jsonl")
+
+	cfg := AuditConfig{
+		Enabled: true,
+		LogPath: logPath,
+	}
+
+	a, err := NewAuditLogger(cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a.Log(AuditEntry{AgentID: "test", Server: "s", Tool: "t", Status: "success"})
+
+	// First close should succeed.
+	if err := a.Close(); err != nil {
+		t.Fatalf("first Close() failed: %v", err)
+	}
+
+	// Second close may return an error but must not panic.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("second Close() panicked: %v", r)
+			}
+		}()
+		_ = a.Close() // error is acceptable, panic is not
+	}()
 }

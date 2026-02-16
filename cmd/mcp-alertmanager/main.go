@@ -192,6 +192,11 @@ func (s *alertmanagerServer) request(ctx context.Context, method, path string, b
 		return map[string]any{"ok": true}, nil
 	}
 
+	// Guard against HTML error pages (proxy/gateway returning non-JSON)
+	if len(respBody) > 0 && respBody[0] == '<' {
+		return nil, fmt.Errorf("alertmanager returned HTML instead of JSON (check URL %s): %s", s.url, strutil.BodySnippet(respBody, 256))
+	}
+
 	// Try to parse as JSON
 	var result any
 	if err := json.Unmarshal(respBody, &result); err != nil {

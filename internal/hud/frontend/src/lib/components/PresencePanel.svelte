@@ -8,6 +8,7 @@
   import Modal from '../widgets/Modal.svelte';
   import AgentCard from '../widgets/AgentCard.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import BulkToolbar from './shared/BulkToolbar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
@@ -194,6 +195,28 @@
       toastStore.error('Failed to release claim');
     }
   }
+
+  // --- Bulk claim selection ---
+  let selectedClaimIds = $state(new Set());
+
+  function handleClaimSelect(ids) {
+    selectedClaimIds = ids;
+  }
+
+  async function bulkReleaseClaims() {
+    for (const id of selectedClaimIds) {
+      const claim = claims.find((c) => c.id === id);
+      if (claim) {
+        await releaseClaim(claim.agent_id, claim.file_path);
+      }
+    }
+    toastStore.success(`${selectedClaimIds.size} claims released`);
+    selectedClaimIds = new Set();
+  }
+
+  let claimBulkActions = $derived([
+    { label: 'Release Selected', variant: 'danger', onclick: bulkReleaseClaims },
+  ]);
 
   // --- Relative time tick (forces re-render) ---
   let _tick = $state(0);
@@ -547,6 +570,9 @@
           <DataTable
             columns={claimColumns}
             rows={claims}
+            selectable={true}
+            selectedIds={selectedClaimIds}
+            onSelect={handleClaimSelect}
           >
             {#snippet row({ row: claim })}
               <td class="text-mono" title={claim.file_path}>{shortPath(claim.file_path)}</td>
@@ -561,6 +587,11 @@
               </td>
             {/snippet}
           </DataTable>
+          <BulkToolbar
+            count={selectedClaimIds.size}
+            actions={claimBulkActions}
+            onClearSelection={() => { selectedClaimIds = new Set(); }}
+          />
         {/if}
       </div>
 

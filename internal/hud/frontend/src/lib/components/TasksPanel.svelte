@@ -11,6 +11,39 @@
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
+  // --- GitLab issue-reference linking ---
+  const GITLAB_BASE = 'https://gitlab.flexinfer.ai';
+  const SERVICE_PROJECTS = new Set([
+    'loom-core', 'loom', 'loom-zed', 'flexdeck', 'flexinfer', 'flexinfer-site',
+    'homelab-homepage', 'jobsearch-app', 'storyboard-generator',
+    'streamslate', 'streamslate-site', 'substack', 'tech-radar',
+    'mcp-gateway', 'mcp-orchestra', 'mcp-sandbox', 'mentatlab',
+    'news-analyzer', 'diff-surgeon', 'comfyui-images-proxy',
+  ]);
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function gitlabIssueUrl(project, num) {
+    const group = SERVICE_PROJECTS.has(project) ? 'services' : 'libs';
+    return `${GITLAB_BASE}/${group}/${project}/-/issues/${num}`;
+  }
+
+  function parseIssueRefs(title) {
+    if (!title) return '---';
+    const escaped = escapeHtml(title);
+    return escaped.replace(
+      /\[([a-zA-Z0-9_-]+)#(\d+)\]/g,
+      (_, proj, num) =>
+        `<a href="${gitlabIssueUrl(proj, num)}" class="issue-link" target="_blank" rel="noopener" onclick="event.stopPropagation()">${proj}#${num}</a>`
+    );
+  }
+
   $effect(() => {
     taskStore.startPolling(5000);
     agentStore.startPolling(30000);
@@ -460,7 +493,7 @@
         >
           {#snippet row({ row: task })}
             <td class="task-title" title={task.context || task.title}>
-              {task.title ?? '---'}
+              {@html parseIssueRefs(task.title)}
               {#if task.context}
                 <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
               {/if}
@@ -483,16 +516,18 @@
                 {/each}
               </select>
             </td>
-            <td class="text-mono blocked-col">
-              {#if task.blocked_by?.length}
-                {#each task.blocked_by as dep}
-                  <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
-                    {dep.slice(0, 8)}
-                  </span>
-                {/each}
-              {:else}
-                <span class="text-muted">---</span>
-              {/if}
+            <td class="text-mono">
+              <div class="blocked-col">
+                {#if task.blocked_by?.length}
+                  {#each task.blocked_by as dep}
+                    <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
+                      {dep.slice(0, 8)}
+                    </span>
+                  {/each}
+                {:else}
+                  <span class="text-muted">---</span>
+                {/if}
+              </div>
             </td>
             <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
             <td class="actions-col">
@@ -537,7 +572,7 @@
                       {#each items as task (task.id)}
                         <tr>
                           <td class="task-title" title={task.context || task.title}>
-                            {task.title ?? '---'}
+                            {@html parseIssueRefs(task.title)}
                             {#if task.context}
                               <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
                             {/if}
@@ -559,16 +594,18 @@
                               {/each}
                             </select>
                           </td>
-                          <td class="text-mono blocked-col">
-                            {#if task.blocked_by?.length}
-                              {#each task.blocked_by as dep}
-                                <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
-                                  {dep.slice(0, 8)}
-                                </span>
-                              {/each}
-                            {:else}
-                              <span class="text-muted">---</span>
-                            {/if}
+                          <td class="text-mono">
+                            <div class="blocked-col">
+                              {#if task.blocked_by?.length}
+                                {#each task.blocked_by as dep}
+                                  <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
+                                    {dep.slice(0, 8)}
+                                  </span>
+                                {/each}
+                              {:else}
+                                <span class="text-muted">---</span>
+                              {/if}
+                            </div>
                           </td>
                           <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
                           <td class="actions-col">
@@ -862,6 +899,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .task-title :global(.issue-link) {
+    color: var(--info, #4a9eff);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .task-title :global(.issue-link:hover) {
+    text-decoration: underline;
   }
 
   .blocked-col {

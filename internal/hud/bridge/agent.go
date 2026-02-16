@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -162,6 +163,50 @@ type ContextEntry struct {
 	Title     string `json:"title"`
 	Content   string `json:"content,omitempty"`
 	Timestamp string `json:"timestamp"`
+}
+
+// ContextInspectBucket describes aggregate context weight by entry type.
+type ContextInspectBucket struct {
+	EntryType       string `json:"entry_type"`
+	Count           int    `json:"count"`
+	Chars           int    `json:"chars"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+}
+
+// ContextInspectTopEntry highlights the heaviest entries in a session.
+type ContextInspectTopEntry struct {
+	ID              string `json:"id"`
+	EntryType       string `json:"entry_type"`
+	Title           string `json:"title"`
+	Timestamp       string `json:"timestamp"`
+	Chars           int    `json:"chars"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+}
+
+// ContextInspectTasks summarizes task state for the inspected session.
+type ContextInspectTasks struct {
+	Total      int `json:"total"`
+	Pending    int `json:"pending"`
+	InProgress int `json:"in_progress"`
+	Completed  int `json:"completed"`
+}
+
+// ContextInspectResult is a context budget breakdown for a session.
+type ContextInspectResult struct {
+	SessionID       string                   `json:"session_id"`
+	AgentID         string                   `json:"agent_id,omitempty"`
+	Namespace       string                   `json:"namespace,omitempty"`
+	SessionStatus   string                   `json:"session_status,omitempty"`
+	Limit           int                      `json:"limit"`
+	EntryCount      int                      `json:"entry_count"`
+	ContextChars    int                      `json:"context_chars"`
+	EstimatedTokens int                      `json:"estimated_tokens"`
+	Truncated       bool                     `json:"truncated"`
+	ByEntryType     []ContextInspectBucket   `json:"by_entry_type"`
+	TopEntries      []ContextInspectTopEntry `json:"top_entries,omitempty"`
+	Tasks           ContextInspectTasks      `json:"tasks"`
+	Memory          *MemoryStatsResult       `json:"memory,omitempty"`
+	RetrievedAt     string                   `json:"retrieved_at"`
 }
 
 func normalizeEntityInfo(e *EntityInfo) {
@@ -892,6 +937,168 @@ func (a *AgentBridge) SessionEntries(sessionID string, limit int) ([]ContextEntr
 		return nil, err
 	}
 	return result.Results, nil
+}
+
+// ContextInspect builds a context budget breakdown for a session.
+//
+// Resolution order:
+//   - If sessionID is empty, uses the active session for agentID.
+//   - If sessionID is set, uses that session (and backfills metadata when available).
+func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, limit int) (*ContextInspectResult, error) {
+	if sessionID == "" && agentID == "" {
+		return nil, fmt.Errorf("agent_id or session_id is required")
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+
+	var sessionMeta *SessionInfo
+	if sessionID == "" {
+		active, err := a.GetActiveSession(agentID)
+		if err != nil {
+			return nil, fmt.Errorf("get active session: %w", err)
+		}
+		if active == nil {
+			return nil, fmt.Errorf("no active session found for agent %s", agentID)
+		}
+		sessionMeta = active
+		sessionID = active.ID
+	} else {
+		if sessions, err := a.Sessions(); err == nil {
+			for i := range sessions {
+				if sessions[i].ID == sessionID {
+					sessionMeta = &sessions[i]
+					break
+				}
+			}
+		}
+	}
+
+	entries, err := a.SessionEntries(sessionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("session entries: %w", err)
+	}
+
+	byType := make(map[string]*ContextInspectBucket)
+	top := make([]ContextInspectTopEntry, 0, len(entries))
+	totalChars := 0
+	totalTokens := 0
+
+	for _, wrapped := range entries {
+		entry := wrapped.Entry
+		entryType := strings.TrimSpace(entry.EntryType)
+		if entryType == "" {
+			entryType = "note"
+		}
+		chars := estimateContextChars(entry)
+		tokens := estimateContextTokens(chars)
+		totalChars += chars
+		totalTokens += tokens
+
+		b := byType[entryType]
+		if b == nil {
+			b = &ContextInspectBucket{EntryType: entryType}
+			byType[entryType] = b
+		}
+		b.Count++
+		b.Chars += chars
+		b.EstimatedTokens += tokens
+
+		if detail {
+			top = append(top, ContextInspectTopEntry{
+				ID:              entry.ID,
+				EntryType:       entryType,
+				Title:           entry.Title,
+				Timestamp:       entry.Timestamp,
+				Chars:           chars,
+				EstimatedTokens: tokens,
+			})
+		}
+	}
+
+	buckets := make([]ContextInspectBucket, 0, len(byType))
+	for _, b := range byType {
+		buckets = append(buckets, *b)
+	}
+	sort.SliceStable(buckets, func(i, j int) bool {
+		if buckets[i].EstimatedTokens == buckets[j].EstimatedTokens {
+			return buckets[i].EntryType < buckets[j].EntryType
+		}
+		return buckets[i].EstimatedTokens > buckets[j].EstimatedTokens
+	})
+
+	if detail {
+		sort.SliceStable(top, func(i, j int) bool {
+			if top[i].Chars == top[j].Chars {
+				return top[i].Timestamp > top[j].Timestamp
+			}
+			return top[i].Chars > top[j].Chars
+		})
+		if len(top) > 20 {
+			top = top[:20]
+		}
+	}
+
+	tasksSummary := ContextInspectTasks{}
+	if tasks, err := a.Tasks(sessionID); err == nil {
+		tasksSummary.Total = len(tasks)
+		for _, t := range tasks {
+			switch strings.ToLower(strings.TrimSpace(t.Status)) {
+			case "completed":
+				tasksSummary.Completed++
+			case "in_progress":
+				tasksSummary.InProgress++
+			default:
+				tasksSummary.Pending++
+			}
+		}
+	}
+
+	var memory *MemoryStatsResult
+	if stats, err := a.MemoryStats(); err == nil {
+		memory = stats
+	}
+
+	result := &ContextInspectResult{
+		SessionID:       sessionID,
+		Limit:           limit,
+		EntryCount:      len(entries),
+		ContextChars:    totalChars,
+		EstimatedTokens: totalTokens,
+		Truncated:       len(entries) >= limit,
+		ByEntryType:     buckets,
+		TopEntries:      top,
+		Tasks:           tasksSummary,
+		Memory:          memory,
+		RetrievedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if sessionMeta != nil {
+		result.AgentID = sessionMeta.AgentID
+		result.Namespace = sessionMeta.Namespace
+		result.SessionStatus = sessionMeta.Status
+		if agentID == "" {
+			agentID = sessionMeta.AgentID
+		}
+	}
+	if result.AgentID == "" {
+		result.AgentID = agentID
+	}
+	return result, nil
+}
+
+func estimateContextChars(entry ContextEntry) int {
+	chars := len(entry.Title) + len(entry.Content)
+	// Include minimal metadata overhead so very short entries are still represented.
+	chars += len(entry.EntryType) + len(entry.Timestamp)
+	return chars
+}
+
+func estimateContextTokens(chars int) int {
+	if chars <= 0 {
+		return 0
+	}
+	// Simple approximation used elsewhere in HUD docs: ~4 chars/token.
+	return (chars + 3) / 4
 }
 
 // --- Reasoning chain methods ---
