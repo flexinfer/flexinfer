@@ -216,7 +216,7 @@ func (p *clusterProber) probeCluster(cluster globalrouting.ClusterEndpoint) (boo
 	if err != nil {
 		return false, latency
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
