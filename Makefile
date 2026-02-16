@@ -461,7 +461,7 @@ mod-update:
 # CI TARGETS - Mimic GitLab CI pipeline locally
 # =============================================================================
 
-COVERAGE_THRESHOLD ?= 24
+COVERAGE_THRESHOLD ?= 28
 
 # Full CI pipeline
 ci: ci-lint ci-build ci-test ci-security
