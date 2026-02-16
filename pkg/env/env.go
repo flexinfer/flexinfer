@@ -41,6 +41,18 @@ func IntWithZero(key string, fallback int) int {
 	return fallback
 }
 
+// Float returns the float64 value of the environment variable or the fallback.
+// Only positive values are accepted; zero or negative values return the fallback.
+func Float(key string, fallback float64) float64 {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil && f > 0 {
+			return f
+		}
+	}
+	return fallback
+}
+
 // Bool returns the boolean value of the environment variable or the fallback.
 // Accepts "1", "true", "yes", "on" (case-insensitive) as true.
 func Bool(key string, fallback bool) bool {

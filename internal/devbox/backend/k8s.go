@@ -121,26 +121,22 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 		return nil, fmt.Errorf("context dir %q is not under workspace root %q", opts.ContextDir, k.workspaceRoot)
 	}
 
-	// Write Dockerfile to a build staging area on the NFS volume.
 	buildName := sanitizeBuildName(opts.Tag)
-	buildDir := filepath.Join(k.workspaceRoot, ".devbox-build", buildName)
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return nil, fmt.Errorf("create build dir: %w", err)
-	}
-	defer os.RemoveAll(buildDir)
-
-	dockerfilePath := filepath.Join(buildDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, opts.Dockerfile, 0644); err != nil {
-		return nil, fmt.Errorf("write Dockerfile: %w", err)
-	}
-
-	// NFS-relative paths for the Kaniko pod
-	dockerfileRel := filepath.Join(".devbox-build", buildName, "Dockerfile")
 	cacheRepo := k.registry + "/cache/devbox"
+
+	// Inject Dockerfile via ConfigMap so it's accessible to the Kaniko pod
+	// without requiring the local filesystem to be the NFS volume.
+	cmName := "kaniko-dockerfile-" + buildName
+	if err := k.createDockerfileConfigMap(ctx, cmName, opts.Dockerfile); err != nil {
+		return nil, fmt.Errorf("create dockerfile configmap: %w", err)
+	}
+	defer func() {
+		_ = k.deleteConfigMap(context.Background(), cmName)
+	}()
 
 	// Create the Kaniko build pod
 	podName := "kaniko-build-" + buildName
-	pod := k.buildKanikoPodSpec(podName, registryTag, dockerfileRel, contextRel, cacheRepo)
+	pod := k.buildKanikoPodSpec(podName, registryTag, cmName, contextRel, cacheRepo)
 
 	// Delete any leftover build pod with the same name
 	_ = k.deletePod(ctx, podName)
@@ -370,28 +366,20 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		env = append(env, corev1.EnvVar{Name: key, Value: val})
 	}
 
+	// Set only limits (not requests) so sandbox pods schedule as Burstable/BestEffort.
+	// Dev sandbox pods are short-lived; low requests prevent scheduling failures
+	// on clusters with high CPU reservation.
 	resources := corev1.ResourceRequirements{}
 	if opts.MemoryMB > 0 {
-		if resources.Limits == nil {
-			resources.Limits = corev1.ResourceList{}
+		resources.Limits = corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", opts.MemoryMB)),
 		}
-		if resources.Requests == nil {
-			resources.Requests = corev1.ResourceList{}
-		}
-		mem := resource.MustParse(fmt.Sprintf("%dMi", opts.MemoryMB))
-		resources.Limits[corev1.ResourceMemory] = mem
-		resources.Requests[corev1.ResourceMemory] = mem
 	}
 	if opts.CPUs > 0 {
 		if resources.Limits == nil {
 			resources.Limits = corev1.ResourceList{}
 		}
-		if resources.Requests == nil {
-			resources.Requests = corev1.ResourceList{}
-		}
-		cpu := resource.MustParse(fmt.Sprintf("%dm", int(opts.CPUs*1000)))
-		resources.Limits[corev1.ResourceCPU] = cpu
-		resources.Requests[corev1.ResourceCPU] = cpu
+		resources.Limits[corev1.ResourceCPU] = resource.MustParse(fmt.Sprintf("%dm", int(opts.CPUs*1000)))
 	}
 
 	// Volumes: NFS workspace via PVC (shared across all sandbox pods)
@@ -493,7 +481,9 @@ func (k *K8sBackend) waitForPodRunning(ctx context.Context, name string, timeout
 }
 
 // buildKanikoPodSpec creates a Pod spec for a Kaniko in-cluster build.
-func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileRel, contextRel, cacheRepo string) *corev1.Pod {
+// The Dockerfile is injected via a ConfigMap (dockerfileCM) so it doesn't
+// need to exist on the NFS workspace volume.
+func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileCM, contextRel, cacheRepo string) *corev1.Pod {
 	gracePeriod := int64(0)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -517,13 +507,15 @@ func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileRel, con
 					Image: k.kanikoImage,
 					Args: []string{
 						"--context=dir:///workspace/" + contextRel,
-						"--dockerfile=/workspace/" + dockerfileRel,
+						"--dockerfile=/kaniko-dockerfile/Dockerfile",
 						"--destination=" + destination,
 						"--cache=true",
 						"--cache-repo=" + cacheRepo,
 						"--cache-copy-layers",
 						"--snapshot-mode=redo",
 						"--use-new-run",
+						"--skip-tls-verify",
+						"--skip-tls-verify-pull",
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
@@ -538,6 +530,7 @@ func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileRel, con
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "workspace", MountPath: "/workspace"},
 						{Name: "docker-config", MountPath: "/kaniko/.docker", ReadOnly: true},
+						{Name: "dockerfile", MountPath: "/kaniko-dockerfile", ReadOnly: true},
 					},
 				},
 			},
@@ -557,6 +550,16 @@ func (k *K8sBackend) buildKanikoPodSpec(podName, destination, dockerfileRel, con
 							SecretName: k.imagePullSecret,
 							Items: []corev1.KeyToPath{
 								{Key: ".dockerconfigjson", Path: "config.json"},
+							},
+						},
+					},
+				},
+				{
+					Name: "dockerfile",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: dockerfileCM,
 							},
 						},
 					},
@@ -616,6 +619,35 @@ func (k *K8sBackend) getPodLogs(ctx context.Context, podName string) (string, er
 		return "", fmt.Errorf("read logs: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// createDockerfileConfigMap creates a ConfigMap containing the Dockerfile.
+func (k *K8sBackend) createDockerfileConfigMap(ctx context.Context, name string, dockerfile []byte) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: k.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "mcp-devbox",
+				"devbox/build":                 "kaniko",
+			},
+		},
+		Data: map[string]string{
+			"Dockerfile": string(dockerfile),
+		},
+	}
+	_ = k.deleteConfigMap(ctx, name)
+	_, err := k.clientset.CoreV1().ConfigMaps(k.namespace).Create(ctx, cm, metav1.CreateOptions{})
+	return err
+}
+
+// deleteConfigMap deletes a ConfigMap by name.
+func (k *K8sBackend) deleteConfigMap(ctx context.Context, name string) error {
+	err := k.clientset.CoreV1().ConfigMaps(k.namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !isNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // deletePod deletes a pod with zero grace period (immediate).
