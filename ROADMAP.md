@@ -135,15 +135,15 @@ These address capabilities the market now expects from production MCP infrastruc
   - ~~Log access decisions for audit.~~ ✅ Done
   - *Rationale: #1 enterprise requirement. All gateway competitors (Kong, Lunar.dev, TrueFoundry) offer this.*
 
-- [ ] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10))
-  - Track token usage per agent session, per tool, per MCP server at the proxy layer.
+- [x] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10)) ✅ Shipped
+  - ~~Track token usage per agent session, per tool, per MCP server at the proxy layer.~~ ✅ Done
   - Expose cost dashboard in HUD (new KPI on Overview panel).
   - Export cost metrics via OTel.
   - *Rationale: The proxy already sees all traffic. Adding token counting is incremental. No local tool provides this today.*
 
-- [ ] **Structured audit trail** ([#9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/9))
-  - Produce structured JSON event for every tool call through the proxy (agent_id, session, tool, server, duration, status).
-  - Store in append-only log file, exportable to SIEM/observability tools.
+- [x] **Structured audit trail** ([#9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/9)) ✅ Shipped
+  - ~~Produce structured JSON event for every tool call through the proxy (agent_id, session, tool, server, duration, status).~~ ✅ Done
+  - ~~Store in append-only log file, exportable to SIEM/observability tools.~~ ✅ Done
   - *Rationale: Compliance requirement for enterprise adoption. Addresses "Shadow MCP" concerns.*
 
 ## Tier 3: Strategic Differentiation (Future)

@@ -94,6 +94,7 @@ type Daemon struct {
 	httpStreamable *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
 	rbac           *RBACEnforcer                   // RBAC enforcer for tool access control
 	audit          *AuditLogger                    // Structured audit logger
+	cost           *CostTracker                    // Usage tracking and attribution
 	authMiddleware func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	wg             gosync.WaitGroup
 	done           chan struct{}
@@ -349,6 +350,9 @@ func New(cfg Config) (*Daemon, error) {
 		logger.Warn("failed to initialize audit logger", "error", err)
 	}
 	d.audit = auditLogger
+
+	// Initialize cost tracker (nil when disabled)
+	d.cost = NewCostTracker(fileCfg.Cost, logger)
 
 	// Initialize health monitor
 	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
@@ -887,6 +891,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 		return d.handleCacheStats(ctx, msg)
 	case "loom/cache/clear":
 		return d.handleCacheClear(ctx, msg)
+	case "loom/cost-stats":
+		return d.handleCostStats(ctx, msg)
 	default:
 		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
 	}
@@ -1646,23 +1652,39 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	return resp, nil
 }
 
-// emitAudit writes a structured audit entry if audit logging is enabled.
+// emitAudit writes a structured audit entry and cost record if enabled.
 func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool) {
-	if d.audit == nil {
-		return
+	durationMs := time.Since(start).Milliseconds()
+
+	if d.audit != nil {
+		d.audit.Log(AuditEntry{
+			Timestamp:  start.UTC(),
+			AgentID:    params.AgentID,
+			AgentType:  params.AgentType,
+			Server:     server,
+			Tool:       tool,
+			DurationMs: durationMs,
+			Status:     status,
+			Error:      errMsg,
+			Target:     target,
+			Cached:     cached,
+		})
 	}
-	d.audit.Log(AuditEntry{
-		Timestamp:  start.UTC(),
-		AgentID:    params.AgentID,
-		AgentType:  params.AgentType,
-		Server:     server,
-		Tool:       tool,
-		DurationMs: time.Since(start).Milliseconds(),
-		Status:     status,
-		Error:      errMsg,
-		Target:     target,
-		Cached:     cached,
-	})
+
+	if d.cost != nil {
+		costStatus := status
+		if cached {
+			costStatus = "cached"
+		}
+		d.cost.Record(UsageRecord{
+			AgentID:    params.AgentID,
+			AgentType:  params.AgentType,
+			Server:     server,
+			Tool:       tool,
+			DurationMs: durationMs,
+			Status:     costStatus,
+		})
+	}
 }
 
 // logAccessDecision logs an RBAC access decision and publishes deny events.
@@ -1759,6 +1781,18 @@ func (d *Daemon) handleCacheClear(ctx context.Context, msg *mcp.Message) (*mcp.M
 		"cleared": true,
 		"server":  params.Server,
 	})
+}
+
+// handleCostStats returns cost tracking usage data.
+func (d *Daemon) handleCostStats(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.cost == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"enabled": false,
+			"reason":  "cost tracking not enabled",
+		})
+	}
+	snap := d.cost.Snapshot()
+	return mcp.NewResponse(msg.ID, snap)
 }
 
 // Reload reloads the registry and refreshes servers.

@@ -40,6 +40,9 @@ type FileConfig struct {
 	// Audit controls structured tool call logging
 	Audit AuditConfig `yaml:"audit,omitempty"`
 
+	// Cost controls usage tracking and attribution
+	Cost CostConfig `yaml:"cost,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -229,6 +232,7 @@ func DefaultFileConfig() FileConfig {
 		},
 		RBAC:  DefaultRBACConfig(),
 		Audit: DefaultAuditConfig(),
+		Cost:  DefaultCostConfig(),
 		Debug: false,
 	}
 }
