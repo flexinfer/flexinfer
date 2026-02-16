@@ -1,0 +1,182 @@
+{{- /*
+Tenant baseline resources (M1 foundation):
+- Optional Namespace creation + Pod Security Admission labels
+- ResourceQuota
+- LimitRange
+- Optional default-deny NetworkPolicy pattern
+- Namespaced least-privilege Role + optional RoleBinding subjects
+*/ -}}
+{{- if and .Values.tenancy.enabled (gt (len .Values.tenancy.tenants) 0) }}
+{{- $root := . -}}
+{{- range $tenant := .Values.tenancy.tenants }}
+{{- $ns := required "tenancy.tenants[].namespace is required" $tenant.namespace }}
+{{- $createNamespace := default $root.Values.tenancy.createNamespaces $tenant.createNamespace }}
+{{- $tenantPodSecurity := default (dict) $tenant.podSecurity }}
+{{- $psEnforce := default $root.Values.tenancy.podSecurity.enforce (get $tenantPodSecurity "enforce") }}
+{{- $psWarn := default $root.Values.tenancy.podSecurity.warn (get $tenantPodSecurity "warn") }}
+{{- $psAudit := default $root.Values.tenancy.podSecurity.audit (get $tenantPodSecurity "audit") }}
+{{- $quotaHard := default $root.Values.tenancy.quotaHard $tenant.quotaHard }}
+{{- $limitRangeLimits := default $root.Values.tenancy.limitRangeLimits $tenant.limitRangeLimits }}
+{{- $networkPolicyMode := default $root.Values.tenancy.networkPolicy.mode $tenant.networkPolicyMode }}
+{{- $nsLabels := merge (deepCopy (default (dict) $root.Values.tenancy.namespaceLabels)) (deepCopy (default (dict) $tenant.labels)) }}
+{{- if $createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    flexinfer.ai/tenant: "true"
+    pod-security.kubernetes.io/enforce: {{ $psEnforce | quote }}
+    pod-security.kubernetes.io/warn: {{ $psWarn | quote }}
+    pod-security.kubernetes.io/audit: {{ $psAudit | quote }}
+    {{- with $nsLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+{{- end }}
+{{- if gt (len $quotaHard) 0 }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: flexinfer-tenant-quota
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+spec:
+  hard:
+    {{- toYaml $quotaHard | nindent 4 }}
+---
+{{- end }}
+{{- if gt (len $limitRangeLimits) 0 }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: flexinfer-tenant-limits
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+spec:
+  limits:
+    {{- toYaml $limitRangeLimits | nindent 4 }}
+---
+{{- end }}
+{{- if eq $networkPolicyMode "default-deny" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flexinfer-tenant-default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flexinfer-tenant-allow-same-namespace
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+{{- if $root.Values.tenancy.networkPolicy.allowDNS }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flexinfer-tenant-allow-dns
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+{{- end }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $root.Values.tenancy.rbac.roleName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+rules:
+  - apiGroups: ["ai.flexinfer"]
+    resources:
+      - modeldeployments
+      - modeldeployments/status
+      - modelcaches
+      - modelcaches/status
+      - models
+      - models/status
+      - loraadapters
+      - loraadapters/status
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services
+      - configmaps
+      - events
+      - pods
+      - pods/log
+    verbs: ["get", "list", "watch"]
+---
+{{- if gt (len (default (list) $tenant.subjects)) 0 }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $root.Values.tenancy.rbac.roleName }}-binding
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flexinfer.labels" $root | nindent 4 }}
+    flexinfer.ai/tenant: "true"
+subjects:
+  {{- range $subject := $tenant.subjects }}
+  - kind: {{ $subject.kind }}
+    name: {{ $subject.name }}
+    {{- if eq $subject.kind "ServiceAccount" }}
+    namespace: {{ default $ns $subject.namespace }}
+    {{- else }}
+    apiGroup: {{ default "rbac.authorization.k8s.io" $subject.apiGroup }}
+    {{- end }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $root.Values.tenancy.rbac.roleName }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

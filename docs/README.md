@@ -48,6 +48,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 |----------|-------------|
 | [Feature Inventory](planning/feature-inventory.md) | Current feature status |
 | [Next Roadmap](planning/next-roadmap.md) | Upcoming work |
+| [Multi-Tenancy Design](design/multi-tenancy.md) | M1 namespace isolation foundation |
 | [Phase 1](planning/phase-1-controller-api-hardening.md) | Controller & API hardening |
 | [Phase 2](planning/phase-2-serverless-activator-hardening.md) | Serverless hardening |
 | [Phase 3](planning/phase-3-routing-performance.md) | Routing & performance |

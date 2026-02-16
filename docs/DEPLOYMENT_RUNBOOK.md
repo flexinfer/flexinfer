@@ -486,6 +486,73 @@ kubectl describe node <gpu-node> | grep -A5 "Allocated resources"
 
 5. **GitOps with Helm**: Always bump chart versions when modifying templates. Use `imagePullPolicy: Always` during development.
 
+## Tenant Onboarding Workflow (M1 Baseline)
+
+Use this workflow for namespace-isolated tenant onboarding with the chart-managed policy bundle.
+
+### 1. Define tenant values
+
+Add the tenant to Helm values (or a separate values overlay):
+
+```yaml
+tenancy:
+  enabled: true
+  createNamespaces: true
+  networkPolicy:
+    mode: default-deny
+    allowDNS: true
+  tenants:
+    - namespace: team-foo
+      quotaHard:
+        requests.cpu: "8"
+        requests.memory: 32Gi
+        limits.cpu: "16"
+        limits.memory: 64Gi
+        amd.com/gpu: "1"
+      subjects:
+        - kind: ServiceAccount
+          name: team-foo-operator
+          namespace: team-foo
+```
+
+### 2. Render and verify manifests
+
+```bash
+helm template flexinfer ./charts/flexinfer -n flexinfer-system -f values.yaml -f values-tenancy.yaml
+```
+
+Verify these resources are rendered for each tenant namespace:
+
+- `ResourceQuota/flexinfer-tenant-quota`
+- `LimitRange/flexinfer-tenant-limits`
+- `Role/flexinfer-tenant-operator`
+- optional `RoleBinding/flexinfer-tenant-operator-binding`
+- optional default-deny network policies when enabled
+
+### 3. Apply via Helm/Flux
+
+Apply through your normal GitOps flow, then confirm:
+
+```bash
+kubectl get ns team-foo --show-labels
+kubectl get resourcequota,limitrange,networkpolicy,role,rolebinding -n team-foo
+```
+
+### 4. Verify tenant permissions and quotas
+
+```bash
+# Example: tenant operator can manage models only in their namespace
+kubectl auth can-i --as=system:serviceaccount:team-foo:team-foo-operator \
+  create modeldeployments.ai.flexinfer -n team-foo
+
+# Example: verify quota object and hard limits
+kubectl describe resourcequota flexinfer-tenant-quota -n team-foo
+```
+
+### 5. Deploy tenant workload
+
+Deploy tenant `ModelDeployment`/`ModelCache` into the tenant namespace and verify scheduling still works with quota/policy constraints.
+
 ## Future Improvements
 
 ### Completed
@@ -503,5 +570,5 @@ kubectl describe node <gpu-node> | grep -A5 "Allocated resources"
 ### Planned
 - [ ] Automatic benchmark result generation during CI/CD
 - [ ] GPUGroup metrics and Grafana dashboard
-- [ ] Multi-tenant support with namespace isolation
+- [~] Multi-tenant support with namespace isolation (M1 foundation in place; admission/scheduler hardening still pending)
 - [ ] Spot instance preemption handling

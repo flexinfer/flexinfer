@@ -265,6 +265,76 @@ networkPolicy:
   # Namespace where Prometheus is deployed (for metrics scraping)
   prometheusNamespace: monitoring
 
+# Multi-tenancy baseline bundle.
+# This is an opt-in "foundation" for namespace isolation and policy guardrails.
+# It does not provide hard GPU partitioning or billing isolation.
+tenancy:
+  # Enable tenant baseline resources from tenants[].
+  enabled: false
+  # Create tenant namespaces if they do not exist.
+  # Set false if namespaces are managed externally (GitOps/platform team).
+  createNamespaces: false
+
+  # Namespace defaults applied when creating namespaces.
+  # Pod Security Admission labels follow Kubernetes defaults:
+  # enforce=baseline, warn/audit=restricted.
+  namespaceLabels: {}
+  podSecurity:
+    enforce: baseline
+    warn: restricted
+    audit: restricted
+
+  # Default ResourceQuota hard limits. Override per-tenant via tenants[].quotaHard.
+  quotaHard:
+    requests.cpu: "8"
+    requests.memory: 32Gi
+    limits.cpu: "16"
+    limits.memory: 64Gi
+    requests.storage: 200Gi
+    persistentvolumeclaims: "20"
+    services: "20"
+    pods: "40"
+
+  # Default LimitRange entries. Override per-tenant via tenants[].limitRangeLimits.
+  limitRangeLimits:
+    - type: Container
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+      default:
+        cpu: "2"
+        memory: 4Gi
+      max:
+        cpu: "8"
+        memory: 16Gi
+
+  # Optional tenant default-deny network policy.
+  # mode: "disabled" | "default-deny"
+  networkPolicy:
+    mode: disabled
+    # Adds an egress exception for kube-dns when mode=default-deny.
+    allowDNS: true
+
+  # Namespaced least-privilege Role for tenant operators (CRD management only).
+  # Binding is only created when a tenant has subjects[] configured.
+  rbac:
+    roleName: flexinfer-tenant-operator
+
+  # Tenant definitions.
+  # - namespace: required
+  # - createNamespace: optional override for this tenant
+  # - labels: optional extra namespace labels (merge with tenancy.namespaceLabels)
+  # - podSecurity: optional overrides for enforce/warn/audit labels
+  # - quotaHard: optional full override map for ResourceQuota.spec.hard
+  # - limitRangeLimits: optional full override list for LimitRange.spec.limits
+  # - networkPolicyMode: optional override ("disabled"|"default-deny")
+  # - subjects: optional RoleBinding subjects (ServiceAccount/User/Group)
+  #   - kind: ServiceAccount|User|Group
+  #     name: required
+  #     namespace: required for ServiceAccount subjects
+  #     apiGroup: optional (defaults to rbac.authorization.k8s.io for User/Group)
+  tenants: []
+
 # Pod Disruption Budget configuration
 # Ensures availability during voluntary disruptions (upgrades, node drains)
 podDisruptionBudget:

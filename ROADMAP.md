@@ -129,7 +129,7 @@ Shipped in pipeline #498 across 3 commits.
 ### Low Priority (Advanced Features)
 - [x] **KV-Cache tiering** - Advanced memory management (shipped: LRU/LFU/FIFO eviction)
 - [x] **Harbor OCI integration** - Direct model registry support (shipped: `pkg/registry/`, `ModelCatalog` CRD)
-- [ ] **Multi-tenancy** - Namespace isolation features ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2))
+- [ ] **Multi-tenancy** - Namespace isolation features ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2), [Design](docs/design/multi-tenancy.md))
 - [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
 
 ## Phase 5: Multi-Cluster (Future)

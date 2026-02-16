@@ -75,6 +75,8 @@ sections:
         path: planning/feature-inventory.md
       - title: Next Roadmap
         path: planning/next-roadmap.md
+      - title: Multi-Tenancy Design (M1)
+        path: design/multi-tenancy.md
       - title: Phase 1 (Controller Hardening)
         path: planning/phase-1-controller-api-hardening.md
       - title: Phase 2 (Serverless Hardening)
@@ -83,3 +85,5 @@ sections:
         path: planning/phase-3-routing-performance.md
       - title: Phase 4 (Operational Polish)
         path: planning/phase-4-operational-polish.md
+      - title: Phase 5 (Multi-Cluster)
+        path: planning/phase-5-multi-cluster.md

@@ -189,7 +189,7 @@ See `docs/design/multi-cluster.md` for full design.
 
 **Remaining Work:**
 
-1. **Multi-tenancy foundation** — See roadmap issue [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
+1. **Multi-tenancy foundation** — See `docs/design/multi-tenancy.md` and roadmap issue [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
 2. **Multi-cluster federation (Phase 5)** — See `docs/design/multi-cluster.md` and roadmap issues [#3](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3), [#4](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4), [#5](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5), [#6](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6)
 3. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
 

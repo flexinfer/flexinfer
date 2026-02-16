@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-10
+> Last updated: 2026-02-16
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
@@ -62,6 +62,16 @@ Shipped in pipeline #498 across 3 commits.
 - ✅ Flash-Loader sidecar — `flexinfer-flash-loader` binary, parallel PVC→tmpfs preloading, P2P transfer
 - ✅ Spot-Instance Resilience — Termination detectors for AWS, Azure, GCP, Harvester; proactive draining
 - ✅ CNCF Sandbox Prep — GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning
+
+## M1: Multi-Tenancy Foundation 🚧 IN PROGRESS
+
+Design: `docs/design/multi-tenancy.md`  
+Tracking issue: [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
+
+- [x] Multi-tenancy design draft (guarantees/non-guarantees)
+- [x] Helm tenant baseline policy bundle scaffolding (`tenancy.*` values + templates)
+- [x] Tenant onboarding workflow documented in deployment runbook
+- [ ] Validate baseline bundle in staging namespace and capture verification output
 
 ## Phase 5: Multi-Cluster (Future)
 
