@@ -18,12 +18,15 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -73,8 +76,9 @@ func TestFederatedModelReconcile_StatusAggregation(t *testing.T) {
 			Name:      "cluster-a",
 			Namespace: "flexinfer-system",
 		},
-		Status: aiv1alpha2.ClusterStatus{
-			Phase: aiv1alpha2.ClusterPhaseReady,
+		Spec: aiv1alpha2.ClusterSpec{
+			APIEndpoint: "https://cluster-a.example.com",
+			SecretRef:   corev1.LocalObjectReference{Name: "cluster-a-kubeconfig"},
 		},
 	}
 	clusterB := &aiv1alpha2.Cluster{
@@ -82,8 +86,9 @@ func TestFederatedModelReconcile_StatusAggregation(t *testing.T) {
 			Name:      "cluster-b",
 			Namespace: "flexinfer-system",
 		},
-		Status: aiv1alpha2.ClusterStatus{
-			Phase: aiv1alpha2.ClusterPhaseNotReady,
+		Spec: aiv1alpha2.ClusterSpec{
+			APIEndpoint: "https://cluster-b.example.com",
+			SecretRef:   corev1.LocalObjectReference{Name: "cluster-b-kubeconfig"},
 		},
 	}
 
@@ -93,9 +98,45 @@ func TestFederatedModelReconcile_StatusAggregation(t *testing.T) {
 		WithObjects(fm, clusterA, clusterB).
 		Build()
 
+	remoteModelA := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen-global", Namespace: "flexinfer-system"},
+		Spec:       fm.Spec.Template,
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+		},
+	}
+	remoteModelB := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen-global", Namespace: "flexinfer-system"},
+		Spec:       fm.Spec.Template,
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePending,
+		},
+	}
+
+	remoteClientA := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		WithObjects(remoteModelA).
+		Build()
+	remoteClientB := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		WithObjects(remoteModelB).
+		Build()
+
 	r := &FederatedModelReconciler{
 		Client: fakeClient,
 		Scheme: scheme,
+		RemoteClientFactory: func(ctx context.Context, cluster *aiv1alpha2.Cluster) (client.Client, error) {
+			switch cluster.Name {
+			case "cluster-a":
+				return remoteClientA, nil
+			case "cluster-b":
+				return remoteClientB, nil
+			default:
+				return nil, fmt.Errorf("unexpected cluster %q", cluster.Name)
+			}
+		},
 	}
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -125,10 +166,10 @@ func TestFederatedModelReconcile_StatusAggregation(t *testing.T) {
 	if len(got.Status.Clusters) != 2 {
 		t.Fatalf("len(Clusters) = %d, want 2", len(got.Status.Clusters))
 	}
-	if got.Status.Clusters[0].Cluster != "cluster-a" || got.Status.Clusters[0].ReadyReplicas != 2 {
+	if got.Status.Clusters[0].Cluster != "cluster-a" || got.Status.Clusters[0].ReadyReplicas != 2 || got.Status.Clusters[0].Phase != string(aiv1alpha2.ModelPhaseReady) {
 		t.Fatalf("cluster-a status = %+v, want ready replicas 2", got.Status.Clusters[0])
 	}
-	if got.Status.Clusters[1].Cluster != "cluster-b" || got.Status.Clusters[1].ReadyReplicas != 0 {
+	if got.Status.Clusters[1].Cluster != "cluster-b" || got.Status.Clusters[1].ReadyReplicas != 0 || got.Status.Clusters[1].Phase != string(aiv1alpha2.ModelPhasePending) {
 		t.Fatalf("cluster-b status = %+v, want ready replicas 0", got.Status.Clusters[1])
 	}
 }

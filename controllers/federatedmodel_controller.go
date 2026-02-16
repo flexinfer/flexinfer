@@ -18,12 +18,18 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"sort"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -32,16 +38,21 @@ import (
 
 const federatedModelRequeueInterval = 30 * time.Second
 
+type remoteClientFactory func(ctx context.Context, cluster *aiv1alpha2.Cluster) (client.Client, error)
+
 // FederatedModelReconciler reconciles a FederatedModel object.
 type FederatedModelReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme              *runtime.Scheme
+	RemoteClientFactory remoteClientFactory
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=federatedmodels,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=federatedmodels/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=federatedmodels/finalizers,verbs=update
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=clusters,verbs=get;list;watch
+//+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 func (r *FederatedModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	fm := &aiv1alpha2.FederatedModel{}
@@ -71,33 +82,27 @@ func (r *FederatedModelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{RequeueAfter: federatedModelRequeueInterval}, nil
 	}
 
-	replicas := int32(1)
-	if fm.Spec.Placement.ReplicasPerCluster != nil {
-		replicas = *fm.Spec.Placement.ReplicasPerCluster
-	}
-
-	clusterStatus := make([]aiv1alpha2.FederatedModelClusterStatus, 0, len(targets))
-	var readyCount int32
-	for _, c := range targets {
-		readyReplicas := int32(0)
-		if c.Status.Phase == aiv1alpha2.ClusterPhaseReady {
-			readyReplicas = replicas
-			readyCount++
-		}
-		clusterStatus = append(clusterStatus, aiv1alpha2.FederatedModelClusterStatus{
-			Cluster:       c.Name,
-			Phase:         string(c.Status.Phase),
-			ReadyReplicas: readyReplicas,
-			TotalReplicas: replicas,
-		})
-	}
-
+	clusterStatus, syncErr := r.syncFederatedModel(ctx, fm, targets)
 	fm.Status.Clusters = clusterStatus
 	fm.Status.TotalClusters = int32(len(clusterStatus))
+
+	var readyCount int32
+	for _, cs := range clusterStatus {
+		if cs.TotalReplicas > 0 && cs.ReadyReplicas >= cs.TotalReplicas {
+			readyCount++
+		}
+	}
 	fm.Status.ReadyClusters = readyCount
+
 	setFederatedModelCondition(fm, "SpecValid", metav1.ConditionTrue, "SpecValid", "spec validation passed")
 	setFederatedModelCondition(fm, "ClusterPlacementResolved", metav1.ConditionTrue, "PlacementResolved", fmt.Sprintf("resolved %d target clusters", len(clusterStatus)))
-	if fm.Status.TotalClusters > 0 && fm.Status.TotalClusters == fm.Status.ReadyClusters {
+	if syncErr != nil {
+		setFederatedModelCondition(fm, "ModelSync", metav1.ConditionFalse, "ModelSyncFailed", syncErr.Error())
+	} else {
+		setFederatedModelCondition(fm, "ModelSync", metav1.ConditionTrue, "ModelSyncSucceeded", "remote models synchronized")
+	}
+
+	if syncErr == nil && fm.Status.TotalClusters > 0 && fm.Status.TotalClusters == fm.Status.ReadyClusters {
 		setFederatedModelCondition(fm, "Ready", metav1.ConditionTrue, "AllClustersReady", "all selected clusters are ready")
 	} else {
 		setFederatedModelCondition(fm, "Ready", metav1.ConditionFalse, "ClustersNotReady", "waiting for selected clusters to become ready")
@@ -136,6 +141,205 @@ func (r *FederatedModelReconciler) resolvePlacementClusters(ctx context.Context,
 	}
 
 	return mapClustersToSortedSlice(out), nil
+}
+
+func (r *FederatedModelReconciler) syncFederatedModel(ctx context.Context, fm *aiv1alpha2.FederatedModel, targets []aiv1alpha2.Cluster) ([]aiv1alpha2.FederatedModelClusterStatus, error) {
+	targetSet := make(map[string]struct{}, len(targets))
+	statuses := make([]aiv1alpha2.FederatedModelClusterStatus, 0, len(targets))
+	errorsList := make([]string, 0)
+
+	for i := range targets {
+		target := targets[i]
+		targetSet[target.Name] = struct{}{}
+
+		status, err := r.syncRemoteModelForCluster(ctx, fm, &target)
+		if err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("%s: %v", target.Name, err))
+		}
+		statuses = append(statuses, status)
+	}
+
+	if err := r.cleanupRemovedRemoteModels(ctx, fm, targetSet); err != nil {
+		errorsList = append(errorsList, err.Error())
+	}
+
+	sort.Slice(statuses, func(i, j int) bool {
+		return statuses[i].Cluster < statuses[j].Cluster
+	})
+
+	if len(errorsList) > 0 {
+		return statuses, errors.New(strings.Join(errorsList, "; "))
+	}
+	return statuses, nil
+}
+
+func (r *FederatedModelReconciler) syncRemoteModelForCluster(ctx context.Context, fm *aiv1alpha2.FederatedModel, cluster *aiv1alpha2.Cluster) (aiv1alpha2.FederatedModelClusterStatus, error) {
+	replicas := int32(1)
+	if fm.Spec.Placement.ReplicasPerCluster != nil {
+		replicas = *fm.Spec.Placement.ReplicasPerCluster
+	}
+
+	status := aiv1alpha2.FederatedModelClusterStatus{
+		Cluster:       cluster.Name,
+		Phase:         "Pending",
+		ReadyReplicas: 0,
+		TotalReplicas: replicas,
+	}
+
+	remoteClient, err := r.remoteClientForCluster(ctx, cluster)
+	if err != nil {
+		status.Phase = "Error"
+		return status, err
+	}
+
+	key := client.ObjectKey{Name: fm.Name, Namespace: fm.Namespace}
+	desired := desiredRemoteModel(fm)
+	existing := &aiv1alpha2.Model{}
+
+	if err := remoteClient.Get(ctx, key, existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			status.Phase = "Error"
+			return status, fmt.Errorf("get remote model: %w", err)
+		}
+		if err := remoteClient.Create(ctx, desired); err != nil {
+			status.Phase = "Error"
+			return status, fmt.Errorf("create remote model: %w", err)
+		}
+		existing = desired.DeepCopy()
+	} else if needsRemoteModelUpdate(existing, desired) {
+		existing.Spec = desired.Spec
+		existing.Labels = desired.Labels
+		existing.Annotations = desired.Annotations
+		if err := remoteClient.Update(ctx, existing); err != nil {
+			status.Phase = "Error"
+			return status, fmt.Errorf("update remote model: %w", err)
+		}
+	}
+
+	if err := remoteClient.Get(ctx, key, existing); err == nil {
+		phase := string(existing.Status.Phase)
+		if phase == "" {
+			phase = string(aiv1alpha2.ModelPhasePending)
+		}
+		status.Phase = phase
+		if existing.Status.Phase == aiv1alpha2.ModelPhaseReady {
+			status.ReadyReplicas = replicas
+		}
+	}
+
+	return status, nil
+}
+
+func (r *FederatedModelReconciler) cleanupRemovedRemoteModels(ctx context.Context, fm *aiv1alpha2.FederatedModel, targetSet map[string]struct{}) error {
+	if len(fm.Status.Clusters) == 0 {
+		return nil
+	}
+
+	errorsList := make([]string, 0)
+	for _, prev := range fm.Status.Clusters {
+		if _, keep := targetSet[prev.Cluster]; keep {
+			continue
+		}
+
+		cluster := &aiv1alpha2.Cluster{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: fm.Namespace, Name: prev.Cluster}, cluster); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			errorsList = append(errorsList, fmt.Sprintf("resolve removed cluster %s: %v", prev.Cluster, err))
+			continue
+		}
+
+		remoteClient, err := r.remoteClientForCluster(ctx, cluster)
+		if err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("remote client for removed cluster %s: %v", prev.Cluster, err))
+			continue
+		}
+
+		toDelete := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: fm.Name, Namespace: fm.Namespace}}
+		if err := remoteClient.Delete(ctx, toDelete); err != nil && !apierrors.IsNotFound(err) {
+			errorsList = append(errorsList, fmt.Sprintf("delete remote model on %s: %v", prev.Cluster, err))
+		}
+	}
+
+	if len(errorsList) > 0 {
+		return errors.New(strings.Join(errorsList, "; "))
+	}
+	return nil
+}
+
+func (r *FederatedModelReconciler) remoteClientForCluster(ctx context.Context, cluster *aiv1alpha2.Cluster) (client.Client, error) {
+	if r.RemoteClientFactory != nil {
+		return r.RemoteClientFactory(ctx, cluster)
+	}
+	return r.buildRemoteClient(ctx, cluster)
+}
+
+func (r *FederatedModelReconciler) buildRemoteClient(ctx context.Context, cluster *aiv1alpha2.Cluster) (client.Client, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: cluster.Spec.SecretRef.Name}, secret); err != nil {
+		return nil, fmt.Errorf("read kubeconfig secret: %w", err)
+	}
+
+	kubeconfig, err := extractKubeconfig(secret)
+	if err != nil {
+		return nil, err
+	}
+
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("build rest config: %w", err)
+	}
+	restConfig.Host = cluster.Spec.NormalizedAPIEndpoint()
+	restConfig.Timeout = defaultClusterProbeTimeout
+
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha2.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add ai v1alpha2 scheme: %w", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add core v1 scheme: %w", err)
+	}
+
+	remoteClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("create remote client: %w", err)
+	}
+	return remoteClient, nil
+}
+
+func desiredRemoteModel(fm *aiv1alpha2.FederatedModel) *aiv1alpha2.Model {
+	labels := map[string]string{
+		"flexinfer.ai/federated-model": fm.Name,
+	}
+	for k, v := range fm.Labels {
+		if _, exists := labels[k]; !exists {
+			labels[k] = v
+		}
+	}
+
+	return &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        fm.Name,
+			Namespace:   fm.Namespace,
+			Labels:      labels,
+			Annotations: fm.Annotations,
+		},
+		Spec: fm.Spec.Template,
+	}
+}
+
+func needsRemoteModelUpdate(current, desired *aiv1alpha2.Model) bool {
+	if !reflect.DeepEqual(current.Spec, desired.Spec) {
+		return true
+	}
+	if !reflect.DeepEqual(current.Labels, desired.Labels) {
+		return true
+	}
+	if !reflect.DeepEqual(current.Annotations, desired.Annotations) {
+		return true
+	}
+	return false
 }
 
 func mapClustersToSortedSlice(items map[string]aiv1alpha2.Cluster) []aiv1alpha2.Cluster {
