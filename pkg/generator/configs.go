@@ -518,7 +518,7 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string) error
 	case "claude":
 		config = claudeHooksConfig(reg)
 	case "gemini":
-		config = geminiHooksConfig()
+		config = geminiHooksConfigFromRegistry(reg)
 	case "opencode":
 		// OpenCode uses JS/TS plugins for hooks, not a JSON settings file.
 		return generateOpenCodeHooksPlugin(outputDir)
@@ -805,9 +805,9 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	sandboxMode := "workspace-write"
 	webSearchMode := "live"
 	features := map[string]any{
-		"include_apply_patch_tool": true,
-		"apply_patch_freeform":     true,
-		"unified_exec":             true,
+		"apply_patch_freeform": true,
+		"unified_exec":         true,
+		"collaboration_modes":  true,
 	}
 
 	// Override from registry settings if present.
@@ -870,44 +870,79 @@ func registryPlatformPerms(reg *registry.Registry, platform string) *registry.Pl
 	return reg.PlatformPermissions[platform]
 }
 
-// geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks.
-// Uses the same three-level nesting as Claude Code but with Gemini event names:
+// geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks
+// and auto-approve settings. Uses the same three-level nesting as Claude Code
+// but with Gemini event names:
 //   - SessionStart → SessionStart (same)
 //   - SessionEnd → SessionEnd (Gemini uses SessionEnd, not Stop)
 //   - AfterTool → AfterTool (Gemini uses AfterTool, not PostToolUse)
 //
 // Gemini tool names also differ (run_shell_command vs Bash).
 func geminiHooksConfig() map[string]any {
+	return geminiHooksConfigFromRegistry(nil)
+}
+
+// geminiHooksConfigFromRegistry builds Gemini CLI settings.json, merging
+// lifecycle hooks with auto-approve settings from the registry's
+// platform_permissions.gemini section.
+func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
+	config := map[string]any{
+		"hooks": geminiHooks(),
+	}
+
+	// Merge auto-approve and tool settings from registry.
+	pp := registryPlatformPerms(reg, "gemini")
+	if pp != nil && pp.Settings != nil {
+		general := map[string]any{}
+		if v, ok := pp.Settings["approval_mode"].(string); ok && v != "" {
+			general["defaultApprovalMode"] = v
+		}
+		if v, ok := pp.Settings["checkpointing"].(bool); ok && v {
+			general["checkpointing"] = map[string]any{"enabled": true}
+		}
+		if len(general) > 0 {
+			config["general"] = general
+		}
+		if allowed := coerceStringSlice(pp.Settings["tools_allowed"]); len(allowed) > 0 {
+			config["tools"] = map[string]any{
+				"allowed": allowed,
+			}
+		}
+	}
+
+	return config
+}
+
+// geminiHooks returns the hooks block for Gemini CLI settings.json.
+func geminiHooks() map[string]any {
 	return map[string]any{
-		"hooks": map[string]any{
-			"SessionStart": []map[string]any{
-				{
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
-						},
+		"SessionStart": []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
 					},
 				},
 			},
-			"SessionEnd": []map[string]any{
-				{
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
-						},
+		},
+		"SessionEnd": []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
 					},
 				},
 			},
-			"AfterTool": []map[string]any{
-				{
-					"matcher": "run_shell_command",
-					"hooks": []map[string]any{
-						{
-							"type":    "command",
-							"command": "loom agent heartbeat --agent-id gemini-cli --status active --ensure-session --agent-type gemini-cli --quiet 2>/dev/null || true",
-						},
+		},
+		"AfterTool": []map[string]any{
+			{
+				"matcher": "run_shell_command",
+				"hooks": []map[string]any{
+					{
+						"type":    "command",
+						"command": "loom agent heartbeat --agent-id gemini-cli --status active --ensure-session --agent-type gemini-cli --quiet 2>/dev/null || true",
 					},
 				},
 			},
