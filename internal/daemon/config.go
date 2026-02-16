@@ -37,6 +37,9 @@ type FileConfig struct {
 	// RBAC controls role-based access control for tool calls
 	RBAC RBACConfig `yaml:"rbac,omitempty"`
 
+	// Audit controls structured tool call logging
+	Audit AuditConfig `yaml:"audit,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -225,6 +228,7 @@ func DefaultFileConfig() FileConfig {
 			MaxSessions:           1000,
 		},
 		RBAC:  DefaultRBACConfig(),
+		Audit: DefaultAuditConfig(),
 		Debug: false,
 	}
 }

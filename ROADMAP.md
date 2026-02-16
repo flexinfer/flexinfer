@@ -129,10 +129,10 @@ These address capabilities the market now expects from production MCP infrastruc
   - Remaining: OAuth 2.1 dynamic client registration ([#11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/11)) (OIDC covers static clients today).
   - *Rationale: Transforms Loom from local dev tool into team/org infrastructure. Every MCP gateway supports this. Biggest single unlock for adoption.*
 
-- [ ] **Lightweight RBAC for tool access** ([#8](https://gitlab.flexinfer.ai/services/loom-core/-/issues/8))
-  - Add role-to-tool mapping in daemon config (e.g., restrict destructive tools per agent).
-  - Enforce per-agent tool scoping at the proxy layer.
-  - Log access decisions for audit.
+- [x] **Lightweight RBAC for tool access** ([#8](https://gitlab.flexinfer.ai/services/loom-core/-/issues/8)) ✅ Shipped
+  - ~~Add role-to-tool mapping in daemon config (e.g., restrict destructive tools per agent).~~ ✅ Done
+  - ~~Enforce per-agent tool scoping at the proxy layer.~~ ✅ Done
+  - ~~Log access decisions for audit.~~ ✅ Done
   - *Rationale: #1 enterprise requirement. All gateway competitors (Kong, Lunar.dev, TrueFoundry) offer this.*
 
 - [ ] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10))

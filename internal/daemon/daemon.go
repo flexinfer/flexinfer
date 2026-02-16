@@ -93,6 +93,7 @@ type Daemon struct {
 	httpServer     *http.Server                    // Streamable HTTP listener
 	httpStreamable *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
 	rbac           *RBACEnforcer                   // RBAC enforcer for tool access control
+	audit          *AuditLogger                    // Structured audit logger
 	authMiddleware func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	wg             gosync.WaitGroup
 	done           chan struct{}
@@ -341,6 +342,13 @@ func New(cfg Config) (*Daemon, error) {
 	if d.rbac != nil {
 		logger.Info("RBAC enabled", "default_policy", fileCfg.RBAC.DefaultPolicy, "roles", len(fileCfg.RBAC.Roles), "bindings", len(fileCfg.RBAC.Bindings))
 	}
+
+	// Initialize audit logger (nil when disabled)
+	auditLogger, err := NewAuditLogger(fileCfg.Audit, logger)
+	if err != nil {
+		logger.Warn("failed to initialize audit logger", "error", err)
+	}
+	d.audit = auditLogger
 
 	// Initialize health monitor
 	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
@@ -679,6 +687,13 @@ func (d *Daemon) Stop() error {
 	if d.watcher != nil {
 		if err := d.watcher.Stop(); err != nil {
 			d.logger.Warn("failed to stop watcher", "error", err)
+		}
+	}
+
+	// Close audit logger
+	if d.audit != nil {
+		if err := d.audit.Close(); err != nil {
+			d.logger.Warn("failed to close audit logger", "error", err)
 		}
 	}
 
@@ -1437,11 +1452,15 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "missing server or tool for call"), nil
 	}
 
+	// Capture start time for audit logging
+	auditStart := time.Now()
+
 	// RBAC check: enforce tool access control before processing
 	if d.rbac != nil {
 		decision := d.rbac.Check(params.AgentID, params.AgentType, serverName, toolName)
 		d.logAccessDecision(decision)
 		if !decision.Allowed {
+			d.emitAudit(params, serverName, toolName, "", auditStart, "denied", decision.Reason, false)
 			return d.rbacDeniedResponse(msg.ID, decision), nil
 		}
 	}
@@ -1458,6 +1477,7 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		if cached, ok := d.respCache.Get(cacheKey); ok {
 			d.metrics.RecordResponseCacheHit(serverName, toolName)
 			d.logger.Debug("response cache hit", "server", serverName, "tool", toolName)
+			d.emitAudit(params, serverName, toolName, "local", auditStart, "success", "", true)
 			// Return cached response with original message ID
 			return mcp.NewResponse(msg.ID, json.RawMessage(cached))
 		}
@@ -1614,7 +1634,35 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		d.logger.Debug("response cached", "server", serverName, "tool", toolName)
 	}
 
+	// Audit log the completed tool call
+	auditStatus := "success"
+	auditErr := ""
+	if resp.Error != nil {
+		auditStatus = "error"
+		auditErr = resp.Error.Message
+	}
+	d.emitAudit(params, serverName, toolName, targetStr, auditStart, auditStatus, auditErr, false)
+
 	return resp, nil
+}
+
+// emitAudit writes a structured audit entry if audit logging is enabled.
+func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool) {
+	if d.audit == nil {
+		return
+	}
+	d.audit.Log(AuditEntry{
+		Timestamp:  start.UTC(),
+		AgentID:    params.AgentID,
+		AgentType:  params.AgentType,
+		Server:     server,
+		Tool:       tool,
+		DurationMs: time.Since(start).Milliseconds(),
+		Status:     status,
+		Error:      errMsg,
+		Target:     target,
+		Cached:     cached,
+	})
 }
 
 // logAccessDecision logs an RBAC access decision and publishes deny events.
