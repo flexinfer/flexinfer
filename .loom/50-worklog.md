@@ -1,0 +1,205 @@
+# Worklog
+
+## 2026-02-16 (session 5)
+
+- What changed:
+  - Completed backlog issue #5 baseline (HUD diagnostics surface for context/queue).
+  - Added a new **Diagnostics** tab in Presence panel with:
+    - per-agent context inspection summary (`/api/agent/context-inspect`)
+    - nudge queue status by lane (`/api/agent/nudge-queue`)
+    - runtime queue policy visibility (`/api/agent/nudge-queue-policy`)
+  - Added agent selector, manual refresh, and 10s polling while diagnostics tab is active.
+  - Added compact metrics cards (estimated tokens, entry count, pending, dropped) and sectioned diagnostics blocks.
+  - Updated docs/planning:
+    - `docs/USER_GUIDE.md` with `loom agent nudge-queue-policy` examples + auth env notes.
+    - `.loom/00-index.md`, `.loom/30-implementation-plan.md`, `.loom/31-gap-to-backlog-map.md`.
+- Why:
+  - Closes the API-to-operator gap by surfacing context and queue diagnostics directly in HUD without requiring CLI/curl workflows.
+- Verification:
+  - `pnpm build` (HUD frontend) — pass.
+  - `go test ./internal/hud/... ./cmd/loom -count=1` — pass.
+- Sources:
+  - [S1] `internal/hud/frontend/src/lib/components/PresencePanel.svelte`
+  - [S2] `internal/hud/api_agent.go`
+  - [S3] `cmd/loom/cmd_agent.go`
+  - [S4] `docs/USER_GUIDE.md`
+
+## 2026-02-16 (session 4)
+
+- What changed:
+  - Completed backlog issue #3 baseline (Runtime nudge queue policy mutation controls).
+  - Added runtime policy mutation support in queue core:
+    - `NudgeQueue.Config()` and `NudgeQueue.UpdateConfig(...)`.
+    - Strict validation for `cap`, `debounce_ms`, `drop_policy`, and `lane_priority`.
+  - Added HUD endpoints:
+    - `GET /api/agent/nudge-queue-policy`
+    - `POST /api/agent/nudge-queue-policy` (admin-token protected)
+  - Added CLI surfaces:
+    - `loom agent nudge-queue --agent-id ...` (status)
+    - `loom agent nudge-queue-policy` (get)
+    - `loom agent nudge-queue-policy --cap/--debounce-ms/--drop-policy/--lane-priority` (update)
+  - Added HUD startup config for mutation auth:
+    - `loom hud --admin-token ...` (`$HUD_ADMIN_TOKEN`).
+  - Added tests for policy get/update handler flow and queue update validation.
+- Why:
+  - Closes the next OpenClaw-informed gap by allowing live operator tuning of queue behavior without daemon/HUD restart.
+- Verification:
+  - `go test ./internal/hud -run 'NudgeQueue|AgentNudgeQueuePolicy' -count=1` (pass)
+  - `go test ./internal/hud -count=1` (pass)
+  - `go test ./cmd/loom -count=1` (pass)
+- Sources:
+  - [S1] `internal/hud/nudge.go`
+  - [S2] `internal/hud/api_agent.go`
+  - [S3] `internal/hud/app.go`
+  - [S4] `cmd/loom/cmd_agent.go`
+  - [S5] `cmd/loom/hud.go`
+  - [S6] `internal/hud/app_test.go`
+  - [S7] `internal/hud/nudge_test.go`
+
+## 2026-02-16 (session 3)
+
+- What changed:
+  - Started backlog item #1 (Context Budget Inspector):
+    - Added `GET /api/agent/context-inspect` in HUD API.
+    - Added `AgentBridge.ContextInspect(...)` aggregation for session context entries, estimated tokens, task summary, and memory stats.
+    - Added CLI entrypoint: `loom agent context-inspect`.
+  - Started backlog item #2 (Lane-Aware Nudge Queue):
+    - Reworked HUD nudge queue to lane-aware model with cap, overflow policy, and debounce.
+    - Added queue status endpoint: `GET /api/agent/nudge-queue?agent_id=...`.
+    - Added lane mapping for nudge types (`control`, `handoff`, `advice`).
+  - Added/updated tests:
+    - Queue policy tests in `internal/hud/nudge_test.go`.
+    - Context inspect aggregation test in `internal/hud/bridge/agent_test.go`.
+  - Updated `.loom` planning docs and added comparison research file:
+    - `13-research-agentic-workflows-openclaw.md`
+    - updates to `00-index.md`, `20-product-spec.md`, `30-implementation-plan.md`, `40-decisions.md`.
+- Why:
+  - Needed to operationalize the OpenClaw comparison into concrete Loom improvements with immediately usable API/CLI surfaces.
+- Verification:
+  - `go test ./internal/hud/... ./cmd/loom -count=1` (pass)
+- What’s next:
+  - Add HUD frontend visibility for context inspector and queue diagnostics.
+  - Add full prompt/tool-schema/file-level token accounting to context inspector.
+  - Add runtime policy mutation controls for nudge queue.
+- Sources:
+  - [S1] `internal/hud/nudge.go`
+  - [S2] `internal/hud/api_agent.go`
+  - [S3] `internal/hud/bridge/agent.go`
+  - [S4] `cmd/loom/cmd_agent.go`
+
+## 2026-02-16 (session 2)
+
+- What changed:
+  - Refreshed `.loom/` context pack: workspace snapshot, index, MCP inventory verified.
+  - Inventoried uncommitted changeset: structured audit trail (`audit.go`, `audit_test.go`, config/daemon wiring).
+  - Audit logger writes JSONL with timestamp, agent_id, agent_type, server, tool, duration, status, error, target, cached.
+  - Wired into `handleCall` at four points: RBAC denied, cache hit, success, error.
+  - 5 test cases cover: disabled returns nil, JSONL encoding, append across reopens, default timestamp, nested directory creation.
+  - Updated `00-index.md` to reflect RBAC shipped + audit in-flight as current state.
+- Why:
+  - Context pack was stale — still listed RBAC as a future priority when it shipped in `4870018`.
+  - Audit trail is the next Tier 2 item and needed proper documentation before commit.
+- What's next:
+  - Commit audit trail changeset (5 files).
+  - Wire audit into ROADMAP as partially shipped (core logger done, export/rotation TBD).
+  - Determine next priority: OTel trace export, test coverage push, or HUD M3/M4 remaining items.
+- Sources:
+  - [S1] `internal/daemon/audit.go` — AuditLogger implementation
+  - [S2] `internal/daemon/audit_test.go` — 5 test cases
+  - [S3] `internal/daemon/daemon.go` — `emitAudit()` integration in `handleCall`
+  - [S4] `internal/daemon/config.go` — `AuditConfig` in `FileConfig`
+
+## 2026-02-16 (session 1)
+
+- What changed:
+  - Shipped M3.1 DetailDrawer integration for Servers, Tasks, Memory, and Graph panels (`a7f44ef`).
+  - ServersPanel: replaced inline `.detail-footer` with DetailDrawer showing status, tools, latency sparkline, categories, errors.
+  - TasksPanel: added DetailDrawer with priority/status badges, context, file path, tags, blocked_by deps, resolution, and Resolve Task footer action.
+  - MemoryPanel: added DetailDrawer with importance, tokens, status, accessed time, full content, and Promote/Demote/Delete footer actions.
+  - GraphPanel: added DetailDrawer with entity type badge, properties table, inbound/outbound relations. Entity name click opens drawer; chevron still toggles inline expand.
+  - Updated ROADMAP.md to reflect current shipped state: M1/M2 complete, M3 ~80%, M4 ~85%, Streamable HTTP shipped.
+  - Updated `.loom/30-implementation-plan.md` with per-section status annotations.
+  - Streamable HTTP transport shipped in `3aed430` (previous session): `--http-addr` flag, bearer/OIDC/mTLS auth, session management, `loom auth` CLI, `loom proxy --remote`.
+  - Kaniko in-cluster builds shipped in `ec0332f` (previous session): replaces Docker build for devbox K8s backend.
+- Why:
+  - M3.1 was the last major interaction pattern milestone — all panels now have consistent drill-down via DetailDrawer.
+  - Roadmap was out of date (still listed Streamable HTTP as TODO, HUD progress understated).
+- What's next:
+  - Plan next work priorities: M3 bulk actions, M4 VirtualList, Tier 2 items (RBAC, OTel, cost tracking).
+  - Consider test coverage push (currently ~21%, target 40%).
+- Sources:
+  - [S1] `ServersPanel.svelte` — DetailDrawer with StatusDot, SparkLine, categories
+  - [S2] `TasksPanel.svelte` — DetailDrawer with Badge, context, deps, resolution
+  - [S3] `MemoryPanel.svelte` — DetailDrawer with importance, promote/demote/delete
+  - [S4] `GraphPanel.svelte` — DetailDrawer with properties table, relations
+  - [S5] `docs/STREAMABLE_HTTP.md` — transport docs
+  - [S6] CI pipeline #1160 — all green for `a7f44ef`
+
+## 2026-02-14
+
+- What changed:
+  - Refreshed `.loom/00-workspace-snapshot.md` with current git state (HEAD: `143310b`).
+  - Inventoried 19-file uncommitted changeset spanning two workstreams: daemon reliability and proxy improvements.
+  - Updated `.loom/00-index.md` to reflect shift from HUD planning (shipped) to daemon/proxy hardening (in progress).
+  - Recorded 5 new decisions in `40-decisions.md`.
+- Current uncommitted changes (587 insertions, 130 deletions across 19 files):
+  - **Daemon lifecycle**: file-based `flock` to prevent duplicate `loomd` instances (`daemon.go`), stale socket detection before rebinding, `pkill`-based cleanup in `daemon_control.go`, `waitForDaemonLockRelease()` for clean stop/start cycles.
+  - **Proxy**: LaunchAgent kickstart fallback in `proxy.go` for GUI clients (Codex/Zed/VS Code), separate image truncation budget (`proxy_truncate.go`), atomic keep-or-drop for image payloads.
+  - **Config gen**: `preferWorkspaceLoomBinary()` for monorepo dev, Codex-specific schema compliance (strip `description`/`hint`/`always_allow`, add `approval_policy`, `features`, `sandbox_mode`), Claude Code default-allow permissions list.
+  - **TUI**: Fleet panel fluid column widths, grouped-by-namespace header, separator lines (`panels/fleet.go`, `panels/health.go`).
+  - **Makefile**: `hud-reload` target for one-command frontend rebuild+restart, smart Go build cache flush when embedded assets change.
+  - **Ghostty**: `quick-terminal-size` unit fix (`380` -> `380px`).
+  - **ROADMAP.md**: Issue tracker links added to near-term priorities (cosmetic).
+- Why:
+  - Daemon duplication caused stale/unreachable sockets in production use, especially when GUI clients auto-started `loomd`.
+  - Image payloads from `mcp-browserkit` screenshots were being truncated mid-base64, breaking downstream clients.
+  - Codex config load was failing on unsupported TOML fields.
+- What's next:
+  - Run `go test ./cmd/loom/... ./internal/daemon/... ./pkg/generator/...` to verify all changes.
+  - Consider adding a `loom daemon status` subcommand to expose lock holder info.
+  - Evaluate whether to split this into multiple commits (daemon, proxy, config gen, TUI).
+- Sources:
+  - [S1] `cmd/loom/proxy.go:197-233` — LaunchAgent kickstart fallback
+  - [S2] `internal/daemon/daemon.go:105-120` — `acquireLock()` with `flock`
+  - [S3] `cmd/loom/daemon_control.go:126-181` — `killLoomdBySocket()`, `waitForDaemonLockRelease()`
+  - [S4] `cmd/loom/proxy_truncate.go:88-130` — image-aware truncation
+  - [S5] `pkg/generator/configs.go:16-56` — `preferWorkspaceLoomBinary()`
+  - [S6] `pkg/generator/configs.go:393-408` — Codex approval_policy, features, sandbox_mode
+  - [S7] `internal/tui/panels/fleet.go:219-275` — fluid column layout
+
+## 2026-02-13
+
+- What changed:
+  - Refreshed `.loom/00-workspace-snapshot.md` with current git state.
+  - Performed full code audit of HUD frontend: 13 panels, 14 widgets, 16 stores, 2 CSS files.
+  - Wrote research brief documenting 8 findings (inconsistent layouts, accessibility gaps, duplicated code, performance concerns, IA issues, missing interactions, empty state inconsistency, typography irregularities).
+  - Wrote product spec: 5 functional requirements (design system, nav restructure, interaction patterns, accessibility, performance).
+  - Wrote implementation plan: 4 milestones (M1: design system, M2: nav restructure, M3: interactions, M4: a11y + perf).
+  - Recorded 3 architectural decisions (grouped views, design system first, slide-over drawer).
+- Why:
+  - HUD grew from 0 to 13 panels in ~3 weeks. Needs design consolidation before adding more features.
+- What's next:
+  - Get approval on plan and grouping structure.
+  - Begin M1.1: formalize token system in `theme.css`.
+  - Begin M1.2: create `PanelShell` and `DataTable` shared components.
+- Sources:
+  - [S1] `internal/hud/frontend/src/App.svelte` — panel list
+  - [S2] `internal/hud/frontend/src/lib/styles/theme.css` — current tokens
+  - [S3] `internal/hud/frontend/src/lib/styles/layout.css` — current grid system
+  - [S4] Git log: 7 HUD commits since 2026-01-12
+
+## 2026-02-11
+
+- What changed:
+  - Patched workspace skill docs to use fallback skill path expressions.
+  - Patched user-level skill docs under `~/.codex/skills` for immediate local Codex macOS compatibility.
+  - Reinitialized `.loom` templates and regenerated workspace snapshot.
+  - Rewrote research/spec/plan docs for CODEX_HOME issue.
+- Why:
+  - Raw `$CODEX_HOME/skills/...` examples fail when `CODEX_HOME` is unset.
+- What's next:
+  - Add repo CI lint check for raw `$CODEX_HOME/skills` pattern.
+- Sources:
+  - [S1] `.codex/skills/plan-loom-core/SKILL.md:15`
+  - [S2] `.codex/skills/mcp-registry-ops/SKILL.md:13`
+  - [S3] Command: `printenv CODEX_HOME`.
