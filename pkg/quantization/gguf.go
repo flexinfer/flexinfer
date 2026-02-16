@@ -135,6 +135,7 @@ func (b *GGUFJobBuilder) buildScript(modelPath, ggufType string) string {
 MODEL_DIR="/cache/%s"
 WORKSPACE="/workspace"
 GGUF_TYPE="%s"
+START_TS=$(date +%%s)
 
 echo "=== GGUF Quantization ==="
 echo "Model: ${MODEL_DIR}"
@@ -169,6 +170,8 @@ rm -f "${WORKSPACE}/model-fp16.gguf"
 # Record compressed size
 COMPRESSED_SIZE=$(stat -c %%s "${QUANTIZED_FILE}" 2>/dev/null || stat -f %%z "${QUANTIZED_FILE}")
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
+END_TS=$(date +%%s)
+DURATION_SEC=$((END_TS - START_TS))
 
 # Write metadata for the controller to read
 cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
@@ -177,9 +180,20 @@ cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
   "type": "${GGUF_TYPE}",
   "originalSizeBytes": ${ORIGINAL_SIZE},
   "compressedSizeBytes": ${COMPRESSED_SIZE},
+  "quantizationTimeSeconds": ${DURATION_SEC},
   "outputFile": "model-${GGUF_TYPE}.gguf"
 }
 METADATA
+
+# Mirror metadata to container termination message so controller can read it.
+cat > /dev/termination-log << TERMINATION
+{
+  "type": "${GGUF_TYPE}",
+  "originalSizeBytes": ${ORIGINAL_SIZE},
+  "compressedSizeBytes": ${COMPRESSED_SIZE},
+  "quantizationTimeSeconds": ${DURATION_SEC}
+}
+TERMINATION
 
 echo "=== Quantization complete ==="
 echo "Output: ${QUANTIZED_FILE}"

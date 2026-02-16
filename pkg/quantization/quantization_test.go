@@ -143,6 +143,16 @@ func TestGGUFJobBuilder_BuildJob(t *testing.T) {
 	if container.Name != "quantizer" {
 		t.Errorf("container.Name = %q, want %q", container.Name, "quantizer")
 	}
+	if len(container.Args) == 0 {
+		t.Fatal("expected quantizer container args to include the shell script")
+	}
+	script := container.Args[0]
+	if !contains(script, "/dev/termination-log") {
+		t.Error("script should write quantization metadata to /dev/termination-log")
+	}
+	if !contains(script, "quantizationTimeSeconds") {
+		t.Error("script should include quantizationTimeSeconds metadata")
+	}
 
 	// Verify volumes (PVC + workspace)
 	if len(podSpec.Volumes) != 2 {

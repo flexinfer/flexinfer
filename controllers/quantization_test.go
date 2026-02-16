@@ -84,6 +84,10 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			Expect(quantJob.Labels["flexinfer.ai/cache"]).To(Equal(CacheName))
 
 			By("Simulating quantization job success")
+			start := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+			completion := metav1.NewTime(time.Now())
+			quantJob.Status.StartTime = &start
+			quantJob.Status.CompletionTime = &completion
 			quantJob.Status.Succeeded = 1
 			Expect(k8sClient.Status().Update(ctx, quantJob)).To(Succeed())
 
@@ -102,6 +106,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			Expect(cache.Status.Quantization).NotTo(BeNil())
 			Expect(cache.Status.Quantization.Format).To(Equal("GGUF"))
 			Expect(cache.Status.Quantization.Type).To(Equal("Q4_K_M"))
+			Expect(cache.Status.Quantization.QuantizationTime).NotTo(BeEmpty())
 		})
 	})
 

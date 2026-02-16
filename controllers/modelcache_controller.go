@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,6 +57,7 @@ type ModelCacheReconciler struct {
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 
@@ -1902,15 +1904,50 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	if quantJob.Status.Succeeded > 0 {
 		log.Info("Quantization job succeeded", "cache", modelCache.Name)
 
-		// Populate quantization status
+		// Populate quantization status and metrics from quantizer output.
 		ggufType := modelCache.Spec.Quantization.GGUFType
 		if ggufType == "" {
 			ggufType = "Q4_K_M"
 		}
-		modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+		quantStatus := &aiv1alpha1.QuantizationStatus{
 			Format: string(modelCache.Spec.Quantization.Format),
 			Type:   ggufType,
 		}
+
+		quantDurationSeconds := int64(0)
+		meta, metaErr := r.readQuantizationMetadataFromPods(ctx, modelCache.Namespace, quantJob.Name)
+		if metaErr != nil {
+			log.Error(metaErr, "Failed to read quantization metadata from pod termination logs", "job", quantJob.Name)
+		}
+		if meta != nil {
+			if meta.Type != "" {
+				quantStatus.Type = meta.Type
+			}
+			quantStatus.OriginalSizeBytes = meta.OriginalSizeBytes
+			quantStatus.CompressedSizeBytes = meta.CompressedSizeBytes
+			quantDurationSeconds = meta.QuantizationTimeSeconds
+		}
+
+		if quantDurationSeconds == 0 {
+			if duration, ok := quantizationDurationFromJobStatus(quantJob); ok {
+				quantDurationSeconds = int64(duration.Round(time.Second) / time.Second)
+			}
+		}
+		if quantDurationSeconds > 0 {
+			quantStatus.QuantizationTime = (time.Duration(quantDurationSeconds) * time.Second).String()
+		}
+
+		ratio, hasRatio := quantizationCompressionRatio(quantStatus.OriginalSizeBytes, quantStatus.CompressedSizeBytes)
+		if hasRatio {
+			quantStatus.CompressionRatio = formatCompressionRatio(ratio)
+		}
+
+		// Reuse cache size field for quantized output where available.
+		if quantStatus.CompressedSizeBytes > 0 {
+			modelCache.Status.CacheSizeBytes = quantStatus.CompressedSizeBytes
+		}
+
+		modelCache.Status.Quantization = quantStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
@@ -1922,6 +1959,21 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 		// Update quantization metrics
 		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "succeeded").Inc()
+		if quantDurationSeconds > 0 {
+			metrics.QuantizationDurationSeconds.WithLabelValues(
+				modelCache.Name, string(modelCache.Spec.Quantization.Format), quantStatus.Type,
+			).Observe(float64(quantDurationSeconds))
+		}
+		if hasRatio {
+			metrics.QuantizationCompressionRatio.WithLabelValues(
+				modelCache.Name, string(modelCache.Spec.Quantization.Format),
+			).Set(ratio)
+		}
+		if quantStatus.CompressedSizeBytes > 0 {
+			metrics.QuantizationCacheSizeBytes.WithLabelValues(
+				modelCache.Name, string(modelCache.Spec.Quantization.Format),
+			).Set(float64(quantStatus.CompressedSizeBytes))
+		}
 
 		return ctrl.Result{}, nil
 	}
@@ -1940,6 +1992,116 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	// Job still running — requeue to check later
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+type quantizationJobMetadata struct {
+	Type                    string `json:"type,omitempty"`
+	OriginalSizeBytes       int64  `json:"originalSizeBytes,omitempty"`
+	CompressedSizeBytes     int64  `json:"compressedSizeBytes,omitempty"`
+	QuantizationTimeSeconds int64  `json:"quantizationTimeSeconds,omitempty"`
+}
+
+func (r *ModelCacheReconciler) readQuantizationMetadataFromPods(ctx context.Context, namespace, jobName string) (*quantizationJobMetadata, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return nil, err
+	}
+
+	var (
+		bestMeta     *quantizationJobMetadata
+		bestFinished time.Time
+	)
+	for i := range podList.Items {
+		meta, finished := quantizationMetadataFromPod(&podList.Items[i])
+		if meta == nil {
+			continue
+		}
+		if bestMeta == nil || (!finished.IsZero() && finished.After(bestFinished)) {
+			clone := *meta
+			bestMeta = &clone
+			bestFinished = finished
+		}
+	}
+	return bestMeta, nil
+}
+
+func quantizationMetadataFromPod(pod *corev1.Pod) (*quantizationJobMetadata, time.Time) {
+	try := func(status corev1.ContainerStatus) (*quantizationJobMetadata, time.Time) {
+		terminated := status.State.Terminated
+		if terminated == nil {
+			terminated = status.LastTerminationState.Terminated
+		}
+		if terminated == nil || strings.TrimSpace(terminated.Message) == "" {
+			return nil, time.Time{}
+		}
+		meta, err := parseQuantizationMetadata(terminated.Message)
+		if err != nil {
+			return nil, time.Time{}
+		}
+		return meta, terminated.FinishedAt.Time
+	}
+
+	// Prefer the quantizer container when present.
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name != "quantizer" {
+			continue
+		}
+		if meta, finished := try(pod.Status.ContainerStatuses[i]); meta != nil {
+			return meta, finished
+		}
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == "quantizer" {
+			continue
+		}
+		if meta, finished := try(pod.Status.ContainerStatuses[i]); meta != nil {
+			return meta, finished
+		}
+	}
+
+	return nil, time.Time{}
+}
+
+func parseQuantizationMetadata(message string) (*quantizationJobMetadata, error) {
+	var meta quantizationJobMetadata
+	if err := json.Unmarshal([]byte(strings.TrimSpace(message)), &meta); err != nil {
+		return nil, err
+	}
+	if meta.OriginalSizeBytes < 0 {
+		meta.OriginalSizeBytes = 0
+	}
+	if meta.CompressedSizeBytes < 0 {
+		meta.CompressedSizeBytes = 0
+	}
+	if meta.QuantizationTimeSeconds < 0 {
+		meta.QuantizationTimeSeconds = 0
+	}
+	return &meta, nil
+}
+
+func quantizationDurationFromJobStatus(job *batchv1.Job) (time.Duration, bool) {
+	if job == nil || job.Status.StartTime == nil || job.Status.CompletionTime == nil {
+		return 0, false
+	}
+	duration := job.Status.CompletionTime.Sub(job.Status.StartTime.Time)
+	if duration <= 0 {
+		return 0, false
+	}
+	return duration, true
+}
+
+func quantizationCompressionRatio(originalSizeBytes, compressedSizeBytes int64) (float64, bool) {
+	if originalSizeBytes <= 0 || compressedSizeBytes <= 0 {
+		return 0, false
+	}
+	return float64(originalSizeBytes) / float64(compressedSizeBytes), true
+}
+
+func formatCompressionRatio(ratio float64) string {
+	formatted := strconv.FormatFloat(ratio, 'f', 2, 64)
+	formatted = strings.TrimRight(formatted, "0")
+	formatted = strings.TrimRight(formatted, ".")
+	return formatted
 }
 
 // SetupWithManager sets up the controller with the Manager.
