@@ -541,3 +541,115 @@ func TestRunBenchmark_DeletesJobAndResultsConfigMap(t *testing.T) {
 		t.Fatalf("expected benchmark results configmap to be deleted")
 	}
 }
+
+func TestRunQuantizeFormats_PrintsTable(t *testing.T) {
+	cmd, stdout, _ := newTestCmd()
+
+	if err := runQuantizeFormats(cmd, nil); err != nil {
+		t.Fatalf("runQuantizeFormats() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "FORMAT") || !strings.Contains(out, "BACKENDS") {
+		t.Fatalf("expected formats table header, got: %q", out)
+	}
+	if !strings.Contains(out, "GGUF") || !strings.Contains(out, "implemented") {
+		t.Fatalf("expected GGUF implemented row, got: %q", out)
+	}
+	if !strings.Contains(out, "AWQ") {
+		t.Fatalf("expected AWQ row, got: %q", out)
+	}
+}
+
+func TestRunQuantize_RejectsUnsupportedFormat(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelCacheSpec{Source: "huggingface://meta-llama/Llama-3-8B"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, _, _ := newTestCmd()
+
+	origNs := namespace
+	origFormat := quantFormat
+	origType := quantType
+	origMem := quantMaxMemGB
+	t.Cleanup(func() {
+		namespace = origNs
+		quantFormat = origFormat
+		quantType = origType
+		quantMaxMemGB = origMem
+	})
+
+	namespace = "flexinfer-system"
+	quantFormat = "AWQ"
+	quantType = ""
+	quantMaxMemGB = 0
+
+	err := runQuantize(cmd, []string{"test-cache"})
+	if err == nil {
+		t.Fatal("runQuantize() should fail for unsupported format")
+	}
+	if !strings.Contains(err.Error(), "not yet implemented") {
+		t.Fatalf("expected unimplemented format error, got: %v", err)
+	}
+}
+
+func TestRunQuantize_AppliesGGUFSpec(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelCacheSpec{Source: "huggingface://meta-llama/Llama-3-8B"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origFormat := quantFormat
+	origType := quantType
+	origMem := quantMaxMemGB
+	t.Cleanup(func() {
+		namespace = origNs
+		quantFormat = origFormat
+		quantType = origType
+		quantMaxMemGB = origMem
+	})
+
+	namespace = "flexinfer-system"
+	quantFormat = "gguf"
+	quantType = "q5_k_m"
+	quantMaxMemGB = 64
+
+	if err := runQuantize(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantize() error: %v", err)
+	}
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := c.Get(ctx(), types.NamespacedName{Name: "test-cache", Namespace: "flexinfer-system"}, updated); err != nil {
+		t.Fatalf("Get updated ModelCache: %v", err)
+	}
+	if updated.Spec.Quantization == nil {
+		t.Fatal("expected quantization spec to be set")
+	}
+	if updated.Spec.Quantization.Format != aiv1alpha1.QuantizationFormatGGUF {
+		t.Fatalf("Format = %q, want %q", updated.Spec.Quantization.Format, aiv1alpha1.QuantizationFormatGGUF)
+	}
+	if updated.Spec.Quantization.GGUFType != "Q5_K_M" {
+		t.Fatalf("GGUFType = %q, want %q", updated.Spec.Quantization.GGUFType, "Q5_K_M")
+	}
+	if updated.Spec.Quantization.MaxMemoryGB == nil || *updated.Spec.Quantization.MaxMemoryGB != 64 {
+		t.Fatalf("MaxMemoryGB = %v, want 64", updated.Spec.Quantization.MaxMemoryGB)
+	}
+
+	if !strings.Contains(stdout.String(), "Format: GGUF") {
+		t.Fatalf("expected output to include normalized format, got: %q", stdout.String())
+	}
+}

@@ -17,13 +17,15 @@ limitations under the License.
 package commands
 
 import (
-	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
 var (
@@ -54,15 +56,90 @@ Examples:
 	RunE: runQuantize,
 }
 
+var quantizeFormatsCmd = &cobra.Command{
+	Use:   "formats",
+	Short: "List quantization formats and backend compatibility",
+	Args:  cobra.NoArgs,
+	RunE:  runQuantizeFormats,
+}
+
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
+	quantizeCmd.AddCommand(quantizeFormatsCmd)
+}
+
+func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
+
+	type formatInfo struct {
+		bits  string
+		notes string
+	}
+	info := map[aiv1alpha1.QuantizationFormat]formatInfo{
+		aiv1alpha1.QuantizationFormatGGUF: {bits: "2-8", notes: "Best for consumer GPUs"},
+		aiv1alpha1.QuantizationFormatAWQ:  {bits: "4", notes: "NVIDIA-focused throughput"},
+		aiv1alpha1.QuantizationFormatGPTQ: {bits: "4-8", notes: "Wide NVIDIA compatibility"},
+		aiv1alpha1.QuantizationFormatEXL2: {bits: "2-6", notes: "ExLlamaV2 optimized"},
+		aiv1alpha1.QuantizationFormatFP8:  {bits: "8", notes: "Datacenter GPU optimization"},
+	}
+	order := []aiv1alpha1.QuantizationFormat{
+		aiv1alpha1.QuantizationFormatGGUF,
+		aiv1alpha1.QuantizationFormatAWQ,
+		aiv1alpha1.QuantizationFormatGPTQ,
+		aiv1alpha1.QuantizationFormatEXL2,
+		aiv1alpha1.QuantizationFormatFP8,
+	}
+
+	_, _ = fmt.Fprintf(out, "%-8s %-6s %-24s %-11s %s\n", "FORMAT", "BITS", "BACKENDS", "STATUS", "NOTES")
+	_, _ = fmt.Fprintf(out, "%-8s %-6s %-24s %-11s %s\n", "------", "----", "--------", "------", "-----")
+
+	for _, format := range order {
+		compatible := append([]string(nil), quantization.FormatBackendCompatibility[format]...)
+		sort.Strings(compatible)
+
+		status := "planned"
+		if _, err := quantization.GetBuilder(format); err == nil {
+			status = "implemented"
+		}
+
+		details := info[format]
+		_, _ = fmt.Fprintf(
+			out, "%-8s %-6s %-24s %-11s %s\n",
+			string(format),
+			details.bits,
+			strings.Join(compatible, ","),
+			status,
+			details.notes,
+		)
+	}
+
+	return nil
 }
 
 func runQuantize(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	cacheName := args[0]
+	format := aiv1alpha1.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantFormat)))
+	if format == "" {
+		return fmt.Errorf("quantization format is required")
+	}
+	if _, err := quantization.GetBuilder(format); err != nil {
+		return fmt.Errorf("quantization format %q is not available: %w", format, err)
+	}
+
+	qType := strings.TrimSpace(quantType)
+	if format == aiv1alpha1.QuantizationFormatGGUF {
+		if qType == "" {
+			qType = quantization.DefaultGGUFType
+		} else {
+			qType = strings.ToUpper(qType)
+		}
+		if !quantization.IsValidGGUFType(qType) {
+			return fmt.Errorf("invalid GGUF type %q", qType)
+		}
+	}
 
 	k8sClient, err := getClient()
 	if err != nil {
@@ -78,33 +155,23 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 
 	// Build the quantization spec patch
 	quantSpec := &aiv1alpha1.QuantizationSpec{
-		Format:   aiv1alpha1.QuantizationFormat(quantFormat),
-		GGUFType: quantType,
+		Format:   format,
+		GGUFType: qType,
 	}
 	if quantMaxMemGB > 0 {
 		quantSpec.MaxMemoryGB = &quantMaxMemGB
 	}
 
 	// Apply patch
-	patch := cache.DeepCopy()
-	patch.Spec.Quantization = quantSpec
-
-	patchData, err := json.Marshal(map[string]interface{}{
-		"spec": map[string]interface{}{
-			"quantization": patch.Spec.Quantization,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch: %w", err)
-	}
-
-	if err := k8sClient.Patch(ctx(), cache, client.RawPatch(client.MergeFrom(cache).Type(), patchData)); err != nil {
+	original := cache.DeepCopy()
+	cache.Spec.Quantization = quantSpec
+	if err := k8sClient.Patch(ctx(), cache, client.MergeFrom(original)); err != nil {
 		return fmt.Errorf("failed to patch ModelCache: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Quantization requested for ModelCache %q\n", cacheName)
-	_, _ = fmt.Fprintf(out, "  Format: %s\n", quantFormat)
-	_, _ = fmt.Fprintf(out, "  Type:   %s\n", quantType)
+	_, _ = fmt.Fprintf(out, "  Format: %s\n", format)
+	_, _ = fmt.Fprintf(out, "  Type:   %s\n", qType)
 	if quantMaxMemGB > 0 {
 		_, _ = fmt.Fprintf(out, "  Memory: %dGB\n", quantMaxMemGB)
 	}
