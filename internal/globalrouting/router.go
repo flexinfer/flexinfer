@@ -2,6 +2,7 @@ package globalrouting
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,15 @@ type ClusterEndpoint struct {
 	URL     string
 	Healthy bool
 	Weight  int
+
+	GPUVendor string
+	FreeGPUs  int64
+}
+
+// Requirements constrains which clusters are eligible for a routing decision.
+type Requirements struct {
+	GPUVendor   string
+	MinFreeGPUs int64
 }
 
 // Registry stores downstream cluster endpoints, failover preferences, and probe latencies.
@@ -169,59 +179,64 @@ func NewRouter(registry *Registry) *Router {
 
 // Select chooses a downstream cluster using the configured strategy.
 func (r *Router) Select(strategy Strategy) (ClusterEndpoint, error) {
+	return r.SelectWithRequirements(strategy, Requirements{})
+}
+
+// SelectWithRequirements chooses a downstream cluster using strategy and constraints.
+func (r *Router) SelectWithRequirements(strategy Strategy, req Requirements) (ClusterEndpoint, error) {
 	switch strategy {
 	case StrategyFailover:
-		return r.selectFailover()
+		return r.selectFailover(req)
 	case StrategyLatency:
-		return r.selectLatency()
+		return r.selectLatency(req)
 	case StrategyWeighted:
-		return r.selectWeighted()
+		return r.selectWeighted(req)
 	case StrategyRoundRobin, "":
 		fallthrough
 	default:
-		return r.selectRoundRobin()
+		return r.selectRoundRobin(req)
 	}
 }
 
-func (r *Router) selectRoundRobin() (ClusterEndpoint, error) {
-	healthy := r.registry.HealthyClusters()
-	if len(healthy) == 0 {
+func (r *Router) selectRoundRobin(req Requirements) (ClusterEndpoint, error) {
+	eligible := r.filterEligible(r.registry.HealthyClusters(), req)
+	if len(eligible) == 0 {
 		return ClusterEndpoint{}, ErrNoHealthyClusters
 	}
 
 	idx := atomic.AddUint64(&r.rrCounter, 1) - 1
-	return healthy[idx%uint64(len(healthy))], nil
+	return eligible[idx%uint64(len(eligible))], nil
 }
 
-func (r *Router) selectFailover() (ClusterEndpoint, error) {
+func (r *Router) selectFailover(req Requirements) (ClusterEndpoint, error) {
 	order := r.registry.FailoverOrder()
 	for _, name := range order {
-		if c, ok := r.registry.ClusterByName(name); ok && c.Healthy {
+		if c, ok := r.registry.ClusterByName(name); ok && c.Healthy && matchesRequirements(c, req) {
 			return c, nil
 		}
 	}
 
-	healthy := r.registry.HealthyClusters()
-	if len(healthy) == 0 {
+	eligible := r.filterEligible(r.registry.HealthyClusters(), req)
+	if len(eligible) == 0 {
 		return ClusterEndpoint{}, ErrNoHealthyClusters
 	}
-	return healthy[0], nil
+	return eligible[0], nil
 }
 
-func (r *Router) selectLatency() (ClusterEndpoint, error) {
-	healthy := r.registry.HealthyClusters()
-	if len(healthy) == 0 {
+func (r *Router) selectLatency(req Requirements) (ClusterEndpoint, error) {
+	eligible := r.filterEligible(r.registry.HealthyClusters(), req)
+	if len(eligible) == 0 {
 		return ClusterEndpoint{}, ErrNoHealthyClusters
 	}
 
-	selected := healthy[0]
+	selected := eligible[0]
 	bestLatency, found := r.registry.Latency(selected.Name)
 	if !found {
 		bestLatency = 0
 	}
 
-	for i := 1; i < len(healthy); i++ {
-		candidate := healthy[i]
+	for i := 1; i < len(eligible); i++ {
+		candidate := eligible[i]
 		latency, ok := r.registry.Latency(candidate.Name)
 		if !ok {
 			continue
@@ -236,14 +251,14 @@ func (r *Router) selectLatency() (ClusterEndpoint, error) {
 	return selected, nil
 }
 
-func (r *Router) selectWeighted() (ClusterEndpoint, error) {
-	healthy := r.registry.HealthyClusters()
-	if len(healthy) == 0 {
+func (r *Router) selectWeighted(req Requirements) (ClusterEndpoint, error) {
+	eligible := r.filterEligible(r.registry.HealthyClusters(), req)
+	if len(eligible) == 0 {
 		return ClusterEndpoint{}, ErrNoHealthyClusters
 	}
 
-	weighted := make([]ClusterEndpoint, 0, len(healthy))
-	for _, c := range healthy {
+	weighted := make([]ClusterEndpoint, 0, len(eligible))
+	for _, c := range eligible {
 		weight := c.Weight
 		if weight < 1 {
 			weight = 1
@@ -255,4 +270,33 @@ func (r *Router) selectWeighted() (ClusterEndpoint, error) {
 
 	idx := atomic.AddUint64(&r.rrCounter, 1) - 1
 	return weighted[idx%uint64(len(weighted))], nil
+}
+
+func (r *Router) filterEligible(candidates []ClusterEndpoint, req Requirements) []ClusterEndpoint {
+	if req.GPUVendor == "" && req.MinFreeGPUs <= 0 {
+		return candidates
+	}
+
+	out := make([]ClusterEndpoint, 0, len(candidates))
+	for _, c := range candidates {
+		if matchesRequirements(c, req) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func matchesRequirements(c ClusterEndpoint, req Requirements) bool {
+	requiredVendor := strings.ToLower(strings.TrimSpace(req.GPUVendor))
+	if requiredVendor != "" {
+		clusterVendor := strings.ToLower(strings.TrimSpace(c.GPUVendor))
+		if clusterVendor != requiredVendor {
+			return false
+		}
+	}
+
+	if req.MinFreeGPUs > 0 && c.FreeGPUs < req.MinFreeGPUs {
+		return false
+	}
+	return true
 }

@@ -68,6 +68,16 @@ spec:
                         Must be an absolute http(s) URL.
                       pattern: ^https?://
                       type: string
+                    gpuVendor:
+                      description: |-
+                        GPUVendor optionally declares the primary GPU vendor for this cluster.
+                        Used by GPU-aware routing hints in the global proxy.
+                      enum:
+                      - nvidia
+                      - amd
+                      - intel
+                      - cpu
+                      type: string
                     name:
                       description: Name is the logical cluster name.
                       type: string

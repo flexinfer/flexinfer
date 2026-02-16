@@ -172,8 +172,8 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 10) GPU-aware routing
 
-- [ ] Route based on GPU availability
-- [ ] Match model requirements to cluster capabilities
+- [x] Route based on GPU availability
+- [x] Match model requirements to cluster capabilities
 
 #### 11) Cross-cluster metrics aggregation
 

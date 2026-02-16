@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -190,5 +191,18 @@ func TestRuntimeConfigFromGlobalProxyValidation(t *testing.T) {
 
 	if _, err := runtimeConfigFromGlobalProxy(gp); err == nil {
 		t.Fatalf("runtimeConfigFromGlobalProxy() error = nil, want non-nil")
+	}
+}
+
+func TestRequirementsFromRequest(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://example.com/v1/chat/completions?min_free_gpus=3", nil)
+	req.Header.Set("X-FlexInfer-GPU-Vendor", "amd")
+
+	got := requirementsFromRequest(req)
+	if got.GPUVendor != "amd" {
+		t.Fatalf("GPUVendor = %q, want amd", got.GPUVendor)
+	}
+	if got.MinFreeGPUs != 3 {
+		t.Fatalf("MinFreeGPUs = %d, want 3", got.MinFreeGPUs)
 	}
 }

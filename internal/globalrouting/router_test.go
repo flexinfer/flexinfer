@@ -144,3 +144,40 @@ func TestRouterLatencyFallsBackWhenNoProbeData(t *testing.T) {
 		t.Fatalf("selected cluster = %q, want cluster-a", selected.Name)
 	}
 }
+
+func TestRouterSelectWithRequirements_GPUVendor(t *testing.T) {
+	registry := NewRegistry([]ClusterEndpoint{
+		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true, GPUVendor: "amd"},
+		{Name: "cluster-b", URL: "https://b.example.com", Healthy: true, GPUVendor: "nvidia"},
+	}, nil)
+	router := NewRouter(registry)
+
+	selected, err := router.SelectWithRequirements(StrategyRoundRobin, Requirements{GPUVendor: "nvidia"})
+	if err != nil {
+		t.Fatalf("SelectWithRequirements() error = %v", err)
+	}
+	if selected.Name != "cluster-b" {
+		t.Fatalf("selected cluster = %q, want cluster-b", selected.Name)
+	}
+}
+
+func TestRouterSelectWithRequirements_MinFreeGPUs(t *testing.T) {
+	registry := NewRegistry([]ClusterEndpoint{
+		{Name: "cluster-a", URL: "https://a.example.com", Healthy: true, FreeGPUs: 1},
+		{Name: "cluster-b", URL: "https://b.example.com", Healthy: true, FreeGPUs: 3},
+	}, nil)
+	router := NewRouter(registry)
+
+	selected, err := router.SelectWithRequirements(StrategyRoundRobin, Requirements{MinFreeGPUs: 2})
+	if err != nil {
+		t.Fatalf("SelectWithRequirements() error = %v", err)
+	}
+	if selected.Name != "cluster-b" {
+		t.Fatalf("selected cluster = %q, want cluster-b", selected.Name)
+	}
+
+	_, err = router.SelectWithRequirements(StrategyRoundRobin, Requirements{MinFreeGPUs: 4})
+	if err == nil {
+		t.Fatalf("SelectWithRequirements() error = nil, want non-nil when no cluster meets min free GPUs")
+	}
+}

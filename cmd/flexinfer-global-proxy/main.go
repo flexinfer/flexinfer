@@ -20,6 +20,8 @@ import (
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -71,12 +73,12 @@ func (s *proxyState) applyConfig(cfg runtimeConfig) error {
 	return nil
 }
 
-func (s *proxyState) selectCluster() (globalrouting.ClusterEndpoint, globalrouting.Strategy, error) {
+func (s *proxyState) selectCluster(req globalrouting.Requirements) (globalrouting.ClusterEndpoint, globalrouting.Strategy, error) {
 	s.mu.RLock()
 	strategy := s.strategy
 	s.mu.RUnlock()
 
-	selected, err := s.router.Select(strategy)
+	selected, err := s.router.SelectWithRequirements(strategy, req)
 	return selected, strategy, err
 }
 
@@ -182,14 +184,15 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if _, _, err := state.selectCluster(); err != nil {
+		if _, _, err := state.selectCluster(globalrouting.Requirements{}); err != nil {
 			http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		selected, strategy, err := state.selectCluster()
+		required := requirementsFromRequest(r)
+		selected, strategy, err := state.selectCluster(required)
 		if err != nil {
 			http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
 			return
@@ -291,6 +294,7 @@ func syncFromGlobalProxy(ctx context.Context, k8sClient crclient.Client, namespa
 	if err != nil {
 		return fmt.Errorf("build runtime config from GlobalProxy %s/%s: %w", namespace, name, err)
 	}
+	cfg.clusters = enrichClusterCapabilities(ctx, k8sClient, namespace, cfg.clusters)
 	if err := state.applyConfig(cfg); err != nil {
 		return fmt.Errorf("apply GlobalProxy runtime config %s/%s: %w", namespace, name, err)
 	}
@@ -339,10 +343,11 @@ func runtimeConfigFromGlobalProxy(gp *aiv1alpha2.GlobalProxy) (runtimeConfig, er
 		}
 
 		clusters = append(clusters, globalrouting.ClusterEndpoint{
-			Name:    name,
-			URL:     u.String(),
-			Healthy: true,
-			Weight:  weight,
+			Name:      name,
+			URL:       u.String(),
+			Healthy:   true,
+			Weight:    weight,
+			GPUVendor: strings.ToLower(strings.TrimSpace(c.GPUVendor)),
 		})
 	}
 
@@ -351,6 +356,42 @@ func runtimeConfigFromGlobalProxy(gp *aiv1alpha2.GlobalProxy) (runtimeConfig, er
 		clusters:      clusters,
 		failoverOrder: append([]string(nil), gp.Spec.FailoverOrder...),
 	}, nil
+}
+
+func enrichClusterCapabilities(ctx context.Context, k8sClient crclient.Client, namespace string, clusters []globalrouting.ClusterEndpoint) []globalrouting.ClusterEndpoint {
+	out := make([]globalrouting.ClusterEndpoint, len(clusters))
+	copy(out, clusters)
+
+	for i := range out {
+		cluster := &aiv1alpha2.Cluster{}
+		if err := k8sClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: out[i].Name}, cluster); err != nil {
+			if !apierrors.IsNotFound(err) {
+				slog.Debug("cluster capability enrichment failed", "cluster", out[i].Name, "error", err)
+			}
+			continue
+		}
+
+		if vendor := strings.ToLower(strings.TrimSpace(cluster.Spec.Labels["gpu-vendor"])); vendor != "" {
+			out[i].GPUVendor = vendor
+		}
+		out[i].FreeGPUs = extractAvailableGPUCount(cluster.Status.Available)
+	}
+
+	return out
+}
+
+func extractAvailableGPUCount(available corev1.ResourceList) int64 {
+	var total int64
+	for _, name := range []corev1.ResourceName{
+		corev1.ResourceName("nvidia.com/gpu"),
+		corev1.ResourceName("amd.com/gpu"),
+		corev1.ResourceName("gpu.intel.com/i915"),
+	} {
+		if quantity, ok := available[name]; ok {
+			total += quantity.Value()
+		}
+	}
+	return total
 }
 
 type routingMetrics struct {
@@ -476,6 +517,27 @@ func buildLogger(logLevel string) *slog.Logger {
 		level = slog.LevelError
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}
+
+func requirementsFromRequest(r *http.Request) globalrouting.Requirements {
+	req := globalrouting.Requirements{
+		GPUVendor: strings.TrimSpace(r.Header.Get("X-FlexInfer-GPU-Vendor")),
+	}
+	if req.GPUVendor == "" {
+		req.GPUVendor = strings.TrimSpace(r.URL.Query().Get("gpu_vendor"))
+	}
+
+	rawMinFree := strings.TrimSpace(r.Header.Get("X-FlexInfer-Min-Free-GPUs"))
+	if rawMinFree == "" {
+		rawMinFree = strings.TrimSpace(r.URL.Query().Get("min_free_gpus"))
+	}
+	if rawMinFree != "" {
+		if parsed, err := strconv.ParseInt(rawMinFree, 10, 64); err == nil && parsed > 0 {
+			req.MinFreeGPUs = parsed
+		}
+	}
+
+	return req
 }
 
 func parseStrategy(raw string) (globalrouting.Strategy, error) {

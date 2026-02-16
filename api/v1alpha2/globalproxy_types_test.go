@@ -48,7 +48,7 @@ func TestGlobalProxySpecValidateBasic(t *testing.T) {
 				ExternalEndpoint: "global.flexinfer.example.com",
 				Strategy:         GlobalRoutingStrategyWeighted,
 				Clusters: []GlobalProxyClusterEndpoint{
-					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com"},
+					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com", GPUVendor: "amd"},
 					{Name: "cluster-b", Endpoint: "https://cluster-b.example.com"},
 				},
 			},
@@ -131,6 +131,16 @@ func TestGlobalProxySpecValidateBasic(t *testing.T) {
 					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com"},
 				},
 				FailoverOrder: []string{"cluster-a"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid gpu vendor",
+			spec: GlobalProxySpec{
+				ExternalEndpoint: "global.flexinfer.example.com",
+				Clusters: []GlobalProxyClusterEndpoint{
+					{Name: "cluster-a", Endpoint: "https://cluster-a.example.com", GPUVendor: "fpga"},
+				},
 			},
 			wantErr: true,
 		},

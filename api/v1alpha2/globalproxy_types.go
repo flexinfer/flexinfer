@@ -55,6 +55,12 @@ type GlobalProxyClusterEndpoint struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	Weight *int32 `json:"weight,omitempty"`
+
+	// GPUVendor optionally declares the primary GPU vendor for this cluster.
+	// Used by GPU-aware routing hints in the global proxy.
+	// +kubebuilder:validation:Enum=nvidia;amd;intel;cpu
+	// +optional
+	GPUVendor string `json:"gpuVendor,omitempty"`
 }
 
 // GlobalProxyTLSSpec configures TLS for the public global proxy endpoint.
@@ -128,6 +134,10 @@ func (s GlobalProxySpec) ValidateBasic() error {
 		}
 		if u.Host == "" {
 			return fmt.Errorf("spec.clusters[%q].endpoint host is required", name)
+		}
+		vendor := strings.ToLower(strings.TrimSpace(c.GPUVendor))
+		if vendor != "" && vendor != "nvidia" && vendor != "amd" && vendor != "intel" && vendor != "cpu" {
+			return fmt.Errorf("spec.clusters[%q].gpuVendor must be one of nvidia, amd, intel, cpu", name)
 		}
 	}
 
