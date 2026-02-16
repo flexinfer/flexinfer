@@ -167,4 +167,83 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseFailed))
 		})
 	})
+
+	Context("When a ModelCache uses AWQ quantization", func() {
+		It("Should create an AWQ quantization job and record AWQ type on success", func() {
+			ctx := context.Background()
+			cacheName := "test-awq-cache"
+			bits := int32(4)
+			groupSize := int32(128)
+			maxMem := int32(48)
+
+			modelCache := &aiv1alpha1.ModelCache{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cacheName,
+					Namespace: CacheNamespace,
+				},
+				Spec: aiv1alpha1.ModelCacheSpec{
+					Source:          "meta-llama/Meta-Llama-3-8B",
+					StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+					Quantization: &aiv1alpha1.QuantizationSpec{
+						Format:      aiv1alpha1.QuantizationFormatAWQ,
+						Bits:        &bits,
+						GroupSize:   &groupSize,
+						UseGPU:      true,
+						MaxMemoryGB: &maxMem,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			By("Simulating download job success")
+			dlJobKey := types.NamespacedName{
+				Name:      fmt.Sprintf("%s-downloader", cacheName),
+				Namespace: CacheNamespace,
+			}
+			dlJob := &batchv1.Job{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, dlJobKey, dlJob)
+			}, time.Minute, time.Second).Should(Succeed())
+			dlJob.Status.Succeeded = 1
+			Expect(k8sClient.Status().Update(ctx, dlJob)).To(Succeed())
+
+			By("Checking AWQ quantization job creation")
+			quantJobKey := types.NamespacedName{
+				Name:      fmt.Sprintf("%s-quantize", cacheName),
+				Namespace: CacheNamespace,
+			}
+			quantJob := &batchv1.Job{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, quantJobKey, quantJob)
+			}, time.Minute, time.Second).Should(Succeed())
+
+			Expect(quantJob.Labels["flexinfer.ai/format"]).To(Equal("AWQ"))
+			Expect(quantJob.Labels["flexinfer.ai/cache"]).To(Equal(cacheName))
+
+			By("Simulating AWQ quantization job success")
+			start := metav1.NewTime(time.Now().Add(-90 * time.Second))
+			completion := metav1.NewTime(time.Now())
+			quantJob.Status.StartTime = &start
+			quantJob.Status.CompletionTime = &completion
+			quantJob.Status.Succeeded = 1
+			Expect(k8sClient.Status().Update(ctx, quantJob)).To(Succeed())
+
+			By("Verifying AWQ quantization status")
+			cacheKey := types.NamespacedName{Name: cacheName, Namespace: CacheNamespace}
+			Eventually(func() aiv1alpha1.ModelCachePhase {
+				cache := &aiv1alpha1.ModelCache{}
+				if err := k8sClient.Get(ctx, cacheKey, cache); err != nil {
+					return ""
+				}
+				return cache.Status.Phase
+			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseReady))
+
+			cache := &aiv1alpha1.ModelCache{}
+			Expect(k8sClient.Get(ctx, cacheKey, cache)).To(Succeed())
+			Expect(cache.Status.Quantization).NotTo(BeNil())
+			Expect(cache.Status.Quantization.Format).To(Equal("AWQ"))
+			Expect(cache.Status.Quantization.Type).To(Equal("W4_G128"))
+			Expect(cache.Status.Quantization.QuantizationTime).NotTo(BeEmpty())
+		})
+	})
 })
