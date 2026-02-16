@@ -7,6 +7,7 @@
   import ConfirmDialog from '../widgets/ConfirmDialog.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import FilterBar from './shared/FilterBar.svelte';
+  import DetailDrawer from './shared/DetailDrawer.svelte';
 
   $effect(() => {
     graphStore.startPolling(10000);
@@ -249,6 +250,24 @@
     const d = getDetail(entity);
     return d.outbound_relations ?? d.relations?.filter(r => r.source === entity.id) ?? [];
   }
+
+  // DetailDrawer state
+  let drawerEntity = $state(null);
+  let drawerEntityDetail = $state(null);
+  let loadingDrawerDetail = $state(false);
+
+  async function openEntityDrawer(entity) {
+    drawerEntity = entity;
+    loadingDrawerDetail = true;
+    const detail = await graphStore.getEntityDetail(entity.id);
+    drawerEntityDetail = detail;
+    loadingDrawerDetail = false;
+  }
+
+  function closeEntityDrawer() {
+    drawerEntity = null;
+    drawerEntityDetail = null;
+  }
 </script>
 
 <div class="panel graph-panel">
@@ -347,7 +366,8 @@
         <div class="entity-card" class:entity-selected={selectedEntity?.id === entity.id}>
           <button class="entity-header" onclick={() => { toggleExpand(entity.id); selectEntity(entity); }}>
             <Badge text={entity.type ?? 'entity'} variant={typeVariant(entity.type)} />
-            <span class="entity-name">{entity.name ?? entity.id}</span>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <span class="entity-name entity-name-link" onclick={(e) => { e.stopPropagation(); openEntityDrawer(entity); }} role="button" tabindex="-1">{entity.name ?? entity.id}</span>
             <span class="entity-chevron">
               {expandedEntities.has(entity.id) ? '\u25BC' : '\u25B6'}
             </span>
@@ -528,6 +548,71 @@
   onConfirm={executeDelete}
   onCancel={() => { showDeleteConfirm = false; deleteTarget = null; }}
 />
+
+<DetailDrawer
+  open={!!drawerEntity}
+  title={drawerEntity?.name ?? '---'}
+  subtitle={drawerEntity?.type ?? drawerEntity?.entity_type ?? ''}
+  onClose={closeEntityDrawer}
+>
+  {#snippet header()}
+    {#if drawerEntity}
+      <div class="detail-stats">
+        <div class="stat-chip">
+          <Badge text={drawerEntity.type ?? drawerEntity.entity_type ?? 'unknown'} variant={typeVariant(drawerEntity.type ?? drawerEntity.entity_type)} />
+        </div>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if loadingDrawerDetail}
+    <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+  {:else if drawerEntityDetail}
+    {#if Object.keys(drawerEntityDetail.properties ?? {}).length > 0}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Properties</div>
+        <div class="drawer-props-table">
+          {#each Object.entries(drawerEntityDetail.properties) as [key, value]}
+            <div class="drawer-prop-row">
+              <span class="drawer-prop-key text-mono text-xs">{key}</span>
+              <span class="drawer-prop-value text-mono text-xs text-secondary">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if drawerEntityDetail.inbound_relations?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Inbound Relations ({drawerEntityDetail.inbound_relations.length})</div>
+        {#each drawerEntityDetail.inbound_relations as rel}
+          <div class="drawer-relation-row">
+            <span class="text-mono text-sm">{rel.source_name ?? rel.source ?? '?'}</span>
+            <Badge text={rel.type ?? rel.relation_type ?? 'related'} variant="accent" />
+          </div>
+        {/each}
+      </div>
+    {/if}
+    {#if drawerEntityDetail.outbound_relations?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Outbound Relations ({drawerEntityDetail.outbound_relations.length})</div>
+        {#each drawerEntityDetail.outbound_relations as rel}
+          <div class="drawer-relation-row">
+            <Badge text={rel.type ?? rel.relation_type ?? 'related'} variant="accent" />
+            <span class="text-mono text-sm">{rel.target_name ?? rel.target ?? '?'}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {:else}
+    <EmptyState icon={'\u25C8'} heading="No detail available" compact />
+  {/if}
+
+  {#snippet footer()}
+    {#if drawerEntity}
+      <button class="btn btn-danger btn-sm" onclick={() => { closeEntityDrawer(); confirmDeleteEntity(drawerEntity); }}>Delete Entity</button>
+    {/if}
+  {/snippet}
+</DetailDrawer>
 
 <style>
   .graph-panel {
@@ -845,5 +930,68 @@
   .path-arrow {
     color: var(--fg-muted);
     font-size: 14px;
+  }
+
+  /* Entity name link (opens drawer) */
+  .entity-name-link {
+    cursor: pointer;
+  }
+
+  .entity-name-link:hover {
+    text-decoration: underline;
+    color: var(--accent);
+  }
+
+  /* DetailDrawer stat chips */
+  .detail-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+    flex-wrap: wrap;
+  }
+
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1, 4px);
+    font-size: var(--text-sm, 13px);
+  }
+
+  /* Drawer properties table */
+  .drawer-props-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .drawer-prop-row {
+    display: flex;
+    gap: var(--space-2, 8px);
+    padding: 2px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .drawer-prop-key {
+    color: var(--fg-muted);
+    min-width: 100px;
+  }
+
+  .drawer-prop-value {
+    flex: 1;
+    word-break: break-word;
+  }
+
+  /* Drawer relation rows */
+  .drawer-relation-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+    padding: 4px 0;
+    font-size: var(--text-sm, 13px);
+  }
+
+  /* Section (shared drawer pattern) */
+  .section {
+    margin-bottom: 12px;
   }
 </style>

@@ -9,6 +9,7 @@
   import FilterBar from './shared/FilterBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import DetailDrawer from './shared/DetailDrawer.svelte';
 
   $effect(() => {
     memoryStore.startPolling(8000);
@@ -223,6 +224,17 @@
     return map[importance] ?? 0.3;
   }
 
+  // Detail drawer
+  let drawerItem = $state(null);
+
+  function openItemDrawer(item) {
+    drawerItem = item;
+  }
+
+  function closeItemDrawer() {
+    drawerItem = null;
+  }
+
 </script>
 
 <div class="panel memory-panel">
@@ -394,6 +406,7 @@
         idKey="id"
         onSort={(key, dir) => { sortKey = key; sortDir = dir; }}
         onToggleExpand={(item) => toggleExpand(item.id)}
+        onRowClick={openItemDrawer}
       >
         {#snippet row({ row: item, expanded })}
           <td style="border-left: 3px solid {importanceBorderColor(item.importance)}">
@@ -496,6 +509,60 @@
   onConfirm={executeDelete}
   onCancel={cancelDelete}
 />
+
+<!-- Memory Detail Drawer -->
+<DetailDrawer
+  open={!!drawerItem}
+  title={drawerItem?.title ?? '---'}
+  subtitle={drawerItem?.category ?? ''}
+  onClose={closeItemDrawer}
+>
+  {#snippet header()}
+    {#if drawerItem}
+      <div class="detail-stats">
+        <div class="stat-chip">
+          <span class="importance-text" style="color: {importanceColor(drawerItem.importance)}">
+            {drawerItem.importance ?? 'medium'}
+          </span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip-value">{formatNumber(drawerItem.tokens ?? 0)}</span>
+          <span class="stat-chip-label">tokens</span>
+        </div>
+        <div class="stat-chip">
+          <Badge text={drawerItem.status ?? 'active'} variant={statusVariant(drawerItem.status)} />
+        </div>
+        {#if drawerItem.last_accessed}
+          <div class="stat-chip">
+            <span class="stat-chip-value">{relativeTime(drawerItem.last_accessed)}</span>
+            <span class="stat-chip-label">accessed</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if drawerItem}
+    <div class="section">
+      <div class="section-title text-xs uppercase text-muted">Content</div>
+      <pre class="detail-pre">{drawerItem.content ?? '(no content)'}</pre>
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    {#if drawerItem}
+      <div class="drawer-actions">
+        {#if activeTier !== 'long_term'}
+          <button class="btn btn-success btn-sm" onclick={() => { promoteItem(drawerItem.id); }}>Promote</button>
+        {/if}
+        {#if activeTier !== 'working'}
+          <button class="btn btn-ghost btn-sm" onclick={() => { demoteItem(drawerItem.id); }}>Demote</button>
+        {/if}
+        <button class="btn btn-danger btn-sm" onclick={() => { closeItemDrawer(); confirmDelete(drawerItem); }}>Delete</button>
+      </div>
+    {/if}
+  {/snippet}
+</DetailDrawer>
 
 <style>
   .memory-panel {
@@ -748,5 +815,59 @@
 
   .form-row .form-field {
     flex: 1;
+  }
+
+  /* --- Detail Drawer --- */
+
+  .detail-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+    flex-wrap: wrap;
+  }
+
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1, 4px);
+    font-size: var(--text-sm, 12px);
+  }
+
+  .stat-chip-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .stat-chip-label {
+    font-size: var(--text-xs, 10px);
+    color: var(--fg-muted);
+  }
+
+  .section {
+    margin-bottom: 12px;
+  }
+
+  .section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+    margin-bottom: 4px;
+  }
+
+  .detail-pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm, 12px);
+    color: var(--fg-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+
+  .drawer-actions {
+    display: flex;
+    gap: var(--space-2, 8px);
   }
 </style>

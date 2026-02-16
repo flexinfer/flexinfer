@@ -5,6 +5,7 @@
   import Badge from '../widgets/Badge.svelte';
   import FilterBar from './shared/FilterBar.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
@@ -341,34 +342,72 @@
     </div>
   </div>
 
-  <!-- Footer: selected server detail -->
-  {#if selectedServer}
-    <div class="detail-footer">
-      <div class="detail-header">
-        <span class="detail-name text-mono">{selectedServer.name}</span>
-        <StatusDot status={selectedServer.status ?? 'unknown'} />
-        {#if selectedServer.tool_count > 0}
-          <Badge text="{selectedServer.tool_count} tools" variant="accent" />
+
+</div>
+
+<!-- Server Detail Drawer -->
+<DetailDrawer
+  open={!!selectedServer}
+  title={selectedServer?.name ?? ''}
+  subtitle={selectedServer?.target ?? ''}
+  onClose={() => { selectedServer = null; }}
+>
+  {#snippet header()}
+    {#if selectedServer}
+      <div class="detail-stats">
+        <div class="stat-chip">
+          <StatusDot status={selectedServer.status ?? 'unknown'} />
+          <span class="stat-chip-label">{selectedServer.status ?? 'unknown'}</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip-value">{selectedServer.tool_count ?? 0}</span>
+          <span class="stat-chip-label">tools</span>
+        </div>
+        {#if selectedServer.latency != null}
+          <div class="stat-chip">
+            <span class="stat-chip-value">{formatLatency(selectedServer.latency)}</span>
+            <span class="stat-chip-label">latency</span>
+          </div>
         {/if}
       </div>
-      {#if selectedServer.description}
-        <p class="detail-description">{selectedServer.description}</p>
-      {/if}
-      {#if selectedServer.categories?.length}
+    {/if}
+  {/snippet}
+
+  {#if selectedServer}
+    {#if selectedServer.description}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Description</div>
+        <p class="text-sm text-secondary">{selectedServer.description}</p>
+      </div>
+    {/if}
+    {#if selectedServer.categories?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Categories</div>
         <div class="detail-cats">
           {#each selectedServer.categories as cat}
             <span class="cat-chip">{cat}</span>
           {/each}
         </div>
-      {/if}
-      {#if selectedServer.error_message}
-        <div class="detail-error">
-          <span class="error-label">ERROR:</span> {selectedServer.error_message}
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
+    {#if selectedServer.latencyHistory?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Latency History</div>
+        <SparkLine
+          data={selectedServer.latencyHistory}
+          width={340}
+          height={60}
+          color={selectedServer.status === 'healthy' ? 'var(--success)' : 'var(--warning)'}
+        />
+      </div>
+    {/if}
+    {#if selectedServer.error_message}
+      <div class="detail-error">
+        <span class="error-label">ERROR:</span> {selectedServer.error_message}
+      </div>
+    {/if}
   {/if}
-</div>
+</DetailDrawer>
 
 <style>
   .servers-panel {
@@ -525,34 +564,44 @@
     color: var(--fg-muted);
   }
 
-  /* --- Detail Footer --- */
+  /* --- Detail Drawer --- */
 
-  .detail-footer {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 12px 16px;
-    margin-top: 12px;
-    font-size: 12px;
-  }
-
-  .detail-header {
+  .detail-stats {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: var(--space-2, 8px);
+    flex-wrap: wrap;
   }
 
-  .detail-name {
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1, 4px);
+    font-size: var(--text-sm, 12px);
+  }
+
+  .stat-chip-value {
+    font-family: var(--font-mono);
     font-weight: 600;
     color: var(--fg-primary);
-    font-size: 14px;
   }
 
-  .detail-description {
-    color: var(--fg-secondary);
-    margin-bottom: 6px;
-    line-height: 1.4;
+  .stat-chip-label {
+    font-size: var(--text-xs, 10px);
+    color: var(--fg-muted);
+  }
+
+  .section {
+    margin-bottom: 12px;
+  }
+
+  .section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+    margin-bottom: 4px;
   }
 
   .detail-cats {

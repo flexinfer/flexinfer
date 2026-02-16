@@ -7,6 +7,7 @@
   import Modal from '../widgets/Modal.svelte';
   import FilterBar from './shared/FilterBar.svelte';
   import DataTable from './shared/DataTable.svelte';
+  import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
@@ -332,6 +333,17 @@
     closeResolve();
   }
 
+  // Detail drawer
+  let selectedTask = $state(null);
+
+  function selectTask(task) {
+    selectedTask = selectedTask?.id === task.id ? null : task;
+  }
+
+  function closeTaskDetail() {
+    selectedTask = null;
+  }
+
 </script>
 
 <div class="panel tasks-panel">
@@ -396,6 +408,7 @@
           loading={!taskStore.lastUpdated}
           skeletonRows={3}
           onSort={handleSort}
+          onRowClick={selectTask}
         >
           {#snippet row({ row: task })}
             <td class="task-title" title={task.context || task.title}>
@@ -653,6 +666,84 @@
     </div>
   </form>
 </Modal>
+
+<!-- Task Detail Drawer -->
+<DetailDrawer
+  open={!!selectedTask}
+  title={selectedTask?.title ?? ''}
+  subtitle={selectedTask?.agent ?? 'Unassigned'}
+  onClose={closeTaskDetail}
+>
+  {#snippet header()}
+    {#if selectedTask}
+      <div class="detail-stats">
+        <div class="stat-chip">
+          <Badge text={selectedTask.priority ?? 'medium'} variant={priorityVariant(selectedTask.priority)} />
+        </div>
+        <div class="stat-chip">
+          <Badge text={selectedTask.status ?? 'pending'} variant={statusVariant(selectedTask.status)} />
+        </div>
+        {#if selectedTask.created_at}
+          <div class="stat-chip">
+            <span class="stat-chip-value">{relativeTime(selectedTask.created_at)}</span>
+            <span class="stat-chip-label">created</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if selectedTask}
+    {#if selectedTask.context}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Context</div>
+        <pre class="detail-pre">{selectedTask.context}</pre>
+      </div>
+    {/if}
+    {#if selectedTask.file_path}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">File</div>
+        <span class="text-mono text-sm">{selectedTask.file_path}</span>
+      </div>
+    {/if}
+    {#if selectedTask.tags?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Tags</div>
+        <div class="tag-chips">
+          {#each selectedTask.tags as tag}
+            <span class="tag-chip">{tag}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if selectedTask.blocked_by?.length}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Blocked By</div>
+        <div class="dep-list">
+          {#each selectedTask.blocked_by as depId}
+            <span class="blocked-id" class:resolved={selectedTask.resolved_deps?.includes(depId)}>
+              {depId.slice(0, 12)}
+            </span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if selectedTask.resolution}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Resolution</div>
+        <pre class="detail-pre">{selectedTask.resolution}</pre>
+      </div>
+    {/if}
+  {/if}
+
+  {#snippet footer()}
+    {#if selectedTask && selectedTask.status !== 'completed' && selectedTask.status !== 'cancelled'}
+      <button class="btn btn-success" onclick={() => { closeTaskDetail(); openResolve(selectedTask); }}>
+        Resolve Task
+      </button>
+    {/if}
+  {/snippet}
+</DetailDrawer>
 
 <style>
   .tasks-panel {
@@ -961,5 +1052,75 @@
 
   .group-body {
     padding: 0;
+  }
+
+  /* --- Detail Drawer --- */
+
+  .detail-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+    flex-wrap: wrap;
+  }
+
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1, 4px);
+    font-size: var(--text-sm, 12px);
+  }
+
+  .stat-chip-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .stat-chip-label {
+    font-size: var(--text-xs, 10px);
+    color: var(--fg-muted);
+  }
+
+  .section {
+    margin-bottom: 12px;
+  }
+
+  .section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+    margin-bottom: 4px;
+  }
+
+  .detail-pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm, 12px);
+    color: var(--fg-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+
+  .tag-chips {
+    display: flex;
+    gap: var(--space-1, 4px);
+    flex-wrap: wrap;
+  }
+
+  .tag-chip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    color: var(--fg-secondary);
+  }
+
+  .dep-list {
+    display: flex;
+    gap: var(--space-1, 4px);
+    flex-wrap: wrap;
   }
 </style>
