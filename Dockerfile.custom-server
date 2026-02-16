@@ -11,10 +11,12 @@ ARG CI_JOB_TOKEN
 RUN mkdir -p /libs
 RUN if [ -n "${CI_JOB_TOKEN:-}" ]; then \
       git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/mcp-go.git" /libs/mcp-go && \
-      git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" /libs/fi-mcp-kit ; \
+      git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" /libs/fi-mcp-kit && \
+      git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-accel.git" /libs/fi-accel ; \
     else \
       git clone --depth 1 "https://gitlab.flexinfer.ai/libs/mcp-go.git" /libs/mcp-go && \
-      git clone --depth 1 "https://gitlab.flexinfer.ai/libs/fi-mcp-kit.git" /libs/fi-mcp-kit ; \
+      git clone --depth 1 "https://gitlab.flexinfer.ai/libs/fi-mcp-kit.git" /libs/fi-mcp-kit && \
+      git clone --depth 1 "https://gitlab.flexinfer.ai/libs/fi-accel.git" /libs/fi-accel ; \
     fi
 
 WORKDIR /src

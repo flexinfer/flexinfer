@@ -30,6 +30,13 @@ jobs:
           ref: main
           token: ${{ secrets.LOOM_DEPS_TOKEN }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: crb2nu/fi-accel
+          path: _deps/fi-accel
+          ref: main
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -39,6 +46,7 @@ jobs:
           set -euo pipefail
           go mod edit -replace gitlab.flexinfer.ai/libs/mcp-go=./_deps/mcp-go
           go mod edit -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=./_deps/fi-mcp-kit
+          go mod edit -replace gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel=./_deps/fi-accel/go/fiaccel
       - name: Guardrails (docs drift + CLI help smoke)
         run: |
           bash scripts/ci/check_docs_guardrails.sh
@@ -68,6 +76,13 @@ jobs:
           ref: main
           token: ${{ secrets.LOOM_DEPS_TOKEN }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: crb2nu/fi-accel
+          path: _deps/fi-accel
+          ref: main
+          token: ${{ secrets.LOOM_DEPS_TOKEN }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -77,6 +92,7 @@ jobs:
           set -euo pipefail
           go mod edit -replace gitlab.flexinfer.ai/libs/mcp-go=./_deps/mcp-go
           go mod edit -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=./_deps/fi-mcp-kit
+          go mod edit -replace gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel=./_deps/fi-accel/go/fiaccel
       - name: Install security tools
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest

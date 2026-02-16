@@ -97,6 +97,9 @@ cache:
       if [ ! -d "${LIBS_DIR}/fi-mcp-kit" ]; then
         git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" "${LIBS_DIR}/fi-mcp-kit"
       fi
+      if [ ! -d "${LIBS_DIR}/fi-accel" ]; then
+        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-accel.git" "${LIBS_DIR}/fi-accel"
+      fi
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
     - mkdir -p "$GOPATH" "$GOCACHE"
