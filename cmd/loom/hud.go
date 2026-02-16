@@ -21,6 +21,8 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var flexinferURL string
 	var flexinferKey string
 	var coordinatorModel string
+	var webhookURL string
+	var webhookToken string
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
@@ -78,6 +80,8 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				FlexInferURL:        flexinferURL,
 				FlexInferKey:        flexinferKey,
 				CoordinatorModel:    coordinatorModel,
+				WebhookURL:          webhookURL,
+				WebhookToken:        webhookToken,
 				TUI:                 tui,
 			})
 		},
@@ -98,6 +102,10 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&flexinferURL, "flexinfer-url", os.Getenv("FLEXINFER_URL"), "FlexInfer proxy URL (enables coordinator) [$FLEXINFER_URL]")
 	cmd.Flags().StringVar(&flexinferKey, "flexinfer-key", os.Getenv("FLEXINFER_API_KEY"), "FlexInfer API key [$FLEXINFER_API_KEY]")
 	cmd.Flags().StringVar(&coordinatorModel, "coordinator-model", os.Getenv("COORDINATOR_MODEL"), "Default model for coordinator (e.g., fast-chat) [$COORDINATOR_MODEL]")
+
+	// Webhook push (fleet presence → remote endpoint like flexdeck).
+	cmd.Flags().StringVar(&webhookURL, "webhook-url", os.Getenv("HUD_WEBHOOK_URL"), "Push agent presence to this URL on each fleet refresh [$HUD_WEBHOOK_URL]")
+	cmd.Flags().StringVar(&webhookToken, "webhook-token", os.Getenv("HUD_WEBHOOK_TOKEN"), "Bearer token for webhook auth [$HUD_WEBHOOK_TOKEN]")
 
 	// Ghostty integration.
 	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")

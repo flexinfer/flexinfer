@@ -390,6 +390,12 @@ func (a *AgentBridge) RejectStep(workflowID, stepID string) error {
 	return a.callAgentTool("agent_workflow_reject", args, nil)
 }
 
+// CancelWorkflow cancels a running workflow.
+func (a *AgentBridge) CancelWorkflow(workflowID string) error {
+	args := map[string]any{"workflow_id": workflowID}
+	return a.callAgentTool("agent_workflow_cancel", args, nil)
+}
+
 // MemoryStats returns the memory hierarchy statistics.
 func (a *AgentBridge) MemoryStats() (*MemoryStatsResult, error) {
 	var result MemoryStatsResult

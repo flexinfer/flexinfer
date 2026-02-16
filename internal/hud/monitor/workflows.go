@@ -140,6 +140,15 @@ func (m *WorkflowMonitor) RejectStep(workflowID, stepID string) error {
 	return nil
 }
 
+// CancelWorkflow cancels a workflow and invalidates the cached detail.
+func (m *WorkflowMonitor) CancelWorkflow(workflowID string) error {
+	if err := m.agent.CancelWorkflow(workflowID); err != nil {
+		return fmt.Errorf("cancel workflow %s: %w", workflowID, err)
+	}
+	m.invalidateDetail(workflowID)
+	return nil
+}
+
 // PendingApprovals returns the count of workflows with status "waiting_approval".
 func (m *WorkflowMonitor) PendingApprovals() int {
 	m.mu.RLock()

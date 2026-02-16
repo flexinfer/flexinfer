@@ -52,6 +52,10 @@ type Config struct {
 	FlexInferKey     string // Optional API key for FlexInfer.
 	CoordinatorModel string // Default model for coordinator tasks (e.g., "qwen3-8b").
 
+	// Webhook push: forward presence+session snapshots to a remote endpoint.
+	WebhookURL   string // Push URL (e.g., "https://deck.flexinfer.ai/api/agents/hud/push").
+	WebhookToken string // Bearer token for push auth.
+
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
 }
@@ -154,17 +158,31 @@ func Run(cfg Config) error {
 	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
 	// This enables "SSE-first" data flow: stores apply data directly from
 	// these events rather than re-fetching via HTTP after receiving a signal.
+
+	// Optional webhook pusher: forward presence+session snapshots to a remote
+	// endpoint (e.g., flexdeck in the K8s cluster).
+	var fleetWebhook *FleetWebhook
+	if cfg.WebhookURL != "" {
+		fleetWebhook = NewFleetWebhook(cfg.WebhookURL, cfg.WebhookToken, logger)
+		logger.Info("fleet webhook enabled", "url", cfg.WebhookURL)
+	}
+
 	app.fleetMonitor.OnRefresh(func(snap monitor.FleetSnapshot) {
+		// SSE broadcast to browser clients.
 		data, err := json.Marshal(snap)
-		if err != nil {
-			return
+		if err == nil {
+			app.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-fleet-%d", time.Now().UnixMilli()),
+				Type:      "hud.fleet",
+				Timestamp: time.Now(),
+				Data:      data,
+			})
 		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-fleet-%d", time.Now().UnixMilli()),
-			Type:      "hud.fleet",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
+
+		// Webhook push to remote endpoint (non-blocking).
+		if fleetWebhook != nil {
+			go fleetWebhook.Push(snap)
+		}
 	})
 	app.healthMonitor.OnRefresh(func(servers []monitor.ServerHealthEntry) {
 		data, err := json.Marshal(map[string]any{"servers": servers})
@@ -404,6 +422,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/workflows/{id}", a.withCORS(a.handleWorkflowDetail))
 	mux.HandleFunc("POST /api/workflows/{id}/approve", a.withCORS(a.handleWorkflowApprove))
 	mux.HandleFunc("POST /api/workflows/{id}/reject", a.withCORS(a.handleWorkflowReject))
+	mux.HandleFunc("POST /api/workflows/{id}/cancel", a.withCORS(a.handleWorkflowCancel))
 	mux.HandleFunc("GET /api/memory/stats", a.withCORS(a.handleMemoryStats))
 	mux.HandleFunc("POST /api/memory/{id}/promote", a.withCORS(a.handleMemoryPromote))
 	mux.HandleFunc("POST /api/memory/{id}/demote", a.withCORS(a.handleMemoryDemote))
@@ -792,6 +811,24 @@ func (a *App) handleWorkflowReject(w http.ResponseWriter, r *http.Request) {
 		"step_id":     body.StepID,
 	})
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
+}
+
+// handleWorkflowCancel cancels a running workflow and invalidates the cache.
+func (a *App) handleWorkflowCancel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		a.writeError(w, http.StatusBadRequest, "missing workflow id", nil)
+		return
+	}
+	if err := a.workflowMonitor.CancelWorkflow(id); err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to cancel workflow", err)
+		return
+	}
+	go a.workflowMonitor.Refresh()
+	a.broadcastAgentEvent("hud.workflow.cancel", map[string]any{
+		"workflow_id": id,
+	})
+	a.writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
 // handleMemoryStats returns memory hierarchy stats from the memory monitor.
