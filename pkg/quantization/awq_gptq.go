@@ -3,7 +3,6 @@ package quantization
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -380,8 +379,4 @@ func gptqQuantizerImage() string {
 		return img
 	}
 	return DefaultGPTQImage
-}
-
-func quantizationTypeFromBitsAndGroup(bits, groupSize int) string {
-	return strings.ToUpper(fmt.Sprintf("W%d_G%d", bits, groupSize))
 }
