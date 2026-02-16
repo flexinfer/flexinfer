@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -12,24 +13,105 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/apimachinery/pkg/runtime"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
+
+type runtimeConfig struct {
+	strategy      globalrouting.Strategy
+	clusters      []globalrouting.ClusterEndpoint
+	failoverOrder []string
+}
+
+type proxyState struct {
+	registry *globalrouting.Registry
+	router   *globalrouting.Router
+
+	mu       sync.RWMutex
+	strategy globalrouting.Strategy
+	proxies  map[string]*httputil.ReverseProxy
+}
+
+func newProxyState(cfg runtimeConfig) (*proxyState, error) {
+	proxies, err := buildReverseProxyMap(cfg.clusters)
+	if err != nil {
+		return nil, err
+	}
+
+	registry := globalrouting.NewRegistry(cfg.clusters, cfg.failoverOrder)
+	return &proxyState{
+		registry: registry,
+		router:   globalrouting.NewRouter(registry),
+		strategy: cfg.strategy,
+		proxies:  proxies,
+	}, nil
+}
+
+func (s *proxyState) applyConfig(cfg runtimeConfig) error {
+	proxies, err := buildReverseProxyMap(cfg.clusters)
+	if err != nil {
+		return err
+	}
+
+	s.registry.SetClusters(cfg.clusters)
+	s.registry.SetFailoverOrder(cfg.failoverOrder)
+
+	s.mu.Lock()
+	s.strategy = cfg.strategy
+	s.proxies = proxies
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *proxyState) selectCluster() (globalrouting.ClusterEndpoint, globalrouting.Strategy, error) {
+	s.mu.RLock()
+	strategy := s.strategy
+	s.mu.RUnlock()
+
+	selected, err := s.router.Select(strategy)
+	return selected, strategy, err
+}
+
+func (s *proxyState) proxyFor(cluster string) (*httputil.ReverseProxy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	proxy, ok := s.proxies[cluster]
+	return proxy, ok
+}
+
+func (s *proxyState) strategyValue() globalrouting.Strategy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.strategy
+}
+
+func (s *proxyState) clusterNames() []string {
+	clusters := s.registry.Clusters()
+	return clusterNames(clusters)
+}
 
 func main() {
 	var (
-		port         int
-		logLevel     string
-		strategyFlag string
-		clustersFlag string
-		failoverFlag string
-		weightsFlag  string
-		probePath    string
-		probeTimeout time.Duration
-		probeEvery   time.Duration
+		port                    int
+		logLevel                string
+		strategyFlag            string
+		clustersFlag            string
+		failoverFlag            string
+		weightsFlag             string
+		probePath               string
+		probeTimeout            time.Duration
+		probeEvery              time.Duration
+		globalProxyName         string
+		globalProxyNamespace    string
+		globalProxySyncInterval time.Duration
 	)
 
 	flag.IntVar(&port, "port", 8090, "Port to listen on")
@@ -41,45 +123,58 @@ func main() {
 	flag.StringVar(&probePath, "probe-path", "/healthz", "Health probe path on downstream cluster proxies")
 	flag.DurationVar(&probeTimeout, "probe-timeout", 2*time.Second, "HTTP timeout per downstream probe")
 	flag.DurationVar(&probeEvery, "probe-interval", 15*time.Second, "Probe interval for downstream latency/health checks")
+	flag.StringVar(&globalProxyName, "globalproxy-name", os.Getenv("GLOBAL_PROXY_NAME"), "Optional GlobalProxy resource name for dynamic config sync")
+	flag.StringVar(&globalProxyNamespace, "globalproxy-namespace", os.Getenv("POD_NAMESPACE"), "Namespace containing GlobalProxy resource (default: POD_NAMESPACE or default)")
+	flag.DurationVar(&globalProxySyncInterval, "globalproxy-sync-interval", 15*time.Second, "Polling interval for GlobalProxy config sync")
 	flag.Parse()
+
+	if strings.TrimSpace(globalProxyNamespace) == "" {
+		globalProxyNamespace = "default"
+	}
 
 	logger := buildLogger(logLevel)
 	slog.SetDefault(logger)
 
-	strategy, err := parseStrategy(strategyFlag)
+	cfg, err := configFromFlags(strategyFlag, clustersFlag, failoverFlag, weightsFlag)
 	if err != nil {
-		slog.Error("invalid strategy", "error", err)
+		slog.Error("invalid startup configuration", "error", err)
 		os.Exit(1)
 	}
 
-	clusters, err := parseClusters(clustersFlag)
+	state, err := newProxyState(cfg)
 	if err != nil {
-		slog.Error("invalid clusters", "error", err)
+		slog.Error("failed to initialize proxy state", "error", err)
 		os.Exit(1)
 	}
-	weights, err := parseWeights(weightsFlag)
-	if err != nil {
-		slog.Error("invalid weights", "error", err)
-		os.Exit(1)
-	}
-	if err := applyClusterWeights(clusters, weights); err != nil {
-		slog.Error("failed to apply weights", "error", err)
-		os.Exit(1)
-	}
-	failoverOrder := parseCSV(failoverFlag)
 
-	registry := globalrouting.NewRegistry(clusters, failoverOrder)
-	router := globalrouting.NewRouter(registry)
+	if strings.TrimSpace(globalProxyName) != "" {
+		k8sClient, err := newGlobalProxyClient()
+		if err != nil {
+			slog.Error("failed to create kubernetes client for GlobalProxy sync", "error", err)
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		if err := syncFromGlobalProxy(ctx, k8sClient, globalProxyNamespace, globalProxyName, state); err != nil {
+			slog.Warn("initial GlobalProxy sync failed; continuing with flag/env config",
+				"namespace", globalProxyNamespace,
+				"name", globalProxyName,
+				"error", err,
+			)
+		} else {
+			slog.Info("applied initial GlobalProxy config",
+				"namespace", globalProxyNamespace,
+				"name", globalProxyName,
+			)
+		}
+
+		go runGlobalProxySyncLoop(ctx, k8sClient, globalProxyNamespace, globalProxyName, state, globalProxySyncInterval)
+	}
+
 	metrics := newRoutingMetrics()
 	prober := newClusterProber(probePath, probeTimeout)
-	prober.probeAll(registry, metrics)
-	go runProbeLoop(registry, metrics, prober, probeEvery)
-
-	proxies, err := buildReverseProxyMap(clusters)
-	if err != nil {
-		slog.Error("failed to create reverse proxies", "error", err)
-		os.Exit(1)
-	}
+	prober.probeAll(state.registry, metrics)
+	go runProbeLoop(state.registry, metrics, prober, probeEvery)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -87,20 +182,20 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := router.Select(strategy); err != nil {
+		if _, _, err := state.selectCluster(); err != nil {
 			http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		selected, err := router.Select(strategy)
+		selected, strategy, err := state.selectCluster()
 		if err != nil {
 			http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
 			return
 		}
 
-		proxy, ok := proxies[selected.Name]
+		proxy, ok := state.proxyFor(selected.Name)
 		if !ok {
 			http.Error(w, "cluster proxy not configured", http.StatusInternalServerError)
 			return
@@ -114,15 +209,148 @@ func main() {
 	addr := fmt.Sprintf(":%d", port)
 	slog.Info("starting global proxy",
 		"addr", addr,
-		"strategy", strategy,
-		"clusters", clusterNames(clusters),
+		"strategy", state.strategyValue(),
+		"clusters", state.clusterNames(),
 		"probePath", probePath,
 		"probeInterval", probeEvery,
+		"globalProxyName", globalProxyName,
+		"globalProxyNamespace", globalProxyNamespace,
 	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
 	}
+}
+
+func configFromFlags(strategyFlag, clustersFlag, failoverFlag, weightsFlag string) (runtimeConfig, error) {
+	strategy, err := parseStrategy(strategyFlag)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
+	clusters, err := parseClusters(clustersFlag)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
+	weights, err := parseWeights(weightsFlag)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	if err := applyClusterWeights(clusters, weights); err != nil {
+		return runtimeConfig{}, err
+	}
+
+	return runtimeConfig{
+		strategy:      strategy,
+		clusters:      clusters,
+		failoverOrder: parseCSV(failoverFlag),
+	}, nil
+}
+
+func newGlobalProxyClient() (crclient.Client, error) {
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha2.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("add ai.flexinfer scheme: %w", err)
+	}
+
+	cfg, err := ctrlconfig.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("get kubeconfig: %w", err)
+	}
+
+	k8sClient, err := crclient.New(cfg, crclient.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("create kubernetes client: %w", err)
+	}
+	return k8sClient, nil
+}
+
+func runGlobalProxySyncLoop(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := syncFromGlobalProxy(ctx, k8sClient, namespace, name, state); err != nil {
+			slog.Warn("GlobalProxy sync failed", "namespace", namespace, "name", name, "error", err)
+		}
+	}
+}
+
+func syncFromGlobalProxy(ctx context.Context, k8sClient crclient.Client, namespace, name string, state *proxyState) error {
+	globalProxy := &aiv1alpha2.GlobalProxy{}
+	if err := k8sClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: name}, globalProxy); err != nil {
+		return fmt.Errorf("get GlobalProxy %s/%s: %w", namespace, name, err)
+	}
+
+	cfg, err := runtimeConfigFromGlobalProxy(globalProxy)
+	if err != nil {
+		return fmt.Errorf("build runtime config from GlobalProxy %s/%s: %w", namespace, name, err)
+	}
+	if err := state.applyConfig(cfg); err != nil {
+		return fmt.Errorf("apply GlobalProxy runtime config %s/%s: %w", namespace, name, err)
+	}
+
+	slog.Debug("applied GlobalProxy config",
+		"namespace", namespace,
+		"name", name,
+		"strategy", cfg.strategy,
+		"clusters", clusterNames(cfg.clusters),
+	)
+	return nil
+}
+
+func runtimeConfigFromGlobalProxy(gp *aiv1alpha2.GlobalProxy) (runtimeConfig, error) {
+	strategy, err := parseStrategy(string(gp.Spec.Strategy))
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+
+	clusters := make([]globalrouting.ClusterEndpoint, 0, len(gp.Spec.Clusters))
+	seenNames := make(map[string]struct{}, len(gp.Spec.Clusters))
+	for _, c := range gp.Spec.Clusters {
+		name := strings.TrimSpace(c.Name)
+		if name == "" {
+			return runtimeConfig{}, fmt.Errorf("spec.clusters[].name is required")
+		}
+		if _, exists := seenNames[name]; exists {
+			return runtimeConfig{}, fmt.Errorf("spec.clusters has duplicate name %q", name)
+		}
+		seenNames[name] = struct{}{}
+
+		u, err := url.Parse(strings.TrimSpace(c.Endpoint))
+		if err != nil {
+			return runtimeConfig{}, fmt.Errorf("spec.clusters[%q].endpoint invalid: %w", name, err)
+		}
+		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return runtimeConfig{}, fmt.Errorf("spec.clusters[%q].endpoint must be absolute http(s) URL", name)
+		}
+
+		weight := 1
+		if c.Weight != nil {
+			weight = int(*c.Weight)
+			if weight < 1 {
+				return runtimeConfig{}, fmt.Errorf("spec.clusters[%q].weight must be >= 1", name)
+			}
+		}
+
+		clusters = append(clusters, globalrouting.ClusterEndpoint{
+			Name:    name,
+			URL:     u.String(),
+			Healthy: true,
+			Weight:  weight,
+		})
+	}
+
+	return runtimeConfig{
+		strategy:      strategy,
+		clusters:      clusters,
+		failoverOrder: append([]string(nil), gp.Spec.FailoverOrder...),
+	}, nil
 }
 
 type routingMetrics struct {

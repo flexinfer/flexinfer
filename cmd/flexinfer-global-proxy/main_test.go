@@ -3,7 +3,9 @@ package main
 import (
 	"testing"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestParseStrategy(t *testing.T) {
@@ -138,5 +140,55 @@ func TestApplyClusterWeights(t *testing.T) {
 	bad := map[string]int{"cluster-c": 2}
 	if err := applyClusterWeights(clusters, bad); err == nil {
 		t.Fatalf("applyClusterWeights() error = nil, want non-nil for unknown cluster")
+	}
+}
+
+func TestRuntimeConfigFromGlobalProxy(t *testing.T) {
+	weightA := int32(3)
+	gp := &aiv1alpha2.GlobalProxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "global",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.GlobalProxySpec{
+			Strategy: aiv1alpha2.GlobalRoutingStrategyWeighted,
+			Clusters: []aiv1alpha2.GlobalProxyClusterEndpoint{
+				{Name: "cluster-a", Endpoint: "https://a.example.com", Weight: &weightA},
+				{Name: "cluster-b", Endpoint: "https://b.example.com"},
+			},
+			FailoverOrder: []string{"cluster-a", "cluster-b"},
+		},
+	}
+
+	cfg, err := runtimeConfigFromGlobalProxy(gp)
+	if err != nil {
+		t.Fatalf("runtimeConfigFromGlobalProxy() error = %v", err)
+	}
+	if cfg.strategy != globalrouting.StrategyWeighted {
+		t.Fatalf("strategy = %q, want %q", cfg.strategy, globalrouting.StrategyWeighted)
+	}
+	if len(cfg.clusters) != 2 {
+		t.Fatalf("len(clusters) = %d, want 2", len(cfg.clusters))
+	}
+	if cfg.clusters[0].Weight != 3 {
+		t.Fatalf("cluster-a weight = %d, want 3", cfg.clusters[0].Weight)
+	}
+	if cfg.clusters[1].Weight != 1 {
+		t.Fatalf("cluster-b default weight = %d, want 1", cfg.clusters[1].Weight)
+	}
+}
+
+func TestRuntimeConfigFromGlobalProxyValidation(t *testing.T) {
+	gp := &aiv1alpha2.GlobalProxy{
+		Spec: aiv1alpha2.GlobalProxySpec{
+			Strategy: aiv1alpha2.GlobalRoutingStrategyRoundRobin,
+			Clusters: []aiv1alpha2.GlobalProxyClusterEndpoint{
+				{Name: "cluster-a", Endpoint: "grpc://a.example.com"},
+			},
+		},
+	}
+
+	if _, err := runtimeConfigFromGlobalProxy(gp); err == nil {
+		t.Fatalf("runtimeConfigFromGlobalProxy() error = nil, want non-nil")
 	}
 }
