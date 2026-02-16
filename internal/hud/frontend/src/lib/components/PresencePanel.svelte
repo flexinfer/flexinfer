@@ -361,6 +361,131 @@
   let nudgeQueueStatusError = $state('');
   let nudgeQueuePolicy = $state(null);
   let nudgeQueuePolicyError = $state('');
+  let nudgePolicyCapInput = $state('');
+  let nudgePolicyDebounceInput = $state('');
+  let nudgePolicyDropPolicy = $state('drop_old');
+  let nudgePolicyLanePriorityInput = $state('');
+  let nudgePolicyUpdatedBy = $state('hud-ui');
+  let nudgePolicyAdminToken = $state('');
+  let nudgePolicyUpdating = $state(false);
+  let nudgePolicyMutationError = $state('');
+  let nudgePolicyFormDirty = $state(false);
+  const nudgeDropPolicyOptions = ['drop_old', 'drop_new', 'summarize'];
+
+  function parseLanePriorityInput(raw) {
+    return raw
+      .split(',')
+      .map((lane) => lane.trim())
+      .filter((lane) => lane.length > 0);
+  }
+
+  function markNudgePolicyDirty() {
+    nudgePolicyFormDirty = true;
+    nudgePolicyMutationError = '';
+  }
+
+  function hydrateNudgePolicyForm(policy) {
+    if (!policy || nudgePolicyFormDirty || nudgePolicyUpdating) return;
+    nudgePolicyCapInput = String(policy.cap ?? '');
+    nudgePolicyDebounceInput = String(policy.debounce_ms ?? 0);
+    nudgePolicyDropPolicy = nudgeDropPolicyOptions.includes(policy.drop_policy) ? policy.drop_policy : 'drop_old';
+    nudgePolicyLanePriorityInput = (policy.lane_priority ?? []).join(', ');
+    nudgePolicyMutationError = '';
+    nudgePolicyFormDirty = false;
+  }
+
+  function resetNudgePolicyForm() {
+    const source = nudgeQueuePolicy ?? nudgeQueueStatus;
+    if (!source) return;
+    nudgePolicyFormDirty = false;
+    hydrateNudgePolicyForm(source);
+  }
+
+  async function updateNudgePolicy() {
+    if (nudgePolicyUpdating) return;
+
+    const token = nudgePolicyAdminToken.trim();
+    if (!token) {
+      nudgePolicyMutationError = 'Admin token is required to update policy.';
+      return;
+    }
+
+    const cap = Number.parseInt(nudgePolicyCapInput.trim(), 10);
+    if (!Number.isInteger(cap) || cap <= 0) {
+      nudgePolicyMutationError = 'Cap must be a positive integer.';
+      return;
+    }
+
+    const debounceMs = Number.parseInt(nudgePolicyDebounceInput.trim(), 10);
+    if (!Number.isInteger(debounceMs) || debounceMs < 0) {
+      nudgePolicyMutationError = 'Debounce must be a non-negative integer (ms).';
+      return;
+    }
+
+    const dropPolicy = nudgePolicyDropPolicy.trim();
+    if (!nudgeDropPolicyOptions.includes(dropPolicy)) {
+      nudgePolicyMutationError = 'Drop policy must be drop_old, drop_new, or summarize.';
+      return;
+    }
+
+    const lanePriority = parseLanePriorityInput(nudgePolicyLanePriorityInput);
+    if (lanePriority.length === 0) {
+      nudgePolicyMutationError = 'Lane priority must include at least one lane.';
+      return;
+    }
+
+    const currentPolicy = nudgeQueuePolicy ?? nudgeQueueStatus;
+    if (
+      currentPolicy &&
+      currentPolicy.cap === cap &&
+      currentPolicy.debounce_ms === debounceMs &&
+      currentPolicy.drop_policy === dropPolicy &&
+      JSON.stringify(currentPolicy.lane_priority ?? []) === JSON.stringify(lanePriority)
+    ) {
+      nudgePolicyMutationError = '';
+      nudgePolicyFormDirty = false;
+      toastStore.info('Nudge queue policy is already up to date');
+      return;
+    }
+
+    nudgePolicyMutationError = '';
+    nudgePolicyUpdating = true;
+    try {
+      const res = await globalThis.fetch('/api/agent/nudge-queue-policy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': token,
+        },
+        body: JSON.stringify({
+          cap,
+          debounce_ms: debounceMs,
+          drop_policy: dropPolicy,
+          lane_priority: lanePriority,
+          updated_by: nudgePolicyUpdatedBy.trim() || 'hud-ui',
+        }),
+      });
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        throw new Error(data?.error || `${res.status} ${res.statusText}`);
+      }
+      nudgeQueuePolicy = data?.policy ?? null;
+      nudgePolicyFormDirty = false;
+      hydrateNudgePolicyForm(nudgeQueuePolicy);
+      toastStore.success('Nudge queue policy updated');
+      await fetchDiagnostics();
+    } catch (e) {
+      nudgePolicyMutationError = e instanceof Error ? e.message : 'Failed to update policy';
+      toastStore.error(nudgePolicyMutationError);
+    } finally {
+      nudgePolicyUpdating = false;
+    }
+  }
 
   async function fetchJSON(url) {
     const res = await globalThis.fetch(url);
@@ -412,6 +537,10 @@
     } else {
       nudgeQueuePolicy = null;
       nudgeQueuePolicyError = policyResult.reason?.message ?? 'Failed to load queue policy';
+    }
+
+    if (!nudgePolicyFormDirty && !nudgePolicyUpdating) {
+      hydrateNudgePolicyForm(nudgeQueuePolicy ?? nudgeQueueStatus);
     }
 
     if (contextInspectError && nudgeQueueStatusError && nudgeQueuePolicyError) {
@@ -801,7 +930,7 @@
           <div class="diagnostics-metrics">
             <div class="stat-card" style="--accent-color: var(--accent)">
               <div class="metric-value">{contextInspect?.estimated_tokens ?? '---'}</div>
-              <div class="metric-label">Est. Tokens</div>
+              <div class="metric-label">Prompt Est. Tokens</div>
             </div>
             <div class="stat-card" style="--accent-color: var(--info)">
               <div class="metric-value">{contextInspect?.entry_count ?? '---'}</div>
@@ -839,6 +968,18 @@
                     </div>
                   {/each}
                 </div>
+                {#if (contextInspect.sections ?? []).length > 0}
+                  <div class="diag-subtitle">Prompt Sections</div>
+                  <div class="diag-list">
+                    {#each (contextInspect.sections ?? []) as section}
+                      <div class="diag-row">
+                        <span class="text-mono">{section.section}</span>
+                        <span class="text-xs text-muted">{section.source}</span>
+                        <span class="text-xs text-mono">{section.estimated_tokens} tok</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
                 {#if (contextInspect.top_entries ?? []).length > 0}
                   <div class="diag-subtitle">Top Entries</div>
                   <div class="diag-list">
@@ -887,6 +1028,103 @@
                     {/each}
                   </div>
                 {/if}
+
+                <div class="diag-subtitle">Runtime Controls</div>
+                <form
+                  class="diag-policy-form"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    updateNudgePolicy();
+                  }}
+                >
+                  <div class="diag-policy-grid">
+                    <div class="form-group diag-form-group">
+                      <label class="form-label" for="diag-policy-cap">Cap</label>
+                      <input
+                        id="diag-policy-cap"
+                        class="form-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        bind:value={nudgePolicyCapInput}
+                        oninput={markNudgePolicyDirty}
+                      />
+                    </div>
+                    <div class="form-group diag-form-group">
+                      <label class="form-label" for="diag-policy-debounce">Debounce (ms)</label>
+                      <input
+                        id="diag-policy-debounce"
+                        class="form-input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        bind:value={nudgePolicyDebounceInput}
+                        oninput={markNudgePolicyDirty}
+                      />
+                    </div>
+                    <div class="form-group diag-form-group">
+                      <label class="form-label" for="diag-policy-drop">Drop Policy</label>
+                      <select
+                        id="diag-policy-drop"
+                        class="form-input"
+                        bind:value={nudgePolicyDropPolicy}
+                        onchange={markNudgePolicyDirty}
+                      >
+                        <option value="drop_old">drop_old</option>
+                        <option value="drop_new">drop_new</option>
+                        <option value="summarize">summarize</option>
+                      </select>
+                    </div>
+                    <div class="form-group diag-form-group">
+                      <label class="form-label" for="diag-policy-updated-by">Updated By</label>
+                      <input
+                        id="diag-policy-updated-by"
+                        class="form-input"
+                        type="text"
+                        placeholder="hud-ui"
+                        bind:value={nudgePolicyUpdatedBy}
+                        oninput={markNudgePolicyDirty}
+                      />
+                    </div>
+                  </div>
+
+                  <div class="form-group diag-form-group">
+                    <label class="form-label" for="diag-policy-lanes">Lane Priority (comma-separated)</label>
+                    <input
+                      id="diag-policy-lanes"
+                      class="form-input text-mono"
+                      type="text"
+                      placeholder="control, handoff, advice, default"
+                      bind:value={nudgePolicyLanePriorityInput}
+                      oninput={markNudgePolicyDirty}
+                    />
+                  </div>
+
+                  <div class="form-group diag-form-group">
+                    <label class="form-label" for="diag-policy-token">Admin Token</label>
+                    <input
+                      id="diag-policy-token"
+                      class="form-input text-mono"
+                      type="password"
+                      autocomplete="off"
+                      placeholder="Required for policy updates"
+                      bind:value={nudgePolicyAdminToken}
+                    />
+                  </div>
+
+                  <div class="diag-policy-actions">
+                    <button class="btn btn-sm btn-ghost" type="button" onclick={resetNudgePolicyForm} disabled={nudgePolicyUpdating}>
+                      Reset
+                    </button>
+                    <button class="btn btn-sm btn-primary" type="submit" disabled={nudgePolicyUpdating}>
+                      {nudgePolicyUpdating ? 'Updating...' : 'Apply Policy'}
+                    </button>
+                  </div>
+
+                  {#if nudgePolicyMutationError}
+                    <div class="text-xs diagnostics-error">{nudgePolicyMutationError}</div>
+                  {/if}
+                </form>
               {/if}
             </div>
           </div>
@@ -1197,6 +1435,32 @@
     gap: 6px;
   }
 
+  .diag-policy-form {
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .diag-policy-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .diag-form-group {
+    margin-bottom: 0;
+  }
+
+  .diag-policy-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+  }
+
   .lane-chip {
     display: inline-flex;
     align-items: center;
@@ -1494,6 +1758,24 @@
     }
 
     .diagnostics-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .diagnostics-controls {
+      width: 100%;
+      margin-left: 0;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .diagnostics-select {
+      min-width: 0;
+      max-width: none;
+    }
+
+    .diag-policy-grid {
       grid-template-columns: 1fr;
     }
   }

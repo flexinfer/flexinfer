@@ -195,6 +195,27 @@ func TestAgentBridge_SessionEntries_SetsRequiredQuery(t *testing.T) {
 func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
+	handlers.handle("loom/tools", func(_ json.RawMessage) (any, error) {
+		return map[string]any{
+			"tools": []map[string]any{
+				{
+					"name":        "agent_context__agent_context_search",
+					"description": "Search context entries",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"query": map[string]any{"type": "string"},
+							"limit": map[string]any{"type": "integer"},
+						},
+						"required": []string{"query"},
+					},
+				},
+			},
+			"cachedAt":    "2026-02-16T00:00:00Z",
+			"serverCount": 1,
+		}, nil
+	})
+
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
 			Name      string         `json:"name"`
@@ -216,7 +237,7 @@ func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
-					{"type": "text", "text": `{"results":[{"score":1,"entry":{"id":"e1","entry_type":"decision","title":"Short title","content":"small body","timestamp":"2026-02-16T00:00:00Z"}},{"score":1,"entry":{"id":"e2","entry_type":"finding","title":"Longer title","content":"this is a much longer body for context sizing","timestamp":"2026-02-16T00:01:00Z"}}]}`},
+					{"type": "text", "text": `{"results":[{"score":1,"entry":{"id":"e1","entry_type":"decision","title":"Short title","content":"small body","timestamp":"2026-02-16T00:00:00Z","token_count":14}},{"score":1,"entry":{"id":"e2","entry_type":"finding","title":"Longer title","content":"this is a much longer body for context sizing","timestamp":"2026-02-16T00:01:00Z","token_count":27}},{"score":1,"entry":{"id":"e3","entry_type":"file_read","title":"Read internal/hud/api_agent.go","content":"lines 560-640 reviewed for context inspect handler","file_path":"internal/hud/api_agent.go","line_start":560,"line_end":640,"timestamp":"2026-02-16T00:02:00Z","token_count":42}}]}`},
 				},
 			}, nil
 		case "agent_context__agent_task_list":
@@ -246,7 +267,7 @@ func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
 	defer client.Close()
 
 	bridge := NewAgentBridge(client)
-	result, err := bridge.ContextInspect("codex", "", true, 2)
+	result, err := bridge.ContextInspect("codex", "", true, 3)
 	if err != nil {
 		t.Fatalf("context inspect failed: %v", err)
 	}
@@ -254,26 +275,50 @@ func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
 	if result.SessionID != "sess-1" {
 		t.Fatalf("expected session_id sess-1, got %q", result.SessionID)
 	}
-	if result.EntryCount != 2 {
-		t.Fatalf("expected 2 entries, got %d", result.EntryCount)
+	if result.EntryCount != 3 {
+		t.Fatalf("expected 3 entries, got %d", result.EntryCount)
 	}
 	if !result.Truncated {
 		t.Fatalf("expected truncated=true when entry_count == limit")
 	}
-	if len(result.ByEntryType) != 2 {
-		t.Fatalf("expected 2 entry-type buckets, got %d", len(result.ByEntryType))
+	if len(result.ByEntryType) != 3 {
+		t.Fatalf("expected 3 entry-type buckets, got %d", len(result.ByEntryType))
 	}
-	if len(result.TopEntries) != 2 {
+	if len(result.TopEntries) != 3 {
 		t.Fatalf("expected top entries in detail mode, got %d", len(result.TopEntries))
 	}
-	if result.TopEntries[0].ID != "e2" {
-		t.Fatalf("expected largest entry e2 first, got %q", result.TopEntries[0].ID)
+	if result.TopEntries[0].ID != "e3" {
+		t.Fatalf("expected largest token entry e3 first, got %q", result.TopEntries[0].ID)
 	}
 	if result.Tasks.Pending != 1 || result.Tasks.InProgress != 1 || result.Tasks.Completed != 1 {
 		t.Fatalf("unexpected task summary: %+v", result.Tasks)
 	}
 	if result.Memory == nil || result.Memory.TotalTokens != 920 {
 		t.Fatalf("expected memory stats to be populated, got %+v", result.Memory)
+	}
+	if result.ContextEstimatedTokens != 83 {
+		t.Fatalf("expected context_estimated_tokens 83, got %d", result.ContextEstimatedTokens)
+	}
+	if len(result.Sections) != 5 {
+		t.Fatalf("expected 5 accounting sections, got %d", len(result.Sections))
+	}
+	sections := make(map[string]ContextInspectSection, len(result.Sections))
+	sum := 0
+	for _, s := range result.Sections {
+		sections[s.Section] = s
+		sum += s.EstimatedTokens
+	}
+	if result.EstimatedTokens != sum {
+		t.Fatalf("expected estimated_tokens to reconcile with sections (got %d, sum=%d)", result.EstimatedTokens, sum)
+	}
+	if sections["tools_schema"].EstimatedTokens <= 0 {
+		t.Fatalf("expected tools_schema section to include measured overhead, got %+v", sections["tools_schema"])
+	}
+	if sections["file_injections"].EstimatedTokens != 42 {
+		t.Fatalf("expected file_injections tokens to be 42, got %d", sections["file_injections"].EstimatedTokens)
+	}
+	if got := sections["context_entries"].EstimatedTokens + sections["file_injections"].EstimatedTokens; got != result.ContextEstimatedTokens {
+		t.Fatalf("expected context entries + file injections = context_estimated_tokens (%d), got %d", result.ContextEstimatedTokens, got)
 	}
 }
 

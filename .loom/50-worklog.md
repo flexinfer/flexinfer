@@ -1,5 +1,52 @@
 # Worklog
 
+## 2026-02-16 (session 7)
+
+- What changed:
+  - Completed backlog issue #4 baseline (full prompt-section context accounting for context inspector).
+  - Extended `ContextInspect` output with sectioned prompt budget model:
+    - `system_prompt`
+    - `tools_schema` (measured from `loom/tools` tool + input-schema payloads)
+    - `context_entries`
+    - `file_injections`
+    - `response_budget`
+  - Added `context_estimated_tokens` (context-only) and changed `estimated_tokens` to section-total prompt estimate.
+  - Added reconciliation logic so section totals equal final prompt estimate.
+  - Extended HUD Diagnostics Context Breakdown to render new prompt section accounting and updated metric card label to prompt estimate.
+  - Rebuilt and reloaded local runtime via `make dev-reload` (twice in this continuation: pre-work and post-work).
+- Why:
+  - Closes the remaining OpenClaw-informed gap for context observability by making prompt composition overhead visible (not just stored-entry weight).
+- Verification:
+  - `go test ./internal/hud/... ./cmd/loom -count=1` — pass.
+  - `pnpm --dir internal/hud/frontend build` — pass (with same pre-existing Svelte warnings in shared components).
+  - `make dev-reload` — pass.
+- Sources:
+  - [S1] `internal/hud/bridge/agent.go`
+  - [S2] `internal/hud/bridge/agent_test.go`
+  - [S3] `internal/hud/bridge/daemon.go`
+  - [S4] `internal/hud/frontend/src/lib/components/PresencePanel.svelte`
+  - [S5] `docs/USER_GUIDE.md`
+
+## 2026-02-16 (session 6)
+
+- What changed:
+  - Extended backlog issue #5 diagnostics baseline with in-HUD runtime policy mutation controls (completes issue #3 UI mutation path).
+  - Added Presence Diagnostics policy editor for:
+    - `cap`, `debounce_ms`, `drop_policy`, `lane_priority`, `updated_by`
+    - admin token entry (sent as `X-Admin-Token`) for protected `POST /api/agent/nudge-queue-policy`
+  - Added client-side validation and error handling for mutation fields.
+  - Kept diagnostics polling from clobbering in-progress edits by hydrating form state only when form is not dirty.
+  - Updated planning/index docs to reflect HUD mutation controls delivery.
+- Why:
+  - Closes the operator control-loop gap by allowing queue policy tuning directly in HUD, without dropping to CLI/curl.
+- Verification:
+  - `pnpm --dir internal/hud/frontend build` — pass.
+  - `go test ./internal/hud/... ./cmd/loom -count=1` — pass.
+- Sources:
+  - [S1] `internal/hud/frontend/src/lib/components/PresencePanel.svelte`
+  - [S2] `internal/hud/api_agent.go`
+  - [S3] `cmd/loom/cmd_agent.go`
+
 ## 2026-02-16 (session 5)
 
 - What changed:

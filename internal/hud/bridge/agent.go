@@ -156,13 +156,17 @@ type ContextEntryInfo struct {
 
 // ContextEntry is the inner entry within a context search result.
 type ContextEntry struct {
-	ID        string `json:"id"`
-	EntryType string `json:"entry_type"`
-	AgentID   string `json:"agent_id"`
-	Namespace string `json:"namespace"`
-	Title     string `json:"title"`
-	Content   string `json:"content,omitempty"`
-	Timestamp string `json:"timestamp"`
+	ID         string `json:"id"`
+	EntryType  string `json:"entry_type"`
+	AgentID    string `json:"agent_id"`
+	Namespace  string `json:"namespace"`
+	Title      string `json:"title"`
+	Content    string `json:"content,omitempty"`
+	FilePath   string `json:"file_path,omitempty"`
+	LineStart  int    `json:"line_start,omitempty"`
+	LineEnd    int    `json:"line_end,omitempty"`
+	TokenCount int    `json:"token_count,omitempty"`
+	Timestamp  string `json:"timestamp"`
 }
 
 // ContextInspectBucket describes aggregate context weight by entry type.
@@ -191,23 +195,38 @@ type ContextInspectTasks struct {
 	Completed  int `json:"completed"`
 }
 
+// ContextInspectSection describes estimated prompt budget by section.
+type ContextInspectSection struct {
+	Section         string `json:"section"`
+	Chars           int    `json:"chars"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+	Source          string `json:"source"`
+}
+
 // ContextInspectResult is a context budget breakdown for a session.
 type ContextInspectResult struct {
-	SessionID       string                   `json:"session_id"`
-	AgentID         string                   `json:"agent_id,omitempty"`
-	Namespace       string                   `json:"namespace,omitempty"`
-	SessionStatus   string                   `json:"session_status,omitempty"`
-	Limit           int                      `json:"limit"`
-	EntryCount      int                      `json:"entry_count"`
-	ContextChars    int                      `json:"context_chars"`
-	EstimatedTokens int                      `json:"estimated_tokens"`
-	Truncated       bool                     `json:"truncated"`
-	ByEntryType     []ContextInspectBucket   `json:"by_entry_type"`
-	TopEntries      []ContextInspectTopEntry `json:"top_entries,omitempty"`
-	Tasks           ContextInspectTasks      `json:"tasks"`
-	Memory          *MemoryStatsResult       `json:"memory,omitempty"`
-	RetrievedAt     string                   `json:"retrieved_at"`
+	SessionID              string                   `json:"session_id"`
+	AgentID                string                   `json:"agent_id,omitempty"`
+	Namespace              string                   `json:"namespace,omitempty"`
+	SessionStatus          string                   `json:"session_status,omitempty"`
+	Limit                  int                      `json:"limit"`
+	EntryCount             int                      `json:"entry_count"`
+	ContextChars           int                      `json:"context_chars"`
+	ContextEstimatedTokens int                      `json:"context_estimated_tokens"`
+	EstimatedTokens        int                      `json:"estimated_tokens"`
+	Truncated              bool                     `json:"truncated"`
+	ByEntryType            []ContextInspectBucket   `json:"by_entry_type"`
+	TopEntries             []ContextInspectTopEntry `json:"top_entries,omitempty"`
+	Sections               []ContextInspectSection  `json:"sections"`
+	Tasks                  ContextInspectTasks      `json:"tasks"`
+	Memory                 *MemoryStatsResult       `json:"memory,omitempty"`
+	RetrievedAt            string                   `json:"retrieved_at"`
 }
+
+const (
+	contextInspectSystemPromptTokens   = 768
+	contextInspectResponseBudgetTokens = 2048
+)
 
 func normalizeEntityInfo(e *EntityInfo) {
 	if e == nil {
@@ -981,8 +1000,12 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 
 	byType := make(map[string]*ContextInspectBucket)
 	top := make([]ContextInspectTopEntry, 0, len(entries))
-	totalChars := 0
-	totalTokens := 0
+	totalContextChars := 0
+	totalContextTokens := 0
+	contextEntryChars := 0
+	contextEntryTokens := 0
+	fileInjectionChars := 0
+	fileInjectionTokens := 0
 
 	for _, wrapped := range entries {
 		entry := wrapped.Entry
@@ -991,9 +1014,19 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 			entryType = "note"
 		}
 		chars := estimateContextChars(entry)
-		tokens := estimateContextTokens(chars)
-		totalChars += chars
-		totalTokens += tokens
+		tokens := entry.TokenCount
+		if tokens <= 0 {
+			tokens = estimateContextTokens(chars)
+		}
+		totalContextChars += chars
+		totalContextTokens += tokens
+		if isFileInjectionEntry(entry, entryType) {
+			fileInjectionChars += chars
+			fileInjectionTokens += tokens
+		} else {
+			contextEntryChars += chars
+			contextEntryTokens += tokens
+		}
 
 		b := byType[entryType]
 		if b == nil {
@@ -1029,14 +1062,57 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 
 	if detail {
 		sort.SliceStable(top, func(i, j int) bool {
-			if top[i].Chars == top[j].Chars {
+			if top[i].EstimatedTokens == top[j].EstimatedTokens {
 				return top[i].Timestamp > top[j].Timestamp
 			}
-			return top[i].Chars > top[j].Chars
+			return top[i].EstimatedTokens > top[j].EstimatedTokens
 		})
 		if len(top) > 20 {
 			top = top[:20]
 		}
+	}
+
+	systemPromptChars := contextInspectSystemPromptTokens * 4
+	systemPromptTokens := contextInspectSystemPromptTokens
+	toolSchemaChars, toolSchemaTokens := a.estimateToolSchemaBudget()
+	responseBudgetChars := contextInspectResponseBudgetTokens * 4
+	responseBudgetTokens := contextInspectResponseBudgetTokens
+
+	sections := []ContextInspectSection{
+		{
+			Section:         "system_prompt",
+			Chars:           systemPromptChars,
+			EstimatedTokens: systemPromptTokens,
+			Source:          "heuristic",
+		},
+		{
+			Section:         "tools_schema",
+			Chars:           toolSchemaChars,
+			EstimatedTokens: toolSchemaTokens,
+			Source:          "measured",
+		},
+		{
+			Section:         "context_entries",
+			Chars:           contextEntryChars,
+			EstimatedTokens: contextEntryTokens,
+			Source:          "measured",
+		},
+		{
+			Section:         "file_injections",
+			Chars:           fileInjectionChars,
+			EstimatedTokens: fileInjectionTokens,
+			Source:          "measured",
+		},
+		{
+			Section:         "response_budget",
+			Chars:           responseBudgetChars,
+			EstimatedTokens: responseBudgetTokens,
+			Source:          "heuristic",
+		},
+	}
+	promptEstimatedTokens := 0
+	for _, s := range sections {
+		promptEstimatedTokens += s.EstimatedTokens
 	}
 
 	tasksSummary := ContextInspectTasks{}
@@ -1060,17 +1136,19 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 	}
 
 	result := &ContextInspectResult{
-		SessionID:       sessionID,
-		Limit:           limit,
-		EntryCount:      len(entries),
-		ContextChars:    totalChars,
-		EstimatedTokens: totalTokens,
-		Truncated:       len(entries) >= limit,
-		ByEntryType:     buckets,
-		TopEntries:      top,
-		Tasks:           tasksSummary,
-		Memory:          memory,
-		RetrievedAt:     time.Now().UTC().Format(time.RFC3339),
+		SessionID:              sessionID,
+		Limit:                  limit,
+		EntryCount:             len(entries),
+		ContextChars:           totalContextChars,
+		ContextEstimatedTokens: totalContextTokens,
+		EstimatedTokens:        promptEstimatedTokens,
+		Truncated:              len(entries) >= limit,
+		ByEntryType:            buckets,
+		TopEntries:             top,
+		Sections:               sections,
+		Tasks:                  tasksSummary,
+		Memory:                 memory,
+		RetrievedAt:            time.Now().UTC().Format(time.RFC3339),
 	}
 	if sessionMeta != nil {
 		result.AgentID = sessionMeta.AgentID
@@ -1087,9 +1165,12 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 }
 
 func estimateContextChars(entry ContextEntry) int {
-	chars := len(entry.Title) + len(entry.Content)
+	chars := len(entry.Title) + len(entry.Content) + len(entry.FilePath)
 	// Include minimal metadata overhead so very short entries are still represented.
 	chars += len(entry.EntryType) + len(entry.Timestamp)
+	if entry.LineStart > 0 || entry.LineEnd > 0 {
+		chars += 12
+	}
 	return chars
 }
 
@@ -1099,6 +1180,31 @@ func estimateContextTokens(chars int) int {
 	}
 	// Simple approximation used elsewhere in HUD docs: ~4 chars/token.
 	return (chars + 3) / 4
+}
+
+func isFileInjectionEntry(entry ContextEntry, entryType string) bool {
+	t := strings.ToLower(strings.TrimSpace(entryType))
+	if t == "file_read" || t == "code_context" {
+		return true
+	}
+	return strings.TrimSpace(entry.FilePath) != ""
+}
+
+func (a *AgentBridge) estimateToolSchemaBudget() (chars int, tokens int) {
+	if a == nil || a.client == nil {
+		return 0, 0
+	}
+	toolsResult, err := a.client.Tools()
+	if err != nil || toolsResult == nil {
+		return 0, 0
+	}
+	for _, tool := range toolsResult.Tools {
+		chars += len(tool.Name) + len(tool.Description)
+		if schemaJSON, err := json.Marshal(tool.InputSchema); err == nil {
+			chars += len(schemaJSON)
+		}
+	}
+	return chars, estimateContextTokens(chars)
 }
 
 // --- Reasoning chain methods ---

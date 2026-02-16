@@ -184,6 +184,15 @@ Context budget inspection:
 loom agent context-inspect --agent-id codex --detail --limit 200
 ```
 
+`context-inspect` now includes sectioned prompt accounting (`sections`) for:
+- `system_prompt`
+- `tools_schema`
+- `context_entries`
+- `file_injections`
+- `response_budget`
+
+`estimated_tokens` is the final prompt estimate (sum of section estimates), while `context_estimated_tokens` tracks context-entry-only weight.
+
 Nudge queue status for an agent:
 
 ```bash
@@ -196,6 +205,8 @@ Nudge queue runtime policy (read/update):
 loom agent nudge-queue-policy
 loom agent nudge-queue-policy --cap 96 --drop-policy summarize --debounce-ms 50 --lane-priority control,handoff,advice,default
 ```
+
+HUD equivalent: Presence panel → Diagnostics tab → Nudge Queue Policy → Runtime Controls.
 
 Optional auth env for policy mutation:
 

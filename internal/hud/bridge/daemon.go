@@ -390,8 +390,9 @@ type ServersResult struct {
 
 // ToolInfo describes an aggregated MCP tool.
 type ToolInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema mcp.InputSchema `json:"inputSchema"`
 }
 
 // ToolsResult holds the response from loom/tools.
