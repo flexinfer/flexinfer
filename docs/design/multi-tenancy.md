@@ -129,6 +129,6 @@ Detailed onboarding steps are in `docs/DEPLOYMENT_RUNBOOK.md`.
 ## Future Enhancements (Post-M1)
 
 1. Tenant policy CRD (declarative API instead of values-driven templates).
-2. Validating webhook for mandatory resource requests/limits.
-3. Tenant-aware scheduling/fair-share quotas.
+2. Admission policy guardrails for mandatory resource requests/limits (see `docs/planning/multi-tenancy-followups.md`, MT-2).
+3. Tenant-aware scheduling/fair-share quotas (see `docs/planning/multi-tenancy-followups.md`, MT-3).
 4. Per-tenant metrics, SLOs, and chargeback.

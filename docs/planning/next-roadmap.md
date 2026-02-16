@@ -71,16 +71,18 @@ Tracking issue: [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
 - [x] Multi-tenancy design draft (guarantees/non-guarantees)
 - [x] Helm tenant baseline policy bundle scaffolding (`tenancy.*` values + templates)
 - [x] Tenant onboarding workflow documented in deployment runbook
-- [ ] Validate baseline bundle in staging namespace and capture verification output
+- [x] Validate baseline bundle in staging namespace and capture verification output
+- [x] Define admission-policy follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-2)
+- [x] Define tenant-aware fair-share follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-3)
 
 ## Phase 5: Multi-Cluster (Future)
 
 Design: `docs/design/multi-cluster.md`
 Checklist: `docs/planning/phase-5-multi-cluster.md`
 
-- [ ] Cluster Registry (MVP)
-- [ ] Cross-Cluster Model Sync
-- [ ] Global Routing
+- [x] Cluster Registry (MVP)
+- [x] Cross-Cluster Model Sync
+- [x] Global Routing
 - [ ] Advanced Features
 
 Progress note:
@@ -89,7 +91,8 @@ Progress note:
 - Cluster status now aggregates remote model inventory into `Cluster.status.models` (best-effort).
 - FederatedModel CRD scaffold has landed (`api/v1alpha2/federatedmodel_types.go`, `config/crd/ai.flexinfer_federatedmodels.yaml`).
 - FederatedModel controller scaffold now resolves placement and updates aggregated cluster readiness status (`controllers/federatedmodel_controller.go`).
-- Remaining Cluster Registry work is controller hardening (timeouts/retries/backoff and richer conditions).
+- GlobalProxy CRD + global proxy binary + round-robin/failover/latency/weighted strategies are implemented (`api/v1alpha2/globalproxy_types.go`, `cmd/flexinfer-global-proxy/main.go`).
+- Remaining Phase 5 scope is advanced features: dynamic weight adjustment via CRD and GPU-aware routing.
 
 ## Tech Debt (Ongoing)
 
