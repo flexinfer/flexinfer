@@ -4,7 +4,7 @@
 - [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 
-FlexInfer is split into **five** cooperating executables (all written in Go).
+FlexInfer is split into **six** cooperating executables (all written in Go).
 This document explains what each agent does, how they communicate, and which options you can tune.
 
 | Component | Binary | Runs on | Key responsibility |
@@ -13,6 +13,7 @@ This document explains what each agent does, how they communicate, and which opt
 | Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
 | Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
 | Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
 | Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
 
 ---
@@ -316,6 +317,7 @@ make build-agent
 make build-controller
 make build-scheduler
 make build-benchmarker
+make build-global-proxy
 ```
 
 ### Testing

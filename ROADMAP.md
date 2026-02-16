@@ -136,8 +136,8 @@ Shipped in pipeline #498 across 3 commits.
 
 See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` for details.
 
-- [ ] Cluster Registry (MVP) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3))
-- [ ] Cross-Cluster Model Sync ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4))
+- [x] Cluster Registry (MVP) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3))
+- [x] Cross-Cluster Model Sync ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4))
 - [ ] Global Routing ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5))
 - [ ] Advanced Features (weighted routing, cross-cluster GPU sharing) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6))
 

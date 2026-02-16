@@ -108,9 +108,9 @@ See `docs/design/multi-cluster.md` for the full design document.
 #### 5) Model propagation
 
 - [x] Watch FederatedModel resources (status/placement scaffold controller)
-- [ ] Create/update/delete Model resources in target clusters
-- [ ] Handle cluster membership changes (add/remove clusters)
-- [ ] Aggregate status from remote Models
+- [x] Create/update/delete Model resources in target clusters
+- [x] Handle cluster membership changes (add/remove clusters)
+- [x] Aggregate status from remote Models
 
 **Acceptance**
 - Model appears in all selected clusters within reconcile interval.
@@ -124,10 +124,10 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 6) GlobalProxy component
 
-- [ ] Create `cmd/flexinfer-global-proxy/` binary
-- [ ] Implement cluster endpoint registry
-- [ ] Implement round-robin routing as default
-- [ ] Implement failover routing (primary/backup)
+- [x] Create `cmd/flexinfer-global-proxy/` binary
+- [x] Implement cluster endpoint registry
+- [x] Implement round-robin routing as default
+- [x] Implement failover routing (primary/backup)
 
 **Acceptance**
 - Requests to global proxy reach healthy cluster proxies.
@@ -139,7 +139,7 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 7) GlobalProxy CRD
 
-- [ ] Define `GlobalProxy` CRD:
+- [x] Define `GlobalProxy` CRD:
   - `spec.externalEndpoint` - External hostname
   - `spec.tls` - TLS configuration
   - `spec.clusters` - Cluster endpoints with weights

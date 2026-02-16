@@ -109,12 +109,17 @@ build-all: build build-cli ## Build all binaries (manager + CLI + flash-loader).
 	go build -o bin/flexinfer-agent ./cmd/flexinfer-agent
 	go build -o bin/flexinfer-bench ./cmd/flexinfer-bench
 	go build -o bin/flexinfer-proxy ./cmd/flexinfer-proxy
+	go build -o bin/flexinfer-global-proxy ./cmd/flexinfer-global-proxy
 	go build -o bin/flexinfer-sched ./cmd/flexinfer-sched
 	go build -o bin/flexinfer-flash-loader ./cmd/flexinfer-flash-loader
 
 .PHONY: build-flash-loader
 build-flash-loader: ## Build the flash-loader init container binary.
 	go build -o bin/flexinfer-flash-loader ./cmd/flexinfer-flash-loader
+
+.PHONY: build-global-proxy
+build-global-proxy: ## Build the global proxy binary.
+	go build -o bin/flexinfer-global-proxy ./cmd/flexinfer-global-proxy
 
 .PHONY: test-race
 test-race: ## Run tests with race detector
