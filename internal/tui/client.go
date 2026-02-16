@@ -8,6 +8,18 @@ import (
 	"github.com/crb2nu/loom/internal/hud/monitor"
 )
 
+// Deps bundles pre-existing monitors and bridge for shared-mode operation.
+// When the HUD and TUI co-host, the HUD owns the monitors and passes them
+// here so the TUI reads from the same cached snapshots without creating a
+// second daemon connection or duplicate polling loops.
+type Deps struct {
+	Agent  *bridge.AgentBridge
+	Fleet  *monitor.FleetMonitor
+	Health *monitor.HealthMonitor
+	Memory *monitor.MemoryMonitor
+	Stream *monitor.StreamMonitor
+}
+
 // Client provides data access for the TUI, backed by the same monitors
 // used by the web dashboard.
 type Client struct {
@@ -18,9 +30,11 @@ type Client struct {
 	memory *monitor.MemoryMonitor
 	stream *monitor.StreamMonitor
 	logger *slog.Logger
+	owned  bool // true = we created monitors and must stop them
 }
 
 // NewClient creates a TUI client connected to the daemon socket.
+// The client owns its monitors and daemon connection (owned=true).
 func NewClient(socketPath string, logger *slog.Logger) (*Client, error) {
 	d := bridge.NewDaemonClient(socketPath, logger)
 	// Don't fail hard if the daemon isn't up yet. The daemon client can
@@ -33,6 +47,7 @@ func NewClient(socketPath string, logger *slog.Logger) (*Client, error) {
 		daemon: d,
 		agent:  a,
 		logger: logger,
+		owned:  true,
 	}
 	// Initialize monitors with the same cadences as the web dashboard.
 	c.fleet = monitor.NewFleetMonitor(d, a, logger)
@@ -42,8 +57,26 @@ func NewClient(socketPath string, logger *slog.Logger) (*Client, error) {
 	return c, nil
 }
 
+// NewClientFromDeps creates a TUI client backed by externally-owned monitors.
+// Start() and Stop() are no-ops because the caller manages the monitor lifecycle.
+func NewClientFromDeps(deps Deps, logger *slog.Logger) *Client {
+	return &Client{
+		agent:  deps.Agent,
+		fleet:  deps.Fleet,
+		health: deps.Health,
+		memory: deps.Memory,
+		stream: deps.Stream,
+		logger: logger,
+		owned:  false,
+	}
+}
+
 // Start begins all background monitor polling.
+// No-op when the client was created via NewClientFromDeps (monitors are externally managed).
 func (c *Client) Start() {
+	if !c.owned {
+		return
+	}
 	c.fleet.Start(15 * time.Second)
 	c.health.Start(5 * time.Second)
 	c.memory.Start(10 * time.Second)
@@ -51,7 +84,11 @@ func (c *Client) Start() {
 }
 
 // Stop halts all monitors and closes the daemon connection.
+// No-op when the client was created via NewClientFromDeps (monitors are externally managed).
 func (c *Client) Stop() {
+	if !c.owned {
+		return
+	}
 	c.fleet.Stop()
 	c.health.Stop()
 	c.memory.Stop()

@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -553,8 +554,28 @@ func (m Model) tabFromX(x int) Panel {
 	return -1
 }
 
+// RunWithDeps starts the TUI dashboard using externally-owned monitors.
+// This is called when the HUD and TUI co-host: the HUD owns the daemon
+// connection and monitors, so the TUI reads from shared cached snapshots.
+func RunWithDeps(deps Deps, ctx context.Context) error {
+	logger := newTUILogger().With("component", "tui")
+	client := NewClientFromDeps(deps, logger)
+	// No Start/Stop — monitors are externally managed.
+
+	restoreStderr := redirectStderr()
+	defer restoreStderr()
+
+	model := New(client)
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+	return nil
+}
+
 // Run starts the TUI dashboard. This is the main entry point called from the CLI.
-func Run(socketPath string) error {
+// The provided context enables clean shutdown on external signals (SIGINT, SIGTERM, SIGHUP).
+func Run(socketPath string, ctx context.Context) error {
 	logger := newTUILogger().With("component", "tui")
 
 	client, err := NewClient(socketPath, logger)
@@ -562,7 +583,18 @@ func Run(socketPath string) error {
 		return fmt.Errorf("create TUI client: %w", err)
 	}
 	client.Start()
-	defer client.Stop()
+	defer func() {
+		// Timeout client.Stop() to avoid hanging if the daemon is unresponsive.
+		done := make(chan struct{})
+		go func() {
+			client.Stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	}()
 
 	// Redirect stderr and the standard log package to the TUI log file so
 	// that daemon reconnection warnings, net package diagnostics, and any
@@ -571,7 +603,7 @@ func Run(socketPath string) error {
 	defer restoreStderr()
 
 	model := New(client)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

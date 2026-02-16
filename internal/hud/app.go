@@ -10,6 +10,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -28,6 +29,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/window"
+	"github.com/crb2nu/loom/internal/tui"
 )
 
 //go:embed frontend/dist
@@ -94,12 +96,14 @@ type App struct {
 // Run creates and starts the HUD application. This is the main entry point
 // called from the CLI command.
 func Run(cfg Config) error {
-	// TUI mode: launch bubbletea terminal UI instead of web dashboard.
+	var logger *slog.Logger
 	if cfg.TUI {
-		return tuiRun(cfg.SocketPath)
+		// In TUI mode, route HUD logs to the TUI log file so they don't
+		// corrupt the bubbletea alt-screen.
+		logger = newHUDTUILogger().With("component", "hud")
+	} else {
+		logger = slog.Default().With("component", "hud")
 	}
-
-	logger := slog.Default().With("component", "hud")
 
 	client := bridge.NewDaemonClient(cfg.SocketPath, logger)
 	if err := client.Connect(); err != nil {
@@ -292,9 +296,13 @@ func Run(cfg Config) error {
 		ec.On("process.stop", func(e bridge.SSEEvent) {
 			app.fleetMonitor.Refresh()
 		})
-		ec.OnAny(func(e bridge.SSEEvent) {
-			app.sseHub.Broadcast(e)
-		})
+		// Only broadcast to SSE hub when browser clients may be connected.
+		// In TUI mode no browser connects, so skip the fan-out overhead.
+		if !cfg.TUI {
+			ec.OnAny(func(e bridge.SSEEvent) {
+				app.sseHub.Broadcast(e)
+			})
+		}
 
 		ec.Start(context.Background())
 		defer ec.Stop()
@@ -326,7 +334,9 @@ func Run(cfg Config) error {
 	logger.Info("HUD server started", "url", url, "dev", cfg.Dev)
 	fmt.Printf("Agent HUD running at %s\n", url)
 
-	openBrowser(url)
+	if !cfg.TUI {
+		openBrowser(url)
+	}
 
 	// WriteTimeout must be 0 to support SSE (Server-Sent Events) connections
 	// which are long-lived. A non-zero WriteTimeout would forcibly close SSE
@@ -337,14 +347,44 @@ func Run(cfg Config) error {
 		IdleTimeout: 60 * time.Second,
 	}
 
-	// Graceful shutdown on SIGINT/SIGTERM.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Graceful shutdown on SIGINT/SIGTERM/SIGHUP.
+	// SIGHUP is sent when the controlling terminal closes (e.g., Ghostty quick terminal).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(ln)
 	}()
+
+	if cfg.TUI {
+		// TUI mode: run bubbletea on the main thread while the HTTP server
+		// runs in the background goroutine above. Same pattern as overlay mode.
+		go func() {
+			select {
+			case err := <-errCh:
+				if err != nil {
+					logger.Error("HTTP server error", "error", err)
+				}
+			case <-ctx.Done():
+			}
+		}()
+
+		tuiErr := tuiRun(tui.Deps{
+			Agent:  agent,
+			Fleet:  app.fleetMonitor,
+			Health: app.healthMonitor,
+			Memory: app.memoryMonitor,
+			Stream: app.streamMonitor,
+		}, ctx)
+
+		// TUI exited — shut down HTTP server.
+		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutdownCtx)
+		return tuiErr
+	}
 
 	if cfg.Overlay {
 		if !window.Available() {
@@ -1887,6 +1927,20 @@ func (a *App) writeError(w http.ResponseWriter, status int, message string, err 
 		a.logger.Error(message, "error", err)
 	}
 	a.writeJSON(w, status, map[string]string{"error": message})
+}
+
+// newHUDTUILogger creates a logger that writes to ~/.config/loom/logs/tui.log.
+// Used in TUI mode so HUD log output doesn't corrupt the alt-screen.
+func newHUDTUILogger() *slog.Logger {
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".config", "loom", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+
+	f, err := os.OpenFile(filepath.Join(logDir, "tui.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	}
+	return slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{}))
 }
 
 // openBrowser attempts to open a URL in the default browser.
