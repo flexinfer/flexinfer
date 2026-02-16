@@ -398,6 +398,80 @@ func TestRunCacheStatus_PrintsMemorySummary(t *testing.T) {
 	}
 }
 
+func TestRunCacheStatus_ShowsQuantizationFormatAndType(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	ready := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "quant-ready", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Source:          "HF://Qwen/Qwen3-8B",
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:   aiv1alpha1.QuantizationFormatGGUF,
+				GGUFType: "Q4_K_M",
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase: aiv1alpha1.ModelCachePhaseReady,
+			Path:  "model-pvc:qwen3-8b",
+			Quantization: &aiv1alpha1.QuantizationStatus{
+				Format:           "GGUF",
+				Type:             "Q4_K_M",
+				CompressionRatio: "3.8",
+			},
+		},
+	}
+
+	pending := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "quant-pending", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Source:          "HF://Qwen/Qwen3-14B",
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:   aiv1alpha1.QuantizationFormatGGUF,
+				GGUFType: "Q5_K_M",
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase: aiv1alpha1.ModelCachePhaseQuantizing,
+			Path:  "model-pvc:qwen3-14b",
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ready, pending).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origAll := allNs
+	origNs := namespace
+	t.Cleanup(func() {
+		allNs = origAll
+		namespace = origNs
+	})
+	allNs = false
+	namespace = "flexinfer-system"
+
+	if err := runCacheStatus(cmd, nil); err != nil {
+		t.Fatalf("runCacheStatus() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "GGUF/Q4_K_M") {
+		t.Fatalf("expected applied format/type in output, got: %q", out)
+	}
+	if !strings.Contains(out, "GGUF/Q5_K_M") {
+		t.Fatalf("expected requested format/type in output, got: %q", out)
+	}
+	if !strings.Contains(out, "3.8x") {
+		t.Fatalf("expected compression ratio in output, got: %q", out)
+	}
+	if !strings.Contains(out, "pending") {
+		t.Fatalf("expected pending compression marker in output, got: %q", out)
+	}
+}
+
 func TestRunStatus_PrintsEvents(t *testing.T) {
 	stubNotifyContext(t)
 	stubInClusterConfig(t)

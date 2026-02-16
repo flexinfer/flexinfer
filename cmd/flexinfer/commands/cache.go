@@ -118,7 +118,7 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 		if mc.Status.Quantization != nil {
 			quantFormat = mc.Status.Quantization.Format
 			if mc.Status.Quantization.Type != "" {
-				quantFormat = mc.Status.Quantization.Type
+				quantFormat = fmt.Sprintf("%s/%s", mc.Status.Quantization.Format, mc.Status.Quantization.Type)
 			}
 			if mc.Status.Quantization.CompressionRatio != "" {
 				compression = mc.Status.Quantization.CompressionRatio + "x"
@@ -127,7 +127,7 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 			// Quantization requested but not yet complete
 			quantFormat = string(mc.Spec.Quantization.Format)
 			if mc.Spec.Quantization.GGUFType != "" {
-				quantFormat = mc.Spec.Quantization.GGUFType
+				quantFormat = fmt.Sprintf("%s/%s", mc.Spec.Quantization.Format, mc.Spec.Quantization.GGUFType)
 			}
 			compression = "pending"
 		}
