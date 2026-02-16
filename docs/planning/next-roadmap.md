@@ -87,6 +87,7 @@ Progress note:
 - Cluster CRD API scaffold has landed (`api/v1alpha2/cluster_types.go`, `config/crd/ai.flexinfer_clusters.yaml`).
 - Cluster health probing + status transitions + probe metrics are implemented (`controllers/cluster_controller.go`).
 - Cluster status now aggregates remote model inventory into `Cluster.status.models` (best-effort).
+- FederatedModel CRD scaffold has landed (`api/v1alpha2/federatedmodel_types.go`, `config/crd/ai.flexinfer_federatedmodels.yaml`).
 - Remaining Cluster Registry work is controller hardening (timeouts/retries/backoff and richer conditions).
 
 ## Tech Debt (Ongoing)

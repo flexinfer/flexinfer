@@ -88,13 +88,13 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 4) FederatedModel CRD
 
-- [ ] Define `FederatedModel` CRD:
+- [x] Define `FederatedModel` CRD:
   - `spec.template` - Model spec to deploy
   - `spec.placement.clusterSelector` - Label selector for target clusters
   - `spec.placement.clusters` - Explicit cluster list
   - `spec.placement.replicasPerCluster` - Replicas per cluster
   - `spec.routing` - Cross-cluster routing strategy
-- [ ] Add `status` aggregation:
+- [x] Add `status` aggregation:
   - Per-cluster deployment status
   - Overall ready/total counts
 

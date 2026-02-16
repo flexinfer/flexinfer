@@ -1,0 +1,544 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: federatedmodels.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: FederatedModel
+    listKind: FederatedModelList
+    plural: federatedmodels
+    shortNames:
+    - fmodel
+    singular: federatedmodel
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.readyClusters
+      name: ReadyClusters
+      type: string
+    - jsonPath: .status.totalClusters
+      name: TotalClusters
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: FederatedModel declares model deployment intent across multiple
+          clusters.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: FederatedModelSpec defines desired state for a multi-cluster
+              model.
+            properties:
+              placement:
+                description: Placement controls cluster selection and replica distribution.
+                properties:
+                  clusterSelector:
+                    description: ClusterSelector selects target clusters by labels.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  clusters:
+                    description: Clusters explicitly lists target cluster names.
+                    items:
+                      type: string
+                    type: array
+                  replicasPerCluster:
+                    default: 1
+                    description: ReplicasPerCluster is the desired replicas per selected
+                      cluster.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              routing:
+                description: Routing controls request distribution across clusters.
+                properties:
+                  failoverOrder:
+                    description: FailoverOrder defines primary -> backup order for
+                      failover routing.
+                    items:
+                      type: string
+                    type: array
+                  strategy:
+                    default: RoundRobin
+                    description: Strategy is the routing mode.
+                    enum:
+                    - RoundRobin
+                    - Latency
+                    - Weighted
+                    - Failover
+                    type: string
+                  weights:
+                    additionalProperties:
+                      format: int32
+                      type: integer
+                    description: Weights configures weighted routing (cluster -> weight).
+                    type: object
+                type: object
+              template:
+                description: Template is the Model spec propagated to selected clusters.
+                properties:
+                  backend:
+                    description: |-
+                      Backend is the inference backend to use.
+                      Supported: ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui, vllm-omni
+                    type: string
+                  cache:
+                    description: |-
+                      Cache configures model caching behavior.
+                      If not specified, cache strategy is inferred from gpu.shared.
+                    properties:
+                      pvcName:
+                        description: |-
+                          PVCName is the PVC to use for SharedPVC strategy.
+                          Auto-created if not specified.
+                        type: string
+                      size:
+                        default: 50Gi
+                        description: Size is the storage size for auto-created PVCs.
+                        type: string
+                      storageClass:
+                        default: longhorn
+                        description: StorageClass for auto-created PVCs.
+                        type: string
+                      strategy:
+                        description: |-
+                          Strategy for caching models.
+                          - Memory: Keep model weights in RAM (fast reload, uses RAM)
+                          - SharedPVC: Store on shared PVC (slower reload, saves RAM)
+                          - None: No caching (downloads each time)
+                          Default: Memory if gpu.shared is set, SharedPVC otherwise.
+                        enum:
+                        - Memory
+                        - SharedPVC
+                        - None
+                        type: string
+                    type: object
+                  config:
+                    description: |-
+                      Config contains backend-specific configuration as JSON.
+                      These are passed to the backend plugin for container configuration.
+                      See backend documentation for available options.
+                      Example: {"mode": "server", "maxNumSequence": 4}
+                    x-kubernetes-preserve-unknown-fields: true
+                  gpu:
+                    description: GPU configures GPU allocation and sharing.
+                    properties:
+                      count:
+                        description: Count is the number of GPUs required.
+                        format: int32
+                        maximum: 8
+                        minimum: 1
+                        type: integer
+                      priority:
+                        default: 100
+                        description: |-
+                          Priority within a shared group. Higher = more important.
+                          Models with higher priority preempt lower priority ones.
+                        format: int32
+                        maximum: 1000
+                        minimum: 0
+                        type: integer
+                      shared:
+                        description: |-
+                          Shared groups models together for time-sharing a GPU.
+                          Models with the same shared value compete for the same GPU,
+                          with higher priority models preempting lower priority ones.
+                          If not set, model gets exclusive GPU access.
+                        type: string
+                      vendor:
+                        default: auto
+                        description: |-
+                          Vendor selects the GPU vendor to target.
+                          Use "auto" (or omit) to auto-detect based on available nodes.
+                          Use "cpu" for CPU-only inference (no GPU resource requests).
+                        enum:
+                        - auto
+                        - nvidia
+                        - amd
+                        - cpu
+                        type: string
+                      vramEstimateMB:
+                        description: |-
+                          VRAMEstimateMB is the estimated VRAM usage in MB.
+                          Used for scheduling decisions in shared groups.
+                        format: int64
+                        type: integer
+                    type: object
+                    x-kubernetes-validations:
+                    - message: gpu.count must be omitted when gpu.vendor is cpu
+                      rule: self.vendor != 'cpu' || !has(self.count)
+                    - message: gpu.vramEstimateMB must be omitted when gpu.vendor
+                        is cpu
+                      rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
+                    - message: gpu.shared must be empty when gpu.vendor is cpu
+                      rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
+                        == 0
+                  kvCache:
+                    description: |-
+                      KVCache configures KV-cache pressure management.
+                      Only effective with backends that support KV-cache tuning (vLLM).
+                    properties:
+                      highWatermark:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: HighWatermark is the KV-cache utilization ratio
+                          that triggers the pressure policy.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      lowWatermark:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: LowWatermark is the target KV-cache utilization
+                          ratio after pressure mitigation.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      maxBlockSize:
+                        description: MaxBlockSize overrides the vLLM --block-size
+                          argument for KV-cache block allocation.
+                        type: integer
+                      pressurePolicy:
+                        default: Observe
+                        description: PressurePolicy defines how to react when KV-cache
+                          usage exceeds watermarks.
+                        enum:
+                        - Observe
+                        - Reconfigure
+                        - Evict
+                        type: string
+                      swapSpace:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: SwapSpace configures the vLLM --swap-space argument
+                          (GiB) for CPU-offloaded KV-cache.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  litellm:
+                    description: LiteLLM configures proxy integration for unified
+                      API access.
+                    properties:
+                      aliases:
+                        description: Aliases are additional model names that route
+                          to this model.
+                        items:
+                          type: string
+                        type: array
+                      copilotAlias:
+                        description: CopilotAlias enables IDE/Copilot compatibility
+                          mode.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Enabled controls whether LiteLLM annotations
+                          are added.
+                        type: boolean
+                      servedModelName:
+                        description: |-
+                          ServedModelName is the model name exposed to clients.
+                          Defaults to Model resource name.
+                        type: string
+                    type: object
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      NodeSelector for scheduling the model to specific nodes.
+                      If not specified, auto-detects GPU nodes.
+                    type: object
+                  resources:
+                    description: Resources defines compute resources for the model
+                      container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This is an alpha field and requires enabling the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  serverless:
+                    description: |-
+                      Serverless configures scale-to-zero behavior.
+                      Enabled by default for homelab use.
+                    properties:
+                      coldStartTimeout:
+                        default: 60s
+                        description: |-
+                          ColdStartTimeout is max time to wait for model activation.
+                          Requests exceeding this get 503 Service Unavailable.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Enabled controls scale-to-zero.
+                        type: boolean
+                      idleTimeout:
+                        description: |-
+                          IdleTimeout is how long to wait before scaling to zero.
+                          Default: 5m for LLMs, 10m for image generation backends.
+                        type: string
+                      minReplicas:
+                        default: 0
+                        description: |-
+                          MinReplicas is the minimum number of replicas to keep running.
+                          Use 0 for true scale-to-zero. Use 1 for "warm start" behavior.
+                        format: int32
+                        maximum: 10
+                        minimum: 0
+                        type: integer
+                    type: object
+                  serviceLabels:
+                    description: |-
+                      ServiceLabels are semantic labels describing model capabilities.
+                      Used for dynamic routing (e.g., ["textgen", "code", "fast"]).
+                    items:
+                      type: string
+                    maxItems: 10
+                    type: array
+                  source:
+                    description: |-
+                      Source is the model source URI.
+                      Formats:
+                        - HF://org/model        - HuggingFace model
+                        - ollama://model:tag   - Ollama model
+                        - file:///path/to/model - Local file path
+                        - pvc://name/path      - PVC-backed model
+                    type: string
+                required:
+                - backend
+                - source
+                type: object
+                x-kubernetes-validations:
+                - message: spec.cache.strategy must be SharedPVC when spec.source
+                    is pvc://... (cache stages into a PVC)
+                  rule: '!self.source.startsWith(''pvc://'') || !has(self.cache) ||
+                    !has(self.cache.strategy) || size(self.cache.strategy) == 0 ||
+                    self.cache.strategy == ''SharedPVC'''
+                - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
+                    instead
+                  rule: '!has(self.resources) || !has(self.resources.limits) || (!(''nvidia.com/gpu''
+                    in self.resources.limits) && !(''amd.com/gpu'' in self.resources.limits)
+                    && !(''gpu.intel.com/i915'' in self.resources.limits))'
+                - message: Do not set GPU requests in spec.resources.requests; use
+                    spec.gpu.vendor/spec.gpu.count instead
+                  rule: '!has(self.resources) || !has(self.resources.requests) ||
+                    (!(''nvidia.com/gpu'' in self.resources.requests) && !(''amd.com/gpu''
+                    in self.resources.requests) && !(''gpu.intel.com/i915'' in self.resources.requests))'
+                - message: spec.nodeSelector['node.flexstack.io/gpu-vendor'] must
+                    match spec.gpu.vendor
+                  rule: '!has(self.gpu) || self.gpu.vendor == ''auto'' || !has(self.nodeSelector)
+                    || !(''node.flexstack.io/gpu-vendor'' in self.nodeSelector) ||
+                    self.nodeSelector[''node.flexstack.io/gpu-vendor''] == self.gpu.vendor'
+            required:
+            - placement
+            - template
+            type: object
+          status:
+            description: FederatedModelStatus is aggregated state across target clusters.
+            properties:
+              clusters:
+                description: Clusters is per-cluster deployment status.
+                items:
+                  description: FederatedModelClusterStatus is per-cluster deployment
+                    state.
+                  properties:
+                    cluster:
+                      description: Cluster is the target cluster name.
+                      type: string
+                    phase:
+                      description: Phase is the cluster-local phase summary.
+                      type: string
+                    readyReplicas:
+                      description: ReadyReplicas is the number of ready replicas in
+                        this cluster.
+                      format: int32
+                      type: integer
+                    totalReplicas:
+                      description: TotalReplicas is the desired/observed replicas
+                        in this cluster.
+                      format: int32
+                      type: integer
+                  required:
+                  - cluster
+                  type: object
+                type: array
+              conditions:
+                description: Conditions are aggregated reconciliation conditions.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              readyClusters:
+                description: ReadyClusters is the count of clusters currently ready.
+                format: int32
+                type: integer
+              totalClusters:
+                description: TotalClusters is the total selected clusters.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

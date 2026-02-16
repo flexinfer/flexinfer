@@ -13,6 +13,7 @@ FlexInfer exposes Kubernetes APIs under the `ai.flexinfer` group.
 - `LoRAAdapter` (`ai.flexinfer/v1alpha2`)
 - `ModelCatalog` (`ai.flexinfer/v1alpha2`)
 - `Cluster` (`ai.flexinfer/v1alpha2`, Phase 5.1 scaffold)
+- `FederatedModel` (`ai.flexinfer/v1alpha2`, Phase 5.2 scaffold)
 
 Generated CRD:
 
@@ -20,6 +21,7 @@ Generated CRD:
 - `services/flexinfer/config/crd/ai.flexinfer_loraadapters.yaml`
 - `services/flexinfer/config/crd/ai.flexinfer_modelcatalogs.yaml`
 - `services/flexinfer/config/crd/ai.flexinfer_clusters.yaml`
+- `services/flexinfer/config/crd/ai.flexinfer_federatedmodels.yaml`
 
 ## v1alpha1 (legacy)
 
@@ -40,6 +42,7 @@ Generated CRDs:
   - `services/flexinfer/api/v1alpha2/lora_types.go`
   - `services/flexinfer/api/v1alpha2/catalog_types.go`
   - `services/flexinfer/api/v1alpha2/cluster_types.go`
+  - `services/flexinfer/api/v1alpha2/federatedmodel_types.go`
   - `services/flexinfer/api/v1alpha1/types.go`
   - `services/flexinfer/api/v1alpha1/modelcache_types.go`
   - `services/flexinfer/api/v1alpha1/gpugroup_types.go`
