@@ -5,7 +5,7 @@ description: Concrete checklist for multi-cluster federation support.
 
 # Phase 5: Multi-Cluster
 
-> Last updated: 2026-02-01
+> Last updated: 2026-02-16
 
 This is the checklist for Phase 5: enable **multi-cluster federation** for FlexInfer deployments.
 
@@ -34,16 +34,16 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 #### 1) Cluster CRD
 
-- [ ] Define `Cluster` CRD (`api/v1alpha2/cluster_types.go`):
+- [x] Define `Cluster` CRD (`api/v1alpha2/cluster_types.go`):
   - `spec.apiEndpoint` - Kubernetes API server URL
   - `spec.secretRef` - Reference to kubeconfig Secret
   - `spec.labels` - Cluster metadata (region, gpu-vendor, tier)
-- [ ] Add `status` fields:
+- [x] Add `status` fields:
   - `phase` (Pending, Ready, NotReady, Unknown)
   - `capacity` (GPU counts by type)
   - `available` (free GPU counts)
   - `models` (list of deployed models with status)
-- [ ] Add unit tests for CRD validation
+- [x] Add unit tests for Cluster spec validation helpers (`api/v1alpha2/cluster_types_test.go`)
 
 **Acceptance**
 - `kubectl apply` of Cluster resource creates/updates correctly.

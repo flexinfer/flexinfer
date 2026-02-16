@@ -83,6 +83,9 @@ Checklist: `docs/planning/phase-5-multi-cluster.md`
 - [ ] Global Routing
 - [ ] Advanced Features
 
+Progress note:
+- Cluster CRD API scaffold has landed (`api/v1alpha2/cluster_types.go`, `config/crd/ai.flexinfer_clusters.yaml`), but controller health/inventory reconciliation is still pending.
+
 ## Tech Debt (Ongoing)
 
 See `ROADMAP.md` for full tech debt tracking:
