@@ -126,7 +126,7 @@ These address capabilities the market now expects from production MCP infrastruc
   - ~~Add Streamable HTTP transport to `loomd` (MCP v1.0 spec compliance).~~ ✅ Done
   - ~~Add bearer token, OIDC, and mTLS authentication for remote access.~~ ✅ Done
   - ~~Enable hybrid local+remote topology (local proxy connecting to remote daemon).~~ ✅ Done
-  - Remaining: OAuth 2.1 dynamic client registration ([#11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/11)) (OIDC covers static clients today).
+  - ~~OAuth 2.1 authorization server with PKCE, dynamic client registration, AS/resource metadata ([#11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/11)).~~ ✅ Done
   - *Rationale: Transforms Loom from local dev tool into team/org infrastructure. Every MCP gateway supports this. Biggest single unlock for adoption.*
 
 - [x] **Lightweight RBAC for tool access** ([#8](https://gitlab.flexinfer.ai/services/loom-core/-/issues/8)) ✅ Shipped

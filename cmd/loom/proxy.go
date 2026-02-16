@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -27,6 +28,12 @@ var remoteURLGlobal string
 // remoteTokenGlobal stores the --remote-token flag value.
 var remoteTokenGlobal string
 
+// lastHeartbeat tracks the unix nanos of the last heartbeat to rate-limit goroutine spawning.
+var lastHeartbeat atomic.Int64
+
+// heartbeatIntervalNanos is the minimum interval between heartbeats in nanoseconds.
+var heartbeatIntervalNanos int64 = int64(5 * time.Second)
+
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
@@ -40,6 +47,14 @@ func runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken string) erro
 // runProxy runs loom as an MCP server, bridging stdio to the daemon
 func runProxy(socketPath string) error {
 	ctx := context.Background()
+
+	// Load file config once for proxy-side settings.
+	if fileCfg, err := daemon.LoadConfigFile(); err == nil {
+		proxyConfigGlobal = fileCfg.Proxy
+		if fileCfg.Proxy.HeartbeatIntervalMs > 0 {
+			heartbeatIntervalNanos = int64(time.Duration(fileCfg.Proxy.HeartbeatIntervalMs) * time.Millisecond)
+		}
+	}
 
 	// Create stdio transport for client communication
 	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
@@ -303,8 +318,15 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 
 	// Proxy-level heartbeat: fire async heartbeat on each tool call for
 	// platforms with zero hook support (Kilocode, Antigravity, etc.).
+	// Rate-limited to avoid spawning unbounded goroutines.
 	if agentHintGlobal != "" {
-		go proxyHeartbeat(agentHintGlobal)
+		now := time.Now().UnixNano()
+		prev := lastHeartbeat.Load()
+		if now-prev >= heartbeatIntervalNanos {
+			if lastHeartbeat.CompareAndSwap(prev, now) {
+				go proxyHeartbeat(agentHintGlobal)
+			}
+		}
 	}
 
 	// Parse server__toolname format

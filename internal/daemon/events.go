@@ -46,11 +46,12 @@ type Event struct {
 // EventBus manages event subscriptions and broadcasting.
 // All methods are safe for concurrent use.
 type EventBus struct {
-	mu          sync.RWMutex
-	subscribers map[string]chan Event
-	nextID      atomic.Int64
-	eventSeq    atomic.Int64
-	logger      *slog.Logger
+	mu           sync.RWMutex
+	subscribers  map[string]chan Event
+	nextID       atomic.Int64
+	eventSeq     atomic.Int64
+	droppedCount atomic.Int64
+	logger       *slog.Logger
 }
 
 // NewEventBus creates a new EventBus.
@@ -114,6 +115,7 @@ func (eb *EventBus) Publish(eventType EventType, data any) {
 		select {
 		case ch <- event:
 		default:
+			eb.droppedCount.Add(1)
 			eb.logger.Debug("event dropped for slow subscriber", "subscriber", id, "event", event.ID)
 		}
 	}
@@ -124,6 +126,11 @@ func (eb *EventBus) SubscriberCount() int {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
 	return len(eb.subscribers)
+}
+
+// DroppedCount returns the total number of events dropped across all subscribers.
+func (eb *EventBus) DroppedCount() int64 {
+	return eb.droppedCount.Load()
 }
 
 // ServeSSE is an http.HandlerFunc that streams daemon events to the client

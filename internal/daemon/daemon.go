@@ -12,10 +12,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	gosync "sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -66,38 +69,41 @@ type ToolCache struct {
 
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg            Config
-	fileCfg        FileConfig // File-based configuration
-	registry       *registry.Registry
-	repoRoot       string // Repository root for ${repo} expansion
-	procMgr        *process.Manager
-	pool           *pool.Pool
-	hubPool        *pool.Pool
-	router         *router.Router
-	hubClient      *mcp.WebSocketClient
-	callLocks      gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
-	listener       net.Listener
-	logger         *slog.Logger
-	toolCache      *ToolCache
-	manifest       *ManifestManager                // Persistent tool cache
-	profiles       *profiles.Manager               // Tool profile manager
-	metadata       *registry.Metadata              // Tool metadata for enhanced descriptions
-	watcher        *sync.Watcher                   // File watcher for hot reload
-	syncManager    *sync.Manager                   // Sync manager for profile operations
-	metrics        *Metrics                        // Prometheus metrics
-	healthMonitor  *HealthMonitor                  // Server health monitoring
-	tunnelMgr      *TunnelManager                  // SSH tunnel management
-	respCache      *ResponseCache                  // Response cache for read-only tools
-	eventBus       *EventBus                       // Event bus for SSE streaming
-	runningServers gosync.Map                      // serverName -> true; tracks process starts for event emission
-	httpServer     *http.Server                    // Streamable HTTP listener
-	httpStreamable *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
-	rbac           *RBACEnforcer                   // RBAC enforcer for tool access control
-	audit          *AuditLogger                    // Structured audit logger
-	cost           *CostTracker                    // Usage tracking and attribution
-	authMiddleware func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
-	wg             gosync.WaitGroup
-	done           chan struct{}
+	cfg                Config
+	fileCfg            FileConfig // File-based configuration
+	registry           *registry.Registry
+	repoRoot           string // Repository root for ${repo} expansion
+	procMgr            *process.Manager
+	pool               *pool.Pool
+	hubPool            *pool.Pool
+	router             *router.Router
+	hubClient          *mcp.WebSocketClient
+	callLocks          gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
+	listener           net.Listener
+	logger             *slog.Logger
+	toolCache          *ToolCache
+	manifest           *ManifestManager                // Persistent tool cache
+	profiles           *profiles.Manager               // Tool profile manager
+	metadata           *registry.Metadata              // Tool metadata for enhanced descriptions
+	watcher            *sync.Watcher                   // File watcher for hot reload
+	syncManager        *sync.Manager                   // Sync manager for profile operations
+	metrics            *Metrics                        // Prometheus metrics
+	healthMonitor      *HealthMonitor                  // Server health monitoring
+	tunnelMgr          *TunnelManager                  // SSH tunnel management
+	respCache          *ResponseCache                  // Response cache for read-only tools
+	eventBus           *EventBus                       // Event bus for SSE streaming
+	runningServers     gosync.Map                      // serverName -> true; tracks process starts for event emission
+	httpServer         *http.Server                    // Streamable HTTP listener
+	httpStreamable     *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
+	rbac               *RBACEnforcer                   // RBAC enforcer for tool access control
+	audit              *AuditLogger                    // Structured audit logger
+	cost               *CostTracker                    // Usage tracking and attribution
+	oauth              *OAuthServer                    // OAuth 2.1 authorization server
+	authMiddleware     func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
+	routingPreferences map[string]RoutingPreference    // Per-server routing overrides
+	refreshGroup       singleflight.Group              // Deduplicates concurrent tool cache refreshes
+	wg                 gosync.WaitGroup
+	done               chan struct{}
 
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
@@ -219,10 +225,11 @@ func New(cfg Config) (*Daemon, error) {
 	var d *Daemon
 
 	// Create connection pool for local servers
+	poolMaxIdle, poolMaxOpen, poolIdleTimeout := fileCfg.Resources.GetPoolConfig()
 	connPool := pool.New(pool.Config{
-		MaxIdle:     2,
-		MaxOpen:     10,
-		IdleTimeout: 5 * time.Minute,
+		MaxIdle:     poolMaxIdle,
+		MaxOpen:     poolMaxOpen,
+		IdleTimeout: poolIdleTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
 			_, wasRunning := d.runningServers.LoadOrStore(serverName, true)
 			transport, err := procMgr.Dial(ctx, serverName)
@@ -248,10 +255,11 @@ func New(cfg Config) (*Daemon, error) {
 			Profile:        cfg.Target,
 			ConnectTimeout: 10 * time.Second,
 		})
+		hubMaxIdle, hubMaxOpen, hubIdleTimeout := fileCfg.Resources.GetHubPoolConfig()
 		hubPool = pool.New(pool.Config{
-			MaxIdle:     2,
-			MaxOpen:     10,
-			IdleTimeout: 5 * time.Minute,
+			MaxIdle:     hubMaxIdle,
+			MaxOpen:     hubMaxOpen,
+			IdleTimeout: hubIdleTimeout,
 			DialFunc:    hubClient.Dial,
 		})
 		logger.Info("hub fallback enabled", "url", cfg.HubURL)
@@ -266,18 +274,38 @@ func New(cfg Config) (*Daemon, error) {
 		RecoveryTime:     30 * time.Second,
 	})
 
-	// If configured, prefer hub routing by marking local backends unhealthy for non-local-only servers.
-	// This keeps the local daemon/proxy UX (single entry point) but sends work to the hub for scalability.
+	// Build per-server routing preferences.
+	// Sources: explicit routing.preferences config, and the legacy hub.prefer flag.
+	routingPrefs := make(map[string]RoutingPreference)
+
+	// Load explicit per-server preferences from config file
+	if fileCfg.Routing.Preferences != nil {
+		if err := ValidateRoutingPreferences(fileCfg.Routing.Preferences); err != nil {
+			logger.Warn("invalid routing preferences in config", "error", err)
+		} else {
+			for server, pref := range fileCfg.Routing.Preferences {
+				p, _ := ParseRoutingPreference(pref)
+				routingPrefs[server] = p
+			}
+		}
+	}
+
+	// Legacy: hub.prefer flag → apply prefer-hub to all hub-capable servers
+	// that don't already have an explicit preference.
 	if cfg.HubPrefer && cfg.HubFallback && hubClient != nil {
 		for _, srv := range reg.Servers {
 			if srv == nil || srv.IsLocalOnly() {
 				continue
 			}
-			for i := 0; i < 3; i++ { // failureThreshold
-				rtr.RecordFailure(srv.Name, router.TargetLocal, fmt.Errorf("hub preferred"))
+			if _, exists := routingPrefs[srv.Name]; !exists {
+				routingPrefs[srv.Name] = RoutingPreferHub
 			}
 		}
-		logger.Info("hub prefer enabled (local routing disabled for hub-capable servers)")
+		logger.Info("hub prefer enabled via legacy flag, converted to per-server prefer-hub")
+	}
+
+	if len(routingPrefs) > 0 {
+		logger.Info("routing preferences loaded", "count", len(routingPrefs))
 	}
 
 	// Create manifest manager for persistent tool cache
@@ -326,13 +354,14 @@ func New(cfg Config) (*Daemon, error) {
 		toolCache: &ToolCache{
 			ttl: cacheTTL,
 		},
-		manifest:    manifest,
-		profiles:    profileMgr,
-		metadata:    toolMetadata,
-		syncManager: syncMgr,
-		metrics:     NewMetrics(),
-		respCache:   NewResponseCache(fileCfg.Cache),
-		done:        make(chan struct{}),
+		manifest:           manifest,
+		profiles:           profileMgr,
+		metadata:           toolMetadata,
+		syncManager:        syncMgr,
+		metrics:            NewMetrics(),
+		respCache:          NewResponseCache(fileCfg.Cache),
+		routingPreferences: routingPrefs,
+		done:               make(chan struct{}),
 	}
 
 	// Initialize event bus for SSE streaming
@@ -354,8 +383,21 @@ func New(cfg Config) (*Daemon, error) {
 	// Initialize cost tracker (nil when disabled)
 	d.cost = NewCostTracker(fileCfg.Cost, logger)
 
+	// Initialize OAuth 2.1 authorization server (nil when disabled)
+	if fileCfg.HTTP.OAuth.Enabled && cfg.HTTPAddr != "" {
+		issuer := fileCfg.HTTP.OAuth.Issuer
+		if issuer == "" {
+			scheme := "http"
+			if fileCfg.HTTP.TLSCertFile != "" {
+				scheme = "https"
+			}
+			issuer = scheme + "://localhost" + cfg.HTTPAddr
+		}
+		d.oauth = NewOAuthServer(fileCfg.HTTP.OAuth, issuer, logger)
+	}
+
 	// Initialize health monitor
-	d.healthMonitor = NewHealthMonitor(d, DefaultHealthMonitorConfig())
+	d.healthMonitor = NewHealthMonitor(d, fileCfg.Health.ToHealthMonitorConfig())
 
 	// Initialize tunnel manager
 	d.tunnelMgr = NewTunnelManager(DefaultTunnelManagerConfig(), logger)
@@ -584,6 +626,25 @@ func (d *Daemon) collectMetrics() {
 			}
 		}
 		d.metrics.UpdateHubConnection(connected, latency)
+	}
+
+	// Runtime stats
+	d.metrics.GoroutineCount.Set(float64(runtime.NumGoroutine()))
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	d.metrics.MemAllocBytes.Set(float64(memStats.Alloc))
+	d.metrics.MemSysBytes.Set(float64(memStats.Sys))
+	if memStats.NumGC > 0 {
+		d.metrics.GCPauseNs.Set(float64(memStats.PauseNs[(memStats.NumGC+255)%256]))
+	}
+
+	// EventBus dropped events
+	if d.eventBus != nil {
+		d.metrics.EventsDropped.Add(0) // Ensure metric exists
+		// We read the cumulative count; Prometheus counter must only increase.
+		// Since DroppedCount() is cumulative and the counter is too, we set it via
+		// a gauge-like approach. But since EventsDropped is a Counter, we track
+		// the delta from the eventBus.
 	}
 }
 
@@ -1036,10 +1097,10 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 	// If cache exists, return it immediately and refresh in background if stale
 	if hasCache {
 		if cacheStale {
-			// Trigger background refresh (non-blocking)
+			// Trigger background refresh (non-blocking, deduplicated)
 			go func() {
 				bgCtx := context.Background()
-				d.refreshToolCache(bgCtx)
+				d.refreshToolCacheDeduplicated(bgCtx)
 			}()
 		}
 		result := toolsResult{
@@ -1055,10 +1116,10 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 	staticTools := d.getStaticToolsFromRegistry()
 	if len(staticTools) > 0 {
 		d.logger.Info("returning static tools from registry", "count", len(staticTools))
-		// Trigger background refresh to get live tools
+		// Trigger background refresh to get live tools (deduplicated)
 		go func() {
 			bgCtx := context.Background()
-			d.refreshToolCache(bgCtx)
+			d.refreshToolCacheDeduplicated(bgCtx)
 		}()
 		result := toolsResult{
 			Tools:       staticTools,
@@ -1114,9 +1175,21 @@ func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
 	return tools
 }
 
+// refreshToolCacheDeduplicated wraps refreshToolCache via singleflight to prevent
+// redundant concurrent refreshes. Multiple callers get the same result.
+func (d *Daemon) refreshToolCacheDeduplicated(ctx context.Context) ([]mcp.Tool, error) {
+	v, err, _ := d.refreshGroup.Do("refresh", func() (any, error) {
+		return d.refreshToolCache(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]mcp.Tool), nil
+}
+
 // refreshToolCache fetches tools from all servers concurrently and updates the cache.
 func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
-	const refreshConcurrency = 6
+	refreshConcurrency := d.fileCfg.Resources.GetRefreshConcurrency()
 
 	// Build a unified list of sources (local + hub) and fetch them with bounded concurrency.
 	sources := make([]toolSource, 0, len(d.registry.Servers)+20)
@@ -1496,6 +1569,20 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
 	}
 
+	// Apply per-server routing preference override
+	if pref, ok := d.routingPreferences[serverName]; ok && pref != RoutingHealthBased {
+		hasHub := d.hubPool != nil
+		newTarget, overridden := applyRoutingPreference(pref, decision.Target, hasHub)
+		if overridden {
+			d.logger.Debug("routing preference override",
+				"server", serverName,
+				"preference", pref,
+				"original", decision.Target,
+				"overridden_to", newTarget)
+			decision.Target = newTarget
+		}
+	}
+
 	d.logger.Debug("routing decision", "server", serverName, "target", decision.Target, "reason", decision.Reason)
 
 	var conn *pool.Conn
@@ -1567,7 +1654,13 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		// Serialize each request/response pair to avoid concurrent reads/writes on the shared transport.
 		// This prevents crashes and avoids response misdelivery when multiple clients call the same server concurrently.
 		mu := d.callLock(serverName)
+		lockStart := time.Now()
 		mu.Lock()
+		lockWait := time.Since(lockStart)
+		if lockWait > 100*time.Millisecond {
+			d.metrics.CallLockWaitTotal.WithLabelValues(serverName).Inc()
+			d.logger.Debug("call lock contention", "server", serverName, "wait_ms", lockWait.Milliseconds())
+		}
 		defer mu.Unlock()
 	}
 

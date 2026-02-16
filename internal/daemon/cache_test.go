@@ -460,3 +460,104 @@ func TestCacheableTools(t *testing.T) {
 		}
 	}
 }
+
+func TestResponseCache_ClearServer_Targeted(t *testing.T) {
+	cfg := CacheConfig{Enabled: true, DefaultTTLSeconds: 60}
+	cache := NewResponseCache(cfg)
+
+	// Add entries for server A
+	for i := 0; i < 3; i++ {
+		params := json.RawMessage(`{"i": "a` + string(rune('0'+i)) + `"}`)
+		key := cache.Key("serverA", "tool", params)
+		cache.Set(key, json.RawMessage(`{"result": "a"}`), "serverA", "tool")
+	}
+
+	// Add entries for server B
+	for i := 0; i < 2; i++ {
+		params := json.RawMessage(`{"i": "b` + string(rune('0'+i)) + `"}`)
+		key := cache.Key("serverB", "tool", params)
+		cache.Set(key, json.RawMessage(`{"result": "b"}`), "serverB", "tool")
+	}
+
+	stats := cache.Stats()
+	if stats.Entries != 5 {
+		t.Fatalf("Entries = %d, want 5", stats.Entries)
+	}
+
+	// Clear server A only
+	cache.ClearServer("serverA")
+
+	stats = cache.Stats()
+	if stats.Entries != 2 {
+		t.Errorf("Entries after ClearServer(A) = %d, want 2", stats.Entries)
+	}
+
+	// Server B entries should still be accessible
+	params := json.RawMessage(`{"i": "b0"}`)
+	key := cache.Key("serverB", "tool", params)
+	if _, ok := cache.Get(key); !ok {
+		t.Error("serverB entry should still exist after clearing serverA")
+	}
+}
+
+func TestResponseCache_ClearServer_Empty(t *testing.T) {
+	cfg := CacheConfig{Enabled: true, DefaultTTLSeconds: 60}
+	cache := NewResponseCache(cfg)
+
+	// Should not panic on clearing nonexistent server
+	cache.ClearServer("nonexistent")
+
+	stats := cache.Stats()
+	if stats.Entries != 0 {
+		t.Errorf("Entries = %d, want 0", stats.Entries)
+	}
+}
+
+func TestResponseCache_ServerIndex_EvictionConsistency(t *testing.T) {
+	cfg := CacheConfig{Enabled: true, DefaultTTLSeconds: 60}
+	cache := NewResponseCache(cfg)
+	cache.maxSize = 100 // Force tiny cache
+
+	// Add several entries that will cause LRU eviction
+	for i := 0; i < 10; i++ {
+		params := json.RawMessage(`{"i": ` + string(rune('0'+i)) + `}`)
+		key := cache.Key("server1", "tool", params)
+		cache.Set(key, json.RawMessage(`{"result": "this is a response that takes some bytes"}`), "server1", "tool")
+	}
+
+	// Server index should be consistent with entries
+	cache.mu.RLock()
+	indexCount := 0
+	if keys, ok := cache.serverIndex["server1"]; ok {
+		indexCount = len(keys)
+	}
+	entryCount := len(cache.entries)
+	cache.mu.RUnlock()
+
+	if indexCount != entryCount {
+		t.Errorf("server index count (%d) != entry count (%d)", indexCount, entryCount)
+	}
+}
+
+func TestResponseCache_Set_WithServer(t *testing.T) {
+	cfg := CacheConfig{Enabled: true, DefaultTTLSeconds: 60}
+	cache := NewResponseCache(cfg)
+
+	params := json.RawMessage(`{}`)
+	key := cache.Key("myserver", "mytool", params)
+	cache.Set(key, json.RawMessage(`{"ok": true}`), "myserver", "mytool")
+
+	cache.mu.RLock()
+	entry := cache.entries[key]
+	cache.mu.RUnlock()
+
+	if entry == nil {
+		t.Fatal("entry should exist")
+	}
+	if entry.Server != "myserver" {
+		t.Errorf("Server = %q, want myserver", entry.Server)
+	}
+	if entry.Tool != "mytool" {
+		t.Errorf("Tool = %q, want mytool", entry.Tool)
+	}
+}

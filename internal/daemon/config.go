@@ -43,6 +43,15 @@ type FileConfig struct {
 	// Cost controls usage tracking and attribution
 	Cost CostConfig `yaml:"cost,omitempty"`
 
+	// Health controls health monitor settings
+	Health HealthConfig `yaml:"health,omitempty"`
+
+	// Proxy controls proxy-side truncation and heartbeat settings
+	Proxy ProxyConfig `yaml:"proxy,omitempty"`
+
+	// Routing controls per-server routing preferences
+	Routing RoutingConfig `yaml:"routing,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -66,11 +75,14 @@ type HTTPConfig struct {
 
 	// Auth controls authentication for the HTTP listener.
 	Auth HTTPAuthConfig `yaml:"auth,omitempty"`
+
+	// OAuth controls the built-in OAuth 2.1 authorization server.
+	OAuth OAuthConfig `yaml:"oauth,omitempty"`
 }
 
 // HTTPAuthConfig controls authentication for the Streamable HTTP listener.
 type HTTPAuthConfig struct {
-	// Type is the authentication type: "token", "oidc", "mtls", or "" (none/localhost-only).
+	// Type is the authentication type: "token", "oidc", "mtls", "oauth2", or "" (none/localhost-only).
 	Type string `yaml:"type,omitempty"`
 
 	// TokenSecretKey is the secret store key containing the bearer token (for type=token).
@@ -156,6 +168,27 @@ type ResourceConfig struct {
 
 	// ManifestTTLMinutes is how long cached tools are considered fresh (default: 5)
 	ManifestTTLMinutes int `yaml:"manifest_ttl_minutes,omitempty"`
+
+	// PoolMaxIdle is the maximum idle connections per server for the local pool (default: 2)
+	PoolMaxIdle int `yaml:"pool_max_idle,omitempty"`
+
+	// PoolMaxOpen is the maximum open connections per server for the local pool (default: 10)
+	PoolMaxOpen int `yaml:"pool_max_open,omitempty"`
+
+	// PoolIdleTimeoutMinutes is the idle timeout for local pool connections (default: 5)
+	PoolIdleTimeoutMinutes int `yaml:"pool_idle_timeout_minutes,omitempty"`
+
+	// HubPoolMaxIdle is the maximum idle connections per server for the hub pool (default: 2)
+	HubPoolMaxIdle int `yaml:"hub_pool_max_idle,omitempty"`
+
+	// HubPoolMaxOpen is the maximum open connections per server for the hub pool (default: 10)
+	HubPoolMaxOpen int `yaml:"hub_pool_max_open,omitempty"`
+
+	// HubPoolIdleTimeoutMinutes is the idle timeout for hub pool connections (default: 5)
+	HubPoolIdleTimeoutMinutes int `yaml:"hub_pool_idle_timeout_minutes,omitempty"`
+
+	// RefreshConcurrency is the max parallel server refreshes during tool cache updates (default: 6)
+	RefreshConcurrency int `yaml:"refresh_concurrency,omitempty"`
 }
 
 // ContextConfig controls tool filtering and profile selection.
@@ -201,6 +234,119 @@ type HubConfig struct {
 
 	// MaxRetries before giving up on hub connection (default: 3)
 	MaxRetries int `yaml:"max_retries,omitempty"`
+}
+
+// HealthConfig controls the health monitor settings.
+type HealthConfig struct {
+	// CheckIntervalSeconds between health checks (default: 30)
+	CheckIntervalSeconds int `yaml:"check_interval_seconds,omitempty"`
+
+	// HealthyThreshold consecutive successes to mark healthy (default: 2)
+	HealthyThreshold int `yaml:"healthy_threshold,omitempty"`
+
+	// UnhealthyThreshold consecutive failures to mark unhealthy (default: 3)
+	UnhealthyThreshold int `yaml:"unhealthy_threshold,omitempty"`
+
+	// RestartThreshold failures before auto-restart (default: 3)
+	RestartThreshold int `yaml:"restart_threshold,omitempty"`
+
+	// MaxRestarts before giving up (default: 3)
+	MaxRestarts int `yaml:"max_restarts,omitempty"`
+
+	// RestartCooldownMinutes between restart attempts (default: 5)
+	RestartCooldownMinutes int `yaml:"restart_cooldown_minutes,omitempty"`
+}
+
+// ToHealthMonitorConfig converts HealthConfig to HealthMonitorConfig,
+// applying defaults for zero values.
+func (c *HealthConfig) ToHealthMonitorConfig() HealthMonitorConfig {
+	cfg := DefaultHealthMonitorConfig()
+	if c == nil {
+		return cfg
+	}
+	if c.CheckIntervalSeconds > 0 {
+		cfg.CheckInterval = time.Duration(c.CheckIntervalSeconds) * time.Second
+	}
+	if c.HealthyThreshold > 0 {
+		cfg.HealthyThreshold = c.HealthyThreshold
+	}
+	if c.UnhealthyThreshold > 0 {
+		cfg.UnhealthyThreshold = c.UnhealthyThreshold
+	}
+	if c.RestartThreshold > 0 {
+		cfg.RestartThreshold = c.RestartThreshold
+	}
+	if c.MaxRestarts > 0 {
+		cfg.MaxRestarts = c.MaxRestarts
+	}
+	if c.RestartCooldownMinutes > 0 {
+		cfg.RestartCooldown = time.Duration(c.RestartCooldownMinutes) * time.Minute
+	}
+	return cfg
+}
+
+// ProxyConfig controls proxy-side truncation and heartbeat settings.
+type ProxyConfig struct {
+	// MaxToolResultBytes is the max size for text tool results (default: 48000)
+	MaxToolResultBytes int `yaml:"max_tool_result_bytes,omitempty"`
+
+	// MaxImageResultBytes is the max size for image tool results (default: 1500000)
+	MaxImageResultBytes int `yaml:"max_image_result_bytes,omitempty"`
+
+	// MaxResourceBytes is the max size for resource reads (default: 64000)
+	MaxResourceBytes int `yaml:"max_resource_bytes,omitempty"`
+
+	// HeartbeatIntervalMs is the minimum interval between proxy heartbeats (default: 5000)
+	HeartbeatIntervalMs int `yaml:"heartbeat_interval_ms,omitempty"`
+}
+
+// RoutingConfig controls per-server routing preferences.
+type RoutingConfig struct {
+	// Preferences maps server names to routing preference strings.
+	// Valid values: "local-only", "hub-only", "prefer-local", "prefer-hub", "health-based"
+	Preferences map[string]string `yaml:"preferences,omitempty"`
+}
+
+// GetPoolConfig returns a pool.Config for the local connection pool.
+func (c *ResourceConfig) GetPoolConfig() (maxIdle, maxOpen int, idleTimeout time.Duration) {
+	maxIdle = 2
+	if c.PoolMaxIdle > 0 {
+		maxIdle = c.PoolMaxIdle
+	}
+	maxOpen = 10
+	if c.PoolMaxOpen > 0 {
+		maxOpen = c.PoolMaxOpen
+	}
+	idleTimeout = 5 * time.Minute
+	if c.PoolIdleTimeoutMinutes > 0 {
+		idleTimeout = time.Duration(c.PoolIdleTimeoutMinutes) * time.Minute
+	}
+	return
+}
+
+// GetHubPoolConfig returns a pool.Config for the hub connection pool.
+func (c *ResourceConfig) GetHubPoolConfig() (maxIdle, maxOpen int, idleTimeout time.Duration) {
+	maxIdle = 2
+	if c.HubPoolMaxIdle > 0 {
+		maxIdle = c.HubPoolMaxIdle
+	}
+	maxOpen = 10
+	if c.HubPoolMaxOpen > 0 {
+		maxOpen = c.HubPoolMaxOpen
+	}
+	idleTimeout = 5 * time.Minute
+	if c.HubPoolIdleTimeoutMinutes > 0 {
+		idleTimeout = time.Duration(c.HubPoolIdleTimeoutMinutes) * time.Minute
+	}
+	return
+}
+
+// GetRefreshConcurrency returns the tool refresh concurrency limit.
+func (c *ResourceConfig) GetRefreshConcurrency() int {
+	if c.RefreshConcurrency > 0 {
+		return c.RefreshConcurrency
+	}
+	return 6
 }
 
 // DefaultFileConfig returns the default configuration.

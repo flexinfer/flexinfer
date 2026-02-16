@@ -55,6 +55,12 @@ func (d *Daemon) buildAuthenticator() (gateway.Authenticator, error) {
 			AllowedCommonNames: cfg.AllowedCommonNames,
 		}, nil
 
+	case "oauth2":
+		if d.oauth == nil {
+			return nil, fmt.Errorf("oauth2 auth requires http.oauth.enabled=true")
+		}
+		return d.oauth, nil
+
 	default:
 		return nil, fmt.Errorf("unknown auth type: %q", cfg.Type)
 	}

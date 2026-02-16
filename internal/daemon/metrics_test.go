@@ -216,6 +216,59 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	}
 }
 
+func TestMetrics_RuntimeStats(t *testing.T) {
+	m := NewMetrics()
+
+	// Verify new runtime gauges are registered and usable
+	if m.GoroutineCount == nil {
+		t.Error("GoroutineCount not registered")
+	}
+	if m.MemAllocBytes == nil {
+		t.Error("MemAllocBytes not registered")
+	}
+	if m.MemSysBytes == nil {
+		t.Error("MemSysBytes not registered")
+	}
+	if m.GCPauseNs == nil {
+		t.Error("GCPauseNs not registered")
+	}
+	if m.EventsDropped == nil {
+		t.Error("EventsDropped not registered")
+	}
+	if m.CallLockWaitTotal == nil {
+		t.Error("CallLockWaitTotal not registered")
+	}
+
+	// Set some values and verify no panics
+	m.GoroutineCount.Set(42)
+	m.MemAllocBytes.Set(1024 * 1024)
+	m.MemSysBytes.Set(8 * 1024 * 1024)
+	m.GCPauseNs.Set(50000)
+	m.EventsDropped.Add(5)
+	m.CallLockWaitTotal.WithLabelValues("test-server").Inc()
+
+	// Verify handler still serves metrics with new fields
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Body)
+	bodyStr := string(body)
+
+	if !strings.Contains(bodyStr, "goroutine_count") {
+		t.Error("response should contain goroutine_count metric")
+	}
+	if !strings.Contains(bodyStr, "mem_alloc_bytes") {
+		t.Error("response should contain mem_alloc_bytes metric")
+	}
+	if !strings.Contains(bodyStr, "events_dropped_total") {
+		t.Error("response should contain events_dropped_total metric")
+	}
+	if !strings.Contains(bodyStr, "call_lock_wait_total") {
+		t.Error("response should contain call_lock_wait_total metric")
+	}
+}
+
 func TestMetrics_ConcurrentAccess(t *testing.T) {
 	m := NewMetrics()
 

@@ -65,6 +65,16 @@ func (d *Daemon) startHTTPListener(ctx context.Context) error {
 	// Health endpoint (unauthenticated, useful for LB probes)
 	mux.HandleFunc("/health", d.HealthHandler())
 
+	// OAuth 2.1 endpoints (unauthenticated, part of the OAuth flow itself)
+	if d.oauth != nil {
+		mux.HandleFunc("/.well-known/oauth-authorization-server", d.oauth.HandleMetadata)
+		mux.HandleFunc("/.well-known/oauth-protected-resource", d.oauth.HandleResourceMetadata)
+		mux.HandleFunc("/oauth2/register", d.oauth.HandleRegister)
+		mux.HandleFunc("/oauth2/authorize", d.oauth.HandleAuthorize)
+		mux.HandleFunc("/oauth2/token", d.oauth.HandleToken)
+		mux.HandleFunc("/oauth2/revoke", d.oauth.HandleRevoke)
+	}
+
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -144,6 +154,12 @@ func (d *Daemon) httpSessionReaperLoop() {
 				reaped := d.httpStreamable.ReapExpiredSessions()
 				if reaped > 0 {
 					d.logger.Info("reaped expired HTTP sessions", "count", reaped)
+				}
+			}
+			if d.oauth != nil {
+				reaped := d.oauth.ReapExpired()
+				if reaped > 0 {
+					d.logger.Info("reaped expired OAuth codes/tokens", "count", reaped)
 				}
 			}
 		}

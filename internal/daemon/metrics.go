@@ -54,6 +54,18 @@ type Metrics struct {
 	// RBAC metrics
 	RBACDenied prometheus.Counter
 
+	// Runtime metrics
+	GoroutineCount prometheus.Gauge
+	MemAllocBytes  prometheus.Gauge
+	MemSysBytes    prometheus.Gauge
+	GCPauseNs      prometheus.Gauge
+
+	// EventBus metrics
+	EventsDropped prometheus.Counter
+
+	// Contention metrics
+	CallLockWaitTotal *prometheus.CounterVec
+
 	registry *prometheus.Registry
 }
 
@@ -328,6 +340,64 @@ func NewMetrics() *Metrics {
 		},
 	)
 
+	// Runtime metrics
+	m.GoroutineCount = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "goroutine_count",
+			Help:      "Current number of goroutines",
+		},
+	)
+
+	m.MemAllocBytes = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "mem_alloc_bytes",
+			Help:      "Current bytes of allocated heap objects",
+		},
+	)
+
+	m.MemSysBytes = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "mem_sys_bytes",
+			Help:      "Total bytes of memory obtained from the OS",
+		},
+	)
+
+	m.GCPauseNs = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "gc_pause_ns",
+			Help:      "Most recent GC pause duration in nanoseconds",
+		},
+	)
+
+	// EventBus metrics
+	m.EventsDropped = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "events_dropped_total",
+			Help:      "Total number of events dropped due to slow subscribers",
+		},
+	)
+
+	// Contention metrics
+	m.CallLockWaitTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "call_lock_wait_total",
+			Help:      "Total number of call lock waits exceeding threshold",
+		},
+		[]string{"server"},
+	)
+
 	// Register all metrics
 	m.registry.MustRegister(
 		m.RequestsTotal,
@@ -357,6 +427,12 @@ func NewMetrics() *Metrics {
 		m.HubRequests,
 		m.HubFailures,
 		m.RBACDenied,
+		m.GoroutineCount,
+		m.MemAllocBytes,
+		m.MemSysBytes,
+		m.GCPauseNs,
+		m.EventsDropped,
+		m.CallLockWaitTotal,
 	)
 
 	return m

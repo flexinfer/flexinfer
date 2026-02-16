@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/internal/daemon"
 )
 
 func TestTruncateCallToolResult_NoChangeWhenUnderLimit(t *testing.T) {
@@ -98,5 +101,68 @@ func TestTruncateCallToolResult_ImageNeverTruncatesBase64(t *testing.T) {
 	}
 	if !foundAfter {
 		t.Fatalf("expected to keep trailing text content")
+	}
+}
+
+func TestResolveProxyLimit_EnvOverridesConfig(t *testing.T) {
+	os.Setenv("TEST_PROXY_LIMIT", "99999")
+	defer os.Unsetenv("TEST_PROXY_LIMIT")
+
+	got := resolveProxyLimit("TEST_PROXY_LIMIT", 50000, 48000, 1024)
+	if got != 99999 {
+		t.Errorf("resolveProxyLimit = %d, want 99999 (env)", got)
+	}
+}
+
+func TestResolveProxyLimit_ConfigFallback(t *testing.T) {
+	os.Unsetenv("TEST_PROXY_LIMIT_2")
+
+	got := resolveProxyLimit("TEST_PROXY_LIMIT_2", 60000, 48000, 1024)
+	if got != 60000 {
+		t.Errorf("resolveProxyLimit = %d, want 60000 (config)", got)
+	}
+}
+
+func TestResolveProxyLimit_HardcodedDefault(t *testing.T) {
+	os.Unsetenv("TEST_PROXY_LIMIT_3")
+
+	got := resolveProxyLimit("TEST_PROXY_LIMIT_3", 0, 48000, 1024)
+	if got != 48000 {
+		t.Errorf("resolveProxyLimit = %d, want 48000 (default)", got)
+	}
+}
+
+func TestResolveProxyLimit_MinBound(t *testing.T) {
+	os.Setenv("TEST_PROXY_LIMIT_4", "500")
+	defer os.Unsetenv("TEST_PROXY_LIMIT_4")
+
+	got := resolveProxyLimit("TEST_PROXY_LIMIT_4", 0, 48000, 1024)
+	if got != 1024 {
+		t.Errorf("resolveProxyLimit = %d, want 1024 (min bound)", got)
+	}
+}
+
+func TestProxyMaxToolResultBytes_ConfigFallback(t *testing.T) {
+	os.Unsetenv(loomProxyMaxToolResultBytesEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{MaxToolResultBytes: 70000}
+	got := proxyMaxToolResultBytes()
+	if got != 70000 {
+		t.Errorf("proxyMaxToolResultBytes() = %d, want 70000", got)
+	}
+}
+
+func TestProxyMaxToolResultBytes_EnvOverridesConfig(t *testing.T) {
+	os.Setenv(loomProxyMaxToolResultBytesEnv, "80000")
+	defer os.Unsetenv(loomProxyMaxToolResultBytesEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{MaxToolResultBytes: 70000}
+	got := proxyMaxToolResultBytes()
+	if got != 80000 {
+		t.Errorf("proxyMaxToolResultBytes() = %d, want 80000 (env)", got)
 	}
 }

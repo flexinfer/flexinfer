@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/internal/daemon"
 )
 
 const (
@@ -21,52 +23,58 @@ const (
 	defaultMaxResourceBytes      = 64_000
 )
 
+// proxyConfigGlobal holds the loaded file config for proxy-side settings.
+// It is loaded once at proxy startup.
+var proxyConfigGlobal daemon.ProxyConfig
+
 func proxyMaxToolResultBytes() int {
-	v := strings.TrimSpace(os.Getenv(loomProxyMaxToolResultBytesEnv))
-	if v == "" {
-		return defaultMaxToolResultBytes
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return defaultMaxToolResultBytes
-	}
-	// Keep a sane lower bound to avoid zero-length results.
-	if n < 1024 {
-		return 1024
-	}
-	return n
+	return resolveProxyLimit(
+		loomProxyMaxToolResultBytesEnv,
+		proxyConfigGlobal.MaxToolResultBytes,
+		defaultMaxToolResultBytes,
+		1024,
+	)
 }
 
 func proxyMaxImageResultBytes() int {
-	v := strings.TrimSpace(os.Getenv(loomProxyMaxImageResultBytesEnv))
-	if v == "" {
-		return defaultMaxImageResultBytes
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return defaultMaxImageResultBytes
-	}
-	// Keep a sane lower bound; otherwise image outputs will always be dropped.
-	if n < 16_384 {
-		return 16_384
-	}
-	return n
+	return resolveProxyLimit(
+		loomProxyMaxImageResultBytesEnv,
+		proxyConfigGlobal.MaxImageResultBytes,
+		defaultMaxImageResultBytes,
+		16_384,
+	)
 }
 
 func proxyMaxResourceBytes() int {
-	v := strings.TrimSpace(os.Getenv(loomProxyMaxResourceBytesEnv))
-	if v == "" {
-		return defaultMaxResourceBytes
+	return resolveProxyLimit(
+		loomProxyMaxResourceBytesEnv,
+		proxyConfigGlobal.MaxResourceBytes,
+		defaultMaxResourceBytes,
+		1024,
+	)
+}
+
+// resolveProxyLimit resolves a proxy limit with precedence: env var > config file > hardcoded default.
+func resolveProxyLimit(envKey string, configValue, hardcodedDefault, minValue int) int {
+	// Env var takes highest precedence.
+	if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			if n < minValue {
+				return minValue
+			}
+			return n
+		}
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return defaultMaxResourceBytes
+	// Config file is next.
+	if configValue > 0 {
+		if configValue < minValue {
+			return minValue
+		}
+		return configValue
 	}
-	// Keep a sane lower bound to avoid zero-length results.
-	if n < 1024 {
-		return 1024
-	}
-	return n
+	// Hardcoded default.
+	return hardcodedDefault
 }
 
 func truncateResourceText(text string, maxBytes int) string {

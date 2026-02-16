@@ -12,15 +12,16 @@ import (
 
 // ResponseCache provides TTL-based caching for read-only MCP tool responses.
 type ResponseCache struct {
-	mu         sync.RWMutex
-	entries    map[string]*cacheEntry
-	order      *list.List // LRU order tracking
-	orderMap   map[string]*list.Element
-	maxSize    int64 // max size in bytes
-	curSize    int64 // current size in bytes
-	defaultTTL time.Duration
-	toolTTLs   map[string]time.Duration // server__tool -> TTL
-	cacheable  map[string]bool          // server__tool -> cacheable
+	mu          sync.RWMutex
+	entries     map[string]*cacheEntry
+	order       *list.List // LRU order tracking
+	orderMap    map[string]*list.Element
+	serverIndex map[string]map[string]struct{} // server -> set of cache keys (reverse index)
+	maxSize     int64                          // max size in bytes
+	curSize     int64                          // current size in bytes
+	defaultTTL  time.Duration
+	toolTTLs    map[string]time.Duration // server__tool -> TTL
+	cacheable   map[string]bool          // server__tool -> cacheable
 }
 
 // cacheEntry represents a cached response.
@@ -28,6 +29,8 @@ type cacheEntry struct {
 	Key       string
 	Response  json.RawMessage
 	Size      int64
+	Server    string // originating server name
+	Tool      string // originating tool name
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Hits      int64
@@ -150,13 +153,14 @@ func NewResponseCache(cfg CacheConfig) *ResponseCache {
 	}
 
 	return &ResponseCache{
-		entries:    make(map[string]*cacheEntry),
-		order:      list.New(),
-		orderMap:   make(map[string]*list.Element),
-		maxSize:    maxSize,
-		defaultTTL: defaultTTL,
-		toolTTLs:   toolTTLs,
-		cacheable:  cacheableTools(),
+		entries:     make(map[string]*cacheEntry),
+		order:       list.New(),
+		orderMap:    make(map[string]*list.Element),
+		serverIndex: make(map[string]map[string]struct{}),
+		maxSize:     maxSize,
+		defaultTTL:  defaultTTL,
+		toolTTLs:    toolTTLs,
+		cacheable:   cacheableTools(),
 	}
 }
 
@@ -235,6 +239,8 @@ func (c *ResponseCache) Set(key string, response json.RawMessage, server, tool s
 		Key:       key,
 		Response:  response,
 		Size:      size,
+		Server:    server,
+		Tool:      tool,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
 		Hits:      0,
@@ -255,6 +261,14 @@ func (c *ResponseCache) Set(key string, response json.RawMessage, server, tool s
 	c.curSize += size
 	elem := c.order.PushFront(key)
 	c.orderMap[key] = elem
+
+	// Update server index
+	if server != "" {
+		if c.serverIndex[server] == nil {
+			c.serverIndex[server] = make(map[string]struct{})
+		}
+		c.serverIndex[server][key] = struct{}{}
+	}
 }
 
 // Clear removes all entries from the cache.
@@ -269,10 +283,12 @@ func (c *ResponseCache) Clear() {
 	c.entries = make(map[string]*cacheEntry)
 	c.order = list.New()
 	c.orderMap = make(map[string]*list.Element)
+	c.serverIndex = make(map[string]map[string]struct{})
 	c.curSize = 0
 }
 
-// ClearServer removes all entries for a specific server.
+// ClearServer removes all entries for a specific server using the server index.
+// This is O(k) where k is the number of entries for the server, not O(n) for all entries.
 func (c *ResponseCache) ClearServer(server string) {
 	if c == nil {
 		return
@@ -281,14 +297,15 @@ func (c *ResponseCache) ClearServer(server string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// We need to iterate and find entries for this server
-	// Since cache keys are sha256 hashes, we can't easily filter by server
-	// For now, we'll just clear the entire cache when clearing by server
-	// A more sophisticated approach would store server info in the entry
-	c.entries = make(map[string]*cacheEntry)
-	c.order = list.New()
-	c.orderMap = make(map[string]*list.Element)
-	c.curSize = 0
+	keys, ok := c.serverIndex[server]
+	if !ok {
+		return
+	}
+
+	for key := range keys {
+		c.removeEntryLocked(key)
+	}
+	delete(c.serverIndex, server)
 }
 
 // Stats returns cache statistics.
@@ -334,6 +351,16 @@ func (c *ResponseCache) removeEntryLocked(key string) {
 	if elem, ok := c.orderMap[key]; ok {
 		c.order.Remove(elem)
 		delete(c.orderMap, key)
+	}
+
+	// Clean up server index
+	if entry.Server != "" {
+		if keys, ok := c.serverIndex[entry.Server]; ok {
+			delete(keys, key)
+			if len(keys) == 0 {
+				delete(c.serverIndex, entry.Server)
+			}
+		}
 	}
 }
 
