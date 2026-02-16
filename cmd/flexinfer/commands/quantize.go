@@ -22,6 +22,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -222,6 +224,22 @@ func runQuantizeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(out, "Namespace:  %s\n", cache.Namespace)
 	_, _ = fmt.Fprintf(out, "Phase:      %s\n", phase)
 	_, _ = fmt.Fprintf(out, "Requested:  %s\n", requested)
+	job := &batchv1.Job{}
+	jobKey := client.ObjectKey{Name: cacheName + "-quantize", Namespace: namespace}
+	if err := k8sClient.Get(ctx(), jobKey, job); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get quantization job %q: %w", job.Name, err)
+		}
+	} else {
+		_, _ = fmt.Fprintf(
+			out,
+			"Job:        %s (active=%d succeeded=%d failed=%d)\n",
+			job.Name,
+			job.Status.Active,
+			job.Status.Succeeded,
+			job.Status.Failed,
+		)
+	}
 
 	if cache.Status.Quantization == nil {
 		_, _ = fmt.Fprintln(out, "Quantization: pending")

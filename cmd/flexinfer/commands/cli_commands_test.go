@@ -795,7 +795,13 @@ func TestRunQuantizeStatus_PrintsPendingWhenNoStatus(t *testing.T) {
 			Phase: aiv1alpha1.ModelCachePhaseQuantizing,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache-quantize", Namespace: "flexinfer-system"},
+		Status: batchv1.JobStatus{
+			Active: 1,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache, job).Build()
 	stubClient(t, c)
 
 	cmd, stdout, _ := newTestCmd()
@@ -811,6 +817,9 @@ func TestRunQuantizeStatus_PrintsPendingWhenNoStatus(t *testing.T) {
 	out := stdout.String()
 	if !strings.Contains(out, "Requested:  GGUF/Q4_K_M") {
 		t.Fatalf("expected requested quantization in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Job:        test-cache-quantize (active=1 succeeded=0 failed=0)") {
+		t.Fatalf("expected job status in output, got: %q", out)
 	}
 	if !strings.Contains(out, "Quantization: pending") {
 		t.Fatalf("expected pending marker in output, got: %q", out)
