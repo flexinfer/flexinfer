@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RBAC** (`internal/daemon/rbac.go`): Role-based tool access control with glob patterns, per-agent bindings, and deny-wins evaluation.
+- **Audit Trail** (`internal/daemon/audit.go`): Append-only JSONL logging of all tool calls with agent, server, tool, duration, and status fields.
+- **Cost Tracking** (`internal/daemon/cost.go`): Usage attribution by agent/server/tool with aggregation buckets and snapshot API endpoint.
+- **OAuth 2.1** (`internal/daemon/oauth.go`): Built-in authorization server with PKCE (S256), dynamic client registration (RFC 7591), AS metadata (RFC 8414), and token revocation (RFC 7009).
+- `docs/ENTERPRISE_SECURITY.md`: Configuration guide for all enterprise security features.
+- Agent lifecycle hooks bridge with nudge system and HUD API endpoints.
+- MCP server smoke tests for 10 additional servers (youtube, itchio, crypto, release, morph-fast-apply, alertmanager, minio, substack, qdrant, morph-embeddings).
+- Edge-case tests for daemon enterprise features (RBAC, audit, cost, OAuth) and agentcontext (workflows, memory hierarchy, service).
 - `mcp-devbox`: project-aware sandbox executor with Docker/K8s backends.
 - New devbox tools: `devbox_exec_async`, `devbox_exec_poll`, `devbox_metrics`, `devbox_summary`, `devbox_read_file`, `devbox_write_file`.
 - HUD sandbox API/panel integration backed by `devbox_summary` for live sandbox visibility.
@@ -29,11 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server test coverage Batch 1: `mcp-git`, `mcp-memory`, `mcp-sequentialthinking`.
 
 ### Changed
+- HUD M3/M4 completion: BulkToolbar in PresencePanel Claims tab, lazy-loaded LifecyclePanel, color-blind safe StatusDot in OverlayShell, row pagination via `maxRows` in Fleet/Tasks DataTables, GitLab issue-reference linking in task titles.
 - Devbox now mounts workspace root and sets project-relative container workdirs for better monorepo support.
 - HUD web/TUI surfaces were refined (polish, interactions, and Ghostty palette alignment).
 - `loom agent` lifecycle commands now prefer HUD API but automatically fall back to daemon socket `tools/call` when HUD is unavailable.
+- `docs/STREAMABLE_HTTP.md` expanded with OAuth 2.1 auth type documentation.
 
 ### Fixed
+- `mcp-alertmanager` now detects HTML error responses and returns a clear error message instead of an unmarshal panic.
+- TasksPanel row shifting caused by `display: flex` on `<td>` elements in the blocked-by column.
 - `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.
 - Hook-only clients (for example Codex `notify`) can now bootstrap agent session/presence via `loom agent heartbeat --ensure-session`, preventing repeated heartbeat failures when no explicit session-start hook exists.
 - `loom sync <profile|all> --regen` now prefers workspace-local registry discovery across ancestor directories (including `platform/gitops/mcp/context/registry.yaml`), avoiding stale regeneration from `~/.config/loom/registry.yaml` when run from `services/*` repos.

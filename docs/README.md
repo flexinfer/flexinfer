@@ -15,6 +15,11 @@ This index helps contributors and operators quickly find the right guide.
 - MCP server error handling standards: `docs/ERROR_HANDLING.md`
 - flexinfer.ai docs publishing integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
 
+## Enterprise & Security
+
+- Enterprise security features (RBAC, audit, cost, OAuth): `docs/ENTERPRISE_SECURITY.md`
+- Remote MCP transport (Streamable HTTP): `docs/STREAMABLE_HTTP.md`
+
 ## Planning and Roadmap
 
 - Project roadmap and status: `ROADMAP.md`

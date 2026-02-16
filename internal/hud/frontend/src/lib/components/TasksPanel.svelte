@@ -3,6 +3,7 @@
   import { agentStore } from '../stores/agents.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
   import { relativeTime, statusVariant, priorityVariant } from '../utils/format.ts';
+  import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
   import Badge from '../widgets/Badge.svelte';
   import Modal from '../widgets/Modal.svelte';
   import FilterBar from './shared/FilterBar.svelte';
@@ -485,6 +486,7 @@
           {sortDir}
           loading={!taskStore.lastUpdated}
           skeletonRows={3}
+          maxRows={VIRTUAL_SCROLL_THRESHOLD}
           selectable={true}
           selectedIds={selectedTaskIds}
           onSelect={handleTaskSelect}

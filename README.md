@@ -17,13 +17,27 @@ Go backend for the Loom ecosystem:
 - Build lifecycle: `docs/DEV_BUILD_LIFECYCLE.md`
 - API stability policy: `docs/API_STABILITY.md`
 - flexinfer.ai site integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
+- Enterprise security: `docs/ENTERPRISE_SECURITY.md`
+- Remote transport: `docs/STREAMABLE_HTTP.md`
 - Roadmap: `ROADMAP.md`
 
 ## Recent changes (post `v0.9.7`)
 
+- Added enterprise security features: RBAC, audit trail, cost tracking, OAuth 2.1 with PKCE.
 - Added and hardened `mcp-devbox` (project-aware sandbox execution, async exec/poll, metrics, summary).
-- Expanded HUD with sandbox visibility and improved TUI/web polish.
+- Expanded HUD with sandbox visibility, agent lifecycle hooks, and improved TUI/web polish.
 - Added atomic local upgrade workflow (`make dev-upgrade`) for safer developer iteration.
+
+## Enterprise Features
+
+Loom Core includes optional enterprise security features for team and org deployments:
+
+- **RBAC**: Role-based tool access control with glob patterns and per-agent bindings.
+- **Audit Trail**: Append-only JSONL log of all tool calls for compliance.
+- **Cost Tracking**: Usage attribution by agent, server, and tool with snapshot API.
+- **OAuth 2.1**: Built-in authorization server with PKCE, dynamic client registration, and token revocation.
+
+All features are disabled by default. See `docs/ENTERPRISE_SECURITY.md` for configuration.
 
 ## Quickstart
 

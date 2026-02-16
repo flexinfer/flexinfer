@@ -8,6 +8,7 @@
   import { healthStore } from '../stores/health.svelte.ts';
   import { router } from '../stores/router.svelte.ts';
   import { formatTime, relativeTime, formatNumber, entryVariant } from '../utils/format.ts';
+  import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Gauge from '../widgets/Gauge.svelte';
@@ -220,6 +221,7 @@
           sortDir={fleetSortDir}
           loading={!fleetStore.lastUpdated}
           skeletonRows={4}
+          maxRows={VIRTUAL_SCROLL_THRESHOLD}
           onSort={handleFleetSort}
           onRowClick={(row) => navigateToSession(row.id)}
         >

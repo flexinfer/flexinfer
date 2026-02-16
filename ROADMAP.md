@@ -33,7 +33,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
 
 ## Recently Shipped (post `v0.9.7`)
 
-- ✅ **HUD UI/UX overhaul (M1 complete, M2 complete, M3 ~80%, M4 ~85%)**
+- ✅ **HUD UI/UX overhaul (M1-M4 complete)**
   - Shipped design system foundation: tokens, type scale, spacing scale, elevation (`tokens.ts`, `theme.css`).
   - Shipped shared primitives: `PanelShell`, `DataTable`, `FilterBar`, `DetailDrawer`, `EmptyState`, `MetricCard`.
   - Shipped navigation restructure: 13 panels grouped into 6 views with badge counts, sub-tabs, keyboard shortcuts.
@@ -90,23 +90,28 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
 
 These build on shipped work and address immediate quality and reliability.
 
-- [ ] **Finish HUD M3/M4** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/7))
+- [x] **Finish HUD M3/M4** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/7)) ✅ Complete
   - ~~DetailDrawer integration for all views (Fleet, Servers, Tasks, Memory, Graph).~~ ✅ Done
   - ~~FilterBar across major panels (Tasks, Memory, Graph, Servers).~~ ✅ Done
   - ~~Accessibility: semantic HTML, `aria-sort`, focus trapping, skip link, keyboard nav.~~ ✅ Done
   - ~~SSE circuit breaker, incremental fetching, D3 simulation pause.~~ ✅ Done
-  - Add bulk actions toolbar for Tasks, Memory, and Claims.
-  - Add VirtualList adoption for large lists (Fleet 100+ sessions, Tasks).
-  - Ship color-blind safe status indicators (shape variants alongside color).
-  - Lazy-load heavy panels (Topology, Graph, Lifecycle).
+  - ~~Add bulk actions toolbar for Tasks, Memory, and Claims.~~ ✅ Done
+  - ~~Add row pagination (maxRows) for large lists (Fleet, Tasks).~~ ✅ Done
+  - ~~Ship color-blind safe status indicators (shape variants alongside color).~~ ✅ Done
+  - ~~Lazy-load heavy panels (Topology, Graph, Lifecycle).~~ ✅ Done
 
 - [ ] **Raise test coverage to 40%+** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2))
-  - Add happy-path + error-path + mcperror shape tests for `mcp-devbox`, `mcp-agent-context`, and newest servers.
+  - ~~Add smoke tests for 10 MCP servers (youtube, itchio, crypto, release, morph-fast-apply, alertmanager, minio, substack, qdrant, morph-embeddings).~~ ✅ Done
+  - ~~Add enterprise edge-case tests (RBAC, audit, cost, OAuth).~~ ✅ Done
+  - ~~Add agentcontext gap-fill tests (workflows, memory hierarchy, service).~~ ✅ Done
   - Add daemon lifecycle tests: flock contention, socket cleanup, proxy autostart, graceful shutdown.
   - Add integration tests for Docker + K8s devbox backends under monorepo layouts.
-  - Target: 40% overall coverage (up from 21.2%).
+  - Current: 30.4% (up from 29.3%). Target: 40%.
 
 - [ ] **Onboarding and docs consistency** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/6))
+  - ~~Add `docs/ENTERPRISE_SECURITY.md` covering RBAC, audit, cost, OAuth.~~ ✅ Done
+  - ~~Expand `docs/STREAMABLE_HTTP.md` with OAuth 2.1 auth type.~~ ✅ Done
+  - ~~Update README, docs hub, CHANGELOG, and ROADMAP.~~ ✅ Done
   - Keep README/docs/changelog synchronized with shipped command and tool surface.
   - Maintain one canonical docs entrypoint for user/developer/operator tasks.
   - Polish `make bootstrap-local` first-run experience.

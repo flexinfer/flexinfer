@@ -138,8 +138,32 @@ http:
 | `token` | Static bearer token | Small teams, dev environments |
 | `oidc` | JWT via OIDC provider | Enterprise SSO integration |
 | `mtls` | Mutual TLS with client certs | Zero-trust infrastructure |
+| `oauth` | OAuth 2.1 with PKCE | Standards-based access control |
 
 When binding to localhost, auth is optional. When binding to a non-localhost address, auth is **required** and the daemon refuses to start without it.
+
+### OAuth 2.1 (PKCE)
+
+The daemon includes a built-in OAuth 2.1 authorization server. Enable it in the daemon config:
+
+```yaml
+oauth:
+  enabled: true
+  token_ttl_minutes: 60
+  allow_dynamic_registration: true
+```
+
+This exposes standard endpoints:
+
+| Path | Description |
+|------|-------------|
+| `/.well-known/oauth-authorization-server` | Server metadata (RFC 8414) |
+| `/oauth2/register` | Dynamic client registration (RFC 7591) |
+| `/oauth2/authorize` | Authorization endpoint |
+| `/oauth2/token` | Token exchange (PKCE S256 required) |
+| `/oauth2/revoke` | Token revocation (RFC 7009) |
+
+See `docs/ENTERPRISE_SECURITY.md` for the full PKCE flow with curl examples.
 
 ## Security
 
