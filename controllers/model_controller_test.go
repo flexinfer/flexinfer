@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -394,6 +395,94 @@ func TestDetectGPU_ReturnsNoMatchingWhenOnlyNotReadyNodesMatch(t *testing.T) {
 		t.Fatalf("expected no matching nodes error, got nil")
 	} else if !isNoMatchingNodesError(err) {
 		t.Fatalf("expected noMatchingNodesError, got %T (%v)", err, err)
+	}
+}
+
+func TestPruneFailedModelPods_DeletesOnlyOldFailedPods(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+		},
+	}
+
+	matchLabels := map[string]string{
+		"app.kubernetes.io/name":       "model",
+		"app.kubernetes.io/instance":   "test-model",
+		"app.kubernetes.io/managed-by": "flexinfer",
+		"flexinfer.ai/model":           "test-model",
+		"flexinfer.ai/backend":         "mlc-llm",
+	}
+
+	oldFailed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "old-failed",
+			Namespace:         "default",
+			Labels:            matchLabels,
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+		},
+		Status: corev1.PodStatus{
+			Phase:  corev1.PodFailed,
+			Reason: "UnexpectedAdmissionError",
+		},
+	}
+	recentFailed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "recent-failed",
+			Namespace:         "default",
+			Labels:            matchLabels,
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Minute)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed,
+		},
+	}
+	running := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "running",
+			Namespace:         "default",
+			Labels:            matchLabels,
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-20 * time.Minute)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, oldFailed, recentFailed, running).
+		Build()
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	if err := r.pruneFailedModelPods(context.Background(), model); err != nil {
+		t.Fatalf("pruneFailedModelPods() error: %v", err)
+	}
+
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(oldFailed), &corev1.Pod{}); err == nil {
+		t.Fatalf("expected old failed pod to be deleted")
+	} else if !errors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking old failed pod: %v", err)
+	}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(recentFailed), &corev1.Pod{}); err != nil {
+		t.Fatalf("expected recent failed pod to remain, got error: %v", err)
+	}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(running), &corev1.Pod{}); err != nil {
+		t.Fatalf("expected running pod to remain, got error: %v", err)
 	}
 }
 

@@ -402,8 +402,35 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		r.reconcileKVCachePressure(ctx, model)
 	}
+	// Best-effort cleanup: prune old failed pods from this model's ReplicaSet so
+	// operational status stays readable after transient device/plugin failures.
+	if err := r.pruneFailedModelPods(ctx, model); err != nil {
+		log.Error(err, "Failed to prune old failed model pods")
+	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1alpha2.Model) error {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(model.Namespace), client.MatchingLabels(r.selectorLabelsForModel(model))); err != nil {
+		return err
+	}
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodFailed {
+			continue
+		}
+		if pod.CreationTimestamp.Time.After(cutoff) {
+			continue
+		}
+		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
