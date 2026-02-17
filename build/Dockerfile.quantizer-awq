@@ -1,0 +1,34 @@
+# Dockerfile.quantizer-awq
+# AWQ quantization runtime image for FlexInfer ModelCache quantization jobs.
+# Uses CUDA userspace + Python tooling required by AutoAWQ.
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# Pin to known-compatible CUDA 12.1 wheels for stability in CI/build environments.
+RUN python3 -m pip install \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.3.1 torchvision==0.18.1
+
+RUN python3 -m pip install \
+    autoawq==0.2.7 \
+    transformers==4.46.3 \
+    accelerate==1.1.1 \
+    safetensors==0.4.5 \
+    sentencepiece==0.2.0 \
+    huggingface_hub==0.26.2
+
+ENTRYPOINT ["/bin/sh"]
