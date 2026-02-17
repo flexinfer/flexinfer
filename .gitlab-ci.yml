@@ -549,13 +549,26 @@ build_quantizer_gguf:
       done
     - |
       echo "Building GGUF quantizer image..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.quantizer-gguf" \
-        --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/quantizer:gguf,push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.quantizer-gguf" \
+          --opt platform=linux/amd64 \
+          --output "type=image,name=${REGISTRY}/quantizer:gguf,push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: GGUF quantizer build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: GGUF quantizer build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
@@ -578,13 +591,26 @@ build_quantizer_awq:
       done
     - |
       echo "Building AWQ quantizer image..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.quantizer-awq" \
-        --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/quantizer:awq,push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.quantizer-awq" \
+          --opt platform=linux/amd64 \
+          --output "type=image,name=${REGISTRY}/quantizer:awq,push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: AWQ quantizer build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: AWQ quantizer build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
@@ -607,13 +633,26 @@ build_quantizer_gptq:
       done
     - |
       echo "Building GPTQ quantizer image..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.quantizer-gptq" \
-        --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/quantizer:gptq,push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.quantizer-gptq" \
+          --opt platform=linux/amd64 \
+          --output "type=image,name=${REGISTRY}/quantizer:gptq,push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: GPTQ quantizer build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: GPTQ quantizer build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
