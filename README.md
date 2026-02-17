@@ -5,110 +5,57 @@
 Go backend for the Loom ecosystem:
 
 - MCP server implementations (`cmd/mcp-*/`)
-- `loom` CLI for config generation, sync, and local operations (`cmd/loom/`)
-- `loomd` daemon for MCP server lifecycle and routing (`cmd/loomd/`)
+- `loom` CLI for config generation/sync, daemon control, and tooling (`cmd/loom/`)
+- `loomd` daemon for MCP server lifecycle and tool routing (`cmd/loomd/`)
 
-## Documentation
+## Implementation Status
 
-- Docs hub: `docs/README.md`
-- User guide: `docs/USER_GUIDE.md`
-- Developer guide: `docs/DEVELOPER_GUIDE.md`
-- Architecture: `docs/ARCHITECTURE.md`
-- Build lifecycle: `docs/DEV_BUILD_LIFECYCLE.md`
-- API stability policy: `docs/API_STABILITY.md`
-- flexinfer.ai site integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
-- Enterprise security: `docs/ENTERPRISE_SECURITY.md`
-- Remote transport: `docs/STREAMABLE_HTTP.md`
-- Roadmap: `ROADMAP.md`
+Current shipped/in-progress status is tracked in one place:
 
-## Recent changes (post `v0.9.7`)
+- `docs/IMPLEMENTATION_STATUS.md`
 
-- Added enterprise security features: RBAC, audit trail, cost tracking, OAuth 2.1 with PKCE.
-- Added and hardened `mcp-devbox` (project-aware sandbox execution, async exec/poll, metrics, summary).
-- Expanded HUD with sandbox visibility, agent lifecycle hooks, and improved TUI/web polish.
-- Added atomic local upgrade workflow (`make dev-upgrade`) for safer developer iteration.
+Roadmap and execution sequencing:
 
-## Enterprise Features
+- `ROADMAP.md`
+- `docs/planning/2026-02-17-architecture-refactor-opportunities.md`
 
-Loom Core includes optional enterprise security features for team and org deployments:
+## Start Here By Role
 
-- **RBAC**: Role-based tool access control with glob patterns and per-agent bindings.
-- **Audit Trail**: Append-only JSONL log of all tool calls for compliance.
-- **Cost Tracking**: Usage attribution by agent, server, and tool with snapshot API.
-- **OAuth 2.1**: Built-in authorization server with PKCE, dynamic client registration, and token revocation.
+- Users/operators: `docs/USER_GUIDE.md`
+- Contributors/developers: `docs/DEVELOPER_GUIDE.md`
+- System architecture: `docs/ARCHITECTURE.md`
+- Full docs index: `docs/README.md`
 
-All features are disabled by default. See `docs/ENTERPRISE_SECURITY.md` for configuration.
+## Quickstart (Local)
 
-## Quickstart
+```bash
+make bootstrap-local
+./bin/loom start
+./bin/loom status
+```
+
+Manual path:
 
 ```bash
 make build
-
-# Recommended: one loom-proxy entry per MCP client
 ./bin/loom sync all --regen --loom-mode
-
-# Run daemon in foreground
 ./bin/loomd
-
-# Or manage daemon with launchd (macOS)
-./bin/loom start
-./bin/loom status
 ```
 
-First-time local bootstrap (build + install core binaries + sync + check):
+## Daily Workflows
 
-```bash
-make bootstrap-local
-```
+- Safe local upgrade: `make dev-upgrade`
+- Force daemon restart upgrade: `make dev-reload`
+- Health check: `curl http://localhost:9876/health`
+- Launch HUD: `./bin/loom hud --port 3333`
 
-## Daemon Management (launchd on macOS)
+## Notable Capabilities
 
-```bash
-./bin/loom start
-./bin/loom status
-./bin/loom reload
-./bin/loom restart
-./bin/loom stop
-```
-
-## Notable MCP Servers
-
-- `mcp-devbox`: project-aware sandbox executor with Docker/K8s backends.
-- `mcp-agent-context`: persistent memory, tasks, annotations, and workflows for agent sessions.
-- `mcp-k8s`: Go-native Kubernetes API operations.
-- `mcp-k8s-ops`: `kubectl`-exact operations (`exec`, `apply`, context-aware workflows).
-
-### Kubernetes timeouts (important for agents)
-
-Many MCP clients enforce tool-call deadlines (often ~60s). To avoid hangs:
-
-- Prefer bounded queries (`tail` logs, paginate list calls).
-- For `mcp-k8s-ops`, pass `timeoutSeconds` on long operations.
-- Defaults:
-  - `mcp-k8s`: `MCP_K8S_TIMEOUT_SECONDS` (default `55`)
-  - `mcp-k8s-ops`: `MCP_K8S_OPS_TIMEOUT_SECONDS` (default `55`)
-  - `mcp-ops`: `MCP_OPS_KUBECTL_TIMEOUT_SECONDS` / `MCP_OPS_SSH_TIMEOUT_SECONDS` (default `55`)
-
-### Kubeconfig selection
-
-- `mcp-k8s`: `MCP_K8S_KUBECONFIG` (preferred) or `KUBECONFIG`, default `~/.kube/config`
-- `mcp-k8s-ops`: `MCP_K8S_KUBECONFIG` (preferred) or `KUBECONFIG`, default `~/.kube/k3s.yaml` (if present) else `~/.kube/config`
-
-## Developer Upgrade Loop
-
-Use atomic install + safe daemon restart for local development:
-
-```bash
-make dev-upgrade
-```
-
-For first-time setup, use:
-
-```bash
-make bootstrap-local
-```
-
-For full details and rollback, see `docs/DEV_BUILD_LIFECYCLE.md`.
+- Multi-platform MCP config generation/sync (Codex, Claude, Gemini, Zed, VS Code, Kilocode).
+- Agent orchestration primitives via `mcp-agent-context` (sessions, tasks, memory, workflows, worktrees).
+- Project-aware sandbox execution via `mcp-devbox` (Docker/K8s backends).
+- Optional enterprise security controls (RBAC, audit, cost attribution, OAuth 2.1).
+- Streamable HTTP remote transport for team and remote daemon topologies.
 
 ## Development Quality Gates
 
@@ -117,10 +64,10 @@ go test ./...
 golangci-lint run
 ```
 
-In restricted environments, use:
+In restricted environments:
 
 ```bash
 make test-sandbox
 ```
 
-See `AGENTS.md` for agent-specific guidance.
+See `AGENTS.md` for agent-specific working conventions.

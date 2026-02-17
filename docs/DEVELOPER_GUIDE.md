@@ -2,7 +2,15 @@
 
 This guide is for contributors working on Loom Core internals.
 
-For system architecture, see `docs/ARCHITECTURE.md`.
+For architecture details, see `docs/ARCHITECTURE.md`.
+
+## Current Implementation Priorities
+
+Before starting feature work, align with:
+
+- Current shipped/in-progress status: `docs/IMPLEMENTATION_STATUS.md`
+- Strategic roadmap: `ROADMAP.md`
+- Active refactor sequencing: `docs/planning/2026-02-17-architecture-refactor-opportunities.md`
 
 ## Repository Layout
 
@@ -44,27 +52,35 @@ Safe binary upgrade without breaking running agents:
 make dev-upgrade
 ```
 
+Force-restart variant:
+
+```bash
+make dev-reload
+```
+
 First-time local onboarding:
 
 ```bash
 make bootstrap-local
 ```
 
-This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, and restarts daemon only when idle.
+This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, and restarts daemon only when idle (or always for `dev-reload`).
 
 ## Adding or Updating an MCP Server
 
-1. Add/update implementation in `cmd/mcp-<name>/`.
+1. Implement changes in `cmd/mcp-<name>/`.
 2. Keep tool schemas backward compatible (additive changes preferred).
 3. Use shared packages where possible:
-   - `pkg/validate` for argument parsing/validation
-   - `pkg/mcperror` for structured tool errors
-   - `pkg/httpclient` for timeout/retry-safe external calls
-4. Run quality gates (`go test`, `golangci-lint`, `make build`).
-5. Regenerate and sync configs:
+   - `pkg/validate` for argument parsing/validation.
+   - `pkg/mcperror` for structured tool errors.
+   - `pkg/httpclient` for timeout/retry-safe external calls.
+4. Add or update tests for success and failure paths.
+5. Run quality gates (`go test`, `golangci-lint`, `make build`).
+6. Regenerate and sync configs when tool schemas change:
    - `./bin/loom generate configs --target all --loom-mode`
    - `./bin/loom sync all --regen --loom-mode`
-   - `sync --regen` now prefers workspace-local registries discovered from repo ancestors before home-level defaults.
+
+`sync --regen` prefers workspace-local registries discovered from repo ancestors before home-level defaults.
 
 ## Devbox Development Notes
 
@@ -76,7 +92,7 @@ This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs 
 - `internal/devbox/backend/`: Docker and K8s execution backends
 - `internal/devbox/state/`: persisted sandbox metadata/cache
 
-Recent behavior to preserve:
+Behavior to preserve:
 
 - Monorepo-aware mounts (`workspaceRoot` mounted at `/workspace`)
 - Per-project lifecycle locking to avoid TOCTOU races
@@ -126,12 +142,22 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ./bin/loomd --debug
 ```
 
-Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, and `mcp-prometheus`.
+Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, and `mcp-prometheus`, with ongoing expansion noted in `ROADMAP.md`.
 
 ### Metrics
 
-- `mcp-agent-context`: `agent_context_stats` tool exposes counters and memory/workflow stats.
+- `mcp-agent-context`: `agent_context_stats` exposes counters and memory/workflow stats.
 - `mcp-devbox`: `devbox_metrics` and `devbox_summary` support runtime visibility and HUD integration.
+
+## Docs Maintenance Expectations
+
+When behavior changes are user-visible:
+
+1. Update `docs/IMPLEMENTATION_STATUS.md` if shipped/in-progress status changes.
+2. Update `README.md`, `docs/USER_GUIDE.md`, or this guide if workflows changed.
+3. Update `CHANGELOG.md` for release-note visibility.
+4. Follow `docs/DOCS_MAINTENANCE.md` ownership/cadence checklist.
+5. Run `make ci-guardrails` before PR when possible.
 
 ## Pre-PR Checklist
 
@@ -141,4 +167,4 @@ Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitl
 - `make build`
 - `./bin/loom sync all --regen --loom-mode` (if tool schemas changed)
 - Update docs/CHANGELOG for user-visible behavior changes
-- If docs changed, sync to site repo: see `docs/FLEXINFER_SITE_INTEGRATION.md`
+- If docs changed, sync to site repo: `docs/FLEXINFER_SITE_INTEGRATION.md`

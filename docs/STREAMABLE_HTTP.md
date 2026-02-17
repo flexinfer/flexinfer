@@ -2,6 +2,8 @@
 
 MCP v1.0 introduced Streamable HTTP as the standard remote transport. This document covers setup, configuration, and usage of the Streamable HTTP listener in `loomd`.
 
+For current shipped/in-progress status, see `docs/IMPLEMENTATION_STATUS.md`.
+
 ## Architecture
 
 ```
@@ -35,22 +37,22 @@ curl -X POST http://localhost:8088/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
 
-Expected output:
+Expected output includes a JSON-RPC success response and an `Mcp-Session-Id` header:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "protocolVersion": "2024-11-05",
+    "protocolVersion": "<server-supported-version>",
     "capabilities": {},
-    "serverInfo": {"name": "loom", "version": "0.1.0"},
+    "serverInfo": {"name": "loom", "version": "<daemon-version>"},
     "instructions": "Loom daemon - unified MCP hub management"
   }
 }
 ```
 
-The response includes an `Mcp-Session-Id` header for subsequent requests.
+Use that `Mcp-Session-Id` value on subsequent requests.
 
 ### Team/Shared Daemon (With Auth)
 
@@ -118,7 +120,7 @@ http:
 
   # Authentication
   auth:
-    type: token                  # token | oidc | mtls
+    type: token                  # token | oidc | mtls | oauth2
     token_secret_key: LOOM_HTTP_TOKEN
 
     # For type: oidc
@@ -138,7 +140,7 @@ http:
 | `token` | Static bearer token | Small teams, dev environments |
 | `oidc` | JWT via OIDC provider | Enterprise SSO integration |
 | `mtls` | Mutual TLS with client certs | Zero-trust infrastructure |
-| `oauth` | OAuth 2.1 with PKCE | Standards-based access control |
+| `oauth2` | OAuth 2.1 with PKCE | Standards-based access control |
 
 When binding to localhost, auth is optional. When binding to a non-localhost address, auth is **required** and the daemon refuses to start without it.
 
@@ -147,10 +149,13 @@ When binding to localhost, auth is optional. When binding to a non-localhost add
 The daemon includes a built-in OAuth 2.1 authorization server. Enable it in the daemon config:
 
 ```yaml
-oauth:
-  enabled: true
-  token_ttl_minutes: 60
-  allow_dynamic_registration: true
+http:
+  auth:
+    type: oauth2
+  oauth:
+    enabled: true
+    token_ttl_minutes: 60
+    allow_dynamic_registration: true
 ```
 
 This exposes standard endpoints:
@@ -158,6 +163,7 @@ This exposes standard endpoints:
 | Path | Description |
 |------|-------------|
 | `/.well-known/oauth-authorization-server` | Server metadata (RFC 8414) |
+| `/.well-known/oauth-protected-resource` | Protected resource metadata (RFC 9728) |
 | `/oauth2/register` | Dynamic client registration (RFC 7591) |
 | `/oauth2/authorize` | Authorization endpoint |
 | `/oauth2/token` | Token exchange (PKCE S256 required) |
@@ -167,7 +173,7 @@ See `docs/ENTERPRISE_SECURITY.md` for the full PKCE flow with curl examples.
 
 ## Security
 
-- **Localhost binding**: Auth disabled by default. The daemon warns but allows unauthenticated access.
+- **Localhost binding**: Auth is optional (`http.auth.type` may be omitted).
 - **Non-localhost binding**: Auth required. The daemon refuses to start without `http.auth.type` configured.
 - **Non-localhost without TLS**: The daemon logs a warning. Strongly recommend TLS for any non-localhost deployment.
 - **Session management**: Sessions expire after configurable idle timeout. A background reaper cleans up expired sessions every minute.
@@ -214,3 +220,9 @@ loom proxy --remote https://host:8088/mcp  # Uses LOOM_REMOTE_TOKEN env
 |------|------|-------------|
 | `/mcp` | Required (if configured) | MCP Streamable HTTP endpoint |
 | `/health` | No | Health check for load balancer probes |
+| `/.well-known/oauth-authorization-server` | No | OAuth server metadata (when `http.oauth.enabled=true`) |
+| `/.well-known/oauth-protected-resource` | No | OAuth protected resource metadata (when `http.oauth.enabled=true`) |
+| `/oauth2/register` | No | Dynamic client registration (when `http.oauth.enabled=true`) |
+| `/oauth2/authorize` | No | OAuth authorization endpoint (when `http.oauth.enabled=true`) |
+| `/oauth2/token` | No | OAuth token endpoint (when `http.oauth.enabled=true`) |
+| `/oauth2/revoke` | No | OAuth token revocation endpoint (when `http.oauth.enabled=true`) |

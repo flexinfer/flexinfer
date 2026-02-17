@@ -1,15 +1,30 @@
 # 2026-02 Quality and Onboarding Opportunities
 
-> **Status:** In Progress
+> **Status:** Historical Snapshot (Partially Completed)
 > **Reviewed:** 2026-02-11
 > **Inputs:** recent commits (`v0.9.7..HEAD`), `go test ./...`, `golangci-lint run`
+>
+> For current status, use `docs/IMPLEMENTATION_STATUS.md` and `ROADMAP.md`.
 
 ## Snapshot
 
-- `go test ./...`: passing
+- `go test ./...`: passing (at time of review)
 - `golangci-lint run`: passing after one low-risk fix in `internal/devbox/detect/hash_test.go`
-- current total Go coverage (`go tool cover -func`): **21.2%**
-- hook reliability improvement (2026-02-11): `loom agent` now supports HUD->daemon fallback and `heartbeat --ensure-session` bootstrap for notify-only clients.
+- historical coverage at review time (`go tool cover -func`): **21.2%**
+- hook reliability improvement (2026-02-11): `loom agent` supports HUD->daemon fallback and `heartbeat --ensure-session` bootstrap for notify-only clients.
+
+## Completion Since This Review
+
+Items from this plan that have shipped (see `ROADMAP.md` / `CHANGELOG.md`):
+
+- Docs + command guardrails in CI (`scripts/ci/check_docs_guardrails.sh` and CLI help smoke checks).
+- `make bootstrap-local` onboarding workflow.
+- Significant MCP server coverage growth and additional edge-case tests.
+
+Items still active from this plan:
+
+- Additional daemon lifecycle + devbox integration coverage toward the current 40% target.
+- Broader migration to standardized MCP error handling across remaining legacy servers.
 
 ## Priority Opportunities
 
