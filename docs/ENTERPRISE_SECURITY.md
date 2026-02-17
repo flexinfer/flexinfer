@@ -2,6 +2,8 @@
 
 Loom Core provides four enterprise security features configurable in the daemon config file (`~/.config/loom/config.yaml`). All features are disabled by default and activate independently.
 
+For shipped/in-progress status, see `docs/IMPLEMENTATION_STATUS.md`.
+
 ## Overview
 
 | Feature | Config Key | Purpose |
@@ -9,7 +11,7 @@ Loom Core provides four enterprise security features configurable in the daemon 
 | RBAC | `rbac` | Restrict tool access per agent role |
 | Audit Trail | `audit` | Append-only JSONL log of all tool calls |
 | Cost Tracking | `cost` | Usage attribution by agent, server, and tool |
-| OAuth 2.1 | `oauth` | Standards-based authorization for remote access |
+| OAuth 2.1 | `http.oauth` + `http.auth.type: oauth2` | Standards-based authorization for remote access |
 
 ## RBAC (Role-Based Access Control)
 
@@ -145,13 +147,11 @@ Each tool call produces a `UsageRecord` with:
 | `response_bytes` | Response payload size |
 | `status` | `success`, `error`, `denied`, or `cached` |
 
-### Snapshot Endpoint
+### Snapshot Method
 
-Query aggregated usage via the daemon API:
+Query aggregated usage via daemon JSON-RPC method `loom/cost-stats` (for example, from a proxy client or internal HUD/bridge integration).
 
-```bash
-curl -s http://localhost:8088/loom/cost-stats | jq .
-```
+This is not a standalone REST endpoint path.
 
 Response structure:
 
@@ -190,13 +190,18 @@ The built-in OAuth 2.1 server enables standards-based authorization for remote M
 
 ### Configuration
 
+Enable OAuth endpoints under `http.oauth` and set HTTP auth mode to `oauth2`:
+
 ```yaml
-oauth:
-  enabled: true
-  issuer: https://loom.example.com     # Default: derived from --http-addr
-  token_ttl_minutes: 60                # Access token lifetime (default: 60)
-  auth_code_ttl_seconds: 600           # Authorization code lifetime (default: 600)
-  allow_dynamic_registration: true     # RFC 7591 dynamic registration (default: true)
+http:
+  auth:
+    type: oauth2
+  oauth:
+    enabled: true
+    issuer: https://loom.example.com     # Default: derived from --http-addr
+    token_ttl_minutes: 60                # Access token lifetime (default: 60)
+    auth_code_ttl_seconds: 600           # Authorization code lifetime (default: 600)
+    allow_dynamic_registration: true     # RFC 7591 dynamic registration (default: true)
 ```
 
 ### Endpoints
@@ -266,6 +271,12 @@ http:
   session_timeout_minutes: 30
   tls_cert_file: /etc/loom/cert.pem
   tls_key_file: /etc/loom/key.pem
+  auth:
+    type: oauth2
+  oauth:
+    enabled: true
+    token_ttl_minutes: 60
+    allow_dynamic_registration: true
 
 rbac:
   enabled: true
@@ -292,9 +303,4 @@ audit:
 
 cost:
   enabled: true
-
-oauth:
-  enabled: true
-  token_ttl_minutes: 60
-  allow_dynamic_registration: true
 ```

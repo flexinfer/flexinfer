@@ -1622,6 +1622,10 @@ type DispatchTaskParams struct {
 	Title         string
 	Context       string
 	Priority      string
+	Tags          []string
+	FilePath      string
+	LineNumber    int
+	BlockedBy     []string
 }
 
 // DispatchTask creates a task and a handoff targeting a specific agent.
@@ -1638,17 +1642,23 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 		sessionID = session.ID
 	}
 
+	taskCreated := false
+
 	// Create the task.
 	if sessionID != "" {
 		if err := a.CreateTask(CreateTaskParams{
-			SessionID: sessionID,
-			Title:     p.Title,
-			Context:   p.Context,
-			Priority:  p.Priority,
-			Tags:      []string{"dispatched"},
+			SessionID:  sessionID,
+			Title:      p.Title,
+			Context:    p.Context,
+			Priority:   p.Priority,
+			Tags:       mergeDispatchTags(p.Tags),
+			FilePath:   p.FilePath,
+			LineNumber: p.LineNumber,
+			BlockedBy:  p.BlockedBy,
 		}); err != nil {
 			return nil, fmt.Errorf("create task: %w", err)
 		}
+		taskCreated = true
 	}
 
 	// Create a handoff targeting the agent.
@@ -1663,7 +1673,27 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 		"session_id":      sessionID,
 		"title":           p.Title,
 		"priority":        p.Priority,
+		"task_created":    taskCreated,
+		"handoff_created": true,
 	}, nil
+}
+
+func mergeDispatchTags(tags []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(tags)+1)
+
+	for _, tag := range append([]string{"dispatched"}, tags...) {
+		normalized := strings.TrimSpace(tag)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
 }
 
 // ReleaseFileClaim releases a specific file claim for an agent.

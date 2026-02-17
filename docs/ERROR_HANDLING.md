@@ -88,7 +88,13 @@ Legacy servers use `return nil, err` or `return nil, fmt.Errorf(...)` in handler
 functions. These should be migrated to `return mcp.ErrorResult(err), nil`.
 
 **CI guardrail:** `scripts/ci/check_error_handling.sh` prevents the count from
-increasing above the baseline (313). Lower the baseline as servers are migrated.
+increasing above its configured baseline (`ERROR_HANDLING_BASELINE`, default defined in the script). Lower the baseline as servers are migrated.
+
+Quick check:
+
+```bash
+scripts/ci/check_error_handling.sh
+```
 
 | Server | `nil,err` Count | Handler-level? | Status |
 |--------|-----------------|----------------|--------|

@@ -2,6 +2,8 @@
 
 This document describes Loom Core compatibility expectations for contributors and integrators.
 
+For shipped/in-progress feature status, see `docs/IMPLEMENTATION_STATUS.md`.
+
 ## Versioning Policy
 
 Loom Core uses [Semantic Versioning](https://semver.org/), with an important caveat:
@@ -60,6 +62,7 @@ The following packages are considered reusable public code:
 - `pkg/strutil`
 - `pkg/sync`
 - `pkg/templatevars`
+- `pkg/toolexec`
 - `pkg/tunnel`
 - `pkg/validate`
 - `pkg/validator`
@@ -81,7 +84,7 @@ Core command families expected to remain available:
 
 - Daemon lifecycle: `start`, `stop`, `status`, `restart`, `reload`, `daemon ...`
 - Config workflows: `generate ...`, `sync ...`, `validate ...`
-- Operations: `servers`, `tools ...`, `tunnel ...`, `secrets ...`
+- Operations: `servers`, `tools ...`, `tunnel ...`, `secrets ...`, `auth ...`, `doctor ...`
 - Runtime interfaces: `proxy`, `hud`, `agent ...`
 
 Notes:

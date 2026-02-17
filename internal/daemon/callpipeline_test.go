@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	kitregistry "gitlab.flexinfer.ai/libs/fi-mcp-kit/pkg/registry"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/internal/pool"
+	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
 )
 
@@ -50,6 +52,18 @@ func newCallPipelineTestDaemon() *Daemon {
 		metrics: NewMetrics(),
 		router:  router.New(router.Config{HubEnabled: true}),
 	}
+}
+
+func newTestPool(t *testing.T) *pool.Pool {
+	t.Helper()
+	return pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{}, nil
+		},
+	})
 }
 
 func newCallMessage(t *testing.T, payload any) *mcp.Message {
@@ -257,6 +271,164 @@ func TestCallPipelineBuildForwardRequest_FromArguments(t *testing.T) {
 	}
 }
 
+func TestCallPipelineRouteAndConnect_Unavailable(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: false})
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "route-unavailable"},
+		serverName: "unknown",
+	}
+
+	resp := p.routeAndConnect()
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected unavailable routing error response")
+	}
+	if resp.Error.Code != mcp.InternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+	if !strings.Contains(resp.Error.Message, "server unavailable") {
+		t.Fatalf("unexpected error message: %q", resp.Error.Message)
+	}
+}
+
+func TestCallPipelineRouteAndConnect_HubFallbackNotConfigured(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: true})
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "route-hub-missing"},
+		serverName: "unknown",
+	}
+
+	resp := p.routeAndConnect()
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected hub fallback configuration error response")
+	}
+	if resp.Error.Code != mcp.InternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+	if !strings.Contains(resp.Error.Message, "hub fallback not configured") {
+		t.Fatalf("unexpected error message: %q", resp.Error.Message)
+	}
+}
+
+func TestCallPipelineRouteAndConnect_LocalSuccess(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{
+		HubEnabled: false,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "local_srv",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.pool = newTestPool(t)
+	defer func() { _ = d.pool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "route-local-ok"},
+		serverName: "local_srv",
+	}
+
+	resp := p.routeAndConnect()
+	if resp != nil {
+		t.Fatalf("unexpected routing error response: %+v", resp.Error)
+	}
+	if p.conn == nil {
+		t.Fatal("expected connection to be established")
+	}
+	if p.target != router.TargetLocal {
+		t.Fatalf("target = %v, want %v", p.target, router.TargetLocal)
+	}
+	if p.targetStr != router.TargetLocal.String() {
+		t.Fatalf("targetStr = %q, want %q", p.targetStr, router.TargetLocal.String())
+	}
+}
+
+func TestCallPipelineRouteAndConnect_HubSuccess(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: true})
+	d.hubPool = newTestPool(t)
+	defer func() { _ = d.hubPool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "route-hub-ok"},
+		serverName: "hub_only",
+	}
+
+	resp := p.routeAndConnect()
+	if resp != nil {
+		t.Fatalf("unexpected routing error response: %+v", resp.Error)
+	}
+	if p.conn == nil {
+		t.Fatal("expected hub connection to be established")
+	}
+	if p.target != router.TargetHub {
+		t.Fatalf("target = %v, want %v", p.target, router.TargetHub)
+	}
+	if p.targetStr != router.TargetHub.String() {
+		t.Fatalf("targetStr = %q, want %q", p.targetStr, router.TargetHub.String())
+	}
+}
+
+func TestCallPipelineReleaseConnection_Local(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	defer func() { _ = d.pool.Close() }()
+
+	p := &callPipeline{
+		daemon: d,
+		conn: &pool.Conn{
+			ServerName: "local_srv",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+		target: router.TargetLocal,
+	}
+
+	p.releaseConnection()
+
+	stats := d.pool.Stats()
+	if stats.IdleConns != 1 {
+		t.Fatalf("idle conns = %d, want 1", stats.IdleConns)
+	}
+}
+
+func TestCallPipelineReleaseConnection_Hub(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.hubPool = newTestPool(t)
+	defer func() { _ = d.hubPool.Close() }()
+
+	p := &callPipeline{
+		daemon: d,
+		conn: &pool.Conn{
+			ServerName: "hub_srv",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+		target: router.TargetHub,
+	}
+
+	p.releaseConnection()
+
+	stats := d.hubPool.Stats()
+	if stats.IdleConns != 1 {
+		t.Fatalf("idle conns = %d, want 1", stats.IdleConns)
+	}
+}
+
 func TestCallPipelineExecute_SendFailure(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	tr := &fakeTransport{sendErr: errors.New("send failed")}
@@ -367,5 +539,49 @@ func TestCallPipelineExecute_SuccessCachesResponse(t *testing.T) {
 	}
 	if string(got) != `{"ok":true}` {
 		t.Fatalf("cached result = %s, want %s", string(got), `{"ok":true}`)
+	}
+}
+
+func TestCallPipelineTransportFailure_LocalClearsIdleAndStopsServer(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	d.procMgr = process.NewManager(nil, "codex")
+	defer func() { _ = d.pool.Close() }()
+
+	// Seed an idle pooled connection so local recovery has something to clear.
+	d.pool.Put(&pool.Conn{
+		ServerName: "local_srv",
+		Transport:  &fakeTransport{},
+		Healthy:    true,
+	})
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "transport-local"},
+		serverName: "local_srv",
+		method:     "tools/call",
+		target:     router.TargetLocal,
+		targetStr:  router.TargetLocal.String(),
+		conn: &pool.Conn{
+			ServerName: "local_srv",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+	}
+
+	resp := p.transportFailure("send", errors.New("send failed"), time.Now())
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected transport error response")
+	}
+	if resp.Error.Code != mcp.InternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection marked unhealthy on transport failure")
+	}
+
+	stats := d.pool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("idle conns = %d, want 0 after ClearServer", stats.IdleConns)
 	}
 }

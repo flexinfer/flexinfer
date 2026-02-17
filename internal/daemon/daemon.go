@@ -205,12 +205,10 @@ func New(cfg Config) (*Daemon, error) {
 
 	if registryPath != "" {
 		var err error
-		reg, err = registry.Load(registryPath)
+		reg, err = registry.LoadWithDefaults(registryPath)
 		if err != nil {
 			return nil, fmt.Errorf("load registry: %w", err)
 		}
-		// Merge default env aliases for fallback resolution
-		reg.MergeDefaultAliases()
 		logger.Info("loaded registry", "path", registryPath, "servers", len(reg.Servers))
 
 		// If repo_root not set in config, derive from registry path
@@ -220,15 +218,20 @@ func New(cfg Config) (*Daemon, error) {
 		}
 	}
 
-	// Create process manager with variable expansion (using registry for env aliases)
+	// d will be set once the Daemon struct is created (below). Closures below
+	// capture this pointer so runtime expansion and process/event behavior can
+	// follow reloaded daemon state.
+	var d *Daemon
+
+	// Create process manager with variable expansion (using the daemon's current
+	// registry so reloads immediately affect env/template expansion).
 	procMgr := process.NewManager(reg, cfg.Target)
 	procMgr.SetExpandFunc(func(s string) string {
+		if d != nil {
+			return expandVarsWithRegistry(s, d.repoRoot, d.registry)
+		}
 		return expandVarsWithRegistry(s, repoRoot, reg)
 	})
-
-	// d will be set once the Daemon struct is created (below). The closure
-	// captures the pointer so it can emit process.start events on first dial.
-	var d *Daemon
 
 	// Create connection pool for local servers
 	poolMaxIdle, poolMaxOpen, poolIdleTimeout := fileCfg.Resources.GetPoolConfig()
@@ -238,15 +241,25 @@ func New(cfg Config) (*Daemon, error) {
 		IdleTimeout: poolIdleTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
 			_, wasRunning := d.runningServers.LoadOrStore(serverName, true)
-			transport, err := procMgr.Dial(ctx, serverName)
+			// Process lifetime must not be tied to request/handshake timeout contexts.
+			transport, err := procMgr.Dial(context.Background(), serverName)
 			if err != nil {
 				d.runningServers.Delete(serverName)
 				return nil, err
 			}
-			if !wasRunning && d.eventBus != nil {
-				d.eventBus.Publish(EventProcessStart, map[string]any{
-					"server": serverName,
-				})
+			if !wasRunning {
+				initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := initializeMCPTransport(initCtx, transport); err != nil {
+					d.runningServers.Delete(serverName)
+					_ = procMgr.Stop(serverName)
+					return nil, fmt.Errorf("initialize transport: %w", err)
+				}
+				if d.eventBus != nil {
+					d.eventBus.Publish(EventProcessStart, map[string]any{
+						"server": serverName,
+					})
+				}
 			}
 			return transport, nil
 		},
@@ -1415,23 +1428,8 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 
 	transport := mcp.NewStdioTransport(stdout, stdin)
 
-	// Initialize
-	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
-		ProtocolVersion: mcp.ProtocolVersion,
-		Capabilities:    mcp.Capabilities{},
-		ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
-	})
-	if err := transport.Send(ctx, initReq); err != nil {
-		return nil, fmt.Errorf("send init: %w", err)
-	}
-	if _, err := transport.Recv(ctx); err != nil {
-		return nil, fmt.Errorf("recv init: %w", err)
-	}
-
-	// Send initialized notification
-	initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
-	if err := transport.Send(ctx, initNotif); err != nil {
-		return nil, fmt.Errorf("send initialized: %w", err)
+	if err := initializeMCPTransport(ctx, transport); err != nil {
+		return nil, err
 	}
 
 	// Get tools
@@ -1455,6 +1453,27 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 	}
 
 	return toolsList.Tools, nil
+}
+
+// initializeMCPTransport performs the MCP initialize handshake on a fresh transport.
+func initializeMCPTransport(ctx context.Context, transport mcp.Transport) error {
+	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
+		ProtocolVersion: mcp.ProtocolVersion,
+		Capabilities:    mcp.Capabilities{},
+		ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
+	})
+	if err := transport.Send(ctx, initReq); err != nil {
+		return fmt.Errorf("send init: %w", err)
+	}
+	if _, err := transport.Recv(ctx); err != nil {
+		return fmt.Errorf("recv init: %w", err)
+	}
+
+	initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
+	if err := transport.Send(ctx, initNotif); err != nil {
+		return fmt.Errorf("send initialized: %w", err)
+	}
+	return nil
 }
 
 // expandVarsWithRegistry expands variable patterns with registry-based env aliases.
@@ -1674,7 +1693,7 @@ func (d *Daemon) Reload(ctx context.Context) error {
 
 	// Reload registry
 	if d.cfg.RegistryPath != "" {
-		newReg, err := registry.Load(d.cfg.RegistryPath)
+		newReg, err := registry.LoadWithDefaults(d.cfg.RegistryPath)
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
 		}
@@ -1705,6 +1724,8 @@ func (d *Daemon) Reload(ctx context.Context) error {
 			}
 		}
 
+		d.procMgr.SetRegistry(newReg)
+		d.router.SetRegistry(newReg)
 		d.registry = newReg
 		d.logger.Info("registry reloaded", "servers", len(newReg.Servers))
 	}

@@ -30,7 +30,11 @@ func (g *gitlabServer) handleCreateIssue(ctx context.Context, args map[string]an
 	if labels != "" {
 		payload["labels"] = labels
 	}
-	if assigneeIDs, ok := args["assignee_ids"].([]any); ok {
+	assigneeIDs, err := parseOptionalPositiveIntSliceArg(args, "assignee_ids")
+	if err != nil {
+		return mcp.ErrorResult(mcperror.InvalidParam("assignee_ids", err.Error())), nil
+	}
+	if len(assigneeIDs) > 0 {
 		payload["assignee_ids"] = assigneeIDs
 	}
 
@@ -106,7 +110,11 @@ func (g *gitlabServer) handleUpdateIssue(ctx context.Context, args map[string]an
 	if stateEvent != "" {
 		payload["state_event"] = stateEvent
 	}
-	if assigneeIDs, ok := args["assignee_ids"].([]any); ok {
+	assigneeIDs, err := parseOptionalPositiveIntSliceArg(args, "assignee_ids")
+	if err != nil {
+		return mcp.ErrorResult(mcperror.InvalidParam("assignee_ids", err.Error())), nil
+	}
+	if len(assigneeIDs) > 0 {
 		payload["assignee_ids"] = assigneeIDs
 	}
 	if len(payload) == 0 {

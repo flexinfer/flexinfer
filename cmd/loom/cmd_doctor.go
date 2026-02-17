@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -68,19 +67,13 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 	}
 
 	// Load registry for hooks/permissions comparison.
-	regPath, found := registry.FindRegistry()
-	if !found {
-		candidate := filepath.Join(workspaceRoot, "platform", "gitops", "mcp", "context", "registry.yaml")
-		if _, err := os.Stat(candidate); err == nil {
-			regPath = candidate
-			found = true
-		}
-	}
+	regRes := resolveRegistryForDiagnostics(workspaceRoot)
+	regPath, found := regRes.Path, regRes.Found
 
 	var reg *registry.Registry
 	if found {
 		var err error
-		reg, err = registry.Load(regPath)
+		reg, err = registry.LoadWithDefaults(regPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load registry: %v\n", err)
 		}
@@ -88,6 +81,8 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 
 	// Run doctor checks.
 	report := generator.DoctorCheckAll(reg, workspaceRoot, home)
+	templateDiags := collectTemplateDiagnostics(reg, defaultTemplateProfiles(reg))
+	envWarnings := collectEnvConventionWarnings(reg)
 
 	// Check loom binary reachability.
 	loomPath, _ := exec.LookPath("loom")
@@ -99,18 +94,26 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 
 	if outputJSON {
 		type jsonReport struct {
-			OK         bool                        `json:"ok"`
-			Platforms  []*generator.PlatformHealth `json:"platforms"`
-			LoomBinary string                      `json:"loom_binary,omitempty"`
-			Registry   string                      `json:"registry,omitempty"`
+			OK                 bool                        `json:"ok"`
+			Platforms          []*generator.PlatformHealth `json:"platforms"`
+			LoomBinary         string                      `json:"loom_binary,omitempty"`
+			Registry           string                      `json:"registry,omitempty"`
+			RegistrySource     string                      `json:"registry_source,omitempty"`
+			RegistryPrecedence []string                    `json:"registry_precedence,omitempty"`
+			TemplateProfiles   []profileTemplateDiagnostic `json:"template_profiles,omitempty"`
+			EnvWarnings        []envConventionWarning      `json:"env_warnings,omitempty"`
 		}
 		jr := jsonReport{
-			OK:         report.OK,
-			Platforms:  report.Platforms,
-			LoomBinary: loomPath,
+			OK:                 report.OK,
+			Platforms:          report.Platforms,
+			LoomBinary:         loomPath,
+			RegistryPrecedence: regRes.Precedence,
+			TemplateProfiles:   templateDiags,
+			EnvWarnings:        envWarnings,
 		}
 		if found {
 			jr.Registry = regPath
+			jr.RegistrySource = regRes.Source
 		}
 		out, err := json.MarshalIndent(jr, "", "  ")
 		if err != nil {
@@ -128,8 +131,12 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 	fmt.Println("===========")
 	if found {
 		fmt.Printf("Registry: %s\n", regPath)
+		fmt.Printf("Source:   %s\n", regRes.Source)
 	} else {
 		fmt.Println("Registry: not found (hook comparison unavailable)")
+	}
+	if len(regRes.Precedence) > 0 {
+		fmt.Printf("Search:   %s\n", strings.Join(regRes.Precedence, " -> "))
 	}
 	if loomPath != "" {
 		fmt.Printf("Binary:   %s\n", loomPath)
@@ -204,6 +211,59 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 				fmt.Printf("         upstream: %s\n", upstreamHash[:16])
 			}
 		}
+	}
+
+	var templateWarnings []profileTemplateDiagnostic
+	for _, d := range templateDiags {
+		if d.OK {
+			continue
+		}
+		templateWarnings = append(templateWarnings, d)
+	}
+
+	fmt.Println()
+	fmt.Println("Registry Template Diagnostics:")
+	if reg == nil {
+		fmt.Println("  skipped (registry unavailable)")
+	} else if len(templateWarnings) == 0 {
+		fmt.Printf("  no unresolved env/keychain/secret template references across %d profile(s)\n", len(templateDiags))
+	} else {
+		for _, d := range templateWarnings {
+			fmt.Printf("  [%s] unresolved: %d\n", d.Profile, d.Count)
+			limit := len(d.Unresolved)
+			if limit > 6 {
+				limit = 6
+			}
+			for i := 0; i < limit; i++ {
+				ref := d.Unresolved[i]
+				fmt.Printf("    - %s %s (%s:%s)\n", ref.Server, ref.Location, ref.Kind, ref.Key)
+			}
+			if len(d.Unresolved) > limit {
+				fmt.Printf("    ... and %d more\n", len(d.Unresolved)-limit)
+			}
+			fmt.Printf("    Fix: %s\n", strings.ReplaceAll(templateFixForProfile(d), "\n", "\n         "))
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Registry Env Conventions:")
+	if reg == nil {
+		fmt.Println("  skipped (registry unavailable)")
+	} else if len(envWarnings) == 0 {
+		fmt.Println("  no naming drift warnings")
+	} else {
+		limit := len(envWarnings)
+		if limit > 12 {
+			limit = 12
+		}
+		for i := 0; i < limit; i++ {
+			w := envWarnings[i]
+			fmt.Printf("  [%s] %s -> %s (servers: %s)\n", w.Key, w.Issue, w.Suggestion, strings.Join(w.Servers, ","))
+		}
+		if len(envWarnings) > limit {
+			fmt.Printf("  ... and %d more warning(s)\n", len(envWarnings)-limit)
+		}
+		fmt.Println("  Fix: update registry key names, then run `loom sync all --regen` and `loom doctor`")
 	}
 
 	if fix {

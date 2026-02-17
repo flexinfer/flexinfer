@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "loom": {
+      "command": "/Users/cblevins/workspace/services/loom-core/bin/loom",
+      "args": [
+        "proxy",
+        "--agent-hint",
+        "zed"
+      ],
+      "timeout": 600
+    }
+  }
+}

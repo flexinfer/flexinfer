@@ -52,6 +52,46 @@ servers:
 	assert.Len(t, s2.Targets, 2)
 }
 
+func TestLoadWithDefaults_MergesDefaultAliases(t *testing.T) {
+	content := `
+version: 1
+servers: []
+`
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "registry.yaml")
+	err := os.WriteFile(path, []byte(content), 0644)
+	require.NoError(t, err)
+
+	reg, err := LoadWithDefaults(path)
+	require.NoError(t, err)
+
+	alias, ok := reg.EnvAliases["GITHUB_TOKEN"]
+	require.True(t, ok, "expected default alias for GITHUB_TOKEN")
+	assert.Contains(t, alias.Fallbacks, "GITHUB_PERSONAL_ACCESS_TOKEN")
+}
+
+func TestLoadWithDefaults_PreservesRegistryAliasOverrides(t *testing.T) {
+	content := `
+version: 1
+env_aliases:
+  GITHUB_TOKEN:
+    fallbacks:
+      - CUSTOM_GH_TOKEN
+servers: []
+`
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "registry.yaml")
+	err := os.WriteFile(path, []byte(content), 0644)
+	require.NoError(t, err)
+
+	reg, err := LoadWithDefaults(path)
+	require.NoError(t, err)
+
+	alias, ok := reg.EnvAliases["GITHUB_TOKEN"]
+	require.True(t, ok, "expected custom alias for GITHUB_TOKEN")
+	assert.Equal(t, []string{"CUSTOM_GH_TOKEN"}, alias.Fallbacks)
+}
+
 func TestGetServerSpec(t *testing.T) {
 	reg := &Registry{
 		Servers: []*Server{

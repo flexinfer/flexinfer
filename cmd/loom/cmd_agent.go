@@ -1026,6 +1026,10 @@ func newAgentDispatchCmd() *cobra.Command {
 		title       string
 		ctx         string
 		priority    string
+		tags        []string
+		filePath    string
+		lineNumber  int
+		blockedBy   []string
 		quiet       bool
 	)
 
@@ -1044,6 +1048,18 @@ This enables the HUD or CLI to push work to active agents.`,
 				"title":           title,
 				"context":         ctx,
 				"priority":        priority,
+			}
+			if len(tags) > 0 {
+				body["tags"] = tags
+			}
+			if filePath != "" {
+				body["file_path"] = filePath
+			}
+			if lineNumber > 0 {
+				body["line_number"] = lineNumber
+			}
+			if len(blockedBy) > 0 {
+				body["blocked_by"] = blockedBy
 			}
 
 			result, err := hudPost(port, "/api/agent/dispatch", body)
@@ -1066,6 +1082,10 @@ This enables the HUD or CLI to push work to active agents.`,
 	cmd.Flags().StringVar(&title, "title", "", "Task title (required)")
 	cmd.Flags().StringVar(&ctx, "context", "", "Additional context for the task")
 	cmd.Flags().StringVar(&priority, "priority", "medium", "Priority (low, medium, high, critical)")
+	cmd.Flags().StringSliceVar(&tags, "tag", nil, "Tag(s) to attach to the dispatched task (comma-separated or repeated)")
+	cmd.Flags().StringVar(&filePath, "file", "", "Optional related file path for the task")
+	cmd.Flags().IntVar(&lineNumber, "line", 0, "Optional related line number for --file")
+	cmd.Flags().StringSliceVar(&blockedBy, "blocked-by", nil, "Task IDs this dispatch should be blocked by (comma-separated or repeated)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
 	_ = cmd.MarkFlagRequired("to")
 	_ = cmd.MarkFlagRequired("title")

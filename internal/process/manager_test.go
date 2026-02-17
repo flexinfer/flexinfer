@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,43 @@ func TestManager_SetExpandFunc(t *testing.T) {
 		t.Fatalf("expected running process")
 	}
 	_ = m.Stop("test-server")
+}
+
+func TestManager_SetRegistry_UpdatesSpecSource(t *testing.T) {
+	reg1 := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name:   "reload-server",
+				Common: &registry.TargetSpec{
+					// Intentionally empty command: this should fail before registry swap.
+				},
+			},
+		},
+	}
+	m := NewManager(reg1, "common")
+
+	ctx := context.Background()
+	_, err := m.Start(ctx, "reload-server")
+	if err == nil || !strings.Contains(err.Error(), "has no command defined") {
+		t.Fatalf("expected no-command error before registry swap, got: %v", err)
+	}
+
+	reg2 := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name: "reload-server",
+				Common: &registry.TargetSpec{
+					Command: "definitely-not-a-real-command-binary",
+				},
+			},
+		},
+	}
+	m.SetRegistry(reg2)
+
+	_, err = m.Start(ctx, "reload-server")
+	if err == nil || !strings.Contains(err.Error(), "start process:") {
+		t.Fatalf("expected start-process error after registry swap, got: %v", err)
+	}
 }
 
 func TestManager_Count(t *testing.T) {

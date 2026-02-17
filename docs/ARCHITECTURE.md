@@ -6,6 +6,7 @@ For operational commands, see:
 
 - `docs/USER_GUIDE.md`
 - `docs/DEVELOPER_GUIDE.md`
+- `docs/IMPLEMENTATION_STATUS.md` for shipped vs in-progress status
 
 ## High-Level Components
 

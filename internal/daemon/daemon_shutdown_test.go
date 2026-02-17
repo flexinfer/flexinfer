@@ -19,7 +19,7 @@ import (
 	"github.com/crb2nu/loom/internal/process"
 )
 
-func newTestPool() *pool.Pool {
+func newShutdownTestPool() *pool.Pool {
 	return pool.New(pool.Config{
 		MaxIdle:     1,
 		MaxOpen:     1,
@@ -90,7 +90,7 @@ func TestDaemonStop_IdempotentAndReleasesSocketAndLock(t *testing.T) {
 	d := &Daemon{
 		cfg:      Config{SocketPath: socketPath},
 		done:     make(chan struct{}),
-		pool:     newTestPool(),
+		pool:     newShutdownTestPool(),
 		manifest: manifest,
 		procMgr:  process.NewManager(nil, "codex"),
 		listener: listener,

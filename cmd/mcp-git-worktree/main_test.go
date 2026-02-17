@@ -45,16 +45,16 @@ func initTestRepo(t *testing.T) string {
 	return dir
 }
 
-func setRepoPath(t *testing.T, p string) {
+func setDefaultRepo(t *testing.T, p string) {
 	t.Helper()
-	prev := repoPath
-	repoPath = p
-	t.Cleanup(func() { repoPath = prev })
+	prev := defaultRepo
+	defaultRepo = p
+	t.Cleanup(func() { defaultRepo = prev })
 }
 
 func TestHandleAddListAndRemove(t *testing.T) {
 	dir := initTestRepo(t)
-	setRepoPath(t, dir)
+	setDefaultRepo(t, dir)
 
 	addResult, err := handleAdd(context.Background(), map[string]any{
 		"path":          "wt-feature",
@@ -104,7 +104,7 @@ func TestHandleAddListAndRemove(t *testing.T) {
 
 func TestHandleAddRejectsTraversal(t *testing.T) {
 	dir := initTestRepo(t)
-	setRepoPath(t, dir)
+	setDefaultRepo(t, dir)
 
 	addResult, err := handleAdd(context.Background(), map[string]any{
 		"path":          "../escape",
@@ -134,7 +134,7 @@ func TestHandleAddRejectsTraversal(t *testing.T) {
 
 func TestHandleAddRejectsRootPath(t *testing.T) {
 	dir := initTestRepo(t)
-	setRepoPath(t, dir)
+	setDefaultRepo(t, dir)
 
 	result, err := handleAdd(context.Background(), map[string]any{
 		"path":          ".",
@@ -154,7 +154,7 @@ func TestHandleAddRejectsRootPath(t *testing.T) {
 
 func TestHandleListIgnoresInheritedGitRoutingEnv(t *testing.T) {
 	dir := initTestRepo(t)
-	setRepoPath(t, dir)
+	setDefaultRepo(t, dir)
 
 	t.Setenv("GIT_DIR", "/tmp/not-a-repo")
 	t.Setenv("GIT_WORK_TREE", "/tmp/not-a-worktree")
@@ -166,5 +166,40 @@ func TestHandleListIgnoresInheritedGitRoutingEnv(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+}
+func TestHandleListSupportsRepoPathOverride(t *testing.T) {
+	dir := initTestRepo(t)
+	setDefaultRepo(t, filepath.Dir(dir)) // default is intentionally not a git repo
+
+	result, err := handleList(context.Background(), map[string]any{
+		"repo_path": dir,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success with repo_path override, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, dir) {
+		t.Fatalf("expected repo path %q in output: %s", dir, result.Content[0].Text)
+	}
+}
+
+func TestResolveDefaultRepoFallsBackToGitRepoPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("REPO_PATH", "")
+	t.Setenv("GIT_REPO_PATH", dir)
+
+	got, err := resolveDefaultRepo()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("resolve want abs path: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveDefaultRepo() = %q, want %q", got, want)
 	}
 }

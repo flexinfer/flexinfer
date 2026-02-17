@@ -1,29 +1,36 @@
 # Loom Core Documentation Hub
 
-This index helps contributors and operators quickly find the right guide.
+This is the main docs index for users, contributors, and operators.
 
-## Start Here
+## Current Status First
 
-- New users: `docs/USER_GUIDE.md`
-- New contributors: `docs/DEVELOPER_GUIDE.md`
-- System overview: `docs/ARCHITECTURE.md`
+If you need to know what is shipped vs still in progress:
 
-## Day-to-Day Operations
+- `docs/IMPLEMENTATION_STATUS.md`
+- `ROADMAP.md`
 
-- Build + safe local upgrade loop: `docs/DEV_BUILD_LIFECYCLE.md`
-- API compatibility guarantees: `docs/API_STABILITY.md`
-- MCP server error handling standards: `docs/ERROR_HANDLING.md`
-- flexinfer.ai docs publishing integration: `docs/FLEXINFER_SITE_INTEGRATION.md`
+## Quick Paths By Audience
 
-## Enterprise & Security
+- New user/operator setup: `docs/USER_GUIDE.md`
+- Contributor/developer workflows: `docs/DEVELOPER_GUIDE.md`
+- Runtime/system model: `docs/ARCHITECTURE.md`
 
-- Enterprise security features (RBAC, audit, cost, OAuth): `docs/ENTERPRISE_SECURITY.md`
-- Remote MCP transport (Streamable HTTP): `docs/STREAMABLE_HTTP.md`
+## Task-Based Navigation
 
-## Planning and Roadmap
+- Install, sync configs, run daemon/HUD: `docs/USER_GUIDE.md`
+- Build/reload loop for local development: `docs/DEV_BUILD_LIFECYCLE.md`
+- Add/update MCP servers safely: `docs/DEVELOPER_GUIDE.md`
+- Understand compatibility commitments: `docs/API_STABILITY.md`
+- Follow MCP error-handling standards: `docs/ERROR_HANDLING.md`
+- Configure enterprise controls: `docs/ENTERPRISE_SECURITY.md`
+- Configure remote transport (Streamable HTTP): `docs/STREAMABLE_HTTP.md`
+- Follow docs ownership and update cadence: `docs/DOCS_MAINTENANCE.md`
+- Publish docs to flexinfer.ai: `docs/FLEXINFER_SITE_INTEGRATION.md`
 
-- Project roadmap and status: `ROADMAP.md`
-- Planning notes: `docs/planning/README.md`
+## Planning and Technical Direction
+
+- Active roadmap and priorities: `ROADMAP.md`
+- Planning index and historical notes: `docs/planning/README.md`
 
 ## Diagrams
 
@@ -32,7 +39,7 @@ This index helps contributors and operators quickly find the right guide.
 ## Suggested Reading Order
 
 1. `README.md`
-2. `docs/USER_GUIDE.md`
-3. `docs/ARCHITECTURE.md`
-4. `docs/DEVELOPER_GUIDE.md`
-5. `docs/DEV_BUILD_LIFECYCLE.md`
+2. `docs/IMPLEMENTATION_STATUS.md`
+3. `docs/USER_GUIDE.md`
+4. `docs/ARCHITECTURE.md`
+5. `docs/DEVELOPER_GUIDE.md`

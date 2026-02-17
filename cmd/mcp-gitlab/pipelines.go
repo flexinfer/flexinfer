@@ -52,6 +52,9 @@ func (g *gitlabServer) handleGetPipeline(ctx context.Context, args map[string]an
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
+	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines/%d", encodeProject(project), pipelineID)
 	result, err := g.request(ctx, "GET", path, nil)
@@ -93,6 +96,9 @@ func (g *gitlabServer) handleCancelPipeline(ctx context.Context, args map[string
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
+	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/cancel", encodeProject(project), pipelineID)
 	result, err := g.request(ctx, "POST", path, nil)
@@ -109,6 +115,9 @@ func (g *gitlabServer) handleRetryPipeline(ctx context.Context, args map[string]
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
 	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/retry", encodeProject(project), pipelineID)
@@ -129,6 +138,9 @@ func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[stri
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
 	}
 
 	q := url.Values{}
@@ -154,6 +166,9 @@ func (g *gitlabServer) handleGetJob(ctx context.Context, args map[string]any) (*
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
+	}
 
 	path := fmt.Sprintf("/projects/%s/jobs/%d", encodeProject(project), jobID)
 	job, err := g.request(ctx, "GET", path, nil)
@@ -172,6 +187,9 @@ func (g *gitlabServer) handleGetJobTrace(ctx context.Context, args map[string]an
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
 	}
 
 	if tailLines <= 0 {
@@ -212,6 +230,9 @@ func (g *gitlabServer) handleRetryJob(ctx context.Context, args map[string]any) 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
+	}
 
 	path := fmt.Sprintf("/projects/%s/jobs/%d/retry", encodeProject(project), jobID)
 	job, err := g.request(ctx, "POST", path, nil)
@@ -228,6 +249,9 @@ func (g *gitlabServer) handlePlayJob(ctx context.Context, args map[string]any) (
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
 	}
 
 	var payload any
@@ -251,6 +275,9 @@ func (g *gitlabServer) handleCancelJob(ctx context.Context, args map[string]any)
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
+	}
 
 	path := fmt.Sprintf("/projects/%s/jobs/%d/cancel", encodeProject(project), jobID)
 	job, err := g.request(ctx, "POST", path, nil)
@@ -271,6 +298,9 @@ func (g *gitlabServer) handlePipelineSummary(ctx context.Context, args map[strin
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
 	}
 
 	// Fetch pipeline and jobs concurrently
@@ -338,6 +368,9 @@ func (g *gitlabServer) handleGetTestReport(ctx context.Context, args map[string]
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
+	}
 
 	if maxFailures <= 0 {
 		maxFailures = 50
@@ -366,6 +399,9 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
+	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
+		return errResult, nil
+	}
 
 	// Cap at 10MB
 	if maxSizeBytes <= 0 {
@@ -377,7 +413,8 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 
 	// If specific file requested, fetch that file
 	if artifactPath != "" {
-		path := fmt.Sprintf("/projects/%s/jobs/%d/artifacts/%s", encodeProject(project), jobID, artifactPath)
+		encodedArtifactPath := encodeArtifactPath(artifactPath)
+		path := fmt.Sprintf("/projects/%s/jobs/%d/artifacts/%s", encodeProject(project), jobID, encodedArtifactPath)
 		data, resp, truncated, err := g.doRequestLimited(ctx, "GET", g.apiURL+path, nil, nil, maxSizeBytes) //nolint:bodyclose // body closed inside doRequestLimited
 		if err != nil {
 			return nil, err
@@ -399,7 +436,7 @@ func (g *gitlabServer) handleGetArtifacts(ctx context.Context, args map[string]a
 		result["content_type"] = contentType
 
 		if truncated {
-			result["download_url"] = fmt.Sprintf("%s/projects/%s/jobs/%d/artifacts/%s", g.apiURL, encodeProject(project), jobID, artifactPath)
+			result["download_url"] = fmt.Sprintf("%s/projects/%s/jobs/%d/artifacts/%s", g.apiURL, encodeProject(project), jobID, encodedArtifactPath)
 		} else {
 			// Check if text or binary
 			if isTextContent(contentType, data) {
@@ -452,6 +489,9 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
+		return errResult, nil
 	}
 
 	// Validate and cap values
