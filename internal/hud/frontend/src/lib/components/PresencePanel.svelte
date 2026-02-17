@@ -1,6 +1,6 @@
 <script>
   import { presenceStore } from '../stores/presence.svelte.ts';
-  import { toastStore } from '../stores/toasts.svelte.ts';
+  import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
   import Modal from '../widgets/Modal.svelte';
   import PresenceAgentsTab from './presence/PresenceAgentsTab.svelte';
   import PresenceClaimsTab from './presence/PresenceClaimsTab.svelte';
@@ -22,176 +22,15 @@
   // --- Tab management ---
   let activeTab = $state('agents');
 
-  // --- Handoffs state ---
-  let handoffs = $state([]);
-  let templates = $state([]);
-  let handoffLoading = $state(false);
-  let handoffError = $state('');
-  let showHandoffModal = $state(false);
-  let newHandoffTo = $state('');
-  let newHandoffSummary = $state('');
-  let newHandoffContext = $state('');
-  let creatingHandoff = $state(false);
-
-  async function fetchHandoffs() {
-    handoffLoading = true;
-    handoffError = '';
-    try {
-      const [hRes, tRes] = await Promise.all([
-        globalThis.fetch('/api/handoffs'),
-        globalThis.fetch('/api/templates'),
-      ]);
-      if (hRes.ok) {
-        const hData = await hRes.json();
-        handoffs = hData.handoffs ?? [];
-      }
-      if (tRes.ok) {
-        const tData = await tRes.json();
-        templates = tData.templates ?? [];
-      }
-    } catch (e) {
-      handoffError = e instanceof Error ? e.message : 'Failed to load';
-    } finally {
-      handoffLoading = false;
-    }
+  function setActiveTab(nextTab) {
+    activeTab = nextTab;
   }
 
-  // Fetch handoffs when tab is shown
   $effect(() => {
     if (activeTab === 'handoffs') {
-      fetchHandoffs();
+      presenceActionsStore.refreshHandoffs();
     }
   });
-
-  async function submitHandoff() {
-    if (!newHandoffSummary.trim()) return;
-    creatingHandoff = true;
-    try {
-      const res = await globalThis.fetch('/api/handoffs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to_agent: newHandoffTo.trim() || undefined,
-          summary: newHandoffSummary.trim(),
-          context: newHandoffContext.trim() || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error(`Create handoff: ${res.status}`);
-      toastStore.success('Handoff created');
-      showHandoffModal = false;
-      newHandoffTo = '';
-      newHandoffSummary = '';
-      newHandoffContext = '';
-      await fetchHandoffs();
-    } catch (e) {
-      toastStore.error('Failed to create handoff');
-    } finally {
-      creatingHandoff = false;
-    }
-  }
-
-  async function acceptHandoff(id) {
-    try {
-      const res = await globalThis.fetch(`/api/handoffs/${id}/accept`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Accept: ${res.status}`);
-      toastStore.success('Handoff accepted');
-      await fetchHandoffs();
-    } catch (e) {
-      toastStore.error('Failed to accept handoff');
-    }
-  }
-
-  // --- Dispatch task ---
-  let showDispatchModal = $state(false);
-  let dispatchTargetAgent = $state('');
-  let dispatchTitle = $state('');
-  let dispatchContext = $state('');
-  let dispatchPriority = $state('medium');
-  let dispatchSubmitting = $state(false);
-
-  async function submitDispatch() {
-    if (!dispatchTargetAgent || !dispatchTitle.trim()) return;
-    dispatchSubmitting = true;
-    try {
-      const res = await globalThis.fetch('/api/agent/dispatch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_agent_id: dispatchTargetAgent,
-          title: dispatchTitle.trim(),
-          context: dispatchContext.trim() || undefined,
-          priority: dispatchPriority,
-        }),
-      });
-      if (!res.ok) throw new Error(`Dispatch: ${res.status}`);
-      toastStore.success(`Task dispatched to ${dispatchTargetAgent}`);
-      showDispatchModal = false;
-      dispatchTitle = '';
-      dispatchContext = '';
-      dispatchPriority = 'medium';
-    } catch (e) {
-      toastStore.error('Failed to dispatch task');
-    } finally {
-      dispatchSubmitting = false;
-    }
-  }
-
-  function openDispatch(agentId) {
-    dispatchTargetAgent = agentId;
-    showDispatchModal = true;
-  }
-
-  // --- Nudge agent ---
-  let showNudgeModal = $state(false);
-  let nudgeTargetAgent = $state('');
-  let nudgeType = $state('message');
-  let nudgeContent = $state('');
-  let nudgeSubmitting = $state(false);
-
-  function openNudge(agentId) {
-    nudgeTargetAgent = agentId;
-    nudgeType = 'message';
-    nudgeContent = '';
-    showNudgeModal = true;
-  }
-
-  async function submitNudge() {
-    if (!nudgeTargetAgent || !nudgeContent.trim()) return;
-    nudgeSubmitting = true;
-    try {
-      const res = await globalThis.fetch('/api/agent/nudge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_agent_id: nudgeTargetAgent,
-          type: nudgeType,
-          content: nudgeContent.trim(),
-          from_agent: 'hud',
-        }),
-      });
-      if (!res.ok) throw new Error(`Nudge: ${res.status}`);
-      toastStore.success(`Nudge sent to ${nudgeTargetAgent}`);
-      showNudgeModal = false;
-    } catch (e) {
-      toastStore.error('Failed to send nudge');
-    } finally {
-      nudgeSubmitting = false;
-    }
-  }
-
-  // --- Release claim ---
-  async function releaseClaim(agentId, filePath) {
-    try {
-      const res = await globalThis.fetch(`/api/claims/${encodeURIComponent(agentId)}/${encodeURIComponent(filePath)}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error(`Release: ${res.status}`);
-      toastStore.success('Claim released');
-      presenceStore.fetch();
-    } catch (e) {
-      toastStore.error('Failed to release claim');
-    }
-  }
 
   // --- File conflict detection ---
   let fileConflicts = $derived.by(() => {
@@ -213,19 +52,19 @@
 <div class="panel presence-panel">
   <!-- Tab bar -->
   <div class="tab-bar">
-    <button class="tab-btn" class:active={activeTab === 'agents'} onclick={() => { activeTab = 'agents'; }}>
+    <button class="tab-btn" class:active={activeTab === 'agents'} onclick={() => setActiveTab('agents')}>
       Agents <span class="tab-count">{agents.length}</span>
     </button>
-    <button class="tab-btn" class:active={activeTab === 'claims'} onclick={() => { activeTab = 'claims'; }}>
+    <button class="tab-btn" class:active={activeTab === 'claims'} onclick={() => setActiveTab('claims')}>
       Claims <span class="tab-count">{claims.length}</span>
     </button>
-    <button class="tab-btn" class:active={activeTab === 'worktrees'} onclick={() => { activeTab = 'worktrees'; }}>
+    <button class="tab-btn" class:active={activeTab === 'worktrees'} onclick={() => setActiveTab('worktrees')}>
       Worktrees <span class="tab-count">{worktrees.length}</span>
     </button>
-    <button class="tab-btn" class:active={activeTab === 'handoffs'} onclick={() => { activeTab = 'handoffs'; }}>
-      Handoffs <span class="tab-count">{handoffs.length}</span>
+    <button class="tab-btn" class:active={activeTab === 'handoffs'} onclick={() => setActiveTab('handoffs')}>
+      Handoffs <span class="tab-count">{presenceActionsStore.handoffs.length}</span>
     </button>
-    <button class="tab-btn" class:active={activeTab === 'diagnostics'} onclick={() => { activeTab = 'diagnostics'; }}>
+    <button class="tab-btn" class:active={activeTab === 'diagnostics'} onclick={() => setActiveTab('diagnostics')}>
       Diagnostics
     </button>
     <div class="tab-spacer"></div>
@@ -253,15 +92,15 @@
         offlineCount={presenceStore.offlineCount}
         claimedFilesCount={presenceStore.claimedFiles.length}
         {agentView}
-        onOpenDispatch={openDispatch}
-        onOpenNudge={openNudge}
+        onOpenDispatch={(agentId) => presenceActionsStore.onOpenDispatch(agentId)}
+        onOpenNudge={(agentId) => presenceActionsStore.onOpenNudge(agentId)}
       />
 
     {:else if activeTab === 'claims'}
       <PresenceClaimsTab
         {claims}
         {fileConflicts}
-        onReleaseClaim={releaseClaim}
+        onReleaseClaim={(agentId, filePath) => presenceActionsStore.onReleaseClaim(agentId, filePath)}
       />
 
     {:else if activeTab === 'worktrees'}
@@ -269,12 +108,12 @@
 
     {:else if activeTab === 'handoffs'}
       <PresenceHandoffsTab
-        {handoffs}
-        {templates}
-        {handoffLoading}
-        {handoffError}
-        onOpenHandoffModal={() => { showHandoffModal = true; }}
-        onAcceptHandoff={acceptHandoff}
+        handoffs={presenceActionsStore.handoffs}
+        templates={presenceActionsStore.templates}
+        handoffLoading={presenceActionsStore.handoffLoading}
+        handoffError={presenceActionsStore.handoffError}
+        onOpenHandoffModal={() => presenceActionsStore.openHandoffModal()}
+        onAcceptHandoff={(id) => presenceActionsStore.onAcceptHandoff(id)}
       />
 
     {:else if activeTab === 'diagnostics'}
@@ -284,22 +123,22 @@
 </div>
 
 <!-- Dispatch Task Modal -->
-<Modal title="Dispatch Task" open={showDispatchModal} onclose={() => { showDispatchModal = false; }}>
+<Modal title="Dispatch Task" open={presenceActionsStore.showDispatchModal} onclose={() => presenceActionsStore.closeDispatchModal()}>
   <div class="form-group">
     <label class="form-label" for="dispatch-target">Target Agent</label>
-    <input id="dispatch-target" type="text" bind:value={dispatchTargetAgent} class="form-input" readonly />
+    <input id="dispatch-target" type="text" bind:value={presenceActionsStore.dispatchTargetAgent} class="form-input" readonly />
   </div>
   <div class="form-group">
     <label class="form-label" for="dispatch-title">Title *</label>
-    <input id="dispatch-title" type="text" bind:value={dispatchTitle} placeholder="Task title..." class="form-input" />
+    <input id="dispatch-title" type="text" bind:value={presenceActionsStore.dispatchTitle} placeholder="Task title..." class="form-input" />
   </div>
   <div class="form-group">
     <label class="form-label" for="dispatch-context">Context</label>
-    <textarea id="dispatch-context" bind:value={dispatchContext} placeholder="Additional instructions..." class="form-input" rows="4"></textarea>
+    <textarea id="dispatch-context" bind:value={presenceActionsStore.dispatchContext} placeholder="Additional instructions..." class="form-input" rows="4"></textarea>
   </div>
   <div class="form-group">
     <label class="form-label" for="dispatch-priority">Priority</label>
-    <select id="dispatch-priority" bind:value={dispatchPriority} class="form-input">
+    <select id="dispatch-priority" bind:value={presenceActionsStore.dispatchPriority} class="form-input">
       <option value="low">Low</option>
       <option value="medium">Medium</option>
       <option value="high">High</option>
@@ -307,22 +146,22 @@
     </select>
   </div>
   <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => { showDispatchModal = false; }}>Cancel</button>
-    <button class="btn btn-primary" onclick={submitDispatch} disabled={dispatchSubmitting || !dispatchTitle.trim()}>
-      {dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}
+    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeDispatchModal()}>Cancel</button>
+    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitDispatch()} disabled={presenceActionsStore.dispatchSubmitting || !presenceActionsStore.dispatchTitle.trim()}>
+      {presenceActionsStore.dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}
     </button>
   </div>
 </Modal>
 
 <!-- Nudge Agent Modal -->
-<Modal title="Nudge Agent" open={showNudgeModal} onclose={() => { showNudgeModal = false; }}>
+<Modal title="Nudge Agent" open={presenceActionsStore.showNudgeModal} onclose={() => presenceActionsStore.closeNudgeModal()}>
   <div class="form-group">
     <label class="form-label" for="nudge-target">Target Agent</label>
-    <input id="nudge-target" type="text" bind:value={nudgeTargetAgent} class="form-input" readonly />
+    <input id="nudge-target" type="text" bind:value={presenceActionsStore.nudgeTargetAgent} class="form-input" readonly />
   </div>
   <div class="form-group">
     <label class="form-label" for="nudge-type">Type</label>
-    <select id="nudge-type" bind:value={nudgeType} class="form-input">
+    <select id="nudge-type" bind:value={presenceActionsStore.nudgeType} class="form-input">
       <option value="message">Message</option>
       <option value="context_inject">Context Inject</option>
       <option value="task_redirect">Task Redirect</option>
@@ -331,37 +170,37 @@
   </div>
   <div class="form-group">
     <label class="form-label" for="nudge-content">Content *</label>
-    <textarea id="nudge-content" bind:value={nudgeContent} placeholder="Message or context to send to the agent..." class="form-input" rows="4"></textarea>
+    <textarea id="nudge-content" bind:value={presenceActionsStore.nudgeContent} placeholder="Message or context to send to the agent..." class="form-input" rows="4"></textarea>
   </div>
   <div class="nudge-hint">
     Nudge delivered on the agent's next heartbeat (5-15s latency).
   </div>
   <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => { showNudgeModal = false; }}>Cancel</button>
-    <button class="btn btn-primary" onclick={submitNudge} disabled={nudgeSubmitting || !nudgeContent.trim()}>
-      {nudgeSubmitting ? 'Sending...' : 'Send Nudge'}
+    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeNudgeModal()}>Cancel</button>
+    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitNudge()} disabled={presenceActionsStore.nudgeSubmitting || !presenceActionsStore.nudgeContent.trim()}>
+      {presenceActionsStore.nudgeSubmitting ? 'Sending...' : 'Send Nudge'}
     </button>
   </div>
 </Modal>
 
 <!-- Create Handoff Modal -->
-<Modal title="Create Handoff" open={showHandoffModal} onclose={() => { showHandoffModal = false; }}>
+<Modal title="Create Handoff" open={presenceActionsStore.showHandoffModal} onclose={() => presenceActionsStore.closeHandoffModal()}>
   <div class="form-group">
     <label class="form-label" for="handoff-to-agent">To Agent (optional)</label>
-    <input id="handoff-to-agent" type="text" bind:value={newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
+    <input id="handoff-to-agent" type="text" bind:value={presenceActionsStore.newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
   </div>
   <div class="form-group">
     <label class="form-label" for="handoff-summary">Summary *</label>
-    <input id="handoff-summary" type="text" bind:value={newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
+    <input id="handoff-summary" type="text" bind:value={presenceActionsStore.newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
   </div>
   <div class="form-group">
     <label class="form-label" for="handoff-context">Context</label>
-    <textarea id="handoff-context" bind:value={newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
+    <textarea id="handoff-context" bind:value={presenceActionsStore.newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
   </div>
   <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => { showHandoffModal = false; }}>Cancel</button>
-    <button class="btn btn-primary" onclick={submitHandoff} disabled={creatingHandoff || !newHandoffSummary.trim()}>
-      {creatingHandoff ? 'Creating...' : 'Create Handoff'}
+    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeHandoffModal()}>Cancel</button>
+    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitHandoff()} disabled={presenceActionsStore.creatingHandoff || !presenceActionsStore.newHandoffSummary.trim()}>
+      {presenceActionsStore.creatingHandoff ? 'Creating...' : 'Create Handoff'}
     </button>
   </div>
 </Modal>
