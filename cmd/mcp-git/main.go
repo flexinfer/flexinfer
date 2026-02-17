@@ -346,12 +346,39 @@ func runGit(ctx context.Context, repoPath string, args ...string) (string, error
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
+	cmd.Env = sanitizedGitEnv(os.Environ())
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("git %s: %s", strings.Join(args, " "), string(output))
 	}
 	return string(output), nil
+}
+
+func sanitizedGitEnv(envVars []string) []string {
+	// Strip inherited repository-routing variables (e.g. from git hooks) so
+	// each command targets cmd.Dir/repoPath instead of caller context.
+	blocked := map[string]struct{}{
+		"GIT_DIR":                          {},
+		"GIT_WORK_TREE":                    {},
+		"GIT_COMMON_DIR":                   {},
+		"GIT_INDEX_FILE":                   {},
+		"GIT_OBJECT_DIRECTORY":             {},
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	}
+
+	sanitized := make([]string, 0, len(envVars))
+	for _, kv := range envVars {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if _, found := blocked[key]; found {
+			continue
+		}
+		sanitized = append(sanitized, kv)
+	}
+	return sanitized
 }
 
 func handleGitStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

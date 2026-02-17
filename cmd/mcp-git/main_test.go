@@ -22,7 +22,7 @@ func initTestRepo(t *testing.T) string {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(sanitizedGitEnv(os.Environ()),
 			"GIT_AUTHOR_NAME=Test",
 			"GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=Test",
@@ -96,6 +96,25 @@ func TestHandleGitStatus(t *testing.T) {
 		text := result.Content[0].Text
 		if !strings.Contains(text, "new.txt") {
 			t.Errorf("expected new.txt in untracked, got: %s", text)
+		}
+	})
+
+	t.Run("ignores inherited git env routing vars", func(t *testing.T) {
+		dir := initTestRepo(t)
+		t.Setenv("GIT_DIR", "/tmp/not-a-repo")
+		t.Setenv("GIT_WORK_TREE", "/tmp/not-a-worktree")
+		t.Setenv("GIT_COMMON_DIR", "/tmp/not-a-common-dir")
+
+		result, err := handleGitStatus(context.Background(), withPath(dir, map[string]any{}))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %v", result.Content)
+		}
+		text := result.Content[0].Text
+		if !strings.Contains(text, "clean: true") && !strings.Contains(text, `"clean":true`) && !strings.Contains(text, `"clean": true`) {
+			t.Errorf("expected clean=true, got: %s", text)
 		}
 	})
 
