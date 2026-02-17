@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,7 @@ import (
 	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
 func TestExtractKubeconfig(t *testing.T) {
@@ -363,7 +365,7 @@ func TestBuildClusterModelStatusSorted(t *testing.T) {
 }
 
 func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
-	w := newRemoteModelWatch("cfg", func() {})
+	w := newRemoteModelWatch("cluster-a", "cfg", func() {})
 	if snapshot := w.snapshot(); snapshot.CacheReady {
 		t.Fatal("snapshot should not be ready before initial list")
 	}
@@ -453,7 +455,7 @@ func TestStopRemoteModelWatch(t *testing.T) {
 	canceled := false
 	r := &ClusterReconciler{
 		modelWatches: map[string]*remoteModelWatch{
-			"flexinfer-system/cluster-a": newRemoteModelWatch("cfg", func() { canceled = true }),
+			"flexinfer-system/cluster-a": newRemoteModelWatch("cluster-a", "cfg", func() { canceled = true }),
 		},
 	}
 
@@ -463,6 +465,45 @@ func TestStopRemoteModelWatch(t *testing.T) {
 	}
 	if _, ok := r.modelWatches["flexinfer-system/cluster-a"]; ok {
 		t.Fatal("expected watch entry to be removed")
+	}
+}
+
+func TestMarkWatchDegraded_IncrementsRestartCounter(t *testing.T) {
+	cluster := "cluster-restart-metric"
+	reasonClass := "watch_channel_closed"
+	before := promtestutil.ToFloat64(metrics.ClusterModelWatchRestartTotal.WithLabelValues(cluster, reasonClass))
+
+	w := newRemoteModelWatch(cluster, "cfg", func() {})
+	w.markWatchDegraded("remote model watch channel closed", true)
+
+	after := promtestutil.ToFloat64(metrics.ClusterModelWatchRestartTotal.WithLabelValues(cluster, reasonClass))
+	if after != before+1 {
+		t.Fatalf("restart counter = %v, want %v", after, before+1)
+	}
+}
+
+func TestClassifyWatchRestartReason(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason string
+		want   string
+	}{
+		{name: "crd missing", reason: "remote Model CRD not found; retrying watch sync", want: "crd_not_found"},
+		{name: "list failed", reason: "remote model list failed: timeout", want: "list_failed"},
+		{name: "watch start failed", reason: "remote model watch start failed: io timeout", want: "watch_start_failed"},
+		{name: "channel closed", reason: "remote model watch channel closed", want: "watch_channel_closed"},
+		{name: "watch error event", reason: "remote model watch received error event", want: "watch_error_event"},
+		{name: "unknown", reason: "something else happened", want: "other"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyWatchRestartReason(tc.reason)
+			if got != tc.want {
+				t.Fatalf("classifyWatchRestartReason(%q) = %q, want %q", tc.reason, got, tc.want)
+			}
+		})
 	}
 }
 

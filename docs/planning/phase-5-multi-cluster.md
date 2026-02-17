@@ -71,6 +71,8 @@ See `docs/design/multi-cluster.md` for the full design document.
   - `flexinfer_cluster_models_discovered{cluster, region}` (gauge: discovered model count)
   - `flexinfer_cluster_model_inventory_source{cluster, source}` (gauge: active source one-hot; `source=watch|list`)
   - `flexinfer_cluster_model_watch_ready{cluster}` (gauge: 1 when remote watch stream is healthy)
+  - `flexinfer_cluster_model_watch_restarts{cluster}` (gauge: restart count seen by controller)
+  - `flexinfer_cluster_model_watch_restarts_total{cluster, reason}` (counter: restart events by reason class)
 
 **Acceptance**
 - Unhealthy clusters are marked `NotReady` within configured timeout.
