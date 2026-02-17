@@ -7,6 +7,7 @@
 - Research (HUD): `10-research.md`
 - Research (Daemon/Proxy): `11-research-daemon-proxy.md`
 - Research (Agentic workflows/OpenClaw): `13-research-agentic-workflows-openclaw.md`
+- Research (Architecture refactor focus): `../docs/planning/2026-02-17-architecture-refactor-opportunities.md`
 - Product spec: `20-product-spec.md`
 - Implementation plan: `30-implementation-plan.md`
 - Gap-to-backlog map: `31-gap-to-backlog-map.md`
@@ -15,30 +16,31 @@
 
 ## Current Goal
 
-Five active workstreams:
+Three active near-term workstreams:
 
-1. **HUD UI/UX Overhaul**: M1/M2 complete, M3/M4 nearing finish.
-2. **Remote MCP Transport**: shipped; remaining hardening work.
-3. **RBAC + Audit Trail**: RBAC shipped, audit trail in-flight.
-4. **Agent Context Budget Inspector (in progress)**: API + CLI inspection path implemented (`/api/agent/context-inspect`, `loom agent context-inspect`) with sectioned prompt accounting (system prompt, tools/schema, context entries, file injections, response budget) and HUD diagnostics rendering.
-5. **Lane-Aware Nudge Queue (in progress)**: queue policy implemented with lane priority, cap/drop policies, debounce, queue status endpoint (`/api/agent/nudge-queue`), runtime policy controls (`/api/agent/nudge-queue-policy`), and HUD diagnostics + mutation controls in Presence.
+1. **Architecture stabilization after Feb 15-16 feature surge**
+  - Decompose daemon tool-call pipeline (`internal/daemon/daemon.go`) to reduce cross-cutting churn.
+  - Unify agent API contracts across HUD handlers, CLI fallback commands, and bridge adapters.
+2. **Quality floor and observability**
+  - Close remaining Roadmap Issue #2 coverage gaps (daemon lifecycle + devbox integration paths).
+  - Start Roadmap Issue #12 (OTel trace export) on top of pipeline extraction.
+3. **HUD maintainability for Fleet UX**
+  - Split oversized Presence panel into tab-level components/stores to support Issue #13 safely.
 
 ## Success Criteria (Near-Term)
 
-- Context inspector:
-  - Stable API contract for HUD/CLI.
-  - Prompt-section/tool-schema/file-level breakdown delivered in baseline.
-  - Frontend surface shipped in HUD Presence diagnostics tab.
-- Nudge queue:
-  - Queue policy visible in HUD.
-  - Per-lane metrics and dropped-summary behavior validated under load.
-  - Optional runtime policy controls (admin/API + in-HUD actions) added.
+- Daemon call path has isolated middleware components with unit tests.
+- Agent context/nudge endpoints share one contract model across HUD and CLI.
+- Presence diagnostics and mutation logic are isolated from unrelated tab concerns.
+- Coverage trend remains upward while these refactors land (no regression in current 30%+ baseline).
 
 ## Risks
 
-- Context inspector currently estimates tokens from stored context entries; it does not yet include full model prompt composition overhead.
-- Debounce on nudge delivery can hide queued nudges briefly if heartbeat cadence is too fast.
+- Refactoring cross-cutting daemon logic without preserving current behavior around cache/routing/recovery can introduce subtle regressions.
+- HUD tab decomposition can introduce transient UI state bugs if polling ownership is not moved carefully.
+- OTel rollout before contract stabilization may create duplicate instrumentation paths.
 
 ## Notes
 
-- This context pack was updated to include OpenClaw-informed operator ergonomics work and the initial implementation slice for backlog items 1 and 2.
+- Workspace snapshot refreshed on 2026-02-17.
+- Planning focus is now anchored in `docs/planning/2026-02-17-architecture-refactor-opportunities.md`.

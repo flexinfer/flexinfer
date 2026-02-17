@@ -1,5 +1,29 @@
 # Worklog
 
+## 2026-02-17 (session 8)
+
+- What changed:
+  - Reviewed commit activity from the previous two days and identified architecture hotspots by churn frequency and file size.
+  - Added planning brief: `docs/planning/2026-02-17-architecture-refactor-opportunities.md`.
+  - Updated `ROADMAP.md` with a new "Immediate Architecture Refactor Focus (Current)" section to prioritize stabilization work before additional Tier 3 expansion.
+  - Updated `.loom/00-index.md` to align current goals with the refactor/stabilization sequence.
+  - Refreshed `.loom/00-workspace-snapshot.md` using the plan-loom-core workspace snapshot script.
+- Why:
+  - Recent work delivered major features quickly; concentrated churn now indicates maintainability risk in daemon call routing and HUD agent surfaces.
+  - Needed a single, source-backed focus order for what to tackle next.
+- Verification:
+  - Commit/churn analysis commands completed successfully (`git rev-list`, `git log --name-only` aggregations, file-size scans).
+  - Planning docs updated and cross-linked from roadmap + planning index.
+- Sources:
+  - [S1] Command: `git rev-list --count --since='2026-02-15 00:00' HEAD`
+  - [S2] Command: `git log --since='2026-02-15 00:00' --pretty=format: --name-only | ... | sort | uniq -c | sort -nr`
+  - [S3] `internal/daemon/daemon.go`
+  - [S4] `internal/hud/api_agent.go`
+  - [S5] `internal/hud/bridge/agent.go`
+  - [S6] `cmd/loom/cmd_agent.go`
+  - [S7] `internal/hud/frontend/src/lib/components/PresencePanel.svelte`
+  - [S8] `internal/devbox/backend/k8s.go`
+
 ## 2026-02-16 (session 7)
 
 - What changed:
