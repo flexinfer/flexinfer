@@ -1,5 +1,60 @@
 # Worklog
 
+## 2026-02-17 (session 10)
+
+- What changed:
+  - Completed a HUD/TUI-focused RALPH slice for Presence diagnostics and conflict visibility.
+  - Added `presenceDiagnosticsStore` to own diagnostics polling, API fetches, policy-form hydration, and runtime policy mutation flow.
+  - Rewired `PresenceDiagnosticsTab.svelte` to bind against the new store so the tab remains a pure view layer.
+  - Added TUI claim-conflict helpers in `internal/tui/panels/presence.go` (`claimConflicts`, `claimConflictCount`) and surfaced:
+    - summary-level conflict count
+    - claims-table conflict banner
+    - per-row conflict marker + selected-row `shared with` hint
+  - Added `internal/tui/panels/presence_test.go` with targeted coverage for conflict detection and rendering.
+  - Added RALPH artifacts:
+    - `.loom/54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
+    - `.loom/55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
+- Why:
+  - Roadmap refactor focus called out oversized HUD panel/state surfaces; diagnostics orchestration was still embedded in UI.
+  - TUI lacked explicit conflict surfacing despite HUD already exposing conflict cues, creating operator parity gaps.
+- Verification:
+  - `pnpm --dir internal/hud/frontend build` — pass (with same pre-existing Svelte warnings in shared components).
+  - `go test ./internal/tui/panels -count=1` — pass.
+  - `go test ./internal/tui/... -count=1` — pass.
+- Sources:
+  - [S1] `internal/hud/frontend/src/lib/stores/presenceDiagnostics.svelte.ts`
+  - [S2] `internal/hud/frontend/src/lib/components/presence/PresenceDiagnosticsTab.svelte`
+  - [S3] `internal/tui/panels/presence.go`
+  - [S4] `internal/tui/panels/presence_test.go`
+  - [S5] `ROADMAP.md`
+
+## 2026-02-17 (session 9)
+
+- What changed:
+  - Completed Roadmap "Harden daemon tool-call pipeline extraction" Stage 2 slice for side-effect staging and failure coverage.
+  - Refactored `internal/daemon/callpipeline.go` to isolate success-side effects into dedicated helpers (`recordSuccessMetrics`, `markLocalActivity`, `cacheSuccessResponse`, `emitResponseAudit`).
+  - Added failure-path audit/cost emission for route/connect failures and transport send/recv failures.
+  - Added targeted stage-failure tests in `internal/daemon/callpipeline_test.go`:
+    - `TestCallPipelineRouteAndConnect_LocalDialFailureEmitsAuditAndCost`
+    - `TestCallPipelineTransportFailure_EmitsAuditAndCost`
+  - Updated roadmap stage marker in `ROADMAP.md` to note Stage 2 completion.
+  - Added RALPH artifacts:
+    - `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
+    - `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
+- Why:
+  - Needed clearer test seams around daemon call side effects and consistent audit/cost behavior for failure stages, not just success/denied/cached paths.
+- Verification:
+  - `go test ./internal/daemon -run 'CallPipeline|TransportFailure|RouteAndConnect'` — pass.
+  - `go test ./internal/daemon` — pass.
+  - `go test ./...` — pass.
+  - `golangci-lint run ./internal/daemon/...` — not run (tool unavailable in shell).
+- Sources:
+  - [S1] `internal/daemon/callpipeline.go`
+  - [S2] `internal/daemon/callpipeline_test.go`
+  - [S3] `ROADMAP.md`
+  - [S4] `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
+  - [S5] `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
+
 ## 2026-02-17 (session 8)
 
 - What changed:

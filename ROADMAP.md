@@ -122,7 +122,8 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
 
 - [ ] **Harden daemon tool-call pipeline extraction** (in progress via `8c2c50d`)
   - ✅ Stage 1 complete: `handleCall` orchestration now delegates to `internal/daemon/callpipeline.go`.
-  - Next: isolate side effects (audit/cost/cache/metrics) into clearer stages and add targeted stage-failure tests.
+  - ✅ Stage 2 complete: isolated side effects (audit/cost/cache/metrics) into dedicated pipeline helpers and added targeted stage-failure tests for route/connect + transport paths.
+  - Next: unify/centralize error-envelope construction for parse/build/route stages and add end-to-end pipeline stage-boundary regression tests.
   - Target outcome: lower conflict/churn in `internal/daemon/daemon.go` and clearer test seams.
 
 - [ ] **Finish agent contract convergence across HUD/CLI/bridge** (in progress via `8c2c50d`)
@@ -131,7 +132,8 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
   - Target outcome: single contract model for context-inspect, nudge queue, and policy mutation surfaces.
 
 - [ ] **Split oversized HUD panel/state surfaces**
-  - Break `PresencePanel.svelte` into tab-level components and move polling/mutation logic into focused stores/clients.
+  - ✅ 2026-02-17 slice: moved diagnostics polling/fetch/mutation logic into `presenceDiagnosticsStore` and kept `PresenceDiagnosticsTab.svelte` view-only; added TUI claim-conflict visibility in `internal/tui/panels/presence.go` for HUD/TUI parity.
+  - Next: extract dispatch/nudge/handoff modal actions from `PresencePanel.svelte` into focused stores/clients.
   - Target outcome: safer iteration for Fleet orchestration UX work ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
 
 - [ ] **Refactor devbox K8s backend by concern**

@@ -11,6 +11,10 @@
 - Product spec: `20-product-spec.md`
 - Implementation plan: `30-implementation-plan.md`
 - Gap-to-backlog map: `31-gap-to-backlog-map.md`
+- RALPH iteration plan (call pipeline stage 2): `52-ralph-iteration-plan-callpipeline-2026-02-17.md`
+- RALPH slice handoff (call pipeline stage 2): `53-ralph-slice-handoff-callpipeline-2026-02-17.md`
+- RALPH iteration plan (HUD/TUI presence slice): `54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
+- RALPH slice handoff (HUD/TUI presence slice): `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
@@ -44,3 +48,4 @@ Three active near-term workstreams:
 
 - Workspace snapshot refreshed on 2026-02-17.
 - Planning focus is now anchored in `docs/planning/2026-02-17-architecture-refactor-opportunities.md`.
+- HUD/TUI presence slice landed on 2026-02-17 (diagnostics store extraction + TUI claim-conflict visibility).
