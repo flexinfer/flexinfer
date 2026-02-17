@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,7 @@ type ClusterReconciler struct {
 
 type remoteModelWatch struct {
 	cancel     context.CancelFunc
+	cluster    string
 	configHash string
 
 	mu             sync.RWMutex
@@ -106,9 +108,10 @@ type remoteModelWatchSnapshot struct {
 	LastRestartErr string
 }
 
-func newRemoteModelWatch(configHash string, cancel context.CancelFunc) *remoteModelWatch {
+func newRemoteModelWatch(clusterName, configHash string, cancel context.CancelFunc) *remoteModelWatch {
 	return &remoteModelWatch{
 		cancel:     cancel,
+		cluster:    clusterName,
 		configHash: configHash,
 		models:     make(map[string]aiv1alpha2.ClusterModelStatus),
 	}
@@ -157,6 +160,9 @@ func (w *remoteModelWatch) markWatchDegraded(reason string, incrementRestart boo
 		w.restartCount++
 		if reason != "" {
 			w.lastRestartErr = reason
+		}
+		if w.cluster != "" {
+			metrics.ClusterModelWatchRestartTotal.WithLabelValues(w.cluster, classifyWatchRestartReason(reason)).Inc()
 		}
 	}
 }
@@ -418,7 +424,7 @@ func (r *ClusterReconciler) ensureRemoteModelWatch(cluster *aiv1alpha2.Cluster, 
 	}
 
 	watchCtx, cancel := context.WithCancel(context.Background())
-	modelWatch := newRemoteModelWatch(configHash, cancel)
+	modelWatch := newRemoteModelWatch(cluster.Name, configHash, cancel)
 	r.modelWatches[key] = modelWatch
 	r.watchMu.Unlock()
 
@@ -798,6 +804,23 @@ func watchFallbackMessage(observation *clusterObservation) string {
 	return msg
 }
 
+func classifyWatchRestartReason(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "remote Model CRD not found"):
+		return "crd_not_found"
+	case strings.HasPrefix(reason, "remote model list failed:"):
+		return "list_failed"
+	case strings.HasPrefix(reason, "remote model watch start failed:"):
+		return "watch_start_failed"
+	case strings.HasPrefix(reason, "remote model watch channel closed"):
+		return "watch_channel_closed"
+	case strings.HasPrefix(reason, "remote model watch received error event"):
+		return "watch_error_event"
+	default:
+		return "other"
+	}
+}
+
 func clusterProbeMessage(observation *clusterObservation) string {
 	if observation == nil {
 		return "probe succeeded"
@@ -867,6 +890,7 @@ func setClusterInventoryMetrics(clusterName, region string, observation *cluster
 	} else {
 		metrics.ClusterModelWatchReady.WithLabelValues(clusterName).Set(0)
 	}
+	metrics.ClusterModelWatchRestarts.WithLabelValues(clusterName).Set(float64(observation.WatchRestarts))
 	watch, list := inventorySourceGauges(observation.ModelSource)
 	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "watch").Set(watch)
 	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "list").Set(list)
@@ -875,6 +899,7 @@ func setClusterInventoryMetrics(clusterName, region string, observation *cluster
 func resetClusterInventoryMetrics(clusterName, region string) {
 	metrics.ClusterModelsDiscovered.WithLabelValues(clusterName, region).Set(0)
 	metrics.ClusterModelWatchReady.WithLabelValues(clusterName).Set(0)
+	metrics.ClusterModelWatchRestarts.WithLabelValues(clusterName).Set(0)
 	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "watch").Set(0)
 	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "list").Set(0)
 }

@@ -226,6 +226,24 @@ var (
 		},
 		[]string{"cluster"},
 	)
+
+	// ClusterModelWatchRestarts reports remote watch restart count tracked by controller.
+	ClusterModelWatchRestarts = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_cluster_model_watch_restarts",
+			Help: "Remote model watch restart count observed by controller for each cluster.",
+		},
+		[]string{"cluster"},
+	)
+
+	// ClusterModelWatchRestartTotal counts remote watch restart events by reason class.
+	ClusterModelWatchRestartTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_cluster_model_watch_restarts_total",
+			Help: "Total remote model watch restart events by reason class.",
+		},
+		[]string{"cluster", "reason"},
+	)
 )
 
 func init() {
@@ -262,6 +280,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterModelsDiscovered)
 	ctrlmetrics.Registry.MustRegister(ClusterModelInventorySource)
 	ctrlmetrics.Registry.MustRegister(ClusterModelWatchReady)
+	ctrlmetrics.Registry.MustRegister(ClusterModelWatchRestarts)
+	ctrlmetrics.Registry.MustRegister(ClusterModelWatchRestartTotal)
 }
 
 // Exporter handles serving the Prometheus metrics.

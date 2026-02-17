@@ -121,6 +121,8 @@ Watch and inventory observability semantics for the Cluster Registry:
   - `flexinfer_cluster_models_discovered{cluster,region}` reports discovered remote model count.
   - `flexinfer_cluster_model_inventory_source{cluster,source}` is one-hot with `source=watch|list`.
   - `flexinfer_cluster_model_watch_ready{cluster}` is `1` only when the remote watch stream is healthy.
+  - `flexinfer_cluster_model_watch_restarts{cluster}` reports watch restart count observed by controller.
+  - `flexinfer_cluster_model_watch_restarts_total{cluster,reason}` counts restart events by normalized reason class.
 - `Cluster.status.conditions` includes `ModelWatchReady`:
   - `Reason=WatchSynced`, `Status=True` when watch cache is healthy.
   - `Reason=ListFallback`, `Status=False` when using list/cached fallback.
