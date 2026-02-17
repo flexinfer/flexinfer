@@ -155,4 +155,8 @@ spec:
             - name: FLEXINFER_QUANTIZER_GPTQ_IMAGE
               value: {{ .Values.quantization.images.gptq | quote }}
             {{- end }}
+            {{- if .Values.quantization.images.exl2 }}
+            - name: FLEXINFER_QUANTIZER_EXL2_IMAGE
+              value: {{ .Values.quantization.images.exl2 | quote }}
+            {{- end }}
 {{- end }}

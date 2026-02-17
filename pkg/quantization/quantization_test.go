@@ -62,10 +62,19 @@ func TestGetBuilder(t *testing.T) {
 		t.Errorf("builder.Format() = %v, want GPTQ", builder.Format())
 	}
 
-	// EXL2 is still not implemented
-	_, err = GetBuilder(aiv1alpha1.QuantizationFormatEXL2)
+	// EXL2 should return a builder
+	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatEXL2)
+	if err != nil {
+		t.Fatalf("GetBuilder(EXL2) returned error: %v", err)
+	}
+	if builder.Format() != aiv1alpha1.QuantizationFormatEXL2 {
+		t.Errorf("builder.Format() = %v, want EXL2", builder.Format())
+	}
+
+	// FP8 is still not implemented
+	_, err = GetBuilder(aiv1alpha1.QuantizationFormatFP8)
 	if err == nil {
-		t.Error("GetBuilder(EXL2) should return error for unimplemented format")
+		t.Error("GetBuilder(FP8) should return error for unimplemented format")
 	}
 }
 
@@ -367,6 +376,69 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 	}
 	if !contains(script, "W${BITS}_G${GROUP_SIZE}") {
 		t.Fatal("expected GPTQ script type marker")
+	}
+}
+
+func TestEXL2JobBuilder_Validate(t *testing.T) {
+	builder := &EXL2JobBuilder{}
+	bits := int32(4)
+
+	valid := &aiv1alpha1.QuantizationSpec{
+		Format: aiv1alpha1.QuantizationFormatEXL2,
+		Bits:   &bits,
+		UseGPU: true,
+	}
+	if err := builder.Validate(valid); err != nil {
+		t.Fatalf("Validate(valid EXL2) returned error: %v", err)
+	}
+
+	invalidBits := int32(7)
+	invalidSpec := &aiv1alpha1.QuantizationSpec{
+		Format: aiv1alpha1.QuantizationFormatEXL2,
+		Bits:   &invalidBits,
+		UseGPU: true,
+	}
+	if err := builder.Validate(invalidSpec); err == nil {
+		t.Fatal("Validate(invalid EXL2 bits) should return error")
+	}
+}
+
+func TestEXL2JobBuilder_BuildJob(t *testing.T) {
+	builder := &EXL2JobBuilder{}
+	bits := int32(5)
+	params := JobParams{
+		Name:      "llama3-exl2",
+		Namespace: "flexinfer-system",
+		PVCName:   "llama3-exl2",
+		ModelPath: "llama3-exl2",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format: aiv1alpha1.QuantizationFormatEXL2,
+			Bits:   &bits,
+			UseGPU: true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	if container.Image != DefaultEXL2Image {
+		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultEXL2Image)
+	}
+	script := container.Args[0]
+	if !contains(script, "EXL2 Quantization") {
+		t.Fatal("expected EXL2 script banner")
+	}
+	if !contains(script, "convert.py") {
+		t.Fatal("expected EXL2 script to invoke convert.py")
+	}
+	if !contains(script, "EXL2_B${BITS}") {
+		t.Fatal("expected EXL2 script type marker")
+	}
+	if !contains(script, "/dev/termination-log") {
+		t.Fatal("expected EXL2 script to write termination metadata")
 	}
 }
 

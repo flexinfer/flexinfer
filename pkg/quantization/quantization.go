@@ -80,6 +80,8 @@ func GetBuilder(format aiv1alpha1.QuantizationFormat) (JobBuilder, error) {
 		return &AWQJobBuilder{}, nil
 	case aiv1alpha1.QuantizationFormatGPTQ:
 		return &GPTQJobBuilder{}, nil
+	case aiv1alpha1.QuantizationFormatEXL2:
+		return &EXL2JobBuilder{}, nil
 	default:
 		return nil, fmt.Errorf("quantization format %q not yet implemented", format)
 	}

@@ -190,7 +190,7 @@ See `docs/design/multi-cluster.md` for full design.
 
 **Remaining Work:**
 
-1. **Quantization pipelines** — See `docs/design/quantization-pipelines.md` (next sprint)
+1. **Quantization pipelines completion** — GGUF/AWQ/GPTQ/EXL2 pipelines are implemented; remaining scope is FP8 + auto-selection + quality validation (`docs/planning/quantization-pipelines-execution.md`, `docs/design/quantization-pipelines.md`)
 
 **What's Ready:**
 - ✅ Helm charts complete
