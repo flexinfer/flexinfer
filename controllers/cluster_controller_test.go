@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -497,6 +498,58 @@ func TestInventorySourceGauges(t *testing.T) {
 			gotWatch, gotList := inventorySourceGauges(tc.source)
 			if gotWatch != tc.wantWatch || gotList != tc.wantList {
 				t.Fatalf("inventorySourceGauges(%q) = (%v,%v), want (%v,%v)", tc.source, gotWatch, gotList, tc.wantWatch, tc.wantList)
+			}
+		})
+	}
+}
+
+func TestWatchConditionForObservation(t *testing.T) {
+	tests := []struct {
+		name         string
+		observation  *clusterObservation
+		wantStatus   metav1.ConditionStatus
+		wantReason   string
+		wantContains string
+	}{
+		{
+			name: "watch ready",
+			observation: &clusterObservation{
+				WatchReady: true,
+			},
+			wantStatus:   metav1.ConditionTrue,
+			wantReason:   "WatchSynced",
+			wantContains: "watch cache is ready",
+		},
+		{
+			name: "list fallback",
+			observation: &clusterObservation{
+				WatchReady: false,
+			},
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   "ListFallback",
+			wantContains: "list fallback",
+		},
+		{
+			name:         "nil observation",
+			observation:  nil,
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   "ListFallback",
+			wantContains: "list fallback",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			status, reason, message := watchConditionForObservation(tc.observation)
+			if status != tc.wantStatus {
+				t.Fatalf("status = %v, want %v", status, tc.wantStatus)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if !strings.Contains(message, tc.wantContains) {
+				t.Fatalf("message = %q, want to contain %q", message, tc.wantContains)
 			}
 		})
 	}

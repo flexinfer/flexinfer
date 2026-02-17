@@ -56,6 +56,7 @@ const (
 
 	clusterConditionReady     = "Ready"
 	clusterConditionSpecValid = "SpecValid"
+	clusterConditionWatch     = "ModelWatchReady"
 	clusterSecretRefNameField = "spec.secretRef.name"
 )
 
@@ -192,6 +193,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		cluster.Status.LastProbeTime = &now
 		setClusterCondition(cluster, clusterConditionSpecValid, metav1.ConditionFalse, "InvalidSpec", msg)
 		setClusterCondition(cluster, clusterConditionReady, metav1.ConditionFalse, "InvalidSpec", msg)
+		setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionFalse, "InvalidSpec", "watch unavailable due to invalid cluster spec")
 		region := clusterRegion(cluster)
 		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
 		resetClusterInventoryMetrics(cluster.Name, region)
@@ -218,6 +220,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		cluster.Status.Message = msg
 		resetClusterObservationStatus(&cluster.Status)
 		setClusterCondition(cluster, clusterConditionReady, metav1.ConditionFalse, "ProbeFailed", msg)
+		setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionFalse, "ProbeFailed", "watch unavailable while probe is failing")
 		region := clusterRegion(cluster)
 		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
 		resetClusterInventoryMetrics(cluster.Name, region)
@@ -234,6 +237,8 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	cluster.Status.Available = observation.Available
 	cluster.Status.Models = observation.Models
 	setClusterCondition(cluster, clusterConditionReady, metav1.ConditionTrue, "ProbeSucceeded", "cluster reachable")
+	watchStatus, watchReason, watchMessage := watchConditionForObservation(observation)
+	setClusterCondition(cluster, clusterConditionWatch, watchStatus, watchReason, watchMessage)
 	region := clusterRegion(cluster)
 	metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(1)
 	setClusterInventoryMetrics(cluster.Name, region, observation)
@@ -662,6 +667,13 @@ func inventorySourceGauges(source string) (watch, list float64) {
 	default:
 		return 0, 0
 	}
+}
+
+func watchConditionForObservation(observation *clusterObservation) (metav1.ConditionStatus, string, string) {
+	if observation != nil && observation.WatchReady {
+		return metav1.ConditionTrue, "WatchSynced", "remote model watch cache is ready"
+	}
+	return metav1.ConditionFalse, "ListFallback", "using list fallback for model inventory"
 }
 
 func setClusterInventoryMetrics(clusterName, region string, observation *clusterObservation) {
