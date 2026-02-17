@@ -235,15 +235,25 @@ func New(cfg Config) (*Daemon, error) {
 		IdleTimeout: poolIdleTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
 			_, wasRunning := d.runningServers.LoadOrStore(serverName, true)
-			transport, err := procMgr.Dial(ctx, serverName)
+			// Process lifetime must not be tied to request/handshake timeout contexts.
+			transport, err := procMgr.Dial(context.Background(), serverName)
 			if err != nil {
 				d.runningServers.Delete(serverName)
 				return nil, err
 			}
-			if !wasRunning && d.eventBus != nil {
-				d.eventBus.Publish(EventProcessStart, map[string]any{
-					"server": serverName,
-				})
+			if !wasRunning {
+				initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := initializeMCPTransport(initCtx, transport); err != nil {
+					d.runningServers.Delete(serverName)
+					_ = procMgr.Stop(serverName)
+					return nil, fmt.Errorf("initialize transport: %w", err)
+				}
+				if d.eventBus != nil {
+					d.eventBus.Publish(EventProcessStart, map[string]any{
+						"server": serverName,
+					})
+				}
 			}
 			return transport, nil
 		},
@@ -1400,23 +1410,8 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 
 	transport := mcp.NewStdioTransport(stdout, stdin)
 
-	// Initialize
-	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
-		ProtocolVersion: mcp.ProtocolVersion,
-		Capabilities:    mcp.Capabilities{},
-		ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
-	})
-	if err := transport.Send(ctx, initReq); err != nil {
-		return nil, fmt.Errorf("send init: %w", err)
-	}
-	if _, err := transport.Recv(ctx); err != nil {
-		return nil, fmt.Errorf("recv init: %w", err)
-	}
-
-	// Send initialized notification
-	initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
-	if err := transport.Send(ctx, initNotif); err != nil {
-		return nil, fmt.Errorf("send initialized: %w", err)
+	if err := initializeMCPTransport(ctx, transport); err != nil {
+		return nil, err
 	}
 
 	// Get tools
@@ -1440,6 +1435,27 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 	}
 
 	return toolsList.Tools, nil
+}
+
+// initializeMCPTransport performs the MCP initialize handshake on a fresh transport.
+func initializeMCPTransport(ctx context.Context, transport mcp.Transport) error {
+	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
+		ProtocolVersion: mcp.ProtocolVersion,
+		Capabilities:    mcp.Capabilities{},
+		ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
+	})
+	if err := transport.Send(ctx, initReq); err != nil {
+		return fmt.Errorf("send init: %w", err)
+	}
+	if _, err := transport.Recv(ctx); err != nil {
+		return fmt.Errorf("recv init: %w", err)
+	}
+
+	initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
+	if err := transport.Send(ctx, initNotif); err != nil {
+		return fmt.Errorf("send initialized: %w", err)
+	}
+	return nil
 }
 
 // expandVarsWithRegistry expands variable patterns with registry-based env aliases.
