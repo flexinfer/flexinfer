@@ -12,6 +12,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -720,8 +721,11 @@ func sanitizeBuildName(tag string) string {
 
 // registryTag prepends the registry to a local image tag.
 func (k *K8sBackend) registryTag(tag string) string {
-	if strings.Contains(tag, "/") && strings.Contains(strings.Split(tag, "/")[0], ".") {
-		return tag // already has a registry prefix
+	if strings.Contains(tag, "/") {
+		prefix := strings.Split(tag, "/")[0]
+		if strings.Contains(prefix, ".") || strings.Contains(prefix, ":") || prefix == "localhost" {
+			return tag // already has a registry prefix
+		}
 	}
 	return k.registry + "/" + tag
 }
@@ -745,7 +749,13 @@ func parseExitCode(err error) int {
 
 // isNotFound returns true if the error is a K8s "not found" error.
 func isNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "not found")
+	if err == nil {
+		return false
+	}
+	if apierrors.IsNotFound(err) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 // workDir returns the working directory, defaulting to "/workspace".
