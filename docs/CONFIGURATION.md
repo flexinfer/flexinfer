@@ -48,6 +48,9 @@ The controller uses these environment variables to override default backend cont
 | `DEFAULT_DIFFUSERS_IMAGE_AMD` | - | Diffusers API image for AMD GPUs |
 | `DEFAULT_VLLM_IMAGE` | - | vLLM image for NVIDIA/default |
 | `DEFAULT_VLLM_IMAGE_AMD` | - | vLLM image for AMD GPUs |
+| `FLEXINFER_QUANTIZER_GGUF_IMAGE` | `ghcr.io/flexinfer/quantizer:gguf` | GGUF quantizer job image for `ModelCache.spec.quantization.format=GGUF` |
+| `FLEXINFER_QUANTIZER_AWQ_IMAGE` | `ghcr.io/flexinfer/quantizer:awq` | AWQ quantizer job image for `ModelCache.spec.quantization.format=AWQ` |
+| `FLEXINFER_QUANTIZER_GPTQ_IMAGE` | `ghcr.io/flexinfer/quantizer:gptq` | GPTQ quantizer job image for `ModelCache.spec.quantization.format=GPTQ` |
 
 ---
 
@@ -193,6 +196,11 @@ Default container images for each backend type:
 ### Diffusers
 - **NVIDIA**: `registry.harbor.lan/library/diffusers-api:cuda`
 - **AMD**: `registry.harbor.lan/library/diffusers-api:rocm-latest`
+
+### Quantization Jobs
+- **GGUF**: `ghcr.io/flexinfer/quantizer:gguf`
+- **AWQ**: `ghcr.io/flexinfer/quantizer:awq`
+- **GPTQ**: `ghcr.io/flexinfer/quantizer:gptq`
 
 ### Image Pinning Best Practices
 

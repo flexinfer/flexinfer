@@ -143,4 +143,16 @@ spec:
             - name: ORAS_DOWNLOADER_IMAGE
               value: {{ .Values.oras.image | quote }}
             {{- end }}
+            {{- if .Values.quantization.images.gguf }}
+            - name: FLEXINFER_QUANTIZER_GGUF_IMAGE
+              value: {{ .Values.quantization.images.gguf | quote }}
+            {{- end }}
+            {{- if .Values.quantization.images.awq }}
+            - name: FLEXINFER_QUANTIZER_AWQ_IMAGE
+              value: {{ .Values.quantization.images.awq | quote }}
+            {{- end }}
+            {{- if .Values.quantization.images.gptq }}
+            - name: FLEXINFER_QUANTIZER_GPTQ_IMAGE
+              value: {{ .Values.quantization.images.gptq | quote }}
+            {{- end }}
 {{- end }}

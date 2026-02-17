@@ -245,6 +245,14 @@ benchmarker:
     pullPolicy: IfNotPresent
     tag: "latest"
 
+# Quantization runtime images used by ModelCache quantization jobs.
+# Override these when publishing images to a private registry.
+quantization:
+  images:
+    gguf: ghcr.io/flexinfer/quantizer:gguf
+    awq: ghcr.io/flexinfer/quantizer:awq
+    gptq: ghcr.io/flexinfer/quantizer:gptq
+
 grafanaDashboard:
   enabled: true
 
