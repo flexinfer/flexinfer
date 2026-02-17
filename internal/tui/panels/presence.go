@@ -2,6 +2,7 @@ package panels
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -194,11 +195,17 @@ func (p PresencePanel) renderSummary() string {
 	if offlineCount < 0 {
 		offlineCount = 0
 	}
+	conflictCount := p.claimConflictCount()
+	conflictsText := theme.Styles.StatusMuted.Render("0 conflicts")
+	if conflictCount > 0 {
+		conflictsText = theme.Styles.StatusWarn.Render(fmt.Sprintf("%d conflicts", conflictCount))
+	}
 	parts := []string{
 		theme.Styles.StatusOK.Render(fmt.Sprintf("%d active", p.activeAgents)),
 		theme.Styles.StatusWarn.Render(fmt.Sprintf("%d idle", p.idleAgents)),
 		theme.Styles.StatusMuted.Render(fmt.Sprintf("%d offline", offlineCount)),
 		theme.Styles.Label.Render("Claims: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.totalClaims)),
+		conflictsText,
 		theme.Styles.Label.Render("Worktrees: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", len(p.worktrees))),
 	}
 	return strings.Join(parts, "  ")
@@ -336,14 +343,17 @@ func (p PresencePanel) renderClaimsTable() string {
 		return theme.Styles.MutedText.Render("  No active file claims") + "\n"
 	}
 
+	conflictsByPath := p.claimConflicts()
+
 	gap := 2
 	colCursor := 2
+	colConflict := 1
 	colAgent := 14
 	colType := 6
 	colAge := 8
 
 	// File path gets the remainder.
-	colFile := p.width - (colCursor + colAgent + colType + colAge) - gap*3
+	colFile := p.width - (colCursor + colConflict + colAgent + colType + colAge) - gap*4
 	if colFile < 16 {
 		colFile = 16
 	}
@@ -353,6 +363,7 @@ func (p PresencePanel) renderClaimsTable() string {
 
 	header := strings.Join([]string{
 		padRight("", colCursor),
+		padRight("!", colConflict),
 		padRight("File", colFile),
 		padRight("Agent", colAgent),
 		padRight("Type", colType),
@@ -360,6 +371,12 @@ func (p PresencePanel) renderClaimsTable() string {
 	}, spaces(gap))
 
 	var b strings.Builder
+	if len(conflictsByPath) > 0 {
+		b.WriteString(theme.Styles.StatusWarn.Render(
+			fmt.Sprintf("  ! %d file conflict(s): claimed by multiple agents", len(conflictsByPath)),
+		))
+		b.WriteString("\n")
+	}
 	b.WriteString(headerTextStyle.Render(header))
 	b.WriteString("\n")
 	b.WriteString(sepStyle.Render(strings.Repeat("─", min(p.width, lipgloss.Width(header)))))
@@ -385,9 +402,15 @@ func (p PresencePanel) renderClaimsTable() string {
 		agent := truncate(c.AgentID, colAgent)
 		claimType := truncate(c.ClaimType, colType)
 		age := truncate(relativeTime(c.CreatedAt), colAge)
+		conflictAgents := conflictsByPath[c.FilePath]
+		conflictMarker := " "
+		if len(conflictAgents) > 0 {
+			conflictMarker = theme.Styles.StatusWarn.Render("!")
+		}
 
 		row := strings.Join([]string{
 			cursor,
+			padRight(conflictMarker, colConflict),
 			padRight(filePath, colFile),
 			padRight(agent, colAgent),
 			padRight(claimType, colType),
@@ -403,9 +426,50 @@ func (p PresencePanel) renderClaimsTable() string {
 			b.WriteString(descStyle.Render(truncate(c.Reason, p.width-8)))
 			b.WriteString("\n")
 		}
+		if isSelected && len(conflictAgents) > 0 {
+			conflictStyle := lipgloss.NewStyle().Foreground(theme.ColorWarning).PaddingLeft(5)
+			b.WriteString(conflictStyle.Render(
+				truncate(fmt.Sprintf("shared with: %s", strings.Join(conflictAgents, ", ")), p.width-8),
+			))
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String()
+}
+
+func (p PresencePanel) claimConflictCount() int {
+	return len(p.claimConflicts())
+}
+
+func (p PresencePanel) claimConflicts() map[string][]string {
+	agentsByFile := make(map[string]map[string]struct{})
+	for _, claim := range p.claims {
+		if claim.FilePath == "" || claim.AgentID == "" {
+			continue
+		}
+		fileSet, ok := agentsByFile[claim.FilePath]
+		if !ok {
+			fileSet = make(map[string]struct{})
+			agentsByFile[claim.FilePath] = fileSet
+		}
+		fileSet[claim.AgentID] = struct{}{}
+	}
+
+	conflicts := make(map[string][]string)
+	for filePath, agentSet := range agentsByFile {
+		if len(agentSet) < 2 {
+			continue
+		}
+		agents := make([]string, 0, len(agentSet))
+		for agentID := range agentSet {
+			agents = append(agents, agentID)
+		}
+		sort.Strings(agents)
+		conflicts[filePath] = agents
+	}
+
+	return conflicts
 }
 
 // shortenPath shortens an absolute file path by removing common workspace prefixes.

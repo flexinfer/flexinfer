@@ -1,217 +1,18 @@
 <script>
-  import { toastStore } from '../../stores/toasts.svelte.ts';
+  import { presenceDiagnosticsStore } from '../../stores/presenceDiagnostics.svelte.ts';
   import EmptyState from '../shared/EmptyState.svelte';
 
   let { agents = [] } = $props();
 
-  let diagnosticsAgentId = $state('');
-  let diagnosticsLoading = $state(false);
-  let diagnosticsError = $state('');
-  let contextInspect = $state(null);
-  let contextInspectError = $state('');
-  let nudgeQueueStatus = $state(null);
-  let nudgeQueueStatusError = $state('');
-  let nudgeQueuePolicy = $state(null);
-  let nudgeQueuePolicyError = $state('');
-  let nudgePolicyCapInput = $state('');
-  let nudgePolicyDebounceInput = $state('');
-  let nudgePolicyDropPolicy = $state('drop_old');
-  let nudgePolicyLanePriorityInput = $state('');
-  let nudgePolicyUpdatedBy = $state('hud-ui');
-  let nudgePolicyAdminToken = $state('');
-  let nudgePolicyUpdating = $state(false);
-  let nudgePolicyMutationError = $state('');
-  let nudgePolicyFormDirty = $state(false);
-  const nudgeDropPolicyOptions = ['drop_old', 'drop_new', 'summarize'];
-
-  function parseLanePriorityInput(raw) {
-    return raw
-      .split(',')
-      .map((lane) => lane.trim())
-      .filter((lane) => lane.length > 0);
-  }
-
-  function markNudgePolicyDirty() {
-    nudgePolicyFormDirty = true;
-    nudgePolicyMutationError = '';
-  }
-
-  function hydrateNudgePolicyForm(policy) {
-    if (!policy || nudgePolicyFormDirty || nudgePolicyUpdating) return;
-    nudgePolicyCapInput = String(policy.cap ?? '');
-    nudgePolicyDebounceInput = String(policy.debounce_ms ?? 0);
-    nudgePolicyDropPolicy = nudgeDropPolicyOptions.includes(policy.drop_policy) ? policy.drop_policy : 'drop_old';
-    nudgePolicyLanePriorityInput = (policy.lane_priority ?? []).join(', ');
-    nudgePolicyMutationError = '';
-    nudgePolicyFormDirty = false;
-  }
-
-  function resetNudgePolicyForm() {
-    const source = nudgeQueuePolicy ?? nudgeQueueStatus;
-    if (!source) return;
-    nudgePolicyFormDirty = false;
-    hydrateNudgePolicyForm(source);
-  }
-
-  async function updateNudgePolicy() {
-    if (nudgePolicyUpdating) return;
-
-    const token = nudgePolicyAdminToken.trim();
-    if (!token) {
-      nudgePolicyMutationError = 'Admin token is required to update policy.';
-      return;
-    }
-
-    const cap = Number.parseInt(nudgePolicyCapInput.trim(), 10);
-    if (!Number.isInteger(cap) || cap <= 0) {
-      nudgePolicyMutationError = 'Cap must be a positive integer.';
-      return;
-    }
-
-    const debounceMs = Number.parseInt(nudgePolicyDebounceInput.trim(), 10);
-    if (!Number.isInteger(debounceMs) || debounceMs < 0) {
-      nudgePolicyMutationError = 'Debounce must be a non-negative integer (ms).';
-      return;
-    }
-
-    const dropPolicy = nudgePolicyDropPolicy.trim();
-    if (!nudgeDropPolicyOptions.includes(dropPolicy)) {
-      nudgePolicyMutationError = 'Drop policy must be drop_old, drop_new, or summarize.';
-      return;
-    }
-
-    const lanePriority = parseLanePriorityInput(nudgePolicyLanePriorityInput);
-    if (lanePriority.length === 0) {
-      nudgePolicyMutationError = 'Lane priority must include at least one lane.';
-      return;
-    }
-
-    const currentPolicy = nudgeQueuePolicy ?? nudgeQueueStatus;
-    if (
-      currentPolicy &&
-      currentPolicy.cap === cap &&
-      currentPolicy.debounce_ms === debounceMs &&
-      currentPolicy.drop_policy === dropPolicy &&
-      JSON.stringify(currentPolicy.lane_priority ?? []) === JSON.stringify(lanePriority)
-    ) {
-      nudgePolicyMutationError = '';
-      nudgePolicyFormDirty = false;
-      toastStore.info('Nudge queue policy is already up to date');
-      return;
-    }
-
-    nudgePolicyMutationError = '';
-    nudgePolicyUpdating = true;
-    try {
-      const res = await globalThis.fetch('/api/agent/nudge-queue-policy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Token': token,
-        },
-        body: JSON.stringify({
-          cap,
-          debounce_ms: debounceMs,
-          drop_policy: dropPolicy,
-          lane_priority: lanePriority,
-          updated_by: nudgePolicyUpdatedBy.trim() || 'hud-ui',
-        }),
-      });
-      let data = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-      if (!res.ok) {
-        throw new Error(data?.error || `${res.status} ${res.statusText}`);
-      }
-      nudgeQueuePolicy = data?.policy ?? null;
-      nudgePolicyFormDirty = false;
-      hydrateNudgePolicyForm(nudgeQueuePolicy);
-      toastStore.success('Nudge queue policy updated');
-      await fetchDiagnostics();
-    } catch (e) {
-      nudgePolicyMutationError = e instanceof Error ? e.message : 'Failed to update policy';
-      toastStore.error(nudgePolicyMutationError);
-    } finally {
-      nudgePolicyUpdating = false;
-    }
-  }
-
-  async function fetchJSON(url) {
-    const res = await globalThis.fetch(url);
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-    if (!res.ok) {
-      const msg = data?.error || `${res.status} ${res.statusText}`;
-      throw new Error(msg);
-    }
-    return data;
-  }
-
-  async function fetchDiagnostics() {
-    const agentID = diagnosticsAgentId?.trim();
-    if (!agentID) return;
-
-    diagnosticsLoading = true;
-    diagnosticsError = '';
-    contextInspectError = '';
-    nudgeQueueStatusError = '';
-    nudgeQueuePolicyError = '';
-
-    const [ctxResult, queueResult, policyResult] = await Promise.allSettled([
-      fetchJSON(`/api/agent/context-inspect?agent_id=${encodeURIComponent(agentID)}&detail=true&limit=200`),
-      fetchJSON(`/api/agent/nudge-queue?agent_id=${encodeURIComponent(agentID)}`),
-      fetchJSON('/api/agent/nudge-queue-policy'),
-    ]);
-
-    if (ctxResult.status === 'fulfilled') {
-      contextInspect = ctxResult.value ?? null;
-    } else {
-      contextInspect = null;
-      contextInspectError = ctxResult.reason?.message ?? 'Failed to load context diagnostics';
-    }
-
-    if (queueResult.status === 'fulfilled') {
-      nudgeQueueStatus = queueResult.value?.status ?? null;
-    } else {
-      nudgeQueueStatus = null;
-      nudgeQueueStatusError = queueResult.reason?.message ?? 'Failed to load queue status';
-    }
-
-    if (policyResult.status === 'fulfilled') {
-      nudgeQueuePolicy = policyResult.value?.policy ?? null;
-    } else {
-      nudgeQueuePolicy = null;
-      nudgeQueuePolicyError = policyResult.reason?.message ?? 'Failed to load queue policy';
-    }
-
-    if (!nudgePolicyFormDirty && !nudgePolicyUpdating) {
-      hydrateNudgePolicyForm(nudgeQueuePolicy ?? nudgeQueueStatus);
-    }
-
-    if (contextInspectError && nudgeQueueStatusError && nudgeQueuePolicyError) {
-      diagnosticsError = 'Unable to load diagnostics from HUD API.';
-    }
-
-    diagnosticsLoading = false;
-  }
+  $effect(() => {
+    presenceDiagnosticsStore.syncAgents(agents);
+  });
 
   $effect(() => {
-    if (!diagnosticsAgentId) {
-      diagnosticsAgentId = agents.find((a) => a.status === 'active')?.agent_id || agents[0]?.agent_id || '';
-    }
-    if (!diagnosticsAgentId) return;
-    fetchDiagnostics();
-    const timer = setInterval(() => {
-      fetchDiagnostics();
-    }, 10000);
-    return () => clearInterval(timer);
+    presenceDiagnosticsStore.startPolling(10000);
+    return () => {
+      presenceDiagnosticsStore.stopPolling();
+    };
   });
 </script>
 
@@ -223,9 +24,9 @@
       <select
         id="diag-agent"
         class="form-input diagnostics-select"
-        bind:value={diagnosticsAgentId}
+        bind:value={presenceDiagnosticsStore.diagnosticsAgentId}
         onchange={() => {
-          fetchDiagnostics();
+          presenceDiagnosticsStore.fetchDiagnostics();
         }}
       >
         <option value="">Select agent...</option>
@@ -234,35 +35,35 @@
         {/each}
       </select>
       <button class="btn btn-sm" onclick={() => {
-        fetchDiagnostics();
-      }} disabled={diagnosticsLoading || !diagnosticsAgentId}>
-        {diagnosticsLoading ? 'Refreshing...' : 'Refresh'}
+        presenceDiagnosticsStore.fetchDiagnostics();
+      }} disabled={presenceDiagnosticsStore.diagnosticsLoading || !presenceDiagnosticsStore.diagnosticsAgentId}>
+        {presenceDiagnosticsStore.diagnosticsLoading ? 'Refreshing...' : 'Refresh'}
       </button>
     </div>
   </div>
 
-  {#if diagnosticsError}
-    <div class="text-xs text-muted diagnostics-error">{diagnosticsError}</div>
+  {#if presenceDiagnosticsStore.diagnosticsError}
+    <div class="text-xs text-muted diagnostics-error">{presenceDiagnosticsStore.diagnosticsError}</div>
   {/if}
 
-  {#if !diagnosticsAgentId}
+  {#if !presenceDiagnosticsStore.diagnosticsAgentId}
     <EmptyState icon={'\u2699'} heading="Select an agent to inspect diagnostics" compact />
   {:else}
     <div class="diagnostics-metrics">
       <div class="stat-card" style="--accent-color: var(--accent)">
-        <div class="metric-value">{contextInspect?.estimated_tokens ?? '---'}</div>
+        <div class="metric-value">{presenceDiagnosticsStore.contextInspect?.estimated_tokens ?? '---'}</div>
         <div class="metric-label">Prompt Est. Tokens</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--info)">
-        <div class="metric-value">{contextInspect?.entry_count ?? '---'}</div>
+        <div class="metric-value">{presenceDiagnosticsStore.contextInspect?.entry_count ?? '---'}</div>
         <div class="metric-label">Context Entries</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--warning)">
-        <div class="metric-value">{nudgeQueueStatus?.pending ?? '---'}</div>
+        <div class="metric-value">{presenceDiagnosticsStore.nudgeQueueStatus?.pending ?? '---'}</div>
         <div class="metric-label">Queue Pending</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--error)">
-        <div class="metric-value">{nudgeQueueStatus?.dropped ?? '---'}</div>
+        <div class="metric-value">{presenceDiagnosticsStore.nudgeQueueStatus?.dropped ?? '---'}</div>
         <div class="metric-label">Queue Dropped</div>
       </div>
     </div>
@@ -271,17 +72,17 @@
       <div class="diag-section">
         <div class="section-header">
           <span class="section-title">Context Breakdown</span>
-          {#if contextInspect?.session_id}
-            <span class="text-mono text-xs text-muted">{contextInspect.session_id}</span>
+          {#if presenceDiagnosticsStore.contextInspect?.session_id}
+            <span class="text-mono text-xs text-muted">{presenceDiagnosticsStore.contextInspect.session_id}</span>
           {/if}
         </div>
-        {#if contextInspectError}
-          <div class="text-xs text-muted">{contextInspectError}</div>
-        {:else if !contextInspect}
+        {#if presenceDiagnosticsStore.contextInspectError}
+          <div class="text-xs text-muted">{presenceDiagnosticsStore.contextInspectError}</div>
+        {:else if !presenceDiagnosticsStore.contextInspect}
           <div class="text-xs text-muted">No context diagnostics available.</div>
         {:else}
           <div class="diag-list">
-            {#each (contextInspect.by_entry_type ?? []) as bucket}
+            {#each (presenceDiagnosticsStore.contextInspect.by_entry_type ?? []) as bucket}
               <div class="diag-row">
                 <span class="text-mono">{bucket.entry_type}</span>
                 <span class="text-xs text-muted">{bucket.count} entries</span>
@@ -289,10 +90,10 @@
               </div>
             {/each}
           </div>
-          {#if (contextInspect.sections ?? []).length > 0}
+          {#if (presenceDiagnosticsStore.contextInspect.sections ?? []).length > 0}
             <div class="diag-subtitle">Prompt Sections</div>
             <div class="diag-list">
-              {#each (contextInspect.sections ?? []) as section}
+              {#each (presenceDiagnosticsStore.contextInspect.sections ?? []) as section}
                 <div class="diag-row">
                   <span class="text-mono">{section.section}</span>
                   <span class="text-xs text-muted">{section.source}</span>
@@ -301,10 +102,10 @@
               {/each}
             </div>
           {/if}
-          {#if (contextInspect.top_entries ?? []).length > 0}
+          {#if (presenceDiagnosticsStore.contextInspect.top_entries ?? []).length > 0}
             <div class="diag-subtitle">Top Entries</div>
             <div class="diag-list">
-              {#each (contextInspect.top_entries ?? []).slice(0, 5) as entry}
+              {#each (presenceDiagnosticsStore.contextInspect.top_entries ?? []).slice(0, 5) as entry}
                 <div class="diag-row">
                   <span class="truncate" title={entry.title || entry.id}>{entry.title || entry.id}</span>
                   <span class="text-xs text-muted">{entry.entry_type}</span>
@@ -320,18 +121,18 @@
         <div class="section-header">
           <span class="section-title">Nudge Queue Policy</span>
         </div>
-        {#if nudgeQueuePolicyError && nudgeQueueStatusError}
-          <div class="text-xs text-muted">{nudgeQueuePolicyError}</div>
+        {#if presenceDiagnosticsStore.nudgeQueuePolicyError && presenceDiagnosticsStore.nudgeQueueStatusError}
+          <div class="text-xs text-muted">{presenceDiagnosticsStore.nudgeQueuePolicyError}</div>
         {:else}
           <div class="diag-kv">
-            <div><span class="text-muted text-xs">Cap</span><span class="text-mono">{nudgeQueuePolicy?.cap ?? nudgeQueueStatus?.cap ?? '---'}</span></div>
-            <div><span class="text-muted text-xs">Drop</span><span class="text-mono">{nudgeQueuePolicy?.drop_policy ?? nudgeQueueStatus?.drop_policy ?? '---'}</span></div>
-            <div><span class="text-muted text-xs">Debounce</span><span class="text-mono">{nudgeQueuePolicy?.debounce_ms ?? nudgeQueueStatus?.debounce_ms ?? '---'}ms</span></div>
+            <div><span class="text-muted text-xs">Cap</span><span class="text-mono">{presenceDiagnosticsStore.nudgeQueuePolicy?.cap ?? presenceDiagnosticsStore.nudgeQueueStatus?.cap ?? '---'}</span></div>
+            <div><span class="text-muted text-xs">Drop</span><span class="text-mono">{presenceDiagnosticsStore.nudgeQueuePolicy?.drop_policy ?? presenceDiagnosticsStore.nudgeQueueStatus?.drop_policy ?? '---'}</span></div>
+            <div><span class="text-muted text-xs">Debounce</span><span class="text-mono">{presenceDiagnosticsStore.nudgeQueuePolicy?.debounce_ms ?? presenceDiagnosticsStore.nudgeQueueStatus?.debounce_ms ?? '---'}ms</span></div>
           </div>
-          {#if nudgeQueueStatus?.by_lane && Object.keys(nudgeQueueStatus.by_lane).length > 0}
+          {#if presenceDiagnosticsStore.nudgeQueueStatus?.by_lane && Object.keys(presenceDiagnosticsStore.nudgeQueueStatus.by_lane).length > 0}
             <div class="diag-subtitle">Pending by Lane</div>
             <div class="diag-lanes">
-              {#each Object.entries(nudgeQueueStatus.by_lane) as [lane, count]}
+              {#each Object.entries(presenceDiagnosticsStore.nudgeQueueStatus.by_lane) as [lane, count]}
                 <span class="lane-chip">
                   <span class="text-mono">{lane}</span>
                   <span class="text-mono">{count}</span>
@@ -341,10 +142,10 @@
           {:else}
             <div class="text-xs text-muted">No queued nudges for this agent.</div>
           {/if}
-          {#if (nudgeQueuePolicy?.lane_priority ?? []).length > 0}
+          {#if (presenceDiagnosticsStore.nudgeQueuePolicy?.lane_priority ?? []).length > 0}
             <div class="diag-subtitle">Lane Priority</div>
             <div class="diag-lanes">
-              {#each nudgeQueuePolicy.lane_priority as lane}
+              {#each presenceDiagnosticsStore.nudgeQueuePolicy.lane_priority as lane}
                 <span class="lane-chip lane-priority-chip"><span class="text-mono">{lane}</span></span>
               {/each}
             </div>
@@ -355,7 +156,7 @@
             class="diag-policy-form"
             onsubmit={(e) => {
               e.preventDefault();
-              updateNudgePolicy();
+              presenceDiagnosticsStore.updateNudgePolicy();
             }}
           >
             <div class="diag-policy-grid">
@@ -367,8 +168,8 @@
                   type="number"
                   min="1"
                   step="1"
-                  bind:value={nudgePolicyCapInput}
-                  oninput={markNudgePolicyDirty}
+                  bind:value={presenceDiagnosticsStore.nudgePolicyCapInput}
+                  oninput={() => presenceDiagnosticsStore.markNudgePolicyDirty()}
                 />
               </div>
               <div class="form-group diag-form-group">
@@ -379,8 +180,8 @@
                   type="number"
                   min="0"
                   step="1"
-                  bind:value={nudgePolicyDebounceInput}
-                  oninput={markNudgePolicyDirty}
+                  bind:value={presenceDiagnosticsStore.nudgePolicyDebounceInput}
+                  oninput={() => presenceDiagnosticsStore.markNudgePolicyDirty()}
                 />
               </div>
               <div class="form-group diag-form-group">
@@ -388,8 +189,8 @@
                 <select
                   id="diag-policy-drop"
                   class="form-input"
-                  bind:value={nudgePolicyDropPolicy}
-                  onchange={markNudgePolicyDirty}
+                  bind:value={presenceDiagnosticsStore.nudgePolicyDropPolicy}
+                  onchange={() => presenceDiagnosticsStore.markNudgePolicyDirty()}
                 >
                   <option value="drop_old">drop_old</option>
                   <option value="drop_new">drop_new</option>
@@ -403,8 +204,8 @@
                   class="form-input"
                   type="text"
                   placeholder="hud-ui"
-                  bind:value={nudgePolicyUpdatedBy}
-                  oninput={markNudgePolicyDirty}
+                  bind:value={presenceDiagnosticsStore.nudgePolicyUpdatedBy}
+                  oninput={() => presenceDiagnosticsStore.markNudgePolicyDirty()}
                 />
               </div>
             </div>
@@ -416,8 +217,8 @@
                 class="form-input text-mono"
                 type="text"
                 placeholder="control, handoff, advice, default"
-                bind:value={nudgePolicyLanePriorityInput}
-                oninput={markNudgePolicyDirty}
+                bind:value={presenceDiagnosticsStore.nudgePolicyLanePriorityInput}
+                oninput={() => presenceDiagnosticsStore.markNudgePolicyDirty()}
               />
             </div>
 
@@ -429,21 +230,21 @@
                 type="password"
                 autocomplete="off"
                 placeholder="Required for policy updates"
-                bind:value={nudgePolicyAdminToken}
+                bind:value={presenceDiagnosticsStore.nudgePolicyAdminToken}
               />
             </div>
 
             <div class="diag-policy-actions">
-              <button class="btn btn-sm btn-ghost" type="button" onclick={resetNudgePolicyForm} disabled={nudgePolicyUpdating}>
+              <button class="btn btn-sm btn-ghost" type="button" onclick={() => presenceDiagnosticsStore.resetNudgePolicyForm()} disabled={presenceDiagnosticsStore.nudgePolicyUpdating}>
                 Reset
               </button>
-              <button class="btn btn-sm btn-primary" type="submit" disabled={nudgePolicyUpdating}>
-                {nudgePolicyUpdating ? 'Updating...' : 'Apply Policy'}
+              <button class="btn btn-sm btn-primary" type="submit" disabled={presenceDiagnosticsStore.nudgePolicyUpdating}>
+                {presenceDiagnosticsStore.nudgePolicyUpdating ? 'Updating...' : 'Apply Policy'}
               </button>
             </div>
 
-            {#if nudgePolicyMutationError}
-              <div class="text-xs diagnostics-error">{nudgePolicyMutationError}</div>
+            {#if presenceDiagnosticsStore.nudgePolicyMutationError}
+              <div class="text-xs diagnostics-error">{presenceDiagnosticsStore.nudgePolicyMutationError}</div>
             {/if}
           </form>
         {/if}
