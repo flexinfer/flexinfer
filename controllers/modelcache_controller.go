@@ -1923,6 +1923,9 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			quantStatus.OriginalSizeBytes = meta.OriginalSizeBytes
 			quantStatus.CompressedSizeBytes = meta.CompressedSizeBytes
 			quantDurationSeconds = meta.QuantizationTimeSeconds
+			if quantizedPath, ok := quantizedPathFromMetadata(modelCache.Status.Path, meta); ok {
+				modelCache.Status.Path = quantizedPath
+			}
 		}
 
 		if quantDurationSeconds == 0 {
@@ -1996,6 +1999,8 @@ type quantizationJobMetadata struct {
 	OriginalSizeBytes       int64  `json:"originalSizeBytes,omitempty"`
 	CompressedSizeBytes     int64  `json:"compressedSizeBytes,omitempty"`
 	QuantizationTimeSeconds int64  `json:"quantizationTimeSeconds,omitempty"`
+	OutputFile              string `json:"outputFile,omitempty"`
+	OutputDir               string `json:"outputDir,omitempty"`
 }
 
 func (r *ModelCacheReconciler) readQuantizationMetadataFromPods(ctx context.Context, namespace, jobName string) (*quantizationJobMetadata, error) {
@@ -2099,6 +2104,28 @@ func formatCompressionRatio(ratio float64) string {
 	formatted = strings.TrimRight(formatted, "0")
 	formatted = strings.TrimRight(formatted, ".")
 	return formatted
+}
+
+func quantizedPathFromMetadata(basePath string, meta *quantizationJobMetadata) (string, bool) {
+	if meta == nil || strings.TrimSpace(basePath) == "" {
+		return "", false
+	}
+
+	artifact := strings.TrimSpace(meta.OutputFile)
+	if artifact == "" {
+		artifact = strings.TrimSpace(meta.OutputDir)
+	}
+	if artifact == "" {
+		return "", false
+	}
+
+	artifact = strings.TrimPrefix(artifact, "/")
+	cleanArtifact := filepath.Clean(artifact)
+	if cleanArtifact == "." || cleanArtifact == "" || strings.HasPrefix(cleanArtifact, "..") {
+		return "", false
+	}
+
+	return filepath.Clean(filepath.Join(basePath, cleanArtifact)), true
 }
 
 func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {

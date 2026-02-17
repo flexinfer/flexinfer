@@ -29,6 +29,19 @@ func TestParseQuantizationMetadata(t *testing.T) {
 	}
 }
 
+func TestParseQuantizationMetadata_WithOutputLocation(t *testing.T) {
+	meta, err := parseQuantizationMetadata(`{"type":"W4_G128","originalSizeBytes":16000,"compressedSizeBytes":4200,"quantizationTimeSeconds":154,"outputDir":"awq-w4-g128","outputFile":"model-Q4_K_M.gguf"}`)
+	if err != nil {
+		t.Fatalf("parseQuantizationMetadata returned error: %v", err)
+	}
+	if meta.OutputDir != "awq-w4-g128" {
+		t.Fatalf("OutputDir = %q, want %q", meta.OutputDir, "awq-w4-g128")
+	}
+	if meta.OutputFile != "model-Q4_K_M.gguf" {
+		t.Fatalf("OutputFile = %q, want %q", meta.OutputFile, "model-Q4_K_M.gguf")
+	}
+}
+
 func TestParseQuantizationMetadata_Invalid(t *testing.T) {
 	if _, err := parseQuantizationMetadata("not-json"); err == nil {
 		t.Fatal("parseQuantizationMetadata should return an error for invalid JSON")
@@ -130,5 +143,60 @@ func TestQuantizationTypeFromSpec(t *testing.T) {
 	}
 	if got := quantizationTypeFromSpec(gptq); got != "W4_G128" {
 		t.Fatalf("GPTQ default type = %q, want %q", got, "W4_G128")
+	}
+}
+
+func TestQuantizedPathFromMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		basePath string
+		meta     *quantizationJobMetadata
+		want     string
+		ok       bool
+	}{
+		{
+			name:     "uses output file",
+			basePath: "/models/llama3",
+			meta: &quantizationJobMetadata{
+				OutputFile: "model-Q4_K_M.gguf",
+			},
+			want: "/models/llama3/model-Q4_K_M.gguf",
+			ok:   true,
+		},
+		{
+			name:     "uses output dir when file missing",
+			basePath: "/models/llama3",
+			meta: &quantizationJobMetadata{
+				OutputDir: "awq-w4-g128",
+			},
+			want: "/models/llama3/awq-w4-g128",
+			ok:   true,
+		},
+		{
+			name:     "rejects traversal",
+			basePath: "/models/llama3",
+			meta: &quantizationJobMetadata{
+				OutputDir: "../escape",
+			},
+			ok: false,
+		},
+		{
+			name:     "requires artifact",
+			basePath: "/models/llama3",
+			meta:     &quantizationJobMetadata{},
+			ok:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := quantizedPathFromMetadata(tt.basePath, tt.meta)
+			if ok != tt.ok {
+				t.Fatalf("quantizedPathFromMetadata() ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("quantizedPathFromMetadata() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
