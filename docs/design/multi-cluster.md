@@ -115,6 +115,21 @@ status:
       phase: Ready
 ```
 
+Watch and inventory observability semantics for the Cluster Registry:
+
+- Metrics:
+  - `flexinfer_cluster_models_discovered{cluster,region}` reports discovered remote model count.
+  - `flexinfer_cluster_model_inventory_source{cluster,source}` is one-hot with `source=watch|list`.
+  - `flexinfer_cluster_model_watch_ready{cluster}` is `1` only when the remote watch stream is healthy.
+- `Cluster.status.conditions` includes `ModelWatchReady`:
+  - `Reason=WatchSynced`, `Status=True` when watch cache is healthy.
+  - `Reason=ListFallback`, `Status=False` when using list/cached fallback.
+  - `Reason=WatchDegraded`, `Status=False` for watch-loop failure states.
+- Condition transitions emit Kubernetes events:
+  - `ModelWatchSynced` (normal)
+  - `ModelWatchFallback` (normal)
+  - `ModelWatchDegraded` (warning)
+
 ### 3. Global Proxy
 
 A federated proxy that routes to cluster-local proxies:

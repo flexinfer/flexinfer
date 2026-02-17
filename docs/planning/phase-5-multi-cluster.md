@@ -79,6 +79,13 @@ See `docs/design/multi-cluster.md` for the full design document.
   - `Reason=WatchSynced` when watch stream is healthy
   - `Reason=ListFallback` when inventory is using list/cached fallback
   - `Reason=WatchDegraded` when watch loop failures are detected
+  - `Status=False` for both `ListFallback` and `WatchDegraded` (inventory still populated via fallback)
+- Condition transitions emit cluster events:
+  - `ModelWatchSynced` (normal)
+  - `ModelWatchFallback` (normal)
+  - `ModelWatchDegraded` (warning)
+- `flexinfer_cluster_model_inventory_source{cluster,source}` is one-hot per cluster (`source=watch|list`)
+- `flexinfer_cluster_model_watch_ready{cluster}=1` only when `Reason=WatchSynced`
 
 **Primary files**
 - `controllers/cluster_controller.go`
