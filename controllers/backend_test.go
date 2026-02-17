@@ -431,6 +431,36 @@ func TestGetBackendEnv_Ollama(t *testing.T) {
 	}
 }
 
+func TestGetBackendEnv_VLLM_AMD_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			VLLM: &aiv1alpha1.VLLMSpec{
+				HIPVisibleDevices: "1",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["HIP_VISIBLE_DEVICES"]; v != "1" {
+		t.Fatalf("expected HIP_VISIBLE_DEVICES=1, got %q", v)
+	}
+	if v := envMap["ROCR_VISIBLE_DEVICES"]; v != "1" {
+		t.Fatalf("expected ROCR_VISIBLE_DEVICES=1, got %q", v)
+	}
+}
+
 func TestGetBackendCommand_MlcLlm(t *testing.T) {
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{

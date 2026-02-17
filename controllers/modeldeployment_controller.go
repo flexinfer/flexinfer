@@ -1662,9 +1662,13 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
 			env = append(env, r.rocmEnvVars()...)
 
-			// HIP_VISIBLE_DEVICES allows selecting specific GPUs on multi-GPU AMD systems.
-			// On systems with both iGPU and discrete GPU, set to "1" to use discrete.
+			// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
+			// This helps on hosts where KFD can still enumerate multiple GPUs.
 			if m.Spec.VLLM != nil && m.Spec.VLLM.HIPVisibleDevices != "" {
+				env = append(env, corev1.EnvVar{
+					Name:  "ROCR_VISIBLE_DEVICES",
+					Value: m.Spec.VLLM.HIPVisibleDevices,
+				})
 				env = append(env, corev1.EnvVar{
 					Name:  "HIP_VISIBLE_DEVICES",
 					Value: m.Spec.VLLM.HIPVisibleDevices,

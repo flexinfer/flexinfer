@@ -122,14 +122,25 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			},
 		)
 
-		// HIP_VISIBLE_DEVICES allows selecting specific GPUs on multi-GPU systems.
-		// On systems with both iGPU and discrete GPU, set to "1" to use discrete.
-		// Device indices: 0=first GPU (often iGPU), 1=second GPU (discrete), etc.
-		if hipDevices := spec.ConfigString("hipVisibleDevices", ""); hipDevices != "" {
-			env = append(env, corev1.EnvVar{
-				Name:  "HIP_VISIBLE_DEVICES",
-				Value: hipDevices,
-			})
+		// Some setups expose multiple AMD GPUs (e.g., iGPU + dGPU) to the container.
+		// Allow pinning the runtime to a specific device via config. Prefer setting
+		// both variables to avoid partial isolation depending on the stack.
+		hipVisible := spec.ConfigString("hipVisibleDevices", "")
+		rocrVisible := spec.ConfigString("rocrVisibleDevices", "")
+		if hipVisible != "" && rocrVisible == "" {
+			rocrVisible = hipVisible
+		}
+		if rocrVisible != "" && hipVisible == "" {
+			hipVisible = rocrVisible
+		}
+		if rocrVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "ROCR_VISIBLE_DEVICES", Value: rocrVisible})
+		}
+		if hipVisible != "" {
+			env = append(env, corev1.EnvVar{Name: "HIP_VISIBLE_DEVICES", Value: hipVisible})
+		}
+		if ordinal := spec.ConfigString("gpuDeviceOrdinal", ""); ordinal != "" {
+			env = append(env, corev1.EnvVar{Name: "GPU_DEVICE_ORDINAL", Value: ordinal})
 		}
 	}
 
