@@ -5,11 +5,18 @@ description: Concrete checklist for multi-cluster federation support.
 
 # Phase 5: Multi-Cluster
 
-> Last updated: 2026-02-16
+> Last updated: 2026-02-17
 
 This is the checklist for Phase 5: enable **multi-cluster federation** for FlexInfer deployments.
 
 See `docs/design/multi-cluster.md` for the full design document.
+
+## Tracking
+
+- [Phase 5.1 Cluster Registry (MVP)](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3)
+- [Phase 5.2 Cross-Cluster Model Sync](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4)
+- [Phase 5.3 Global Routing](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5)
+- [Phase 5.4 Advanced Features](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6)
 
 ## Goals
 
@@ -61,10 +68,17 @@ See `docs/design/multi-cluster.md` for the full design document.
 - [x] Add metrics:
   - `flexinfer_cluster_health{cluster, region}` (gauge: 0/1)
   - `flexinfer_cluster_probe_latency_seconds{cluster}` (histogram)
+  - `flexinfer_cluster_models_discovered{cluster, region}` (gauge: discovered model count)
+  - `flexinfer_cluster_model_inventory_source{cluster, source}` (gauge: active source one-hot; `source=watch|list`)
+  - `flexinfer_cluster_model_watch_ready{cluster}` (gauge: 1 when remote watch stream is healthy)
 
 **Acceptance**
 - Unhealthy clusters are marked `NotReady` within configured timeout.
 - Metrics available for alerting.
+- `Cluster.status.conditions` includes `ModelWatchReady` with:
+  - `Reason=WatchSynced` when watch stream is healthy
+  - `Reason=ListFallback` when inventory is using list/cached fallback
+  - `Reason=WatchDegraded` when watch loop failures are detected
 
 **Primary files**
 - `controllers/cluster_controller.go`
@@ -198,3 +212,8 @@ See `docs/design/multi-cluster.md` for the full design document.
 
 - This checklist is the source-of-truth for Phase 5 items.
 - When a PR lands, add a checkbox + link to the PR/commit in this doc.
+- Tracking issues:
+  - [Phase 5.1 Cluster Registry (MVP)](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3)
+  - [Phase 5.2 Cross-Cluster Model Sync](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4)
+  - [Phase 5.3 Global Routing](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5)
+  - [Phase 5.4 Advanced Features](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6)
