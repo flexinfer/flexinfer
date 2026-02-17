@@ -3,12 +3,19 @@ package backend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func testK8sBackend() *K8sBackend {
@@ -222,5 +229,61 @@ func TestBuildRejectsContextOutsideWorkspaceRoot(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is not under workspace root") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuild_MonorepoContextCompletesWithFakeK8s(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	contextDir := filepath.Join(workspaceRoot, "services", "loom-core")
+	if err := os.MkdirAll(contextDir, 0o755); err != nil {
+		t.Fatalf("mkdir context dir: %v", err)
+	}
+
+	clientset := k8sfake.NewSimpleClientset()
+	buildWatch := watch.NewFake()
+	watchStarted := make(chan struct{})
+	var createdBuildPod *corev1.Pod
+
+	clientset.PrependWatchReactor("pods", func(action k8stesting.Action) (bool, watch.Interface, error) {
+		close(watchStarted)
+		return true, buildWatch, nil
+	})
+	clientset.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create := action.(k8stesting.CreateAction)
+		pod := create.GetObject().(*corev1.Pod).DeepCopy()
+		createdBuildPod = pod
+
+		go func(name string) {
+			<-watchStarted
+			buildWatch.Modify(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "devbox"},
+				Status:     corev1.PodStatus{Phase: corev1.PodSucceeded},
+			})
+		}(pod.Name)
+		return false, nil, nil
+	})
+
+	k := testK8sBackend()
+	k.workspaceRoot = workspaceRoot
+	k.clientset = clientset
+
+	res, err := k.Build(context.Background(), BuildOpts{
+		Tag:        "mcp/devbox/loom-core:abc1234",
+		Dockerfile: []byte("FROM scratch\n"),
+		ContextDir: contextDir,
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if res.ImageTag != "registry.harbor.lan/mcp/devbox/loom-core:abc1234" {
+		t.Fatalf("ImageTag=%q", res.ImageTag)
+	}
+
+	if createdBuildPod == nil {
+		t.Fatal("expected build pod to be created")
+	}
+	cmd := strings.Join(createdBuildPod.Spec.Containers[0].Command, " ")
+	if !strings.Contains(cmd, "/workspace/services/loom-core") {
+		t.Fatalf("expected monorepo-relative context path in build command, got: %s", cmd)
 	}
 }

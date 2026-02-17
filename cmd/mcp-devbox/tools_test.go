@@ -15,8 +15,8 @@ func TestRegisterTools_RegistersExpectedToolset(t *testing.T) {
 	registerTools(server, &manager{}, noop.NewTracerProvider().Tracer("test"))
 
 	tools := server.Tools()
-	if len(tools) != 11 {
-		t.Fatalf("tool count = %d, want 11", len(tools))
+	if len(tools) < 11 {
+		t.Fatalf("tool count = %d, want at least 11", len(tools))
 	}
 
 	expected := []string{

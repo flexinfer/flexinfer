@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -124,6 +126,64 @@ func TestBuildMounts_K8sBackendReturnsEmpty(t *testing.T) {
 	mounts := m.buildMounts("/home/user/workspace/services/app")
 	if len(mounts) != 0 {
 		t.Errorf("expected empty mounts for k8s backend, got %d", len(mounts))
+	}
+}
+
+func TestBuildMounts_DockerMonorepoMountsWorkspaceRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workspace := filepath.Join(home, "workspace")
+	projectDir := filepath.Join(workspace, "services", "loom-core")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+
+	m := &manager{
+		cfg: managerConfig{
+			backendType:   "docker",
+			workspaceRoot: workspace,
+		},
+	}
+	mounts := m.buildMounts(projectDir)
+	if len(mounts) == 0 {
+		t.Fatal("expected at least one mount")
+	}
+
+	if mounts[0].Host != workspace || mounts[0].Container != "/workspace" {
+		t.Fatalf("expected workspace root mount, got %#v", mounts[0])
+	}
+
+	for _, mount := range mounts {
+		if mount.Host == projectDir && mount.Container == "/workspace" {
+			t.Fatalf("unexpected direct project mount for monorepo project: %#v", mount)
+		}
+	}
+}
+
+func TestBuildMounts_DockerOutsideWorkspaceMountsProjectDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workspace := filepath.Join(home, "workspace")
+	projectDir := filepath.Join(home, "external", "other-repo")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+
+	m := &manager{
+		cfg: managerConfig{
+			backendType:   "docker",
+			workspaceRoot: workspace,
+		},
+	}
+	mounts := m.buildMounts(projectDir)
+	if len(mounts) == 0 {
+		t.Fatal("expected at least one mount")
+	}
+
+	if mounts[0].Host != projectDir || mounts[0].Container != "/workspace" {
+		t.Fatalf("expected direct project mount for outside-workspace project, got %#v", mounts[0])
 	}
 }
 

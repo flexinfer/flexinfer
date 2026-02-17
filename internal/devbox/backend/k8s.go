@@ -27,7 +27,7 @@ const defaultBuilderImage = "quay.io/buildah/stable:v1.38.0"
 // K8sBackend implements Backend using a Kubernetes cluster.
 // Builds are performed in-cluster via Buildah pods — no local Docker daemon required.
 type K8sBackend struct {
-	clientset       *kubernetes.Clientset
+	clientset       kubernetes.Interface
 	restConfig      *rest.Config
 	namespace       string
 	registry        string
