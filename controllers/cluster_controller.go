@@ -451,12 +451,17 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 
 	capacity := make(corev1.ResourceList, len(gpuResourceKeys))
 	used := make(corev1.ResourceList, len(gpuResourceKeys))
+	readyNodes := make(map[string]struct{}, len(nodes.Items))
 	for _, key := range gpuResourceKeys {
 		capacity[key] = *resource.NewQuantity(0, resource.DecimalSI)
 		used[key] = *resource.NewQuantity(0, resource.DecimalSI)
 	}
 
 	for _, node := range nodes.Items {
+		if !isNodeReady(&node) {
+			continue
+		}
+		readyNodes[node.Name] = struct{}{}
 		for _, key := range gpuResourceKeys {
 			if qty, ok := node.Status.Allocatable[key]; ok {
 				total := capacity[key]
@@ -479,6 +484,9 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 		if pod.Spec.NodeName == "" {
 			continue
 		}
+		if _, ok := readyNodes[pod.Spec.NodeName]; !ok {
+			continue
+		}
 		addPodGPURequests(used, &pod)
 	}
 
@@ -493,6 +501,18 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 	}
 
 	return capacity, available, nil
+}
+
+func isNodeReady(node *corev1.Node) bool {
+	if node == nil {
+		return false
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 func addPodGPURequests(used corev1.ResourceList, pod *corev1.Pod) {

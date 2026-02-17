@@ -99,6 +99,9 @@ func TestCollectGPUInventory(t *testing.T) {
 			Allocatable: corev1.ResourceList{
 				corev1.ResourceName("amd.com/gpu"): resource.MustParse("2"),
 			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
 		},
 	}
 	nodeB := &corev1.Node{
@@ -106,6 +109,20 @@ func TestCollectGPUInventory(t *testing.T) {
 		Status: corev1.NodeStatus{
 			Allocatable: corev1.ResourceList{
 				corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-not-ready"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("2"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
 			},
 		},
 	}
@@ -169,7 +186,27 @@ func TestCollectGPUInventory(t *testing.T) {
 		},
 	}
 
-	clientset := k8sfake.NewSimpleClientset(nodeA, nodeB, runningPod, succeededPod, unscheduledPod)
+	notReadyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-on-down-node", Namespace: "tenant-a"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "gpu-node-not-ready",
+			Containers: []corev1.Container{
+				{
+					Name: "inference",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clientset := k8sfake.NewSimpleClientset(nodeA, nodeB, notReadyNode, runningPod, succeededPod, unscheduledPod, notReadyPod)
 	capacity, available, err := collectGPUInventory(ctx, clientset)
 	if err != nil {
 		t.Fatalf("collectGPUInventory() unexpected error: %v", err)
@@ -202,6 +239,9 @@ func TestCollectGPUInventory_UsesInitContainerMaxForScheduledPods(t *testing.T) 
 		Status: corev1.NodeStatus{
 			Allocatable: corev1.ResourceList{
 				corev1.ResourceName("amd.com/gpu"): resource.MustParse("4"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
 			},
 		},
 	}
