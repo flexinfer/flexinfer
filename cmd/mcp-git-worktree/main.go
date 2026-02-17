@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	version  = "0.1.0"
-	repoPath string
+	version     = "0.1.0"
+	defaultRepo string
 )
 
 func main() {
@@ -31,13 +31,13 @@ func main() {
 
 func run(ctx context.Context) error {
 	var err error
-	repoPath, err = filepath.Abs(env.String("REPO_PATH", "."))
+	defaultRepo, err = resolveDefaultRepo()
 	if err != nil {
-		return fmt.Errorf("resolving REPO_PATH: %w", err)
+		return err
 	}
 
 	logger := mcplog.NewDefault()
-	logger.Info("starting server", "name", "mcp-git-worktree", "version", version, "repo", repoPath)
+	logger.Info("starting server", "name", "mcp-git-worktree", "version", version, "repo", defaultRepo)
 
 	server := mcp.NewServer("mcp-git-worktree", version)
 	server.SetInstructions("Git worktree management")
@@ -46,7 +46,15 @@ func run(ctx context.Context) error {
 	server.AddTool(mcp.Tool{
 		Name:        "git_worktree_list",
 		Description: "List git worktrees with branch, lock, and prune flags",
-		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"repo_path": map[string]any{
+					"type":        "string",
+					"description": "Path to the git repository. Defaults to server default.",
+				},
+			},
+		},
 	}, handleList)
 
 	server.AddTool(mcp.Tool{
@@ -55,6 +63,7 @@ func run(ctx context.Context) error {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
+				"repo_path":     map[string]any{"type": "string", "description": "Path to the git repository. Defaults to server default."},
 				"path":          map[string]any{"type": "string", "description": "Relative path for worktree"},
 				"branch":        map[string]any{"type": "string", "description": "Branch to check out"},
 				"create_branch": map[string]any{"type": "boolean", "description": "Create branch from start_point"},
@@ -71,8 +80,9 @@ func run(ctx context.Context) error {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"path":  map[string]any{"type": "string", "description": "Relative path to remove"},
-				"force": map[string]any{"type": "boolean", "description": "Force removal"},
+				"repo_path": map[string]any{"type": "string", "description": "Path to the git repository. Defaults to server default."},
+				"path":      map[string]any{"type": "string", "description": "Relative path to remove"},
+				"force":     map[string]any{"type": "boolean", "description": "Force removal"},
 			},
 			Required: []string{"path"},
 		},
@@ -84,7 +94,8 @@ func run(ctx context.Context) error {
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"dry_run": map[string]any{"type": "boolean", "description": "Show what would be pruned"},
+				"repo_path": map[string]any{"type": "string", "description": "Path to the git repository. Defaults to server default."},
+				"dry_run":   map[string]any{"type": "boolean", "description": "Show what would be pruned"},
 			},
 		},
 	}, handlePrune)
@@ -92,7 +103,42 @@ func run(ctx context.Context) error {
 	return server.Run(ctx)
 }
 
-func runGit(ctx context.Context, args ...string) (string, error) {
+func resolveDefaultRepo() (string, error) {
+	repoRoot := env.StringWithFallbacks("REPO_PATH", "GIT_REPO_PATH")
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	absPath, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolving default repo path: %w", err)
+	}
+	return absPath, nil
+}
+
+func resolveRepoPath(repoPath string) (string, error) {
+	repoRoot := defaultRepo
+	if repoPath != "" {
+		if filepath.IsAbs(repoPath) {
+			repoRoot = repoPath
+		} else {
+			repoRoot = filepath.Join(defaultRepo, repoPath)
+		}
+	}
+	absPath, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolving repo path: %w", err)
+	}
+	// Keep repository selection bounded under the default repo root.
+	if err := pathsec.ValidatePath(absPath, defaultRepo); err != nil {
+		return "", fmt.Errorf("repo_path not allowed: %w", err)
+	}
+	return absPath, nil
+}
+
+func runGit(ctx context.Context, repoPath string, args ...string) (string, error) {
+	if repoPath == "" {
+		repoPath = defaultRepo
+	}
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
 	cmd.Env = sanitizedGitEnv(os.Environ())
 	out, err := cmd.CombinedOutput()
@@ -129,7 +175,18 @@ func sanitizedGitEnv(envVars []string) []string {
 // Handlers
 
 func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	out, err := runGit(ctx, "worktree", "list", "--porcelain")
+	v := validate.NewArgs(args)
+	repoPath := v.String("repo_path", "")
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	resolvedRepoPath, err := resolveRepoPath(repoPath)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	out, err := runGit(ctx, resolvedRepoPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -167,6 +224,7 @@ func handleList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 
 func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
+	repoPath := v.String("repo_path", "")
 	path := v.Required("path")
 	branch := v.String("branch", "")
 	createBranch := v.Bool("create_branch", false)
@@ -176,12 +234,17 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 		return mcp.ErrorResult(err), nil
 	}
 
+	resolvedRepoPath, err := resolveRepoPath(repoPath)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	// Validate path is inside repo
-	absPath := filepath.Join(repoPath, path)
-	if err := pathsec.ValidatePath(absPath, repoPath); err != nil {
+	absPath := filepath.Join(resolvedRepoPath, path)
+	if err := pathsec.ValidatePath(absPath, resolvedRepoPath); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("path must be inside repository: %w", err)), nil
 	}
-	if absPath == repoPath {
+	if absPath == resolvedRepoPath {
 		return mcp.ErrorResult(fmt.Errorf("cannot add worktree at repository root")), nil
 	}
 
@@ -210,7 +273,7 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 		gitArgs = append(gitArgs, absPath, branch)
 	}
 
-	_, err := runGit(ctx, gitArgs...)
+	_, err = runGit(ctx, resolvedRepoPath, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -225,17 +288,23 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 
 func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
+	repoPath := v.String("repo_path", "")
 	path := v.Required("path")
 	force := v.Bool("force", false)
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	absPath := filepath.Join(repoPath, path)
-	if err := pathsec.ValidatePath(absPath, repoPath); err != nil {
+	resolvedRepoPath, err := resolveRepoPath(repoPath)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	absPath := filepath.Join(resolvedRepoPath, path)
+	if err := pathsec.ValidatePath(absPath, resolvedRepoPath); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("path must be inside repository: %w", err)), nil
 	}
-	if absPath == repoPath {
+	if absPath == resolvedRepoPath {
 		return mcp.ErrorResult(fmt.Errorf("cannot remove main repository worktree")), nil
 	}
 
@@ -245,7 +314,7 @@ func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 	gitArgs = append(gitArgs, absPath)
 
-	_, err := runGit(ctx, gitArgs...)
+	_, err = runGit(ctx, resolvedRepoPath, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -255,8 +324,14 @@ func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 
 func handlePrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
+	repoPath := v.String("repo_path", "")
 	dryRun := v.Bool("dry_run", false)
 	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	resolvedRepoPath, err := resolveRepoPath(repoPath)
+	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
@@ -265,7 +340,7 @@ func handlePrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult,
 		gitArgs = append(gitArgs, "--dry-run")
 	}
 
-	out, err := runGit(ctx, gitArgs...)
+	out, err := runGit(ctx, resolvedRepoPath, gitArgs...)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
