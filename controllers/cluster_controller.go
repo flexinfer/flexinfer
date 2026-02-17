@@ -767,13 +767,35 @@ func watchConditionForObservation(observation *clusterObservation) (metav1.Condi
 		}
 		return metav1.ConditionTrue, "WatchSynced", "remote model watch cache is ready"
 	}
-	if observation != nil && observation.WatchReason != "" {
+	if observation != nil && (observation.WatchReason != "" || observation.WatchRestarts > 0) {
+		msg := watchFallbackMessage(observation)
 		if observation.WatchDegraded {
-			return metav1.ConditionFalse, "WatchDegraded", observation.WatchReason
+			return metav1.ConditionFalse, "WatchDegraded", msg
 		}
-		return metav1.ConditionFalse, "ListFallback", observation.WatchReason
+		return metav1.ConditionFalse, "ListFallback", msg
 	}
 	return metav1.ConditionFalse, "ListFallback", "using list fallback for model inventory"
+}
+
+func watchFallbackMessage(observation *clusterObservation) string {
+	if observation == nil {
+		return "using list fallback for model inventory"
+	}
+
+	msg := observation.WatchReason
+	if msg == "" {
+		msg = "using list fallback for model inventory"
+	}
+
+	if observation.WatchRestarts <= 0 {
+		return msg
+	}
+
+	msg = fmt.Sprintf("%s; restarts=%d", msg, observation.WatchRestarts)
+	if observation.WatchLastErr != "" && observation.WatchLastErr != observation.WatchReason {
+		msg = fmt.Sprintf("%s; last_restart_reason=%s", msg, observation.WatchLastErr)
+	}
+	return msg
 }
 
 func clusterProbeMessage(observation *clusterObservation) string {
@@ -782,10 +804,7 @@ func clusterProbeMessage(observation *clusterObservation) string {
 	}
 	base := fmt.Sprintf("probe succeeded (kubernetes %s)", observation.ServerVersion)
 	if !observation.WatchReady {
-		if observation.WatchReason != "" {
-			return fmt.Sprintf("%s; model inventory fallback: %s", base, observation.WatchReason)
-		}
-		return fmt.Sprintf("%s; model inventory fallback active", base)
+		return fmt.Sprintf("%s; model inventory fallback: %s", base, watchFallbackMessage(observation))
 	}
 	if observation.WatchRestarts > 0 {
 		if observation.WatchLastErr != "" {

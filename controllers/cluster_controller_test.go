@@ -565,6 +565,19 @@ func TestWatchConditionForObservation(t *testing.T) {
 			wantContains: "watch start failed",
 		},
 		{
+			name: "watch degraded includes restart metadata",
+			observation: &clusterObservation{
+				WatchReady:    false,
+				WatchDegraded: true,
+				WatchReason:   "remote model watch channel closed",
+				WatchRestarts: 4,
+				WatchLastErr:  "remote model watch channel closed",
+			},
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   "WatchDegraded",
+			wantContains: "restarts=4",
+		},
+		{
 			name:         "nil observation",
 			observation:  nil,
 			wantStatus:   metav1.ConditionFalse,
@@ -655,6 +668,17 @@ func TestClusterProbeMessage(t *testing.T) {
 			},
 			want: "probe succeeded (kubernetes v1.32.0); model inventory fallback: remote model watch start failed: timeout",
 		},
+		{
+			name: "watch fallback reason with restarts",
+			observation: &clusterObservation{
+				ServerVersion: "v1.32.0",
+				WatchReady:    false,
+				WatchReason:   "remote model watch start failed: timeout",
+				WatchRestarts: 2,
+				WatchLastErr:  "remote model watch start failed: timeout",
+			},
+			want: "probe succeeded (kubernetes v1.32.0); model inventory fallback: remote model watch start failed: timeout; restarts=2",
+		},
 	}
 
 	for _, tc := range tests {
@@ -662,6 +686,55 @@ func TestClusterProbeMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := clusterProbeMessage(tc.observation); got != tc.want {
 				t.Fatalf("clusterProbeMessage() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWatchFallbackMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *clusterObservation
+		want string
+	}{
+		{
+			name: "nil observation",
+			in:   nil,
+			want: "using list fallback for model inventory",
+		},
+		{
+			name: "reason only",
+			in: &clusterObservation{
+				WatchReason: "watch stream not yet established",
+			},
+			want: "watch stream not yet established",
+		},
+		{
+			name: "restarts and distinct last error",
+			in: &clusterObservation{
+				WatchReason:   "watch stream not yet established",
+				WatchRestarts: 3,
+				WatchLastErr:  "remote model watch channel closed",
+			},
+			want: "watch stream not yet established; restarts=3; last_restart_reason=remote model watch channel closed",
+		},
+		{
+			name: "restarts and same last error",
+			in: &clusterObservation{
+				WatchReason:   "remote model watch channel closed",
+				WatchRestarts: 3,
+				WatchLastErr:  "remote model watch channel closed",
+			},
+			want: "remote model watch channel closed; restarts=3",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := watchFallbackMessage(tc.in)
+			if got != tc.want {
+				t.Fatalf("watchFallbackMessage() = %q, want %q", got, tc.want)
 			}
 		})
 	}
