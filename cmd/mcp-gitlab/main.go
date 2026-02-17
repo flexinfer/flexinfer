@@ -1307,10 +1307,21 @@ func parseRetryAfter(v string) time.Duration {
 		return 0
 	}
 	secs, err := strconv.Atoi(v)
-	if err != nil || secs <= 0 {
-		return 0
+	if err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
 	}
-	return time.Duration(secs) * time.Second
+	// Retry-After also supports HTTP date format.
+	if t, parseErr := http.ParseTime(v); parseErr == nil {
+		delay := time.Until(t)
+		if delay <= 0 {
+			return 0
+		}
+		return delay
+	}
+	return 0
 }
 
 func backoffDelay(attempt int, max time.Duration) time.Duration {
@@ -1416,6 +1427,83 @@ func readTail(r io.Reader, maxBytes int) ([]byte, int, error) {
 
 func encodeProject(project string) string {
 	return url.PathEscape(project)
+}
+
+func encodeArtifactPath(artifactPath string) string {
+	parts := strings.Split(strings.TrimPrefix(artifactPath, "/"), "/")
+	escaped := make([]string, 0, len(parts))
+	for _, part := range parts {
+		escaped = append(escaped, url.PathEscape(part))
+	}
+	return strings.Join(escaped, "/")
+}
+
+func validatePositiveIntParam(field string, value int) *mcp.CallToolResult {
+	if value <= 0 {
+		return mcp.ErrorResult(mcperror.InvalidParam(field, "must be greater than 0"))
+	}
+	return nil
+}
+
+func parseOptionalPositiveIntSliceArg(args map[string]any, field string) ([]int, error) {
+	raw, ok := args[field]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("must be an array of integers")
+	}
+
+	out := make([]int, 0, len(values))
+	for i, item := range values {
+		n, ok := toInt(item)
+		if !ok {
+			return nil, fmt.Errorf("item %d must be an integer", i)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("item %d must be greater than 0", i)
+		}
+		out = append(out, n)
+	}
+
+	return out, nil
+}
+
+func toInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n != float64(int(n)) {
+			return 0, false
+		}
+		return int(n), true
+	case float32:
+		if n != float32(int(n)) {
+			return 0, false
+		}
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case uint:
+		return int(n), true
+	case uint64:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
+	}
 }
 
 func normalizePerPage(perPage int, defaultVal int) int {

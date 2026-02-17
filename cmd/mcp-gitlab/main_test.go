@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/mcperror"
@@ -604,6 +605,52 @@ func TestHandleCreateIssue(t *testing.T) {
 	}
 }
 
+func TestHandleCreateIssue_WithAssigneeIDs(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":1,"iid":7,"title":"Bug report","state":"opened"}`)
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	_, err := gl.handleCreateIssue(context.Background(), map[string]any{
+		"project":      "group/project",
+		"title":        "Bug report",
+		"assignee_ids": []any{float64(10), float64(11)},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assigneeIDs, ok := gotBody["assignee_ids"].([]any)
+	if !ok {
+		t.Fatalf("expected assignee_ids array in request body, got %v", gotBody["assignee_ids"])
+	}
+	if len(assigneeIDs) != 2 || assigneeIDs[0] != float64(10) || assigneeIDs[1] != float64(11) {
+		t.Fatalf("unexpected assignee_ids payload: %v", assigneeIDs)
+	}
+}
+
+func TestHandleCreateIssue_InvalidAssigneeIDs(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleCreateIssue(context.Background(), map[string]any{
+		"project":      "group/project",
+		"title":        "Bug report",
+		"assignee_ids": []any{"not-an-int"},
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for invalid assignee_ids")
+	}
+}
+
 func TestHandleUpdateIssue(t *testing.T) {
 	var gotBody map[string]any
 	var gotMethod, gotPath string
@@ -691,6 +738,66 @@ func TestHandleListMergeRequests(t *testing.T) {
 	mrs, ok := parsed["merge_requests"].([]any)
 	if !ok || len(mrs) != 1 {
 		t.Fatalf("expected 1 merge request, got %v", parsed["merge_requests"])
+	}
+}
+
+func TestHandleGetPipeline_InvalidPipelineID(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleGetPipeline(context.Background(), map[string]any{
+		"project":     "group/my-project",
+		"pipeline_id": 0,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for invalid pipeline_id")
+	}
+}
+
+func TestHandleGetArtifacts_EncodesArtifactPath(t *testing.T) {
+	var gotEscapedPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEscapedPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "text/plain")
+		io.WriteString(w, "artifact-content")
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	result, err := gl.handleGetArtifacts(context.Background(), map[string]any{
+		"project":       "group/project",
+		"job_id":        99,
+		"artifact_path": "reports/build#1 log.txt",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(gotEscapedPath, "/projects/group%2Fproject/jobs/99/artifacts/reports/build%231%20log.txt") {
+		t.Fatalf("expected escaped artifact path, got %q", gotEscapedPath)
+	}
+
+	parsed := mustParseJSON(t, result)
+	if parsed["encoding"] != "text" {
+		t.Fatalf("expected text encoding, got %v", parsed["encoding"])
+	}
+}
+
+func TestHandleGetArtifacts_InvalidJobID(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleGetArtifacts(context.Background(), map[string]any{
+		"project": "group/project",
+		"job_id":  0,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for invalid job_id")
 	}
 }
 
@@ -811,6 +918,19 @@ func TestParseRetryAfter(t *testing.T) {
 		if gotSecs != wantDur {
 			t.Errorf("parseRetryAfter(%q) = %v, want %ds", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestParseRetryAfter_HTTPDate(t *testing.T) {
+	future := time.Now().Add(3 * time.Second).UTC().Format(http.TimeFormat)
+	got := parseRetryAfter(future)
+	if got < 2*time.Second || got > 4*time.Second {
+		t.Fatalf("expected ~3s delay from HTTP date, got %v", got)
+	}
+
+	past := time.Now().Add(-1 * time.Minute).UTC().Format(http.TimeFormat)
+	if gotPast := parseRetryAfter(past); gotPast != 0 {
+		t.Fatalf("expected 0 delay for past HTTP date, got %v", gotPast)
 	}
 }
 
