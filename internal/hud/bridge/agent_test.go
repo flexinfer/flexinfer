@@ -419,6 +419,173 @@ func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 	}
 }
 
+func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	var taskAddSeen bool
+	var handoffSeen bool
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[{"id":"sess-1","agent_id":"agent-1","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_task_add":
+			taskAddSeen = true
+			tasks, ok := req.Arguments["tasks"].([]any)
+			if !ok || len(tasks) != 1 {
+				t.Fatalf("expected one task in tasks array, got %#v", req.Arguments["tasks"])
+			}
+			task, ok := tasks[0].(map[string]any)
+			if !ok {
+				t.Fatalf("task is not an object: %#v", tasks[0])
+			}
+			tags, ok := task["tags"].([]any)
+			if !ok || len(tags) != 3 {
+				t.Fatalf("expected normalized tags, got %#v", task["tags"])
+			}
+			if tags[0] != "dispatched" || tags[1] != "team" || tags[2] != "gitops" {
+				t.Fatalf("unexpected tags order/content: %#v", tags)
+			}
+			if got, _ := task["file_path"].(string); got != "platform/gitops/k3s/mcp-hub/servers/loom/deployment.yaml" {
+				t.Fatalf("unexpected file_path: %q", got)
+			}
+			if got, _ := task["line_number"].(float64); int(got) != 88 {
+				t.Fatalf("expected line_number=88, got %#v", task["line_number"])
+			}
+			blockedBy, ok := task["blocked_by"].([]any)
+			if !ok || len(blockedBy) != 1 || blockedBy[0] != "task-1" {
+				t.Fatalf("unexpected blocked_by: %#v", task["blocked_by"])
+			}
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		case "agent_context__agent_handoff_create":
+			handoffSeen = true
+			if got, _ := req.Arguments["to_agent"].(string); got != "agent-1" {
+				t.Fatalf("expected to_agent=agent-1, got %q", got)
+			}
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.DispatchTask(DispatchTaskParams{
+		TargetAgentID: "agent-1",
+		Title:         "Review enterprise rollout",
+		Context:       "validate k3s gitops drift and rollout health",
+		Priority:      "high",
+		Tags:          []string{"team", "gitops", "team"},
+		FilePath:      "platform/gitops/k3s/mcp-hub/servers/loom/deployment.yaml",
+		LineNumber:    88,
+		BlockedBy:     []string{"task-1"},
+	})
+	if err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+	if !taskAddSeen {
+		t.Fatalf("expected task_add call")
+	}
+	if !handoffSeen {
+		t.Fatalf("expected handoff_create call")
+	}
+	if created, _ := result["task_created"].(bool); !created {
+		t.Fatalf("expected task_created=true, got %#v", result["task_created"])
+	}
+}
+
+func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	var handoffSeen bool
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[]}`},
+				},
+			}, nil
+		case "agent_context__agent_task_add":
+			t.Fatalf("did not expect task_add when target has no active session")
+			return nil, nil
+		case "agent_context__agent_handoff_create":
+			handoffSeen = true
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.DispatchTask(DispatchTaskParams{
+		TargetAgentID: "agent-2",
+		Title:         "Investigate node skew",
+		Context:       "review k3s control-plane versions",
+		Priority:      "medium",
+	})
+	if err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+	if !handoffSeen {
+		t.Fatalf("expected handoff_create call")
+	}
+	if created, _ := result["task_created"].(bool); created {
+		t.Fatalf("expected task_created=false when no active session")
+	}
+}
+
 func TestAgentBridge_MemoryAdd_UsesItemsArrayShape(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 

@@ -24,6 +24,13 @@ import (
 func newTestApp(t *testing.T) (*App, *http.ServeMux) {
 	t.Helper()
 
+	app, mux, _ := newTestAppWithHandlers(t)
+	return app, mux
+}
+
+func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandlers) {
+	t.Helper()
+
 	// Create a mock daemon over Unix socket.
 	sockPath, handlers := newMockDaemonForApp(t)
 
@@ -119,7 +126,7 @@ func newTestApp(t *testing.T) (*App, *http.ServeMux) {
 	mux := http.NewServeMux()
 	app.registerRoutes(mux)
 
-	return app, mux
+	return app, mux, handlers
 }
 
 func TestHandler_Status(t *testing.T) {
@@ -364,6 +371,161 @@ func TestHandler_AgentContextAdd_EmptyEntries(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty entries, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_AgentDispatch_HandoffOnlyWhenNoActiveSession(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	body := `{"target_agent_id":"agent-1","title":"Investigate k3s drift","context":"compare live state to gitops","priority":"high"}`
+	req := httptest.NewRequest("POST", "/api/agent/dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		OK          bool `json:"ok"`
+		TaskCreated bool `json:"task_created"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected ok=true")
+	}
+	if result.TaskCreated {
+		t.Fatalf("expected task_created=false when target has no active session")
+	}
+}
+
+func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var taskAddSeen bool
+	var handoffSeen bool
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-1\",\"agent_id\":\"agent-1\",\"status\":\"active\"}]}"}]}`), nil
+		case "agent_context__agent_task_add":
+			taskAddSeen = true
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-1" {
+				t.Fatalf("expected session_id=sess-1, got %q", got)
+			}
+			tasks, ok := req.Arguments["tasks"].([]any)
+			if !ok || len(tasks) != 1 {
+				t.Fatalf("expected one task, got %#v", req.Arguments["tasks"])
+			}
+			task, ok := tasks[0].(map[string]any)
+			if !ok {
+				t.Fatalf("task is not object: %#v", tasks[0])
+			}
+			if got, _ := task["title"].(string); got != "Investigate GitOps drift" {
+				t.Fatalf("expected trimmed title, got %q", got)
+			}
+			if got, _ := task["priority"].(string); got != "medium" {
+				t.Fatalf("expected invalid priority to normalize to medium, got %q", got)
+			}
+			if got, _ := task["context"].(string); got != "check Flux reconciliation" {
+				t.Fatalf("expected trimmed context, got %q", got)
+			}
+			if got, _ := task["file_path"].(string); got != "platform/gitops/k3s/mcp-hub/servers/loom/deployment.yaml" {
+				t.Fatalf("unexpected file_path: %q", got)
+			}
+			if got, _ := task["line_number"].(float64); int(got) != 42 {
+				t.Fatalf("expected line_number=42, got %#v", task["line_number"])
+			}
+			tags, ok := task["tags"].([]any)
+			if !ok || len(tags) != 3 {
+				t.Fatalf("expected normalized tags, got %#v", task["tags"])
+			}
+			if tags[0] != "dispatched" || tags[1] != "team" || tags[2] != "gitops" {
+				t.Fatalf("unexpected tags order/content: %#v", tags)
+			}
+			blockedBy, ok := task["blocked_by"].([]any)
+			if !ok || len(blockedBy) != 1 || blockedBy[0] != "task-123" {
+				t.Fatalf("unexpected blocked_by: %#v", task["blocked_by"])
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+		case "agent_context__agent_handoff_create":
+			handoffSeen = true
+			if got, _ := req.Arguments["to_agent"].(string); got != "agent-1" {
+				t.Fatalf("expected to_agent=agent-1, got %q", got)
+			}
+			if got, _ := req.Arguments["summary"].(string); got != "[Dispatched] Investigate GitOps drift" {
+				t.Fatalf("unexpected handoff summary: %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+		default:
+			// Generic success for monitor refresh calls.
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	body := `{
+		"target_agent_id":"  agent-1  ",
+		"title":"  Investigate GitOps drift  ",
+		"context":"  check Flux reconciliation  ",
+		"priority":"P0",
+		"tags":[" team ","","gitops","team"],
+		"file_path":"  platform/gitops/k3s/mcp-hub/servers/loom/deployment.yaml  ",
+		"line_number":42,
+		"blocked_by":[" task-123 ","","task-123"]
+	}`
+	req := httptest.NewRequest("POST", "/api/agent/dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !taskAddSeen {
+		t.Fatalf("expected task_add call to occur")
+	}
+	if !handoffSeen {
+		t.Fatalf("expected handoff_create call to occur")
+	}
+
+	var result struct {
+		Priority    string `json:"priority"`
+		TaskCreated bool   `json:"task_created"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if result.Priority != "medium" {
+		t.Fatalf("expected normalized response priority=medium, got %q", result.Priority)
+	}
+	if !result.TaskCreated {
+		t.Fatalf("expected task_created=true")
+	}
+}
+
+func TestHandler_AgentDispatch_RejectsBlankTitle(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	body := `{"target_agent_id":"agent-1","title":"   "}`
+	req := httptest.NewRequest("POST", "/api/agent/dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

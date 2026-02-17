@@ -1160,12 +1160,18 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
+	body.Title = strings.TrimSpace(body.Title)
 	if body.Title == "" {
 		a.writeError(w, http.StatusBadRequest, "title is required", nil)
 		return
 	}
-	if body.Priority == "" {
-		body.Priority = "medium"
+	body.Priority = normalizeTaskPriority(body.Priority)
+	body.Tags = normalizeStringList(body.Tags)
+	body.BlockedBy = normalizeStringList(body.BlockedBy)
+	body.Context = strings.TrimSpace(body.Context)
+	body.FilePath = strings.TrimSpace(body.FilePath)
+	if body.LineNumber < 0 {
+		body.LineNumber = 0
 	}
 	if err := a.agent.CreateTask(bridge.CreateTaskParams{
 		SessionID:  body.SessionID,
@@ -1839,21 +1845,33 @@ func (a *App) handleTimeline(w http.ResponseWriter, r *http.Request) {
 // POST /api/agent/dispatch
 func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		TargetAgentID string `json:"target_agent_id"`
-		Title         string `json:"title"`
-		Context       string `json:"context"`
-		Priority      string `json:"priority"`
+		TargetAgentID string   `json:"target_agent_id"`
+		Title         string   `json:"title"`
+		Context       string   `json:"context"`
+		Priority      string   `json:"priority"`
+		Tags          []string `json:"tags"`
+		FilePath      string   `json:"file_path"`
+		LineNumber    int      `json:"line_number"`
+		BlockedBy     []string `json:"blocked_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
+	body.TargetAgentID = strings.TrimSpace(body.TargetAgentID)
+	body.Title = strings.TrimSpace(body.Title)
+	body.Context = strings.TrimSpace(body.Context)
+	body.FilePath = strings.TrimSpace(body.FilePath)
+	body.Tags = normalizeStringList(body.Tags)
+	body.BlockedBy = normalizeStringList(body.BlockedBy)
+	body.Priority = normalizeTaskPriority(body.Priority)
+	if body.LineNumber < 0 {
+		body.LineNumber = 0
+	}
+
 	if body.TargetAgentID == "" || body.Title == "" {
 		a.writeError(w, http.StatusBadRequest, "target_agent_id and title are required", nil)
 		return
-	}
-	if body.Priority == "" {
-		body.Priority = "medium"
 	}
 
 	result, err := a.agent.DispatchTask(bridge.DispatchTaskParams{
@@ -1861,6 +1879,10 @@ func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 		Title:         body.Title,
 		Context:       body.Context,
 		Priority:      body.Priority,
+		Tags:          body.Tags,
+		FilePath:      body.FilePath,
+		LineNumber:    body.LineNumber,
+		BlockedBy:     body.BlockedBy,
 	})
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to dispatch task", err)
@@ -1876,6 +1898,32 @@ func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	go a.fleetMonitor.Refresh()
 
 	a.writeJSON(w, http.StatusOK, result)
+}
+
+func normalizeTaskPriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "low", "medium", "high", "critical":
+		return strings.ToLower(strings.TrimSpace(priority))
+	default:
+		return "medium"
+	}
+}
+
+func normalizeStringList(values []string) []string {
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		normalized = append(normalized, v)
+	}
+	return normalized
 }
 
 // handleClaimRelease force-releases a file claim for an agent.
