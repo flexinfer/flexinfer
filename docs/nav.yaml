@@ -29,6 +29,8 @@ sections:
         path: user/gpu-sharing.md
       - title: Caching
         path: user/caching.md
+      - title: Quantization Pipelines
+        path: user/quantization.md
       - title: Operations
         path: user/operations.md
 

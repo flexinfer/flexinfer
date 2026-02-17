@@ -20,6 +20,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | [Routing](user/routing.md) | Session affinity, prefix routing, load balancing |
 | [GPU Sharing](user/gpu-sharing.md) | Time-sharing GPUs between models |
 | [Caching](user/caching.md) | Model weight caching strategies |
+| [Quantization Pipelines](user/quantization.md) | GGUF/AWQ/GPTQ ModelCache quantization workflows |
 | [Operations](user/operations.md) | Day-2 operations and troubleshooting |
 
 ## Developer Guides

@@ -28,4 +28,4 @@ FlexInfer is a Kubernetes-native set of controllers and agents for running AI wo
 
 - `docs/user/caching.md` - Model caching strategies overview
 - `docs/user/caching-oci.md` - OCI registry model sources (Harbor, GHCR, ECR)
-
+- `docs/user/quantization.md` - GGUF/AWQ/GPTQ quantization workflows for ModelCache
