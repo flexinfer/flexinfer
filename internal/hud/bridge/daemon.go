@@ -54,6 +54,8 @@ type DaemonClient struct {
 	mu         sync.Mutex
 	reqID      atomic.Int64
 	logger     *slog.Logger
+	// callTimeout bounds each JSON-RPC request.
+	callTimeout time.Duration
 
 	// Circuit breaker for downstream server failures.
 	cbState       circuitState
@@ -72,9 +74,10 @@ func NewDaemonClient(socketPath string, logger *slog.Logger) *DaemonClient {
 		logger = slog.Default()
 	}
 	c := &DaemonClient{
-		socketPath: socketPath,
-		logger:     logger,
-		cbCooldown: cbMinCooldown,
+		socketPath:  socketPath,
+		logger:      logger,
+		cbCooldown:  cbMinCooldown,
+		callTimeout: 30 * time.Second,
 	}
 	c.reqID.Store(0)
 	return c
@@ -319,8 +322,13 @@ func (c *DaemonClient) callLocked(method string, params any) (json.RawMessage, e
 		return nil, fmt.Errorf("not connected")
 	}
 
+	timeout := c.callTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
 	id := c.reqID.Add(1)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	req, err := mcp.NewRequest(id, method, params)

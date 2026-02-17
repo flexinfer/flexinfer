@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/crb2nu/loom/internal/devbox/detect"
 )
 
 func TestCheckBackendHealth_Timeout(t *testing.T) {
@@ -128,8 +130,45 @@ func TestBuildMounts_K8sBackendReturnsEmpty(t *testing.T) {
 func TestLangNames(t *testing.T) {
 	t.Parallel()
 
-	// Import detect package types not needed — langNames takes *detect.EnvFingerprint
-	// but we can't easily construct one without the detect package internals.
-	// This test is omitted since langNames is a simple join helper already covered
-	// by integration tests.
+	tests := []struct {
+		name string
+		fp   *detect.EnvFingerprint
+		want string
+	}{
+		{
+			name: "empty languages",
+			fp:   &detect.EnvFingerprint{},
+			want: "",
+		},
+		{
+			name: "single language",
+			fp: &detect.EnvFingerprint{
+				Languages: []detect.LanguageSpec{
+					{Language: "go"},
+				},
+			},
+			want: "go",
+		},
+		{
+			name: "multiple languages preserve order",
+			fp: &detect.EnvFingerprint{
+				Languages: []detect.LanguageSpec{
+					{Language: "go"},
+					{Language: "python"},
+					{Language: "node"},
+				},
+			},
+			want: "go, python, node",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := langNames(tt.fp); got != tt.want {
+				t.Fatalf("langNames() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

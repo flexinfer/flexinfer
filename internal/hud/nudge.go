@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +28,8 @@ const (
 const (
 	defaultNudgeQueueCap = 64
 )
+
+var nudgeIDSeq atomic.Uint64
 
 // NudgeEntry is a pending nudge for an agent, delivered via heartbeat.
 type NudgeEntry struct {
@@ -464,5 +467,5 @@ func (q *NudgeQueue) addSummaryLineLocked(state *nudgeQueueState, entry NudgeEnt
 
 // NewNudgeID generates a unique nudge ID.
 func NewNudgeID(targetAgent string) string {
-	return fmt.Sprintf("nudge-%s-%d", targetAgent, time.Now().UnixMilli())
+	return fmt.Sprintf("nudge-%s-%d-%d", targetAgent, time.Now().UnixMilli(), nudgeIDSeq.Add(1))
 }
