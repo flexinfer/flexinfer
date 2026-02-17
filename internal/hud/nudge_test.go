@@ -122,14 +122,13 @@ func TestNewNudgeID_Format(t *testing.T) {
 }
 
 func TestNewNudgeID_Unique(t *testing.T) {
-	id1 := NewNudgeID("agent-1")
-	id2 := NewNudgeID("agent-1")
-
-	// While not guaranteed with millisecond resolution, in practice
-	// these will differ due to time progression. If they happen to be
-	// the same, that is acceptable for this test.
-	if id1 == id2 {
-		t.Log("nudge IDs happened to match (same millisecond), acceptable")
+	seen := make(map[string]struct{}, 1000)
+	for i := 0; i < 1000; i++ {
+		id := NewNudgeID("agent-1")
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate nudge ID generated: %q", id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 

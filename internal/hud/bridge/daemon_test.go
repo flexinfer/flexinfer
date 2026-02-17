@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -299,21 +300,28 @@ func TestDaemonClient_Timeout(t *testing.T) {
 
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
 		// Simulate slow response — sleep longer than the client timeout.
-		time.Sleep(35 * time.Second)
+		time.Sleep(250 * time.Millisecond)
 		return &StatusResult{Running: true}, nil
 	})
 
 	client := NewDaemonClient(sockPath, nil)
+	client.callTimeout = 50 * time.Millisecond
 	if err := client.Connect(); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	defer client.Close()
 
-	// The DaemonClient has a 30s internal timeout on callLocked.
-	// This test verifies the error propagation — we don't actually wait 30s.
-	// Instead, verify the mock handler registered correctly.
-	// (A full timeout test would be too slow for CI.)
-	t.Log("timeout test: handler registered, skipping actual timeout wait for CI speed")
+	start := time.Now()
+	_, err := client.Status()
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("expected timeout-related error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("timeout path took too long: %v", elapsed)
+	}
 }
 
 func TestDaemonClient_CloseIdempotent(t *testing.T) {
