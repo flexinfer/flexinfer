@@ -437,6 +437,16 @@ func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 	if got.Models[0].Namespace != "ns-a" || got.Models[0].Name != "alpha" || got.Models[0].Phase != "Ready" {
 		t.Fatalf("remaining model = %+v, want ns-a/alpha Ready", got.Models[0])
 	}
+
+	w.markWatchDegraded("remote model watch start failed: timeout", true)
+	w.markWatchActive()
+	got = w.snapshot()
+	if got.RestartCount != 1 {
+		t.Fatalf("restart count = %d, want 1", got.RestartCount)
+	}
+	if got.LastRestartErr != "remote model watch start failed: timeout" {
+		t.Fatalf("last restart error = %q, want timeout reason", got.LastRestartErr)
+	}
 }
 
 func TestStopRemoteModelWatch(t *testing.T) {
@@ -533,6 +543,17 @@ func TestWatchConditionForObservation(t *testing.T) {
 			wantContains: "list fallback",
 		},
 		{
+			name: "watch ready with restart reason",
+			observation: &clusterObservation{
+				WatchReady:    true,
+				WatchRestarts: 3,
+				WatchLastErr:  "remote model watch channel closed",
+			},
+			wantStatus:   metav1.ConditionTrue,
+			wantReason:   "WatchSynced",
+			wantContains: "last_restart_reason=remote model watch channel closed",
+		},
+		{
 			name: "watch degraded",
 			observation: &clusterObservation{
 				WatchReady:    false,
@@ -614,6 +635,16 @@ func TestClusterProbeMessage(t *testing.T) {
 				WatchRestarts: 2,
 			},
 			want: "probe succeeded (kubernetes v1.32.0); watch synced after 2 restarts",
+		},
+		{
+			name: "watch ready with restarts and reason",
+			observation: &clusterObservation{
+				ServerVersion: "v1.32.0",
+				WatchReady:    true,
+				WatchRestarts: 2,
+				WatchLastErr:  "remote model watch stream received error event",
+			},
+			want: "probe succeeded (kubernetes v1.32.0); watch synced after 2 restarts (last=remote model watch stream received error event)",
 		},
 		{
 			name: "watch fallback reason",

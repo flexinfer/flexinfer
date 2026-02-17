@@ -93,6 +93,7 @@ type remoteModelWatch struct {
 	degraded       bool
 	degradedReason string
 	restartCount   int64
+	lastRestartErr string
 }
 
 type remoteModelWatchSnapshot struct {
@@ -102,6 +103,7 @@ type remoteModelWatchSnapshot struct {
 	Degraded       bool
 	DegradedReason string
 	RestartCount   int64
+	LastRestartErr string
 }
 
 func newRemoteModelWatch(configHash string, cancel context.CancelFunc) *remoteModelWatch {
@@ -153,6 +155,9 @@ func (w *remoteModelWatch) markWatchDegraded(reason string, incrementRestart boo
 	w.degradedReason = reason
 	if incrementRestart {
 		w.restartCount++
+		if reason != "" {
+			w.lastRestartErr = reason
+		}
 	}
 }
 
@@ -190,6 +195,7 @@ func (w *remoteModelWatch) snapshot() remoteModelWatchSnapshot {
 		Degraded:       w.degraded,
 		DegradedReason: w.degradedReason,
 		RestartCount:   w.restartCount,
+		LastRestartErr: w.lastRestartErr,
 	}
 	if !w.ready {
 		return snapshot
@@ -357,6 +363,7 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 			WatchDegraded: watchSnapshot.Degraded,
 			WatchReason:   watchSnapshot.DegradedReason,
 			WatchRestarts: watchSnapshot.RestartCount,
+			WatchLastErr:  watchSnapshot.LastRestartErr,
 		}, nil
 	}
 
@@ -382,6 +389,7 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 		WatchDegraded: watchDegraded,
 		WatchReason:   watchReason,
 		WatchRestarts: watchSnapshot.RestartCount,
+		WatchLastErr:  watchSnapshot.LastRestartErr,
 	}, nil
 }
 
@@ -751,7 +759,11 @@ func inventorySourceGauges(source string) (watch, list float64) {
 func watchConditionForObservation(observation *clusterObservation) (metav1.ConditionStatus, string, string) {
 	if observation != nil && observation.WatchReady {
 		if observation.WatchRestarts > 0 {
-			return metav1.ConditionTrue, "WatchSynced", fmt.Sprintf("remote model watch cache is ready (restarts=%d)", observation.WatchRestarts)
+			msg := fmt.Sprintf("remote model watch cache is ready (restarts=%d)", observation.WatchRestarts)
+			if observation.WatchLastErr != "" {
+				msg = fmt.Sprintf("%s; last_restart_reason=%s", msg, observation.WatchLastErr)
+			}
+			return metav1.ConditionTrue, "WatchSynced", msg
 		}
 		return metav1.ConditionTrue, "WatchSynced", "remote model watch cache is ready"
 	}
@@ -776,6 +788,9 @@ func clusterProbeMessage(observation *clusterObservation) string {
 		return fmt.Sprintf("%s; model inventory fallback active", base)
 	}
 	if observation.WatchRestarts > 0 {
+		if observation.WatchLastErr != "" {
+			return fmt.Sprintf("%s; watch synced after %d restarts (last=%s)", base, observation.WatchRestarts, observation.WatchLastErr)
+		}
 		return fmt.Sprintf("%s; watch synced after %d restarts", base, observation.WatchRestarts)
 	}
 	return base
@@ -909,4 +924,5 @@ type clusterObservation struct {
 	WatchDegraded bool
 	WatchReason   string
 	WatchRestarts int64
+	WatchLastErr  string
 }
