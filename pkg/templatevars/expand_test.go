@@ -2,8 +2,10 @@ package templatevars
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
+	regpkg "github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/secrets"
 )
 
@@ -84,6 +86,32 @@ func TestExpand_EnvVarMissing_SecretFallback(t *testing.T) {
 	got := e.Expand("${env:TAVILY_API_KEY}")
 	if got != "secret-from-store" {
 		t.Errorf("got %q, want %q", got, "secret-from-store")
+	}
+}
+
+func TestExpand_EnvVar_RegistryDefaultAliasFallback(t *testing.T) {
+	content := `
+version: 1
+servers: []
+`
+	tmpDir := t.TempDir()
+	regPath := filepath.Join(tmpDir, "registry.yaml")
+	if err := os.WriteFile(regPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	reg, err := regpkg.LoadWithDefaults(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+	t.Setenv("GH_TOKEN", "from-default-alias")
+	e := New(WithRegistry(reg))
+	got := e.Expand("${env:GITHUB_TOKEN}")
+	if got != "from-default-alias" {
+		t.Errorf("got %q, want %q", got, "from-default-alias")
 	}
 }
 

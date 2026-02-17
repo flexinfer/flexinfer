@@ -637,7 +637,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 
 	// Load registry - prefer local override, then home directory
 	regPath := discoverRegistryPath(m.RepoRoot)
-	reg, err := registry.Load(regPath)
+	reg, err := registry.LoadWithDefaults(regPath)
 	if err != nil {
 		return fmt.Errorf("load registry from %s: %w", regPath, err)
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/crb2nu/loom/pkg/registry"
@@ -62,6 +63,7 @@ func findWorkspaceRootForChecks() string {
 
 func runCheck(socketPath string, outputJSON bool) error {
 	checks := make([]checkResult, 0)
+	workspaceRoot := findWorkspaceRootForChecks()
 
 	// Default to the daemon's default profile (Codex / loom-mode).
 	// This is the profile used by both Codex CLI and Claude Code when configured
@@ -87,28 +89,31 @@ func runCheck(socketPath string, outputJSON bool) error {
 	}
 
 	// Registry discovery + parse
-	regPath, found := registry.FindRegistry()
+	regRes := resolveRegistryForDiagnostics(workspaceRoot)
+	regPath, found := regRes.Path, regRes.Found
 	var reg *registry.Registry
-	if !found {
-		if root := findWorkspaceRootForChecks(); root != "" {
-			candidate := filepath.Join(root, "platform", "gitops", "mcp", "context", "registry.yaml")
-			if _, err := os.Stat(candidate); err == nil {
-				regPath = candidate
-				found = true
-			}
-		}
-	}
 	if !found {
 		checks = append(checks, checkResult{
 			Name:     "registry",
 			OK:       false,
 			Severity: "error",
 			Message:  "registry.yaml not found",
-			Fix:      "Set up registry at ~/.config/loom/registry.yaml or run from a repo with platform/gitops/mcp/context/registry.yaml",
+			Fix:      "Set up registry in one of these locations (highest priority first):\n  " + strings.Join(regRes.Precedence, "\n  "),
 		})
 	} else {
+		checks = append(checks, checkResult{
+			Name:    "registry_source",
+			OK:      true,
+			Message: fmt.Sprintf("using %s (%s)", regPath, regRes.Source),
+		})
+		checks = append(checks, checkResult{
+			Name:    "registry_precedence",
+			OK:      true,
+			Message: "search order: " + strings.Join(regRes.Precedence, " -> "),
+		})
+
 		var err error
-		reg, err = registry.Load(regPath)
+		reg, err = registry.LoadWithDefaults(regPath)
 		if err != nil {
 			checks = append(checks, checkResult{
 				Name:     "registry",
@@ -158,6 +163,7 @@ func runCheck(socketPath string, outputJSON bool) error {
 				for k := range missing {
 					keys = append(keys, k)
 				}
+				sort.Strings(keys)
 				// Keep output concise and actionable.
 				msg := fmt.Sprintf("missing %d secret(s) referenced by registry for profile '%s' (some MCP tools will fail until set)", len(keys), targetProfile)
 				fixLines := make([]string, 0, 6)
@@ -188,8 +194,17 @@ func runCheck(socketPath string, outputJSON bool) error {
 		}
 	}
 
+	if reg != nil {
+		templateDiags := collectTemplateDiagnostics(reg, defaultTemplateProfiles(reg))
+		checks = append(checks, templateDiagnosticChecks(templateDiags)...)
+
+		envWarnings := collectEnvConventionWarnings(reg)
+		checks = append(checks, envConventionCheck(envWarnings))
+	}
+
 	// Codex config sanity (best-effort, workspace-only)
-	if root := findWorkspaceRootForChecks(); root != "" {
+	if workspaceRoot != "" {
+		root := workspaceRoot
 		codexCfg := filepath.Join(root, ".codex", "config.toml")
 		if b, err := os.ReadFile(codexCfg); err == nil {
 			if strings.Contains(string(b), "${keychain:") || strings.Contains(string(b), "${secret:") || strings.Contains(string(b), "${env:") {

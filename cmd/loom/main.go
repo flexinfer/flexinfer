@@ -456,7 +456,7 @@ func newGenerateManifestsCmd() *cobra.Command {
 				registryPath = registry.FindRegistryOrDefault(filepath.Join(cwd, "mcp", "context", "registry.yaml"))
 			}
 
-			reg, err := registry.Load(registryPath)
+			reg, err := registry.LoadWithDefaults(registryPath)
 			if err != nil {
 				return err
 			}
@@ -510,7 +510,7 @@ func newGenerateConfigsCmd() *cobra.Command {
 				registryPath = registry.FindRegistryOrDefault(filepath.Join(cwd, "mcp", "context", "registry.yaml"))
 			}
 
-			reg, err := registry.Load(registryPath)
+			reg, err := registry.LoadWithDefaults(registryPath)
 			if err != nil {
 				return err
 			}

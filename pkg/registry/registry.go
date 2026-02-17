@@ -18,9 +18,17 @@ type SSHSpec = kitreg.SSHSpec
 type PlatformPermission = kitreg.PlatformPermission
 type SandboxPolicy = kitreg.SandboxPolicy
 
-func LoadConfig() (*Config, error)                { return kitreg.LoadConfig() }
-func GetRepoRoot(registryPath string) string      { return kitreg.GetRepoRoot(registryPath) }
-func Load(path string) (*Registry, error)         { return kitreg.Load(path) }
+func LoadConfig() (*Config, error)           { return kitreg.LoadConfig() }
+func GetRepoRoot(registryPath string) string { return kitreg.GetRepoRoot(registryPath) }
+func Load(path string) (*Registry, error)    { return kitreg.Load(path) }
+func LoadWithDefaults(path string) (*Registry, error) {
+	reg, err := kitreg.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	reg.MergeDefaultAliases()
+	return reg, nil
+}
 func FindDefaultPath(workspaceRoot string) string { return kitreg.FindDefaultPath(workspaceRoot) }
 func FindRegistry() (string, bool)                { return kitreg.FindRegistry() }
 func FindRegistryOrDefault(defaultPath string) string {
