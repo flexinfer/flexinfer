@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -362,7 +364,7 @@ func TestBuildClusterModelStatusSorted(t *testing.T) {
 
 func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 	w := newRemoteModelWatch("cfg", func() {})
-	if _, ok := w.snapshot(); ok {
+	if snapshot := w.snapshot(); snapshot.CacheReady {
 		t.Fatal("snapshot should not be ready before initial list")
 	}
 
@@ -392,15 +394,15 @@ func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 	}
 	w.replaceFromList(initial)
 
-	got, ok := w.snapshot()
-	if !ok {
+	got := w.snapshot()
+	if !got.CacheReady {
 		t.Fatal("snapshot should be ready after initial list")
 	}
-	if len(got) != 2 {
-		t.Fatalf("snapshot len = %d, want 2", len(got))
+	if len(got.Models) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(got.Models))
 	}
-	if got[0].Namespace != "ns-a" || got[0].Name != "alpha" || got[0].Phase != "Loading" {
-		t.Fatalf("first model = %+v, want ns-a/alpha Loading", got[0])
+	if got.Models[0].Namespace != "ns-a" || got.Models[0].Name != "alpha" || got.Models[0].Phase != "Loading" {
+		t.Fatalf("first model = %+v, want ns-a/alpha Loading", got.Models[0])
 	}
 
 	modified := &unstructured.Unstructured{
@@ -425,15 +427,15 @@ func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 	}
 	w.applyWatchEvent(watch.Event{Type: watch.Deleted, Object: deleted})
 
-	got, ok = w.snapshot()
-	if !ok {
+	got = w.snapshot()
+	if !got.CacheReady {
 		t.Fatal("snapshot should remain ready after watch events")
 	}
-	if len(got) != 1 {
-		t.Fatalf("snapshot len = %d, want 1", len(got))
+	if len(got.Models) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(got.Models))
 	}
-	if got[0].Namespace != "ns-a" || got[0].Name != "alpha" || got[0].Phase != "Ready" {
-		t.Fatalf("remaining model = %+v, want ns-a/alpha Ready", got[0])
+	if got.Models[0].Namespace != "ns-a" || got.Models[0].Name != "alpha" || got.Models[0].Phase != "Ready" {
+		t.Fatalf("remaining model = %+v, want ns-a/alpha Ready", got.Models[0])
 	}
 }
 
@@ -523,11 +525,23 @@ func TestWatchConditionForObservation(t *testing.T) {
 		{
 			name: "list fallback",
 			observation: &clusterObservation{
-				WatchReady: false,
+				WatchReady:  false,
+				WatchReason: "watch cache not ready; using list fallback for model inventory",
 			},
 			wantStatus:   metav1.ConditionFalse,
 			wantReason:   "ListFallback",
 			wantContains: "list fallback",
+		},
+		{
+			name: "watch degraded",
+			observation: &clusterObservation{
+				WatchReady:    false,
+				WatchDegraded: true,
+				WatchReason:   "remote model watch start failed: timeout",
+			},
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   "WatchDegraded",
+			wantContains: "watch start failed",
 		},
 		{
 			name:         "nil observation",
@@ -552,6 +566,92 @@ func TestWatchConditionForObservation(t *testing.T) {
 				t.Fatalf("message = %q, want to contain %q", message, tc.wantContains)
 			}
 		})
+	}
+}
+
+func TestClusterProbeMessage(t *testing.T) {
+	tests := []struct {
+		name        string
+		observation *clusterObservation
+		want        string
+	}{
+		{
+			name:        "nil observation",
+			observation: nil,
+			want:        "probe succeeded",
+		},
+		{
+			name: "watch ready",
+			observation: &clusterObservation{
+				ServerVersion: "v1.32.0",
+				WatchReady:    true,
+			},
+			want: "probe succeeded (kubernetes v1.32.0)",
+		},
+		{
+			name: "watch ready with restarts",
+			observation: &clusterObservation{
+				ServerVersion: "v1.32.0",
+				WatchReady:    true,
+				WatchRestarts: 2,
+			},
+			want: "probe succeeded (kubernetes v1.32.0); watch synced after 2 restarts",
+		},
+		{
+			name: "watch fallback reason",
+			observation: &clusterObservation{
+				ServerVersion: "v1.32.0",
+				WatchReady:    false,
+				WatchReason:   "remote model watch start failed: timeout",
+			},
+			want: "probe succeeded (kubernetes v1.32.0); model inventory fallback: remote model watch start failed: timeout",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clusterProbeMessage(tc.observation); got != tc.want {
+				t.Fatalf("clusterProbeMessage() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMaybeRecordWatchConditionEvent(t *testing.T) {
+	cluster := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "flexinfer-system"},
+	}
+	rec := record.NewFakeRecorder(5)
+
+	setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionFalse, "WatchDegraded", "remote model watch start failed")
+	maybeRecordWatchConditionEvent(rec, cluster, nil)
+
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "ModelWatchDegraded") {
+			t.Fatalf("event = %q, want ModelWatchDegraded", event)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected watch condition event")
+	}
+}
+
+func TestMaybeRecordWatchConditionEvent_NoOpWhenUnchanged(t *testing.T) {
+	cluster := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "flexinfer-system"},
+	}
+	rec := record.NewFakeRecorder(1)
+
+	setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionTrue, "WatchSynced", "remote model watch cache is ready")
+	previous := getClusterCondition(cluster, clusterConditionWatch)
+	maybeRecordWatchConditionEvent(rec, cluster, previous)
+
+	select {
+	case event := <-rec.Events:
+		t.Fatalf("unexpected event emitted: %q", event)
+	case <-time.After(200 * time.Millisecond):
+		// expected no event
 	}
 }
 

@@ -86,9 +86,22 @@ type remoteModelWatch struct {
 	cancel     context.CancelFunc
 	configHash string
 
-	mu     sync.RWMutex
-	models map[string]aiv1alpha2.ClusterModelStatus
-	ready  bool
+	mu             sync.RWMutex
+	models         map[string]aiv1alpha2.ClusterModelStatus
+	ready          bool
+	watchActive    bool
+	degraded       bool
+	degradedReason string
+	restartCount   int64
+}
+
+type remoteModelWatchSnapshot struct {
+	Models         []aiv1alpha2.ClusterModelStatus
+	CacheReady     bool
+	WatchActive    bool
+	Degraded       bool
+	DegradedReason string
+	RestartCount   int64
 }
 
 func newRemoteModelWatch(configHash string, cancel context.CancelFunc) *remoteModelWatch {
@@ -116,6 +129,33 @@ func (w *remoteModelWatch) replaceFromList(items []unstructured.Unstructured) {
 	w.mu.Unlock()
 }
 
+func (w *remoteModelWatch) markWatchPending(reason string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.watchActive = false
+	w.degraded = false
+	w.degradedReason = reason
+}
+
+func (w *remoteModelWatch) markWatchActive() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.watchActive = true
+	w.degraded = false
+	w.degradedReason = ""
+}
+
+func (w *remoteModelWatch) markWatchDegraded(reason string, incrementRestart bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.watchActive = false
+	w.degraded = true
+	w.degradedReason = reason
+	if incrementRestart {
+		w.restartCount++
+	}
+}
+
 func (w *remoteModelWatch) applyWatchEvent(event watch.Event) {
 	if event.Type == watch.Bookmark {
 		return
@@ -141,11 +181,18 @@ func (w *remoteModelWatch) applyWatchEvent(event watch.Event) {
 	}
 }
 
-func (w *remoteModelWatch) snapshot() ([]aiv1alpha2.ClusterModelStatus, bool) {
+func (w *remoteModelWatch) snapshot() remoteModelWatchSnapshot {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	snapshot := remoteModelWatchSnapshot{
+		CacheReady:     w.ready,
+		WatchActive:    w.watchActive,
+		Degraded:       w.degraded,
+		DegradedReason: w.degradedReason,
+		RestartCount:   w.restartCount,
+	}
 	if !w.ready {
-		return nil, false
+		return snapshot
 	}
 
 	out := make([]aiv1alpha2.ClusterModelStatus, 0, len(w.models))
@@ -158,7 +205,8 @@ func (w *remoteModelWatch) snapshot() ([]aiv1alpha2.ClusterModelStatus, bool) {
 		}
 		return out[i].Namespace < out[j].Namespace
 	})
-	return out, true
+	snapshot.Models = out
+	return snapshot
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=clusters,verbs=get;list;watch;create;update;patch;delete
@@ -177,6 +225,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		return ctrl.Result{}, err
 	}
+	previousWatchCondition := getClusterCondition(cluster, clusterConditionWatch)
 
 	requeueAfter := defaultClusterProbeInterval
 	if cluster.Spec.ProbeInterval != nil && cluster.Spec.ProbeInterval.Duration > 0 {
@@ -197,6 +246,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		region := clusterRegion(cluster)
 		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
 		resetClusterInventoryMetrics(cluster.Name, region)
+		maybeRecordWatchConditionEvent(r.Recorder, cluster, previousWatchCondition)
 		if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
@@ -224,6 +274,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		region := clusterRegion(cluster)
 		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
 		resetClusterInventoryMetrics(cluster.Name, region)
+		maybeRecordWatchConditionEvent(r.Recorder, cluster, previousWatchCondition)
 		if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
@@ -232,7 +283,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	cluster.Status.Phase = aiv1alpha2.ClusterPhaseReady
-	cluster.Status.Message = fmt.Sprintf("probe succeeded (kubernetes %s)", observation.ServerVersion)
+	cluster.Status.Message = clusterProbeMessage(observation)
 	cluster.Status.Capacity = observation.Capacity
 	cluster.Status.Available = observation.Available
 	cluster.Status.Models = observation.Models
@@ -242,6 +293,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	region := clusterRegion(cluster)
 	metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(1)
 	setClusterInventoryMetrics(cluster.Name, region, observation)
+	maybeRecordWatchConditionEvent(r.Recorder, cluster, previousWatchCondition)
 
 	if err := r.Status().Update(ctx, cluster); err != nil {
 		return ctrl.Result{}, err
@@ -289,20 +341,35 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 	if err != nil {
 		return nil, err
 	}
-	if models, ok := modelWatch.snapshot(); ok {
+	watchSnapshot := modelWatch.snapshot()
+	if watchSnapshot.CacheReady {
+		source := "watch"
+		if !watchSnapshot.WatchActive {
+			source = "list"
+		}
 		return &clusterObservation{
 			ServerVersion: version.GitVersion,
 			Capacity:      capacity,
 			Available:     available,
-			Models:        models,
-			ModelSource:   "watch",
-			WatchReady:    true,
+			Models:        watchSnapshot.Models,
+			ModelSource:   source,
+			WatchReady:    watchSnapshot.WatchActive,
+			WatchDegraded: watchSnapshot.Degraded,
+			WatchReason:   watchSnapshot.DegradedReason,
+			WatchRestarts: watchSnapshot.RestartCount,
 		}, nil
 	}
 
 	models, err := collectRemoteModels(ctx, restConfig)
 	if err != nil {
 		return nil, err
+	}
+
+	watchReason := "watch cache not ready; using list fallback for model inventory"
+	watchDegraded := false
+	if watchSnapshot.DegradedReason != "" {
+		watchReason = watchSnapshot.DegradedReason
+		watchDegraded = watchSnapshot.Degraded
 	}
 
 	return &clusterObservation{
@@ -312,6 +379,9 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 		Models:        models,
 		ModelSource:   "list",
 		WatchReady:    false,
+		WatchDegraded: watchDegraded,
+		WatchReason:   watchReason,
+		WatchRestarts: watchSnapshot.RestartCount,
 	}, nil
 }
 
@@ -372,11 +442,13 @@ func runRemoteModelWatchLoop(ctx context.Context, dynClient dynamic.Interface, m
 		if err != nil {
 			if errors.IsNotFound(err) || metautil.IsNoMatchError(err) {
 				modelWatch.replaceFromList(nil)
+				modelWatch.markWatchDegraded("remote Model CRD not found; retrying watch sync", true)
 				if !waitForContextOrTimeout(ctx, remoteModelNoMatchRetry) {
 					return
 				}
 				continue
 			}
+			modelWatch.markWatchDegraded(fmt.Sprintf("remote model list failed: %v", err), true)
 			if !waitForContextOrTimeout(ctx, remoteModelWatchRetryDelay) {
 				return
 			}
@@ -384,37 +456,44 @@ func runRemoteModelWatchLoop(ctx context.Context, dynClient dynamic.Interface, m
 		}
 
 		modelWatch.replaceFromList(list.Items)
+		modelWatch.markWatchPending("watch stream not yet established")
 		modelWatcher, err := dynClient.Resource(remoteModelGVR).Namespace(metav1.NamespaceAll).Watch(ctx, metav1.ListOptions{
 			ResourceVersion:     list.GetResourceVersion(),
 			AllowWatchBookmarks: true,
 		})
 		if err != nil {
+			modelWatch.markWatchDegraded(fmt.Sprintf("remote model watch start failed: %v", err), true)
 			if !waitForContextOrTimeout(ctx, remoteModelWatchRetryDelay) {
 				return
 			}
 			continue
 		}
+		modelWatch.markWatchActive()
 
-		shouldRestart := consumeRemoteModelWatch(ctx, modelWatcher, modelWatch)
+		shouldRestart, restartReason := consumeRemoteModelWatch(ctx, modelWatcher, modelWatch)
 		if !shouldRestart {
+			return
+		}
+		modelWatch.markWatchDegraded(restartReason, true)
+		if !waitForContextOrTimeout(ctx, remoteModelWatchRetryDelay) {
 			return
 		}
 	}
 }
 
-func consumeRemoteModelWatch(ctx context.Context, watcher watch.Interface, modelWatch *remoteModelWatch) bool {
+func consumeRemoteModelWatch(ctx context.Context, watcher watch.Interface, modelWatch *remoteModelWatch) (bool, string) {
 	defer watcher.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return false
+			return false, ""
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				return true
+				return true, "remote model watch channel closed"
 			}
 			if event.Type == watch.Error {
-				return true
+				return true, "remote model watch received error event"
 			}
 			modelWatch.applyWatchEvent(event)
 		}
@@ -671,9 +750,76 @@ func inventorySourceGauges(source string) (watch, list float64) {
 
 func watchConditionForObservation(observation *clusterObservation) (metav1.ConditionStatus, string, string) {
 	if observation != nil && observation.WatchReady {
+		if observation.WatchRestarts > 0 {
+			return metav1.ConditionTrue, "WatchSynced", fmt.Sprintf("remote model watch cache is ready (restarts=%d)", observation.WatchRestarts)
+		}
 		return metav1.ConditionTrue, "WatchSynced", "remote model watch cache is ready"
 	}
+	if observation != nil && observation.WatchReason != "" {
+		if observation.WatchDegraded {
+			return metav1.ConditionFalse, "WatchDegraded", observation.WatchReason
+		}
+		return metav1.ConditionFalse, "ListFallback", observation.WatchReason
+	}
 	return metav1.ConditionFalse, "ListFallback", "using list fallback for model inventory"
+}
+
+func clusterProbeMessage(observation *clusterObservation) string {
+	if observation == nil {
+		return "probe succeeded"
+	}
+	base := fmt.Sprintf("probe succeeded (kubernetes %s)", observation.ServerVersion)
+	if !observation.WatchReady {
+		if observation.WatchReason != "" {
+			return fmt.Sprintf("%s; model inventory fallback: %s", base, observation.WatchReason)
+		}
+		return fmt.Sprintf("%s; model inventory fallback active", base)
+	}
+	if observation.WatchRestarts > 0 {
+		return fmt.Sprintf("%s; watch synced after %d restarts", base, observation.WatchRestarts)
+	}
+	return base
+}
+
+func getClusterCondition(cluster *aiv1alpha2.Cluster, conditionType string) *metav1.Condition {
+	if cluster == nil {
+		return nil
+	}
+	for i := range cluster.Status.Conditions {
+		if cluster.Status.Conditions[i].Type == conditionType {
+			cond := cluster.Status.Conditions[i]
+			return &cond
+		}
+	}
+	return nil
+}
+
+func clusterConditionChanged(previous, current *metav1.Condition) bool {
+	if previous == nil || current == nil {
+		return previous != current
+	}
+	return previous.Status != current.Status ||
+		previous.Reason != current.Reason ||
+		previous.Message != current.Message
+}
+
+func maybeRecordWatchConditionEvent(recorder record.EventRecorder, cluster *aiv1alpha2.Cluster, previous *metav1.Condition) {
+	if recorder == nil || cluster == nil {
+		return
+	}
+	current := getClusterCondition(cluster, clusterConditionWatch)
+	if !clusterConditionChanged(previous, current) || current == nil {
+		return
+	}
+
+	switch current.Reason {
+	case "WatchSynced":
+		recorder.Event(cluster, corev1.EventTypeNormal, "ModelWatchSynced", current.Message)
+	case "ListFallback":
+		recorder.Event(cluster, corev1.EventTypeNormal, "ModelWatchFallback", current.Message)
+	default:
+		recorder.Event(cluster, corev1.EventTypeWarning, "ModelWatchDegraded", current.Message)
+	}
 }
 
 func setClusterInventoryMetrics(clusterName, region string, observation *clusterObservation) {
@@ -760,4 +906,7 @@ type clusterObservation struct {
 	Models        []aiv1alpha2.ClusterModelStatus
 	ModelSource   string
 	WatchReady    bool
+	WatchDegraded bool
+	WatchReason   string
+	WatchRestarts int64
 }
