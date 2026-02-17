@@ -434,7 +434,7 @@ func TestHandler_AgentNudgeQueuePolicy_Update(t *testing.T) {
 	if result.Policy.Cap != 32 {
 		t.Fatalf("expected cap=32, got %d", result.Policy.Cap)
 	}
-	if result.Policy.DropPolicy != DropPolicyDropNew {
+	if result.Policy.DropPolicy != string(DropPolicyDropNew) {
 		t.Fatalf("expected drop_policy=drop_new, got %q", result.Policy.DropPolicy)
 	}
 	if result.Policy.DebounceMs != 25 {

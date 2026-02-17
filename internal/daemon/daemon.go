@@ -1480,269 +1480,31 @@ type callParams struct {
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
-	var params callParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
+	pipeline := newCallPipeline(d, ctx, msg)
+
+	if resp := pipeline.parseAndResolve(); resp != nil {
+		return resp, nil
 	}
 
-	serverName := params.Server
-	toolName := params.Tool
-	// Support MCP standard tools/call format where tool name is in "name" field
-	if toolName == "" && params.Name != "" {
-		toolName = params.Name
+	if resp := pipeline.authorize(); resp != nil {
+		return resp, nil
 	}
 
-	// If tool name contains server prefix (server__tool), split it
-	if serverName == "" && strings.Contains(toolName, "__") {
-		parts := strings.SplitN(toolName, "__", 2)
-		if len(parts) == 2 {
-			serverName = parts[0]
-			toolName = parts[1]
-		}
+	if resp := pipeline.tryCachedResponse(); resp != nil {
+		return resp, nil
 	}
 
-	// Set method for MCP standard tools/call if not specified
-	method := params.Method
-	if method == "" {
-		method = "tools/call"
+	if resp := pipeline.routeAndConnect(); resp != nil {
+		return resp, nil
+	}
+	defer pipeline.releaseConnection()
+
+	req, resp := pipeline.buildForwardRequest()
+	if resp != nil {
+		return resp, nil
 	}
 
-	// If server not provided, try to resolve it from tool name and arguments (Smart Routing)
-	if serverName == "" && toolName != "" {
-		var args map[string]any
-		if len(params.Arguments) > 0 {
-			_ = json.Unmarshal(params.Arguments, &args)
-		} else if len(params.Params) > 0 {
-			// Fallback: params might contain arguments if it's a direct tools/call
-			_ = json.Unmarshal(params.Params, &args)
-		}
-
-		resolved, err := d.router.ResolveServer(d.cfg.Target, toolName, args)
-		if err != nil {
-			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-		}
-		if resolved == "" {
-			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, fmt.Sprintf("could not resolve server for tool: %s", toolName)), nil
-		}
-		serverName = resolved
-	}
-
-	if serverName == "" {
-		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "missing server or tool for call"), nil
-	}
-
-	// Capture start time for audit logging
-	auditStart := time.Now()
-
-	// RBAC check: enforce tool access control before processing
-	if d.rbac != nil {
-		decision := d.rbac.Check(params.AgentID, params.AgentType, serverName, toolName)
-		d.logAccessDecision(decision)
-		if !decision.Allowed {
-			d.emitAudit(params, serverName, toolName, "", auditStart, "denied", decision.Reason, false)
-			return d.rbacDeniedResponse(msg.ID, decision), nil
-		}
-	}
-
-	// Check response cache for read-only tools
-	var cacheKey string
-	if d.respCache != nil && d.respCache.IsCacheable(serverName, toolName) {
-		// Use params or arguments for cache key
-		cacheParams := params.Params
-		if len(cacheParams) == 0 {
-			cacheParams = params.Arguments
-		}
-		cacheKey = d.respCache.Key(serverName, toolName, cacheParams)
-		if cached, ok := d.respCache.Get(cacheKey); ok {
-			d.metrics.RecordResponseCacheHit(serverName, toolName)
-			d.logger.Debug("response cache hit", "server", serverName, "tool", toolName)
-			d.emitAudit(params, serverName, toolName, "local", auditStart, "success", "", true)
-			// Return cached response with original message ID
-			return mcp.NewResponse(msg.ID, json.RawMessage(cached))
-		}
-		d.metrics.RecordResponseCacheMiss(serverName, toolName)
-	}
-
-	// Route the request based on health
-	decision, err := d.router.Route(ctx, serverName)
-	if err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-	}
-
-	// Apply per-server routing preference override
-	if pref, ok := d.routingPreferences[serverName]; ok && pref != RoutingHealthBased {
-		hasHub := d.hubPool != nil
-		newTarget, overridden := applyRoutingPreference(pref, decision.Target, hasHub)
-		if overridden {
-			d.logger.Debug("routing preference override",
-				"server", serverName,
-				"preference", pref,
-				"original", decision.Target,
-				"overridden_to", newTarget)
-			decision.Target = newTarget
-		}
-	}
-
-	d.logger.Debug("routing decision", "server", serverName, "target", decision.Target, "reason", decision.Reason)
-
-	var conn *pool.Conn
-	var target router.Target
-
-	switch decision.Target {
-	case router.TargetLocal:
-		conn, err = d.pool.Get(ctx, serverName)
-		target = router.TargetLocal
-	case router.TargetHub:
-		if d.hubPool == nil {
-			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "hub fallback not configured"), nil
-		}
-		conn, err = d.hubPool.Get(ctx, serverName)
-		target = router.TargetHub
-	case router.TargetUnavailable:
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, fmt.Sprintf("server unavailable: %s", decision.Reason)), nil
-	}
-
-	if err != nil {
-		d.router.RecordFailure(serverName, target, err)
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-	}
-
-	// Use appropriate pool for Put
-	defer func() {
-		if target == router.TargetLocal {
-			d.pool.Put(conn)
-		} else {
-			d.hubPool.Put(conn)
-		}
-	}()
-
-	// Build params for forwarded request
-	var forwardParams json.RawMessage
-	if len(params.Params) > 0 {
-		// Already have full params (e.g., from loom/call)
-		forwardParams = params.Params
-	} else {
-		// Build tools/call params from name and arguments
-		callParams := map[string]any{
-			"name": toolName,
-		}
-		if len(params.Arguments) > 0 {
-			var args map[string]any
-			_ = json.Unmarshal(params.Arguments, &args)
-			callParams["arguments"] = args
-		} else {
-			callParams["arguments"] = map[string]any{}
-		}
-		forwardParams, _ = json.Marshal(callParams)
-	}
-
-	// Forward request to server
-	req, err := mcp.NewRequest(msg.ID, method, forwardParams)
-	if err != nil {
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-	}
-
-	start := time.Now()
-	targetStr := target.String()
-
-	// Record metrics
-	d.metrics.RecordRequestStart(serverName)
-	defer d.metrics.RecordRequestEnd(serverName)
-
-	if target == router.TargetLocal {
-		// Local servers are stdio-based and currently use a shared process/transport per server.
-		// Serialize each request/response pair to avoid concurrent reads/writes on the shared transport.
-		// This prevents crashes and avoids response misdelivery when multiple clients call the same server concurrently.
-		mu := d.callLock(serverName)
-		lockStart := time.Now()
-		mu.Lock()
-		lockWait := time.Since(lockStart)
-		if lockWait > 100*time.Millisecond {
-			d.metrics.CallLockWaitTotal.WithLabelValues(serverName).Inc()
-			d.logger.Debug("call lock contention", "server", serverName, "wait_ms", lockWait.Milliseconds())
-		}
-		defer mu.Unlock()
-	}
-
-	if err := conn.Transport.Send(ctx, req); err != nil {
-		conn.Healthy = false
-		d.router.RecordFailure(serverName, target, err)
-		d.metrics.RecordServerFailure(serverName, targetStr, "send")
-		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
-
-		// For stdio-based local servers, a broken pipe/EOF usually means the
-		// underlying process died. Restart it and clear any stale idle pool
-		// entries so subsequent calls can recover cleanly.
-		if target == router.TargetLocal {
-			d.logger.Warn("local server send failed; restarting",
-				"server", serverName, "error", err)
-			d.pool.ClearServer(serverName)
-			_ = d.procMgr.Stop(serverName)
-			d.runningServers.Delete(serverName)
-			if d.eventBus != nil {
-				d.eventBus.Publish(EventProcessStop, map[string]any{
-					"server": serverName,
-					"reason": "transport_send_error",
-				})
-			}
-		}
-
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-	}
-
-	resp, err := conn.Transport.Recv(ctx)
-	if err != nil {
-		conn.Healthy = false
-		d.router.RecordFailure(serverName, target, err)
-		d.metrics.RecordServerFailure(serverName, targetStr, "recv")
-		d.metrics.RecordRequest(serverName, method, "error", targetStr, time.Since(start))
-
-		if target == router.TargetLocal {
-			d.logger.Warn("local server recv failed; restarting",
-				"server", serverName, "error", err)
-			d.pool.ClearServer(serverName)
-			_ = d.procMgr.Stop(serverName)
-			d.runningServers.Delete(serverName)
-			if d.eventBus != nil {
-				d.eventBus.Publish(EventProcessStop, map[string]any{
-					"server": serverName,
-					"reason": "transport_recv_error",
-				})
-			}
-		}
-
-		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
-	}
-
-	duration := time.Since(start)
-	latencyMs := float64(duration.Milliseconds())
-	d.router.RecordSuccess(serverName, target, latencyMs)
-	d.metrics.RecordServerSuccess(serverName, targetStr)
-	d.metrics.RecordRequest(serverName, method, "success", targetStr, duration)
-
-	// Track activity for idle reaping (local servers only)
-	if target == router.TargetLocal {
-		d.procMgr.MarkActivity(serverName)
-	}
-
-	// Store successful response in cache if cacheable
-	if cacheKey != "" && resp.Error == nil && resp.Result != nil {
-		d.respCache.Set(cacheKey, resp.Result, serverName, toolName)
-		stats := d.respCache.Stats()
-		d.metrics.UpdateResponseCacheStats(stats.Entries, stats.SizeBytes)
-		d.logger.Debug("response cached", "server", serverName, "tool", toolName)
-	}
-
-	// Audit log the completed tool call
-	auditStatus := "success"
-	auditErr := ""
-	if resp.Error != nil {
-		auditStatus = "error"
-		auditErr = resp.Error.Message
-	}
-	d.emitAudit(params, serverName, toolName, targetStr, auditStart, auditStatus, auditErr, false)
-
-	return resp, nil
+	return pipeline.execute(req), nil
 }
 
 // emitAudit writes a structured audit entry and cost record if enabled.

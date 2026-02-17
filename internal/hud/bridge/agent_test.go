@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -319,6 +320,48 @@ func TestAgentBridge_ContextInspect_AggregatesSessionBudget(t *testing.T) {
 	}
 	if got := sections["context_entries"].EstimatedTokens + sections["file_injections"].EstimatedTokens; got != result.ContextEstimatedTokens {
 		t.Fatalf("expected context entries + file injections = context_estimated_tokens (%d), got %d", result.ContextEstimatedTokens, got)
+	}
+}
+
+func TestContextInspectPromptBudget_ProviderHeuristics(t *testing.T) {
+	sys, resp, src := contextInspectPromptBudget("claude-code-1")
+	if sys != 1024 || resp != 4096 || src != "heuristic:claude" {
+		t.Fatalf("expected claude heuristic, got system=%d response=%d source=%q", sys, resp, src)
+	}
+
+	sys, resp, src = contextInspectPromptBudget("gemini-cli")
+	if sys != 900 || resp != 3072 || src != "heuristic:gemini" {
+		t.Fatalf("expected gemini heuristic, got system=%d response=%d source=%q", sys, resp, src)
+	}
+
+	sys, resp, src = contextInspectPromptBudget("codex")
+	if sys != 896 || resp != 2048 || src != "heuristic:codex" {
+		t.Fatalf("expected codex heuristic, got system=%d response=%d source=%q", sys, resp, src)
+	}
+}
+
+func TestContextInspectPromptBudget_EnvOverride(t *testing.T) {
+	prevSys, hasPrevSys := os.LookupEnv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS")
+	prevResp, hasPrevResp := os.LookupEnv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS")
+	t.Cleanup(func() {
+		if hasPrevSys {
+			_ = os.Setenv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS", prevSys)
+		} else {
+			_ = os.Unsetenv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS")
+		}
+		if hasPrevResp {
+			_ = os.Setenv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS", prevResp)
+		} else {
+			_ = os.Unsetenv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS")
+		}
+	})
+
+	_ = os.Setenv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS", "1500")
+	_ = os.Setenv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS", "2500")
+
+	sys, resp, src := contextInspectPromptBudget("claude-code-1")
+	if sys != 1500 || resp != 2500 || src != "configured:env" {
+		t.Fatalf("expected env override, got system=%d response=%d source=%q", sys, resp, src)
 	}
 }
 

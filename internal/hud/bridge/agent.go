@@ -3,7 +3,9 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -224,8 +226,8 @@ type ContextInspectResult struct {
 }
 
 const (
-	contextInspectSystemPromptTokens   = 768
-	contextInspectResponseBudgetTokens = 2048
+	contextInspectSystemPromptTokensDefault   = 768
+	contextInspectResponseBudgetTokensDefault = 2048
 )
 
 func normalizeEntityInfo(e *EntityInfo) {
@@ -1072,18 +1074,17 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 		}
 	}
 
-	systemPromptChars := contextInspectSystemPromptTokens * 4
-	systemPromptTokens := contextInspectSystemPromptTokens
+	systemPromptTokens, responseBudgetTokens, promptBudgetSource := contextInspectPromptBudget(agentID)
+	systemPromptChars := systemPromptTokens * 4
 	toolSchemaChars, toolSchemaTokens := a.estimateToolSchemaBudget()
-	responseBudgetChars := contextInspectResponseBudgetTokens * 4
-	responseBudgetTokens := contextInspectResponseBudgetTokens
+	responseBudgetChars := responseBudgetTokens * 4
 
 	sections := []ContextInspectSection{
 		{
 			Section:         "system_prompt",
 			Chars:           systemPromptChars,
 			EstimatedTokens: systemPromptTokens,
-			Source:          "heuristic",
+			Source:          promptBudgetSource,
 		},
 		{
 			Section:         "tools_schema",
@@ -1107,7 +1108,7 @@ func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, lim
 			Section:         "response_budget",
 			Chars:           responseBudgetChars,
 			EstimatedTokens: responseBudgetTokens,
-			Source:          "heuristic",
+			Source:          promptBudgetSource,
 		},
 	}
 	promptEstimatedTokens := 0
@@ -1180,6 +1181,51 @@ func estimateContextTokens(chars int) int {
 	}
 	// Simple approximation used elsewhere in HUD docs: ~4 chars/token.
 	return (chars + 3) / 4
+}
+
+func contextInspectPromptBudget(agentID string) (systemPromptTokens int, responseBudgetTokens int, source string) {
+	systemPromptTokens = contextInspectSystemPromptTokensDefault
+	responseBudgetTokens = contextInspectResponseBudgetTokensDefault
+	source = "heuristic:default"
+
+	lowerAgentID := strings.ToLower(strings.TrimSpace(agentID))
+	switch {
+	case strings.Contains(lowerAgentID, "claude"):
+		systemPromptTokens = 1024
+		responseBudgetTokens = 4096
+		source = "heuristic:claude"
+	case strings.Contains(lowerAgentID, "gemini"):
+		systemPromptTokens = 900
+		responseBudgetTokens = 3072
+		source = "heuristic:gemini"
+	case strings.Contains(lowerAgentID, "codex"), strings.Contains(lowerAgentID, "openai"):
+		systemPromptTokens = 896
+		responseBudgetTokens = 2048
+		source = "heuristic:codex"
+	}
+
+	if v, ok := parsePositiveIntEnv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS"); ok {
+		systemPromptTokens = v
+		source = "configured:env"
+	}
+	if v, ok := parsePositiveIntEnv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS"); ok {
+		responseBudgetTokens = v
+		source = "configured:env"
+	}
+
+	return systemPromptTokens, responseBudgetTokens, source
+}
+
+func parsePositiveIntEnv(key string) (int, bool) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 func isFileInjectionEntry(entry ContextEntry, entryType string) bool {

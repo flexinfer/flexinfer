@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,56 +33,37 @@ func hudBaseURL(port string) string {
 	return "http://127.0.0.1:" + port
 }
 
-// hudPost sends a POST request with a JSON body to the HUD API.
-// Returns the response body or an error. On non-2xx status, returns an error.
-func hudPost(port, path string, body any) (json.RawMessage, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+const defaultHUDTimeout = 10 * time.Second
+
+// hudRequest sends a request to the HUD API and returns the raw response body.
+func hudRequest(port, method, path string, body any, headers map[string]string, timeout time.Duration) (json.RawMessage, error) {
+	if timeout <= 0 {
+		timeout = defaultHUDTimeout
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	var payload []byte
+	var err error
+	if body != nil {
+		payload, err = json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hudBaseURL(port)+path, bytes.NewReader(payload))
+	var reqBody io.Reader
+	if payload != nil {
+		reqBody = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, hudBaseURL(port)+path, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
-	}
-
-	return data, nil
-}
-
-// hudPostWithHeaders sends a POST request with optional extra headers.
-func hudPostWithHeaders(port, path string, body any, headers map[string]string) (json.RawMessage, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hudBaseURL(port)+path, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
 			req.Header.Set(k, v)
@@ -100,102 +80,35 @@ func hudPostWithHeaders(port, path string, body any, headers map[string]string) 
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
 	}
-
 	return data, nil
+}
+
+// hudPost sends a POST request with a JSON body to the HUD API.
+func hudPost(port, path string, body any) (json.RawMessage, error) {
+	return hudRequest(port, http.MethodPost, path, body, nil, defaultHUDTimeout)
+}
+
+// hudPostWithHeaders sends a POST request with optional extra headers.
+func hudPostWithHeaders(port, path string, body any, headers map[string]string) (json.RawMessage, error) {
+	return hudRequest(port, http.MethodPost, path, body, headers, defaultHUDTimeout)
 }
 
 // hudGet sends a GET request to the HUD API.
 func hudGet(port, path string) (json.RawMessage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hudBaseURL(port)+path, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
-	}
-
-	return data, nil
+	return hudRequest(port, http.MethodGet, path, nil, nil, defaultHUDTimeout)
 }
 
 // hudPostFast sends a POST with a short timeout (for latency-sensitive ops like heartbeats).
 func hudPostFast(port, path string, body any, timeout time.Duration) (json.RawMessage, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hudBaseURL(port)+path, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
-	}
-
-	return data, nil
+	return hudRequest(port, http.MethodPost, path, body, nil, timeout)
 }
 
 // hudGetFast sends a GET with a short timeout (for preflight health checks).
 func hudGetFast(port, path string, timeout time.Duration) (json.RawMessage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hudBaseURL(port)+path, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
-	}
-
-	return data, nil
+	return hudRequest(port, http.MethodGet, path, nil, nil, timeout)
 }
 
 // hudPostWithRetry sends a POST with retry and exponential backoff.
@@ -419,22 +332,15 @@ func activeSessionWithFallback(cmd *cobra.Command, port, agentID string) (json.R
 }
 
 func contextInspectWithFallback(cmd *cobra.Command, port, agentID, sessionID string, detail bool, limit int) (json.RawMessage, error) {
-	params := url.Values{}
-	if agentID != "" {
-		params.Set("agent_id", agentID)
+	request := bridge.ContextInspectRequest{
+		AgentID:   agentID,
+		SessionID: sessionID,
+		Detail:    detail,
+		Limit:     limit,
 	}
-	if sessionID != "" {
-		params.Set("session_id", sessionID)
-	}
-	if detail {
-		params.Set("detail", "true")
-	}
-	if limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", limit))
-	}
-	path := "/api/agent/context-inspect"
-	if encoded := params.Encode(); encoded != "" {
-		path += "?" + encoded
+	path, err := request.Path()
+	if err != nil {
+		return nil, err
 	}
 
 	return withAgentFallback(
@@ -455,20 +361,22 @@ func contextInspectWithFallback(cmd *cobra.Command, port, agentID, sessionID str
 }
 
 func nudgeQueueStatusWithHUD(port, agentID string) (json.RawMessage, error) {
-	params := url.Values{}
-	params.Set("agent_id", agentID)
-	return hudGet(port, "/api/agent/nudge-queue?"+params.Encode())
+	path, err := bridge.NudgeQueueStatusPath(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return hudGet(port, path)
 }
 
 func nudgeQueuePolicyWithHUD(port string) (json.RawMessage, error) {
-	return hudGet(port, "/api/agent/nudge-queue-policy")
+	return hudGet(port, bridge.AgentNudgeQueuePolicyPath)
 }
 
-func nudgeQueuePolicyUpdateWithHUD(port string, body map[string]any, adminToken string) (json.RawMessage, error) {
+func nudgeQueuePolicyUpdateWithHUD(port string, body bridge.NudgeQueuePolicyMutation, adminToken string) (json.RawMessage, error) {
 	headers := map[string]string{
 		"Authorization": "Bearer " + adminToken,
 	}
-	return hudPostWithHeaders(port, "/api/agent/nudge-queue-policy", body, headers)
+	return hudPostWithHeaders(port, bridge.AgentNudgeQueuePolicyPath, body, headers)
 }
 
 func workflowDefineWithFallback(cmd *cobra.Command, port string, body map[string]any) (json.RawMessage, error) {
@@ -928,10 +836,32 @@ Mutations require --admin-token or $LOOM_HUD_ADMIN_TOKEN (fallback: $HUD_ADMIN_T
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			hasMutation := capValue >= 0 ||
-				debounceMs >= 0 ||
-				strings.TrimSpace(dropPolicy) != "" ||
-				strings.TrimSpace(lanePriority) != ""
+			mutation := bridge.NudgeQueuePolicyMutation{}
+			if capValue >= 0 {
+				v := capValue
+				mutation.Cap = &v
+			}
+			if debounceMs >= 0 {
+				v := debounceMs
+				mutation.DebounceMs = &v
+			}
+			if strings.TrimSpace(dropPolicy) != "" {
+				v := strings.TrimSpace(dropPolicy)
+				mutation.DropPolicy = &v
+			}
+			if strings.TrimSpace(lanePriority) != "" {
+				lanes, err := bridge.ParseLanePriorityCSV(lanePriority)
+				if err != nil {
+					return err
+				}
+				mutation.LanePriority = lanes
+			}
+			if strings.TrimSpace(updatedBy) != "" {
+				mutation.UpdatedBy = strings.TrimSpace(updatedBy)
+			}
+			mutation = mutation.Normalize()
+
+			hasMutation := mutation.HasMutation()
 
 			if !hasMutation {
 				result, err := nudgeQueuePolicyWithHUD(port)
@@ -957,36 +887,11 @@ Mutations require --admin-token or $LOOM_HUD_ADMIN_TOKEN (fallback: $HUD_ADMIN_T
 			if token == "" {
 				return fmt.Errorf("admin token is required for policy updates (--admin-token, LOOM_HUD_ADMIN_TOKEN, or HUD_ADMIN_TOKEN)")
 			}
-
-			body := make(map[string]any)
-			if capValue >= 0 {
-				body["cap"] = capValue
-			}
-			if debounceMs >= 0 {
-				body["debounce_ms"] = debounceMs
-			}
-			if strings.TrimSpace(dropPolicy) != "" {
-				body["drop_policy"] = strings.TrimSpace(dropPolicy)
-			}
-			if strings.TrimSpace(lanePriority) != "" {
-				parts := strings.Split(lanePriority, ",")
-				lanes := make([]string, 0, len(parts))
-				for _, p := range parts {
-					lane := strings.TrimSpace(p)
-					if lane != "" {
-						lanes = append(lanes, lane)
-					}
-				}
-				if len(lanes) == 0 {
-					return fmt.Errorf("lane-priority must include at least one non-empty lane")
-				}
-				body["lane_priority"] = lanes
-			}
-			if strings.TrimSpace(updatedBy) != "" {
-				body["updated_by"] = strings.TrimSpace(updatedBy)
+			if err := mutation.Validate(); err != nil {
+				return err
 			}
 
-			result, err := nudgeQueuePolicyUpdateWithHUD(port, body, token)
+			result, err := nudgeQueuePolicyUpdateWithHUD(port, mutation, token)
 			if err != nil {
 				if quiet {
 					return nil

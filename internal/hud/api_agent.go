@@ -578,30 +578,13 @@ func (a *App) handleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
 // handleAgentContextInspect returns a context budget breakdown for an agent/session.
 // GET /api/agent/context-inspect?agent_id=...&session_id=...&detail=true&limit=200
 func (a *App) handleAgentContextInspect(w http.ResponseWriter, r *http.Request) {
-	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
-	if agentID == "" && sessionID == "" {
-		a.writeError(w, http.StatusBadRequest, "agent_id or session_id query parameter is required", nil)
+	req, err := bridge.ParseContextInspectRequest(r.URL.Query())
+	if err != nil {
+		a.writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	detail := false
-	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("detail"))) {
-	case "1", "true", "yes", "y":
-		detail = true
-	}
-
-	limit := 200
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			a.writeError(w, http.StatusBadRequest, "limit must be a positive integer", nil)
-			return
-		}
-		limit = parsed
-	}
-
-	result, err := a.agent.ContextInspect(agentID, sessionID, detail, limit)
+	result, err := a.agent.ContextInspect(req.AgentID, req.SessionID, req.Detail, req.Limit)
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "context inspect failed", err)
 		return
@@ -668,18 +651,18 @@ func (a *App) handleAgentNudgeQueue(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadRequest, "agent_id query parameter is required", nil)
 		return
 	}
-	a.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"status": a.nudgeQueue.Status(agentID),
+	a.writeJSON(w, http.StatusOK, bridge.NudgeQueueStatusResponse{
+		OK:     true,
+		Status: toNudgeQueueStatusView(a.nudgeQueue.Status(agentID)),
 	})
 }
 
 // handleAgentNudgeQueuePolicy returns current queue policy.
 // GET /api/agent/nudge-queue-policy
 func (a *App) handleAgentNudgeQueuePolicy(w http.ResponseWriter, _ *http.Request) {
-	a.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"policy": toNudgeQueuePolicyView(a.nudgeQueue.Config()),
+	a.writeJSON(w, http.StatusOK, bridge.NudgeQueuePolicyResponse{
+		OK:     true,
+		Policy: toNudgeQueuePolicyView(a.nudgeQueue.Config()),
 	})
 }
 
@@ -690,15 +673,18 @@ func (a *App) handleAgentNudgeQueuePolicyUpdate(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var body struct {
-		DebounceMs   *int     `json:"debounce_ms,omitempty"`
-		Cap          *int     `json:"cap,omitempty"`
-		DropPolicy   *string  `json:"drop_policy,omitempty"`
-		LanePriority []string `json:"lane_priority,omitempty"`
-		UpdatedBy    string   `json:"updated_by,omitempty"`
-	}
+	var body bridge.NudgeQueuePolicyMutation
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	body = body.Normalize()
+	if !body.HasMutation() {
+		a.writeError(w, http.StatusBadRequest, "at least one policy field is required", nil)
+		return
+	}
+	if err := body.Validate(); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid nudge queue policy", err)
 		return
 	}
 
@@ -709,10 +695,6 @@ func (a *App) handleAgentNudgeQueuePolicyUpdate(w http.ResponseWriter, r *http.R
 	}
 	if body.LanePriority != nil {
 		update.LanePriority = append([]string(nil), body.LanePriority...)
-	}
-	if update.DebounceMs == nil && update.Cap == nil && update.DropPolicy == nil && update.LanePriority == nil {
-		a.writeError(w, http.StatusBadRequest, "at least one policy field is required", nil)
-		return
 	}
 
 	before := a.nudgeQueue.Config()
@@ -750,25 +732,32 @@ func (a *App) handleAgentNudgeQueuePolicyUpdate(w http.ResponseWriter, r *http.R
 		"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
 	})
 
-	a.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"policy": afterView,
+	a.writeJSON(w, http.StatusOK, bridge.NudgeQueuePolicyResponse{
+		OK:     true,
+		Policy: afterView,
 	})
 }
 
-type nudgeQueuePolicyView struct {
-	DebounceMs   int             `json:"debounce_ms"`
-	Cap          int             `json:"cap"`
-	DropPolicy   NudgeDropPolicy `json:"drop_policy"`
-	LanePriority []string        `json:"lane_priority"`
-}
+type nudgeQueuePolicyView = bridge.NudgeQueuePolicy
 
 func toNudgeQueuePolicyView(cfg NudgeQueueConfig) nudgeQueuePolicyView {
 	return nudgeQueuePolicyView{
 		DebounceMs:   int(cfg.Debounce / time.Millisecond),
 		Cap:          cfg.Cap,
-		DropPolicy:   cfg.DropPolicy,
+		DropPolicy:   string(cfg.DropPolicy),
 		LanePriority: append([]string(nil), cfg.LanePriority...),
+	}
+}
+
+func toNudgeQueueStatusView(status NudgeQueueStatus) bridge.NudgeQueueStatus {
+	return bridge.NudgeQueueStatus{
+		Pending:      status.Pending,
+		Dropped:      status.Dropped,
+		ByLane:       status.ByLane,
+		DebounceMs:   status.DebounceMs,
+		Cap:          status.Cap,
+		DropPolicy:   string(status.DropPolicy),
+		LanePriority: append([]string(nil), status.LanePriority...),
 	}
 }
 
