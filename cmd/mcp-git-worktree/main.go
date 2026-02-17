@@ -13,6 +13,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -93,11 +94,36 @@ func run(ctx context.Context) error {
 
 func runGit(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
+	cmd.Env = sanitizedGitEnv(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s failed: %v, output: %s", args[0], err, string(out))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func sanitizedGitEnv(envVars []string) []string {
+	blocked := map[string]struct{}{
+		"GIT_DIR":                          {},
+		"GIT_WORK_TREE":                    {},
+		"GIT_COMMON_DIR":                   {},
+		"GIT_INDEX_FILE":                   {},
+		"GIT_OBJECT_DIRECTORY":             {},
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	}
+
+	sanitized := make([]string, 0, len(envVars))
+	for _, kv := range envVars {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if _, found := blocked[key]; found {
+			continue
+		}
+		sanitized = append(sanitized, kv)
+	}
+	return sanitized
 }
 
 // Handlers
@@ -152,8 +178,8 @@ func handleAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 
 	// Validate path is inside repo
 	absPath := filepath.Join(repoPath, path)
-	if !strings.HasPrefix(absPath, repoPath) {
-		return mcp.ErrorResult(fmt.Errorf("path must be inside repository")), nil
+	if err := pathsec.ValidatePath(absPath, repoPath); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("path must be inside repository: %w", err)), nil
 	}
 	if absPath == repoPath {
 		return mcp.ErrorResult(fmt.Errorf("cannot add worktree at repository root")), nil
@@ -206,8 +232,8 @@ func handleRemove(ctx context.Context, args map[string]any) (*mcp.CallToolResult
 	}
 
 	absPath := filepath.Join(repoPath, path)
-	if !strings.HasPrefix(absPath, repoPath) {
-		return mcp.ErrorResult(fmt.Errorf("path must be inside repository")), nil
+	if err := pathsec.ValidatePath(absPath, repoPath); err != nil {
+		return mcp.ErrorResult(fmt.Errorf("path must be inside repository: %w", err)), nil
 	}
 	if absPath == repoPath {
 		return mcp.ErrorResult(fmt.Errorf("cannot remove main repository worktree")), nil
