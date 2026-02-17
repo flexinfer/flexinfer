@@ -87,6 +87,11 @@ proxy:
     requests:
       cpu: 100m
       memory: 128Mi
+  # Cold-start behavior for serverless models.
+  # Increase these to accommodate image pulls + backend bootstrap on first activation.
+  timeouts:
+    queue: 10m
+    coldStart: 10m
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:
