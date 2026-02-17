@@ -24,8 +24,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestExtractKubeconfig(t *testing.T) {
@@ -143,7 +148,7 @@ func TestCollectGPUInventory(t *testing.T) {
 		},
 	}
 
-	clientset := fake.NewSimpleClientset(nodeA, nodeB, runningPod, succeededPod)
+	clientset := k8sfake.NewSimpleClientset(nodeA, nodeB, runningPod, succeededPod)
 	capacity, available, err := collectGPUInventory(ctx, clientset)
 	if err != nil {
 		t.Fatalf("collectGPUInventory() unexpected error: %v", err)
@@ -297,5 +302,67 @@ func TestStopRemoteModelWatch(t *testing.T) {
 	}
 	if _, ok := r.modelWatches["flexinfer-system/cluster-a"]; ok {
 		t.Fatal("expected watch entry to be removed")
+	}
+}
+
+func TestIndexClusterSecretRefName(t *testing.T) {
+	cluster := &aiv1alpha2.Cluster{
+		Spec: aiv1alpha2.ClusterSpec{
+			SecretRef: corev1.LocalObjectReference{Name: "remote-kubeconfig"},
+		},
+	}
+
+	got := indexClusterSecretRefName(cluster)
+	if len(got) != 1 || got[0] != "remote-kubeconfig" {
+		t.Fatalf("indexClusterSecretRefName() = %v, want [remote-kubeconfig]", got)
+	}
+}
+
+func TestRequestsForSecret_FallbackWithoutFieldIndexer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("Add corev1 scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("Add aiv1alpha2 scheme: %v", err)
+	}
+
+	clusterA := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha2.ClusterSpec{
+			APIEndpoint: "https://cluster-a.example.com",
+			SecretRef:   corev1.LocalObjectReference{Name: "shared-kubeconfig"},
+		},
+	}
+	clusterB := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha2.ClusterSpec{
+			APIEndpoint: "https://cluster-b.example.com",
+			SecretRef:   corev1.LocalObjectReference{Name: "other-kubeconfig"},
+		},
+	}
+	clusterOtherNS := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "tenant-a"},
+		Spec: aiv1alpha2.ClusterSpec{
+			APIEndpoint: "https://cluster-c.example.com",
+			SecretRef:   corev1.LocalObjectReference{Name: "shared-kubeconfig"},
+		},
+	}
+
+	fakeClient := ctrlclientfake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterA, clusterB, clusterOtherNS).
+		Build()
+
+	r := &ClusterReconciler{Client: fakeClient}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "shared-kubeconfig", Namespace: "flexinfer-system"}}
+
+	requests := r.requestsForSecret(context.Background(), secret)
+	if len(requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(requests))
+	}
+	want := client.ObjectKey{Namespace: "flexinfer-system", Name: "cluster-a"}
+	if requests[0].NamespacedName != want {
+		t.Fatalf("request key = %s, want %s", requests[0].NamespacedName, want)
 	}
 }

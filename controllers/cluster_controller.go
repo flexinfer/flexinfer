@@ -40,7 +40,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
@@ -54,6 +56,7 @@ const (
 
 	clusterConditionReady     = "Ready"
 	clusterConditionSpecValid = "SpecValid"
+	clusterSecretRefNameField = "spec.secretRef.name"
 )
 
 var gpuResourceKeys = []corev1.ResourceName{
@@ -568,10 +571,57 @@ func setClusterCondition(cluster *aiv1alpha2.Cluster, conditionType string, stat
 	cluster.Status.Conditions = append(cluster.Status.Conditions, newCond)
 }
 
+func indexClusterSecretRefName(rawObj client.Object) []string {
+	cluster, ok := rawObj.(*aiv1alpha2.Cluster)
+	if !ok {
+		return nil
+	}
+	if cluster.Spec.SecretRef.Name == "" {
+		return nil
+	}
+	return []string{cluster.Spec.SecretRef.Name}
+}
+
+func (r *ClusterReconciler) requestsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	clusterList := &aiv1alpha2.ClusterList{}
+	if err := r.List(
+		ctx,
+		clusterList,
+		client.InNamespace(secret.Namespace),
+		client.MatchingFields{clusterSecretRefNameField: secret.Name},
+	); err != nil {
+		// Fallback when cache field indexing is unavailable (for example, in tests).
+		if listErr := r.List(ctx, clusterList, client.InNamespace(secret.Namespace)); listErr != nil {
+			log.FromContext(ctx).Error(listErr, "Failed to list clusters for secret", "secret", client.ObjectKeyFromObject(secret))
+			return nil
+		}
+	}
+
+	requests := make([]reconcile.Request, 0, len(clusterList.Items))
+	for i := range clusterList.Items {
+		cluster := &clusterList.Items[i]
+		if cluster.Spec.SecretRef.Name != secret.Name {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(cluster)})
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &aiv1alpha2.Cluster{}, clusterSecretRefNameField, indexClusterSecretRefName); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.Cluster{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForSecret)).
 		Complete(r)
 }
 
