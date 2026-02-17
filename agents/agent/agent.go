@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/cpu"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -419,6 +420,8 @@ func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
 func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 	log := log.FromContext(ctx)
 
+	var podItems []corev1.Pod
+
 	// List pods running on this node
 	pods, err := a.kubeClient.CoreV1().Pods(a.namespace).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + a.nodeName,
@@ -427,13 +430,14 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 	})
 	if err != nil {
 		log.Error(err, "Failed to list pods on node")
-		pods = nil
+	} else {
+		podItems = pods.Items
 	}
 
 	var totalCache float64
 	var count int
 
-	for _, pod := range pods.Items {
+	for _, pod := range podItems {
 		// Scrape Prometheus metrics from the pod
 		usage := a.scrapeKVCache(ctx, pod.Status.PodIP)
 		if usage >= 0 {
