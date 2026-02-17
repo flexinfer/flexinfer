@@ -104,6 +104,8 @@ type Daemon struct {
 	refreshGroup       singleflight.Group              // Deduplicates concurrent tool cache refreshes
 	wg                 gosync.WaitGroup
 	done               chan struct{}
+	stopOnce           gosync.Once
+	stopErr            error
 
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
@@ -120,7 +122,11 @@ func (d *Daemon) callLock(serverName string) *gosync.Mutex {
 
 func (d *Daemon) acquireLock() error {
 	home, _ := os.UserHomeDir()
-	lockPath := filepath.Join(home, ".config", "loom", "loomd.lock")
+	lockDir := filepath.Join(home, ".config", "loom")
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		return fmt.Errorf("create lock dir: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, "loomd.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return fmt.Errorf("open lock file: %w", err)
@@ -706,75 +712,87 @@ func (d *Daemon) signalLoop(ctx context.Context) {
 
 // Stop stops the daemon.
 func (d *Daemon) Stop() error {
-	close(d.done)
-
-	// Stop health monitor first
-	if d.healthMonitor != nil {
-		d.healthMonitor.Stop()
-	}
-
-	// Stop tunnel manager
-	if d.tunnelMgr != nil {
-		d.tunnelMgr.Stop()
-	}
-
-	// Shutdown HTTP server
-	if d.httpServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		d.httpServer.Shutdown(shutdownCtx)
-		cancel()
-	}
-
-	if d.listener != nil {
-		d.listener.Close()
-	}
-	_ = os.Remove(d.cfg.SocketPath)
-
-	d.pool.Close()
-	if d.hubPool != nil {
-		d.hubPool.Close()
-	}
-	if d.hubClient != nil {
-		d.hubClient.Close()
-	}
-	// Emit process.stop events for all running servers before shutdown.
-	if d.eventBus != nil {
-		for _, name := range d.procMgr.List() {
-			d.eventBus.Publish(EventProcessStop, map[string]any{
-				"server": name,
-				"reason": "daemon_shutdown",
-			})
+	d.stopOnce.Do(func() {
+		if d.done != nil {
+			close(d.done)
 		}
-	}
-	d.procMgr.StopAll()
 
-	// Stop file watcher
-	if d.watcher != nil {
-		if err := d.watcher.Stop(); err != nil {
-			d.logger.Warn("failed to stop watcher", "error", err)
+		// Stop health monitor first
+		if d.healthMonitor != nil {
+			d.healthMonitor.Stop()
 		}
-	}
 
-	// Close audit logger
-	if d.audit != nil {
-		if err := d.audit.Close(); err != nil {
-			d.logger.Warn("failed to close audit logger", "error", err)
+		// Stop tunnel manager
+		if d.tunnelMgr != nil {
+			d.tunnelMgr.Stop()
 		}
-	}
 
-	// Save manifest for next startup
-	if err := d.manifest.Save(); err != nil {
-		d.logger.Warn("failed to save manifest", "error", err)
-	}
+		// Shutdown HTTP server
+		if d.httpServer != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = d.httpServer.Shutdown(shutdownCtx)
+			cancel()
+		}
 
-	d.wg.Wait()
-	d.logger.Info("daemon stopped")
+		if d.listener != nil {
+			_ = d.listener.Close()
+		}
+		_ = os.Remove(d.cfg.SocketPath)
 
-	if d.lockFile != nil {
-		_ = d.lockFile.Close()
-		d.lockFile = nil
-	}
-	return nil
+		if d.pool != nil {
+			d.pool.Close()
+		}
+		if d.hubPool != nil {
+			d.hubPool.Close()
+		}
+		if d.hubClient != nil {
+			_ = d.hubClient.Close()
+		}
+		// Emit process.stop events for all running servers before shutdown.
+		if d.eventBus != nil && d.procMgr != nil {
+			for _, name := range d.procMgr.List() {
+				d.eventBus.Publish(EventProcessStop, map[string]any{
+					"server": name,
+					"reason": "daemon_shutdown",
+				})
+			}
+		}
+		if d.procMgr != nil {
+			d.procMgr.StopAll()
+		}
+
+		// Stop file watcher
+		if d.watcher != nil {
+			if err := d.watcher.Stop(); err != nil && d.logger != nil {
+				d.logger.Warn("failed to stop watcher", "error", err)
+			}
+		}
+
+		// Close audit logger
+		if d.audit != nil {
+			if err := d.audit.Close(); err != nil && d.logger != nil {
+				d.logger.Warn("failed to close audit logger", "error", err)
+			}
+		}
+
+		// Save manifest for next startup
+		if d.manifest != nil {
+			if err := d.manifest.Save(); err != nil && d.logger != nil {
+				d.logger.Warn("failed to save manifest", "error", err)
+			}
+		}
+
+		d.wg.Wait()
+		if d.logger != nil {
+			d.logger.Info("daemon stopped")
+		}
+
+		if d.lockFile != nil {
+			_ = d.lockFile.Close()
+			d.lockFile = nil
+		}
+	})
+	return d.stopErr
 }
 
 // Wait waits for the daemon to stop.
