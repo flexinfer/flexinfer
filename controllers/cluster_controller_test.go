@@ -569,6 +569,24 @@ func TestWatchConditionForObservation(t *testing.T) {
 	}
 }
 
+func TestWatchConditionForObservation_PreservesFallbackReason(t *testing.T) {
+	observation := &clusterObservation{
+		WatchReady:  false,
+		WatchReason: "remote watch list permissions denied; using cached inventory",
+	}
+
+	status, reason, message := watchConditionForObservation(observation)
+	if status != metav1.ConditionFalse {
+		t.Fatalf("status = %v, want %v", status, metav1.ConditionFalse)
+	}
+	if reason != "ListFallback" {
+		t.Fatalf("reason = %q, want %q", reason, "ListFallback")
+	}
+	if message != observation.WatchReason {
+		t.Fatalf("message = %q, want %q", message, observation.WatchReason)
+	}
+}
+
 func TestClusterProbeMessage(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -634,6 +652,81 @@ func TestMaybeRecordWatchConditionEvent(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("expected watch condition event")
+	}
+}
+
+func TestMaybeRecordWatchConditionEvent_ReasonMapping(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    metav1.ConditionStatus
+		reason    string
+		message   string
+		wantEvent string
+	}{
+		{
+			name:      "watch synced",
+			status:    metav1.ConditionTrue,
+			reason:    "WatchSynced",
+			message:   "remote model watch cache is ready",
+			wantEvent: "ModelWatchSynced",
+		},
+		{
+			name:      "list fallback",
+			status:    metav1.ConditionFalse,
+			reason:    "ListFallback",
+			message:   "using list fallback for model inventory",
+			wantEvent: "ModelWatchFallback",
+		},
+		{
+			name:      "watch degraded",
+			status:    metav1.ConditionFalse,
+			reason:    "WatchDegraded",
+			message:   "remote model watch stream failed: timeout",
+			wantEvent: "ModelWatchDegraded",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := &aiv1alpha2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "flexinfer-system"},
+			}
+			rec := record.NewFakeRecorder(1)
+			setClusterCondition(cluster, clusterConditionWatch, tc.status, tc.reason, tc.message)
+
+			maybeRecordWatchConditionEvent(rec, cluster, nil)
+
+			select {
+			case event := <-rec.Events:
+				if !strings.Contains(event, tc.wantEvent) {
+					t.Fatalf("event = %q, want %q", event, tc.wantEvent)
+				}
+			case <-time.After(1 * time.Second):
+				t.Fatalf("expected watch condition event for reason %s", tc.reason)
+			}
+		})
+	}
+}
+
+func TestMaybeRecordWatchConditionEvent_EmitsOnMessageChange(t *testing.T) {
+	cluster := &aiv1alpha2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "flexinfer-system"},
+	}
+	rec := record.NewFakeRecorder(1)
+
+	setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionFalse, "ListFallback", "using list fallback for model inventory")
+	previous := getClusterCondition(cluster, clusterConditionWatch)
+	setClusterCondition(cluster, clusterConditionWatch, metav1.ConditionFalse, "ListFallback", "using list fallback for model inventory (cache stale)")
+	maybeRecordWatchConditionEvent(rec, cluster, previous)
+
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "ModelWatchFallback") {
+			t.Fatalf("event = %q, want ModelWatchFallback", event)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected watch condition event on message change")
 	}
 }
 
