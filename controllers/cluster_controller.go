@@ -187,6 +187,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		r.stopRemoteModelWatch(req.NamespacedName.String())
 		cluster.Status.Phase = aiv1alpha2.ClusterPhaseNotReady
 		cluster.Status.Message = msg
+		resetClusterObservationStatus(&cluster.Status)
 		now := metav1.Now()
 		cluster.Status.LastProbeTime = &now
 		setClusterCondition(cluster, clusterConditionSpecValid, metav1.ConditionFalse, "InvalidSpec", msg)
@@ -213,6 +214,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		msg := fmt.Sprintf("cluster probe failed: %v", probeErr)
 		cluster.Status.Phase = aiv1alpha2.ClusterPhaseNotReady
 		cluster.Status.Message = msg
+		resetClusterObservationStatus(&cluster.Status)
 		setClusterCondition(cluster, clusterConditionReady, metav1.ConditionFalse, "ProbeFailed", msg)
 		metrics.ClusterHealth.WithLabelValues(cluster.Name, clusterRegion(cluster)).Set(0)
 		if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
@@ -610,6 +612,15 @@ func setClusterCondition(cluster *aiv1alpha2.Cluster, conditionType string, stat
 		}
 	}
 	cluster.Status.Conditions = append(cluster.Status.Conditions, newCond)
+}
+
+func resetClusterObservationStatus(status *aiv1alpha2.ClusterStatus) {
+	if status == nil {
+		return
+	}
+	status.Capacity = nil
+	status.Available = nil
+	status.Models = nil
 }
 
 func indexClusterSecretRefName(rawObj client.Object) []string {

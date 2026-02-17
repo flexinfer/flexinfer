@@ -413,6 +413,32 @@ func TestStopRemoteModelWatch(t *testing.T) {
 	}
 }
 
+func TestResetClusterObservationStatus(t *testing.T) {
+	status := &aiv1alpha2.ClusterStatus{
+		Capacity: corev1.ResourceList{
+			corev1.ResourceName("amd.com/gpu"): resource.MustParse("2"),
+		},
+		Available: corev1.ResourceList{
+			corev1.ResourceName("amd.com/gpu"): resource.MustParse("1"),
+		},
+		Models: []aiv1alpha2.ClusterModelStatus{
+			{Name: "model-a", Namespace: "tenant-a", Phase: "Ready"},
+		},
+	}
+
+	resetClusterObservationStatus(status)
+
+	if status.Capacity != nil {
+		t.Fatalf("capacity = %v, want nil", status.Capacity)
+	}
+	if status.Available != nil {
+		t.Fatalf("available = %v, want nil", status.Available)
+	}
+	if status.Models != nil {
+		t.Fatalf("models = %v, want nil", status.Models)
+	}
+}
+
 func TestIndexClusterSecretRefName(t *testing.T) {
 	cluster := &aiv1alpha2.Cluster{
 		Spec: aiv1alpha2.ClusterSpec{
