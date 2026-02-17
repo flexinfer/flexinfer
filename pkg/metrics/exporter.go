@@ -198,6 +198,34 @@ var (
 		},
 		[]string{"cluster"},
 	)
+
+	// ClusterModelsDiscovered reports count of remote models discovered per cluster.
+	ClusterModelsDiscovered = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_cluster_models_discovered",
+			Help: "Number of remote models discovered for each registered cluster.",
+		},
+		[]string{"cluster", "region"},
+	)
+
+	// ClusterModelInventorySource reports which source provided model inventory
+	// during the latest successful probe (one-hot: 1 active, 0 inactive).
+	ClusterModelInventorySource = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_cluster_model_inventory_source",
+			Help: "Model inventory source state per cluster (labels: source=watch|list, value 1 active/0 inactive).",
+		},
+		[]string{"cluster", "source"},
+	)
+
+	// ClusterModelWatchReady reports whether the remote model watch cache is ready.
+	ClusterModelWatchReady = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_cluster_model_watch_ready",
+			Help: "Remote model watch readiness (1=ready, 0=not ready).",
+		},
+		[]string{"cluster"},
+	)
 )
 
 func init() {
@@ -231,6 +259,9 @@ func init() {
 	// Cluster registry metrics
 	ctrlmetrics.Registry.MustRegister(ClusterHealth)
 	ctrlmetrics.Registry.MustRegister(ClusterProbeLatencySeconds)
+	ctrlmetrics.Registry.MustRegister(ClusterModelsDiscovered)
+	ctrlmetrics.Registry.MustRegister(ClusterModelInventorySource)
+	ctrlmetrics.Registry.MustRegister(ClusterModelWatchReady)
 }
 
 // Exporter handles serving the Prometheus metrics.

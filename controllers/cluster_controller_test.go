@@ -479,6 +479,29 @@ func TestResetClusterObservationStatus(t *testing.T) {
 	}
 }
 
+func TestInventorySourceGauges(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		wantWatch float64
+		wantList  float64
+	}{
+		{name: "watch", source: "watch", wantWatch: 1, wantList: 0},
+		{name: "list", source: "list", wantWatch: 0, wantList: 1},
+		{name: "unknown", source: "other", wantWatch: 0, wantList: 0},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			gotWatch, gotList := inventorySourceGauges(tc.source)
+			if gotWatch != tc.wantWatch || gotList != tc.wantList {
+				t.Fatalf("inventorySourceGauges(%q) = (%v,%v), want (%v,%v)", tc.source, gotWatch, gotList, tc.wantWatch, tc.wantList)
+			}
+		})
+	}
+}
+
 func TestIndexClusterSecretRefName(t *testing.T) {
 	cluster := &aiv1alpha2.Cluster{
 		Spec: aiv1alpha2.ClusterSpec{

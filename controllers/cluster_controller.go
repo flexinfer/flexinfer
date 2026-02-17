@@ -192,7 +192,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		cluster.Status.LastProbeTime = &now
 		setClusterCondition(cluster, clusterConditionSpecValid, metav1.ConditionFalse, "InvalidSpec", msg)
 		setClusterCondition(cluster, clusterConditionReady, metav1.ConditionFalse, "InvalidSpec", msg)
-		metrics.ClusterHealth.WithLabelValues(cluster.Name, clusterRegion(cluster)).Set(0)
+		region := clusterRegion(cluster)
+		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
+		resetClusterInventoryMetrics(cluster.Name, region)
 		if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
@@ -216,7 +218,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		cluster.Status.Message = msg
 		resetClusterObservationStatus(&cluster.Status)
 		setClusterCondition(cluster, clusterConditionReady, metav1.ConditionFalse, "ProbeFailed", msg)
-		metrics.ClusterHealth.WithLabelValues(cluster.Name, clusterRegion(cluster)).Set(0)
+		region := clusterRegion(cluster)
+		metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(0)
+		resetClusterInventoryMetrics(cluster.Name, region)
 		if updateErr := r.Status().Update(ctx, cluster); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
@@ -230,7 +234,9 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	cluster.Status.Available = observation.Available
 	cluster.Status.Models = observation.Models
 	setClusterCondition(cluster, clusterConditionReady, metav1.ConditionTrue, "ProbeSucceeded", "cluster reachable")
-	metrics.ClusterHealth.WithLabelValues(cluster.Name, clusterRegion(cluster)).Set(1)
+	region := clusterRegion(cluster)
+	metrics.ClusterHealth.WithLabelValues(cluster.Name, region).Set(1)
+	setClusterInventoryMetrics(cluster.Name, region, observation)
 
 	if err := r.Status().Update(ctx, cluster); err != nil {
 		return ctrl.Result{}, err
@@ -284,6 +290,8 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 			Capacity:      capacity,
 			Available:     available,
 			Models:        models,
+			ModelSource:   "watch",
+			WatchReady:    true,
 		}, nil
 	}
 
@@ -297,6 +305,8 @@ func (r *ClusterReconciler) probeCluster(ctx context.Context, cluster *aiv1alpha
 		Capacity:      capacity,
 		Available:     available,
 		Models:        models,
+		ModelSource:   "list",
+		WatchReady:    false,
 	}, nil
 }
 
@@ -643,6 +653,40 @@ func resetClusterObservationStatus(status *aiv1alpha2.ClusterStatus) {
 	status.Models = nil
 }
 
+func inventorySourceGauges(source string) (watch, list float64) {
+	switch source {
+	case "watch":
+		return 1, 0
+	case "list":
+		return 0, 1
+	default:
+		return 0, 0
+	}
+}
+
+func setClusterInventoryMetrics(clusterName, region string, observation *clusterObservation) {
+	if observation == nil {
+		resetClusterInventoryMetrics(clusterName, region)
+		return
+	}
+	metrics.ClusterModelsDiscovered.WithLabelValues(clusterName, region).Set(float64(len(observation.Models)))
+	if observation.WatchReady {
+		metrics.ClusterModelWatchReady.WithLabelValues(clusterName).Set(1)
+	} else {
+		metrics.ClusterModelWatchReady.WithLabelValues(clusterName).Set(0)
+	}
+	watch, list := inventorySourceGauges(observation.ModelSource)
+	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "watch").Set(watch)
+	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "list").Set(list)
+}
+
+func resetClusterInventoryMetrics(clusterName, region string) {
+	metrics.ClusterModelsDiscovered.WithLabelValues(clusterName, region).Set(0)
+	metrics.ClusterModelWatchReady.WithLabelValues(clusterName).Set(0)
+	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "watch").Set(0)
+	metrics.ClusterModelInventorySource.WithLabelValues(clusterName, "list").Set(0)
+}
+
 func indexClusterSecretRefName(rawObj client.Object) []string {
 	cluster, ok := rawObj.(*aiv1alpha2.Cluster)
 	if !ok {
@@ -702,4 +746,6 @@ type clusterObservation struct {
 	Capacity      corev1.ResourceList
 	Available     corev1.ResourceList
 	Models        []aiv1alpha2.ClusterModelStatus
+	ModelSource   string
+	WatchReady    bool
 }
