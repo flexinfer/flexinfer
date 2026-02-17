@@ -95,11 +95,16 @@ func (s *StreamMonitor) Refresh() error {
 
 	// Flatten and deduplicate.
 	var delta []StreamEntry
+	batchSeen := make(map[string]struct{}, len(raw))
 	for _, r := range raw {
 		id := r.Entry.ID
 		if id == "" {
 			continue
 		}
+		if _, dup := batchSeen[id]; dup {
+			continue
+		}
+		batchSeen[id] = struct{}{}
 		s.mu.RLock()
 		_, dup := s.seen[id]
 		s.mu.RUnlock()
