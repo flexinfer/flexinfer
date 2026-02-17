@@ -1627,64 +1627,10 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 		}
 		return env
 	case "vllm":
-		// vLLM environment configuration
-		optionalTrue := true
-		var env []corev1.EnvVar
-
-		// When using ModelCacheRef, set HF_HOME so vLLM uses the cached models
-		// This allows passing the model ID to --model while using local cache
-		if m.Spec.ModelCacheRef != nil {
-			env = append(env, corev1.EnvVar{
-				Name:  "HF_HOME",
-				Value: "/models",
-			})
-			env = append(env, corev1.EnvVar{
-				Name:  "TRANSFORMERS_CACHE",
-				Value: "/models",
-			})
-		}
-
-		// HuggingFace token for private/gated models (optional)
-		env = append(env, corev1.EnvVar{
-			Name: "HUGGINGFACE_HUB_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "hf-token",
-					},
-					Key:      "HF_TOKEN",
-					Optional: &optionalTrue,
-				},
-			},
-		})
-
-		// ROCm-specific environment for AMD GPUs
-		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
-			env = append(env, r.rocmEnvVars()...)
-
-			// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
-			// This helps on hosts where KFD can still enumerate multiple GPUs.
-			if m.Spec.VLLM != nil && m.Spec.VLLM.HIPVisibleDevices != "" {
-				env = append(env, corev1.EnvVar{
-					Name:  "ROCR_VISIBLE_DEVICES",
-					Value: m.Spec.VLLM.HIPVisibleDevices,
-				})
-				env = append(env, corev1.EnvVar{
-					Name:  "HIP_VISIBLE_DEVICES",
-					Value: m.Spec.VLLM.HIPVisibleDevices,
-				})
-			}
-		}
-
-		return env
+		return r.buildVLLMEnv(m, false)
 	case "vllm-omni":
-		// vLLM-Omni inherits from vLLM
-		return []corev1.EnvVar{
-			{
-				Name:  "CUDA_DEVICE_ORDER",
-				Value: "PCI_BUS_ID",
-			},
-		}
+		// vLLM-Omni inherits vLLM env behavior and pins CUDA ordering.
+		return r.buildVLLMEnv(m, true)
 	case "diffusers":
 		// Diffusers API server environment
 		var env []corev1.EnvVar
@@ -1805,6 +1751,65 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 	default:
 		return nil
 	}
+}
+
+func (r *ModelDeploymentReconciler) buildVLLMEnv(m *aiv1alpha1.ModelDeployment, includeCUDADeviceOrder bool) []corev1.EnvVar {
+	optionalTrue := true
+	var env []corev1.EnvVar
+
+	if includeCUDADeviceOrder {
+		env = append(env, corev1.EnvVar{
+			Name:  "CUDA_DEVICE_ORDER",
+			Value: "PCI_BUS_ID",
+		})
+	}
+
+	// When using ModelCacheRef, set HF_HOME so vLLM uses the cached models.
+	// This allows passing the model ID to --model while using local cache.
+	if m.Spec.ModelCacheRef != nil {
+		env = append(env, corev1.EnvVar{
+			Name:  "HF_HOME",
+			Value: "/models",
+		})
+		env = append(env, corev1.EnvVar{
+			Name:  "TRANSFORMERS_CACHE",
+			Value: "/models",
+		})
+	}
+
+	// HuggingFace token for private/gated models (optional).
+	env = append(env, corev1.EnvVar{
+		Name: "HUGGINGFACE_HUB_TOKEN",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: "hf-token",
+				},
+				Key:      "HF_TOKEN",
+				Optional: &optionalTrue,
+			},
+		},
+	})
+
+	// ROCm-specific environment for AMD GPUs.
+	if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
+		env = append(env, r.rocmEnvVars()...)
+
+		// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
+		// This helps on hosts where KFD can still enumerate multiple GPUs.
+		if m.Spec.VLLM != nil && m.Spec.VLLM.HIPVisibleDevices != "" {
+			env = append(env, corev1.EnvVar{
+				Name:  "ROCR_VISIBLE_DEVICES",
+				Value: m.Spec.VLLM.HIPVisibleDevices,
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "HIP_VISIBLE_DEVICES",
+				Value: m.Spec.VLLM.HIPVisibleDevices,
+			})
+		}
+	}
+
+	return env
 }
 
 // getNodeSelector returns the node selector for the deployment.

@@ -461,6 +461,53 @@ func TestGetBackendEnv_VLLM_AMD_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	}
 }
 
+func TestGetBackendEnv_VLLMOmni_AMD_InheritsVLLMROCmEnv(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	cacheRef := "qwen-cache"
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend:       "vllm-omni",
+			ModelCacheRef: &cacheRef,
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			VLLM: &aiv1alpha1.VLLMSpec{
+				HIPVisibleDevices: "1",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	envMap := make(map[string]corev1.EnvVar)
+	for _, e := range env {
+		envMap[e.Name] = e
+	}
+
+	if v := envMap["CUDA_DEVICE_ORDER"].Value; v != "PCI_BUS_ID" {
+		t.Fatalf("expected CUDA_DEVICE_ORDER=PCI_BUS_ID, got %q", v)
+	}
+	if v := envMap["HIP_VISIBLE_DEVICES"].Value; v != "1" {
+		t.Fatalf("expected HIP_VISIBLE_DEVICES=1, got %q", v)
+	}
+	if v := envMap["ROCR_VISIBLE_DEVICES"].Value; v != "1" {
+		t.Fatalf("expected ROCR_VISIBLE_DEVICES=1, got %q", v)
+	}
+	if v := envMap["HSA_OVERRIDE_GFX_VERSION"].Value; v != "11.0.0" {
+		t.Fatalf("expected HSA_OVERRIDE_GFX_VERSION=11.0.0, got %q", v)
+	}
+	if v := envMap["HF_HOME"].Value; v != "/models" {
+		t.Fatalf("expected HF_HOME=/models, got %q", v)
+	}
+	if v := envMap["TRANSFORMERS_CACHE"].Value; v != "/models" {
+		t.Fatalf("expected TRANSFORMERS_CACHE=/models, got %q", v)
+	}
+	if tok, ok := envMap["HUGGINGFACE_HUB_TOKEN"]; !ok || tok.ValueFrom == nil || tok.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("expected HUGGINGFACE_HUB_TOKEN secret ref to be set")
+	}
+}
+
 func TestGetBackendCommand_MlcLlm(t *testing.T) {
 	r := &ModelDeploymentReconciler{}
 	m := &aiv1alpha1.ModelDeployment{
