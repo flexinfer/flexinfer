@@ -473,15 +473,11 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		for _, c := range pod.Spec.Containers {
-			for _, key := range gpuResourceKeys {
-				if qty, ok := c.Resources.Requests[key]; ok {
-					acc := used[key]
-					acc.Add(qty)
-					used[key] = acc
-				}
-			}
+		// Ignore unscheduled pods: resources are not reserved on any node yet.
+		if pod.Spec.NodeName == "" {
+			continue
 		}
+		addPodGPURequests(used, &pod)
 	}
 
 	available := make(corev1.ResourceList, len(gpuResourceKeys))
@@ -495,6 +491,51 @@ func collectGPUInventory(ctx context.Context, clientset kubernetes.Interface) (c
 	}
 
 	return capacity, available, nil
+}
+
+func addPodGPURequests(used corev1.ResourceList, pod *corev1.Pod) {
+	if pod == nil {
+		return
+	}
+
+	containerSum := make(corev1.ResourceList, len(gpuResourceKeys))
+	initMax := make(corev1.ResourceList, len(gpuResourceKeys))
+	for _, key := range gpuResourceKeys {
+		containerSum[key] = *resource.NewQuantity(0, resource.DecimalSI)
+		initMax[key] = *resource.NewQuantity(0, resource.DecimalSI)
+	}
+
+	for _, c := range pod.Spec.Containers {
+		for _, key := range gpuResourceKeys {
+			if qty, ok := c.Resources.Requests[key]; ok {
+				sum := containerSum[key]
+				sum.Add(qty)
+				containerSum[key] = sum
+			}
+		}
+	}
+
+	for _, c := range pod.Spec.InitContainers {
+		for _, key := range gpuResourceKeys {
+			if qty, ok := c.Resources.Requests[key]; ok {
+				current := initMax[key]
+				if qty.Cmp(current) > 0 {
+					initMax[key] = qty.DeepCopy()
+				}
+			}
+		}
+	}
+
+	for _, key := range gpuResourceKeys {
+		effective := containerSum[key]
+		initQty := initMax[key]
+		if initQty.Cmp(effective) > 0 {
+			effective = initQty
+		}
+		acc := used[key]
+		acc.Add(effective)
+		used[key] = acc
+	}
 }
 
 func collectRemoteModels(ctx context.Context, restConfig *rest.Config) ([]aiv1alpha2.ClusterModelStatus, error) {

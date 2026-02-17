@@ -116,6 +116,7 @@ func TestCollectGPUInventory(t *testing.T) {
 			Phase: corev1.PodRunning,
 		},
 		Spec: corev1.PodSpec{
+			NodeName: "gpu-node-a",
 			Containers: []corev1.Container{
 				{
 					Name: "inference",
@@ -135,6 +136,7 @@ func TestCollectGPUInventory(t *testing.T) {
 			Phase: corev1.PodSucceeded,
 		},
 		Spec: corev1.PodSpec{
+			NodeName: "gpu-node-a",
 			Containers: []corev1.Container{
 				{
 					Name: "ignored",
@@ -148,7 +150,26 @@ func TestCollectGPUInventory(t *testing.T) {
 		},
 	}
 
-	clientset := k8sfake.NewSimpleClientset(nodeA, nodeB, runningPod, succeededPod)
+	unscheduledPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-model", Namespace: "tenant-a"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "waiting",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clientset := k8sfake.NewSimpleClientset(nodeA, nodeB, runningPod, succeededPod, unscheduledPod)
 	capacity, available, err := collectGPUInventory(ctx, clientset)
 	if err != nil {
 		t.Fatalf("collectGPUInventory() unexpected error: %v", err)
@@ -170,6 +191,93 @@ func TestCollectGPUInventory(t *testing.T) {
 	nvidiaAvail := available[corev1.ResourceName("nvidia.com/gpu")]
 	if got := nvidiaAvail.String(); got != "1" {
 		t.Fatalf("nvidia available = %s, want 1", got)
+	}
+}
+
+func TestCollectGPUInventory_UsesInitContainerMaxForScheduledPods(t *testing.T) {
+	ctx := context.Background()
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-a"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceName("amd.com/gpu"): resource.MustParse("4"),
+			},
+		},
+	}
+
+	podWithHeavyInit := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-a", Namespace: "tenant-a"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "gpu-node-a",
+			InitContainers: []corev1.Container{
+				{
+					Name: "init",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("amd.com/gpu"): resource.MustParse("2"),
+						},
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "inference",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("amd.com/gpu"): resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	podWithTwoContainers := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-b", Namespace: "tenant-a"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "gpu-node-a",
+			Containers: []corev1.Container{
+				{
+					Name: "main",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("amd.com/gpu"): resource.MustParse("1"),
+						},
+					},
+				},
+				{
+					Name: "sidecar",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceName("amd.com/gpu"): resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clientset := k8sfake.NewSimpleClientset(node, podWithHeavyInit, podWithTwoContainers)
+	capacity, available, err := collectGPUInventory(ctx, clientset)
+	if err != nil {
+		t.Fatalf("collectGPUInventory() unexpected error: %v", err)
+	}
+
+	amdCap := capacity[corev1.ResourceName("amd.com/gpu")]
+	if got := amdCap.String(); got != "4" {
+		t.Fatalf("amd capacity = %s, want 4", got)
+	}
+
+	amdAvail := available[corev1.ResourceName("amd.com/gpu")]
+	if got := amdAvail.String(); got != "0" {
+		t.Fatalf("amd available = %s, want 0", got)
 	}
 }
 
