@@ -41,7 +41,7 @@ func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipe
 
 func (p *callPipeline) parseAndResolve() *mcp.Message {
 	if err := json.Unmarshal(p.msg.Params, &p.params); err != nil {
-		return mcp.NewErrorResponse(p.msg.ID, mcp.InvalidParams, err.Error())
+		return p.invalidParamsError(err.Error())
 	}
 
 	p.serverName = p.params.Server
@@ -73,16 +73,16 @@ func (p *callPipeline) parseAndResolve() *mcp.Message {
 
 		resolved, err := p.daemon.router.ResolveServer(p.daemon.cfg.Target, p.toolName, args)
 		if err != nil {
-			return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, err.Error())
+			return p.internalError(err)
 		}
 		if resolved == "" {
-			return mcp.NewErrorResponse(p.msg.ID, mcp.InvalidParams, fmt.Sprintf("could not resolve server for tool: %s", p.toolName))
+			return p.invalidParamsError(fmt.Sprintf("could not resolve server for tool: %s", p.toolName))
 		}
 		p.serverName = resolved
 	}
 
 	if p.serverName == "" {
-		return mcp.NewErrorResponse(p.msg.ID, mcp.InvalidParams, "missing server or tool for call")
+		return p.invalidParamsError("missing server or tool for call")
 	}
 
 	p.auditStart = time.Now()
@@ -128,7 +128,7 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 func (p *callPipeline) routeAndConnect() *mcp.Message {
 	decision, err := p.daemon.router.Route(p.ctx, p.serverName)
 	if err != nil {
-		return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, err.Error())
+		return p.internalErrorWithAudit("", err.Error())
 	}
 
 	if pref, ok := p.daemon.routingPreferences[p.serverName]; ok && pref != RoutingHealthBased {
@@ -148,24 +148,29 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 
 	switch decision.Target {
 	case router.TargetLocal:
-		p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
 		p.target = router.TargetLocal
+		p.targetStr = p.target.String()
+		p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
 	case router.TargetHub:
+		p.target = router.TargetHub
+		p.targetStr = p.target.String()
 		if p.daemon.hubPool == nil {
-			return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, "hub fallback not configured")
+			return p.internalErrorWithAudit(p.targetStr, "hub fallback not configured")
 		}
 		p.conn, err = p.daemon.hubPool.Get(p.ctx, p.serverName)
-		p.target = router.TargetHub
 	case router.TargetUnavailable:
-		return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, fmt.Sprintf("server unavailable: %s", decision.Reason))
+		p.target = router.TargetUnavailable
+		p.targetStr = p.target.String()
+		errMsg := fmt.Sprintf("server unavailable: %s", decision.Reason)
+		return p.internalErrorWithAudit(p.targetStr, errMsg)
 	}
 
 	if err != nil {
 		p.daemon.router.RecordFailure(p.serverName, p.target, err)
-		return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, err.Error())
+		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "connect")
+		return p.internalErrorWithAudit(p.targetStr, err.Error())
 	}
 
-	p.targetStr = p.target.String()
 	return nil
 }
 
@@ -200,7 +205,7 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 
 	req, err := mcp.NewRequest(p.msg.ID, p.method, forwardParams)
 	if err != nil {
-		return nil, mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, err.Error())
+		return nil, p.internalError(err)
 	}
 	return req, nil
 }
@@ -233,30 +238,10 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	}
 
 	duration := time.Since(start)
-	latencyMs := float64(duration.Milliseconds())
-	p.daemon.router.RecordSuccess(p.serverName, p.target, latencyMs)
-	p.daemon.metrics.RecordServerSuccess(p.serverName, p.targetStr)
-	p.daemon.metrics.RecordRequest(p.serverName, p.method, "success", p.targetStr, duration)
-
-	if p.target == router.TargetLocal {
-		p.daemon.procMgr.MarkActivity(p.serverName)
-	}
-
-	if p.cacheKey != "" && resp.Error == nil && resp.Result != nil {
-		p.daemon.respCache.Set(p.cacheKey, resp.Result, p.serverName, p.toolName)
-		stats := p.daemon.respCache.Stats()
-		p.daemon.metrics.UpdateResponseCacheStats(stats.Entries, stats.SizeBytes)
-		p.daemon.logger.Debug("response cached", "server", p.serverName, "tool", p.toolName)
-	}
-
-	auditStatus := "success"
-	auditErr := ""
-	if resp.Error != nil {
-		auditStatus = "error"
-		auditErr = resp.Error.Message
-	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, auditStatus, auditErr, false)
-
+	p.recordSuccessMetrics(duration)
+	p.markLocalActivity()
+	p.cacheSuccessResponse(resp)
+	p.emitResponseAudit(resp)
 	return resp
 }
 
@@ -265,6 +250,7 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 	p.daemon.router.RecordFailure(p.serverName, p.target, err)
 	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, stage)
 	p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
+	p.emitErrorAudit(p.targetStr, err.Error())
 
 	if p.target == router.TargetLocal {
 		switch stage {
@@ -289,5 +275,61 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 		}
 	}
 
-	return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, err.Error())
+	return p.internalError(err)
+}
+
+func (p *callPipeline) invalidParamsError(message string) *mcp.Message {
+	return mcp.NewErrorResponse(p.msg.ID, mcp.InvalidParams, message)
+}
+
+func (p *callPipeline) internalError(err error) *mcp.Message {
+	return p.internalErrorMessage(err.Error())
+}
+
+func (p *callPipeline) internalErrorMessage(message string) *mcp.Message {
+	return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, message)
+}
+
+func (p *callPipeline) internalErrorWithAudit(target, message string) *mcp.Message {
+	p.emitErrorAudit(target, message)
+	return p.internalErrorMessage(message)
+}
+
+func (p *callPipeline) recordSuccessMetrics(duration time.Duration) {
+	latencyMs := float64(duration.Milliseconds())
+	p.daemon.router.RecordSuccess(p.serverName, p.target, latencyMs)
+	p.daemon.metrics.RecordServerSuccess(p.serverName, p.targetStr)
+	p.daemon.metrics.RecordRequest(p.serverName, p.method, "success", p.targetStr, duration)
+}
+
+func (p *callPipeline) markLocalActivity() {
+	if p.target != router.TargetLocal || p.daemon.procMgr == nil {
+		return
+	}
+	p.daemon.procMgr.MarkActivity(p.serverName)
+}
+
+func (p *callPipeline) cacheSuccessResponse(resp *mcp.Message) {
+	if p.cacheKey == "" || resp == nil || resp.Error != nil || resp.Result == nil || p.daemon.respCache == nil {
+		return
+	}
+
+	p.daemon.respCache.Set(p.cacheKey, resp.Result, p.serverName, p.toolName)
+	stats := p.daemon.respCache.Stats()
+	p.daemon.metrics.UpdateResponseCacheStats(stats.Entries, stats.SizeBytes)
+	p.daemon.logger.Debug("response cached", "server", p.serverName, "tool", p.toolName)
+}
+
+func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
+	status := "success"
+	errMsg := ""
+	if resp != nil && resp.Error != nil {
+		status = "error"
+		errMsg = resp.Error.Message
+	}
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false)
+}
+
+func (p *callPipeline) emitErrorAudit(target, errMsg string) {
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false)
 }

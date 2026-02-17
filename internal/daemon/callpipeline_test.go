@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +81,50 @@ func newCallMessage(t *testing.T, payload any) *mcp.Message {
 		Method:  "loom/call",
 		Params:  raw,
 	}
+}
+
+func enableAuditAndCostForTest(t *testing.T, d *Daemon) string {
+	t.Helper()
+
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	auditLogger, err := NewAuditLogger(AuditConfig{
+		Enabled: true,
+		LogPath: auditPath,
+	}, d.logger)
+	if err != nil {
+		t.Fatalf("create audit logger: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = auditLogger.Close()
+	})
+	d.audit = auditLogger
+	d.cost = NewCostTracker(CostConfig{Enabled: true}, d.logger)
+
+	return auditPath
+}
+
+func readAuditEntries(t *testing.T, path string) []AuditEntry {
+	t.Helper()
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open audit log: %v", err)
+	}
+	defer f.Close()
+
+	var entries []AuditEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var entry AuditEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			t.Fatalf("decode audit entry: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan audit log: %v", err)
+	}
+	return entries
 }
 
 func TestCallPipelineParseAndResolve_InvalidParams(t *testing.T) {
@@ -271,6 +318,29 @@ func TestCallPipelineBuildForwardRequest_FromArguments(t *testing.T) {
 	}
 }
 
+func TestCallPipelineBuildForwardRequest_InvalidRawParams(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := &callPipeline{
+		daemon: d,
+		msg:    &mcp.Message{ID: "forward-invalid"},
+		method: "tools/call",
+		params: callParams{
+			Params: json.RawMessage(`{`),
+		},
+	}
+
+	req, errResp := p.buildForwardRequest()
+	if req != nil {
+		t.Fatalf("expected nil request, got %+v", req)
+	}
+	if errResp == nil || errResp.Error == nil {
+		t.Fatal("expected internal error response")
+	}
+	if errResp.Error.Code != mcp.InternalError {
+		t.Fatalf("error code = %d, want %d", errResp.Error.Code, mcp.InternalError)
+	}
+}
+
 func TestCallPipelineRouteAndConnect_Unavailable(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	d.router = router.New(router.Config{HubEnabled: false})
@@ -380,6 +450,71 @@ func TestCallPipelineRouteAndConnect_HubSuccess(t *testing.T) {
 	}
 	if p.targetStr != router.TargetHub.String() {
 		t.Fatalf("targetStr = %q, want %q", p.targetStr, router.TargetHub.String())
+	}
+}
+
+func TestCallPipelineRouteAndConnect_LocalDialFailureEmitsAuditAndCost(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.router = router.New(router.Config{
+		HubEnabled: false,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "local_srv",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Second,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return nil, errors.New("dial failed")
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "route-local-fail"},
+		serverName: "local_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		params: callParams{
+			AgentID: "agent-1",
+		},
+		auditStart: time.Now(),
+	}
+
+	resp := p.routeAndConnect()
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected connect failure error response")
+	}
+	if !strings.Contains(resp.Error.Message, "dial failed") {
+		t.Fatalf("unexpected connect failure message: %q", resp.Error.Message)
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.ErrorCount != 1 {
+		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "error" {
+		t.Fatalf("audit status = %q, want error", entries[0].Status)
+	}
+	if entries[0].Target != router.TargetLocal.String() {
+		t.Fatalf("audit target = %q, want %q", entries[0].Target, router.TargetLocal.String())
 	}
 }
 
@@ -583,5 +718,218 @@ func TestCallPipelineTransportFailure_LocalClearsIdleAndStopsServer(t *testing.T
 	stats := d.pool.Stats()
 	if stats.IdleConns != 0 {
 		t.Fatalf("idle conns = %d, want 0 after ClearServer", stats.IdleConns)
+	}
+}
+
+func TestCallPipelineTransportFailure_EmitsAuditAndCost(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "transport-hub"},
+		serverName: "prometheus",
+		toolName:   "query",
+		method:     "tools/call",
+		target:     router.TargetHub,
+		targetStr:  router.TargetHub.String(),
+		params: callParams{
+			AgentID: "agent-1",
+		},
+		auditStart: time.Now(),
+		conn: &pool.Conn{
+			ServerName: "prometheus",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+	}
+
+	resp := p.transportFailure("recv", errors.New("recv failed"), time.Now().Add(-50*time.Millisecond))
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected transport failure response")
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.ErrorCount != 1 {
+		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "error" {
+		t.Fatalf("audit status = %q, want error", entries[0].Status)
+	}
+	if entries[0].Target != router.TargetHub.String() {
+		t.Fatalf("audit target = %q, want %q", entries[0].Target, router.TargetHub.String())
+	}
+	if !strings.Contains(entries[0].Error, "recv failed") {
+		t.Fatalf("audit error = %q, want recv failed", entries[0].Error)
+	}
+}
+
+func TestHandleCall_ParseFailureShortCircuitsWithoutAudit(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	msg := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "parse-fail",
+		Method:  "loom/call",
+		Params:  json.RawMessage(`{`),
+	}
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected parse failure response")
+	}
+	if resp.Error.Code != mcp.InvalidParams {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InvalidParams)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 0 {
+		t.Fatalf("audit entries = %d, want 0", len(entries))
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 0 {
+		t.Fatalf("call_count = %d, want 0", snap.Totals.CallCount)
+	}
+}
+
+func TestHandleCall_CacheHitShortCircuitsRouting(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.respCache = NewResponseCache(CacheConfig{Enabled: true})
+
+	args := json.RawMessage(`{"query":"up"}`)
+	key := d.respCache.Key("prometheus", "query", args)
+	d.respCache.Set(key, json.RawMessage(`{"cached":true}`), "prometheus", "query")
+
+	msg := newCallMessage(t, map[string]any{
+		"server":    "prometheus",
+		"tool":      "query",
+		"arguments": json.RawMessage(`{"query":"up"}`),
+		"agent_id":  "agent-cache",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("unexpected error response: %+v", resp)
+	}
+	if string(resp.Result) != `{"cached":true}` {
+		t.Fatalf("result = %s, want %s", string(resp.Result), `{"cached":true}`)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if !entries[0].Cached {
+		t.Fatal("expected cached audit entry")
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.CachedCount != 1 {
+		t.Fatalf("cached_count = %d, want 1", snap.Totals.CachedCount)
+	}
+}
+
+func TestHandleCall_RouteFailureEmitsSingleAudit(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.router = router.New(router.Config{HubEnabled: false})
+
+	msg := newCallMessage(t, map[string]any{
+		"server":   "unknown",
+		"tool":     "query",
+		"agent_id": "agent-route",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected route failure response")
+	}
+	if !strings.Contains(resp.Error.Message, "server unavailable") {
+		t.Fatalf("unexpected route failure message: %q", resp.Error.Message)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "error" {
+		t.Fatalf("audit status = %q, want error", entries[0].Status)
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.ErrorCount != 1 {
+		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
+	}
+}
+
+func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Second,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{sendErr: errors.New("send failed")}, nil
+		},
+	})
+	defer func() { _ = d.hubPool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server":   "hub_only",
+		"tool":     "query",
+		"agent_id": "agent-send-fail",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected transport failure response")
+	}
+	if !strings.Contains(resp.Error.Message, "send failed") {
+		t.Fatalf("unexpected transport error: %q", resp.Error.Message)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "error" {
+		t.Fatalf("audit status = %q, want error", entries[0].Status)
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.ErrorCount != 1 {
+		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
 	}
 }
