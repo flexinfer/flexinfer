@@ -1498,6 +1498,122 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 }
 
 // handleSharedGPU implements GPU sharing logic for models with gpu.shared set.
+func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *aiv1alpha2.Model {
+	if len(groupModels) == 0 {
+		return nil
+	}
+
+	better := func(a, b *aiv1alpha2.Model) *aiv1alpha2.Model {
+		if a == nil {
+			return b
+		}
+		if b == nil {
+			return a
+		}
+		pa := a.Spec.GetPriority()
+		pb := b.Spec.GetPriority()
+		if pa != pb {
+			if pa > pb {
+				return a
+			}
+			return b
+		}
+		if a.Status.LastActiveTime != nil && b.Status.LastActiveTime != nil {
+			if !a.Status.LastActiveTime.Equal(b.Status.LastActiveTime) {
+				if a.Status.LastActiveTime.After(b.Status.LastActiveTime.Time) {
+					return a
+				}
+				return b
+			}
+		}
+		if a.Name <= b.Name {
+			return a
+		}
+		return b
+	}
+
+	var readyLeader *aiv1alpha2.Model
+	var recentLeader *aiv1alpha2.Model
+	var fallbackLeader *aiv1alpha2.Model
+	for _, m := range groupModels {
+		fallbackLeader = better(fallbackLeader, m)
+		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+			readyLeader = better(readyLeader, m)
+			continue
+		}
+		if m.Status.LastActiveTime == nil {
+			continue
+		}
+		if now.Sub(m.Status.LastActiveTime.Time) < 5*time.Minute {
+			recentLeader = better(recentLeader, m)
+		}
+	}
+
+	if readyLeader != nil {
+		return readyLeader
+	}
+	if recentLeader != nil {
+		return recentLeader
+	}
+	return fallbackLeader
+}
+
+func queuePositionForSharedModel(modelName string, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) int32 {
+	if activeModel != nil && modelName == activeModel.Name {
+		return 0
+	}
+
+	queued := make([]*aiv1alpha2.Model, 0, len(groupModels))
+	for _, m := range groupModels {
+		if activeModel != nil && m.Name == activeModel.Name {
+			continue
+		}
+		queued = append(queued, m)
+	}
+	sort.Slice(queued, func(i, j int) bool {
+		pi := queued[i].Spec.GetPriority()
+		pj := queued[j].Spec.GetPriority()
+		if pi != pj {
+			return pi > pj
+		}
+		return queued[i].Name < queued[j].Name
+	})
+	for i, m := range queued {
+		if m.Name == modelName {
+			return int32(i + 1)
+		}
+	}
+	return 0
+}
+
+func sharedGroupStatusEqual(a, b *aiv1alpha2.SharedGroupStatus) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	}
+	if a.GroupName != b.GroupName || a.State != b.State || a.QueuePosition != b.QueuePosition || a.PreemptedBy != b.PreemptedBy {
+		return false
+	}
+	switch {
+	case a.PreemptedAt == nil && b.PreemptedAt == nil:
+		return true
+	case a.PreemptedAt == nil || b.PreemptedAt == nil:
+		return false
+	default:
+		return a.PreemptedAt.Equal(b.PreemptedAt)
+	}
+}
+
+func cloneSharedGroupStatus(in *aiv1alpha2.SharedGroupStatus) *aiv1alpha2.SharedGroupStatus {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
 func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2.Model) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -1521,36 +1637,15 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		}
 	}
 
-	// Find the active model (highest priority that's running or has pending requests)
-	var activeModel *aiv1alpha2.Model
-	highestPriority := int32(-1)
-
-	for _, m := range groupModels {
-		priority := m.Spec.GetPriority()
-
-		// Check if this model should be active
-		// Priority: Running models > Models with recent activity > Highest priority
-		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
-			if activeModel == nil || priority > highestPriority {
-				activeModel = m
-				highestPriority = priority
-			}
-		} else if m.Status.LastActiveTime != nil {
-			// Model had recent activity (request came in while idle)
-			timeSinceActive := time.Since(m.Status.LastActiveTime.Time)
-			if timeSinceActive < 5*time.Minute && priority > highestPriority {
-				activeModel = m
-				highestPriority = priority
-			}
-		}
-	}
-
-	// If no model is active, this model can become active
+	activeModel := chooseSharedGroupLeader(groupModels, time.Now())
 	if activeModel == nil {
-		activeModel = model
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// Update this model's shared group status
+	origPhase := model.Status.Phase
+	origShared := cloneSharedGroupStatus(model.Status.SharedGroup)
+
 	if model.Status.SharedGroup == nil {
 		model.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{}
 	}
@@ -1560,10 +1655,15 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		// This model should be active
 		model.Status.SharedGroup.State = "Active"
 		model.Status.SharedGroup.QueuePosition = 0
-		log.Info("Model is active in shared group", "group", groupName)
+		model.Status.SharedGroup.PreemptedBy = ""
+		model.Status.SharedGroup.PreemptedAt = nil
+		if origShared == nil || origShared.State != "Active" {
+			log.Info("Model is active in shared group", "group", groupName)
+		}
 	} else {
 		// This model should be preempted/queued
 		model.Status.SharedGroup.State = "Queued"
+		model.Status.SharedGroup.QueuePosition = queuePositionForSharedModel(model.Name, activeModel, groupModels)
 		model.Status.SharedGroup.PreemptedBy = activeModel.Name
 
 		if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
@@ -1574,6 +1674,10 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 				fmt.Sprintf("Preempted by %s with priority %d", activeModel.Name, activeModel.Spec.GetPriority()))
 		}
+	}
+
+	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	if err := r.Status().Update(ctx, model); err != nil {
@@ -1680,9 +1784,20 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 		vendor backend.GPUVendor
 		arch   string
 	}
+	isNodeReady := func(node corev1.Node) bool {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady {
+				return condition.Status == corev1.ConditionTrue
+			}
+		}
+		return false
+	}
 
 	findFirst := func(vendor backend.GPUVendor) (nodeMatch, bool) {
 		for _, node := range nodes {
+			if !isNodeReady(node) {
+				continue
+			}
 			switch vendor {
 			case backend.GPUVendorNVIDIA:
 				qty, ok := node.Status.Capacity["nvidia.com/gpu"]

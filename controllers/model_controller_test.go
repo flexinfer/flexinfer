@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -103,6 +104,305 @@ func TestDesiredReplicasServerless(t *testing.T) {
 	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
 		t.Errorf("desiredReplicas() = %d, want 1 (serverless disabled)", got)
 	}
+}
+
+func TestChooseSharedGroupLeader(t *testing.T) {
+	now := time.Now()
+	shared := "test-shared"
+	high := int32(200)
+	mid := int32(100)
+	low := int32(50)
+
+	models := []*aiv1alpha2.Model{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "low"},
+			Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &low}},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "high"},
+			Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &high}},
+		},
+	}
+
+	leader := chooseSharedGroupLeader(models, now)
+	if leader == nil || leader.Name != "high" {
+		t.Fatalf("expected high-priority fallback leader, got %v", leader)
+	}
+
+	readyLow := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-low"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &low}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+		},
+	}
+	recentHigh := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "recent-high"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &high}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyLow, recentHigh}, now)
+	if leader == nil || leader.Name != "ready-low" {
+		t.Fatalf("expected ready model to win over recent activity, got %v", leader)
+	}
+
+	oldHigh := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "old-high"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &high}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-10 * time.Minute)},
+		},
+	}
+	recentMid := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "recent-mid"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &mid}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-20 * time.Second)},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{oldHigh, recentMid}, now)
+	if leader == nil || leader.Name != "recent-mid" {
+		t.Fatalf("expected recent active model to win when none are ready, got %v", leader)
+	}
+}
+
+func TestQueuePositionForSharedModel(t *testing.T) {
+	shared := "test-shared"
+	p200 := int32(200)
+	p100 := int32(100)
+	p50 := int32(50)
+
+	active := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "active"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &p200}},
+	}
+	queuedA := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "queued-a"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &p100}},
+	}
+	queuedB := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "queued-b"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &p50}},
+	}
+	group := []*aiv1alpha2.Model{queuedB, active, queuedA}
+
+	if pos := queuePositionForSharedModel("active", active, group); pos != 0 {
+		t.Fatalf("expected active model queue position 0, got %d", pos)
+	}
+	if pos := queuePositionForSharedModel("queued-a", active, group); pos != 1 {
+		t.Fatalf("expected queued-a queue position 1, got %d", pos)
+	}
+	if pos := queuePositionForSharedModel("queued-b", active, group); pos != 2 {
+		t.Fatalf("expected queued-b queue position 2, got %d", pos)
+	}
+}
+
+func TestHandleSharedGPU_NoSelfElectionWhenNoModelReady(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	shared := "test-shared"
+	highPrio := int32(200)
+	lowPrio := int32(50)
+
+	high := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "high",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared:   shared,
+				Priority: &highPrio,
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePending,
+		},
+	}
+	low := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "low",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared:   shared,
+				Priority: &lowPrio,
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		WithRuntimeObjects(high, low).
+		Build()
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+	ctx := context.Background()
+
+	lowObj := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(low), lowObj); err != nil {
+		t.Fatalf("get low model: %v", err)
+	}
+	if _, err := r.handleSharedGPU(ctx, lowObj); err != nil {
+		t.Fatalf("handleSharedGPU(low) error: %v", err)
+	}
+
+	updatedLow := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(low), updatedLow); err != nil {
+		t.Fatalf("get updated low model: %v", err)
+	}
+	if updatedLow.Status.SharedGroup == nil {
+		t.Fatalf("expected shared group status to be set")
+	}
+	if updatedLow.Status.SharedGroup.State != "Queued" {
+		t.Fatalf("expected low model state Queued, got %q", updatedLow.Status.SharedGroup.State)
+	}
+	if updatedLow.Status.SharedGroup.PreemptedBy != "high" {
+		t.Fatalf("expected low model preemptedBy high, got %q", updatedLow.Status.SharedGroup.PreemptedBy)
+	}
+	if updatedLow.Status.SharedGroup.QueuePosition != 1 {
+		t.Fatalf("expected low model queue position 1, got %d", updatedLow.Status.SharedGroup.QueuePosition)
+	}
+}
+
+func TestDetectGPU_UsesOnlyReadyNodes(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "amd-not-ready",
+			Labels: map[string]string{"gpu.amd.com/gpu-architecture": "gfx1100"},
+		},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceName("amd.com/gpu"): resourceMustParse("1"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+			},
+		},
+	}
+	readyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "amd-ready",
+			Labels: map[string]string{"gpu.amd.com/gpu-architecture": "gfx1100"},
+		},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceName("amd.com/gpu"): resourceMustParse("1"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(s).
+			WithRuntimeObjects(notReadyNode, readyNode).
+			Build(),
+		Scheme: s,
+	}
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: aiv1alpha2.GPUVendorAMD,
+			},
+		},
+	}
+
+	vendor, arch, err := r.detectGPU(context.Background(), model)
+	if err != nil {
+		t.Fatalf("detectGPU() unexpected error: %v", err)
+	}
+	if vendor != backend.GPUVendorAMD {
+		t.Fatalf("detectGPU() vendor=%v, want %v", vendor, backend.GPUVendorAMD)
+	}
+	if arch != "gfx1100" {
+		t.Fatalf("detectGPU() arch=%q, want %q", arch, "gfx1100")
+	}
+}
+
+func TestDetectGPU_ReturnsNoMatchingWhenOnlyNotReadyNodesMatch(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "amd-not-ready",
+			Labels: map[string]string{"gpu.amd.com/gpu-architecture": "gfx1100"},
+		},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceName("amd.com/gpu"): resourceMustParse("1"),
+			},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionUnknown},
+			},
+		},
+	}
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(s).
+			WithRuntimeObjects(notReadyNode).
+			Build(),
+		Scheme: s,
+	}
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: aiv1alpha2.GPUVendorAMD,
+			},
+		},
+	}
+
+	if _, _, err := r.detectGPU(context.Background(), model); err == nil {
+		t.Fatalf("expected no matching nodes error, got nil")
+	} else if !isNoMatchingNodesError(err) {
+		t.Fatalf("expected noMatchingNodesError, got %T (%v)", err, err)
+	}
+}
+
+func resourceMustParse(raw string) resource.Quantity {
+	q, err := resource.ParseQuantity(raw)
+	if err != nil {
+		panic(err)
+	}
+	return q
 }
 
 func TestGetIdleTimeout(t *testing.T) {
