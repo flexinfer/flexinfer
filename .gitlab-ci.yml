@@ -50,7 +50,18 @@ lint:
     - mkdir -p .go
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export PATH=$PATH:$GOPATH/bin
-    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+    - |
+      set -e
+      if ! command -v golangci-lint >/dev/null 2>&1; then
+        echo "Installing golangci-lint binary..."
+        if ! curl --retry 5 --retry-delay 2 --retry-connrefused -sSfL \
+          https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+          | sh -s -- -b "$GOPATH/bin" v1.64.8; then
+          echo "WARN: installer script failed; falling back to go install via module proxies"
+          GOPROXY="http://athens.ci.svc.cluster.local:3000,https://proxy.golang.org,direct" \
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+        fi
+      fi
   script:
     - golangci-lint run -v --timeout=10m ./...
 
