@@ -15,6 +15,7 @@
    *   expandedIds?: Set<string>,
    *   idKey?: string,
    *   maxRows?: number,
+   *   stableLayout?: boolean,
    *   onSort?: (key: string, dir: 'asc' | 'desc') => void,
    *   onSelect?: (ids: Set<string>) => void,
    *   onRowClick?: (row: any) => void,
@@ -35,6 +36,7 @@
     expandedIds = new Set(),
     idKey = 'id',
     maxRows = undefined,
+    stableLayout = false,
     onSort,
     onSelect,
     onRowClick,
@@ -94,7 +96,7 @@
 </script>
 
 <div class="data-table-wrap">
-  <table class="data-table" role="grid">
+  <table class="data-table" class:stable-layout={stableLayout} role="grid">
     <thead>
       <tr>
         {#if selectable}
@@ -198,6 +200,10 @@
     font-size: var(--text-sm);
   }
 
+  .data-table.stable-layout {
+    table-layout: fixed;
+  }
+
   .data-table thead th {
     text-align: left;
     font-size: var(--text-xs);
@@ -242,6 +248,15 @@
     border-bottom: 1px solid var(--border);
     color: var(--fg-secondary);
     vertical-align: middle;
+  }
+
+  .data-table.stable-layout thead th,
+  .data-table.stable-layout tbody td {
+    min-width: 0;
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .data-table tbody tr:hover td {

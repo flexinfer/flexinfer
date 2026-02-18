@@ -7,7 +7,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { healthStore } from '../stores/health.svelte.ts';
   import { router } from '../stores/router.svelte.ts';
-  import { formatTime, relativeTime, formatNumber, entryVariant } from '../utils/format.ts';
+  import { formatTime, relativeTime, formatNumber, entryVariant, sanitizeText } from '../utils/format.ts';
   import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -143,7 +143,7 @@
       let cmp = 0;
       switch (fleetSortKey) {
         case 'agent':
-          cmp = (a.agent ?? '').localeCompare(b.agent ?? '');
+          cmp = sanitizeText(a.agent ?? '').localeCompare(sanitizeText(b.agent ?? ''));
           break;
         case 'status': {
           const order = { healthy: 0, degraded: 1, down: 2 };
@@ -151,7 +151,7 @@
           break;
         }
         case 'namespace':
-          cmp = (a.namespace ?? '').localeCompare(b.namespace ?? '');
+          cmp = sanitizeText(a.namespace ?? '').localeCompare(sanitizeText(b.namespace ?? ''));
           break;
         case 'task_count':
           cmp = (a.task_count ?? 0) - (b.task_count ?? 0);
@@ -171,9 +171,9 @@
   });
 
   const fleetColumns = [
-    { key: 'agent', label: 'Agent', sortable: true },
+    { key: 'agent', label: 'Agent', sortable: true, width: '130px' },
     { key: 'status', label: 'Status', sortable: true, width: '70px' },
-    { key: 'namespace', label: 'Namespace', sortable: true },
+    { key: 'namespace', label: 'Namespace', sortable: true, width: '200px' },
     { key: 'task_count', label: 'Tasks', sortable: true, width: '60px' },
     { key: 'tokens_used', label: 'Tokens', sortable: true, width: '100px' },
     { key: 'memory_items', label: 'Memory', sortable: true, width: '70px' },
@@ -219,6 +219,7 @@
           rows={sortedSessions}
           sortKey={fleetSortKey}
           sortDir={fleetSortDir}
+          stableLayout={true}
           loading={!fleetStore.lastUpdated}
           skeletonRows={4}
           maxRows={VIRTUAL_SCROLL_THRESHOLD}
@@ -226,8 +227,8 @@
           onRowClick={(row) => navigateToSession(row.id)}
         >
           {#snippet row({ row: session })}
-            <td class="text-mono">
-              {session.agent ?? session.id?.slice(0, 8) ?? '---'}
+            <td class="text-mono agent-cell" title={sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}>
+              {sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}
               {#if expiringClaims.has(session.agent_id)}
                 <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
               {/if}
@@ -235,12 +236,16 @@
             <td>
               <StatusDot status={sessionStatus(session)} />
             </td>
-            <td class="text-mono text-muted">{session.namespace ?? '---'}</td>
+            <td class="text-mono text-muted namespace-cell" title={sanitizeText(session.namespace ?? '---')}>
+              {sanitizeText(session.namespace ?? '---')}
+            </td>
             <td class="text-mono">{session.task_count ?? 0}</td>
             <td class="text-mono token-cell">
-              {#key session.tokens_used}<span class="data-updated">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
+              {#key session.tokens_used}<span class="data-updated token-value">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
               {#if tokenHistories.get(session.id)?.length >= 2}
-                <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
+                <span class="token-spark">
+                  <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
+                </span>
               {/if}
             </td>
             <td class="text-mono">{session.memory_items ?? 0}</td>
@@ -293,13 +298,16 @@
         <DataTable
           columns={activityColumns}
           rows={recentActivity}
+          stableLayout={true}
           idKey="id"
         >
           {#snippet row({ row: entry })}
             <td class="activity-time text-mono">{formatTime(entry.timestamp)}</td>
-            <td><Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} /></td>
-            <td class="activity-agent text-mono">{entry.agent ?? '---'}</td>
-            <td class="activity-title truncate">{entry.title ?? entry.content?.slice(0, 60) ?? '---'}</td>
+            <td><Badge text={sanitizeText(entry.entry_type ?? 'note')} variant={entryVariant(entry.entry_type)} /></td>
+            <td class="activity-agent text-mono" title={sanitizeText(entry.agent ?? '---')}>{sanitizeText(entry.agent ?? '---')}</td>
+            <td class="activity-title truncate" title={sanitizeText(entry.title ?? entry.content?.slice(0, 120) ?? '---')}>
+              {sanitizeText(entry.title ?? entry.content?.slice(0, 60) ?? '---')}
+            </td>
           {/snippet}
         </DataTable>
       {/if}
@@ -354,8 +362,8 @@
   <!-- SESSION DETAIL DRAWER -->
   <DetailDrawer
     open={!!detailSessionId}
-    title={detailSession?.agent ?? detailSessionId?.slice(0, 12) ?? ''}
-    subtitle={detailSession?.namespace ?? ''}
+    title={sanitizeText(detailSession?.agent ?? detailSessionId?.slice(0, 12) ?? '')}
+    subtitle={sanitizeText(detailSession?.namespace ?? '')}
     onClose={backToFleet}
   >
     {#snippet header()}
@@ -383,7 +391,7 @@
           </div>
         </div>
         {#if detailSession.description}
-          <div class="detail-description text-sm text-secondary">{detailSession.description}</div>
+          <div class="detail-description text-sm text-secondary">{sanitizeText(detailSession.description)}</div>
         {/if}
       {/if}
     {/snippet}
@@ -399,16 +407,19 @@
 
     <div class="entries-timeline">
       {#each sessionEntries as entry (entry.id ?? entry.timestamp)}
+        {@const entryContent = sanitizeText(entry.content ?? '')}
         <div class="timeline-entry">
           <div class="timeline-dot" style="background: var(--{entryVariant(entry.entry_type) === 'accent' ? 'accent' : entryVariant(entry.entry_type) === 'error' ? 'error' : entryVariant(entry.entry_type) === 'warning' ? 'warning' : entryVariant(entry.entry_type) === 'success' ? 'success' : 'info'})"></div>
           <div class="timeline-content">
             <div class="timeline-meta">
               <span class="text-mono text-xs text-muted">{formatTime(entry.timestamp)}</span>
-              <Badge text={entry.entry_type ?? 'note'} variant={entryVariant(entry.entry_type)} />
+              <Badge text={sanitizeText(entry.entry_type ?? 'note')} variant={entryVariant(entry.entry_type)} />
             </div>
-            <div class="timeline-title">{entry.title ?? '---'}</div>
-            {#if entry.content}
-              <div class="timeline-body text-sm text-muted">{entry.content.slice(0, 200)}{entry.content.length > 200 ? '...' : ''}</div>
+            <div class="timeline-title">{sanitizeText(entry.title ?? '---')}</div>
+            {#if entryContent}
+              <div class="timeline-body text-sm text-muted">
+                {entryContent.slice(0, 200)}{entryContent.length > 200 ? '...' : ''}
+              </div>
             {/if}
           </div>
         </div>
@@ -621,9 +632,28 @@
   }
 
   .token-cell {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto 40px;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+  }
+
+  .token-value {
+    min-width: 3ch;
+    text-align: right;
+  }
+
+  .token-spark {
+    width: 40px;
+    flex: 0 0 40px;
+  }
+
+  .agent-cell,
+  .namespace-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .expiring-icon {

@@ -7,6 +7,7 @@
   import DataTable from './shared/DataTable.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import { sanitizeText } from '../utils/format.ts';
 
   $effect(() => {
     healthStore.startPolling(5000);
@@ -102,10 +103,10 @@
     let result = servers;
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
+      const q = sanitizeText(searchQuery).toLowerCase();
       result = result.filter(s =>
-        (s.name ?? '').toLowerCase().includes(q) ||
-        (s.description ?? '').toLowerCase().includes(q)
+        sanitizeText(s.name ?? '').toLowerCase().includes(q) ||
+        sanitizeText(s.description ?? '').toLowerCase().includes(q)
       );
     }
 
@@ -131,8 +132,10 @@
         av = STATUS_SORT_ORDER[a.status] ?? 9;
         bv = STATUS_SORT_ORDER[b.status] ?? 9;
       } else {
-        av = a[sortKey] ?? '';
-        bv = b[sortKey] ?? '';
+        const rawA = a[sortKey];
+        const rawB = b[sortKey];
+        av = typeof rawA === 'string' ? sanitizeText(rawA) : (rawA ?? '');
+        bv = typeof rawB === 'string' ? sanitizeText(rawB) : (rawB ?? '');
       }
       let cmp;
       if (typeof av === 'number' && typeof bv === 'number') {
@@ -152,11 +155,11 @@
 
   // DataTable column definitions
   const columns = [
-    { key: 'name', label: 'Server', sortable: true },
+    { key: 'name', label: 'Server', sortable: true, width: '140px' },
     { key: 'status', label: 'Status', sortable: true, width: '80px' },
     { key: 'latency', label: 'Latency', sortable: true, width: '80px' },
     { key: 'tool_count', label: 'Tools', sortable: true, width: '60px' },
-    { key: 'target', label: 'Target' },
+    { key: 'target', label: 'Target', width: '180px' },
     { key: 'sparkline', label: 'Sparkline', width: '130px' },
   ];
 
@@ -240,6 +243,7 @@
         rows={sorted}
         {sortKey}
         {sortDir}
+        stableLayout={true}
         loading={!healthStore.lastUpdated}
         skeletonRows={5}
         idKey="name"
@@ -247,13 +251,15 @@
         onRowClick={selectServer}
       >
         {#snippet row({ row: server })}
-          <td class="text-mono server-name">{server.name}</td>
+          <td class="text-mono server-name" title={sanitizeText(server.name)}>{sanitizeText(server.name)}</td>
           <td>
             <StatusDot status={server.status ?? 'unknown'} />
           </td>
           <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
           <td class="text-mono">{server.tool_count ?? 0}</td>
-          <td class="text-mono text-muted target-cell">{server.target ?? '---'}</td>
+          <td class="text-mono text-muted target-cell" title={sanitizeText(server.target ?? '---')}>
+            {sanitizeText(server.target ?? '---')}
+          </td>
           <td class="sparkline-cell">
             {#if server.latencyHistory?.length}
               <SparkLine
@@ -348,8 +354,8 @@
 <!-- Server Detail Drawer -->
 <DetailDrawer
   open={!!selectedServer}
-  title={selectedServer?.name ?? ''}
-  subtitle={selectedServer?.target ?? ''}
+  title={sanitizeText(selectedServer?.name ?? '')}
+  subtitle={sanitizeText(selectedServer?.target ?? '')}
   onClose={() => { selectedServer = null; }}
 >
   {#snippet header()}
@@ -377,7 +383,7 @@
     {#if selectedServer.description}
       <div class="section">
         <div class="section-title text-xs uppercase text-muted">Description</div>
-        <p class="text-sm text-secondary">{selectedServer.description}</p>
+        <p class="text-sm text-secondary">{sanitizeText(selectedServer.description)}</p>
       </div>
     {/if}
     {#if selectedServer.categories?.length}
@@ -385,7 +391,7 @@
         <div class="section-title text-xs uppercase text-muted">Categories</div>
         <div class="detail-cats">
           {#each selectedServer.categories as cat}
-            <span class="cat-chip">{cat}</span>
+            <span class="cat-chip">{sanitizeText(cat)}</span>
           {/each}
         </div>
       </div>
@@ -403,7 +409,7 @@
     {/if}
     {#if selectedServer.error_message}
       <div class="detail-error">
-        <span class="error-label">ERROR:</span> {selectedServer.error_message}
+        <span class="error-label">ERROR:</span> {sanitizeText(selectedServer.error_message)}
       </div>
     {/if}
   {/if}
@@ -467,6 +473,9 @@
   .server-name {
     color: var(--fg-primary);
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .target-cell {
@@ -479,6 +488,10 @@
   .sparkline-cell {
     width: 130px;
     padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 24px;
   }
 
   /* --- Infrastructure Cards --- */

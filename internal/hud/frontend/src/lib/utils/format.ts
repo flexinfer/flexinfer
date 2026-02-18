@@ -93,6 +93,24 @@ export function truncatePath(path: string | null | undefined, maxLen = 40): stri
   return dirPath.slice(0, budget) + '\u2026/' + filename;
 }
 
+const ANSI_CSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const ANSI_OSC_RE = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
+const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+const ZERO_WIDTH_BIDI_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+const MULTISPACE_RE = /\s+/g;
+
+/** Strip ANSI/control/bidi characters that can destabilize table rendering. */
+export function sanitizeText(value: string | null | undefined): string {
+  if (!value) return '';
+  return value
+    .replace(ANSI_CSI_RE, '')
+    .replace(ANSI_OSC_RE, '')
+    .replace(CONTROL_CHARS_RE, ' ')
+    .replace(ZERO_WIDTH_BIDI_RE, '')
+    .replace(MULTISPACE_RE, ' ')
+    .trim();
+}
+
 // ---- Status / variant mapping ----
 
 /** Map a status string to a badge variant for consistent coloring. */
