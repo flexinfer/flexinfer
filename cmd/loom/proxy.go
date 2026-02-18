@@ -3,12 +3,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +41,8 @@ var heartbeatIntervalNanos int64 = int64(5 * time.Second)
 var (
 	proxyNamespaceOnce sync.Once
 	proxyNamespace     string
+	proxyIdentityOnce  sync.Once
+	proxyAgentID       string
 )
 
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
@@ -347,6 +352,10 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	}
 
 	// Forward to appropriate server via daemon
+	resolvedAgentID := strings.TrimSpace(agentHintGlobal)
+	if resolvedAgentID != "" {
+		resolvedAgentID, _ = resolveProxyIdentity(resolvedAgentID)
+	}
 	toolCallParams := map[string]any{
 		"name": toolName,
 	}
@@ -363,7 +372,7 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 		"method":    "tools/call",
 		"params":    json.RawMessage(paramsJSON),
 		"arguments": params.Arguments,
-		"agent_id":  agentHintGlobal,
+		"agent_id":  resolvedAgentID,
 	})
 
 	if err := daemon.Send(ctx, callReq); err != nil {
@@ -774,13 +783,14 @@ func splitToolName(name string) []string {
 // proxyHeartbeat fires an async heartbeat to the HUD for proxy-level agent identification.
 // This provides universal heartbeat coverage for any agent using loom proxy.
 func proxyHeartbeat(agentType string) {
+	resolvedAgentID, resolvedAgentType := resolveProxyIdentity(agentType)
 	proxyNamespaceOnce.Do(func() {
 		proxyNamespace = inferGitNamespace()
 	})
 	bodyMap := map[string]any{
-		"agent_id":       agentType,
+		"agent_id":       resolvedAgentID,
 		"status":         "active",
-		"agent_type":     agentType,
+		"agent_type":     resolvedAgentType,
 		"ensure_session": true,
 	}
 	if strings.TrimSpace(proxyNamespace) != "" {
@@ -813,4 +823,73 @@ func proxyHeartbeat(agentType string) {
 		return
 	}
 	resp.Body.Close()
+}
+
+func resolveProxyIdentity(agentHint string) (agentID, agentType string) {
+	agentType = strings.TrimSpace(agentHint)
+	if agentType == "" {
+		agentType = "proxy"
+	}
+
+	proxyIdentityOnce.Do(func() {
+		if override := strings.TrimSpace(os.Getenv("LOOM_PROXY_AGENT_ID")); override != "" {
+			proxyAgentID = override
+			return
+		}
+
+		typePart := sanitizeIDPart(agentType)
+		if typePart == "" {
+			typePart = "proxy"
+		}
+
+		host, err := os.Hostname()
+		if err != nil {
+			host = "host"
+		}
+		hostPart := sanitizeIDPart(host)
+		if hostPart == "" {
+			hostPart = "host"
+		}
+
+		pidPart := strconv.Itoa(os.Getpid())
+		nsHash := namespaceDigest(inferGitNamespace())
+		if nsHash != "" {
+			proxyAgentID = fmt.Sprintf("%s-%s-%s-%s", typePart, hostPart, pidPart, nsHash)
+			return
+		}
+		proxyAgentID = fmt.Sprintf("%s-%s-%s", typePart, hostPart, pidPart)
+	})
+
+	return proxyAgentID, agentType
+}
+
+func sanitizeIDPart(input string) string {
+	if input == "" {
+		return ""
+	}
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	var b strings.Builder
+	b.Grow(len(normalized))
+	prevDash := false
+	for _, r := range normalized {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func namespaceDigest(namespace string) string {
+	if strings.TrimSpace(namespace) == "" {
+		return ""
+	}
+	sum := sha1.Sum([]byte(namespace))
+	return hex.EncodeToString(sum[:])[:8]
 }

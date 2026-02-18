@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,5 +70,47 @@ func TestHeartbeatRateLimiting_AllowsAfterInterval(t *testing.T) {
 
 	if got := count.Load(); got != 2 {
 		t.Errorf("expected 2 heartbeats after interval, got %d", got)
+	}
+}
+
+func TestResolveProxyIdentity_UsesEnvOverride(t *testing.T) {
+	t.Setenv("LOOM_PROXY_AGENT_ID", "custom-proxy-id")
+	proxyIdentityOnce = sync.Once{}
+	proxyAgentID = ""
+
+	id, typ := resolveProxyIdentity("codex")
+	if typ != "codex" {
+		t.Fatalf("agentType = %q, want codex", typ)
+	}
+	if id != "custom-proxy-id" {
+		t.Fatalf("agentID = %q, want custom-proxy-id", id)
+	}
+}
+
+func TestResolveProxyIdentity_GeneratesStableProcessScopedID(t *testing.T) {
+	t.Setenv("LOOM_PROXY_AGENT_ID", "")
+	proxyIdentityOnce = sync.Once{}
+	proxyAgentID = ""
+
+	id1, typ1 := resolveProxyIdentity("claude-code")
+	id2, typ2 := resolveProxyIdentity("claude-code")
+
+	if typ1 != "claude-code" || typ2 != "claude-code" {
+		t.Fatalf("unexpected agent type values: %q %q", typ1, typ2)
+	}
+	if id1 == "" || id2 == "" {
+		t.Fatalf("expected non-empty generated IDs, got %q and %q", id1, id2)
+	}
+	if id1 != id2 {
+		t.Fatalf("expected stable ID within process, got %q != %q", id1, id2)
+	}
+
+	prefix := "claude-code-"
+	if !strings.HasPrefix(id1, prefix) {
+		t.Fatalf("expected id %q to start with %q", id1, prefix)
+	}
+	pidFragment := fmt.Sprintf("-%d", os.Getpid())
+	if !strings.Contains(id1, pidFragment) {
+		t.Fatalf("expected id %q to include pid fragment %q", id1, pidFragment)
 	}
 }
