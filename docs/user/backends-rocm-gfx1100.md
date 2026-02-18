@@ -338,6 +338,7 @@ Or set via environment variable:
 
 ```bash
 export DEFAULT_MLC_LLM_IMAGE_GFX1100="my-registry/mlc-llm:custom-gfx1100"
+export DEFAULT_VLLM_IMAGE_GFX1100="my-registry/vllm:custom-gfx1100"
 ```
 
 ## References
