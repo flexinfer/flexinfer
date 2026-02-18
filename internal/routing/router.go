@@ -44,13 +44,55 @@ const (
 )
 
 const (
-	headerCacheKey            = "X-Flexinfer-Cache-Key"
-	maxExplicitCacheKeyLength = 128
-	maxSystemSegmentLength    = 512
-	maxDocSegmentLength       = 256
+	headerCacheKey                   = "X-Flexinfer-Cache-Key"
+	defaultExplicitCacheKeyMaxLength = 128
+	defaultSystemSegmentMaxLength    = 512
+	defaultDocSegmentMaxLength       = 256
 )
 
 var explicitCacheKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:/=-]+$`)
+
+// PrefixKeyConfig controls strictness for prefix/canonical key extraction.
+type PrefixKeyConfig struct {
+	ExplicitCacheKeyMaxLength int
+	SystemSegmentMaxLength    int
+	DocSegmentMaxLength       int
+}
+
+var prefixKeyConfig = DefaultPrefixKeyConfig()
+
+// DefaultPrefixKeyConfig returns default keying bounds.
+func DefaultPrefixKeyConfig() PrefixKeyConfig {
+	return PrefixKeyConfig{
+		ExplicitCacheKeyMaxLength: defaultExplicitCacheKeyMaxLength,
+		SystemSegmentMaxLength:    defaultSystemSegmentMaxLength,
+		DocSegmentMaxLength:       defaultDocSegmentMaxLength,
+	}
+}
+
+// CurrentPrefixKeyConfig returns the current keying bounds.
+func CurrentPrefixKeyConfig() PrefixKeyConfig {
+	return prefixKeyConfig
+}
+
+// SetPrefixKeyConfig sets keying bounds, falling back to defaults for invalid values.
+func SetPrefixKeyConfig(cfg PrefixKeyConfig) {
+	prefixKeyConfig = sanitizePrefixKeyConfig(cfg)
+}
+
+func sanitizePrefixKeyConfig(cfg PrefixKeyConfig) PrefixKeyConfig {
+	sanitized := DefaultPrefixKeyConfig()
+	if cfg.ExplicitCacheKeyMaxLength > 0 {
+		sanitized.ExplicitCacheKeyMaxLength = cfg.ExplicitCacheKeyMaxLength
+	}
+	if cfg.SystemSegmentMaxLength > 0 {
+		sanitized.SystemSegmentMaxLength = cfg.SystemSegmentMaxLength
+	}
+	if cfg.DocSegmentMaxLength > 0 {
+		sanitized.DocSegmentMaxLength = cfg.DocSegmentMaxLength
+	}
+	return sanitized
+}
 
 // defaultVirtualNodes is the number of virtual nodes per real node on the hash ring.
 // Higher values give more even distribution but use more memory (150 is typical for <100 backends).
@@ -297,7 +339,8 @@ func ExtractPrefixKey(req *http.Request, body []byte) (string, KeySource) {
 
 	// Check for legacy explicit prefix.
 	if prefix, ok := data["prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
-		return hashKey("pfx:", normalizeText(prefix, maxSystemSegmentLength)), KeySourcePrefixField
+		cfg := CurrentPrefixKeyConfig()
+		return hashKey("pfx:", normalizeText(prefix, cfg.SystemSegmentMaxLength)), KeySourcePrefixField
 	}
 
 	canonical := extractCanonicalPrefixMaterial(data)
@@ -308,8 +351,9 @@ func ExtractPrefixKey(req *http.Request, body []byte) (string, KeySource) {
 }
 
 func normalizeExplicitCacheKey(in string) (string, bool) {
+	cfg := CurrentPrefixKeyConfig()
 	trimmed := strings.ToLower(strings.TrimSpace(in))
-	if trimmed == "" || len(trimmed) > maxExplicitCacheKeyLength {
+	if trimmed == "" || len(trimmed) > cfg.ExplicitCacheKeyMaxLength {
 		return "", false
 	}
 	if !explicitCacheKeyPattern.MatchString(trimmed) {
@@ -346,6 +390,7 @@ func extractCanonicalPrefixMaterial(data map[string]interface{}) string {
 }
 
 func extractSystemContext(data map[string]interface{}) string {
+	cfg := CurrentPrefixKeyConfig()
 	messages, ok := data["messages"].([]interface{})
 	if !ok || len(messages) == 0 {
 		return ""
@@ -362,7 +407,7 @@ func extractSystemContext(data map[string]interface{}) string {
 			continue
 		}
 		content, _ := msg["content"].(string)
-		content = normalizeText(content, maxSystemSegmentLength)
+		content = normalizeText(content, cfg.SystemSegmentMaxLength)
 		if content == "" {
 			continue
 		}
@@ -379,9 +424,10 @@ func extractSystemContext(data map[string]interface{}) string {
 }
 
 func extractDocumentContext(data map[string]interface{}) string {
+	cfg := CurrentPrefixKeyConfig()
 	for _, key := range []string{"document_context", "documentContext", "context"} {
 		if v, ok := data[key].(string); ok {
-			if normalized := normalizeText(v, maxDocSegmentLength); normalized != "" {
+			if normalized := normalizeText(v, cfg.DocSegmentMaxLength); normalized != "" {
 				return normalized
 			}
 		}
@@ -390,7 +436,7 @@ func extractDocumentContext(data map[string]interface{}) string {
 	if docs, ok := data["documents"].([]interface{}); ok && len(docs) > 0 {
 		if first, ok := docs[0].(map[string]interface{}); ok {
 			if content, ok := first["content"].(string); ok {
-				return normalizeText(content, maxDocSegmentLength)
+				return normalizeText(content, cfg.DocSegmentMaxLength)
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package routing
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -226,6 +227,86 @@ func TestExtractPrefixKey_PrecedenceAndSafety(t *testing.T) {
 			t.Fatalf("expected canonical source, got %s and %s", sourceA, sourceB)
 		}
 	})
+}
+
+func TestExtractPrefixKey_ConfigurableStrictness(t *testing.T) {
+	original := CurrentPrefixKeyConfig()
+	SetPrefixKeyConfig(PrefixKeyConfig{
+		ExplicitCacheKeyMaxLength: 8,
+		SystemSegmentMaxLength:    10,
+		DocSegmentMaxLength:       8,
+	})
+	t.Cleanup(func() {
+		SetPrefixKeyConfig(original)
+	})
+
+	t.Run("explicit key respects configured max length", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("X-Flexinfer-Cache-Key", "123456789")
+		body := []byte(`{"messages":[{"role":"system","content":"system prompt"}]}`)
+
+		key, source := ExtractPrefixKey(req, body)
+		if key == "" {
+			t.Fatal("expected non-empty key")
+		}
+		if source != KeySourceCanonical {
+			t.Fatalf("source=%s want %s", source, KeySourceCanonical)
+		}
+
+		req.Header.Set("X-Flexinfer-Cache-Key", "12345678")
+		key, source = ExtractPrefixKey(req, body)
+		if key == "" {
+			t.Fatal("expected non-empty key")
+		}
+		if source != KeySourceExplicitHeader {
+			t.Fatalf("source=%s want %s", source, KeySourceExplicitHeader)
+		}
+	})
+
+	t.Run("canonical key truncates with configured segment bounds", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+		bodyA := []byte(`{"messages":[{"role":"system","content":"abcdefghijklmno"}],"document_context":"123456789xyz"}`)
+		bodyB := []byte(`{"messages":[{"role":"system","content":"abcdefghij"}],"document_context":"12345678"}`)
+
+		keyA, sourceA := ExtractPrefixKey(req, bodyA)
+		keyB, sourceB := ExtractPrefixKey(req, bodyB)
+
+		if keyA == "" || keyB == "" {
+			t.Fatal("expected non-empty canonical keys")
+		}
+		if keyA != keyB {
+			t.Fatalf("expected same canonical key, got %q vs %q", keyA, keyB)
+		}
+		if sourceA != KeySourceCanonical || sourceB != KeySourceCanonical {
+			t.Fatalf("expected canonical source, got %s and %s", sourceA, sourceB)
+		}
+	})
+}
+
+func TestSetPrefixKeyConfig_InvalidValuesUseDefaults(t *testing.T) {
+	original := CurrentPrefixKeyConfig()
+	t.Cleanup(func() {
+		SetPrefixKeyConfig(original)
+	})
+
+	defaults := DefaultPrefixKeyConfig()
+	SetPrefixKeyConfig(PrefixKeyConfig{
+		ExplicitCacheKeyMaxLength: 0,
+		SystemSegmentMaxLength:    -1,
+		DocSegmentMaxLength:       0,
+	})
+
+	got := CurrentPrefixKeyConfig()
+	if got != defaults {
+		t.Fatalf("got %+v want defaults %+v", got, defaults)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("X-Flexinfer-Cache-Key", strings.Repeat("a", defaults.ExplicitCacheKeyMaxLength))
+	if _, source := ExtractPrefixKey(req, nil); source != KeySourceExplicitHeader {
+		t.Fatalf("expected explicit key accepted at default max length, got source=%s", source)
+	}
 }
 
 func TestRouter_Route(t *testing.T) {

@@ -103,6 +103,12 @@ proxy:
   timeouts:
     queue: 10m
     coldStart: 10m
+  # Prefix-routing key strictness knobs.
+  # Tune these to reduce key cardinality or allow longer context-derived segments.
+  routing:
+    explicitKeyMaxLength: 128
+    systemSegmentMaxLength: 512
+    documentSegmentMaxLength: 256
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:

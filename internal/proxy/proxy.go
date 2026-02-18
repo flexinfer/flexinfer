@@ -68,47 +68,54 @@ func init() {
 
 // Config holds all proxy configuration.
 type Config struct {
-	Namespace            string
-	Client               client.Client
-	MaxQueueSize         int
-	QueueTimeout         time.Duration
-	ColdStartTimeout     time.Duration
-	RoutingEnabled       bool
-	ValidateRequests     bool
-	BackoffEnabled       bool
-	BackoffMaxRetries    int
-	BackoffInitialWait   time.Duration
-	BackoffMaxWait       time.Duration
-	RateLimitEnabled     bool
-	RateLimitPerModel    float64
-	RateLimitBurst       int
-	RateLimitGlobal      float64
-	RateLimitGlobalBurst int
-	AuthEnabled          bool
-	AuthToken            string
+	Namespace                        string
+	Client                           client.Client
+	MaxQueueSize                     int
+	QueueTimeout                     time.Duration
+	ColdStartTimeout                 time.Duration
+	RoutingEnabled                   bool
+	RoutingExplicitCacheKeyMaxLength int
+	RoutingSystemSegmentMaxLength    int
+	RoutingDocSegmentMaxLength       int
+	ValidateRequests                 bool
+	BackoffEnabled                   bool
+	BackoffMaxRetries                int
+	BackoffInitialWait               time.Duration
+	BackoffMaxWait                   time.Duration
+	RateLimitEnabled                 bool
+	RateLimitPerModel                float64
+	RateLimitBurst                   int
+	RateLimitGlobal                  float64
+	RateLimitGlobalBurst             int
+	AuthEnabled                      bool
+	AuthToken                        string
 }
 
 // ConfigFromEnv constructs a Config from environment variables and the provided client/namespace.
 func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
+	defaultRoutingConfig := routing.DefaultPrefixKeyConfig()
 	cfg := Config{
-		Namespace:            namespace,
-		Client:               k8sClient,
-		MaxQueueSize:         getEnvInt("PROXY_MAX_QUEUE_SIZE", 100),
-		QueueTimeout:         getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second),
-		ColdStartTimeout:     getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second),
-		RoutingEnabled:       getEnvBool("PROXY_ROUTING_ENABLED", true),
-		ValidateRequests:     getEnvBool("PROXY_VALIDATE_REQUESTS", false),
-		BackoffEnabled:       getEnvBool("PROXY_BACKOFF_ENABLED", false),
-		BackoffMaxRetries:    getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3),
-		BackoffInitialWait:   getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
-		BackoffMaxWait:       getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
-		RateLimitEnabled:     getEnvBool("PROXY_RATE_LIMIT_ENABLED", false),
-		RateLimitPerModel:    getEnvFloat("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
-		RateLimitBurst:       getEnvInt("PROXY_RATE_LIMIT_BURST", 50),
-		RateLimitGlobal:      getEnvFloat("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
-		RateLimitGlobalBurst: getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
-		AuthEnabled:          getEnvBool("PROXY_AUTH_ENABLED", false),
-		AuthToken:            os.Getenv("PROXY_AUTH_TOKEN"),
+		Namespace:                        namespace,
+		Client:                           k8sClient,
+		MaxQueueSize:                     getEnvInt("PROXY_MAX_QUEUE_SIZE", 100),
+		QueueTimeout:                     getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second),
+		ColdStartTimeout:                 getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second),
+		RoutingEnabled:                   getEnvBool("PROXY_ROUTING_ENABLED", true),
+		RoutingExplicitCacheKeyMaxLength: getEnvInt("PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH", defaultRoutingConfig.ExplicitCacheKeyMaxLength),
+		RoutingSystemSegmentMaxLength:    getEnvInt("PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH", defaultRoutingConfig.SystemSegmentMaxLength),
+		RoutingDocSegmentMaxLength:       getEnvInt("PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH", defaultRoutingConfig.DocSegmentMaxLength),
+		ValidateRequests:                 getEnvBool("PROXY_VALIDATE_REQUESTS", false),
+		BackoffEnabled:                   getEnvBool("PROXY_BACKOFF_ENABLED", false),
+		BackoffMaxRetries:                getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3),
+		BackoffInitialWait:               getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
+		BackoffMaxWait:                   getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
+		RateLimitEnabled:                 getEnvBool("PROXY_RATE_LIMIT_ENABLED", false),
+		RateLimitPerModel:                getEnvFloat("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
+		RateLimitBurst:                   getEnvInt("PROXY_RATE_LIMIT_BURST", 50),
+		RateLimitGlobal:                  getEnvFloat("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
+		RateLimitGlobalBurst:             getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
+		AuthEnabled:                      getEnvBool("PROXY_AUTH_ENABLED", false),
+		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
 	}
 
 	if cfg.AuthEnabled && cfg.AuthToken == "" {
@@ -174,6 +181,11 @@ type Proxy struct {
 // New creates a new Proxy from the given Config.
 func New(cfg Config) *Proxy {
 	RegisterMetrics()
+	routing.SetPrefixKeyConfig(routing.PrefixKeyConfig{
+		ExplicitCacheKeyMaxLength: cfg.RoutingExplicitCacheKeyMaxLength,
+		SystemSegmentMaxLength:    cfg.RoutingSystemSegmentMaxLength,
+		DocSegmentMaxLength:       cfg.RoutingDocSegmentMaxLength,
+	})
 
 	p := &Proxy{
 		client:               cfg.Client,
