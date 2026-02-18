@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,9 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type noMatchingNodesError struct {
@@ -186,6 +190,13 @@ type ModelReconciler struct {
 
 // Reconcile is the main reconciliation loop for Model resources.
 func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, span := otel.Tracer("flexinfer/controller").Start(ctx, "model.reconcile")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("k8s.namespace", req.Namespace),
+		attribute.String("k8s.name", req.Name),
+	)
+
 	log := log.FromContext(ctx)
 
 	// Fetch the Model instance
@@ -196,9 +207,15 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			log.Info("Model resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
+		span.RecordError(err)
 		log.Error(err, "Failed to get Model")
 		return ctrl.Result{}, err
 	}
+	span.SetAttributes(
+		attribute.String("model.name", model.Name),
+		attribute.String("model.namespace", model.Namespace),
+		attribute.String("model.backend", model.Spec.Backend),
+	)
 
 	// Handle finalizer
 	if model.DeletionTimestamp.IsZero() {
@@ -734,6 +751,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	// Add shared memory volume for ML workloads
+	shmSizeLimit := defaultSHMSizeLimit()
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      "shm",
 		MountPath: "/dev/shm",
@@ -743,25 +761,24 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{
 				Medium:    corev1.StorageMediumMemory,
-				SizeLimit: resource.NewQuantity(8*1024*1024*1024, resource.BinarySI), // 8Gi
+				SizeLimit: &shmSizeLimit,
 			},
 		},
 	})
 
-	// Flash-loader init container: if the ModelCache for this model has flash-loader enabled,
-	// inject an init container that parallel-copies model files from PVC to tmpfs.
+	// Flash-loader init container: when enabled, copy model files from PVC to tmpfs
+	// before starting the backend for lower cold-start/swap latency.
 	var initContainers []corev1.Container
-	if r.shouldInjectFlashLoader(ctx, model) {
-		flashImage := "registry.harbor.lan/flexinfer/flash-loader:latest"
-		flashConcurrency := "4"
+	flashCfg := r.resolveFlashLoaderConfig(ctx, model)
+	if flashCfg.Enabled {
 		flashContainer := corev1.Container{
 			Name:            "flash-loader",
-			Image:           flashImage,
+			Image:           flashCfg.Image,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Env: []corev1.EnvVar{
 				{Name: "FLASH_SRC", Value: "/src"},
 				{Name: "FLASH_DST", Value: "/models"},
-				{Name: "FLASH_CONCURRENCY", Value: flashConcurrency},
+				{Name: "FLASH_CONCURRENCY", Value: strconv.Itoa(flashCfg.Concurrency)},
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "model", MountPath: "/src", ReadOnly: true},
@@ -778,12 +795,17 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		}
 
 		// Add the tmpfs volume
+		flashTmpfs := &corev1.EmptyDirVolumeSource{
+			Medium: corev1.StorageMediumMemory,
+		}
+		if flashCfg.TmpfsSizeLimit != nil {
+			sizeLimit := flashCfg.TmpfsSizeLimit.DeepCopy()
+			flashTmpfs.SizeLimit = &sizeLimit
+		}
 		volumes = append(volumes, corev1.Volume{
 			Name: "flash-tmpfs",
 			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					Medium: corev1.StorageMediumMemory,
-				},
+				EmptyDir: flashTmpfs,
 			},
 		})
 	}
@@ -1683,7 +1705,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		model.Status.SharedGroup.State = "Active"
 		model.Status.SharedGroup.QueuePosition = 0
 		model.Status.SharedGroup.PreemptedBy = ""
-		model.Status.SharedGroup.PreemptedAt = nil
+		// Keep PreemptedAt until the model becomes Ready again so swap latency can be observed.
 		if origShared == nil || origShared.State != "Active" {
 			log.Info("Model is active in shared group", "group", groupName)
 		}
@@ -1717,6 +1739,17 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 // updateStatusFromDeployment updates the Model status based on the deployment state.
 func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
 	log := log.FromContext(ctx)
+	prevPhase := model.Status.Phase
+	prevReadyCond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	readyStartedAt := time.Time{}
+	prevReadyReason := ""
+	if prevReadyCond != nil && prevReadyCond.Status == metav1.ConditionFalse {
+		readyStartedAt = prevReadyCond.LastTransitionTime.Time
+		prevReadyReason = prevReadyCond.Reason
+	} else if prevReadyCond != nil {
+		prevReadyReason = prevReadyCond.Reason
+	}
+	now := time.Now()
 
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, deployment); err != nil {
@@ -1754,6 +1787,34 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
+
+		if prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
+			metrics.ModelColdStartDurationSeconds.WithLabelValues(
+				model.Name,
+				model.Namespace,
+				model.Spec.Backend,
+				cacheStrategy(model),
+			).Observe(now.Sub(readyStartedAt).Seconds())
+		}
+
+		if model.Spec.IsShared() && model.Status.SharedGroup != nil && model.Status.SharedGroup.State == "Active" {
+			group := model.Status.SharedGroup.GroupName
+			swapStart := time.Time{}
+			if model.Status.SharedGroup.PreemptedAt != nil {
+				swapStart = model.Status.SharedGroup.PreemptedAt.Time
+			} else if prevReadyReason == aiv1alpha2.ReasonPreempted && !readyStartedAt.IsZero() {
+				swapStart = readyStartedAt
+			}
+			if !swapStart.IsZero() {
+				metrics.ModelSwapDurationSeconds.WithLabelValues(
+					model.Name,
+					model.Namespace,
+					model.Spec.Backend,
+					group,
+				).Observe(now.Sub(swapStart).Seconds())
+				model.Status.SharedGroup.PreemptedAt = nil
+			}
+		}
 	} else if *deployment.Spec.Replicas == 0 {
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhaseIdle
@@ -1955,26 +2016,140 @@ func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 	return b.DefaultIdleTimeout()
 }
 
-// shouldInjectFlashLoader checks if the ModelCache for this model has flash-loader enabled.
-func (r *ModelReconciler) shouldInjectFlashLoader(ctx context.Context, model *aiv1alpha2.Model) bool {
+type flashLoaderRuntimeConfig struct {
+	Enabled        bool
+	Image          string
+	Concurrency    int
+	TmpfsSizeLimit *resource.Quantity
+}
+
+const (
+	defaultFlashLoaderImage       = "registry.harbor.lan/flexinfer/flash-loader:latest"
+	defaultFlashLoaderConcurrency = 4
+	defaultSHMSizeLimitRaw        = "8Gi"
+)
+
+func defaultSHMSizeLimit() resource.Quantity {
+	raw := strings.TrimSpace(os.Getenv("DEFAULT_SHM_SIZE_LIMIT"))
+	if raw == "" {
+		raw = defaultSHMSizeLimitRaw
+	}
+	if parsed, err := resource.ParseQuantity(raw); err == nil {
+		return parsed
+	}
+	return resource.MustParse(defaultSHMSizeLimitRaw)
+}
+
+func envStringOrDefault(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntOrDefault(name string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func envBoolOrDefault(name string, fallback bool) bool {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return fallback
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func parseOptionalQuantity(raw string) (*resource.Quantity, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+	q, err := resource.ParseQuantity(raw)
+	if err != nil {
+		return nil, false
+	}
+	return &q, true
+}
+
+func modelUsesPersistentVolume(model *aiv1alpha2.Model) bool {
+	if _, _, ok := parsePVCSource(model.Spec.Source); ok {
+		return true
+	}
+	return cacheStrategy(model) == "SharedPVC"
+}
+
+func (r *ModelReconciler) matchingModelCache(ctx context.Context, model *aiv1alpha2.Model) *aiv1alpha1.ModelCache {
 	cacheList := &aiv1alpha1.ModelCacheList{}
 	if err := r.List(ctx, cacheList, client.InNamespace(model.Namespace)); err != nil {
-		return false
+		return nil
 	}
 
-	for _, mc := range cacheList.Items {
-		if mc.Spec.FlashLoader != nil && mc.Spec.FlashLoader.Enabled {
-			// Match by source: if the ModelCache source matches the model source
-			if strings.HasPrefix(model.Spec.Source, "HF://") && strings.Contains(mc.Spec.Source, strings.TrimPrefix(model.Spec.Source, "HF://")) {
-				return true
-			}
-			// Match by name convention: modelcache name = model name
-			if mc.Name == model.Name || mc.Name == model.Name+"-cache" {
-				return true
+	for i := range cacheList.Items {
+		mc := &cacheList.Items[i]
+		if mc.Spec.FlashLoader == nil {
+			continue
+		}
+		// Match by source: if the ModelCache source matches the model source
+		if strings.HasPrefix(model.Spec.Source, "HF://") && strings.Contains(mc.Spec.Source, strings.TrimPrefix(model.Spec.Source, "HF://")) {
+			return mc
+		}
+		// Match by name convention: modelcache name = model name
+		if mc.Name == model.Name || mc.Name == model.Name+"-cache" {
+			return mc
+		}
+	}
+	return nil
+}
+
+// resolveFlashLoaderConfig decides if flash-loader should be injected and which runtime settings to use.
+func (r *ModelReconciler) resolveFlashLoaderConfig(ctx context.Context, model *aiv1alpha2.Model) flashLoaderRuntimeConfig {
+	cfg := flashLoaderRuntimeConfig{
+		Enabled:     envBoolOrDefault("DEFAULT_FLASH_LOADER_ENABLED", false),
+		Image:       envStringOrDefault("DEFAULT_FLASH_LOADER_IMAGE", defaultFlashLoaderImage),
+		Concurrency: envIntOrDefault("DEFAULT_FLASH_LOADER_CONCURRENCY", defaultFlashLoaderConcurrency),
+	}
+	if tmpfs, ok := parseOptionalQuantity(os.Getenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT")); ok {
+		cfg.TmpfsSizeLimit = tmpfs
+	}
+
+	if mc := r.matchingModelCache(ctx, model); mc != nil && mc.Spec.FlashLoader != nil {
+		flash := mc.Spec.FlashLoader
+		cfg.Enabled = flash.Enabled
+		if strings.TrimSpace(flash.Image) != "" {
+			cfg.Image = strings.TrimSpace(flash.Image)
+		}
+		if flash.Concurrency > 0 {
+			cfg.Concurrency = flash.Concurrency
+		}
+		if flash.TmpfsSizeLimit != nil {
+			if tmpfs, ok := parseOptionalQuantity(*flash.TmpfsSizeLimit); ok {
+				cfg.TmpfsSizeLimit = tmpfs
 			}
 		}
 	}
-	return false
+
+	if cfg.Concurrency < 1 {
+		cfg.Concurrency = defaultFlashLoaderConcurrency
+	}
+	if !modelUsesPersistentVolume(model) {
+		cfg.Enabled = false
+	}
+	return cfg
 }
 
 // reconcileKVCachePressure checks KV-cache utilization from agent annotations
@@ -2095,6 +2270,15 @@ func setModelCondition(model *aiv1alpha2.Model, conditionType string, status boo
 		}
 	}
 	model.Status.Conditions = append(model.Status.Conditions, newCond)
+}
+
+func modelCondition(conds []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conds {
+		if conds[i].Type == condType {
+			return &conds[i]
+		}
+	}
+	return nil
 }
 
 func isMlcModelSource(source string) bool {

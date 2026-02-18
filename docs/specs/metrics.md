@@ -37,6 +37,8 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_quantization_compression_ratio{model,format}`
 - `flexinfer_quantization_jobs_total{model,status}`
 - `flexinfer_quantization_cache_size_bytes{model,format}`
+- `flexinfer_model_cold_start_duration_seconds{model,namespace,backend,cache_strategy}` (histogram)
+- `flexinfer_model_swap_duration_seconds{model,namespace,backend,group}` (histogram)
 
 ### Registry Note (Important)
 
@@ -103,4 +105,3 @@ Recommended additions (all emitted by `flexinfer-manager` unless noted):
   - publish benchmark results into metrics alongside ConfigMaps:
     - `flexinfer_benchmark_tokens_per_second{model,backend,gpu_vendor,gpu_arch}` (gauge)
     - `flexinfer_benchmark_vram_used_bytes{model,backend,gpu_vendor,gpu_arch}` (gauge)
-
