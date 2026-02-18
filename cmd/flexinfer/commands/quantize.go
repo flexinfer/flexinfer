@@ -38,6 +38,11 @@ var (
 	quantUseGPU    bool
 	quantMaxMemGB  int32
 	quantRecApply  bool
+	quantValFormat string
+	quantValBaseP  float64
+	quantValCandP  float64
+	quantValBaseA  float64
+	quantValCandA  float64
 )
 
 var quantizeCmd = &cobra.Command{
@@ -83,6 +88,13 @@ var quantizeRecommendCmd = &cobra.Command{
 	RunE:  runQuantizeRecommend,
 }
 
+var quantizeValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Validate quantization quality metrics against policy thresholds",
+	Args:  cobra.NoArgs,
+	RunE:  runQuantizeValidate,
+}
+
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
@@ -91,9 +103,15 @@ func init() {
 	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ/EXL2/FP8)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
 	quantizeRecommendCmd.Flags().BoolVar(&quantRecApply, "apply", false, "Apply the recommendation to the ModelCache spec")
+	quantizeValidateCmd.Flags().StringVar(&quantValFormat, "format", "", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
+	quantizeValidateCmd.Flags().Float64Var(&quantValBaseP, "baseline-perplexity", 0, "Baseline perplexity from reference model")
+	quantizeValidateCmd.Flags().Float64Var(&quantValCandP, "candidate-perplexity", 0, "Candidate perplexity from quantized artifact")
+	quantizeValidateCmd.Flags().Float64Var(&quantValBaseA, "baseline-acceptance", 0, "Baseline acceptance rate (0-1 or 0-100)")
+	quantizeValidateCmd.Flags().Float64Var(&quantValCandA, "candidate-acceptance", 0, "Candidate acceptance rate (0-1 or 0-100)")
 	quantizeCmd.AddCommand(quantizeFormatsCmd)
 	quantizeCmd.AddCommand(quantizeStatusCmd)
 	quantizeCmd.AddCommand(quantizeRecommendCmd)
+	quantizeCmd.AddCommand(quantizeValidateCmd)
 }
 
 func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
@@ -386,6 +404,59 @@ func runQuantizeRecommend(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "Applied recommendation to ModelCache %q\n", cache.Name)
 	return nil
+}
+
+func runQuantizeValidate(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
+	format := aiv1alpha1.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantValFormat)))
+	if format == "" {
+		return fmt.Errorf("quantization format is required")
+	}
+	if quantValBaseP <= 0 || quantValCandP <= 0 {
+		return fmt.Errorf("baseline-perplexity and candidate-perplexity must be > 0")
+	}
+
+	baseAcceptance, baseWasPct, err := quantization.NormalizeAcceptanceRate(quantValBaseA)
+	if err != nil {
+		return fmt.Errorf("invalid baseline-acceptance: %w", err)
+	}
+	candidateAcceptance, candidateWasPct, err := quantization.NormalizeAcceptanceRate(quantValCandA)
+	if err != nil {
+		return fmt.Errorf("invalid candidate-acceptance: %w", err)
+	}
+
+	eval, err := quantization.EvaluateQuality(
+		format,
+		quantization.QualityMetrics{
+			Perplexity:     quantValBaseP,
+			AcceptanceRate: baseAcceptance,
+		},
+		quantization.QualityMetrics{
+			Perplexity:     quantValCandP,
+			AcceptanceRate: candidateAcceptance,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("quality evaluation failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(out, "Format:       %s\n", eval.Format)
+	_, _ = fmt.Fprintf(out, "Policy:       perplexity<=+%.2f%% acceptance-drop<=%.2fpp\n", eval.Policy.MaxPerplexityRegressionPct, eval.Policy.MaxAcceptanceDropPct)
+	_, _ = fmt.Fprintf(out, "Perplexity:   baseline=%.4f candidate=%.4f delta=%.2f%%\n", eval.Baseline.Perplexity, eval.Candidate.Perplexity, eval.PerplexityDeltaPct)
+	_, _ = fmt.Fprintf(out, "Acceptance:   baseline=%.2f%% candidate=%.2f%% drop=%.2fpp\n", eval.Baseline.AcceptanceRate*100, eval.Candidate.AcceptanceRate*100, eval.AcceptanceDropPct)
+	if baseWasPct || candidateWasPct {
+		_, _ = fmt.Fprintln(out, "Input note:   acceptance values >1 were interpreted as percentages.")
+	}
+	if eval.Pass {
+		_, _ = fmt.Fprintln(out, "Result:       PASS")
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, "Result:       FAIL")
+	for _, check := range eval.FailedChecks {
+		_, _ = fmt.Fprintf(out, "Failure:      %s\n", check)
+	}
+	return fmt.Errorf("quantization quality gate failed")
 }
 
 func quantizationSpecSummary(spec *aiv1alpha1.QuantizationSpec) string {

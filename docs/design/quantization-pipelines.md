@@ -1,6 +1,6 @@
 # Quantization Pipelines Design
 
-**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8 and auto-selection implemented; quality validation follow-up pending)
+**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8, auto-selection, and quality validation gate policy implemented)
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
 
@@ -333,13 +333,11 @@ Recommended GPU: RTX 3060 12GB or better
 
 ## Open Questions
 
-1. **Quality Validation**: How to verify quantization quality? Automated perplexity testing?
+1. **Incremental Updates**: Re-quantize when base model updates?
 
-2. **Incremental Updates**: Re-quantize when base model updates?
+2. **Multi-GPU Quantization**: Support quantizing models larger than single GPU memory?
 
-3. **Multi-GPU Quantization**: Support quantizing models larger than single GPU memory?
-
-4. **iMatrix Calibration**: Support custom calibration datasets for better quality?
+3. **iMatrix Calibration**: Support custom calibration datasets for better quality?
 
 ## References
 

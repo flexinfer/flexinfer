@@ -1165,3 +1165,77 @@ func TestRunQuantizeRecommend_ApplyPatchesModelCache(t *testing.T) {
 		t.Fatalf("expected apply confirmation in output, got: %q", stdout.String())
 	}
 }
+
+func TestRunQuantizeValidate_Pass(t *testing.T) {
+	cmd, stdout, _ := newTestCmd()
+
+	origFormat := quantValFormat
+	origBaseP := quantValBaseP
+	origCandP := quantValCandP
+	origBaseA := quantValBaseA
+	origCandA := quantValCandA
+	t.Cleanup(func() {
+		quantValFormat = origFormat
+		quantValBaseP = origBaseP
+		quantValCandP = origCandP
+		quantValBaseA = origBaseA
+		quantValCandA = origCandA
+	})
+
+	quantValFormat = "GGUF"
+	quantValBaseP = 9.5
+	quantValCandP = 10.1
+	quantValBaseA = 94
+	quantValCandA = 92
+
+	if err := runQuantizeValidate(cmd, nil); err != nil {
+		t.Fatalf("runQuantizeValidate() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Result:       PASS") {
+		t.Fatalf("expected PASS in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Input note:   acceptance values >1 were interpreted as percentages.") {
+		t.Fatalf("expected acceptance input note in output, got: %q", out)
+	}
+}
+
+func TestRunQuantizeValidate_Fail(t *testing.T) {
+	cmd, stdout, _ := newTestCmd()
+
+	origFormat := quantValFormat
+	origBaseP := quantValBaseP
+	origCandP := quantValCandP
+	origBaseA := quantValBaseA
+	origCandA := quantValCandA
+	t.Cleanup(func() {
+		quantValFormat = origFormat
+		quantValBaseP = origBaseP
+		quantValCandP = origCandP
+		quantValBaseA = origBaseA
+		quantValCandA = origCandA
+	})
+
+	quantValFormat = "FP8"
+	quantValBaseP = 6.0
+	quantValCandP = 6.8
+	quantValBaseA = 0.97
+	quantValCandA = 0.90
+
+	err := runQuantizeValidate(cmd, nil)
+	if err == nil {
+		t.Fatal("runQuantizeValidate() should fail for policy violations")
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Result:       FAIL") {
+		t.Fatalf("expected FAIL in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Failure:      perplexity regression") {
+		t.Fatalf("expected perplexity failure in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Failure:      acceptance drop") {
+		t.Fatalf("expected acceptance failure in output, got: %q", out)
+	}
+}
