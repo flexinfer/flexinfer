@@ -58,6 +58,25 @@ type AgentData struct {
 	LastHeartbeat string
 }
 
+type fleetSortMode string
+
+const (
+	fleetSortStatus fleetSortMode = "status"
+	fleetSortRecent fleetSortMode = "recent"
+	fleetSortTokens fleetSortMode = "tokens"
+)
+
+func (m fleetSortMode) Next() fleetSortMode {
+	switch m {
+	case fleetSortStatus:
+		return fleetSortRecent
+	case fleetSortRecent:
+		return fleetSortTokens
+	default:
+		return fleetSortStatus
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
@@ -78,8 +97,10 @@ type FleetPanel struct {
 	expanded        map[string]bool              // session ID -> expanded
 	sessionEntries  map[string][]StreamEntryData // session ID -> context entries
 	flatRows        []SessionData                // flattened row order for cursor
+	collapsedNS     map[string]bool              // namespace -> collapsed
 	showAllSessions bool
 	hiddenSessions  int
+	sortMode        fleetSortMode
 }
 
 // NewFleetPanel creates a new fleet panel.
@@ -87,7 +108,9 @@ func NewFleetPanel() FleetPanel {
 	return FleetPanel{
 		expanded:        make(map[string]bool),
 		sessionEntries:  make(map[string][]StreamEntryData),
+		collapsedNS:     make(map[string]bool),
 		showAllSessions: false,
+		sortMode:        fleetSortStatus,
 	}
 }
 
@@ -142,6 +165,17 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 		case "v":
 			p.showAllSessions = !p.showAllSessions
 			p.rebuildFlatRows()
+		case "s":
+			p.sortMode = p.sortMode.Next()
+			p.rebuildFlatRows()
+		case "c":
+			if ns := p.selectedNamespace(); ns != "" {
+				p.collapsedNS[ns] = !p.collapsedNS[ns]
+				p.rebuildFlatRows()
+			}
+		case "x":
+			p.collapsedNS = make(map[string]bool)
+			p.rebuildFlatRows()
 		}
 	}
 	return p, nil
@@ -149,17 +183,40 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 
 // rebuildFlatRows builds the ordered list of sessions for cursor navigation.
 func (p *FleetPanel) rebuildFlatRows() {
+	selectedID := p.SelectedSession()
 	p.flatRows = p.flatRows[:0]
 	agentsBySession, agentsByID := p.agentLookups()
 	sessions, hidden := p.filteredSessions(agentsBySession, agentsByID)
-	p.hiddenSessions = hidden
-	namespaces, groups := p.groupedSessions(sessions)
+	namespaces, groups := p.groupedSessions(sessions, agentsBySession, agentsByID)
 	for _, ns := range namespaces {
+		if p.collapsedNS[ns] {
+			continue
+		}
 		p.flatRows = append(p.flatRows, groups[ns]...)
+	}
+	p.hiddenSessions = hidden + p.hiddenByCollapsedNamespaces(groups)
+	if selectedID != "" {
+		for i, row := range p.flatRows {
+			if row.ID == selectedID {
+				p.selectedIdx = i
+				return
+			}
+		}
 	}
 	if p.selectedIdx >= len(p.flatRows) {
 		p.selectedIdx = max(0, len(p.flatRows)-1)
 	}
+}
+
+func (p FleetPanel) selectedNamespace() string {
+	if sid := p.SelectedSession(); sid != "" {
+		for _, s := range p.sessions {
+			if s.ID == sid {
+				return sessionNamespace(s)
+			}
+		}
+	}
+	return ""
 }
 
 // View renders the fleet panel.
@@ -198,6 +255,7 @@ func (p FleetPanel) renderSummary() string {
 		theme.Styles.Label.Render("Servers: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.serverCount)),
 		theme.Styles.Label.Render("Sessions: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.activeSessions)),
 		theme.Styles.Label.Render("Tokens: ") + theme.Styles.Value.Render(formatNumber(p.totalTokens)),
+		theme.Styles.Label.Render("Sort: ") + theme.Styles.Value.Render(string(p.sortMode)),
 	}
 	return strings.Join(parts, "  ")
 }
@@ -210,7 +268,8 @@ func (p FleetPanel) renderSessionTable() string {
 
 	agentsBySession, agentsByID := p.agentLookups()
 	sessions, hidden := p.filteredSessions(agentsBySession, agentsByID)
-	namespaces, groups := p.groupedSessions(sessions)
+	namespaces, groups := p.groupedSessions(sessions, agentsBySession, agentsByID)
+	hidden += p.hiddenByCollapsedNamespaces(groups)
 
 	// Column widths (fluid). Namespace is already the group header, so the table
 	// focuses on per-session fields to avoid redundant + wrap-prone layouts.
@@ -221,15 +280,15 @@ func (p FleetPanel) renderSessionTable() string {
 	colSession := 10
 	colState := 11
 	colTokens := 8
-	colAge := 8
+	colLast := 8
 	if compact {
 		colSession = 8
 		colState = 9
 		colTokens = 6
-		colAge = 7
+		colLast = 7
 	}
 	// Whatever remains goes to Actor (truncate as needed).
-	colActor := tableWidth - (colCursor + colStatus + colSession + colState + colTokens + colAge) - gap*5
+	colActor := tableWidth - (colCursor + colStatus + colSession + colState + colTokens + colLast) - gap*5
 	if colActor < 14 {
 		colActor = 14
 	}
@@ -243,7 +302,7 @@ func (p FleetPanel) renderSessionTable() string {
 		padRight("Actor", colActor),
 		padRight("State", colState),
 		padRight("Tokens", colTokens),
-		padRight("Age", colAge),
+		padRight("Last", colLast),
 	}, spaces(gap))
 
 	var b strings.Builder
@@ -259,6 +318,7 @@ func (p FleetPanel) renderSessionTable() string {
 	}
 
 	flatIdx := 0
+	selectedNS := p.selectedNamespace()
 	for _, ns := range namespaces {
 		// Namespace header
 		nsSessions := groups[ns]
@@ -271,12 +331,22 @@ func (p FleetPanel) renderSessionTable() string {
 			nsTokens += s.TokenCount
 		}
 		nsMeta := fmt.Sprintf("%s  (%d sessions, %d active, %s tok)", ns, len(nsSessions), nsActive, formatNumber(nsTokens))
-		nsLabel := lipgloss.NewStyle().
+		indicator := "▾ "
+		if p.collapsedNS[ns] {
+			indicator = "▸ "
+		}
+		nsStyle := lipgloss.NewStyle().
 			Foreground(theme.ColorFgSecondary).
-			Bold(true).
-			Render(truncate(nsMeta, tableWidth))
+			Bold(true)
+		if selectedNS == ns {
+			nsStyle = nsStyle.Foreground(theme.ColorAccent)
+		}
+		nsLabel := nsStyle.Render(truncate(indicator+nsMeta, tableWidth))
 		b.WriteString(nsLabel)
 		b.WriteString("\n")
+		if p.collapsedNS[ns] {
+			continue
+		}
 
 		for _, s := range nsSessions {
 			isSelected := flatIdx == p.selectedIdx
@@ -305,7 +375,7 @@ func (p FleetPanel) renderSessionTable() string {
 			}
 			dot := widgets.StatusDot(dotStatus)
 			sessionID := truncate(shortSessionID(s.ID), colSession)
-			age := truncate(relativeTime(s.StartedAt), colAge)
+			last := truncate(lastActivityLabel(sessionLastActivityTime(s, agentInfo)), colLast)
 			tokens := truncate(formatNumber(s.TokenCount), colTokens)
 			actor := truncate(sessionActorLabel(s, agentInfo), colActor)
 			stateLabel := truncate(state, colState)
@@ -315,7 +385,7 @@ func (p FleetPanel) renderSessionTable() string {
 				padRight(actor, colActor),
 				padRight(stateLabel, colState),
 				padRight(tokens, colTokens),
-				padRight(age, colAge),
+				padRight(last, colLast),
 			}, spaces(gap))
 
 			b.WriteString(rowStyle.Render(row))
@@ -353,6 +423,9 @@ func (p FleetPanel) renderSessionTable() string {
 				}
 				if hb := relativeTime(agentInfo.LastHeartbeat); hb != "---" {
 					statusDetails = append(statusDetails, fmt.Sprintf("hb:%s", hb))
+				}
+				if started := relativeTime(s.StartedAt); started != "---" {
+					statusDetails = append(statusDetails, fmt.Sprintf("started:%s", started))
 				}
 				b.WriteString(detailStyle.Render(truncate(strings.Join(statusDetails, "  "), detailMax)))
 				b.WriteString("\n")
@@ -405,13 +478,13 @@ func (p FleetPanel) renderSessionTable() string {
 	if p.showAllSessions {
 		focusLabel = "all"
 	}
-	b.WriteString(hintStyle.Render(fmt.Sprintf("  j/k:move  enter:expand  esc:collapse  v:view(%s)", focusLabel)))
+	b.WriteString(hintStyle.Render(fmt.Sprintf("  j/k:move  enter:expand  esc:collapse  v:view(%s)  s:sort(%s)  c:collapse-ns  x:expand-all", focusLabel, p.sortMode)))
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-func (p FleetPanel) groupedSessions(sessions []SessionData) ([]string, map[string][]SessionData) {
+func (p FleetPanel) groupedSessions(sessions []SessionData, bySession, byAgentID map[string]AgentData) ([]string, map[string][]SessionData) {
 	groups := make(map[string][]SessionData)
 	var namespaces []string
 	for _, s := range sessions {
@@ -426,23 +499,67 @@ func (p FleetPanel) groupedSessions(sessions []SessionData) ([]string, map[strin
 		sort.SliceStable(groups[ns], func(i, j int) bool {
 			left := groups[ns][i]
 			right := groups[ns][j]
-			leftRank := sessionStatusRank(left.Status)
-			rightRank := sessionStatusRank(right.Status)
-			if leftRank != rightRank {
-				return leftRank < rightRank
-			}
-			leftStarted := parseRFC3339(left.StartedAt)
-			rightStarted := parseRFC3339(right.StartedAt)
-			if !leftStarted.Equal(rightStarted) {
-				return leftStarted.After(rightStarted)
-			}
-			if left.TokenCount != right.TokenCount {
-				return left.TokenCount > right.TokenCount
+			leftAgent := resolveAgentForSession(left, bySession, byAgentID)
+			rightAgent := resolveAgentForSession(right, bySession, byAgentID)
+			switch p.sortMode {
+			case fleetSortRecent:
+				leftActivity := sessionLastActivityTime(left, leftAgent)
+				rightActivity := sessionLastActivityTime(right, rightAgent)
+				if !leftActivity.Equal(rightActivity) {
+					return leftActivity.After(rightActivity)
+				}
+				leftRank := sessionStatusRankWithAgent(left, leftAgent)
+				rightRank := sessionStatusRankWithAgent(right, rightAgent)
+				if leftRank != rightRank {
+					return leftRank < rightRank
+				}
+				if left.TokenCount != right.TokenCount {
+					return left.TokenCount > right.TokenCount
+				}
+			case fleetSortTokens:
+				if left.TokenCount != right.TokenCount {
+					return left.TokenCount > right.TokenCount
+				}
+				leftActivity := sessionLastActivityTime(left, leftAgent)
+				rightActivity := sessionLastActivityTime(right, rightAgent)
+				if !leftActivity.Equal(rightActivity) {
+					return leftActivity.After(rightActivity)
+				}
+				leftRank := sessionStatusRankWithAgent(left, leftAgent)
+				rightRank := sessionStatusRankWithAgent(right, rightAgent)
+				if leftRank != rightRank {
+					return leftRank < rightRank
+				}
+			default:
+				leftRank := sessionStatusRankWithAgent(left, leftAgent)
+				rightRank := sessionStatusRankWithAgent(right, rightAgent)
+				if leftRank != rightRank {
+					return leftRank < rightRank
+				}
+				leftActivity := sessionLastActivityTime(left, leftAgent)
+				rightActivity := sessionLastActivityTime(right, rightAgent)
+				if !leftActivity.Equal(rightActivity) {
+					return leftActivity.After(rightActivity)
+				}
+				if left.TokenCount != right.TokenCount {
+					return left.TokenCount > right.TokenCount
+				}
 			}
 			return left.ID < right.ID
 		})
 	}
 	return namespaces, groups
+}
+
+func (p FleetPanel) hiddenByCollapsedNamespaces(groups map[string][]SessionData) int {
+	hidden := 0
+	for ns := range p.collapsedNS {
+		if !p.collapsedNS[ns] {
+			continue
+		}
+		hidden += len(groups[ns])
+	}
+	return hidden
 }
 
 func (p FleetPanel) filteredSessions(agentsBySession, agentsByID map[string]AgentData) ([]SessionData, int) {
@@ -476,14 +593,14 @@ func isSessionStale(session SessionData, agent AgentData, now time.Time) bool {
 		return false
 	}
 
-	started := parseRFC3339(session.StartedAt)
-	if started.IsZero() {
+	lastActivity := sessionLastActivityTime(session, agent)
+	if lastActivity.IsZero() {
 		return false
 	}
 
 	// Hide old terminal/offline sessions in focused view.
 	if sessionStatus == "ended" || sessionStatus == "offline" || sessionStatus == "error" {
-		return now.Sub(started) > 24*time.Hour
+		return now.Sub(lastActivity) > 24*time.Hour
 	}
 	return false
 }
@@ -544,6 +661,25 @@ func sessionStatusRank(status string) int {
 	}
 }
 
+func sessionStatusRankWithAgent(session SessionData, agent AgentData) int {
+	sessionStatus := normalizedStatus(session.Status)
+	presenceStatus := normalizedStatus(agent.Status)
+	switch {
+	case sessionStatus == "active" || presenceStatus == "active":
+		return 0
+	case sessionStatus == "idle":
+		return 1
+	case sessionStatus == "error":
+		return 2
+	case sessionStatus == "offline":
+		return 3
+	case sessionStatus == "ended":
+		return 4
+	default:
+		return 5
+	}
+}
+
 func preferAgent(candidate, current AgentData) bool {
 	candidateRank := sessionStatusRank(candidate.Status)
 	currentRank := sessionStatusRank(current.Status)
@@ -564,6 +700,32 @@ func parseRFC3339(ts string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.IsZero() {
+		return b
+	}
+	if b.IsZero() {
+		return a
+	}
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func sessionLastActivityTime(session SessionData, agent AgentData) time.Time {
+	started := parseRFC3339(session.StartedAt)
+	heartbeat := parseRFC3339(agent.LastHeartbeat)
+	return maxTime(started, heartbeat)
+}
+
+func lastActivityLabel(t time.Time) string {
+	if t.IsZero() {
+		return "---"
+	}
+	return relativeTime(t.UTC().Format(time.RFC3339))
 }
 
 func shortSessionID(id string) string {
