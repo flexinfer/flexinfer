@@ -47,6 +47,20 @@ If `services/loom-core/bin/loom` doesn't exist, build it:
 
 - `services/loom-core/bin/loom validate configs --dir generated/mcp`
 
+### 5) Post-Sync Proxy Smoke Check
+
+When clients run in `loom proxy` mode (Codex/Claude default), verify the daemon surface directly after sync:
+
+- Reload daemon config:
+  - `services/loom-core/bin/loom reload`
+- Confirm expected tools are exposed:
+  - `services/loom-core/bin/loom tools list | rg "agent_context__agent_workflow_start|agent_context__agent_entity_add|qdrant__qdrant_delete_collection"`
+- Execute lightweight read calls:
+  - `services/loom-core/bin/loom tools call agent_context__agent_workflow_list --args '{"session_id":"<session-id>"}' --json`
+  - `services/loom-core/bin/loom tools call agent_context__agent_memory_policy_get --args '{"tier":"working"}' --json`
+- Execute reversible vector lifecycle smoke:
+  - create/get/delete a temporary collection via `qdrant__qdrant_create_collection`, `qdrant__qdrant_get_collection`, and `qdrant__qdrant_delete_collection`
+
 ## References / Templates
 
 - Conventions: `references/workspace-conventions.md`
