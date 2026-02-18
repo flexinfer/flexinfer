@@ -571,6 +571,9 @@ build_quantizer_gguf:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab-ci.yml
+        - build/Dockerfile.quantizer-gguf
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
@@ -613,6 +616,9 @@ build_quantizer_awq:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab-ci.yml
+        - build/Dockerfile.quantizer-awq
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
@@ -655,6 +661,9 @@ build_quantizer_gptq:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab-ci.yml
+        - build/Dockerfile.quantizer-gptq
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
