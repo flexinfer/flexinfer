@@ -288,12 +288,13 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	strategy := p.getRoutingStrategy(ctx, resolvedModel)
 
 	if strategy != routing.StrategyDefault && p.router != nil {
-		// Try to route to a specific pod
-		// Use RouteWithLoad to support least-loaded routing
-		targetPod = p.router.RouteWithLoad(resolvedModel, strategy, r, bodyBytes, p.getPodConnections)
+		decision := p.router.RouteWithDecision(resolvedModel, strategy, r, bodyBytes, p.getPodConnections)
+		targetPod = decision.Target
 		if targetPod != "" {
 			targetURL = fmt.Sprintf("http://%s", targetPod)
-			slog.Debug("routing to pod", "model", modelName, "strategy", strategy, "target", targetPod)
+			slog.Debug("routing to pod", "model", modelName, "strategy", strategy, "target", targetPod, "key_source", decision.KeySource)
+		} else {
+			slog.Debug("routing fallback to service", "model", modelName, "strategy", strategy, "key_source", decision.KeySource)
 		}
 	}
 

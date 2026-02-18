@@ -82,8 +82,10 @@ Execution plan: `docs/planning/context-aware-router-execution.md`
 
 - [x] Baseline routing primitives shipped (session affinity, prefix, least-loaded)
 - [x] Execution plan and closure criteria documented
-- [ ] Canonical prefix keying + explicit cache-key contract
-- [ ] Safety/fallback controls + observability signals
+- [x] Explicit cache-key contract and precedence implemented (`X-Flexinfer-Cache-Key`, `cache_key`, `cacheKey`, `prefix`, canonical, session fallback)
+- [x] Safety/fallback controls implemented (key normalization, max length, malformed-key fallback)
+- [~] Canonical prefix keying expanded (normalized multi-system + optional document context; E2E still pending)
+- [~] Observability signals expanded (proxy logs include key source; metrics still pending)
 - [ ] E2E Chat-with-Doc validation and runbook guidance
 
 ## Quantization: Quality Validation Gate ✅ COMPLETE
