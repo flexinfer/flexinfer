@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +27,31 @@ const (
 	StrategyLeastLoaded Strategy = "least-loaded"
 )
 
+// KeySource identifies where a routing key came from.
+type KeySource string
+
+const (
+	KeySourceNone            KeySource = "none"
+	KeySourceSessionHeader   KeySource = "session-header"
+	KeySourceConversation    KeySource = "conversation-header"
+	KeySourceSessionBody     KeySource = "session-body"
+	KeySourceSessionMessages KeySource = "session-messages"
+	KeySourceExplicitHeader  KeySource = "explicit-header"
+	KeySourceExplicitBody    KeySource = "explicit-body"
+	KeySourcePrefixField     KeySource = "prefix-field"
+	KeySourceCanonical       KeySource = "canonical"
+	KeySourceSessionFallback KeySource = "session-fallback"
+)
+
+const (
+	headerCacheKey            = "X-Flexinfer-Cache-Key"
+	maxExplicitCacheKeyLength = 128
+	maxSystemSegmentLength    = 512
+	maxDocSegmentLength       = 256
+)
+
+var explicitCacheKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:/=-]+$`)
+
 // defaultVirtualNodes is the number of virtual nodes per real node on the hash ring.
 // Higher values give more even distribution but use more memory (150 is typical for <100 backends).
 const defaultVirtualNodes = 150
@@ -33,6 +60,13 @@ const defaultVirtualNodes = 150
 type Router struct {
 	mu    sync.RWMutex
 	rings map[string]*HashRing // model name -> hash ring
+}
+
+// RouteDecision captures the selected route target and key metadata.
+type RouteDecision struct {
+	Target    string
+	Key       string
+	KeySource KeySource
 }
 
 // NewRouter creates a new router instance.
@@ -90,30 +124,54 @@ func (r *Router) Route(model string, strategy Strategy, req *http.Request, body 
 
 // RouteWithLoad returns the target pod address, using load information for least-loaded routing.
 func (r *Router) RouteWithLoad(model string, strategy Strategy, req *http.Request, body []byte, loadFn LoadFunc) string {
+	return r.RouteWithDecision(model, strategy, req, body, loadFn).Target
+}
+
+// RouteWithDecision returns route target plus key metadata for observability.
+func (r *Router) RouteWithDecision(model string, strategy Strategy, req *http.Request, body []byte, loadFn LoadFunc) RouteDecision {
 	ring := r.GetRing(model)
 	if ring.Size() == 0 {
-		return "" // No endpoints, fall back to Service DNS
+		return RouteDecision{} // No endpoints, fall back to Service DNS
 	}
 
-	var key string
+	var (
+		key    string
+		source KeySource
+	)
 
 	switch strategy {
 	case StrategySessionAffinity:
-		key = ExtractSessionID(req, body)
+		key, source = ExtractSessionKey(req, body)
 	case StrategyPrefix:
-		key = ExtractPrefix(body)
+		key, source = ExtractPrefixKey(req, body)
+		if key == "" {
+			if fallbackKey, fallbackSource := ExtractSessionKey(req, body); fallbackKey != "" {
+				key = fallbackKey
+				source = KeySourceSessionFallback
+				if fallbackSource == KeySourceNone {
+					source = KeySourceNone
+				}
+			}
+		}
 	case StrategyLeastLoaded:
-		return r.selectLeastLoaded(model, loadFn)
+		return RouteDecision{
+			Target:    r.selectLeastLoaded(model, loadFn),
+			KeySource: KeySourceNone,
+		}
 	default:
 		// Default strategy - no affinity
-		return ""
+		return RouteDecision{}
 	}
 
 	if key == "" {
-		return "" // No key available, fall back to default routing
+		return RouteDecision{KeySource: source} // No key available, fall back to default routing
 	}
 
-	return ring.Get(key)
+	return RouteDecision{
+		Target:    ring.Get(key),
+		Key:       key,
+		KeySource: source,
+	}
 }
 
 // selectLeastLoaded returns the pod with the lowest load.
@@ -150,29 +208,35 @@ func (r *Router) selectLeastLoaded(model string, loadFn LoadFunc) string {
 // 1. X-Session-ID header (explicit)
 // 2. Hash of first message content (implicit, for chat continuity)
 func ExtractSessionID(req *http.Request, body []byte) string {
+	key, _ := ExtractSessionKey(req, body)
+	return key
+}
+
+// ExtractSessionKey extracts a session key and key source.
+func ExtractSessionKey(req *http.Request, body []byte) (string, KeySource) {
 	// Check explicit session header
 	if sessionID := req.Header.Get("X-Session-ID"); sessionID != "" {
-		return sessionID
+		return sessionID, KeySourceSessionHeader
 	}
 
 	// Check for conversation ID (common in chat applications)
 	if convID := req.Header.Get("X-Conversation-ID"); convID != "" {
-		return convID
+		return convID, KeySourceConversation
 	}
 
 	// Try to extract from request body
 	if len(body) == 0 {
-		return ""
+		return "", KeySourceNone
 	}
 
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return ""
+		return "", KeySourceNone
 	}
 
 	// Check for explicit session_id in body
 	if sessionID, ok := data["session_id"].(string); ok && sessionID != "" {
-		return sessionID
+		return sessionID, KeySourceSessionBody
 	}
 
 	// For chat completions, hash the messages to create implicit session ID
@@ -193,41 +257,162 @@ func ExtractSessionID(req *http.Request, body []byte) string {
 				}
 			}
 		}
-		return "msg:" + hex.EncodeToString(h.Sum(nil))[:16]
+		return "msg:" + hex.EncodeToString(h.Sum(nil))[:16], KeySourceSessionMessages
 	}
 
-	return ""
+	return "", KeySourceNone
 }
 
 // ExtractPrefix extracts the system prompt prefix for prefix-based routing.
 // This enables KV-cache sharing for requests with the same system prompt.
 func ExtractPrefix(body []byte) string {
+	key, _ := ExtractPrefixKey(nil, body)
+	return key
+}
+
+// ExtractPrefixKey extracts the prefix key and key source with precedence:
+// 1) X-Flexinfer-Cache-Key header
+// 2) cache_key / cacheKey body field
+// 3) legacy prefix field
+// 4) canonicalized system/document context hash
+func ExtractPrefixKey(req *http.Request, body []byte) (string, KeySource) {
+	if req != nil {
+		if explicit, ok := normalizeExplicitCacheKey(req.Header.Get(headerCacheKey)); ok {
+			return hashKey("exp:", explicit), KeySourceExplicitHeader
+		}
+	}
+
 	if len(body) == 0 {
-		return ""
+		return "", KeySourceNone
 	}
 
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
+		return "", KeySourceNone
+	}
+
+	if explicit, ok := extractExplicitBodyKey(data); ok {
+		return hashKey("exp:", explicit), KeySourceExplicitBody
+	}
+
+	// Check for legacy explicit prefix.
+	if prefix, ok := data["prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
+		return hashKey("pfx:", normalizeText(prefix, maxSystemSegmentLength)), KeySourcePrefixField
+	}
+
+	canonical := extractCanonicalPrefixMaterial(data)
+	if canonical == "" {
+		return "", KeySourceNone
+	}
+	return hashKey("sys:", canonical), KeySourceCanonical
+}
+
+func normalizeExplicitCacheKey(in string) (string, bool) {
+	trimmed := strings.ToLower(strings.TrimSpace(in))
+	if trimmed == "" || len(trimmed) > maxExplicitCacheKeyLength {
+		return "", false
+	}
+	if !explicitCacheKeyPattern.MatchString(trimmed) {
+		return "", false
+	}
+	return trimmed, true
+}
+
+func extractExplicitBodyKey(data map[string]interface{}) (string, bool) {
+	for _, field := range []string{"cache_key", "cacheKey"} {
+		if raw, ok := data[field].(string); ok {
+			if normalized, valid := normalizeExplicitCacheKey(raw); valid {
+				return normalized, true
+			}
+		}
+	}
+	return "", false
+}
+
+func extractCanonicalPrefixMaterial(data map[string]interface{}) string {
+	system := extractSystemContext(data)
+	document := extractDocumentContext(data)
+
+	switch {
+	case system != "" && document != "":
+		return "system=" + system + "|doc=" + document
+	case system != "":
+		return "system=" + system
+	case document != "":
+		return "doc=" + document
+	default:
+		return ""
+	}
+}
+
+func extractSystemContext(data map[string]interface{}) string {
+	messages, ok := data["messages"].([]interface{})
+	if !ok || len(messages) == 0 {
 		return ""
 	}
 
-	// Check for explicit prefix
-	if prefix, ok := data["prefix"].(string); ok && prefix != "" {
-		h := sha256.Sum256([]byte(prefix))
-		return "pfx:" + hex.EncodeToString(h[:])[:16]
+	parts := make([]string, 0, 3)
+	for _, rawMsg := range messages {
+		msg, ok := rawMsg.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if !strings.EqualFold(role, "system") {
+			continue
+		}
+		content, _ := msg["content"].(string)
+		content = normalizeText(content, maxSystemSegmentLength)
+		if content == "" {
+			continue
+		}
+		parts = append(parts, content)
+		if len(parts) >= 3 {
+			break
+		}
 	}
 
-	// Extract system prompt from messages
-	if messages, ok := data["messages"].([]interface{}); ok && len(messages) > 0 {
-		if firstMsg, ok := messages[0].(map[string]interface{}); ok {
-			if role, ok := firstMsg["role"].(string); ok && role == "system" {
-				if content, ok := firstMsg["content"].(string); ok && content != "" {
-					h := sha256.Sum256([]byte(content))
-					return "sys:" + hex.EncodeToString(h[:])[:16]
-				}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
+func extractDocumentContext(data map[string]interface{}) string {
+	for _, key := range []string{"document_context", "documentContext", "context"} {
+		if v, ok := data[key].(string); ok {
+			if normalized := normalizeText(v, maxDocSegmentLength); normalized != "" {
+				return normalized
+			}
+		}
+	}
+
+	if docs, ok := data["documents"].([]interface{}); ok && len(docs) > 0 {
+		if first, ok := docs[0].(map[string]interface{}); ok {
+			if content, ok := first["content"].(string); ok {
+				return normalizeText(content, maxDocSegmentLength)
 			}
 		}
 	}
 
 	return ""
+}
+
+func normalizeText(in string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(in)), " "))
+	if normalized == "" {
+		return ""
+	}
+	if len(normalized) > maxLen {
+		return normalized[:maxLen]
+	}
+	return normalized
+}
+
+func hashKey(prefix, material string) string {
+	h := sha256.Sum256([]byte(material))
+	return prefix + hex.EncodeToString(h[:])[:16]
 }

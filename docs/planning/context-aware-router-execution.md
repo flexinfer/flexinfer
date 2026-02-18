@@ -16,9 +16,9 @@ Implemented today:
 - [x] Endpoint discovery and routing docs (`docs/user/routing.md`)
 
 Gaps to full context-aware behavior:
-- [ ] Canonical cache-key policy beyond "first system prompt only"
-- [ ] Explicit request-level cache-key override contract
-- [ ] Routing safety bounds for noisy/unstable prefixes
+- [~] Canonical cache-key policy expanded to normalized multi-system + optional document context segments (needs E2E validation)
+- [x] Explicit request-level cache-key override contract
+- [x] Routing safety bounds for noisy/unstable prefixes (length/charset validation + deterministic fallback)
 - [ ] End-to-end Chat-with-Doc validation and benchmark signals
 
 ## Milestones
@@ -36,17 +36,17 @@ Acceptance:
 - Small irrelevant payload changes do not fragment routing unnecessarily.
 
 ### CAR-2: Explicit Cache-Key Contract
-- [ ] Add opt-in request field/header for explicit cache key (for advanced clients).
-- [ ] Define precedence between explicit key, canonical key, and session affinity.
-- [ ] Document compatibility and safe defaults.
+- [x] Add opt-in request field/header for explicit cache key (for advanced clients).
+- [x] Define precedence between explicit key, canonical key, and session affinity.
+- [x] Document compatibility and safe defaults.
 
 Acceptance:
 - Explicit keys are respected only when routing mode allows it.
 - Backward compatibility remains unchanged for existing clients.
 
 ### CAR-3: Safety + Fallback Controls
-- [ ] Add safeguards for over-fragmentation (max key length, normalization rules).
-- [ ] Add fallback behavior for malformed/oversized keys.
+- [x] Add safeguards for over-fragmentation (max key length, normalization rules).
+- [x] Add fallback behavior for malformed/oversized keys.
 - [ ] Expose operator knobs for keying strictness.
 
 Acceptance:

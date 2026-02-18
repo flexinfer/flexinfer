@@ -95,8 +95,14 @@ metadata:
 
 Prefix is extracted from:
 
-1. `prefix` field in request body (explicit)
-2. First message with `role: "system"` (standard chat format)
+1. `X-Flexinfer-Cache-Key` header (explicit override)
+2. `cache_key` or `cacheKey` field in request body (explicit override)
+3. `prefix` field in request body (legacy explicit field)
+4. Canonicalized context hash from:
+   - all `role: "system"` messages (normalized)
+   - optional document context (`document_context`, `documentContext`, `context`, or first `documents[].content`)
+
+If no prefix key can be derived, prefix routing falls back to session-derived affinity (when available), then to Service DNS.
 
 **Best for:**
 
@@ -126,6 +132,44 @@ curl -X POST http://proxy:8080/v1/chat/completions \
     ]
   }'
 ```
+
+### Explicit Cache-Key Contract
+
+Use explicit cache keys when your client already has a stable context identifier (for example, `tenant/doc-version`).
+
+```bash
+curl -X POST http://proxy:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Flexinfer-Cache-Key: tenant-a/doc-42" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Summarize this document"}
+    ]
+  }'
+```
+
+Body-based equivalent:
+
+```json
+{
+  "cache_key": "tenant-a/doc-42",
+  "messages": [{"role": "user", "content": "Summarize this document"}]
+}
+```
+
+Precedence for `flexinfer.ai/routing: prefix`:
+1. `X-Flexinfer-Cache-Key`
+2. `cache_key` / `cacheKey`
+3. `prefix`
+4. canonicalized system/document context
+5. session-derived fallback (`X-Session-ID`, etc.)
+6. Kubernetes Service routing fallback
+
+Safety rules:
+- explicit cache keys are normalized and validated
+- max explicit key length is `128` characters
+- allowed characters: `A-Z a-z 0-9 . _ : / = -`
+- malformed keys are ignored (router falls through to the next source)
 
 ### Least-Loaded
 

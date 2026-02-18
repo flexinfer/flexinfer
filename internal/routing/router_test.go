@@ -179,6 +179,55 @@ func TestExtractPrefix_Consistency(t *testing.T) {
 	}
 }
 
+func TestExtractPrefixKey_PrecedenceAndSafety(t *testing.T) {
+	t.Run("header overrides body key and prefix", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("X-Flexinfer-Cache-Key", "tenant-a/doc-42")
+		body := []byte(`{"cache_key":"other-key","prefix":"legacy-prefix","messages":[{"role":"system","content":"System Prompt"}]}`)
+
+		key, source := ExtractPrefixKey(req, body)
+		if key == "" {
+			t.Fatal("expected non-empty key")
+		}
+		if source != KeySourceExplicitHeader {
+			t.Fatalf("source=%s want %s", source, KeySourceExplicitHeader)
+		}
+	})
+
+	t.Run("invalid explicit header falls back to body key", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("X-Flexinfer-Cache-Key", "bad key with spaces")
+		body := []byte(`{"cacheKey":"tenant-b/doc-9","messages":[{"role":"system","content":"System Prompt"}]}`)
+
+		key, source := ExtractPrefixKey(req, body)
+		if key == "" {
+			t.Fatal("expected non-empty key")
+		}
+		if source != KeySourceExplicitBody {
+			t.Fatalf("source=%s want %s", source, KeySourceExplicitBody)
+		}
+	})
+
+	t.Run("canonical key includes normalized system+document context", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		bodyA := []byte(`{"messages":[{"role":"system","content":"  You   Are Helpful  "},{"role":"user","content":"hi"}],"document_context":" Important   Facts  "}`)
+		bodyB := []byte(`{"messages":[{"role":"system","content":"you are helpful"},{"role":"user","content":"hi"}],"documentContext":"important facts"}`)
+
+		keyA, sourceA := ExtractPrefixKey(req, bodyA)
+		keyB, sourceB := ExtractPrefixKey(req, bodyB)
+
+		if keyA == "" || keyB == "" {
+			t.Fatal("expected non-empty canonical keys")
+		}
+		if keyA != keyB {
+			t.Fatalf("expected same canonical key, got %q vs %q", keyA, keyB)
+		}
+		if sourceA != KeySourceCanonical || sourceB != KeySourceCanonical {
+			t.Fatalf("expected canonical source, got %s and %s", sourceA, sourceB)
+		}
+	})
+}
+
 func TestRouter_Route(t *testing.T) {
 	router := NewRouter()
 
@@ -329,5 +378,25 @@ func TestRouter_LeastLoaded_EqualLoad(t *testing.T) {
 
 	if target == "" {
 		t.Error("expected a target with equal load")
+	}
+}
+
+func TestRouter_PrefixFallbackToSession(t *testing.T) {
+	router := NewRouter()
+	router.UpdateEndpoints("test-model", []string{
+		"10.0.0.1:8000",
+		"10.0.0.2:8000",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("X-Session-ID", "session-abc")
+	body := []byte(`{"messages":[{"role":"user","content":"no system prompt"}]}`)
+
+	decision := router.RouteWithDecision("test-model", StrategyPrefix, req, body, nil)
+	if decision.Target == "" {
+		t.Fatal("expected non-empty target via session fallback")
+	}
+	if decision.KeySource != KeySourceSessionFallback {
+		t.Fatalf("key source=%s want %s", decision.KeySource, KeySourceSessionFallback)
 	}
 }
