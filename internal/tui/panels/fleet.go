@@ -74,17 +74,20 @@ type FleetPanel struct {
 	updatedAt      time.Time
 
 	// Interactive state
-	selectedIdx    int
-	expanded       map[string]bool              // session ID -> expanded
-	sessionEntries map[string][]StreamEntryData // session ID -> context entries
-	flatRows       []SessionData                // flattened row order for cursor
+	selectedIdx     int
+	expanded        map[string]bool              // session ID -> expanded
+	sessionEntries  map[string][]StreamEntryData // session ID -> context entries
+	flatRows        []SessionData                // flattened row order for cursor
+	showAllSessions bool
+	hiddenSessions  int
 }
 
 // NewFleetPanel creates a new fleet panel.
 func NewFleetPanel() FleetPanel {
 	return FleetPanel{
-		expanded:       make(map[string]bool),
-		sessionEntries: make(map[string][]StreamEntryData),
+		expanded:        make(map[string]bool),
+		sessionEntries:  make(map[string][]StreamEntryData),
+		showAllSessions: false,
 	}
 }
 
@@ -136,6 +139,9 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 			for k := range p.expanded {
 				delete(p.expanded, k)
 			}
+		case "v":
+			p.showAllSessions = !p.showAllSessions
+			p.rebuildFlatRows()
 		}
 	}
 	return p, nil
@@ -144,7 +150,10 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 // rebuildFlatRows builds the ordered list of sessions for cursor navigation.
 func (p *FleetPanel) rebuildFlatRows() {
 	p.flatRows = p.flatRows[:0]
-	namespaces, groups := p.groupedSessions()
+	agentsBySession, agentsByID := p.agentLookups()
+	sessions, hidden := p.filteredSessions(agentsBySession, agentsByID)
+	p.hiddenSessions = hidden
+	namespaces, groups := p.groupedSessions(sessions)
 	for _, ns := range namespaces {
 		p.flatRows = append(p.flatRows, groups[ns]...)
 	}
@@ -199,8 +208,9 @@ func (p FleetPanel) renderSessionTable() string {
 		tableWidth = 100
 	}
 
-	namespaces, groups := p.groupedSessions()
 	agentsBySession, agentsByID := p.agentLookups()
+	sessions, hidden := p.filteredSessions(agentsBySession, agentsByID)
+	namespaces, groups := p.groupedSessions(sessions)
 
 	// Column widths (fluid). Namespace is already the group header, so the table
 	// focuses on per-session fields to avoid redundant + wrap-prone layouts.
@@ -241,6 +251,12 @@ func (p FleetPanel) renderSessionTable() string {
 	b.WriteString("\n")
 	b.WriteString(sepStyle.Render(strings.Repeat("─", min(tableWidth, lipgloss.Width(header)))))
 	b.WriteString("\n")
+
+	if hidden > 0 && !p.showAllSessions {
+		hint := fmt.Sprintf("focused view: %d hidden stale sessions (press v to show all)", hidden)
+		b.WriteString(lipgloss.NewStyle().Foreground(theme.ColorFgMuted).Render(truncate(hint, tableWidth)))
+		b.WriteString("\n")
+	}
 
 	flatIdx := 0
 	for _, ns := range namespaces {
@@ -385,16 +401,20 @@ func (p FleetPanel) renderSessionTable() string {
 
 	// Navigation hint
 	hintStyle := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
-	b.WriteString(hintStyle.Render("  j/k:move  enter:expand  esc:collapse"))
+	focusLabel := "focus"
+	if p.showAllSessions {
+		focusLabel = "all"
+	}
+	b.WriteString(hintStyle.Render(fmt.Sprintf("  j/k:move  enter:expand  esc:collapse  v:view(%s)", focusLabel)))
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-func (p FleetPanel) groupedSessions() ([]string, map[string][]SessionData) {
+func (p FleetPanel) groupedSessions(sessions []SessionData) ([]string, map[string][]SessionData) {
 	groups := make(map[string][]SessionData)
 	var namespaces []string
-	for _, s := range p.sessions {
+	for _, s := range sessions {
 		ns := sessionNamespace(s)
 		if _, ok := groups[ns]; !ok {
 			namespaces = append(namespaces, ns)
@@ -423,6 +443,49 @@ func (p FleetPanel) groupedSessions() ([]string, map[string][]SessionData) {
 		})
 	}
 	return namespaces, groups
+}
+
+func (p FleetPanel) filteredSessions(agentsBySession, agentsByID map[string]AgentData) ([]SessionData, int) {
+	if p.showAllSessions {
+		return p.sessions, 0
+	}
+	now := time.Now()
+	result := make([]SessionData, 0, len(p.sessions))
+	hidden := 0
+	for _, s := range p.sessions {
+		agentInfo := resolveAgentForSession(s, agentsBySession, agentsByID)
+		if isSessionStale(s, agentInfo, now) {
+			hidden++
+			continue
+		}
+		result = append(result, s)
+	}
+	return result, hidden
+}
+
+func isSessionStale(session SessionData, agent AgentData, now time.Time) bool {
+	sessionStatus := normalizedStatus(session.Status)
+	presenceStatus := normalizedStatus(agent.Status)
+
+	// Keep active/idle sessions visible regardless of age.
+	if sessionStatus == "active" || sessionStatus == "idle" || presenceStatus == "active" {
+		return false
+	}
+	// Keep sessions with tokens visible so recent useful context doesn't disappear.
+	if session.TokenCount > 0 {
+		return false
+	}
+
+	started := parseRFC3339(session.StartedAt)
+	if started.IsZero() {
+		return false
+	}
+
+	// Hide old terminal/offline sessions in focused view.
+	if sessionStatus == "ended" || sessionStatus == "offline" || sessionStatus == "error" {
+		return now.Sub(started) > 24*time.Hour
+	}
+	return false
 }
 
 func (p FleetPanel) agentLookups() (map[string]AgentData, map[string]AgentData) {

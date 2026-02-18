@@ -243,3 +243,38 @@ func TestFleetPanelViewShowsResolvedIdentityAndContext(t *testing.T) {
 		t.Fatalf("view missing selected task context:\n%s", v)
 	}
 }
+
+func TestFleetPanelFocusedViewHidesStaleSessionsAndCanToggleAll(t *testing.T) {
+	now := time.Now().UTC()
+	p := NewFleetPanel()
+	p, _ = p.Update(MsgFleetData{
+		Sessions: []SessionData{
+			{
+				ID:        "active-now",
+				AgentID:   "codex-1",
+				Namespace: "ns",
+				Status:    "active",
+				StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339),
+			},
+			{
+				ID:        "old-ended",
+				AgentID:   "claude-code",
+				Namespace: "ns",
+				Status:    "summarized",
+				StartedAt: now.Add(-48 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	})
+
+	if len(p.flatRows) != 1 {
+		t.Fatalf("focused view flatRows=%d, want 1", len(p.flatRows))
+	}
+	if got := p.flatRows[0].ID; got != "active-now" {
+		t.Fatalf("focused view first row = %q, want active-now", got)
+	}
+
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if len(p.flatRows) != 2 {
+		t.Fatalf("all view flatRows=%d, want 2", len(p.flatRows))
+	}
+}
