@@ -234,6 +234,43 @@ func TestCallPipelineAuthorize_DeniedByRBAC(t *testing.T) {
 	}
 }
 
+func TestCallPipelineAuthorize_DeniedByGlobalPolicy(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		GlobalDeny:    []string{"github__delete_*"},
+		Roles: map[string]RBACRole{
+			"admin": {Allow: []string{"*"}},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "admin-agent", Role: "admin"},
+		},
+	}, d.logger)
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "deny-global"},
+		serverName: "github",
+		toolName:   "delete_repo",
+		params: callParams{
+			AgentID: "admin-agent",
+		},
+		auditStart: time.Now(),
+	}
+
+	resp := p.authorize()
+	if resp == nil {
+		t.Fatal("expected denied response")
+	}
+	if resp.Error == nil || resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("expected invalid request denial, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "global policy") {
+		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
+	}
+}
+
 func TestCallPipelineTryCachedResponse_Hit(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	d.respCache = NewResponseCache(CacheConfig{Enabled: true})

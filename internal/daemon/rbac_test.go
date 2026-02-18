@@ -275,6 +275,64 @@ func TestRBAC_DenyWinsOverAllow(t *testing.T) {
 	}
 }
 
+func TestRBAC_GlobalDenyWinsOverRoleAllow(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		GlobalDeny: []string{
+			"gitlab__delete_*",
+			"server_mgmt__*",
+		},
+		Roles: map[string]RBACRole{
+			"admin": {Allow: []string{"*"}},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "admin-bot", Role: "admin"},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	denied := e.Check("admin-bot", "", "gitlab", "delete_branch")
+	if denied.Allowed {
+		t.Fatalf("expected global deny to block delete tool, got allowed (reason: %s)", denied.Reason)
+	}
+	if !contains(denied.Reason, "global policy") {
+		t.Fatalf("expected global policy reason, got %q", denied.Reason)
+	}
+
+	allowed := e.Check("admin-bot", "", "gitlab", "list_issues")
+	if !allowed.Allowed {
+		t.Fatalf("expected non-denied tool to be allowed, got denied (reason: %s)", allowed.Reason)
+	}
+}
+
+func TestRBAC_GlobalDenyAppliesWithoutBindings(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		GlobalDeny:    []string{"github__delete_*"},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	denied := e.Check("unknown-agent", "", "github", "delete_repo")
+	if denied.Allowed {
+		t.Fatalf("expected delete_repo denied by global policy, got allowed")
+	}
+
+	allowed := e.Check("unknown-agent", "", "github", "list_repos")
+	if !allowed.Allowed {
+		t.Fatalf("expected list_repos allowed by default policy, got denied: %s", allowed.Reason)
+	}
+}
+
 func TestRBAC_MatchesPattern(t *testing.T) {
 	tests := []struct {
 		pattern string

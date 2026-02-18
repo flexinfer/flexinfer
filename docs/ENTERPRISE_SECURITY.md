@@ -23,6 +23,8 @@ RBAC restricts which tools each agent can invoke. The proxy evaluates access bef
 rbac:
   enabled: true
   default_policy: deny          # "allow" or "deny" when no role matches
+  global_deny:
+    - "server_mgmt__*"          # Organization-wide hard block (all agents/roles)
   roles:
     developer:
       allow:
@@ -57,10 +59,11 @@ Bindings resolve in priority order:
 
 Tools are qualified as `server__tool` (e.g., `git__git_status`). The enforcer evaluates:
 
-1. Resolve agent's role via bindings
-2. Check deny patterns first (deny wins)
-3. Check allow patterns
-4. Fall back to `default_policy`
+1. Check `global_deny` patterns first (always deny, before role lookup)
+2. Resolve agent's role via bindings
+3. Check role deny patterns (deny wins)
+4. Check role allow patterns
+5. Fall back to `default_policy`
 
 Pattern matching uses glob syntax (`path.Match`): `*` matches any sequence within a segment.
 
@@ -281,6 +284,9 @@ http:
 rbac:
   enabled: true
   default_policy: deny
+  global_deny:
+    - "server_mgmt__*"
+    - "k8s__k8s_apply"
   roles:
     full:
       allow: ["*"]

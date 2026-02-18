@@ -16,6 +16,10 @@ type RBACConfig struct {
 	// DefaultPolicy is "allow" or "deny" when no binding matches an agent.
 	DefaultPolicy string `yaml:"default_policy,omitempty"`
 
+	// GlobalDeny is a list of deny patterns enforced before role resolution.
+	// Use this for organization-wide policy blocks that apply to all agents.
+	GlobalDeny []string `yaml:"global_deny,omitempty"`
+
 	// Roles maps role names to their permission definitions.
 	Roles map[string]RBACRole `yaml:"roles,omitempty"`
 
@@ -82,6 +86,20 @@ func DefaultRBACConfig() RBACConfig {
 // Check evaluates whether the given agent may call the specified tool.
 func (e *RBACEnforcer) Check(agentID, agentType, server, tool string) AccessDecision {
 	qualifiedTool := server + "__" + tool
+
+	// Global deny policy always wins, even for privileged roles.
+	for _, pattern := range e.cfg.GlobalDeny {
+		if matchesPattern(pattern, qualifiedTool) {
+			return AccessDecision{
+				Allowed: false,
+				AgentID: agentID,
+				Server:  server,
+				Tool:    tool,
+				Role:    "",
+				Reason:  fmt.Sprintf("denied by global policy pattern %q", pattern),
+			}
+		}
+	}
 
 	roleName := e.resolveRole(agentID, agentType)
 	if roleName == "" {

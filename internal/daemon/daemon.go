@@ -389,7 +389,11 @@ func New(cfg Config) (*Daemon, error) {
 	// Initialize RBAC enforcer (nil when disabled)
 	d.rbac = NewRBACEnforcer(fileCfg.RBAC, logger)
 	if d.rbac != nil {
-		logger.Info("RBAC enabled", "default_policy", fileCfg.RBAC.DefaultPolicy, "roles", len(fileCfg.RBAC.Roles), "bindings", len(fileCfg.RBAC.Bindings))
+		logger.Info("RBAC enabled",
+			"default_policy", fileCfg.RBAC.DefaultPolicy,
+			"roles", len(fileCfg.RBAC.Roles),
+			"bindings", len(fileCfg.RBAC.Bindings),
+			"global_deny", len(fileCfg.RBAC.GlobalDeny))
 	}
 
 	// Initialize audit logger (nil when disabled)
