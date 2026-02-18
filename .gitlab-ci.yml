@@ -536,7 +536,7 @@ publish_mlcllm_maxwell:
 build_quantizer_gguf:
   stage: build
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 30m
+  timeout: 1h
   needs: []
   script:
     - |
