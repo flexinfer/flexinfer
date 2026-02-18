@@ -1,10 +1,12 @@
 package panels
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFleetPanelUpdateWindowSize(t *testing.T) {
@@ -166,5 +168,78 @@ func TestFleetPanelViewWithSessions(t *testing.T) {
 	v := p.View()
 	if v == "" {
 		t.Error("expected non-empty view with sessions")
+	}
+}
+
+func TestFleetPanelRebuildFlatRowsSortsByStatusThenRecency(t *testing.T) {
+	now := time.Now().UTC()
+	p := NewFleetPanel()
+	p, _ = p.Update(MsgFleetData{
+		Sessions: []SessionData{
+			{ID: "active-old", Namespace: "ns", Status: "active", StartedAt: now.Add(-2 * time.Hour).Format(time.RFC3339)},
+			{ID: "idle", Namespace: "ns", Status: "idle", StartedAt: now.Add(-30 * time.Minute).Format(time.RFC3339)},
+			{ID: "ended", Namespace: "ns", Status: "ended", StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
+			{ID: "active-new", Namespace: "ns", Status: "active", StartedAt: now.Add(-1 * time.Hour).Format(time.RFC3339)},
+		},
+	})
+
+	if len(p.flatRows) != 4 {
+		t.Fatalf("flatRows = %d, want 4", len(p.flatRows))
+	}
+
+	got := []string{p.flatRows[0].ID, p.flatRows[1].ID, p.flatRows[2].ID, p.flatRows[3].ID}
+	want := []string{"active-new", "active-old", "idle", "ended"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("flatRows[%d] = %q, want %q (order=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestFleetPanelViewShowsResolvedIdentityAndContext(t *testing.T) {
+	now := time.Now().UTC()
+	sessionID := "sess-1234567890abcdef"
+	p := NewFleetPanel()
+	p, _ = p.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	p, _ = p.Update(MsgFleetData{
+		Sessions: []SessionData{
+			{
+				ID:          sessionID,
+				AgentID:     "runner-42",
+				Namespace:   "loom-core/main",
+				Status:      "active",
+				Description: "Heartbeat bootstrap session",
+				StartedAt:   now.Add(-15 * time.Minute).Format(time.RFC3339),
+				TokenCount:  1200,
+			},
+		},
+		Agents: []AgentData{
+			{
+				AgentID:       "runner-42",
+				SessionID:     sessionID,
+				Status:        "active",
+				AgentType:     "codex",
+				CurrentTask:   "Investigate session clarity",
+				Branch:        "loom-core/main",
+				LastHeartbeat: now.Add(-2 * time.Minute).Format(time.RFC3339),
+			},
+		},
+	})
+
+	v := ansi.Strip(p.View())
+	if !strings.Contains(v, "Session") || !strings.Contains(v, "State") {
+		t.Fatalf("view missing expected headers:\n%s", v)
+	}
+	if !strings.Contains(v, shortSessionID(sessionID)) {
+		t.Fatalf("view missing short session id %q:\n%s", shortSessionID(sessionID), v)
+	}
+	if !strings.Contains(v, "codex/runner-42") {
+		t.Fatalf("view missing resolved actor label:\n%s", v)
+	}
+	if !strings.Contains(v, "session:"+sessionID) {
+		t.Fatalf("view missing selected session context:\n%s", v)
+	}
+	if !strings.Contains(v, "task: Investigate session clarity") {
+		t.Fatalf("view missing selected task context:\n%s", v)
 	}
 }

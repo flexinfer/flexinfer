@@ -386,9 +386,14 @@ func (m Model) fetchAll() tea.Cmd {
 		fleetAgents := make([]panels.AgentData, len(snap.Agents))
 		for i, a := range snap.Agents {
 			fleetAgents[i] = panels.AgentData{
-				AgentID:   a.AgentID,
-				Status:    a.Status,
-				AgentType: a.AgentType,
+				AgentID:       a.AgentID,
+				SessionID:     a.SessionID,
+				Status:        a.Status,
+				AgentType:     a.AgentType,
+				Description:   a.Description,
+				CurrentTask:   a.CurrentTask,
+				Branch:        a.Branch,
+				LastHeartbeat: a.LastHeartbeat,
 			}
 		}
 
