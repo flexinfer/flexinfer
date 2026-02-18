@@ -252,6 +252,8 @@ quantization:
     gguf: ghcr.io/flexinfer/quantizer:gguf
     awq: ghcr.io/flexinfer/quantizer:awq
     gptq: ghcr.io/flexinfer/quantizer:gptq
+    exl2: ghcr.io/flexinfer/quantizer:exl2
+    fp8: ghcr.io/flexinfer/quantizer:fp8
 
 grafanaDashboard:
   enabled: true

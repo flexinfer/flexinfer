@@ -2159,6 +2159,18 @@ func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
 			groupSize = *spec.GroupSize
 		}
 		return fmt.Sprintf("W%d_G%d", bits, groupSize)
+	case aiv1alpha1.QuantizationFormatEXL2:
+		bits := int32(quantization.DefaultEXL2Bits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		return fmt.Sprintf("EXL2_B%d", bits)
+	case aiv1alpha1.QuantizationFormatFP8:
+		bits := int32(quantization.DefaultFP8Bits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		return fmt.Sprintf("FP8_B%d", bits)
 	default:
 		return string(spec.Format)
 	}
