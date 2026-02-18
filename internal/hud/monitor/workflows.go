@@ -63,9 +63,13 @@ func NewWorkflowMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *Workflo
 
 // Start begins the background polling goroutine at the given interval.
 func (m *WorkflowMonitor) Start(interval time.Duration) {
-	if err := m.Refresh(); err != nil {
-		m.logger.Warn("initial workflow refresh failed", "error", err)
-	}
+	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
+	// when downstream services are slow or unavailable.
+	go func() {
+		if err := m.Refresh(); err != nil {
+			m.logger.Warn("initial workflow refresh failed", "error", err)
+		}
+	}()
 
 	go m.pollLoop(interval)
 }

@@ -4,8 +4,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -46,20 +48,18 @@ func run(ctx context.Context) error {
 		password = "password"
 	}
 
-	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(username, password, ""))
+	driver, resolvedURI, err := connectNeo4j(ctx, uri, username, password)
 	if err != nil {
-		return fmt.Errorf("failed to create Neo4j driver: %w", err)
+		return fmt.Errorf("failed to connect to Neo4j: %w", err)
 	}
 	defer driver.Close(ctx)
 
-	// Verify connectivity
-	if err := driver.VerifyConnectivity(ctx); err != nil {
-		return fmt.Errorf("failed to connect to Neo4j: %w", err)
-	}
-
 	ns := &neo4jServer{driver: driver}
 
-	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", uri)
+	if resolvedURI != uri {
+		logger.Warn("normalized Neo4j URI after failed initial connect", "from", uri, "to", resolvedURI)
+	}
+	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", resolvedURI)
 
 	server := mcp.NewServer("mcp-neo4j", version)
 	server.SetInstructions("Neo4j graph database MCP server. Execute Cypher queries, inspect schema, and explore graph data.")
@@ -395,6 +395,87 @@ func convertNeo4jValue(val any) any {
 	default:
 		return v
 	}
+}
+
+func connectNeo4j(ctx context.Context, rawURI, username, password string) (neo4j.DriverWithContext, string, error) {
+	candidates := neo4jURICandidates(rawURI)
+	if len(candidates) == 0 {
+		return nil, "", fmt.Errorf("no Neo4j URI candidates")
+	}
+
+	var errs []string
+	for i, uri := range candidates {
+		driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(username, password, ""))
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("attempt %d: create driver for %q: %v", i+1, uri, err))
+			continue
+		}
+
+		verifyCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		err = driver.VerifyConnectivity(verifyCtx)
+		cancel()
+		if err == nil {
+			return driver, uri, nil
+		}
+		_ = driver.Close(ctx)
+		errs = append(errs, fmt.Sprintf("attempt %d: connect %q: %v", i+1, uri, err))
+	}
+
+	return nil, "", fmt.Errorf("dial neo4j: failed after %d attempts: %s", len(candidates), errs[len(errs)-1])
+}
+
+func neo4jURICandidates(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "bolt://localhost:7687"
+	}
+
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(uri string) {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			return
+		}
+		if _, ok := seen[uri]; ok {
+			return
+		}
+		seen[uri] = struct{}{}
+		out = append(out, uri)
+	}
+
+	add(raw)
+	if !strings.Contains(raw, "://") {
+		add("bolt://" + raw)
+		return out
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return out
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if host == "" {
+		return out
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "http", "ws":
+		add(fmt.Sprintf("bolt://%s:7687", host))
+	case "https", "wss":
+		add(fmt.Sprintf("neo4j+s://%s:7687", host))
+	case "neo4j", "neo4j+s", "neo4j+ssc", "bolt", "bolt+s", "bolt+ssc":
+		if port == "" {
+			add(fmt.Sprintf("%s://%s:7687", u.Scheme, host))
+		}
+		if port == "7474" {
+			add(fmt.Sprintf("%s://%s:7687", u.Scheme, host))
+			add(fmt.Sprintf("bolt://%s:7687", host))
+		}
+	}
+
+	return out
 }
 
 func (s *neo4jServer) handleSchema(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

@@ -62,9 +62,13 @@ func (s *StreamMonitor) OnRefresh(fn func([]StreamEntry)) {
 
 // Start begins the background polling goroutine at the given interval.
 func (s *StreamMonitor) Start(interval time.Duration) {
-	if err := s.Refresh(); err != nil {
-		s.logger.Warn("initial stream refresh failed", "error", err)
-	}
+	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
+	// when downstream services are slow or unavailable.
+	go func() {
+		if err := s.Refresh(); err != nil {
+			s.logger.Warn("initial stream refresh failed", "error", err)
+		}
+	}()
 	go s.pollLoop(interval)
 }
 

@@ -130,10 +130,13 @@ func NewFleetMonitor(client *bridge.DaemonClient, agent *bridge.AgentBridge, log
 
 // Start begins the background polling goroutine at the given interval.
 func (m *FleetMonitor) Start(interval time.Duration) {
-	// Do an initial refresh immediately.
-	if err := m.Refresh(); err != nil {
-		m.logger.Warn("initial fleet refresh failed", "error", err)
-	}
+	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
+	// when downstream services are slow or unavailable.
+	go func() {
+		if err := m.Refresh(); err != nil {
+			m.logger.Warn("initial fleet refresh failed", "error", err)
+		}
+	}()
 
 	go m.pollLoop(interval)
 }
