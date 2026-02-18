@@ -201,6 +201,19 @@ Optional auth env for policy mutation:
 
 Many list/search tools support `page` + `per_page` (capped at 100). Several servers also enforce response-size limits.
 
+Loom proxy inventory resources (loom-mode aware planning):
+
+- `loom://tools/index`
+- `loom://tools/page/{page}`
+- `loom://tools/server/{server}/page/{page}`
+
+`loom://tools` is still supported for backward compatibility and may be truncated for large catalogs. Use the paged `loom://tools/*` URIs for deterministic full inventory.
+
+CLI fallback for automation and scripts:
+
+- `loom tools list --json`
+- `loom tools list --json --server <server> --page <n> --limit <n>`
+
 Selected env controls:
 
 - `LOKI_MAX_RESPONSE_BYTES`
@@ -208,6 +221,7 @@ Selected env controls:
 - `GRAFANA_MAX_RESPONSE_BYTES`
 - `TAVILY_MAX_RESPONSE_BYTES`
 - `ALERTMANAGER_MAX_RESPONSE_BYTES`
+- `LOOM_PROXY_TOOL_PAGE_SIZE` (default `100`, clamped `10..500`)
 
 ## Troubleshooting
 

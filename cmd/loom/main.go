@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"gitlab.flexinfer.ai/libs/mcp-go"
+
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -1086,6 +1088,11 @@ func newToolsCmd(socketPath string) *cobra.Command {
 		Short: "List and search aggregated tools",
 	}
 
+	var toolsListJSON bool
+	var toolsListServer string
+	var toolsListPage int
+	var toolsListLimit int
+
 	toolsListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all available tools from daemon",
@@ -1096,20 +1103,69 @@ func newToolsCmd(socketPath string) *cobra.Command {
 			}
 
 			var tools struct {
-				Tools []struct {
-					Name        string `json:"name"`
-					Description string `json:"description"`
-				} `json:"tools"`
-				CachedAt    string `json:"cachedAt"`
-				ServerCount int    `json:"serverCount"`
+				Tools       []mcp.Tool `json:"tools"`
+				CachedAt    string     `json:"cachedAt"`
+				ServerCount int        `json:"serverCount"`
 			}
 
 			if err := json.Unmarshal(result, &tools); err != nil {
 				return fmt.Errorf("parse tools: %w", err)
 			}
 
-			fmt.Printf("Tools: %d from %d servers\n\n", len(tools.Tools), tools.ServerCount)
-			for _, t := range tools.Tools {
+			if toolsListPage < 1 {
+				return fmt.Errorf("--page must be >= 1")
+			}
+			if toolsListLimit < 0 {
+				return fmt.Errorf("--limit must be >= 0")
+			}
+
+			serverFilter := strings.TrimSpace(toolsListServer)
+			pageSize := len(tools.Tools)
+			if toolsListLimit > 0 {
+				pageSize = clampToolPageSize(toolsListLimit)
+			} else if pageSize == 0 {
+				pageSize = defaultToolPageSize
+			}
+
+			page, err := buildToolInventoryPage(tools.Tools, serverFilter, toolsListPage, pageSize, serverFilter != "")
+			if err != nil {
+				return err
+			}
+
+			if toolsListJSON {
+				out := struct {
+					toolInventoryPage
+					CachedAt    string `json:"cachedAt,omitempty"`
+					ServerCount int    `json:"serverCount"`
+				}{
+					toolInventoryPage: page,
+					CachedAt:          tools.CachedAt,
+					ServerCount:       tools.ServerCount,
+				}
+				b, err := json.MarshalIndent(out, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(b))
+				return nil
+			}
+
+			if serverFilter == "" && toolsListLimit == 0 && toolsListPage == 1 {
+				fmt.Printf("Tools: %d from %d servers\n\n", len(page.Tools), tools.ServerCount)
+			} else {
+				fmt.Printf(
+					"Tools: %d of %d from %d servers (server=%s page=%d/%d pageSize=%d)\n\n",
+					len(page.Tools),
+					page.TotalTools,
+					tools.ServerCount,
+					page.Server,
+					page.Page,
+					page.TotalPages,
+					page.PageSize,
+				)
+			}
+
+			for _, t := range page.Tools {
 				desc := t.Description
 				if len(desc) > 60 {
 					desc = desc[:57] + "..."
@@ -1119,6 +1175,10 @@ func newToolsCmd(socketPath string) *cobra.Command {
 			return nil
 		},
 	}
+	toolsListCmd.Flags().BoolVar(&toolsListJSON, "json", false, "Output machine-readable JSON")
+	toolsListCmd.Flags().StringVar(&toolsListServer, "server", "", "Filter tools by server prefix (server__tool)")
+	toolsListCmd.Flags().IntVar(&toolsListPage, "page", 1, "Page number for paginated output (1-based)")
+	toolsListCmd.Flags().IntVar(&toolsListLimit, "limit", 0, "Page size for paginated output (clamped to 10-500)")
 
 	toolsSearchCmd := &cobra.Command{
 		Use:   "search <query>",

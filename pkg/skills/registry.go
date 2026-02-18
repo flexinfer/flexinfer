@@ -44,9 +44,10 @@ type Script struct {
 
 // TargetSpec defines platform-specific overrides for a skill.
 type TargetSpec struct {
-	Enabled      *bool  `yaml:"enabled,omitempty"`
-	OutputFormat string `yaml:"output_format,omitempty"` // "markdown" for Claude
-	Type         string `yaml:"type,omitempty"`          // "command", "skill", "rule", "instruction", "workflow"
+	Enabled            *bool  `yaml:"enabled,omitempty"`
+	OutputFormat       string `yaml:"output_format,omitempty"`       // "markdown" for Claude
+	Type               string `yaml:"type,omitempty"`                // "command", "skill", "rule", "instruction", "workflow"
+	InstructionsAppend string `yaml:"instructions_append,omitempty"` // platform-specific additive instruction block
 }
 
 // Load reads and parses a skills registry YAML file.
@@ -161,7 +162,16 @@ func (s *Skill) GetType(target string) string {
 // - ${CODEX_HOME}: Codex home directory (~/.codex)
 // - ${HOME}: User home directory
 func (s *Skill) ResolveInstructions(target, codexHome, skillSourceDir string) string {
+	if s.Common == nil {
+		return ""
+	}
+
 	instructions := s.Common.Instructions
+	if s.Targets != nil {
+		if spec, ok := s.Targets[target]; ok && strings.TrimSpace(spec.InstructionsAppend) != "" {
+			instructions = strings.TrimRight(instructions, "\n") + "\n\n" + strings.TrimLeft(spec.InstructionsAppend, "\n")
+		}
+	}
 
 	switch target {
 	case "codex":

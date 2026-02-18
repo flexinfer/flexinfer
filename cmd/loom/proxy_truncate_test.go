@@ -166,3 +166,21 @@ func TestProxyMaxToolResultBytes_EnvOverridesConfig(t *testing.T) {
 		t.Errorf("proxyMaxToolResultBytes() = %d, want 80000 (env)", got)
 	}
 }
+
+func TestProxyToolPageSize_DefaultAndClamp(t *testing.T) {
+	os.Unsetenv(loomProxyToolPageSizeEnv)
+	if got := proxyToolPageSize(); got != defaultToolPageSize {
+		t.Errorf("proxyToolPageSize() = %d, want %d", got, defaultToolPageSize)
+	}
+
+	os.Setenv(loomProxyToolPageSizeEnv, "1")
+	if got := proxyToolPageSize(); got != minToolPageSize {
+		t.Errorf("proxyToolPageSize() = %d, want %d", got, minToolPageSize)
+	}
+
+	os.Setenv(loomProxyToolPageSizeEnv, "9999")
+	if got := proxyToolPageSize(); got != maxToolPageSize {
+		t.Errorf("proxyToolPageSize() = %d, want %d", got, maxToolPageSize)
+	}
+	os.Unsetenv(loomProxyToolPageSizeEnv)
+}

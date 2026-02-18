@@ -222,6 +222,27 @@ func TestSkill_ResolveInstructions_NoVariables(t *testing.T) {
 	}
 }
 
+func TestSkill_ResolveInstructions_WithTargetAppend(t *testing.T) {
+	s := &Skill{
+		Name: "deploy",
+		Common: &SkillSpec{
+			Instructions: "Run ${SKILL_PATH}/scripts/deploy.sh",
+		},
+		Targets: map[string]*TargetSpec{
+			"codex": {
+				InstructionsAppend: "Then verify from ${SKILL_PATH}/references/checklist.md",
+			},
+		},
+	}
+
+	got := s.ResolveInstructions("codex", "/home/.codex", "/workspace/skills/deploy")
+	want := "Run $CODEX_HOME/skills/deploy/scripts/deploy.sh\n\nThen verify from $CODEX_HOME/skills/deploy/references/checklist.md"
+
+	if got != want {
+		t.Errorf("unexpected appended instructions:\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
 func TestFindSkillsSourceDir(t *testing.T) {
 	// Given a registry at mcp/context/skills-registry.yaml,
 	// skills should be at mcp/skills/.
@@ -262,6 +283,7 @@ skills:
         type: command
       codex:
         enabled: false
+        instructions_append: "Codex-only append"
 `
 	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write registry: %v", err)
@@ -286,6 +308,9 @@ skills:
 	}
 	if reg.Skills[0].IsEnabled("codex") {
 		t.Error("expected testing disabled for codex")
+	}
+	if got := reg.Skills[0].Targets["codex"].InstructionsAppend; got != "Codex-only append" {
+		t.Errorf("expected instructions_append to parse, got %q", got)
 	}
 }
 

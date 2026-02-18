@@ -153,6 +153,24 @@ func TestGenerateCodexSkillMD_OnlyScriptsShowsResources(t *testing.T) {
 	}
 }
 
+func TestGenerateCodexSkillMD_IncludesTargetInstructionsAppend(t *testing.T) {
+	g := newTestGenerator()
+	skill := newTestSkill("append-skill", "Skill with target append")
+	skill.Targets = map[string]*TargetSpec{
+		"codex": {
+			InstructionsAppend: "## Codex Addendum\n\nUse ${SKILL_PATH}/assets/extra.md",
+		},
+	}
+
+	got := g.generateCodexSkillMD(skill)
+	if !strings.Contains(got, "## Codex Addendum") {
+		t.Fatalf("expected codex append block in generated skill:\n%s", got)
+	}
+	if !strings.Contains(got, "$CODEX_HOME/skills/append-skill/assets/extra.md") {
+		t.Fatalf("expected path substitutions in append block:\n%s", got)
+	}
+}
+
 func TestEscapeYAMLString(t *testing.T) {
 	tests := []struct {
 		name  string

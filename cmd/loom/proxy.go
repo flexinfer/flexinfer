@@ -432,6 +432,12 @@ func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mc
 			MimeType:    "application/json",
 		},
 		{
+			URI:         "loom://tools/index",
+			Name:        "Loom tools index",
+			Description: "Paginated tools inventory index for loom daemon tools",
+			MimeType:    "application/json",
+		},
+		{
 			URI:         "loom://health",
 			Name:        "Loom health",
 			Description: "Health summary for all servers (local/hub) managed by loom",
@@ -494,6 +500,12 @@ func handleProxyResourcesListBuiltinOnly(msg *mcp.Message) *mcp.Message {
 			MimeType:    "application/json",
 		},
 		{
+			URI:         "loom://tools/index",
+			Name:        "Loom tools index",
+			Description: "Paginated tools inventory index for loom daemon tools",
+			MimeType:    "application/json",
+		},
+		{
 			URI:         "loom://health",
 			Name:        "Loom health",
 			Description: "Health summary for all servers (local/hub) managed by loom",
@@ -542,6 +554,13 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 			return "", err
 		}
 		return truncateResourceText(string(b), proxyMaxResourceBytes()), nil
+	}
+	renderJSONNoTruncate := func(v any) (string, error) {
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	}
 
 	if strings.HasPrefix(params.URI, "loom://") {
@@ -604,7 +623,48 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 			}
 
 		default:
-			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "unknown loom resource URI"), nil
+			server, page, ok, parseErr := parseLoomToolsInventoryURI(params.URI)
+			if !ok {
+				return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "unknown loom resource URI"), nil
+			}
+			if parseErr != nil {
+				return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, parseErr.Error()), nil
+			}
+
+			resp, err := callDaemon("loom/tools", nil)
+			if err != nil {
+				return nil, err
+			}
+			if resp.Error != nil {
+				return resp, nil
+			}
+
+			var toolsResult struct {
+				Tools []mcp.Tool `json:"tools"`
+			}
+			if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
+				return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "unmarshal loom/tools response: "+err.Error()), nil
+			}
+
+			paged, err := buildToolInventoryPage(toolsResult.Tools, server, page, proxyToolPageSize(), true)
+			if err != nil {
+				return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
+			}
+
+			text, err := renderJSONNoTruncate(paged)
+			if err != nil {
+				return mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error()), nil
+			}
+
+			return mcp.NewResponse(msg.ID, map[string]any{
+				"contents": []any{
+					map[string]any{
+						"uri":      params.URI,
+						"mimeType": "application/json",
+						"text":     text,
+					},
+				},
+			})
 		}
 
 		text, err := renderJSON(payload)
@@ -662,6 +722,24 @@ func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport,
 				"description": "Cached aggregated tools from loom daemon",
 				"mimeType":    "application/json",
 				"uriTemplate": "loom://tools",
+			},
+			map[string]any{
+				"name":        "loom_tools_index",
+				"description": "Paginated tools inventory index for loom daemon tools",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://tools/index",
+			},
+			map[string]any{
+				"name":        "loom_tools_page",
+				"description": "Paginated tools inventory page",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://tools/page/{page}",
+			},
+			map[string]any{
+				"name":        "loom_tools_server_page",
+				"description": "Paginated tools inventory for a specific server",
+				"mimeType":    "application/json",
+				"uriTemplate": "loom://tools/server/{server}/page/{page}",
 			},
 			map[string]any{
 				"name":        "loom_health",

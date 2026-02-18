@@ -21,6 +21,8 @@ const (
 
 	loomProxyMaxResourceBytesEnv = "LOOM_PROXY_MAX_RESOURCE_BYTES"
 	defaultMaxResourceBytes      = 64_000
+
+	loomProxyToolPageSizeEnv = "LOOM_PROXY_TOOL_PAGE_SIZE"
 )
 
 // proxyConfigGlobal holds the loaded file config for proxy-side settings.
@@ -52,6 +54,16 @@ func proxyMaxResourceBytes() int {
 		defaultMaxResourceBytes,
 		1024,
 	)
+}
+
+func proxyToolPageSize() int {
+	size := resolveProxyLimit(
+		loomProxyToolPageSizeEnv,
+		0,
+		defaultToolPageSize,
+		minToolPageSize,
+	)
+	return clampToolPageSize(size)
 }
 
 // resolveProxyLimit resolves a proxy limit with precedence: env var > config file > hardcoded default.

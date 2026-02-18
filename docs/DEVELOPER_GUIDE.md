@@ -82,6 +82,19 @@ This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs 
 
 `sync --regen` prefers workspace-local registries discovered from repo ancestors before home-level defaults.
 
+For inventory-oriented tooling/tests in loom-mode, prefer paged proxy resources:
+
+- `loom://tools/index`
+- `loom://tools/page/{page}`
+- `loom://tools/server/{server}/page/{page}`
+
+Keep `loom://tools` behavior backward compatible (including truncation semantics).
+
+CLI fallback for scripts/automation:
+
+- `loom tools list --json`
+- `loom tools list --json --server <server> --page <n> --limit <n>`
+
 ## Devbox Development Notes
 
 `mcp-devbox` spans:

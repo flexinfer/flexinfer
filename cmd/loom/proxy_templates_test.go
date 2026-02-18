@@ -43,10 +43,13 @@ func TestProxy_ResourceTemplatesList_ReturnsProxyTemplates(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"loom_servers": true,
-		"loom_tools":   true,
-		"loom_health":  true,
-		"loom_config":  true,
+		"loom_servers":           true,
+		"loom_tools":             true,
+		"loom_tools_index":       true,
+		"loom_tools_page":        true,
+		"loom_tools_server_page": true,
+		"loom_health":            true,
+		"loom_config":            true,
 	}
 	for _, raw := range arr {
 		m, ok := raw.(map[string]any)
