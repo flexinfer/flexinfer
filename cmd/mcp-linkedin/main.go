@@ -24,12 +24,17 @@ import (
 const (
 	defaultLinkedInBaseURL = "https://www.linkedin.com/voyager/api"
 	maxResponseBytes       = 2 * 1024 * 1024 // 2MB cap to keep responses bounded.
+
+	linkedinModeAuto         = "auto"
+	linkedinModeOfficial     = "official"
+	linkedinModeExperimental = "experimental"
 )
 
 var version = "0.1.0"
 
 type linkedInServer struct {
 	baseURL      string
+	mode         string
 	accessToken  string
 	sessionToken string
 	jsessionID   string
@@ -47,6 +52,10 @@ func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
 
 	baseURL := strings.TrimSuffix(env.String("LINKEDIN_BASE_URL", defaultLinkedInBaseURL), "/")
+	mode, err := parseLinkedInMode(env.String("LINKEDIN_MODE", linkedinModeAuto))
+	if err != nil {
+		return err
+	}
 	accessToken := env.StringWithFallbacks("LINKEDIN_ACCESS_TOKEN", "LINKEDIN_TOKEN")
 	sessionToken := env.StringWithFallbacks("LINKEDIN_SESSION_COOKIE", "LINKEDIN_LI_AT")
 	jsessionID := env.String("LINKEDIN_JSESSIONID", "")
@@ -57,6 +66,12 @@ func run(ctx context.Context) error {
 			"set LINKEDIN_ACCESS_TOKEN for API auth or LINKEDIN_SESSION_COOKIE/LINKEDIN_LI_AT for Voyager auth",
 		)
 	}
+	if mode == linkedinModeOfficial && accessToken == "" {
+		return mcperror.NotConfigured("LINKEDIN_ACCESS_TOKEN", "required when LINKEDIN_MODE=official")
+	}
+	if mode == linkedinModeExperimental && sessionToken == "" {
+		return mcperror.NotConfigured("LINKEDIN_SESSION_COOKIE", "required when LINKEDIN_MODE=experimental")
+	}
 
 	if sessionToken != "" && jsessionID == "" {
 		logger.Warn("LINKEDIN_JSESSIONID is not set; write operations may fail due to missing csrf-token header")
@@ -64,16 +79,26 @@ func run(ctx context.Context) error {
 
 	ls := &linkedInServer{
 		baseURL:      baseURL,
+		mode:         mode,
 		accessToken:  accessToken,
 		sessionToken: sessionToken,
 		jsessionID:   jsessionID,
 		httpClient:   httpclient.NewDefault(),
 	}
 
-	logger.Info("starting server", "name", "mcp-linkedin", "version", version, "base_url", baseURL)
+	logger.Info("starting server", "name", "mcp-linkedin", "version", version, "base_url", baseURL, "mode", mode)
 
 	server := mcp.NewServer("mcp-linkedin", version)
 	server.SetInstructions("LinkedIn personal account management. Supports profile reads and messaging operations. Configure via LINKEDIN_ACCESS_TOKEN or LINKEDIN_SESSION_COOKIE.")
+
+	server.AddTool(mcp.Tool{
+		Name:        "linkedin_auth_status",
+		Description: "Get LinkedIn auth and capability mode status for this MCP server",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, ls.handleAuthStatus)
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_get_profile",
@@ -156,6 +181,35 @@ func run(ctx context.Context) error {
 	return server.Run(ctx)
 }
 
+func (s *linkedInServer) handleAuthStatus(_ context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
+	activeAuth := "none"
+	switch {
+	case s.accessToken != "":
+		activeAuth = "access_token"
+	case s.sessionToken != "":
+		activeAuth = "session_cookie"
+	}
+
+	canUseMessaging := s.ensureMessagingAllowed() == nil
+	canSendMessaging := s.ensureSendAllowed() == nil
+
+	return mcp.JSONResult(map[string]any{
+		"mode": s.mode,
+		"auth": map[string]any{
+			"active_auth":        activeAuth,
+			"has_access_token":   s.accessToken != "",
+			"has_session_cookie": s.sessionToken != "",
+			"has_jsessionid":     s.jsessionID != "",
+		},
+		"capabilities": map[string]any{
+			"profile_read":      true,
+			"messaging_read":    canUseMessaging,
+			"messaging_send":    canSendMessaging,
+			"experimental_mode": s.mode != linkedinModeOfficial,
+		},
+	})
+}
+
 func (s *linkedInServer) handleGetProfile(ctx context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 	data, err := s.requestJSON(ctx, http.MethodGet, "/me", nil)
 	if err != nil {
@@ -165,6 +219,10 @@ func (s *linkedInServer) handleGetProfile(ctx context.Context, _ map[string]any)
 }
 
 func (s *linkedInServer) handleListConversations(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := s.ensureMessagingAllowed(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	v := validate.NewArgs(args)
 	start := v.Int("start", 0)
 	count := v.Int("count", 20)
@@ -188,6 +246,10 @@ func (s *linkedInServer) handleListConversations(ctx context.Context, args map[s
 }
 
 func (s *linkedInServer) handleGetConversationMessages(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := s.ensureMessagingAllowed(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	v := validate.NewArgs(args)
 	conversationURN := strings.TrimSpace(v.Required("conversation_urn"))
 	start := v.Int("start", 0)
@@ -215,6 +277,10 @@ func (s *linkedInServer) handleGetConversationMessages(ctx context.Context, args
 }
 
 func (s *linkedInServer) handleSendMessage(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	if err := s.ensureSendAllowed(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
 	v := validate.NewArgs(args)
 	text := strings.TrimSpace(v.Required("text"))
 	subject := strings.TrimSpace(v.String("subject", ""))
@@ -403,4 +469,37 @@ func readStringSliceArg(v any) []string {
 		}
 	}
 	return out
+}
+
+func parseLinkedInMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = linkedinModeAuto
+	}
+	switch mode {
+	case linkedinModeAuto, linkedinModeOfficial, linkedinModeExperimental:
+		return mode, nil
+	default:
+		return "", mcperror.InvalidParam("LINKEDIN_MODE", "must be one of: auto, official, experimental")
+	}
+}
+
+func (s *linkedInServer) ensureMessagingAllowed() error {
+	if s.mode == linkedinModeOfficial {
+		return mcperror.Forbidden("messaging tools are disabled when LINKEDIN_MODE=official")
+	}
+	if s.sessionToken == "" {
+		return mcperror.NotConfigured("LINKEDIN_SESSION_COOKIE", "required for LinkedIn messaging tools")
+	}
+	return nil
+}
+
+func (s *linkedInServer) ensureSendAllowed() error {
+	if err := s.ensureMessagingAllowed(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(s.jsessionID) == "" {
+		return mcperror.NotConfigured("LINKEDIN_JSESSIONID", "required for LinkedIn messaging send operations")
+	}
+	return nil
 }
