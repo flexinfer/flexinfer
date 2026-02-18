@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-16
+> Last updated: 2026-02-18
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
@@ -74,6 +74,17 @@ Tracking issue: [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
 - [x] Validate baseline bundle in staging namespace and capture verification output
 - [x] Define admission-policy follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-2)
 - [x] Define tenant-aware fair-share follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-3)
+
+## Innovation: Context-Aware Router 🚧 IN PROGRESS
+
+Tracking issue: [#8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8)  
+Execution plan: `docs/planning/context-aware-router-execution.md`
+
+- [x] Baseline routing primitives shipped (session affinity, prefix, least-loaded)
+- [x] Execution plan and closure criteria documented
+- [ ] Canonical prefix keying + explicit cache-key contract
+- [ ] Safety/fallback controls + observability signals
+- [ ] E2E Chat-with-Doc validation and runbook guidance
 
 ## Phase 5: Multi-Cluster (Future)
 

@@ -143,7 +143,7 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 ## Innovation Roadmap
 
 - ✅ **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O. (shipped: `flexinfer-flash-loader` binary)
-- **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (Partially complete - prefix routing available)
+- **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (Partially complete - prefix routing available) ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
 - ✅ **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments. (shipped: `LoRAAdapter` CRD + vLLM integration)
 - ✅ **Spot-Instance Resilience**: Proactive draining on termination notice. (shipped: AWS, Azure, GCP, Harvester detectors)
 
