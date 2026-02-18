@@ -137,6 +137,54 @@ func TestGetBackendImage_MlcLlm_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestGetBackendImage_MlcLlm_AMD_GFX1100(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx1100",
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_MlcLlm_AMD_GFX1100_EnvOverride(t *testing.T) {
+	t.Setenv("DEFAULT_MLC_LLM_IMAGE_GFX1100", "custom/mlc:gfx1100-custom")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"amd.com/gpu.arch": "gfx1100",
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/mlc:gfx1100-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
 func TestGetBackendImage_MlcLlm_MaxwellEnvOverride(t *testing.T) {
 	t.Setenv("DEFAULT_MLC_LLM_IMAGE_MAXWELL", "custom/mlc:maxwell-custom")
 
@@ -241,6 +289,54 @@ func TestGetBackendImage_VLLM_AMD_EnvOverride(t *testing.T) {
 
 	image := r.getBackendImage(m)
 	expected := "custom/vllm:rocm-custom"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_VLLM_AMD_GFX1100(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"gpu.amd.com/gpu-architecture": "gfx1100",
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "registry.harbor.lan/library/vllm-api:rocm-gfx1100"
+	if image != expected {
+		t.Errorf("Expected %s, got %s", expected, image)
+	}
+}
+
+func TestGetBackendImage_VLLM_AMD_GFX1100_EnvOverride(t *testing.T) {
+	t.Setenv("DEFAULT_VLLM_IMAGE_GFX1100", "custom/vllm:gfx1100-custom")
+
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx1100",
+			},
+		},
+	}
+
+	image := r.getBackendImage(m)
+	expected := "custom/vllm:gfx1100-custom"
 	if image != expected {
 		t.Errorf("Expected %s, got %s", expected, image)
 	}
@@ -2450,6 +2546,16 @@ func TestGetGPUArchitecture(t *testing.T) {
 		{
 			name:         "AMD arch label",
 			nodeSelector: map[string]string{"amd.com/gpu.arch": "gfx1100"},
+			expected:     "gfx1100",
+		},
+		{
+			name:         "FlexInfer agent arch label",
+			nodeSelector: map[string]string{"flexinfer.ai/gpu.arch": "gfx1100"},
+			expected:     "gfx1100",
+		},
+		{
+			name:         "AMD plugin architecture label",
+			nodeSelector: map[string]string{"gpu.amd.com/gpu-architecture": "gfx1100"},
 			expected:     "gfx1100",
 		},
 		{

@@ -85,6 +85,10 @@ spec:
             - name: DEFAULT_MLC_LLM_IMAGE_MAXWELL
               value: {{ .Values.mlcllm.maxwellImage | quote }}
             {{- end }}
+            {{- if .Values.mlcllm.gfx1100Image }}
+            - name: DEFAULT_MLC_LLM_IMAGE_GFX1100
+              value: {{ .Values.mlcllm.gfx1100Image | quote }}
+            {{- end }}
             {{- if .Values.mlcllm.defaults.mode }}
             - name: DEFAULT_MLC_LLM_MODE
               value: {{ .Values.mlcllm.defaults.mode | quote }}
@@ -112,6 +116,10 @@ spec:
             {{- if .Values.vllm.rocmImage }}
             - name: DEFAULT_VLLM_IMAGE_AMD
               value: {{ .Values.vllm.rocmImage | quote }}
+            {{- end }}
+            {{- if .Values.vllm.gfx1100Image }}
+            - name: DEFAULT_VLLM_IMAGE_GFX1100
+              value: {{ .Values.vllm.gfx1100Image | quote }}
             {{- end }}
             {{- if .Values.vllm.defaults.args }}
             - name: DEFAULT_VLLM_ARGS

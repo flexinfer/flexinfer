@@ -180,10 +180,12 @@ Default container images for each backend type:
 ### vLLM
 - **NVIDIA**: `vllm/vllm-openai:latest`
 - **AMD**: `vllm/vllm-openai:rocm`
+- **AMD gfx1100 (RDNA3)**: `registry.harbor.lan/library/vllm-api:rocm-gfx1100`
 
 ### MLC-LLM
 - **NVIDIA**: `ghcr.io/mlc-ai/mlc-llm:cuda`
 - **AMD**: `ghcr.io/mlc-ai/mlc-llm:rocm`
+- **AMD gfx1100 (RDNA3)**: `registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100`
 - **Maxwell (sm_52)**: `registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7`
 
 ### llama.cpp
@@ -260,6 +262,10 @@ env:
     value: "ghcr.io/mlc-ai/mlc-llm@sha256:abc123..."
   - name: DEFAULT_VLLM_IMAGE
     value: "vllm/vllm-openai:v0.4.0"
+  - name: DEFAULT_MLC_LLM_IMAGE_GFX1100
+    value: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
+  - name: DEFAULT_VLLM_IMAGE_GFX1100
+    value: "registry.harbor.lan/library/vllm-api:rocm-gfx1100"
 ```
 
 See the [Backend Image Overrides](#backend-image-overrides) section for the complete list of environment variables.
