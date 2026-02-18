@@ -1,6 +1,6 @@
 # Enterprise Security Features
 
-Loom Core provides four enterprise security features configurable in the daemon config file (`~/.config/loom/config.yaml`). All features are disabled by default and activate independently.
+Loom Core provides five enterprise security features configurable in the daemon config file (`~/.config/loom/config.yaml`). All features are disabled by default and activate independently.
 
 For shipped/in-progress status, see `docs/IMPLEMENTATION_STATUS.md`.
 
@@ -9,6 +9,7 @@ For shipped/in-progress status, see `docs/IMPLEMENTATION_STATUS.md`.
 | Feature | Config Key | Purpose |
 |---------|-----------|---------|
 | RBAC | `rbac` | Restrict tool access per agent role |
+| Rate Limiting | `rbac.rate_limits` | Cap per-agent/per-tool call volume at gateway |
 | Audit Trail | `audit` | Append-only JSONL log of all tool calls |
 | Cost Tracking | `cost` | Usage attribution by agent, server, and tool |
 | OAuth 2.1 | `http.oauth` + `http.auth.type: oauth2` | Standards-based authorization for remote access |
@@ -25,6 +26,11 @@ rbac:
   default_policy: deny          # "allow" or "deny" when no role matches
   global_deny:
     - "server_mgmt__*"          # Organization-wide hard block (all agents/roles)
+  rate_limits:
+    - agent_id: "codex-prod"
+      server: "github"
+      tool: "list_*"
+      requests_per_minute: 120
   roles:
     developer:
       allow:
@@ -62,8 +68,8 @@ Tools are qualified as `server__tool` (e.g., `git__git_status`). The enforcer ev
 1. Check `global_deny` patterns first (always deny, before role lookup)
 2. Resolve agent's role via bindings
 3. Check role deny patterns (deny wins)
-4. Check role allow patterns
-5. Fall back to `default_policy`
+4. Check role allow patterns (or `default_policy` when no binding matches)
+5. If the call is allowed, apply the first matching `rate_limits` rule (if configured)
 
 Pattern matching uses glob syntax (`path.Match`): `*` matches any sequence within a segment.
 
@@ -287,6 +293,15 @@ rbac:
   global_deny:
     - "server_mgmt__*"
     - "k8s__k8s_apply"
+  rate_limits:
+    - agent_type: "codex"
+      server: "github"
+      tool: "list_*"
+      requests_per_minute: 120
+    - agent_id: "admin-agent"
+      server: "*"
+      tool: "*"
+      requests_per_minute: 600
   roles:
     full:
       allow: ["*"]

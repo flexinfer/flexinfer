@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRBAC_DisabledReturnsNil(t *testing.T) {
@@ -330,6 +331,111 @@ func TestRBAC_GlobalDenyAppliesWithoutBindings(t *testing.T) {
 	allowed := e.Check("unknown-agent", "", "github", "list_repos")
 	if !allowed.Allowed {
 		t.Fatalf("expected list_repos allowed by default policy, got denied: %s", allowed.Reason)
+	}
+}
+
+func TestRBAC_RateLimitDeniesAfterThreshold(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-a",
+				Server:            "github",
+				Tool:              "list_repos",
+				RequestsPerMinute: 2,
+			},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+	fixed := time.Date(2026, 2, 18, 1, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return fixed }
+
+	first := e.Check("agent-a", "", "github", "list_repos")
+	if !first.Allowed {
+		t.Fatalf("first request should be allowed, got denied: %s", first.Reason)
+	}
+	second := e.Check("agent-a", "", "github", "list_repos")
+	if !second.Allowed {
+		t.Fatalf("second request should be allowed, got denied: %s", second.Reason)
+	}
+	third := e.Check("agent-a", "", "github", "list_repos")
+	if third.Allowed {
+		t.Fatal("third request should be denied by rate limit")
+	}
+	if !contains(third.Reason, "rate limit exceeded") {
+		t.Fatalf("expected rate limit reason, got %q", third.Reason)
+	}
+}
+
+func TestRBAC_RateLimitWindowResets(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-b",
+				Server:            "gitlab",
+				Tool:              "list_issues",
+				RequestsPerMinute: 1,
+			},
+		},
+	}
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	now := time.Date(2026, 2, 18, 1, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return now }
+
+	if d := e.Check("agent-b", "", "gitlab", "list_issues"); !d.Allowed {
+		t.Fatalf("first request should be allowed, got denied: %s", d.Reason)
+	}
+	if d := e.Check("agent-b", "", "gitlab", "list_issues"); d.Allowed {
+		t.Fatal("second request in same minute should be denied")
+	}
+
+	now = now.Add(time.Minute)
+	if d := e.Check("agent-b", "", "gitlab", "list_issues"); !d.Allowed {
+		t.Fatalf("request in next minute should be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestRBAC_RateLimitFirstMatchWins(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-c",
+				Server:            "github",
+				Tool:              "*",
+				RequestsPerMinute: 1,
+			},
+			{
+				AgentID:           "agent-c",
+				Server:            "github",
+				Tool:              "list_repos",
+				RequestsPerMinute: 10,
+			},
+		},
+	}
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+	e.now = func() time.Time { return time.Date(2026, 2, 18, 1, 0, 0, 0, time.UTC) }
+
+	if d := e.Check("agent-c", "", "github", "list_repos"); !d.Allowed {
+		t.Fatalf("first request should be allowed, got denied: %s", d.Reason)
+	}
+	if d := e.Check("agent-c", "", "github", "list_repos"); d.Allowed {
+		t.Fatalf("second request should be denied by first matching rule")
 	}
 }
 

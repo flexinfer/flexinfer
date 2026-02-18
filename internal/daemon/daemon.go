@@ -393,7 +393,8 @@ func New(cfg Config) (*Daemon, error) {
 			"default_policy", fileCfg.RBAC.DefaultPolicy,
 			"roles", len(fileCfg.RBAC.Roles),
 			"bindings", len(fileCfg.RBAC.Bindings),
-			"global_deny", len(fileCfg.RBAC.GlobalDeny))
+			"global_deny", len(fileCfg.RBAC.GlobalDeny),
+			"rate_limits", len(fileCfg.RBAC.RateLimits))
 	}
 
 	// Initialize audit logger (nil when disabled)
