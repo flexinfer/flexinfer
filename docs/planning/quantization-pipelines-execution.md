@@ -23,7 +23,7 @@ Implemented today:
 
 Planned (not implemented yet):
 - [x] Auto-selection of quantization format based on model + GPU constraints
-- [~] Quantization quality validation loop (perplexity/acceptance benchmark baseline) — split to [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
+- [x] Quantization quality validation loop (perplexity/acceptance benchmark baseline) via [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
 
 ## Milestones
 
@@ -64,12 +64,14 @@ Acceptance:
 - No behavior change for users who do not opt in.
 
 ### QP-5: Quality Validation Gate (Split Follow-up)
-- [~] Quality validation gate (perplexity/acceptance benchmark policy) moved to [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
+- [x] Deterministic policy thresholds implemented per format (`pkg/quantization/quality_gate.go`)
+- [x] CLI command for deterministic policy evaluation (`flexinfer quantize validate`)
+- [x] User docs updated with workflow + failure triage (`docs/user/quantization.md`)
 
 Acceptance for follow-up issue #10:
-- Deterministic validation command(s) and operator workflow documented.
-- Policy logic covered by automated tests.
-- Failure triage guidance documented for user/operator docs.
+- [x] Deterministic validation command(s) and operator workflow documented.
+- [x] Policy logic covered by automated tests.
+- [x] Failure triage guidance documented for user/operator docs.
 
 ## Validation Gate (Per Slice)
 

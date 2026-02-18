@@ -70,6 +70,42 @@ flexinfer quantize status llama3-8b
 flexinfer cache status
 ```
 
+## Quantization Quality Validation Gate
+
+Use the quality gate to compare a quantized artifact against a baseline model before rollout.
+
+```bash
+# Example: GGUF check on a gfx1100 workflow
+flexinfer quantize validate \
+  --format GGUF \
+  --baseline-perplexity 9.50 \
+  --candidate-perplexity 10.10 \
+  --baseline-acceptance 94 \
+  --candidate-acceptance 92
+```
+
+Expected passing signal:
+- `Result: PASS`
+
+Expected failing signal:
+- `Result: FAIL`
+- one or more `Failure:` lines with the violated threshold(s)
+- non-zero process exit (safe for CI gates)
+
+Acceptance rate input supports either:
+- ratio (`0.92`)
+- percent (`92`)
+
+Policy thresholds (deterministic):
+
+| Format | Max Perplexity Regression | Max Acceptance Drop |
+|--------|---------------------------|---------------------|
+| GGUF | +10.00% | 3.00pp |
+| AWQ | +7.00% | 2.00pp |
+| GPTQ | +8.00% | 2.50pp |
+| EXL2 | +6.00% | 2.00pp |
+| FP8 | +5.00% | 1.50pp |
+
 ## Declarative Quantization in ModelCache
 
 ```yaml
@@ -116,3 +152,7 @@ If format/backend are incompatible, scheduling or startup will fail.
   - confirm quantizer image has required runtime dependencies (`awq`, `auto-gptq`, `exllamav2`, or FP8 tooling)
 - Controller cannot pull quantizer image:
   - set `quantization.images.*` to reachable registry tags
+- Quality gate fails:
+  - verify baseline/candidate eval prompts and dataset are identical
+  - verify acceptance units (0..1 vs 0..100) are correctly passed
+  - for ROCm gfx1100 targets, prefer `GGUF` baselines first, then compare alternative formats

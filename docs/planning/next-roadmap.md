@@ -86,6 +86,15 @@ Execution plan: `docs/planning/context-aware-router-execution.md`
 - [ ] Safety/fallback controls + observability signals
 - [ ] E2E Chat-with-Doc validation and runbook guidance
 
+## Quantization: Quality Validation Gate ✅ COMPLETE
+
+Tracking issue: [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)  
+Execution plan: `docs/planning/quantization-pipelines-execution.md`
+
+- [x] Per-format perplexity/acceptance policy implemented
+- [x] `flexinfer quantize validate` deterministic gate command implemented
+- [x] User docs include quality-gate workflow and failure triage guidance
+
 ## Phase 5: Multi-Cluster (Future)
 
 Design: `docs/design/multi-cluster.md`
