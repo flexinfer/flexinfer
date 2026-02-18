@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -107,6 +108,7 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 		cache:      bridge.NewCache(),
 		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		sseHub:     NewSSEHub(nil),
+		eventLog:   NewEventLog(1000),
 		nudgeQueue: NewNudgeQueue(),
 	}
 
@@ -284,6 +286,65 @@ func TestHandler_Servers(t *testing.T) {
 
 	if len(result.Servers) == 0 {
 		t.Fatal("expected servers in result")
+	}
+}
+
+func TestFilterTimelineEntries(t *testing.T) {
+	entries := []TimelineEntry{
+		{EventType: "agent.heartbeat", AgentID: "codex"},
+		{EventType: "agent.session.start", AgentID: "codex"},
+		{EventType: "agent.heartbeat", AgentID: "claude"},
+	}
+
+	filtered := filterTimelineEntries(entries, "codex", "agent.heartbeat")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered entry, got %d", len(filtered))
+	}
+	if filtered[0].AgentID != "codex" || filtered[0].EventType != "agent.heartbeat" {
+		t.Fatalf("unexpected filtered entry: %+v", filtered[0])
+	}
+}
+
+func TestHandler_TimelineFilters(t *testing.T) {
+	app, mux := newTestApp(t)
+	now := time.Now().UTC()
+
+	app.eventLog.Append(TimelineEntry{
+		Timestamp: now.Add(-30 * time.Second),
+		EventType: "agent.heartbeat",
+		AgentID:   "codex",
+	})
+	app.eventLog.Append(TimelineEntry{
+		Timestamp: now.Add(-20 * time.Second),
+		EventType: "agent.session.start",
+		AgentID:   "codex",
+	})
+	app.eventLog.Append(TimelineEntry{
+		Timestamp: now.Add(-10 * time.Second),
+		EventType: "agent.heartbeat",
+		AgentID:   "claude",
+	})
+
+	req := httptest.NewRequest("GET", "/api/timeline?agent_id=codex&event_type=agent.heartbeat&limit=1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result struct {
+		Entries []TimelineEntry `json:"entries"`
+		Count   int             `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.Count != 1 || len(result.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got count=%d len=%d", result.Count, len(result.Entries))
+	}
+	if result.Entries[0].AgentID != "codex" || result.Entries[0].EventType != "agent.heartbeat" {
+		t.Fatalf("unexpected entry: %+v", result.Entries[0])
 	}
 }
 

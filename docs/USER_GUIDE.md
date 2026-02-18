@@ -177,6 +177,13 @@ Context budget inspection:
 loom agent context-inspect --agent-id codex --detail --limit 200
 ```
 
+Hook reliability diagnostics:
+
+```bash
+loom agent hook-status --agent-id codex --window 5m
+curl "http://127.0.0.1:3333/api/timeline?agent_id=codex&event_type=agent.heartbeat&limit=50"
+```
+
 Nudge queue status and policy:
 
 ```bash

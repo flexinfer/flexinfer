@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -420,6 +421,7 @@ not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentHeartbeatCmd(),
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
+		newAgentHookStatusCmd(),
 		newAgentContextInspectCmd(),
 		newAgentNudgeQueueStatusCmd(),
 		newAgentNudgeQueuePolicyCmd(),
@@ -725,6 +727,193 @@ func newAgentSessionCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
+
+	return cmd
+}
+
+func parseHeartbeatTimestamp(raw string) (time.Time, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts, true
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts, true
+	}
+	return time.Time{}, false
+}
+
+func hookStateFromSignals(now time.Time, lastHeartbeat time.Time, hasHeartbeat bool, heartbeatsInWindow int) string {
+	if hasHeartbeat {
+		age := now.Sub(lastHeartbeat)
+		switch {
+		case age <= 30*time.Second:
+			return "healthy"
+		case age <= 5*time.Minute:
+			return "stale"
+		default:
+			return "missing"
+		}
+	}
+	if heartbeatsInWindow > 0 {
+		return "stale"
+	}
+	return "missing"
+}
+
+func hookStatusWithHUD(cmd *cobra.Command, port, agentID string, window time.Duration, limit int) (json.RawMessage, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, fmt.Errorf("agent-id is required")
+	}
+	if window <= 0 {
+		return nil, fmt.Errorf("window must be greater than zero")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be greater than zero")
+	}
+
+	now := time.Now().UTC()
+	agentID = strings.TrimSpace(agentID)
+
+	sessionRaw, err := activeSessionWithFallback(cmd, port, agentID)
+	if err != nil {
+		return nil, err
+	}
+	var sessionEnvelope struct {
+		Session *bridge.SessionInfo `json:"session"`
+	}
+	_ = json.Unmarshal(sessionRaw, &sessionEnvelope)
+
+	presenceRaw, err := hudGet(port, "/api/presence")
+	if err != nil {
+		return nil, err
+	}
+	var presenceEnvelope struct {
+		Agents []bridge.PresenceInfo `json:"agents"`
+	}
+	if err := json.Unmarshal(presenceRaw, &presenceEnvelope); err != nil {
+		return nil, fmt.Errorf("parse presence response: %w", err)
+	}
+
+	var presence *bridge.PresenceInfo
+	for i := range presenceEnvelope.Agents {
+		if presenceEnvelope.Agents[i].AgentID == agentID {
+			presence = &presenceEnvelope.Agents[i]
+			break
+		}
+	}
+
+	query := url.Values{}
+	query.Set("agent_id", agentID)
+	query.Set("event_type", "agent.heartbeat")
+	query.Set("since", now.Add(-window).Format(time.RFC3339))
+	query.Set("limit", fmt.Sprintf("%d", limit))
+	timelineRaw, err := hudGet(port, "/api/timeline?"+query.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var timelineEnvelope struct {
+		Entries []struct {
+			Timestamp time.Time `json:"timestamp"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(timelineRaw, &timelineEnvelope); err != nil {
+		return nil, fmt.Errorf("parse timeline response: %w", err)
+	}
+
+	heartbeatsInWindow := len(timelineEnvelope.Entries)
+	var latestEventAt string
+	if heartbeatsInWindow > 0 {
+		latestEventAt = timelineEnvelope.Entries[0].Timestamp.UTC().Format(time.RFC3339)
+	}
+
+	var (
+		lastHeartbeat    time.Time
+		hasLastHeartbeat bool
+		lastHeartbeatRaw string
+		heartbeatAgeSec  int64
+		presenceStatus   string
+	)
+	if presence != nil {
+		lastHeartbeatRaw = strings.TrimSpace(presence.LastHeartbeat)
+		presenceStatus = strings.TrimSpace(presence.Status)
+		if ts, ok := parseHeartbeatTimestamp(lastHeartbeatRaw); ok {
+			hasLastHeartbeat = true
+			lastHeartbeat = ts.UTC()
+			heartbeatAgeSec = int64(now.Sub(lastHeartbeat).Seconds())
+		}
+	}
+
+	state := hookStateFromSignals(now, lastHeartbeat, hasLastHeartbeat, heartbeatsInWindow)
+
+	result := map[string]any{
+		"ok":                   true,
+		"agent_id":             agentID,
+		"hook_state":           state,
+		"hooks_working":        state != "missing",
+		"window_seconds":       int(window.Seconds()),
+		"heartbeats_in_window": heartbeatsInWindow,
+		"presence_registered":  presence != nil,
+		"has_active_session":   sessionEnvelope.Session != nil,
+		"checked_at":           now.Format(time.RFC3339),
+	}
+	if presenceStatus != "" {
+		result["presence_status"] = presenceStatus
+	}
+	if lastHeartbeatRaw != "" {
+		result["last_heartbeat"] = lastHeartbeatRaw
+	}
+	if hasLastHeartbeat {
+		result["heartbeat_age_seconds"] = heartbeatAgeSec
+	}
+	if latestEventAt != "" {
+		result["latest_heartbeat_event_at"] = latestEventAt
+	}
+	if sessionEnvelope.Session != nil {
+		result["session_id"] = sessionEnvelope.Session.ID
+		result["session_namespace"] = sessionEnvelope.Session.Namespace
+		result["session_status"] = sessionEnvelope.Session.Status
+	}
+
+	return json.Marshal(result)
+}
+
+// newAgentHookStatusCmd creates the `loom agent hook-status` command.
+func newAgentHookStatusCmd() *cobra.Command {
+	var (
+		agentID string
+		window  time.Duration
+		limit   int
+		quiet   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "hook-status",
+		Short: "Check if heartbeat hooks are firing for an agent",
+		Long: `Summarize hook/control-loop health by combining active session state,
+presence heartbeat recency, and recent agent.heartbeat timeline events.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+			result, err := hookStatusWithHUD(cmd, port, agentID, window, limit)
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+			if !quiet {
+				fmt.Println(string(result))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
+	cmd.Flags().DurationVar(&window, "window", 5*time.Minute, "Observation window for heartbeat events")
+	cmd.Flags().IntVar(&limit, "limit", 200, "Maximum timeline entries to inspect")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd

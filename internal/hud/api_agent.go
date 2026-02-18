@@ -236,6 +236,10 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Status      string `json:"status,omitempty"`
 		AgentType   string `json:"agent_type,omitempty"`
 		Description string `json:"description,omitempty"`
+		Namespace   string `json:"namespace,omitempty"`
+		// EnsureSession auto-bootstraps a session when heartbeat clients lack
+		// dedicated session-start hooks (for example proxy-only integrations).
+		EnsureSession bool `json:"ensure_session,omitempty"`
 
 		ActiveFiles []string `json:"active_files,omitempty"`
 		CurrentTask string   `json:"current_task,omitempty"`
@@ -250,6 +254,12 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if body.AgentID == "" {
 		a.writeError(w, http.StatusBadRequest, "agent_id is required", nil)
 		return
+	}
+	if body.EnsureSession {
+		namespace := strings.TrimSpace(body.Namespace)
+		if err := a.ensureHeartbeatSession(body.AgentID, namespace, body.AgentType, body.Description); err != nil {
+			a.logger.Warn("heartbeat ensure-session failed", "agent_id", body.AgentID, "error", err)
+		}
 	}
 
 	// Coalesce rapid heartbeats: skip the MCP round-trip if we saw an identical
@@ -393,6 +403,61 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *App) ensureHeartbeatSession(agentID, namespace, agentType, description string) error {
+	if strings.TrimSpace(agentID) == "" {
+		return nil
+	}
+
+	cacheKey := "hb-session:" + agentID + ":" + namespace
+	if _, ok := a.cache.Get(cacheKey); ok {
+		return nil
+	}
+
+	active, err := a.agent.GetActiveSession(agentID)
+	if err != nil {
+		return err
+	}
+	if active != nil {
+		if namespace == "" || strings.TrimSpace(active.Namespace) == namespace {
+			a.cache.Set(cacheKey, true, 30*time.Second)
+			return nil
+		}
+	}
+
+	if namespace == "" {
+		namespace = "agents/" + agentID
+	}
+	if strings.TrimSpace(agentType) == "" {
+		agentType = agentID
+	}
+	if strings.TrimSpace(description) == "" {
+		description = "Heartbeat bootstrap session"
+	}
+
+	result, err := a.agent.StartSession(bridge.SessionStartParams{
+		Namespace:   namespace,
+		AgentID:     agentID,
+		AgentType:   agentType,
+		Description: description,
+		AutoRecall:  false,
+	})
+	if err != nil {
+		return err
+	}
+
+	a.cache.Set(cacheKey, true, 30*time.Second)
+	if result != nil {
+		a.broadcastAgentEvent("agent.session.bootstrap", map[string]any{
+			"agent_id":   agentID,
+			"agent_type": agentType,
+			"session_id": result.SessionID,
+			"namespace":  namespace,
+		})
+	}
+
+	return nil
 }
 
 func heartbeatFingerprint(status, currentTask, branch string, activeFiles []string) string {

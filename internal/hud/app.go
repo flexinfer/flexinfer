@@ -1819,16 +1819,23 @@ func (a *App) handleTimeline(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	eventType := strings.TrimSpace(r.URL.Query().Get("event_type"))
 
 	var entries []TimelineEntry
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
 		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
-			entries = a.eventLog.Since(t, limit)
+			entries = a.eventLog.Since(t, 0)
 		} else {
-			entries = a.eventLog.All(limit)
+			entries = a.eventLog.All(0)
 		}
 	} else {
-		entries = a.eventLog.All(limit)
+		entries = a.eventLog.All(0)
+	}
+
+	entries = filterTimelineEntries(entries, agentID, eventType)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
 	}
 
 	if entries == nil {
@@ -1839,6 +1846,26 @@ func (a *App) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 		"count":   len(entries),
 	})
+}
+
+func filterTimelineEntries(entries []TimelineEntry, agentID, eventType string) []TimelineEntry {
+	agentID = strings.TrimSpace(agentID)
+	eventType = strings.TrimSpace(eventType)
+	if agentID == "" && eventType == "" {
+		return entries
+	}
+
+	filtered := make([]TimelineEntry, 0, len(entries))
+	for _, entry := range entries {
+		if agentID != "" && entry.AgentID != agentID {
+			continue
+		}
+		if eventType != "" && entry.EventType != eventType {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 // handleAgentDispatch dispatches a task to a specific agent from the HUD.

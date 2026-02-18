@@ -34,6 +34,12 @@ var lastHeartbeat atomic.Int64
 // heartbeatIntervalNanos is the minimum interval between heartbeats in nanoseconds.
 var heartbeatIntervalNanos int64 = int64(5 * time.Second)
 
+// proxyNamespace caches inferred git namespace for proxy heartbeat session bootstrap.
+var (
+	proxyNamespaceOnce sync.Once
+	proxyNamespace     string
+)
+
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
@@ -768,7 +774,22 @@ func splitToolName(name string) []string {
 // proxyHeartbeat fires an async heartbeat to the HUD for proxy-level agent identification.
 // This provides universal heartbeat coverage for any agent using loom proxy.
 func proxyHeartbeat(agentType string) {
-	body := fmt.Sprintf(`{"agent_id":"%s","status":"active","agent_type":"%s"}`, agentType, agentType)
+	proxyNamespaceOnce.Do(func() {
+		proxyNamespace = inferGitNamespace()
+	})
+	bodyMap := map[string]any{
+		"agent_id":       agentType,
+		"status":         "active",
+		"agent_type":     agentType,
+		"ensure_session": true,
+	}
+	if strings.TrimSpace(proxyNamespace) != "" {
+		bodyMap["namespace"] = proxyNamespace
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -782,7 +803,7 @@ func proxyHeartbeat(agentType string) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"http://127.0.0.1:"+port+"/api/agent/heartbeat",
-		strings.NewReader(body))
+		strings.NewReader(string(body)))
 	if err != nil {
 		return
 	}
