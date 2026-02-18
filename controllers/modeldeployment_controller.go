@@ -1220,16 +1220,27 @@ func (r *ModelDeploymentReconciler) benchmarkConfigMapName(m *aiv1alpha1.ModelDe
 
 // getBackendImage returns the backend image based on spec and GPU vendor
 func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeployment) string {
+	gpuArch := strings.ToLower(r.getGPUArchitecture(m))
+	isGFX1100 := strings.HasPrefix(gpuArch, "gfx110")
+
 	switch canonicalBackend(m.Spec.Backend) {
 	case "vllm":
 		// vLLM supports both NVIDIA (CUDA) and AMD (ROCm) GPUs
 		gpuResource := r.detectGPUResourceFromSpec(m)
 		switch gpuResource {
 		case GPUResourceAMD:
+			if isGFX1100 {
+				if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE_GFX1100"); ok {
+					return image
+				}
+			}
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE_AMD"); ok {
 				return image
 			}
 			// ROCm-enabled vLLM image for gfx1100 (RX 7900 XTX)
+			if isGFX1100 {
+				return "registry.harbor.lan/library/vllm-api:rocm-gfx1100"
+			}
 			return "registry.harbor.lan/library/vllm-api:rocm-navi"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE"); ok {
@@ -1260,10 +1271,18 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 		gpuResource := r.detectGPUResourceFromSpec(m)
 		switch gpuResource {
 		case GPUResourceAMD:
+			if isGFX1100 {
+				if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE_GFX1100"); ok {
+					return image
+				}
+			}
 			if image, ok := os.LookupEnv("DEFAULT_MLC_LLM_IMAGE_AMD"); ok {
 				return image
 			}
 			// ROCm-enabled MLC-LLM image
+			if isGFX1100 {
+				return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
+			}
 			return "ghcr.io/mlc-ai/mlc-llm:rocm"
 		case GPUResourceNVIDIA:
 			// Check for Maxwell architecture first (requires custom build with CUDA 11.8)
@@ -1308,10 +1327,18 @@ func (r *ModelDeploymentReconciler) getBackendImage(m *aiv1alpha1.ModelDeploymen
 		gpuResource := r.detectGPUResourceFromSpec(m)
 		switch gpuResource {
 		case GPUResourceAMD:
+			if isGFX1100 {
+				if image, ok := os.LookupEnv("DEFAULT_VLLM_IMAGE_GFX1100"); ok {
+					return image
+				}
+			}
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE_AMD"); ok {
 				return image
 			}
 			// ROCm-enabled vLLM-Omni image for gfx1100 (RX 7900 XTX)
+			if isGFX1100 {
+				return "registry.harbor.lan/library/vllm-api:rocm-gfx1100"
+			}
 			return "registry.harbor.lan/library/vllm-api:rocm-navi"
 		default:
 			if image, ok := os.LookupEnv("DEFAULT_VLLM_OMNI_IMAGE"); ok {
@@ -2135,12 +2162,20 @@ func (r *ModelDeploymentReconciler) getGPUArchitecture(m *aiv1alpha1.ModelDeploy
 	if m.Spec.NodeSelector == nil {
 		return ""
 	}
+	// FlexInfer node-agent label (preferred for mixed-vendor/mixed-arch clusters).
+	if arch, ok := m.Spec.NodeSelector["flexinfer.ai/gpu.arch"]; ok && arch != "" {
+		return arch
+	}
 	// Check for explicit architecture label
 	if arch, ok := m.Spec.NodeSelector["nvidia.com/gpu.arch"]; ok {
 		return arch
 	}
 	// Check for AMD ROCm architecture
 	if arch, ok := m.Spec.NodeSelector["amd.com/gpu.arch"]; ok {
+		return arch
+	}
+	// AMD device plugin commonly uses this key.
+	if arch, ok := m.Spec.NodeSelector["gpu.amd.com/gpu-architecture"]; ok {
 		return arch
 	}
 	// Check for compute capability and convert to sm_XX format
