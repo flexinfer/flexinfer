@@ -78,9 +78,9 @@ var quantizeStatusCmd = &cobra.Command{
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
-	quantizeCmd.Flags().Int32Var(&quantBits, "bits", 4, "Quantization bits for AWQ/GPTQ formats")
+	quantizeCmd.Flags().Int32Var(&quantBits, "bits", 4, "Quantization bits for AWQ/GPTQ/EXL2/FP8 formats")
 	quantizeCmd.Flags().Int32Var(&quantGroupSize, "group-size", 128, "Quantization group size for AWQ/GPTQ formats")
-	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ)")
+	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ/EXL2/FP8)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
 	quantizeCmd.AddCommand(quantizeFormatsCmd)
 	quantizeCmd.AddCommand(quantizeStatusCmd)
@@ -174,12 +174,25 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	quantSpec := &aiv1alpha1.QuantizationSpec{
 		Format: format,
 	}
+	effectiveBits := quantBits
+	if (format == aiv1alpha1.QuantizationFormatFP8) && !cmd.Flags().Changed("bits") {
+		effectiveBits = int32(quantization.DefaultFP8Bits)
+	}
+
 	if format == aiv1alpha1.QuantizationFormatGGUF {
 		quantSpec.GGUFType = qType
 	}
 	if format == aiv1alpha1.QuantizationFormatAWQ || format == aiv1alpha1.QuantizationFormatGPTQ {
-		quantSpec.Bits = &quantBits
+		quantSpec.Bits = &effectiveBits
 		quantSpec.GroupSize = &quantGroupSize
+		quantSpec.UseGPU = quantUseGPU
+	}
+	if format == aiv1alpha1.QuantizationFormatEXL2 {
+		quantSpec.Bits = &effectiveBits
+		quantSpec.UseGPU = quantUseGPU
+	}
+	if format == aiv1alpha1.QuantizationFormatFP8 {
+		quantSpec.Bits = &effectiveBits
 		quantSpec.UseGPU = quantUseGPU
 	}
 	if quantMaxMemGB > 0 {
@@ -200,8 +213,14 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(out, "  Format: %s\n", format)
 	if format == aiv1alpha1.QuantizationFormatGGUF {
 		_, _ = fmt.Fprintf(out, "  Type:   %s\n", qType)
+	} else if format == aiv1alpha1.QuantizationFormatEXL2 {
+		_, _ = fmt.Fprintf(out, "  Type:   EXL2_B%d\n", effectiveBits)
+		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
+	} else if format == aiv1alpha1.QuantizationFormatFP8 {
+		_, _ = fmt.Fprintf(out, "  Type:   FP8_B%d\n", effectiveBits)
+		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
 	} else {
-		_, _ = fmt.Fprintf(out, "  Type:   W%d_G%d\n", quantBits, quantGroupSize)
+		_, _ = fmt.Fprintf(out, "  Type:   W%d_G%d\n", effectiveBits, quantGroupSize)
 		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
 	}
 	if quantMaxMemGB > 0 {
@@ -239,6 +258,10 @@ func runQuantizeStatus(cmd *cobra.Command, args []string) error {
 		requested = string(cache.Spec.Quantization.Format)
 		if cache.Spec.Quantization.GGUFType != "" {
 			requested = fmt.Sprintf("%s/%s", requested, cache.Spec.Quantization.GGUFType)
+		} else if cache.Spec.Quantization.Format == aiv1alpha1.QuantizationFormatEXL2 && cache.Spec.Quantization.Bits != nil {
+			requested = fmt.Sprintf("%s/EXL2_B%d", requested, *cache.Spec.Quantization.Bits)
+		} else if cache.Spec.Quantization.Format == aiv1alpha1.QuantizationFormatFP8 && cache.Spec.Quantization.Bits != nil {
+			requested = fmt.Sprintf("%s/FP8_B%d", requested, *cache.Spec.Quantization.Bits)
 		} else if cache.Spec.Quantization.Bits != nil && cache.Spec.Quantization.GroupSize != nil {
 			requested = fmt.Sprintf("%s/W%d_G%d", requested, *cache.Spec.Quantization.Bits, *cache.Spec.Quantization.GroupSize)
 		}

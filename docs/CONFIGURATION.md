@@ -51,6 +51,8 @@ The controller uses these environment variables to override default backend cont
 | `FLEXINFER_QUANTIZER_GGUF_IMAGE` | `ghcr.io/flexinfer/quantizer:gguf` | GGUF quantizer job image for `ModelCache.spec.quantization.format=GGUF` |
 | `FLEXINFER_QUANTIZER_AWQ_IMAGE` | `ghcr.io/flexinfer/quantizer:awq` | AWQ quantizer job image for `ModelCache.spec.quantization.format=AWQ` |
 | `FLEXINFER_QUANTIZER_GPTQ_IMAGE` | `ghcr.io/flexinfer/quantizer:gptq` | GPTQ quantizer job image for `ModelCache.spec.quantization.format=GPTQ` |
+| `FLEXINFER_QUANTIZER_EXL2_IMAGE` | `ghcr.io/flexinfer/quantizer:exl2` | EXL2 quantizer job image for `ModelCache.spec.quantization.format=EXL2` |
+| `FLEXINFER_QUANTIZER_FP8_IMAGE` | `ghcr.io/flexinfer/quantizer:fp8` | FP8 quantizer job image for `ModelCache.spec.quantization.format=FP8` |
 
 ---
 
@@ -201,6 +203,8 @@ Default container images for each backend type:
 - **GGUF**: `ghcr.io/flexinfer/quantizer:gguf`
 - **AWQ**: `ghcr.io/flexinfer/quantizer:awq`
 - **GPTQ**: `ghcr.io/flexinfer/quantizer:gptq`
+- **EXL2**: `ghcr.io/flexinfer/quantizer:exl2`
+- **FP8**: `ghcr.io/flexinfer/quantizer:fp8`
 
 ### Image Pinning Best Practices
 
