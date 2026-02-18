@@ -557,6 +557,71 @@ func TestGetBackendEnv_VLLM_AMD_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	}
 }
 
+func TestGetBackendEnv_VLLM_AMD_ROCRVisibleDevices_MirrorsHIP(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			VLLM: &aiv1alpha1.VLLMSpec{
+				ROCRVisibleDevices: "2",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["ROCR_VISIBLE_DEVICES"]; v != "2" {
+		t.Fatalf("expected ROCR_VISIBLE_DEVICES=2, got %q", v)
+	}
+	if v := envMap["HIP_VISIBLE_DEVICES"]; v != "2" {
+		t.Fatalf("expected HIP_VISIBLE_DEVICES=2, got %q", v)
+	}
+}
+
+func TestGetBackendEnv_VLLM_AMD_DeviceIsolationOverrides(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "vllm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			VLLM: &aiv1alpha1.VLLMSpec{
+				HIPVisibleDevices:  "1",
+				ROCRVisibleDevices: "2",
+				GPUDeviceOrdinal:   "2",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["HIP_VISIBLE_DEVICES"]; v != "1" {
+		t.Fatalf("expected HIP_VISIBLE_DEVICES=1, got %q", v)
+	}
+	if v := envMap["ROCR_VISIBLE_DEVICES"]; v != "2" {
+		t.Fatalf("expected ROCR_VISIBLE_DEVICES=2, got %q", v)
+	}
+	if v := envMap["GPU_DEVICE_ORDINAL"]; v != "2" {
+		t.Fatalf("expected GPU_DEVICE_ORDINAL=2, got %q", v)
+	}
+}
+
 func TestGetBackendEnv_VLLMOmni_AMD_InheritsVLLMROCmEnv(t *testing.T) {
 	r := &ModelDeploymentReconciler{}
 	cacheRef := "qwen-cache"

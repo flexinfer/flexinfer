@@ -543,6 +543,11 @@ spec:
                       EnforceEager disables CUDA graph and runs in eager mode.
                       Useful for debugging or when CUDA graphs cause issues.
                     type: boolean
+                  gpuDeviceOrdinal:
+                    description: |-
+                      GPUDeviceOrdinal pins CUDA/HIP runtime device ordinal selection.
+                      Useful on mixed iGPU+dGPU systems where explicit ordinal routing is needed.
+                    type: string
                   gpuMemoryUtilization:
                     description: |-
                       GPUMemoryUtilization is the fraction of GPU memory to use (0.0-1.0).
@@ -598,6 +603,13 @@ spec:
                     - fp8
                     - None
                     - ""
+                    type: string
+                  rocrVisibleDevices:
+                    description: |-
+                      ROCRVisibleDevices specifies which AMD GPUs to use via ROCR_VISIBLE_DEVICES.
+                      If only one of HIPVisibleDevices or ROCRVisibleDevices is set, FlexInfer
+                      mirrors the value to both variables for consistent ROCm isolation.
+                      Format: comma-separated device indices (e.g., "0", "1", "0,1")
                     type: string
                   ropeScaling:
                     description: |-

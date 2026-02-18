@@ -416,6 +416,18 @@ type VLLMSpec struct {
 	// +optional
 	HIPVisibleDevices string `json:"hipVisibleDevices,omitempty"`
 
+	// ROCRVisibleDevices specifies which AMD GPUs to use via ROCR_VISIBLE_DEVICES.
+	// If only one of HIPVisibleDevices or ROCRVisibleDevices is set, FlexInfer
+	// mirrors the value to both variables for consistent ROCm isolation.
+	// Format: comma-separated device indices (e.g., "0", "1", "0,1")
+	// +optional
+	ROCRVisibleDevices string `json:"rocrVisibleDevices,omitempty"`
+
+	// GPUDeviceOrdinal pins CUDA/HIP runtime device ordinal selection.
+	// Useful on mixed iGPU+dGPU systems where explicit ordinal routing is needed.
+	// +optional
+	GPUDeviceOrdinal string `json:"gpuDeviceOrdinal,omitempty"`
+
 	// EnablePrefixCaching enables automatic prefix caching for improved
 	// performance on repeated prompt prefixes. Reduces KV cache memory by
 	// reusing cached prefixes across requests.
