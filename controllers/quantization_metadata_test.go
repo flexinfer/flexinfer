@@ -153,6 +153,15 @@ func TestQuantizationTypeFromSpec(t *testing.T) {
 	if got := quantizationTypeFromSpec(exl2); got != "EXL2_B5" {
 		t.Fatalf("EXL2 type = %q, want %q", got, "EXL2_B5")
 	}
+
+	fp8Bits := int32(8)
+	fp8 := &aiv1alpha1.QuantizationSpec{
+		Format: aiv1alpha1.QuantizationFormatFP8,
+		Bits:   &fp8Bits,
+	}
+	if got := quantizationTypeFromSpec(fp8); got != "FP8_B8" {
+		t.Fatalf("FP8 type = %q, want %q", got, "FP8_B8")
+	}
 }
 
 func TestQuantizedPathFromMetadata(t *testing.T) {

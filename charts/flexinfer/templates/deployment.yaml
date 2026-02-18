@@ -159,4 +159,8 @@ spec:
             - name: FLEXINFER_QUANTIZER_EXL2_IMAGE
               value: {{ .Values.quantization.images.exl2 | quote }}
             {{- end }}
+            {{- if .Values.quantization.images.fp8 }}
+            - name: FLEXINFER_QUANTIZER_FP8_IMAGE
+              value: {{ .Values.quantization.images.fp8 | quote }}
+            {{- end }}
 {{- end }}

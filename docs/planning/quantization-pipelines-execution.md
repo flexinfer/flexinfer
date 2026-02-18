@@ -11,6 +11,7 @@ Implemented today:
 - [x] `ModelCache.spec.quantization` API and status fields (`api/v1alpha1/modelcache_types.go`)
 - [x] Quantization builders for `GGUF`, `AWQ`, and `GPTQ` (`pkg/quantization/`)
 - [x] Quantization builder for `EXL2` (`pkg/quantization/exl2.go`)
+- [x] Quantization builder for `FP8` (`pkg/quantization/fp8.go`)
 - [x] ModelCache quantization lifecycle integration (download -> quantize job -> status/metrics) (`controllers/modelcache_controller.go`)
 - [x] Quantization metrics (`pkg/metrics/exporter.go`)
 - [x] CLI flows:
@@ -21,7 +22,6 @@ Implemented today:
 - [x] User/operator docs for quantization usage (`docs/user/quantization.md`, `docs/CONFIGURATION.md`)
 
 Planned (not implemented yet):
-- [ ] `FP8` job builder/runtime support
 - [ ] Auto-selection of quantization format based on model + GPU constraints
 - [ ] Quantization quality validation loop (perplexity/acceptance benchmark baseline)
 
@@ -45,14 +45,14 @@ Acceptance:
 
 ### QP-3: Format Expansion (EXL2/FP8)
 - [x] Add `EXL2` job builder + validation constraints.
-- [ ] Add `FP8` job builder + validation constraints.
-- [ ] Extend CLI/help text with runtime-ready status for new formats.
-- [ ] Add tests for new builders and controller integration points.
+- [x] Add `FP8` job builder + validation constraints.
+- [x] Extend CLI/help text with runtime-ready status for new formats.
+- [x] Add tests for new builders and controller integration points.
 
 Acceptance:
-- `quantization.GetBuilder(EXL2)` returns a concrete builder.
-- `quantization.GetBuilder(FP8)` returns a concrete builder.
-- `flexinfer quantize formats` shows implemented for both.
+- [x] `quantization.GetBuilder(EXL2)` returns a concrete builder.
+- [x] `quantization.GetBuilder(FP8)` returns a concrete builder.
+- [x] `flexinfer quantize formats` shows implemented for both.
 
 ### QP-4: Auto-Selection + Recommendations
 - [ ] Add recommendation logic from model footprint + cluster GPU capabilities.

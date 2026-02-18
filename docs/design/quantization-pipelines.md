@@ -1,6 +1,6 @@
 # Quantization Pipelines Design
 
-**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2 implemented; FP8 + auto-selection pending)
+**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8 implemented; auto-selection pending)
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
 

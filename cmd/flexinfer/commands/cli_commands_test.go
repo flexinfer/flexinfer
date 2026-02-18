@@ -636,8 +636,8 @@ func TestRunQuantizeFormats_PrintsTable(t *testing.T) {
 	if !strings.Contains(out, "EXL2") || !strings.Contains(out, "exllamav2") {
 		t.Fatalf("expected EXL2 compatibility row, got: %q", out)
 	}
-	if !strings.Contains(out, "FP8") || !strings.Contains(out, "planned") {
-		t.Fatalf("expected FP8 planned row, got: %q", out)
+	if !strings.Contains(out, "FP8") || !strings.Contains(out, "implemented") {
+		t.Fatalf("expected FP8 implemented row, got: %q", out)
 	}
 }
 
@@ -672,7 +672,7 @@ func TestRunQuantize_RejectsUnsupportedFormat(t *testing.T) {
 	})
 
 	namespace = "flexinfer-system"
-	quantFormat = "FP8"
+	quantFormat = "invalid-format"
 	quantType = ""
 	quantBits = 4
 	quantGroupSize = 128
@@ -756,6 +756,79 @@ func TestRunQuantize_AppliesEXL2Spec(t *testing.T) {
 	out := stdout.String()
 	if !strings.Contains(out, "Format: EXL2") || !strings.Contains(out, "Type:   EXL2_B5") {
 		t.Fatalf("expected EXL2 output in stdout, got: %q", out)
+	}
+}
+
+func TestRunQuantize_AppliesFP8Spec(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelCacheSpec{Source: "huggingface://meta-llama/Llama-3-8B"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origFormat := quantFormat
+	origType := quantType
+	origBits := quantBits
+	origGroupSize := quantGroupSize
+	origUseGPU := quantUseGPU
+	origMem := quantMaxMemGB
+	t.Cleanup(func() {
+		namespace = origNs
+		quantFormat = origFormat
+		quantType = origType
+		quantBits = origBits
+		quantGroupSize = origGroupSize
+		quantUseGPU = origUseGPU
+		quantMaxMemGB = origMem
+	})
+
+	namespace = "flexinfer-system"
+	quantFormat = "fp8"
+	quantType = ""
+	// Keep default value to verify runQuantize applies FP8 default bits (8)
+	// when --bits flag is not explicitly set.
+	quantBits = 4
+	quantGroupSize = 128
+	quantUseGPU = true
+	quantMaxMemGB = 48
+
+	if err := runQuantize(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantize() error: %v", err)
+	}
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := c.Get(ctx(), types.NamespacedName{Name: "test-cache", Namespace: "flexinfer-system"}, updated); err != nil {
+		t.Fatalf("Get updated ModelCache: %v", err)
+	}
+	if updated.Spec.Quantization == nil {
+		t.Fatal("expected quantization spec to be set")
+	}
+	if updated.Spec.Quantization.Format != aiv1alpha1.QuantizationFormatFP8 {
+		t.Fatalf("Format = %q, want %q", updated.Spec.Quantization.Format, aiv1alpha1.QuantizationFormatFP8)
+	}
+	if updated.Spec.Quantization.Bits == nil || *updated.Spec.Quantization.Bits != 8 {
+		t.Fatalf("Bits = %v, want 8", updated.Spec.Quantization.Bits)
+	}
+	if !updated.Spec.Quantization.UseGPU {
+		t.Fatalf("UseGPU = %v, want true", updated.Spec.Quantization.UseGPU)
+	}
+	if updated.Spec.Quantization.GroupSize != nil {
+		t.Fatalf("GroupSize = %v, want nil for FP8", updated.Spec.Quantization.GroupSize)
+	}
+	if updated.Spec.Quantization.MaxMemoryGB == nil || *updated.Spec.Quantization.MaxMemoryGB != 48 {
+		t.Fatalf("MaxMemoryGB = %v, want 48", updated.Spec.Quantization.MaxMemoryGB)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Format: FP8") || !strings.Contains(out, "Type:   FP8_B8") {
+		t.Fatalf("expected FP8 output in stdout, got: %q", out)
 	}
 }
 
