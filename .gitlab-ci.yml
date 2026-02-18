@@ -274,28 +274,28 @@ publish:
         dockerfile="$2"
         shift 2
 
-        for tag in "$@"; do
-          echo "Publishing ${name}: ${tag}"
-          attempts=5
-          delay=2
-          for i in $(seq 1 "${attempts}"); do
-            if buildctl --addr "${BUILDKIT_HOST}" build \
-              --frontend dockerfile.v0 \
-              --local context=. \
-              --local dockerfile=build \
-              --opt filename="${dockerfile}" \
-              --opt platform=linux/amd64 \
-              --output "type=image,name=${tag},push=true"; then
-              break
-            fi
-            if [ "${i}" -eq "${attempts}" ]; then
-              echo "ERROR: failed to publish ${name} (${tag}) after ${attempts} attempts"
-              exit 1
-            fi
-            echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
-            sleep "${delay}"
-            delay=$((delay * 2))
-          done
+        tags_csv="$(IFS=,; echo "$*")"
+        echo "Publishing ${name}: ${tags_csv}"
+
+        attempts=5
+        delay=2
+        for i in $(seq 1 "${attempts}"); do
+          if buildctl --addr "${BUILDKIT_HOST}" --timeout 45m build \
+            --frontend dockerfile.v0 \
+            --local context=. \
+            --local dockerfile=build \
+            --opt filename="${dockerfile}" \
+            --opt platform=linux/amd64 \
+            --output "type=image,name=${tags_csv},push=true"; then
+            break
+          fi
+          if [ "${i}" -eq "${attempts}" ]; then
+            echo "ERROR: failed to publish ${name} (${tags_csv}) after ${attempts} attempts"
+            exit 1
+          fi
+          echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
+          sleep "${delay}"
+          delay=$((delay * 2))
         done
       }
 
