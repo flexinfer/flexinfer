@@ -234,6 +234,86 @@ func TestCallPipelineAuthorize_DeniedByRBAC(t *testing.T) {
 	}
 }
 
+func TestCallPipelineAuthorize_DeniedByGlobalPolicy(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		GlobalDeny:    []string{"github__delete_*"},
+		Roles: map[string]RBACRole{
+			"admin": {Allow: []string{"*"}},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "admin-agent", Role: "admin"},
+		},
+	}, d.logger)
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "deny-global"},
+		serverName: "github",
+		toolName:   "delete_repo",
+		params: callParams{
+			AgentID: "admin-agent",
+		},
+		auditStart: time.Now(),
+	}
+
+	resp := p.authorize()
+	if resp == nil {
+		t.Fatal("expected denied response")
+	}
+	if resp.Error == nil || resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("expected invalid request denial, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "global policy") {
+		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
+	}
+}
+
+func TestCallPipelineAuthorize_DeniedByRateLimit(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-rate",
+				Server:            "github",
+				Tool:              "list_repos",
+				RequestsPerMinute: 1,
+			},
+		},
+	}, d.logger)
+	d.rbac.now = func() time.Time { return time.Date(2026, 2, 18, 1, 0, 0, 0, time.UTC) }
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "deny-rate"},
+		serverName: "github",
+		toolName:   "list_repos",
+		params: callParams{
+			AgentID: "agent-rate",
+		},
+		auditStart: time.Now(),
+	}
+
+	if resp := p.authorize(); resp != nil {
+		t.Fatalf("first request should pass authorization, got %+v", resp.Error)
+	}
+
+	resp := p.authorize()
+	if resp == nil {
+		t.Fatal("expected denied response on second request")
+	}
+	if resp.Error == nil || resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("expected invalid request denial, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "rate limit exceeded") {
+		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
+	}
+}
+
 func TestCallPipelineTryCachedResponse_Hit(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	d.respCache = NewResponseCache(CacheConfig{Enabled: true})
