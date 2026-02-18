@@ -236,7 +236,7 @@ func TestFleetPanelViewShowsResolvedIdentityAndContext(t *testing.T) {
 	if !strings.Contains(v, "codex/runner-42") {
 		t.Fatalf("view missing resolved actor label:\n%s", v)
 	}
-	if !strings.Contains(v, "session:"+sessionID) {
+	if !strings.Contains(v, "sid:"+sessionID) {
 		t.Fatalf("view missing selected session context:\n%s", v)
 	}
 	if !strings.Contains(v, "task: Investigate session clarity") {

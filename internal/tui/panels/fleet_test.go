@@ -59,16 +59,39 @@ func TestSessionStateLabel(t *testing.T) {
 		presence      string
 		want          string
 	}{
-		{name: "same status", sessionStatus: "active", presence: "active", want: "active"},
-		{name: "mismatch status", sessionStatus: "active", presence: "offline", want: "active/offline"},
-		{name: "missing presence", sessionStatus: "idle", presence: "", want: "idle"},
-		{name: "missing session", sessionStatus: "", presence: "active", want: "unknown/active"},
+		{name: "same status", sessionStatus: "active", presence: "active", want: "act"},
+		{name: "mismatch status", sessionStatus: "active", presence: "offline", want: "act/off"},
+		{name: "missing presence", sessionStatus: "idle", presence: "", want: "idl"},
+		{name: "missing session", sessionStatus: "", presence: "active", want: "?/act"},
+		{name: "summarized with active presence", sessionStatus: "summarized", presence: "active", want: "sum/act"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sessionStateLabel(tt.sessionStatus, tt.presence)
 			if got != tt.want {
 				t.Errorf("sessionStateLabel(%q, %q) = %q, want %q", tt.sessionStatus, tt.presence, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStatusCode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "active", want: "act"},
+		{input: "idle", want: "idl"},
+		{input: "offline", want: "off"},
+		{input: "summarized", want: "sum"},
+		{input: "ended", want: "end"},
+		{input: "", want: "?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := statusCode(tt.input)
+			if got != tt.want {
+				t.Errorf("statusCode(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}

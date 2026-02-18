@@ -281,7 +281,13 @@ func (p FleetPanel) renderSessionTable() string {
 			}
 
 			state := sessionStateLabel(s.Status, agentInfo.Status)
-			dot := widgets.StatusDot(normalizeSessionStatus(state))
+			sessionStatus := normalizedStatus(s.Status)
+			presenceStatus := normalizedStatus(agentInfo.Status)
+			dotStatus := normalizeSessionStatus(sessionStatus)
+			if presenceStatus != "" && sessionStatus != "" && presenceStatus != sessionStatus {
+				dotStatus = "degraded"
+			}
+			dot := widgets.StatusDot(dotStatus)
 			sessionID := truncate(shortSessionID(s.ID), colSession)
 			age := truncate(relativeTime(s.StartedAt), colAge)
 			tokens := truncate(formatNumber(s.TokenCount), colTokens)
@@ -312,20 +318,27 @@ func (p FleetPanel) renderSessionTable() string {
 					agentID = strings.TrimSpace(s.AgentID)
 				}
 
-				details := []string{fmt.Sprintf("session:%s", s.ID)}
+				details := []string{fmt.Sprintf("id:%s", shortSessionID(s.ID))}
 				if agentID != "" {
 					details = append(details, fmt.Sprintf("agent:%s", agentID))
 				}
 				if agentType := canonicalAgentType(agentInfo.AgentType, agentID); agentType != "unknown" {
 					details = append(details, fmt.Sprintf("type:%s", agentType))
 				}
-				if presenceStatus := normalizedStatus(agentInfo.Status); presenceStatus != "" {
-					details = append(details, fmt.Sprintf("presence:%s", presenceStatus))
-				}
-				if hb := relativeTime(agentInfo.LastHeartbeat); hb != "---" {
-					details = append(details, fmt.Sprintf("heartbeat:%s", hb))
+				if s.ID != "" {
+					details = append(details, fmt.Sprintf("sid:%s", s.ID))
 				}
 				b.WriteString(detailStyle.Render(truncate(strings.Join(details, "  "), detailMax)))
+				b.WriteString("\n")
+
+				statusDetails := []string{fmt.Sprintf("session:%s", statusDisplay(s.Status))}
+				if presence := strings.TrimSpace(agentInfo.Status); presence != "" {
+					statusDetails = append(statusDetails, fmt.Sprintf("presence:%s", statusDisplay(presence)))
+				}
+				if hb := relativeTime(agentInfo.LastHeartbeat); hb != "---" {
+					statusDetails = append(statusDetails, fmt.Sprintf("hb:%s", hb))
+				}
+				b.WriteString(detailStyle.Render(truncate(strings.Join(statusDetails, "  "), detailMax)))
 				b.WriteString("\n")
 
 				if agentInfo.CurrentTask != "" {
@@ -536,26 +549,30 @@ func canonicalAgentType(agentType, agentID string) string {
 
 func sessionStateLabel(sessionStatus, presenceStatus string) string {
 	sessionState := normalizedStatus(sessionStatus)
+	presenceState := normalizedStatus(presenceStatus)
+	sessionCode := statusCode(sessionStatus)
 	if sessionState == "" {
 		sessionState = "unknown"
+		sessionCode = "?"
 	}
-	presenceState := normalizedStatus(presenceStatus)
 	if presenceState == "" || presenceState == "unknown" || presenceState == sessionState {
-		return sessionState
+		return sessionCode
 	}
-	return sessionState + "/" + presenceState
+	return sessionCode + "/" + statusCode(presenceStatus)
 }
 
 func normalizedStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "active", "running":
+	case "active", "running", "in_progress", "in-progress":
 		return "active"
-	case "idle":
+	case "idle", "waiting":
 		return "idle"
 	case "offline":
 		return "offline"
-	case "ended", "closed":
+	case "ended", "closed", "summarized", "completed", "done":
 		return "ended"
+	case "error", "failed":
+		return "error"
 	default:
 		if strings.TrimSpace(status) == "" {
 			return ""
@@ -596,7 +613,60 @@ func normalizeSessionStatus(status string) string {
 		return "idle"
 	case "ended", "closed", "offline":
 		return "down"
+	case "error":
+		return "degraded"
 	default:
 		return "degraded"
+	}
+}
+
+func statusCode(raw string) string {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "":
+		return "?"
+	case "summarized", "summary":
+		return "sum"
+	}
+	switch normalizedStatus(status) {
+	case "active":
+		return "act"
+	case "idle":
+		return "idl"
+	case "offline":
+		return "off"
+	case "ended":
+		return "end"
+	case "error":
+		return "err"
+	default:
+		if len(status) <= 3 {
+			return status
+		}
+		return status[:3]
+	}
+}
+
+func statusDisplay(raw string) string {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "":
+		return "unknown"
+	case "summarized", "summary":
+		return "summarized"
+	}
+	switch normalizedStatus(status) {
+	case "active":
+		return "active"
+	case "idle":
+		return "idle"
+	case "offline":
+		return "offline"
+	case "ended":
+		return "ended"
+	case "error":
+		return "error"
+	default:
+		return status
 	}
 }
