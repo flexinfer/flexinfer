@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Dev upgrade routine: build, atomically install to ~/.local/bin, regen+sync configs in loom mode,
+# Dev upgrade routine: build, atomically install binaries, regen+sync configs in loom mode,
 # and (optionally) restart the daemon only when idle.
+#
+# Path safety:
+# - Always installs to INSTALL_DIR (default ~/.local/bin)
+# - Also installs to the currently active `loom` PATH directory when user-writable
+#   (prevents stale binaries when PATH prefers e.g. ~/go/bin/loom)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
@@ -10,20 +15,82 @@ RESTART_DAEMON="${RESTART_DAEMON:-auto}" # auto|always|never
 
 cd "$ROOT"
 
+resolve_dir() {
+  local d="$1"
+  mkdir -p "$d"
+  (cd "$d" && pwd -P)
+}
+
+dir_in_list() {
+  local needle="$1"
+  shift
+  local d
+  for d in "$@"; do
+    if [[ "$d" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 echo "== Build =="
 make loom loomd >/dev/null
 
 echo "== Install (atomic) =="
 chmod +x scripts/install_atomic.sh
-scripts/install_atomic.sh "$ROOT/bin/loom"  "$INSTALL_DIR/loom"
-scripts/install_atomic.sh "$ROOT/bin/loomd" "$INSTALL_DIR/loomd"
+PRIMARY_DIR="$(resolve_dir "$INSTALL_DIR")"
+declare -a INSTALL_TARGET_DIRS=("$PRIMARY_DIR")
 
-echo "Installed:"
-"$INSTALL_DIR/loom" --version || true
-"$INSTALL_DIR/loomd" --version 2>/dev/null || true
+ACTIVE_LOOM_BIN="$(command -v loom 2>/dev/null || true)"
+if [[ -n "${ACTIVE_LOOM_BIN:-}" ]]; then
+  ACTIVE_LOOM_DIR="$(resolve_dir "$(dirname "$ACTIVE_LOOM_BIN")")"
+  if ! dir_in_list "$ACTIVE_LOOM_DIR" "${INSTALL_TARGET_DIRS[@]}"; then
+    case "$ACTIVE_LOOM_DIR" in
+      "$HOME"|"$HOME"/*)
+        if [[ -w "$ACTIVE_LOOM_DIR" ]]; then
+          INSTALL_TARGET_DIRS+=("$ACTIVE_LOOM_DIR")
+        else
+          echo "WARNING: active loom dir not writable, skipping extra install: $ACTIVE_LOOM_DIR"
+        fi
+        ;;
+      *)
+        echo "WARNING: active loom dir is outside HOME, skipping extra install: $ACTIVE_LOOM_DIR"
+        ;;
+    esac
+  fi
+fi
+
+for dir in "${INSTALL_TARGET_DIRS[@]}"; do
+  scripts/install_atomic.sh "$ROOT/bin/loom"  "$dir/loom"
+  scripts/install_atomic.sh "$ROOT/bin/loomd" "$dir/loomd"
+done
+
+RUN_LOOM="$PRIMARY_DIR/loom"
+RUN_LOOMD="$PRIMARY_DIR/loomd"
+
+echo "Installed targets:"
+for dir in "${INSTALL_TARGET_DIRS[@]}"; do
+  echo "  - $dir/loom"
+done
+echo "Versions:"
+"$RUN_LOOM" --version || true
+"$RUN_LOOMD" --version 2>/dev/null || true
+
+if [[ -n "${ACTIVE_LOOM_BIN:-}" ]]; then
+  ACTIVE_VER="$("$ACTIVE_LOOM_BIN" --version 2>/dev/null || true)"
+  EXPECTED_VER="$("$RUN_LOOM" --version 2>/dev/null || true)"
+  if [[ -n "$ACTIVE_VER" && -n "$EXPECTED_VER" && "$ACTIVE_VER" != "$EXPECTED_VER" ]]; then
+    echo "ERROR: active PATH loom is stale after install."
+    echo "  command -v loom -> $ACTIVE_LOOM_BIN"
+    echo "  active version  -> $ACTIVE_VER"
+    echo "  expected        -> $EXPECTED_VER"
+    echo "Fix PATH order or set INSTALL_DIR to the active loom directory."
+    exit 3
+  fi
+fi
 
 echo "== Regen + Sync (loom mode) =="
-"$INSTALL_DIR/loom" sync all --regen --loom-mode --loom-binary "$INSTALL_DIR/loom"
+"$RUN_LOOM" sync all --regen --loom-mode --loom-binary "$RUN_LOOM"
 
 echo "== Daemon =="
 case "$RESTART_DAEMON" in
@@ -31,15 +98,15 @@ case "$RESTART_DAEMON" in
     echo "Skipping daemon restart (RESTART_DAEMON=never)"
     ;;
   always)
-    "$INSTALL_DIR/loom" restart
+    "$RUN_LOOM" restart
     ;;
   auto)
     # Only restart if idle to avoid interrupting in-flight tool calls.
     # Expected status line: "Connections: X active, Y idle"
-    if out=$("$INSTALL_DIR/loom" status 2>/dev/null); then
+    if out=$("$RUN_LOOM" status 2>/dev/null); then
       active="$(echo "$out" | awk '/^Connections:/{print $2}' | tr -d '[:space:]' || true)"
       if [[ -n "${active:-}" && "${active:-0}" =~ ^[0-9]+$ && "${active:-0}" -eq 0 ]]; then
-        "$INSTALL_DIR/loom" restart
+        "$RUN_LOOM" restart
       else
         echo "Daemon has active connections (${active:-unknown}); skipping restart (set RESTART_DAEMON=always to force)"
       fi
@@ -60,7 +127,7 @@ if [ -n "$HUD_PID" ]; then
   sleep 1
   if kill -0 "$HUD_PID" 2>/dev/null; then kill -9 "$HUD_PID" 2>/dev/null || true; fi
   echo "Killed old HUD (PID $HUD_PID)"
-  nohup "$INSTALL_DIR/loom" hud --port 3333 > /tmp/loom-hud.log 2>&1 &
+  nohup "$RUN_LOOM" hud --port 3333 > /tmp/loom-hud.log 2>&1 &
   sleep 2
   if lsof -ti :3333 >/dev/null 2>&1; then
     echo "HUD restarted — http://127.0.0.1:3333"
@@ -72,7 +139,7 @@ else
 fi
 
 echo "== Smoke (proxy initialize) =="
-python3 - "$INSTALL_DIR/loom" <<'PY'
+python3 - "$RUN_LOOM" <<'PY'
 import json, subprocess, sys
 msg = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"upgrade-smoke","version":"0"}}}
 p = subprocess.Popen([sys.argv[1], "proxy"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
