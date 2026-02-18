@@ -1,6 +1,6 @@
 # Quantization Pipelines Execution Plan
 
-> Last updated: 2026-02-17  
+> Last updated: 2026-02-18  
 > Tracking issue: [#7 Quantization pipelines execution](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7)
 
 This checklist converts `docs/design/quantization-pipelines.md` into a bounded execution plan with clear validation gates.
@@ -23,7 +23,7 @@ Implemented today:
 
 Planned (not implemented yet):
 - [x] Auto-selection of quantization format based on model + GPU constraints
-- [ ] Quantization quality validation loop (perplexity/acceptance benchmark baseline)
+- [~] Quantization quality validation loop (perplexity/acceptance benchmark baseline) — split to [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
 
 ## Milestones
 
@@ -63,6 +63,14 @@ Acceptance:
 - Recommendation output is deterministic and covered by tests.
 - No behavior change for users who do not opt in.
 
+### QP-5: Quality Validation Gate (Split Follow-up)
+- [~] Quality validation gate (perplexity/acceptance benchmark policy) moved to [#10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
+
+Acceptance for follow-up issue #10:
+- Deterministic validation command(s) and operator workflow documented.
+- Policy logic covered by automated tests.
+- Failure triage guidance documented for user/operator docs.
+
 ## Validation Gate (Per Slice)
 
 Targeted checks:
@@ -86,5 +94,5 @@ flexinfer quantize status <cache-name> -n flexinfer-system
 
 Issue #7 can be closed when:
 1. `QP-1` and `QP-2` remain green against current `master`.
-2. Either `QP-3` and `QP-4` are completed, or are split into explicit follow-up issues with clear ownership and acceptance criteria.
+2. Either `QP-3` and `QP-4` are completed, or remaining work is split into explicit follow-up issues with clear ownership and acceptance criteria.
 3. Roadmap docs point to this execution plan as the source of truth for quantization progress.
