@@ -47,7 +47,7 @@ Acceptance:
 ### CAR-3: Safety + Fallback Controls
 - [x] Add safeguards for over-fragmentation (max key length, normalization rules).
 - [x] Add fallback behavior for malformed/oversized keys.
-- [ ] Expose operator knobs for keying strictness.
+- [x] Expose operator knobs for keying strictness.
 
 Acceptance:
 - Invalid keys never break request routing.

@@ -170,6 +170,26 @@ Safety rules:
 - max explicit key length is `128` characters
 - allowed characters: `A-Z a-z 0-9 . _ : / = -`
 - malformed keys are ignored (router falls through to the next source)
+- key strictness bounds are operator-configurable through proxy env/Helm values
+
+#### Operator Keying Knobs
+
+Tune these values when you need stricter cardinality control or longer canonical segments:
+
+```yaml
+proxy:
+  routing:
+    explicitKeyMaxLength: 128
+    systemSegmentMaxLength: 512
+    documentSegmentMaxLength: 256
+```
+
+These map to:
+- `PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH`
+- `PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH`
+- `PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH`
+
+Invalid (non-positive) values safely fall back to defaults.
 
 ### Least-Loaded
 

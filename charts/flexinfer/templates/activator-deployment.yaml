@@ -56,6 +56,20 @@ spec:
               value: {{ .Values.proxy.timeouts.coldStart | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.proxy.routing }}
+            {{- if .Values.proxy.routing.explicitKeyMaxLength }}
+            - name: PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH
+              value: {{ .Values.proxy.routing.explicitKeyMaxLength | quote }}
+            {{- end }}
+            {{- if .Values.proxy.routing.systemSegmentMaxLength }}
+            - name: PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH
+              value: {{ .Values.proxy.routing.systemSegmentMaxLength | quote }}
+            {{- end }}
+            {{- if .Values.proxy.routing.documentSegmentMaxLength }}
+            - name: PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH
+              value: {{ .Values.proxy.routing.documentSegmentMaxLength | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.proxy.rateLimit }}
             {{- if .Values.proxy.rateLimit.enabled }}
             - name: PROXY_RATE_LIMIT_ENABLED

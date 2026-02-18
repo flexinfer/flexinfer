@@ -75,6 +75,9 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_QUEUE_TIMEOUT` | `60s` | How long a request can wait in queue before timeout |
 | `PROXY_COLD_START_TIMEOUT` | `60s` | Default timeout waiting for a model to become ready after scale-up |
 | `PROXY_ROUTING_ENABLED` | `true` | Enable advanced routing (session affinity, prefix-based) |
+| `PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH` | `128` | Maximum accepted length for explicit cache keys (`X-Flexinfer-Cache-Key`, `cache_key`, `cacheKey`) |
+| `PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH` | `512` | Maximum canonicalized system-context segment length used for prefix keying |
+| `PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH` | `256` | Maximum canonicalized document-context segment length used for prefix keying |
 | `PROXY_VALIDATE_REQUESTS` | `false` | Enable OpenAI request schema validation (validates required fields, field types, and value ranges) |
 | `PROXY_BACKOFF_ENABLED` | `false` | Enable exponential backoff with jitter for failed activations |
 | `PROXY_BACKOFF_MAX_RETRIES` | `3` | Maximum retry attempts after initial activation failure |
