@@ -8,6 +8,14 @@
 
 The last two days delivered major capability wins (OAuth/RBAC/audit/cost, HUD M3/M4 completion, devbox backend shifts), but the same period shows concentrated churn in a small set of large files. The Feb 17 commit (`8c2c50d`) already started the daemon call-pipeline and shared agent-contract refactor, so the next focus is to harden and finish those seams before expanding Tier 3 scope.
 
+## Tracking
+
+- [Harden daemon tool-call pipeline extraction](https://gitlab.flexinfer.ai/services/loom-core/-/issues/20)
+- [Finish agent contract convergence across HUD/CLI/bridge](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21)
+- [Split PresencePanel into feature modules](https://gitlab.flexinfer.ai/services/loom-core/-/issues/22)
+- [Decompose devbox K8s backend responsibilities](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23)
+- [Reduce HUD dist artifact churn](https://gitlab.flexinfer.ai/services/loom-core/-/issues/24)
+
 ## Evidence Snapshot
 
 - 41 commits landed since 2026-02-15.

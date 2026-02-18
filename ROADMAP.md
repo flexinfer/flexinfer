@@ -120,27 +120,27 @@ These build on shipped work and address immediate quality and reliability.
 
 Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regression risk before expanding Tier 3 scope.
 
-- [ ] **Harden daemon tool-call pipeline extraction** (in progress via `8c2c50d`)
+- [ ] **Harden daemon tool-call pipeline extraction** (in progress via `8c2c50d`) ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/20))
   - ✅ Stage 1 complete: `handleCall` orchestration now delegates to `internal/daemon/callpipeline.go`.
   - ✅ Stage 2 complete: isolated side effects (audit/cost/cache/metrics) into dedicated pipeline helpers and added targeted stage-failure tests for route/connect + transport paths.
   - Next: unify/centralize error-envelope construction for parse/build/route stages and add end-to-end pipeline stage-boundary regression tests.
   - Target outcome: lower conflict/churn in `internal/daemon/daemon.go` and clearer test seams.
 
-- [ ] **Finish agent contract convergence across HUD/CLI/bridge** (in progress via `8c2c50d`)
+- [ ] **Finish agent contract convergence across HUD/CLI/bridge** (in progress via `8c2c50d`) ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21))
   - ✅ Stage 1 complete: shared contracts for context-inspect + nudge policy in `internal/hud/bridge/agent_contracts.go`.
   - Next: split and dedupe command/bridge surfaces (`cmd/loom/cmd_agent.go`, `internal/hud/bridge/agent.go`, `internal/hud/api_agent.go`) and align error envelopes.
   - Target outcome: single contract model for context-inspect, nudge queue, and policy mutation surfaces.
 
-- [ ] **Split oversized HUD panel/state surfaces**
+- [ ] **Split oversized HUD panel/state surfaces** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/22))
   - ✅ 2026-02-17 slice: moved diagnostics polling/fetch/mutation logic into `presenceDiagnosticsStore` and kept `PresenceDiagnosticsTab.svelte` view-only; added TUI claim-conflict visibility in `internal/tui/panels/presence.go` for HUD/TUI parity.
   - Next: extract dispatch/nudge/handoff modal actions from `PresencePanel.svelte` into focused stores/clients.
   - Target outcome: safer iteration for Fleet orchestration UX work ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
 
-- [ ] **Refactor devbox K8s backend by concern**
+- [ ] **Refactor devbox K8s backend by concern** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23))
   - Separate build pod orchestration from runtime lifecycle logic in `internal/devbox/backend/k8s.go`.
   - Target outcome: faster iteration and stronger integration-test coverage for Roadmap Issue #2 remaining devbox work.
 
-- [ ] **Reduce HUD dist artifact churn in feature commits**
+- [ ] **Reduce HUD dist artifact churn in feature commits** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/24))
   - Adopt one policy: either separate dist-only commits or enforce regeneration/verification in CI.
   - Target outcome: cleaner review diffs and faster root-cause analysis during regressions.
 
