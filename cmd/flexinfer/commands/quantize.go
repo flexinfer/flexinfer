@@ -37,6 +37,7 @@ var (
 	quantGroupSize int32
 	quantUseGPU    bool
 	quantMaxMemGB  int32
+	quantRecApply  bool
 )
 
 var quantizeCmd = &cobra.Command{
@@ -75,6 +76,13 @@ var quantizeStatusCmd = &cobra.Command{
 	RunE:  runQuantizeStatus,
 }
 
+var quantizeRecommendCmd = &cobra.Command{
+	Use:   "recommend <cache-name>",
+	Short: "Recommend quantization settings from model and GPU constraints",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runQuantizeRecommend,
+}
+
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
@@ -82,8 +90,10 @@ func init() {
 	quantizeCmd.Flags().Int32Var(&quantGroupSize, "group-size", 128, "Quantization group size for AWQ/GPTQ formats")
 	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ/EXL2/FP8)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
+	quantizeRecommendCmd.Flags().BoolVar(&quantRecApply, "apply", false, "Apply the recommendation to the ModelCache spec")
 	quantizeCmd.AddCommand(quantizeFormatsCmd)
 	quantizeCmd.AddCommand(quantizeStatusCmd)
+	quantizeCmd.AddCommand(quantizeRecommendCmd)
 }
 
 func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
@@ -313,4 +323,108 @@ func runQuantizeStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runQuantizeRecommend(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	cacheName := args[0]
+
+	k8sClient, err := getClient()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	cache := &aiv1alpha1.ModelCache{}
+	key := client.ObjectKey{Name: cacheName, Namespace: namespace}
+	if err := k8sClient.Get(ctx(), key, cache); err != nil {
+		return fmt.Errorf("failed to get ModelCache %q: %w", cacheName, err)
+	}
+
+	rec := quantization.RecommendSpec(quantization.RecommendationInput{
+		Source:       cache.Spec.Source,
+		NodeSelector: cache.Spec.NodeSelector,
+	})
+	if rec.Spec == nil {
+		return fmt.Errorf("no recommendation available for %q", cacheName)
+	}
+
+	builder, err := quantization.GetBuilder(rec.Spec.Format)
+	if err != nil {
+		return fmt.Errorf("recommended format %q is not available: %w", rec.Spec.Format, err)
+	}
+	if err := builder.Validate(rec.Spec); err != nil {
+		return fmt.Errorf("recommended configuration is invalid: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(out, "ModelCache:   %s\n", cache.Name)
+	_, _ = fmt.Fprintf(out, "Namespace:    %s\n", cache.Namespace)
+	_, _ = fmt.Fprintf(out, "Recommended:  %s\n", quantizationSpecSummary(rec.Spec))
+	if rec.GPUVendor != "" && rec.GPUVendor != "Unknown" {
+		if rec.GPUArchitecture != "" {
+			_, _ = fmt.Fprintf(out, "GPU target:   %s/%s\n", rec.GPUVendor, rec.GPUArchitecture)
+		} else {
+			_, _ = fmt.Fprintf(out, "GPU target:   %s\n", rec.GPUVendor)
+		}
+	}
+	if rec.HasModelSizeEstimate {
+		_, _ = fmt.Fprintf(out, "Model hint:   %.1fB\n", rec.ModelSizeBillions)
+	}
+	_, _ = fmt.Fprintf(out, "Reason:       %s\n", rec.Reason)
+
+	if !quantRecApply {
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "Apply with: flexinfer quantize recommend %s --apply -n %s\n", cache.Name, namespace)
+		return nil
+	}
+
+	original := cache.DeepCopy()
+	cache.Spec.Quantization = rec.Spec
+	if err := k8sClient.Patch(ctx(), cache, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("failed to patch ModelCache with recommendation: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "Applied recommendation to ModelCache %q\n", cache.Name)
+	return nil
+}
+
+func quantizationSpecSummary(spec *aiv1alpha1.QuantizationSpec) string {
+	if spec == nil {
+		return "-"
+	}
+	switch spec.Format {
+	case aiv1alpha1.QuantizationFormatGGUF:
+		ggufType := strings.TrimSpace(spec.GGUFType)
+		if ggufType == "" {
+			ggufType = quantization.DefaultGGUFType
+		}
+		return fmt.Sprintf("GGUF/%s", ggufType)
+	case aiv1alpha1.QuantizationFormatAWQ, aiv1alpha1.QuantizationFormatGPTQ:
+		bits := int32(quantization.DefaultAWQBits)
+		if spec.Format == aiv1alpha1.QuantizationFormatGPTQ {
+			bits = int32(quantization.DefaultGPTQBits)
+		}
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		group := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			group = *spec.GroupSize
+		}
+		return fmt.Sprintf("%s/W%d_G%d", spec.Format, bits, group)
+	case aiv1alpha1.QuantizationFormatEXL2:
+		bits := int32(quantization.DefaultEXL2Bits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		return fmt.Sprintf("EXL2/EXL2_B%d", bits)
+	case aiv1alpha1.QuantizationFormatFP8:
+		bits := int32(quantization.DefaultFP8Bits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		return fmt.Sprintf("FP8/FP8_B%d", bits)
+	default:
+		return string(spec.Format)
+	}
 }

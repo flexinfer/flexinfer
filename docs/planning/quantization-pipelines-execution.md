@@ -22,7 +22,7 @@ Implemented today:
 - [x] User/operator docs for quantization usage (`docs/user/quantization.md`, `docs/CONFIGURATION.md`)
 
 Planned (not implemented yet):
-- [ ] Auto-selection of quantization format based on model + GPU constraints
+- [x] Auto-selection of quantization format based on model + GPU constraints
 - [ ] Quantization quality validation loop (perplexity/acceptance benchmark baseline)
 
 ## Milestones
@@ -55,9 +55,9 @@ Acceptance:
 - [x] `flexinfer quantize formats` shows implemented for both.
 
 ### QP-4: Auto-Selection + Recommendations
-- [ ] Add recommendation logic from model footprint + cluster GPU capabilities.
-- [ ] Surface recommendation in CLI and/or controller events.
-- [ ] Guard with explicit opt-in to preserve existing behavior.
+- [x] Add recommendation logic from model footprint + cluster GPU capabilities.
+- [x] Surface recommendation in CLI and/or controller events.
+- [x] Guard with explicit opt-in to preserve existing behavior.
 
 Acceptance:
 - Recommendation output is deterministic and covered by tests.
