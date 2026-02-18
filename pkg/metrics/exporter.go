@@ -180,6 +180,26 @@ var (
 		[]string{"model", "format"},
 	)
 
+	// ModelColdStartDurationSeconds tracks time from activation/startup to Ready.
+	ModelColdStartDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_model_cold_start_duration_seconds",
+			Help:    "Duration from model activation/startup to Ready.",
+			Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300},
+		},
+		[]string{"model", "namespace", "backend", "cache_strategy"},
+	)
+
+	// ModelSwapDurationSeconds tracks shared-GPU swap-in latency to Ready.
+	ModelSwapDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_model_swap_duration_seconds",
+			Help:    "Duration for a shared-group model to become Ready after preemption/swap.",
+			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120},
+		},
+		[]string{"model", "namespace", "backend", "group"},
+	)
+
 	// ClusterHealth reports remote cluster readiness (1 ready, 0 not ready).
 	ClusterHealth = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -273,6 +293,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(QuantizationCompressionRatio)
 	ctrlmetrics.Registry.MustRegister(QuantizationJobsTotal)
 	ctrlmetrics.Registry.MustRegister(QuantizationCacheSizeBytes)
+	ctrlmetrics.Registry.MustRegister(ModelColdStartDurationSeconds)
+	ctrlmetrics.Registry.MustRegister(ModelSwapDurationSeconds)
 
 	// Cluster registry metrics
 	ctrlmetrics.Registry.MustRegister(ClusterHealth)

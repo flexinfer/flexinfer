@@ -73,6 +73,38 @@ spec:
               value: "{{ .Values.benchmarker.image.repository }}:{{ .Values.benchmarker.image.tag }}"
             - name: BENCHMARK_SERVICE_ACCOUNT
               value: {{ include "flexinfer.benchmarkerServiceAccountName" . | quote }}
+            {{- if .Values.controller.runtime.shmSizeLimit }}
+            - name: DEFAULT_SHM_SIZE_LIMIT
+              value: {{ .Values.controller.runtime.shmSizeLimit | quote }}
+            {{- end }}
+            {{- if .Values.controller.runtime.flashLoader }}
+            - name: DEFAULT_FLASH_LOADER_ENABLED
+              value: {{ .Values.controller.runtime.flashLoader.enabled | quote }}
+            {{- if .Values.controller.runtime.flashLoader.image }}
+            - name: DEFAULT_FLASH_LOADER_IMAGE
+              value: {{ .Values.controller.runtime.flashLoader.image | quote }}
+            {{- end }}
+            {{- if .Values.controller.runtime.flashLoader.concurrency }}
+            - name: DEFAULT_FLASH_LOADER_CONCURRENCY
+              value: {{ .Values.controller.runtime.flashLoader.concurrency | quote }}
+            {{- end }}
+            {{- if .Values.controller.runtime.flashLoader.tmpfsSizeLimit }}
+            - name: DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT
+              value: {{ .Values.controller.runtime.flashLoader.tmpfsSizeLimit | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.observability.tracing.enabled }}
+            - name: FLEXINFER_OTEL_ENABLED
+              value: "true"
+            {{- if .Values.observability.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.observability.tracing.serviceNamespace }}
+            - name: FLEXINFER_OTEL_SERVICE_NAMESPACE
+              value: {{ .Values.observability.tracing.serviceNamespace | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.mlcllm.cudaImage }}
             - name: DEFAULT_MLC_LLM_IMAGE
               value: {{ .Values.mlcllm.cudaImage | quote }}

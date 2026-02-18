@@ -1,7 +1,7 @@
 # ROCm/gfx1100 Config + Observability Slice
 
 > Last updated: 2026-02-18
-> Status: Proposed (next active slice)
+> Status: Complete (PR-1 merged on 2026-02-18)
 
 ## Goal
 
@@ -67,6 +67,6 @@ rg "DEFAULT_MLC_LLM_IMAGE_GFX1100|DEFAULT_VLLM_IMAGE_GFX1100" /tmp/flexinfer-ren
 
 ## Follow-Up Slice Candidates
 
-1. Deploy/swap speed knobs: make flash-loader image/concurrency and `/dev/shm` sizing operator-configurable in v1alpha2 path.
+1. Deploy/swap speed knobs: make flash-loader image/concurrency and `/dev/shm` sizing operator-configurable in v1alpha2 path. (active: `docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`)
 2. Detailed metrics: add first-class cold-start and swap latency histograms with consistent model/backend labels.
 3. Tracing foundation: add optional OTel tracing in proxy/controller, reusing Loom Core opt-in model.

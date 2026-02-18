@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -32,7 +33,9 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 )
@@ -1218,4 +1221,293 @@ func TestSetModelCondition(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveFlashLoaderConfig_GlobalDefaults(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
+	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:rocm")
+	t.Setenv("DEFAULT_FLASH_LOADER_CONCURRENCY", "9")
+	t.Setenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT", "12Gi")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha1 scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(),
+		Scheme: s,
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "HF://mlc-ai/Qwen3-8B-q4f32_1-MLC",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "SharedPVC",
+			},
+		},
+	}
+
+	cfg := r.resolveFlashLoaderConfig(context.Background(), model)
+	if !cfg.Enabled {
+		t.Fatal("expected flash-loader to be enabled via global default")
+	}
+	if cfg.Image != "registry.example/flash-loader:rocm" {
+		t.Fatalf("expected flash-loader image override, got %q", cfg.Image)
+	}
+	if cfg.Concurrency != 9 {
+		t.Fatalf("expected flash-loader concurrency 9, got %d", cfg.Concurrency)
+	}
+	if cfg.TmpfsSizeLimit == nil || cfg.TmpfsSizeLimit.String() != "12Gi" {
+		t.Fatalf("expected tmpfs size limit 12Gi, got %v", cfg.TmpfsSizeLimit)
+	}
+}
+
+func TestResolveFlashLoaderConfig_ModelCacheOverrides(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
+	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:default")
+	t.Setenv("DEFAULT_FLASH_LOADER_CONCURRENCY", "4")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha1 scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "override-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "HF://mlc-ai/Qwen3-8B-q4f32_1-MLC",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "SharedPVC",
+			},
+		},
+	}
+
+	t.Run("disables when modelcache sets enabled=false", func(t *testing.T) {
+		mc := &aiv1alpha1.ModelCache{
+			ObjectMeta: metav1.ObjectMeta{Name: "override-model", Namespace: "default"},
+			Spec: aiv1alpha1.ModelCacheSpec{
+				Source: "HF://mlc-ai/Qwen3-8B-q4f32_1-MLC",
+				FlashLoader: &aiv1alpha1.FlashLoaderSpec{
+					Enabled: false,
+				},
+			},
+		}
+		r := &ModelReconciler{
+			Client: fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(mc).Build(),
+			Scheme: s,
+		}
+		cfg := r.resolveFlashLoaderConfig(context.Background(), model)
+		if cfg.Enabled {
+			t.Fatal("expected flash-loader to be disabled by modelcache override")
+		}
+	})
+
+	t.Run("uses modelcache image and concurrency when enabled", func(t *testing.T) {
+		size := "16Gi"
+		mc := &aiv1alpha1.ModelCache{
+			ObjectMeta: metav1.ObjectMeta{Name: "override-model", Namespace: "default"},
+			Spec: aiv1alpha1.ModelCacheSpec{
+				Source: "HF://mlc-ai/Qwen3-8B-q4f32_1-MLC",
+				FlashLoader: &aiv1alpha1.FlashLoaderSpec{
+					Enabled:        true,
+					Image:          "registry.example/flash-loader:custom",
+					Concurrency:    7,
+					TmpfsSizeLimit: &size,
+				},
+			},
+		}
+		r := &ModelReconciler{
+			Client: fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(mc).Build(),
+			Scheme: s,
+		}
+		cfg := r.resolveFlashLoaderConfig(context.Background(), model)
+		if !cfg.Enabled {
+			t.Fatal("expected flash-loader enabled from modelcache")
+		}
+		if cfg.Image != "registry.example/flash-loader:custom" {
+			t.Fatalf("expected modelcache image override, got %q", cfg.Image)
+		}
+		if cfg.Concurrency != 7 {
+			t.Fatalf("expected modelcache concurrency 7, got %d", cfg.Concurrency)
+		}
+		if cfg.TmpfsSizeLimit == nil || cfg.TmpfsSizeLimit.String() != "16Gi" {
+			t.Fatalf("expected tmpfs size limit 16Gi, got %v", cfg.TmpfsSizeLimit)
+		}
+	})
+}
+
+func TestUpdateStatusFromDeployment_EmitsLatencyMetrics(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	replicas := int32(1)
+	now := time.Now()
+	modelName := "latency-model-" + now.Format("150405")
+	readyTransition := metav1.NewTime(now.Add(-20 * time.Second))
+	preemptedAt := metav1.NewTime(now.Add(-35 * time.Second))
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       modelName,
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "pvc://models-pvc/qwen3",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared: "fast-models",
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseLoading,
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				GroupName:   "fast-models",
+				State:       "Active",
+				PreemptedAt: &preemptedAt,
+			},
+			Conditions: []metav1.Condition{
+				{
+					Type:               aiv1alpha2.ConditionModelReady,
+					Status:             metav1.ConditionFalse,
+					Reason:             aiv1alpha2.ReasonPreempted,
+					Message:            "Model was preempted by higher priority model",
+					LastTransitionTime: readyTransition,
+					ObservedGeneration: 1,
+				},
+			},
+		},
+	}
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      modelName,
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+		},
+		Status: appsv1.DeploymentStatus{
+			ReadyReplicas: 1,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, deployment).
+		WithStatusSubresource(&aiv1alpha2.Model{}, &appsv1.Deployment{}).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	key := client.ObjectKey{Name: modelName, Namespace: "default"}
+	current := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, current); err != nil {
+		t.Fatalf("failed to get model: %v", err)
+	}
+
+	coldLabels := map[string]string{
+		"model":          modelName,
+		"namespace":      "default",
+		"backend":        "mlc-llm",
+		"cache_strategy": "Memory",
+	}
+	swapLabels := map[string]string{
+		"model":     modelName,
+		"namespace": "default",
+		"backend":   "mlc-llm",
+		"group":     "fast-models",
+	}
+
+	beforeCold := histogramSampleCount(t, "flexinfer_model_cold_start_duration_seconds", coldLabels)
+	beforeSwap := histogramSampleCount(t, "flexinfer_model_swap_duration_seconds", swapLabels)
+
+	if err := r.updateStatusFromDeployment(context.Background(), current); err != nil {
+		t.Fatalf("updateStatusFromDeployment() error: %v", err)
+	}
+
+	afterCold := histogramSampleCount(t, "flexinfer_model_cold_start_duration_seconds", coldLabels)
+	afterSwap := histogramSampleCount(t, "flexinfer_model_swap_duration_seconds", swapLabels)
+	if afterCold <= beforeCold {
+		t.Fatalf("expected cold-start histogram sample count to increase (before=%d after=%d)", beforeCold, afterCold)
+	}
+	if afterSwap <= beforeSwap {
+		t.Fatalf("expected swap histogram sample count to increase (before=%d after=%d)", beforeSwap, afterSwap)
+	}
+
+	updated := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, updated); err != nil {
+		t.Fatalf("failed to get updated model: %v", err)
+	}
+	if updated.Status.Phase != aiv1alpha2.ModelPhaseReady {
+		t.Fatalf("expected model phase Ready, got %s", updated.Status.Phase)
+	}
+	if updated.Status.SharedGroup == nil || updated.Status.SharedGroup.PreemptedAt != nil {
+		t.Fatalf("expected shared-group preemptedAt to be cleared after swap metrics emission")
+	}
+}
+
+func histogramSampleCount(t *testing.T, metricName string, labels map[string]string) uint64 {
+	t.Helper()
+	families, err := ctrlmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != metricName {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if labelSetMatches(metric, labels) {
+				if metric.GetHistogram() != nil {
+					return metric.GetHistogram().GetSampleCount()
+				}
+				return 0
+			}
+		}
+	}
+	return 0
+}
+
+func labelSetMatches(metric *dto.Metric, want map[string]string) bool {
+	if metric == nil {
+		return false
+	}
+	for k, v := range want {
+		found := false
+		for _, l := range metric.GetLabel() {
+			if l.GetName() == k && l.GetValue() == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

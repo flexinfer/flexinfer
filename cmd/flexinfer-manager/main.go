@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
@@ -36,6 +37,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/controllers"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -68,6 +70,17 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	shutdownTracing, err := observability.InitTracing(context.Background(), "flexinfer-manager")
+	if err != nil {
+		setupLog.Error(err, "unable to initialize tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			setupLog.Error(err, "failed to shutdown tracing")
+		}
+	}()
 
 	if err := backend.RegistrationError(); err != nil {
 		setupLog.Error(err, "backend registration failed")

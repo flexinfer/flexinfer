@@ -25,6 +25,14 @@ The controller manager handles reconciliation of FlexInfer CRDs and manages the 
 | `METRICS_BIND_ADDRESS` | `:8080` | Address for Prometheus metrics endpoint |
 | `HEALTH_PROBE_BIND_ADDRESS` | `:8081` | Address for health and readiness probes |
 | `LEADER_ELECT` | `false` | Enable leader election for HA deployments |
+| `DEFAULT_SHM_SIZE_LIMIT` | `8Gi` | Default `/dev/shm` size limit for v1alpha2 model pods |
+| `DEFAULT_FLASH_LOADER_ENABLED` | `false` | Enable flash-loader init container by default for eligible v1alpha2 models |
+| `DEFAULT_FLASH_LOADER_IMAGE` | `registry.harbor.lan/flexinfer/flash-loader:latest` | Default flash-loader image |
+| `DEFAULT_FLASH_LOADER_CONCURRENCY` | `4` | Default flash-loader copy parallelism |
+| `DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT` | - | Optional default tmpfs size limit for flash-loader staging volume |
+| `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export (manager + proxy) |
+| `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for exported spans |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for tracing exporter (typically `http://collector:4318`) |
 
 ### Backend Image Overrides
 
@@ -72,6 +80,9 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_BACKOFF_MAX_RETRIES` | `3` | Maximum retry attempts after initial activation failure |
 | `PROXY_BACKOFF_INITIAL_WAIT` | `5s` | Initial wait time before first retry |
 | `PROXY_BACKOFF_MAX_WAIT` | `30s` | Maximum wait time between retries |
+| `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export for proxy requests |
+| `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for proxy spans |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for proxy trace export |
 
 ### Routing Configuration
 

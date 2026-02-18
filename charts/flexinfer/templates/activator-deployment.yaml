@@ -34,6 +34,18 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if .Values.observability.tracing.enabled }}
+            - name: FLEXINFER_OTEL_ENABLED
+              value: "true"
+            {{- if .Values.observability.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.observability.tracing.serviceNamespace }}
+            - name: FLEXINFER_OTEL_SERVICE_NAMESPACE
+              value: {{ .Values.observability.tracing.serviceNamespace | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.proxy.timeouts }}
             {{- if .Values.proxy.timeouts.queue }}
             - name: PROXY_QUEUE_TIMEOUT

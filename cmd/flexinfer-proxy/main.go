@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/flexinfer/flexinfer/internal/proxy"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
@@ -32,6 +34,17 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
+
+	shutdownTracing, err := observability.InitTracing(context.Background(), "flexinfer-proxy")
+	if err != nil {
+		slog.Error("unable to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			slog.Error("failed to shutdown tracing", "error", err)
+		}
+	}()
 
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {

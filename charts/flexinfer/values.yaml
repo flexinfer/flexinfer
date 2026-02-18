@@ -55,6 +55,17 @@ controller:
     requests:
       cpu: 10m
       memory: 64Mi
+  runtime:
+    # Shared memory volume size mounted at /dev/shm for model pods created by the v1alpha2 controller.
+    shmSizeLimit: "8Gi"
+    # Flash-loader defaults used by v1alpha2 model deployments when enabled globally
+    # or when a matching v1alpha1 ModelCache enables flashLoader.
+    flashLoader:
+      enabled: false
+      image: "registry.harbor.lan/flexinfer/flash-loader:latest"
+      concurrency: 4
+      # Optional tmpfs size limit for flash-loader staging volume.
+      tmpfsSizeLimit: ""
 
 agent:
   enabled: true
@@ -254,6 +265,15 @@ quantization:
     gptq: ghcr.io/flexinfer/quantizer:gptq
     exl2: ghcr.io/flexinfer/quantizer:exl2
     fp8: ghcr.io/flexinfer/quantizer:fp8
+
+observability:
+  tracing:
+    enabled: false
+    # Optional OTLP endpoint (for example: http://otel-collector.observability:4318).
+    # When empty, OpenTelemetry SDK defaults are used.
+    otlpEndpoint: ""
+    # Optional service namespace label for traces (for example: "flexinfer-system").
+    serviceNamespace: ""
 
 grafanaDashboard:
   enabled: true

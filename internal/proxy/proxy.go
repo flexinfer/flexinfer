@@ -16,6 +16,9 @@ import (
 	"github.com/flexinfer/flexinfer/internal/routing"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -240,11 +243,19 @@ func (p *Proxy) Run(port int) error {
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("flexinfer/proxy").Start(ctx, "proxy.handle_request")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("http.method", r.Method),
+		attribute.String("http.path", r.URL.Path),
+	)
 
 	// 0a. Generate/propagate request ID
 	requestID := generateRequestID(r)
 	w.Header().Set("X-Request-ID", requestID)
-	r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
+	span.SetAttributes(attribute.String("request.id", requestID))
+	r = r.WithContext(context.WithValue(ctx, requestIDKey{}, requestID))
 
 	// 0b. Authentication check
 	if !p.checkAuth(r) {
@@ -274,13 +285,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := r.Context()
+	ctx = r.Context()
 
 	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
 	resolvedName := p.resolveServiceLabel(ctx, modelName)
 	if resolvedName != modelName {
 		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
 		modelName = resolvedName
+		span.SetAttributes(attribute.String("flexinfer.model", modelName))
 	}
 
 	// 3. Fetch the model deployment
