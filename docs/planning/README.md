@@ -15,6 +15,7 @@ If you’re looking for “what exists today” docs, start here instead:
 
 - `feature-inventory.md`: what features exist, what’s stable, what’s experimental, and what’s missing.
 - `next-roadmap.md`: the next series of features/enhancements to implement (prioritized).
+- `context-aware-router-execution.md`: execution checklist for issue `#8` (context-aware routing).
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
 - `../design/multi-tenancy.md`: M1 design for namespace-isolated tenancy baseline.
 - `phase-5-multi-cluster.md`: forward-looking checklist for multi-cluster federation (future).
