@@ -11,6 +11,9 @@ stages:
   - publish
   - security
 
+default:
+  interruptible: true
+
 variables:
   # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
