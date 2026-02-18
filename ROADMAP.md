@@ -21,7 +21,7 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
 Open roadmap scope is now concentrated on:
-- Quantization pipeline execution ([Design](docs/design/quantization-pipelines.md))
+- Quantization pipeline execution ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system

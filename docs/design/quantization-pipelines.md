@@ -1,8 +1,13 @@
 # Quantization Pipelines Design
 
-**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8 implemented; auto-selection pending)
+**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8 and auto-selection implemented; quality validation follow-up pending)
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
+
+## Tracking
+
+- [#7 Quantization pipelines execution](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7)
+- [#10 Quantization quality validation gate](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10)
 
 ## Overview
 
