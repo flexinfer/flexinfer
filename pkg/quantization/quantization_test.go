@@ -531,6 +531,116 @@ func TestFormatBackendCompatibility(t *testing.T) {
 	}
 }
 
+func TestRecommendSpec(t *testing.T) {
+	t.Run("amd gfx1100 defaults to GGUF", func(t *testing.T) {
+		rec := RecommendSpec(RecommendationInput{
+			Source: "HF://mlc-ai/Qwen3-8B-Instruct",
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+		})
+		if rec.Spec == nil {
+			t.Fatal("recommendation spec is nil")
+		}
+		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
+		}
+		if rec.Spec.GGUFType != DefaultGGUFType {
+			t.Fatalf("GGUFType = %q, want %q", rec.Spec.GGUFType, DefaultGGUFType)
+		}
+		if rec.GPUVendor != "AMD" {
+			t.Fatalf("GPUVendor = %q, want AMD", rec.GPUVendor)
+		}
+		if rec.GPUArchitecture != "gfx1100" {
+			t.Fatalf("GPUArchitecture = %q, want gfx1100", rec.GPUArchitecture)
+		}
+	})
+
+	t.Run("large model on AMD prefers tighter GGUF type", func(t *testing.T) {
+		rec := RecommendSpec(RecommendationInput{
+			Source: "HF://Qwen/Qwen3-32B-Instruct",
+			NodeSelector: map[string]string{
+				"amd.com/gpu.arch": "gfx1100",
+			},
+		})
+		if rec.Spec == nil {
+			t.Fatal("recommendation spec is nil")
+		}
+		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
+		}
+		if rec.Spec.GGUFType != "Q3_K_M" {
+			t.Fatalf("GGUFType = %q, want Q3_K_M", rec.Spec.GGUFType)
+		}
+	})
+
+	t.Run("nvidia sm89 prefers AWQ", func(t *testing.T) {
+		rec := RecommendSpec(RecommendationInput{
+			Source: "huggingface://meta-llama/Llama-3-8B-Instruct",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "8",
+				"nvidia.com/gpu.compute.minor": "9",
+			},
+		})
+		if rec.Spec == nil {
+			t.Fatal("recommendation spec is nil")
+		}
+		if rec.Spec.Format != aiv1alpha1.QuantizationFormatAWQ {
+			t.Fatalf("Format = %q, want AWQ", rec.Spec.Format)
+		}
+		if rec.Spec.Bits == nil || *rec.Spec.Bits != int32(DefaultAWQBits) {
+			t.Fatalf("Bits = %v, want %d", rec.Spec.Bits, DefaultAWQBits)
+		}
+		if rec.Spec.GroupSize == nil || *rec.Spec.GroupSize != int32(DefaultQuantizationGroupSize) {
+			t.Fatalf("GroupSize = %v, want %d", rec.Spec.GroupSize, DefaultQuantizationGroupSize)
+		}
+		if !rec.Spec.UseGPU {
+			t.Fatal("UseGPU = false, want true")
+		}
+	})
+
+	t.Run("nvidia sm90 prefers FP8", func(t *testing.T) {
+		rec := RecommendSpec(RecommendationInput{
+			Source: "huggingface://meta-llama/Llama-3-70B",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "9",
+				"nvidia.com/gpu.compute.minor": "0",
+			},
+		})
+		if rec.Spec == nil {
+			t.Fatal("recommendation spec is nil")
+		}
+		if rec.Spec.Format != aiv1alpha1.QuantizationFormatFP8 {
+			t.Fatalf("Format = %q, want FP8", rec.Spec.Format)
+		}
+		if rec.Spec.Bits == nil || *rec.Spec.Bits != int32(DefaultFP8Bits) {
+			t.Fatalf("Bits = %v, want %d", rec.Spec.Bits, DefaultFP8Bits)
+		}
+		if !rec.Spec.UseGPU {
+			t.Fatal("UseGPU = false, want true")
+		}
+	})
+
+	t.Run("maxwell falls back to GGUF", func(t *testing.T) {
+		rec := RecommendSpec(RecommendationInput{
+			Source: "huggingface://meta-llama/Llama-2-7B",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.arch": "Maxwell",
+			},
+		})
+		if rec.Spec == nil {
+			t.Fatal("recommendation spec is nil")
+		}
+		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
+		}
+		if rec.Spec.GGUFType != "Q3_K_M" {
+			t.Fatalf("GGUFType = %q, want Q3_K_M", rec.Spec.GGUFType)
+		}
+	})
+}
+
 func contains(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && containsStr([]string{s}, substr)
 }

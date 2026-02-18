@@ -1064,3 +1064,104 @@ func TestRunQuantizeStatus_PrintsPendingWhenNoStatus(t *testing.T) {
 		t.Fatalf("expected pending marker in output, got: %q", out)
 	}
 }
+
+func TestRunQuantizeRecommend_PrintsRecommendation(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "HF://Qwen/Qwen3-32B-Instruct",
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origApply := quantRecApply
+	t.Cleanup(func() {
+		namespace = origNs
+		quantRecApply = origApply
+	})
+	namespace = "flexinfer-system"
+	quantRecApply = false
+
+	if err := runQuantizeRecommend(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantizeRecommend() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Recommended:  GGUF/Q3_K_M") {
+		t.Fatalf("expected GGUF/Q3_K_M recommendation in output, got: %q", out)
+	}
+	if !strings.Contains(out, "GPU target:   AMD/gfx1100") {
+		t.Fatalf("expected AMD/gfx1100 target in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Apply with: flexinfer quantize recommend test-cache --apply -n flexinfer-system") {
+		t.Fatalf("expected apply hint in output, got: %q", out)
+	}
+}
+
+func TestRunQuantizeRecommend_ApplyPatchesModelCache(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "huggingface://meta-llama/Llama-3-8B-Instruct",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "8",
+				"nvidia.com/gpu.compute.minor": "9",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origApply := quantRecApply
+	t.Cleanup(func() {
+		namespace = origNs
+		quantRecApply = origApply
+	})
+	namespace = "flexinfer-system"
+	quantRecApply = true
+
+	if err := runQuantizeRecommend(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantizeRecommend() error: %v", err)
+	}
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := c.Get(ctx(), types.NamespacedName{Name: "test-cache", Namespace: "flexinfer-system"}, updated); err != nil {
+		t.Fatalf("Get updated ModelCache: %v", err)
+	}
+	if updated.Spec.Quantization == nil {
+		t.Fatal("expected quantization spec to be set")
+	}
+	if updated.Spec.Quantization.Format != aiv1alpha1.QuantizationFormatAWQ {
+		t.Fatalf("Format = %q, want AWQ", updated.Spec.Quantization.Format)
+	}
+	if updated.Spec.Quantization.Bits == nil || *updated.Spec.Quantization.Bits != 4 {
+		t.Fatalf("Bits = %v, want 4", updated.Spec.Quantization.Bits)
+	}
+	if updated.Spec.Quantization.GroupSize == nil || *updated.Spec.Quantization.GroupSize != 128 {
+		t.Fatalf("GroupSize = %v, want 128", updated.Spec.Quantization.GroupSize)
+	}
+	if !updated.Spec.Quantization.UseGPU {
+		t.Fatal("UseGPU = false, want true")
+	}
+
+	if !strings.Contains(stdout.String(), "Applied recommendation to ModelCache \"test-cache\"") {
+		t.Fatalf("expected apply confirmation in output, got: %q", stdout.String())
+	}
+}

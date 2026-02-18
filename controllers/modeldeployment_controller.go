@@ -1824,15 +1824,33 @@ func (r *ModelDeploymentReconciler) buildVLLMEnv(m *aiv1alpha1.ModelDeployment, 
 
 		// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
 		// This helps on hosts where KFD can still enumerate multiple GPUs.
-		if m.Spec.VLLM != nil && m.Spec.VLLM.HIPVisibleDevices != "" {
-			env = append(env, corev1.EnvVar{
-				Name:  "ROCR_VISIBLE_DEVICES",
-				Value: m.Spec.VLLM.HIPVisibleDevices,
-			})
-			env = append(env, corev1.EnvVar{
-				Name:  "HIP_VISIBLE_DEVICES",
-				Value: m.Spec.VLLM.HIPVisibleDevices,
-			})
+		if m.Spec.VLLM != nil {
+			hipVisible := m.Spec.VLLM.HIPVisibleDevices
+			rocrVisible := m.Spec.VLLM.ROCRVisibleDevices
+			if hipVisible != "" && rocrVisible == "" {
+				rocrVisible = hipVisible
+			}
+			if rocrVisible != "" && hipVisible == "" {
+				hipVisible = rocrVisible
+			}
+			if rocrVisible != "" {
+				env = append(env, corev1.EnvVar{
+					Name:  "ROCR_VISIBLE_DEVICES",
+					Value: rocrVisible,
+				})
+			}
+			if hipVisible != "" {
+				env = append(env, corev1.EnvVar{
+					Name:  "HIP_VISIBLE_DEVICES",
+					Value: hipVisible,
+				})
+			}
+			if m.Spec.VLLM.GPUDeviceOrdinal != "" {
+				env = append(env, corev1.EnvVar{
+					Name:  "GPU_DEVICE_ORDINAL",
+					Value: m.Spec.VLLM.GPUDeviceOrdinal,
+				})
+			}
 		}
 	}
 

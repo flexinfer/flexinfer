@@ -65,6 +65,12 @@ helm template charts/flexinfer >/tmp/flexinfer-render.yaml
 rg "DEFAULT_MLC_LLM_IMAGE_GFX1100|DEFAULT_VLLM_IMAGE_GFX1100" /tmp/flexinfer-render.yaml
 ```
 
+## Progress (2026-02-18)
+
+- [x] Added legacy v1alpha1 `vllm` device-isolation parity fields: `rocrVisibleDevices` and `gpuDeviceOrdinal`.
+- [x] Updated controller env wiring to mirror HIP/ROCR when one is set, honor explicit dual values, and pass `GPU_DEVICE_ORDINAL`.
+- [x] Added controller regression tests for HIP-only, ROCR-only, and explicit override combinations.
+
 ## Follow-Up Slice Candidates
 
 1. Deploy/swap speed knobs: make flash-loader image/concurrency and `/dev/shm` sizing operator-configurable in v1alpha2 path. (active: `docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`)

@@ -53,6 +53,16 @@ Check available formats:
 flexinfer quantize formats
 ```
 
+Get an auto recommendation from model footprint + node constraints:
+
+```bash
+# Preview recommendation (no changes)
+flexinfer quantize recommend llama3-8b
+
+# Apply recommendation to ModelCache.spec.quantization (explicit opt-in)
+flexinfer quantize recommend llama3-8b --apply
+```
+
 Check status:
 
 ```bash
