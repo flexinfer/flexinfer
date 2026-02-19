@@ -37,6 +37,9 @@ type FileConfig struct {
 	// RBAC controls role-based access control for tool calls
 	RBAC RBACConfig `yaml:"rbac,omitempty"`
 
+	// Policy controls gateway request/response policy enforcement hooks
+	Policy GatewayPolicyConfig `yaml:"policy,omitempty"`
+
 	// Audit controls structured tool call logging
 	Audit AuditConfig `yaml:"audit,omitempty"`
 
@@ -379,10 +382,11 @@ func DefaultFileConfig() FileConfig {
 			SessionTimeoutMinutes: 30,
 			MaxSessions:           1000,
 		},
-		RBAC:  DefaultRBACConfig(),
-		Audit: DefaultAuditConfig(),
-		Cost:  DefaultCostConfig(),
-		Debug: false,
+		RBAC:   DefaultRBACConfig(),
+		Policy: DefaultGatewayPolicyConfig(),
+		Audit:  DefaultAuditConfig(),
+		Cost:   DefaultCostConfig(),
+		Debug:  false,
 	}
 }
 

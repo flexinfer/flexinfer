@@ -889,6 +889,76 @@ func TestHandleCall_ParseFailureShortCircuitsWithoutAudit(t *testing.T) {
 	}
 }
 
+func TestHandleCall_RequestPolicyDeniedEmitsAuditAndCost(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.policy = NewGatewayPolicyEnforcer(GatewayPolicyConfig{
+		Enabled: true,
+		Request: []GatewayRequestPolicyRule{
+			{
+				ID:                 "deny-force-delete",
+				Server:             "github",
+				Tool:               "delete_*",
+				ForbiddenArguments: []string{"force"},
+				ReasonCode:         "POLICY_FORCE_DELETE_BLOCKED",
+			},
+		},
+	}, d.logger)
+
+	msg := newCallMessage(t, map[string]any{
+		"server":    "github",
+		"tool":      "delete_repo",
+		"arguments": json.RawMessage(`{"force":true}`),
+		"agent_id":  "agent-policy",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected policy denial response")
+	}
+	if resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InvalidRequest)
+	}
+	if !strings.Contains(resp.Error.Message, "policy denied") {
+		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
+	}
+	data, ok := resp.Error.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected error data map, got %T", resp.Error.Data)
+	}
+	if got := data["policy_rule_id"]; got != "deny-force-delete" {
+		t.Fatalf("policy_rule_id = %v, want %q", got, "deny-force-delete")
+	}
+	if got := data["policy_reason_code"]; got != "POLICY_FORCE_DELETE_BLOCKED" {
+		t.Fatalf("policy_reason_code = %v, want %q", got, "POLICY_FORCE_DELETE_BLOCKED")
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "denied" {
+		t.Fatalf("audit status = %q, want denied", entries[0].Status)
+	}
+	if entries[0].PolicyRuleID != "deny-force-delete" {
+		t.Fatalf("audit policy_rule_id = %q, want %q", entries[0].PolicyRuleID, "deny-force-delete")
+	}
+	if entries[0].PolicyReasonCode != "POLICY_FORCE_DELETE_BLOCKED" {
+		t.Fatalf("audit policy_reason_code = %q, want %q", entries[0].PolicyReasonCode, "POLICY_FORCE_DELETE_BLOCKED")
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.DeniedCount != 1 {
+		t.Fatalf("denied_count = %d, want 1", snap.Totals.DeniedCount)
+	}
+}
+
 func TestHandleCall_CacheHitShortCircuitsRouting(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	auditPath := enableAuditAndCostForTest(t, d)

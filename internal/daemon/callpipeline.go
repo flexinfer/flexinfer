@@ -101,8 +101,32 @@ func (p *callPipeline) authorize() *mcp.Message {
 	if decision.Allowed {
 		return nil
 	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil)
 	return p.daemon.rbacDeniedResponse(p.msg.ID, decision)
+}
+
+func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
+	if p.daemon.policy == nil {
+		return nil
+	}
+
+	decision := p.daemon.policy.CheckRequest(p.serverName, p.toolName, p.params)
+	if decision.Allowed {
+		return nil
+	}
+
+	p.daemon.emitAudit(
+		p.params,
+		p.serverName,
+		p.toolName,
+		"",
+		p.auditStart,
+		"denied",
+		decision.Reason,
+		false,
+		&decision,
+	)
+	return p.daemon.policyDeniedResponse(p.msg.ID, decision)
 }
 
 func (p *callPipeline) tryCachedResponse() *mcp.Message {
@@ -119,7 +143,7 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 	if cached, ok := p.daemon.respCache.Get(p.cacheKey); ok {
 		p.daemon.metrics.RecordResponseCacheHit(p.serverName, p.toolName)
 		p.daemon.logger.Debug("response cache hit", "server", p.serverName, "tool", p.toolName)
-		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true)
+		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil)
 		resp, _ := mcp.NewResponse(p.msg.ID, json.RawMessage(cached))
 		return resp
 	}
@@ -338,9 +362,9 @@ func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
 		status = "error"
 		errMsg = resp.Error.Message
 	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false, nil)
 }
 
 func (p *callPipeline) emitErrorAudit(target, errMsg string) {
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil)
 }

@@ -96,6 +96,7 @@ type Daemon struct {
 	httpServer         *http.Server                    // Streamable HTTP listener
 	httpStreamable     *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
 	rbac               *RBACEnforcer                   // RBAC enforcer for tool access control
+	policy             *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
 	audit              *AuditLogger                    // Structured audit logger
 	cost               *CostTracker                    // Usage tracking and attribution
 	oauth              *OAuthServer                    // OAuth 2.1 authorization server
@@ -395,6 +396,11 @@ func New(cfg Config) (*Daemon, error) {
 			"bindings", len(fileCfg.RBAC.Bindings),
 			"global_deny", len(fileCfg.RBAC.GlobalDeny),
 			"rate_limits", len(fileCfg.RBAC.RateLimits))
+	}
+	d.policy = NewGatewayPolicyEnforcer(fileCfg.Policy, logger)
+	if d.policy != nil {
+		logger.Info("gateway policy enabled",
+			"request_rules", len(fileCfg.Policy.Request))
 	}
 
 	// Initialize audit logger (nil when disabled)
@@ -1579,6 +1585,10 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return resp, nil
 	}
 
+	if resp := pipeline.enforceRequestPolicy(); resp != nil {
+		return resp, nil
+	}
+
 	if resp := pipeline.tryCachedResponse(); resp != nil {
 		return resp, nil
 	}
@@ -1597,21 +1607,30 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 }
 
 // emitAudit writes a structured audit entry and cost record if enabled.
-func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool) {
+func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision) {
 	durationMs := time.Since(start).Milliseconds()
+
+	policyRuleID := ""
+	policyReasonCode := ""
+	if policy != nil {
+		policyRuleID = policy.RuleID
+		policyReasonCode = policy.ReasonCode
+	}
 
 	if d.audit != nil {
 		d.audit.Log(AuditEntry{
-			Timestamp:  start.UTC(),
-			AgentID:    params.AgentID,
-			AgentType:  params.AgentType,
-			Server:     server,
-			Tool:       tool,
-			DurationMs: durationMs,
-			Status:     status,
-			Error:      errMsg,
-			Target:     target,
-			Cached:     cached,
+			Timestamp:        start.UTC(),
+			AgentID:          params.AgentID,
+			AgentType:        params.AgentType,
+			Server:           server,
+			Tool:             tool,
+			DurationMs:       durationMs,
+			Status:           status,
+			Error:            errMsg,
+			Target:           target,
+			Cached:           cached,
+			PolicyRuleID:     policyRuleID,
+			PolicyReasonCode: policyReasonCode,
 		})
 	}
 
@@ -1661,6 +1680,24 @@ func (d *Daemon) rbacDeniedResponse(msgID any, decision AccessDecision) *mcp.Mes
 	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
 		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
 	return mcp.NewErrorResponse(msgID, mcp.InvalidRequest, reason)
+}
+
+// policyDeniedResponse returns an MCP error for a denied policy hook decision.
+func (d *Daemon) policyDeniedResponse(msgID any, decision GatewayPolicyDecision) *mcp.Message {
+	return &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      msgID,
+		Error: &mcp.Error{
+			Code:    mcp.InvalidRequest,
+			Message: fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason),
+			Data: map[string]any{
+				"policy_rule_id":     decision.RuleID,
+				"policy_reason_code": decision.ReasonCode,
+				"policy_stage":       decision.Stage,
+				"policy_action":      decision.Action,
+			},
+		},
+	}
 }
 
 // handleReload reloads the registry and refreshes the tool cache.

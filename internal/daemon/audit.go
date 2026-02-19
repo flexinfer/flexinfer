@@ -30,16 +30,18 @@ func DefaultAuditConfig() AuditConfig {
 
 // AuditEntry is a structured record of a single tool call.
 type AuditEntry struct {
-	Timestamp  time.Time `json:"timestamp"`
-	AgentID    string    `json:"agent_id"`
-	AgentType  string    `json:"agent_type,omitempty"`
-	Server     string    `json:"server"`
-	Tool       string    `json:"tool"`
-	DurationMs int64     `json:"duration_ms"`
-	Status     string    `json:"status"` // "success", "error", "denied"
-	Error      string    `json:"error,omitempty"`
-	Target     string    `json:"target,omitempty"` // "local" or "hub"
-	Cached     bool      `json:"cached,omitempty"`
+	Timestamp        time.Time `json:"timestamp"`
+	AgentID          string    `json:"agent_id"`
+	AgentType        string    `json:"agent_type,omitempty"`
+	Server           string    `json:"server"`
+	Tool             string    `json:"tool"`
+	DurationMs       int64     `json:"duration_ms"`
+	Status           string    `json:"status"` // "success", "error", "denied"
+	Error            string    `json:"error,omitempty"`
+	Target           string    `json:"target,omitempty"` // "local" or "hub"
+	Cached           bool      `json:"cached,omitempty"`
+	PolicyRuleID     string    `json:"policy_rule_id,omitempty"`
+	PolicyReasonCode string    `json:"policy_reason_code,omitempty"`
 }
 
 // AuditLogger writes structured audit entries to an append-only JSONL file.
