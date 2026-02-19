@@ -48,6 +48,7 @@ const (
 	defaultExplicitCacheKeyMaxLength = 128
 	defaultSystemSegmentMaxLength    = 512
 	defaultDocSegmentMaxLength       = 256
+	defaultModelSegmentMaxLength     = 128
 )
 
 var explicitCacheKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:/=-]+$`)
@@ -185,7 +186,7 @@ func (r *Router) RouteWithDecision(model string, strategy Strategy, req *http.Re
 	case StrategySessionAffinity:
 		key, source = ExtractSessionKey(req, body)
 	case StrategyPrefix:
-		key, source = ExtractPrefixKey(req, body)
+		key, source = ExtractPrefixKeyForModel(req, body, model)
 		if key == "" {
 			if fallbackKey, fallbackSource := ExtractSessionKey(req, body); fallbackKey != "" {
 				key = fallbackKey
@@ -312,12 +313,22 @@ func ExtractPrefix(body []byte) string {
 	return key
 }
 
+// ExtractPrefixKeyForModel extracts the prefix key for a routed model and key source.
+// Canonical keys are scoped by routed model identity when available.
+func ExtractPrefixKeyForModel(req *http.Request, body []byte, model string) (string, KeySource) {
+	return extractPrefixKey(req, body, model)
+}
+
 // ExtractPrefixKey extracts the prefix key and key source with precedence:
 // 1) X-Flexinfer-Cache-Key header
 // 2) cache_key / cacheKey body field
 // 3) legacy prefix field
-// 4) canonicalized system/document context hash
+// 4) canonicalized model/system/document context hash
 func ExtractPrefixKey(req *http.Request, body []byte) (string, KeySource) {
+	return extractPrefixKey(req, body, "")
+}
+
+func extractPrefixKey(req *http.Request, body []byte, routedModel string) (string, KeySource) {
 	if req != nil {
 		if explicit, ok := normalizeExplicitCacheKey(req.Header.Get(headerCacheKey)); ok {
 			return hashKey("exp:", explicit), KeySourceExplicitHeader
@@ -343,7 +354,7 @@ func ExtractPrefixKey(req *http.Request, body []byte) (string, KeySource) {
 		return hashKey("pfx:", normalizeText(prefix, cfg.SystemSegmentMaxLength)), KeySourcePrefixField
 	}
 
-	canonical := extractCanonicalPrefixMaterial(data)
+	canonical := extractCanonicalPrefixMaterial(data, routedModel)
 	if canonical == "" {
 		return "", KeySourceNone
 	}
@@ -373,20 +384,36 @@ func extractExplicitBodyKey(data map[string]interface{}) (string, bool) {
 	return "", false
 }
 
-func extractCanonicalPrefixMaterial(data map[string]interface{}) string {
+func extractCanonicalPrefixMaterial(data map[string]interface{}, routedModel string) string {
+	model := extractCanonicalModel(routedModel, data)
 	system := extractSystemContext(data)
 	document := extractDocumentContext(data)
 
-	switch {
-	case system != "" && document != "":
-		return "system=" + system + "|doc=" + document
-	case system != "":
-		return "system=" + system
-	case document != "":
-		return "doc=" + document
-	default:
+	if system == "" && document == "" {
 		return ""
 	}
+
+	segments := make([]string, 0, 3)
+	if model != "" {
+		segments = append(segments, "model="+model)
+	}
+	if system != "" {
+		segments = append(segments, "system="+system)
+	}
+	if document != "" {
+		segments = append(segments, "doc="+document)
+	}
+	return strings.Join(segments, "|")
+}
+
+func extractCanonicalModel(routedModel string, data map[string]interface{}) string {
+	if model := normalizeText(routedModel, defaultModelSegmentMaxLength); model != "" {
+		return model
+	}
+	if bodyModel, ok := data["model"].(string); ok {
+		return normalizeText(bodyModel, defaultModelSegmentMaxLength)
+	}
+	return ""
 }
 
 func extractSystemContext(data map[string]interface{}) string {

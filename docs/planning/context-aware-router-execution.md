@@ -16,7 +16,7 @@ Implemented today:
 - [x] Endpoint discovery and routing docs (`docs/user/routing.md`)
 
 Gaps to full context-aware behavior:
-- [~] Canonical cache-key policy expanded to normalized multi-system + optional document context segments (needs E2E validation)
+- [x] Canonical cache-key policy expanded to model-scoped normalized multi-system + optional document context segments
 - [x] Explicit request-level cache-key override contract
 - [x] Routing safety bounds for noisy/unstable prefixes (length/charset validation + deterministic fallback)
 - [~] End-to-end Chat-with-Doc validation (benchmark signals defined; E2E still open)
@@ -24,12 +24,12 @@ Gaps to full context-aware behavior:
 ## Milestones
 
 ### CAR-1: Canonical Prefix Keying
-- [ ] Define canonical key extraction policy for chat payloads:
+- [x] Define canonical key extraction policy for chat payloads:
   - model id
   - normalized system prompt
   - optional document-context segment (bounded)
-- [ ] Implement deterministic key canonicalization helpers.
-- [ ] Add unit tests for canonicalization edge cases (empty/whitespace/order/noise).
+- [x] Implement deterministic key canonicalization helpers.
+- [x] Add unit tests for canonicalization edge cases (empty/whitespace/order/noise).
 
 Acceptance:
 - Same semantic prompt/doc context yields identical cache keys.
