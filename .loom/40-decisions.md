@@ -1,5 +1,56 @@
 # Decisions
 
+## 2026-02-19: Set mobile auth bootstrap default to native OAuth + PKCE with device-code fallback
+
+- Decision:
+  - v1 default bootstrap mode is direct native OAuth authorization code + PKCE using an external browser/system auth session.
+  - Device-code pairing is the fallback path only when direct browser-mediated auth is not practical for the selected profile (for example constrained remote operator workflows).
+  - The fallback path must be explicitly selected by profile/policy and not silently auto-selected.
+- Rationale:
+  - RFC 8252 and OAuth security guidance align on browser-mediated native auth and PKCE as the safest default.
+  - A constrained-input fallback is still required for some remote operator scenarios where a full direct auth flow is impractical.
+  - Explicit fallback selection reduces phishing and downgrade risk from accidental or implicit flow switching.
+- Threat model focus:
+  - Mitigates embedded-webview credential capture by requiring external user-agent/system auth sessions.
+  - Mitigates replay risk via short-lived access tokens plus rotating refresh or sender-constrained refresh semantics.
+  - Mitigates pairing brute-force/phishing risk by requiring short code TTLs, attempt/rate limits, and operator-facing anti-phishing guidance.
+- Alternatives considered:
+  - Device-code-first default for all profiles.
+  - Hybrid auto-failover without explicit profile selection.
+  - Deferring pairing fallback until post-v1.
+- Consequences:
+  - API and security contracts must state default and fallback selection semantics.
+  - M1 auth hardening must include replay/revocation tests and fallback abuse controls.
+  - UI/profile flows must expose which bootstrap path is active and why.
+- Sources:
+  - [S1] `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
+  - [S2] `https://datatracker.ietf.org/doc/rfc8252/`
+  - [S3] `https://datatracker.ietf.org/doc/html/rfc9700`
+  - [S4] `https://datatracker.ietf.org/doc/html/rfc8628`
+
+## 2026-02-19: Support both LAN mode and gateway mode for the mobile companion
+
+- Decision:
+  - The iPhone/iPad companion app will support **both** connectivity modes:
+    - **LAN mode** for local/trusted network access.
+    - **Gateway mode** for remote/zero-trust access.
+  - Mode selection is use-case driven and configured per connection profile.
+- Rationale:
+  - Operators need low-latency local access in trusted environments and secure remote access when off-network.
+  - Forcing one mode would either reduce usability (gateway-only for local use) or weaken remote posture (LAN-only assumptions).
+- Alternatives considered:
+  - LAN-only in v1.
+  - Gateway-only in v1.
+  - Defer one mode to v1.1.
+- Consequences:
+  - M0/M1 scope must include dual-profile connection and auth behavior.
+  - Client UX must expose mode/profile clearly and prevent ambiguous trust assumptions.
+  - Testing matrix expands to include parity checks across both modes.
+- Sources:
+  - [S1] `internal/hud/app.go:317`
+  - [S2] `ROADMAP.md:48`
+  - [S3] Product direction update in planning session (2026-02-19)
+
 ## 2026-02-16: Add API/CLI-first context budget inspector
 
 - Decision:
