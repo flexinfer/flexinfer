@@ -60,6 +60,9 @@ type Config struct {
 	WebhookToken   string // Bearer token for push auth.
 	WebhookResolve string // Override DNS resolution for webhook hostname (e.g., LAN IP to bypass Cloudflare).
 	AdminToken     string // Token required for admin-only HUD mutations.
+	// Mobile operator API auth policy.
+	MobileOperatorToken  string // Bearer token for /api/mobile/v1 routes.
+	MobileOperatorScopes string // Comma-separated scopes granted to mobile token.
 
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
@@ -526,6 +529,16 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sandbox/start", a.withCORS(a.handleSandboxStart))
 	mux.HandleFunc("POST /api/sandbox/stop", a.withCORS(a.handleSandboxStop))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
+
+	// API routes — mobile companion v1.
+	mux.HandleFunc("GET /api/mobile/v1/ping", a.withCORS(a.handleMobilePing))
+	mux.HandleFunc("GET /api/mobile/v1/dashboard", a.withCORS(a.handleMobileDashboard))
+	mux.HandleFunc("GET /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessions))
+	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}", a.withCORS(a.handleMobileSessionDetail))
+	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}/events", a.withCORS(a.handleMobileSessionEvents))
+	mux.HandleFunc("GET /api/mobile/v1/events/stream", a.withCORS(a.handleMobileEventsStream))
+	mux.HandleFunc("POST /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessionCreate))
+	mux.HandleFunc("POST /api/mobile/v1/sessions/{session_id}/end", a.withCORS(a.handleMobileSessionEnd))
 
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
@@ -1986,7 +1999,11 @@ func (a *App) withCORS(next http.HandlerFunc) http.HandlerFunc {
 		if a.config.Dev {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		}
+		if a.mobileTokenOutsideMobileAPI(r) {
+			a.writeError(w, http.StatusForbidden, "mobile_operator token is restricted to /api/mobile/v1 endpoints", nil)
+			return
 		}
 		next(w, r)
 	}
@@ -1997,7 +2014,7 @@ func (a *App) handlePreflight(w http.ResponseWriter, _ *http.Request) {
 	if a.config.Dev {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
