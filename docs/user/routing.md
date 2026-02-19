@@ -99,8 +99,8 @@ Prefix is extracted from:
 2. `cache_key` or `cacheKey` field in request body (explicit override)
 3. `prefix` field in request body (legacy explicit field)
 4. Canonicalized context hash from:
-   - all `role: "system"` messages (normalized)
-   - optional document context (`document_context`, `documentContext`, `context`, or first `documents[].content`)
+   - all `role: "system"` messages (normalized). `content` may be plain text or structured text-part arrays.
+   - optional document context (`document_context`, `documentContext`, `context`, or first `documents[]` text payload)
 
 If no prefix key can be derived, prefix routing falls back to session-derived affinity (when available), then to Service DNS.
 

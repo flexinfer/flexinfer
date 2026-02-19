@@ -227,6 +227,53 @@ func TestExtractPrefixKey_PrecedenceAndSafety(t *testing.T) {
 			t.Fatalf("expected canonical source, got %s and %s", sourceA, sourceB)
 		}
 	})
+
+	t.Run("canonical key handles structured system and document payloads", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		bodyA := []byte(`{
+			"messages":[
+				{"role":"system","content":"You are helpful"},
+				{"role":"user","content":"hi"}
+			],
+			"document_context":"Important facts"
+		}`)
+		bodyB := []byte(`{
+			"messages":[
+				{"role":"system","content":[{"type":"text","text":" You "},{"type":"text","text":"are   helpful "},{"type":"image_url","image_url":{"url":"https://example.com/img.png"}}]},
+				{"role":"user","content":"hi"}
+			],
+			"documents":[{"content":[{"type":"text","text":" Important "},{"type":"text","text":"facts"}]}]
+		}`)
+
+		keyA, sourceA := ExtractPrefixKey(req, bodyA)
+		keyB, sourceB := ExtractPrefixKey(req, bodyB)
+
+		if keyA == "" || keyB == "" {
+			t.Fatal("expected non-empty canonical keys")
+		}
+		if keyA != keyB {
+			t.Fatalf("expected same canonical key, got %q vs %q", keyA, keyB)
+		}
+		if sourceA != KeySourceCanonical || sourceB != KeySourceCanonical {
+			t.Fatalf("expected canonical source, got %s and %s", sourceA, sourceB)
+		}
+	})
+
+	t.Run("invalid explicit body key falls through to canonical", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		body := []byte(`{
+			"cache_key":"bad key",
+			"messages":[{"role":"system","content":[{"type":"text","text":"System Prompt"}]}]
+		}`)
+
+		key, source := ExtractPrefixKey(req, body)
+		if key == "" {
+			t.Fatal("expected non-empty key")
+		}
+		if source != KeySourceCanonical {
+			t.Fatalf("source=%s want %s", source, KeySourceCanonical)
+		}
+	})
 }
 
 func TestExtractPrefixKey_ConfigurableStrictness(t *testing.T) {

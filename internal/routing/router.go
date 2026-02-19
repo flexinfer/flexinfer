@@ -406,8 +406,7 @@ func extractSystemContext(data map[string]interface{}) string {
 		if !strings.EqualFold(role, "system") {
 			continue
 		}
-		content, _ := msg["content"].(string)
-		content = normalizeText(content, cfg.SystemSegmentMaxLength)
+		content := normalizeText(extractTextPayload(msg["content"]), cfg.SystemSegmentMaxLength)
 		if content == "" {
 			continue
 		}
@@ -426,22 +425,52 @@ func extractSystemContext(data map[string]interface{}) string {
 func extractDocumentContext(data map[string]interface{}) string {
 	cfg := CurrentPrefixKeyConfig()
 	for _, key := range []string{"document_context", "documentContext", "context"} {
-		if v, ok := data[key].(string); ok {
-			if normalized := normalizeText(v, cfg.DocSegmentMaxLength); normalized != "" {
-				return normalized
-			}
+		if normalized := normalizeText(extractTextPayload(data[key]), cfg.DocSegmentMaxLength); normalized != "" {
+			return normalized
 		}
 	}
 
 	if docs, ok := data["documents"].([]interface{}); ok && len(docs) > 0 {
+		if normalized := normalizeText(extractTextPayload(docs[0]), cfg.DocSegmentMaxLength); normalized != "" {
+			return normalized
+		}
 		if first, ok := docs[0].(map[string]interface{}); ok {
-			if content, ok := first["content"].(string); ok {
-				return normalizeText(content, cfg.DocSegmentMaxLength)
+			for _, key := range []string{"content", "text", "value"} {
+				if normalized := normalizeText(extractTextPayload(first[key]), cfg.DocSegmentMaxLength); normalized != "" {
+					return normalized
+				}
 			}
 		}
 	}
 
 	return ""
+}
+
+func extractTextPayload(raw interface{}) string {
+	switch v := raw.(type) {
+	case string:
+		return v
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := strings.TrimSpace(extractTextPayload(item)); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, " ")
+	case map[string]interface{}:
+		for _, key := range []string{"text", "content", "value"} {
+			if text := strings.TrimSpace(extractTextPayload(v[key])); text != "" {
+				return text
+			}
+		}
+		if text := strings.TrimSpace(extractTextPayload(v["parts"])); text != "" {
+			return text
+		}
+		return ""
+	default:
+		return ""
+	}
 }
 
 func normalizeText(in string, maxLen int) string {
