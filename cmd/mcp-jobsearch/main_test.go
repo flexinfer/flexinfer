@@ -31,10 +31,17 @@ func TestNewJobsearchClientFromEnv_MissingToken(t *testing.T) {
 	t.Setenv("JOBSEARCH_API_URL", "http://localhost:8000")
 	t.Setenv("JOBSEARCH_API_TOKEN", "")
 	t.Setenv("JOBSEARCH_BEARER_TOKEN", "")
+	t.Setenv("JOBSEARCH_CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("JOBSEARCH_CF_ACCESS_CLIENT_SECRET", "")
+	t.Setenv("CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "")
 
-	_, err := newJobsearchClientFromEnv(testLogger())
-	if err == nil {
-		t.Fatal("expected error when token is missing")
+	client, err := newJobsearchClientFromEnv(testLogger())
+	if err != nil {
+		t.Fatalf("unexpected error when token is missing: %v", err)
+	}
+	if client.token != "" {
+		t.Fatalf("expected empty token when unset, got %q", client.token)
 	}
 }
 

@@ -54,6 +54,39 @@ func TestClientRequest_InjectsAuthAndCloudflareHeaders(t *testing.T) {
 	}
 }
 
+func TestClientRequest_DoesNotInjectAuthHeaderWhenTokenUnset(t *testing.T) {
+	var gotAuth string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer ts.Close()
+
+	t.Setenv("JOBSEARCH_API_URL", ts.URL)
+	t.Setenv("JOBSEARCH_API_TOKEN", "")
+	t.Setenv("JOBSEARCH_BEARER_TOKEN", "")
+	t.Setenv("JOBSEARCH_CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("JOBSEARCH_CF_ACCESS_CLIENT_SECRET", "")
+	t.Setenv("CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "")
+
+	client, err := newJobsearchClientFromEnv(testLogger())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = client.Request(context.Background(), requestOptions{Method: "GET", Path: "/health"})
+	if err != nil {
+		t.Fatalf("unexpected request error: %v", err)
+	}
+
+	if gotAuth != "" {
+		t.Fatalf("expected no auth header, got %q", gotAuth)
+	}
+}
+
 func TestClientRequest_NoCloudflareHeadersOnPartialConfig(t *testing.T) {
 	var gotCFID string
 	var gotCFSecret string

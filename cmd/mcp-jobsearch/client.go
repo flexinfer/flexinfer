@@ -58,7 +58,7 @@ func newJobsearchClientFromEnv(logger *slog.Logger) (*jobsearchClient, error) {
 
 	token := strings.TrimSpace(env.StringWithFallbacks("JOBSEARCH_API_TOKEN", "JOBSEARCH_BEARER_TOKEN"))
 	if token == "" {
-		return nil, mcperror.NotConfigured("JOBSEARCH_API_TOKEN", "set JOBSEARCH_API_TOKEN or JOBSEARCH_BEARER_TOKEN")
+		logger.Warn("JOBSEARCH_API_TOKEN is not configured; continuing without Authorization header")
 	}
 
 	timeoutSeconds := env.Int("JOBSEARCH_TIMEOUT_SECONDS", 30)
@@ -148,7 +148,9 @@ func (c *jobsearchClient) Request(ctx context.Context, opts requestOptions) (*jo
 
 	req.Header.Set("Accept", "application/json, text/plain;q=0.9, */*;q=0.8")
 	req.Header.Set("User-Agent", "mcp-jobsearch/"+version)
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	if len(reqBody) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}

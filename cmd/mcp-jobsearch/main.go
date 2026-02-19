@@ -48,6 +48,7 @@ func run(ctx context.Context) error {
 	server.SetInstructions("JobSearch backend integration MCP server. Includes explicit workflow/CRM tools and a guarded generic API passthrough.")
 
 	registerCoreTools(server, s)
+	registerResumeTools(server, s)
 	registerWorkflowCRMTools(server, s)
 	registerPassthroughTools(server, s)
 
