@@ -1776,7 +1776,7 @@ func (s *Service) runIndexJob(
 				if vectorSize <= 0 {
 					return fmt.Errorf("embedding returned empty vector")
 				}
-				if ensureErr := s.qdrant.EnsureCollection(ctx, vectorSize); ensureErr != nil {
+				if ensureErr := s.ensureCollectionForVector(ctx, vectorSize, fullRefresh); ensureErr != nil {
 					return ensureErr
 				}
 				ensured = true
@@ -1933,6 +1933,29 @@ func minFloat64(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func (s *Service) ensureCollectionForVector(ctx context.Context, vectorSize int, allowRecreate bool) error {
+	if err := s.qdrant.EnsureCollection(ctx, vectorSize); err == nil {
+		return nil
+	} else if !allowRecreate || !qdrant.IsVectorSizeMismatch(err) {
+		return err
+	}
+
+	remaining, countErr := s.qdrant.Count(ctx, nil)
+	if countErr != nil {
+		return fmt.Errorf("qdrant vector size mismatch and collection count failed: %w", countErr)
+	}
+	if remaining > 0 {
+		return fmt.Errorf(
+			"qdrant vector size mismatch and collection is not empty (%d points); refusing automatic recreate",
+			remaining,
+		)
+	}
+	if recreateErr := s.qdrant.RecreateCollection(ctx, vectorSize); recreateErr != nil {
+		return fmt.Errorf("qdrant recreate collection after vector size mismatch: %w", recreateErr)
+	}
+	return nil
 }
 
 func (s *Service) setJobFailed(jobID, msg string) {

@@ -3,6 +3,8 @@ package qdrant
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,28 @@ import (
 var ErrCollectionNotFound = errors.New("qdrant collection not found")
 
 const maxQdrantResponseBytes = 10 * 1024 * 1024 // 10MB
+
+// VectorSizeMismatchError indicates that an existing collection's vector size is
+// incompatible with a requested size.
+type VectorSizeMismatchError struct {
+	Collection string
+	Existing   int
+	Expected   int
+}
+
+func (e *VectorSizeMismatchError) Error() string {
+	return fmt.Sprintf(
+		"qdrant collection %q vector size=%d expected=%d (use CODEBASE_QDRANT_COLLECTION or delete/recreate collection)",
+		e.Collection,
+		e.Existing,
+		e.Expected,
+	)
+}
+
+func IsVectorSizeMismatch(err error) bool {
+	var mismatchErr *VectorSizeMismatchError
+	return errors.As(err, &mismatchErr)
+}
 
 type Client struct {
 	http       *httpclient.Client
@@ -157,7 +181,11 @@ func (c *Client) EnsureCollection(ctx context.Context, vectorSize int) error {
 	}
 	if exists {
 		if existingSize > 0 && vectorSize > 0 && existingSize != vectorSize {
-			return fmt.Errorf("qdrant collection %q vector size=%d expected=%d (use CODEBASE_QDRANT_COLLECTION or delete/recreate collection)", c.collection, existingSize, vectorSize)
+			return &VectorSizeMismatchError{
+				Collection: c.collection,
+				Existing:   existingSize,
+				Expected:   vectorSize,
+			}
 		}
 		return nil
 	}
@@ -172,6 +200,16 @@ func (c *Client) EnsureCollection(ctx context.Context, vectorSize int) error {
 		},
 	}
 	return c.doJSON(ctx, http.MethodPut, "/collections/"+c.collection, body, nil)
+}
+
+func (c *Client) RecreateCollection(ctx context.Context, vectorSize int) error {
+	if vectorSize <= 0 {
+		return fmt.Errorf("invalid vectorSize %d", vectorSize)
+	}
+	if err := c.doJSON(ctx, http.MethodDelete, "/collections/"+c.collection, nil, nil); err != nil && !errors.Is(err, ErrCollectionNotFound) {
+		return err
+	}
+	return c.EnsureCollection(ctx, vectorSize)
 }
 
 func (c *Client) DeleteRepo(ctx context.Context, repoID string) error {
@@ -784,12 +822,22 @@ func pointsToJSON(points []Point) []map[string]any {
 	out := make([]map[string]any, 0, len(points))
 	for _, p := range points {
 		out = append(out, map[string]any{
-			"id":      p.ID,
+			"id":      toPointID(p.ID),
 			"vector":  p.Vector,
 			"payload": p.Payload,
 		})
 	}
 	return out
+}
+
+// toPointID converts an arbitrary string to a stable UUIDv5-like value accepted
+// by Qdrant point ID validation.
+func toPointID(id string) string {
+	h := sha256.Sum256([]byte(id))
+	h[6] = (h[6] & 0x0f) | 0x50 // version 5
+	h[8] = (h[8] & 0x3f) | 0x80 // RFC 4122 variant
+	s := hex.EncodeToString(h[:16])
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
@@ -825,7 +873,12 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	}
 
 	if resp.StatusCode == http.StatusNotFound && strings.Contains(path, "/collections/"+c.collection) {
-		return ErrCollectionNotFound
+		// Qdrant may return 404 for both missing collections and point-level misses.
+		// Treat as collection-missing only when the response body indicates so.
+		lower := bytes.ToLower(respBody)
+		if bytes.Contains(lower, []byte("collection")) {
+			return ErrCollectionNotFound
+		}
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("qdrant HTTP %d: %s", resp.StatusCode, string(respBody))

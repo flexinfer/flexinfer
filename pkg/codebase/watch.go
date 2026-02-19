@@ -530,7 +530,7 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			if size <= 0 {
 				return fmt.Errorf("embed %s: empty vector", t.relPath)
 			}
-			if err := s.qdrant.EnsureCollection(ctx, size); err != nil {
+			if err := s.ensureCollectionForVector(ctx, size, false); err != nil {
 				return fmt.Errorf("ensure collection: %v", err)
 			}
 
