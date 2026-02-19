@@ -99,8 +99,9 @@ Prefix is extracted from:
 2. `cache_key` or `cacheKey` field in request body (explicit override)
 3. `prefix` field in request body (legacy explicit field)
 4. Canonicalized context hash from:
-   - all `role: "system"` messages (normalized)
-   - optional document context (`document_context`, `documentContext`, `context`, or first `documents[].content`)
+   - routed model identity (falls back to request body `model` when route model is unavailable)
+   - all `role: "system"` messages (normalized). `content` may be plain text or structured text-part arrays.
+   - optional document context (`document_context`, `documentContext`, `context`, or first `documents[]` text payload)
 
 If no prefix key can be derived, prefix routing falls back to session-derived affinity (when available), then to Service DNS.
 
@@ -161,7 +162,7 @@ Precedence for `flexinfer.ai/routing: prefix`:
 1. `X-Flexinfer-Cache-Key`
 2. `cache_key` / `cacheKey`
 3. `prefix`
-4. canonicalized system/document context
+4. canonicalized model/system/document context
 5. session-derived fallback (`X-Session-ID`, etc.)
 6. Kubernetes Service routing fallback
 
