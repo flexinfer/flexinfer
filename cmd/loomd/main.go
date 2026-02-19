@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,9 +19,15 @@ import (
 
 var version = "dev"
 
+const defaultMetricsAddr = "127.0.0.1:9876"
+
 func main() {
 	var cfg daemon.Config
 	var metricsAddr string
+	metricsDefault := strings.TrimSpace(os.Getenv("LOOM_METRICS_ADDR"))
+	if metricsDefault == "" {
+		metricsDefault = defaultMetricsAddr
+	}
 
 	rootCmd := &cobra.Command{
 		Use:     "loomd",
@@ -41,7 +49,7 @@ func main() {
 	flags.BoolVar(&cfg.HubPrefer, "hub-prefer", defaultCfg.HubPrefer, "Prefer hub over local servers (hub-capable servers only)")
 	flags.StringSliceVar(&cfg.WarmOnStart, "warm", nil, "Servers to warm up on start")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
-	flags.StringVar(&metricsAddr, "metrics-addr", "", "Address for metrics endpoint (e.g., :9090)")
+	flags.StringVar(&metricsAddr, "metrics-addr", metricsDefault, "Address for metrics/health/events endpoint (e.g., 127.0.0.1:9876; empty disables)")
 	flags.StringVar(&cfg.HTTPAddr, "http-addr", "", "Address for Streamable HTTP listener (e.g., :8088)")
 
 	if err := rootCmd.Execute(); err != nil {
@@ -70,29 +78,56 @@ func run(cfg daemon.Config, metricsAddr string) error {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
-	// Start metrics server if address is provided
+	metricsAddr = strings.TrimSpace(metricsAddr)
+
+	// Start metrics server(s) if an address is provided.
+	// Compatibility: if a non-default metrics addr is configured, also expose the
+	// default local endpoint so health checks remain predictable across upgrades.
 	if metricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", d.MetricsHandler())
 		mux.HandleFunc("/health", d.HealthHandler())
 		mux.HandleFunc("/events", d.EventBus().ServeSSE)
 
-		server := &http.Server{
-			Addr:    metricsAddr,
-			Handler: mux,
+		addrs := []string{metricsAddr}
+		if metricsAddr != defaultMetricsAddr {
+			addrs = append(addrs, defaultMetricsAddr)
+		}
+		seen := make(map[string]struct{}, len(addrs))
+		servers := make([]*http.Server, 0, len(addrs))
+
+		for _, addr := range addrs {
+			addr = strings.TrimSpace(addr)
+			if addr == "" {
+				continue
+			}
+			if _, ok := seen[addr]; ok {
+				continue
+			}
+			seen[addr] = struct{}{}
+
+			server := &http.Server{
+				Addr:              addr,
+				Handler:           mux,
+				ReadHeaderTimeout: 5 * time.Second,
+				IdleTimeout:       60 * time.Second,
+			}
+			servers = append(servers, server)
+
+			go func(addr string, server *http.Server) {
+				slog.Info("metrics server started", "addr", addr)
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.Error("metrics server error", "addr", addr, "error", err)
+				}
+			}(addr, server)
 		}
 
-		go func() {
-			slog.Info("metrics server started", "addr", metricsAddr)
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("metrics server error", "error", err)
-			}
-		}()
-
-		// Shutdown metrics server on context cancel
+		// Shutdown metrics server(s) on context cancel
 		go func() {
 			<-ctx.Done()
-			server.Shutdown(context.Background())
+			for _, server := range servers {
+				_ = server.Shutdown(context.Background())
+			}
 		}()
 	}
 

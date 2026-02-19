@@ -72,6 +72,17 @@ func runProxy(socketPath string) error {
 
 	var daemon mcp.Transport
 	var daemonConn net.Conn
+	cleanupDaemon := func() {
+		if daemonConn != nil {
+			_ = daemonConn.Close()
+			daemonConn = nil
+		}
+		if daemon != nil {
+			_ = daemon.Close()
+			daemon = nil
+		}
+	}
+	defer cleanupDaemon()
 
 	var autostartOnce sync.Once
 	autostart := func() {
@@ -176,14 +187,68 @@ func runProxy(socketPath string) error {
 		return nil
 	}
 
+	type recvResult struct {
+		msg *mcp.Message
+		err error
+	}
+	recvCh := make(chan recvResult, 1)
+	go func() {
+		for {
+			msg, err := stdio.Recv(ctx)
+			recvCh <- recvResult{msg: msg, err: err}
+			if err != nil {
+				close(recvCh)
+				return
+			}
+		}
+	}()
+
+	idleTimeout := proxyIdleExitTimeout()
+	var idleTimer *time.Timer
+	if idleTimeout > 0 {
+		idleTimer = time.NewTimer(idleTimeout)
+		defer idleTimer.Stop()
+	}
+	resetIdleTimer := func() {
+		if idleTimer == nil {
+			return
+		}
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idleTimeout)
+	}
+
 	// Main message loop
 	for {
-		msg, err := stdio.Recv(ctx)
-		if err != nil {
-			return nil // Client disconnected
+		var msg *mcp.Message
+		if idleTimer == nil {
+			recv, ok := <-recvCh
+			if !ok || recv.err != nil {
+				return nil // Client disconnected
+			}
+			msg = recv.msg
+		} else {
+			select {
+			case <-idleTimer.C:
+				fmt.Fprintf(os.Stderr, "loom proxy: idle timeout reached (%s), exiting\n", idleTimeout)
+				return nil
+			case recv, ok := <-recvCh:
+				if !ok || recv.err != nil {
+					return nil // Client disconnected
+				}
+				msg = recv.msg
+				resetIdleTimer()
+			}
 		}
 
-		var resp *mcp.Message
+		var (
+			resp *mcp.Message
+			err  error
+		)
 
 		switch msg.Method {
 		case "initialize":
@@ -241,14 +306,7 @@ func runProxy(socketPath string) error {
 		if err != nil {
 			// If it was a connection error, clear daemon so we reconnect next time
 			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
-				if daemonConn != nil {
-					daemonConn.Close()
-					daemonConn = nil
-				}
-				if daemon != nil {
-					daemon.Close()
-				}
-				daemon = nil
+				cleanupDaemon()
 			}
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
 		}

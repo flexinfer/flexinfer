@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -183,4 +184,42 @@ func TestProxyToolPageSize_DefaultAndClamp(t *testing.T) {
 		t.Errorf("proxyToolPageSize() = %d, want %d", got, maxToolPageSize)
 	}
 	os.Unsetenv(loomProxyToolPageSizeEnv)
+}
+
+func TestProxyIdleExitTimeout_ConfigFallback(t *testing.T) {
+	os.Unsetenv(loomProxyIdleExitSecondsEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{IdleExitSeconds: 600}
+	got := proxyIdleExitTimeout()
+	if got != 10*time.Minute {
+		t.Errorf("proxyIdleExitTimeout() = %v, want 10m", got)
+	}
+}
+
+func TestProxyIdleExitTimeout_EnvOverridesConfig(t *testing.T) {
+	os.Setenv(loomProxyIdleExitSecondsEnv, "120")
+	defer os.Unsetenv(loomProxyIdleExitSecondsEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{IdleExitSeconds: 600}
+	got := proxyIdleExitTimeout()
+	if got != 2*time.Minute {
+		t.Errorf("proxyIdleExitTimeout() = %v, want 2m", got)
+	}
+}
+
+func TestProxyIdleExitTimeout_MinBound(t *testing.T) {
+	os.Setenv(loomProxyIdleExitSecondsEnv, "5")
+	defer os.Unsetenv(loomProxyIdleExitSecondsEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{IdleExitSeconds: 0}
+	got := proxyIdleExitTimeout()
+	if got != 30*time.Second {
+		t.Errorf("proxyIdleExitTimeout() = %v, want 30s min bound", got)
+	}
 }

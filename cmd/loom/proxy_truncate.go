@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -23,6 +24,9 @@ const (
 	defaultMaxResourceBytes      = 64_000
 
 	loomProxyToolPageSizeEnv = "LOOM_PROXY_TOOL_PAGE_SIZE"
+
+	loomProxyIdleExitSecondsEnv = "LOOM_PROXY_IDLE_EXIT_SECONDS"
+	defaultProxyIdleExitSeconds = 1_800
 )
 
 // proxyConfigGlobal holds the loaded file config for proxy-side settings.
@@ -64,6 +68,19 @@ func proxyToolPageSize() int {
 		minToolPageSize,
 	)
 	return clampToolPageSize(size)
+}
+
+func proxyIdleExitTimeout() time.Duration {
+	seconds := resolveProxyLimit(
+		loomProxyIdleExitSecondsEnv,
+		proxyConfigGlobal.IdleExitSeconds,
+		defaultProxyIdleExitSeconds,
+		30,
+	)
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // resolveProxyLimit resolves a proxy limit with precedence: env var > config file > hardcoded default.

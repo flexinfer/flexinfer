@@ -298,6 +298,9 @@ type ProxyConfig struct {
 
 	// HeartbeatIntervalMs is the minimum interval between proxy heartbeats (default: 5000)
 	HeartbeatIntervalMs int `yaml:"heartbeat_interval_ms,omitempty"`
+
+	// IdleExitSeconds is how long an idle proxy waits for MCP messages before exiting (default: 1800)
+	IdleExitSeconds int `yaml:"idle_exit_seconds,omitempty"`
 }
 
 // RoutingConfig controls per-server routing preferences.
