@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -168,6 +169,34 @@ func TestGenerateCodexSkillMD_IncludesTargetInstructionsAppend(t *testing.T) {
 	}
 	if !strings.Contains(got, "$CODEX_HOME/skills/append-skill/assets/extra.md") {
 		t.Fatalf("expected path substitutions in append block:\n%s", got)
+	}
+}
+
+func TestCodexManifestFiles_IncludeBundledResources(t *testing.T) {
+	g := newTestGenerator()
+	skill := newTestSkill("with-resources", "Skill with resources")
+	skill.Common.Scripts = []*Script{
+		{Name: "run", Path: "scripts/run.sh"},
+	}
+	skill.Common.References = []string{"guide.md"}
+	skill.Common.Assets = []string{"templates/default.yaml"}
+
+	got := g.codexManifestFiles(skill)
+
+	want := []string{
+		filepath.Join("skills", "with-resources", "SKILL.md"),
+		filepath.Join("skills", "with-resources", "scripts", "run.sh"),
+		filepath.Join("skills", "with-resources", "references", "guide.md"),
+		filepath.Join("skills", "with-resources", "assets", "templates", "default.yaml"),
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d manifest files, got %d: %#v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("manifest file %d mismatch: want %q got %q", i, want[i], got[i])
+		}
 	}
 }
 

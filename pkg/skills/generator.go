@@ -130,7 +130,7 @@ func (g *Generator) generateForTarget(target string) error {
 		case "codex":
 			err = g.generateCodexSkill(skill)
 			if err == nil {
-				files = append(files, filepath.Join("skills", skill.Name, "SKILL.md"))
+				files = append(files, g.codexManifestFiles(skill)...)
 			}
 		case "claude":
 			files, err = g.generateClaudeSkillByType(skill)
@@ -194,6 +194,39 @@ func (g *Generator) resolveTargetDir(target string) string {
 		}
 	}
 	return ""
+}
+
+func (g *Generator) codexManifestFiles(skill *Skill) []string {
+	files := []string{filepath.Join("skills", skill.Name, "SKILL.md")}
+	seen := map[string]struct{}{files[0]: {}}
+
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+
+	if skill.Common != nil {
+		for _, script := range skill.Common.Scripts {
+			if script == nil || script.Path == "" {
+				continue
+			}
+			add(filepath.Join("skills", skill.Name, script.Path))
+		}
+		for _, ref := range skill.Common.References {
+			add(filepath.Join("skills", skill.Name, "references", ref))
+		}
+		for _, asset := range skill.Common.Assets {
+			add(filepath.Join("skills", skill.Name, "assets", asset))
+		}
+	}
+
+	return files
 }
 
 // =========================================================================
