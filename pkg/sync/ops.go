@@ -642,6 +642,9 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 		return fmt.Errorf("load registry from %s: %w", regPath, err)
 	}
 	fmt.Printf("Using registry: %s\n", regPath)
+	if err := syncAgentsSafetyPolicy(m.RepoRoot, reg); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: AGENTS.md safety policy sync failed: %v\n", err)
+	}
 
 	// Create temp dir
 	tmpDir, err := os.MkdirTemp("", "loom-gen")

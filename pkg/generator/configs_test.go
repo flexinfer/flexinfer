@@ -15,6 +15,13 @@ import (
 func testRegistry() *registry.Registry {
 	return &registry.Registry{
 		PlatformPermissions: map[string]*registry.PlatformPermission{
+			"agents": {
+				Settings: map[string]any{
+					"dirty_worktree_mode":                   "continue_scoped_commits",
+					"dirty_worktree_nudge_on_session_start": true,
+					"dirty_worktree_nudge_message":          "Dirty worktree detected. Continue on current branch with scoped commits.",
+				},
+			},
 			"claude": {
 				AdditionalDirectories: []string{"~/workspace"},
 				Allow: []string{
@@ -184,6 +191,7 @@ func TestEmitCodexPreamble(t *testing.T) {
 		`sandbox_mode = "workspace-write"`,
 		`writable_roots = ["/tmp/workspace"]`,
 		`web_search = "live"`,
+		`Git safety policy: treat pre-existing dirty worktrees as baseline context.`,
 		"notify =",
 	} {
 		if !strings.Contains(content, want) {
@@ -581,6 +589,64 @@ func TestGeneratedClaudeSettings_WithInvalidRulesStillValid(t *testing.T) {
 	result := validator.ValidateClaudeSettings("settings.json", data)
 	if result.HasErrors() {
 		t.Errorf("settings with filtered invalid rules should still validate: %v", result.Errors)
+	}
+}
+
+func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
+	config := claudeHooksConfig(testRegistry())
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in claude config")
+	}
+	sessionStart, ok := hooks["SessionStart"].([]map[string]any)
+	if !ok || len(sessionStart) == 0 {
+		t.Fatal("expected SessionStart hooks")
+	}
+	entries, ok := sessionStart[0]["hooks"].([]map[string]any)
+	if !ok || len(entries) < 2 {
+		t.Fatalf("expected at least two SessionStart hooks (session-start + nudge), got %d", len(entries))
+	}
+
+	found := false
+	for _, h := range entries {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "git ls-files --others --exclude-standard") &&
+			strings.Contains(cmd, "Dirty worktree detected") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected dirty-worktree nudge command in SessionStart hooks: %#v", entries)
+	}
+}
+
+func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
+	config := geminiHooksConfigFromRegistry(testRegistry())
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in gemini config")
+	}
+	sessionStart, ok := hooks["SessionStart"].([]map[string]any)
+	if !ok || len(sessionStart) == 0 {
+		t.Fatal("expected SessionStart hooks")
+	}
+	entries, ok := sessionStart[0]["hooks"].([]map[string]any)
+	if !ok || len(entries) < 2 {
+		t.Fatalf("expected at least two SessionStart hooks (session-start + nudge), got %d", len(entries))
+	}
+
+	found := false
+	for _, h := range entries {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "git ls-files --others --exclude-standard") &&
+			strings.Contains(cmd, "Dirty worktree detected") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected dirty-worktree nudge command in SessionStart hooks: %#v", entries)
 	}
 }
 

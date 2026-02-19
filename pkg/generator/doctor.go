@@ -81,7 +81,7 @@ func DoctorCheck(reg *registry.Registry, platform, configDir string) *PlatformHe
 	case "claude":
 		checkClaudeHealth(health, reg, configDir)
 	case "gemini":
-		checkGeminiHealth(health, configDir)
+		checkGeminiHealth(health, reg, configDir)
 	case "codex":
 		checkCodexHealth(health, configDir)
 	case "opencode":
@@ -120,7 +120,7 @@ func checkClaudeHealth(health *PlatformHealth, reg *registry.Registry, configDir
 	}
 
 	// Compare hooks block.
-	expectedHooks := claudeHooks()
+	expectedHooks := claudeHooks(reg)
 	onDiskHooks := onDisk["hooks"]
 	if onDiskHooks == nil {
 		health.Hooks = "missing"
@@ -160,7 +160,7 @@ func checkClaudeHealth(health *PlatformHealth, reg *registry.Registry, configDir
 }
 
 // checkGeminiHealth checks Gemini CLI settings.json for hooks freshness.
-func checkGeminiHealth(health *PlatformHealth, configDir string) {
+func checkGeminiHealth(health *PlatformHealth, reg *registry.Registry, configDir string) {
 	settingsPath := filepath.Join(configDir, "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -178,7 +178,7 @@ func checkGeminiHealth(health *PlatformHealth, configDir string) {
 	}
 
 	// Compare hooks block.
-	expectedConfig := geminiHooksConfig()
+	expectedConfig := geminiHooksConfigFromRegistry(reg)
 	expectedHooks := expectedConfig["hooks"]
 	onDiskHooks := onDisk["hooks"]
 	if onDiskHooks == nil {

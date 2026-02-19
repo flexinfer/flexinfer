@@ -590,21 +590,30 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 func claudeHooksConfig(reg *registry.Registry) map[string]any {
 	return map[string]any{
 		"permissions": claudePermissions(reg),
-		"hooks":       claudeHooks(),
+		"hooks":       claudeHooks(reg),
 	}
 }
 
 // claudeHooks returns the hooks block for Claude Code settings.json.
-func claudeHooks() map[string]any {
+func claudeHooks(reg *registry.Registry) map[string]any {
+	policy := agentSafetyPolicyFromRegistry(reg)
+	sessionStartHooks := []map[string]any{
+		{
+			"type":    "command",
+			"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
+		},
+	}
+	if policy.DirtyWorktreeNudgeOnSessionStart {
+		sessionStartHooks = append(sessionStartHooks, map[string]any{
+			"type":    "command",
+			"command": dirtyWorktreeSessionStartNudgeCommand(policy),
+		})
+	}
+
 	return map[string]any{
 		"SessionStart": []map[string]any{
 			{
-				"hooks": []map[string]any{
-					{
-						"type":    "command",
-						"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
-					},
-				},
+				"hooks": sessionStartHooks,
 			},
 		},
 		"Stop": []map[string]any{
@@ -798,6 +807,7 @@ func filterClaudePermissionRules(rules []string) (kept []string, dropped []strin
 // Settings are read from the registry's platform_permissions.codex section.
 func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoot string) {
 	pp := registryPlatformPerms(reg, "codex")
+	policy := agentSafetyPolicyFromRegistry(reg)
 
 	// Defaults when registry has no codex entry.
 	approvalPolicy := "never"
@@ -857,6 +867,14 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		fmt.Fprintf(sb, "web_search = %q\n\n", webSearchMode)
 	}
 
+	sb.WriteString("# Git safety policy: treat pre-existing dirty worktrees as baseline context.\n")
+	if policy.DirtyWorktreeMode == "continue_scoped_commits" {
+		sb.WriteString("# Continue on current branch/worktree; stage+commit only files changed for the active task.\n")
+		sb.WriteString("# Escalate only when new unexpected changes appear in files you are editing.\n\n")
+	} else {
+		fmt.Fprintf(sb, "# Dirty-worktree mode: %s\n\n", policy.DirtyWorktreeMode)
+	}
+
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
 	sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
 }
@@ -868,6 +886,50 @@ func registryPlatformPerms(reg *registry.Registry, platform string) *registry.Pl
 		return nil
 	}
 	return reg.PlatformPermissions[platform]
+}
+
+type agentSafetyPolicy struct {
+	DirtyWorktreeMode                string
+	DirtyWorktreeNudgeOnSessionStart bool
+	DirtyWorktreeNudgeMessage        string
+}
+
+func defaultAgentSafetyPolicy() agentSafetyPolicy {
+	return agentSafetyPolicy{
+		DirtyWorktreeMode:                "continue_scoped_commits",
+		DirtyWorktreeNudgeOnSessionStart: true,
+		DirtyWorktreeNudgeMessage:        "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing.",
+	}
+}
+
+func agentSafetyPolicyFromRegistry(reg *registry.Registry) agentSafetyPolicy {
+	policy := defaultAgentSafetyPolicy()
+	pp := registryPlatformPerms(reg, "agents")
+	if pp == nil || pp.Settings == nil {
+		return policy
+	}
+
+	if v, ok := pp.Settings["dirty_worktree_mode"].(string); ok && strings.TrimSpace(v) != "" {
+		policy.DirtyWorktreeMode = strings.TrimSpace(v)
+	}
+	if v, ok := pp.Settings["dirty_worktree_nudge_on_session_start"].(bool); ok {
+		policy.DirtyWorktreeNudgeOnSessionStart = v
+	}
+	if v, ok := pp.Settings["dirty_worktree_nudge_message"].(string); ok && strings.TrimSpace(v) != "" {
+		policy.DirtyWorktreeNudgeMessage = strings.TrimSpace(v)
+	}
+	return policy
+}
+
+func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
+	payload, err := json.Marshal(map[string]string{
+		"systemMessage": policy.DirtyWorktreeNudgeMessage,
+	})
+	if err != nil {
+		payload = []byte(`{"systemMessage":"Dirty worktree detected. Continue on this branch and stage only task-scoped files."}`)
+	}
+
+	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then printf '%%s\n' %q; fi; fi; exit 0`, string(payload))
 }
 
 // geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks
@@ -887,7 +949,7 @@ func geminiHooksConfig() map[string]any {
 // platform_permissions.gemini section.
 func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
 	config := map[string]any{
-		"hooks": geminiHooks(),
+		"hooks": geminiHooks(reg),
 	}
 
 	// Merge auto-approve and tool settings from registry.
@@ -914,16 +976,25 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
 }
 
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
-func geminiHooks() map[string]any {
+func geminiHooks(reg *registry.Registry) map[string]any {
+	policy := agentSafetyPolicyFromRegistry(reg)
+	sessionStartHooks := []map[string]any{
+		{
+			"type":    "command",
+			"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
+		},
+	}
+	if policy.DirtyWorktreeNudgeOnSessionStart {
+		sessionStartHooks = append(sessionStartHooks, map[string]any{
+			"type":    "command",
+			"command": dirtyWorktreeSessionStartNudgeCommand(policy),
+		})
+	}
+
 	return map[string]any{
 		"SessionStart": []map[string]any{
 			{
-				"hooks": []map[string]any{
-					{
-						"type":    "command",
-						"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
-					},
-				},
+				"hooks": sessionStartHooks,
 			},
 		},
 		"SessionEnd": []map[string]any{
