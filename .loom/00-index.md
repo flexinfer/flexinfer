@@ -3,49 +3,40 @@
 ## Quick Links
 
 - Workspace snapshot: `00-workspace-snapshot.md`
-- MCP inventory: `00-mcp-inventory.md`
-- Research (HUD): `10-research.md`
-- Research (Daemon/Proxy): `11-research-daemon-proxy.md`
-- Research (Agentic workflows/OpenClaw): `13-research-agentic-workflows-openclaw.md`
-- Research (Architecture refactor focus): `../docs/planning/2026-02-17-architecture-refactor-opportunities.md`
-- Product spec: `20-product-spec.md`
-- Implementation plan: `30-implementation-plan.md`
-- Gap-to-backlog map: `31-gap-to-backlog-map.md`
-- RALPH iteration plan (call pipeline stage 2): `52-ralph-iteration-plan-callpipeline-2026-02-17.md`
-- RALPH slice handoff (call pipeline stage 2): `53-ralph-slice-handoff-callpipeline-2026-02-17.md`
-- RALPH iteration plan (HUD/TUI presence slice): `54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
-- RALPH slice handoff (HUD/TUI presence slice): `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
+- MCP inventory (loom-mode + workflow tooling): `00-mcp-inventory.md`
+- Research brief (core workflow upgrades): `10-research.md`
+- Product spec (universal skills v2): `20-product-spec.md`
+- Implementation plan (propagation + adoption): `30-implementation-plan.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
 ## Current Goal
 
-Three active near-term workstreams:
+Standardize repeatable day-to-day engineering loops across Codex/Claude/Kilocode/Gemini so agents:
 
-1. **Architecture stabilization after Feb 15-16 feature surge**
-  - Decompose daemon tool-call pipeline (`internal/daemon/daemon.go`) to reduce cross-cutting churn.
-  - Unify agent API contracts across HUD handlers, CLI fallback commands, and bridge adapters.
-2. **Quality floor and observability**
-  - Close remaining Roadmap Issue #2 coverage gaps (daemon lifecycle + devbox integration paths).
-  - Start Roadmap Issue #12 (OTel trace export) on top of pipeline extraction.
-3. **HUD maintainability for Fleet UX**
-  - Split oversized Presence panel into tab-level components/stores to support Issue #13 safely.
+1. start with context recall + codebase index validation,
+2. execute to ship-ready outcomes by default (hooks/tests/lint, commit/push, CI watch/fix),
+3. leave durable agent-context handoff state.
 
 ## Success Criteria (Near-Term)
 
-- Daemon call path has isolated middleware components with unit tests.
-- Agent context/nudge endpoints share one contract model across HUD and CLI.
-- Presence diagnostics and mutation logic are isolated from unrelated tab concerns.
-- Coverage trend remains upward while these refactors land (no regression in current 30%+ baseline).
+- Core skill definitions in `platform/gitops/mcp/context/skills-registry.yaml` encode repeatable loops for:
+  - research
+  - technical writing/planning
+  - delivery/testing
+  - troubleshooting/incidents
+  - cross-agent context coordination
+- Codebase indexing/search is explicit in planning/research/exploration skills.
+- Backlog delivery includes executable local verification + CI retry loop.
+- Skills are regenerated and synced across supported platforms.
 
-## Risks
+## Current Risks
 
-- Refactoring cross-cutting daemon logic without preserving current behavior around cache/routing/recovery can introduce subtle regressions.
-- HUD tab decomposition can introduce transient UI state bugs if polling ownership is not moved carefully.
-- OTel rollout before contract stabilization may create duplicate instrumentation paths.
+- Policy can drift if registry updates are not followed by `loom generate skills` + `loom sync skills all`.
+- Hook/test parity varies by repo; helper scripts reduce but do not eliminate project-specific setup variance.
+- Some servers remain lazy-start/not-running until first invocation; workflows must tolerate startup latency.
 
 ## Notes
 
-- Workspace snapshot refreshed on 2026-02-17.
-- Planning focus is now anchored in `docs/planning/2026-02-17-architecture-refactor-opportunities.md`.
-- HUD/TUI presence slice landed on 2026-02-17 (diagnostics store extraction + TUI claim-conflict visibility).
+- This pack was refreshed on 2026-02-19 for "universal workflow + propagation" work.
+- Previous JobSearch roadmap artifacts remain in history/worklog for reference.

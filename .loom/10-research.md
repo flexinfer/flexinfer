@@ -1,140 +1,78 @@
-# Research Brief: HUD UI/UX Overhaul
+# Research Brief: Universal Workflow Skills and Propagation
 
 ## Problem
 
-The HUD has grown from a simple status page to a 13-panel real-time dashboard in ~3 weeks. The rapid iteration produced a feature-rich but inconsistent UI with duplicated patterns, accessibility gaps, and no formal design system. Each panel invents its own layout, filtering, detail-view, and empty-state patterns.
+Current skill behavior is uneven across platforms and too dependent on ad-hoc prompts ("commit/push/watch CI"). We need repeatable loops that close work end-to-end and leverage loom-native context/index/search capabilities by default.
 
 ## Questions
 
-- Q1: What are the major UI/UX inconsistencies across panels?
-- Q2: What accessibility issues exist?
-- Q3: Where does performance degrade with scale?
-- Q4: What information architecture improvements would reduce cognitive load?
-
-## Constraints
-
-- Frontend: Svelte 5 + Vite, no external component library (pure CSS variables).
-- Backend: Go HTTP server with embedded dist/ (zero-dependency deploy).
-- Data flow: SSE-first with 30s polling fallback.
-- Target environment: macOS desktop (primary), overlay mode in Ghostty terminal.
-
-## Method
-
-- Full code audit of all 13 panel components, 14 widget components, 16 Svelte stores, and 2 CSS files.
-- Reviewed recent git history (7 HUD-related commits since Jan 12, 2026).
-- Analyzed theme.css and layout.css token systems.
-- Mapped data flow from Go monitors through SSE to Svelte stores.
+- Q1: Do we have sufficient MCP/runtime primitives to enforce index-first + context-first + ship-to-green loops?
+- Q2: Which existing skills need stronger operational contracts for research/writing/testing/troubleshooting?
+- Q3: How do we propagate consistent behavior across Codex/Claude/Kilocode/Gemini without duplicating logic?
 
 ## Findings
 
-### F1: Inconsistent layout patterns (source: `layout.css`, panel components)
+### F1: Runtime supports the full delivery loop now
 
-Each panel uses different grid/layout approaches:
-- FleetPanel: 2x2 grid (table + stats + activity + gauges)
-- ServersPanel: table + 2-col infra cards below
-- OverviewPanel: KPI strip + auto-fill tile grid
-- TasksPanel: full-width table with toolbar
-- MemoryPanel: tier gauges + search + item list
-- TopologyPanel/LifecyclePanel: full-bleed canvas
-- Others: single-column scrollable lists
+- Loom runtime reports `42` servers and `379` tools with paged inventory (`totalPages: 4`), enough to build deterministic workflow packs.
+- `agent_context` exposes full session/task/handoff/presence lifecycle (`78` tools).
+- `codebase_memory` exposes async indexing and search/reference graph workflows (`17` tools).
+- `gitlab` exposes pipeline poll + summary + failed log retrieval (`30` tools), enabling CI close-the-loop behavior.
 
-No shared "panel template" component exists. Each panel rebuilds header, filter bar, content area, and empty states from scratch.
+### F2: Existing global instruction skills were too generic
 
-### F2: Accessibility gaps (source: all panel .svelte files)
+- `mcp-usage-core` and `research-docs-workflow` existed but did not enforce ship loop completion or index-first execution.
+- `research` skill was Tavily-centric and did not require local codebase context or durable outputs.
 
-| Issue | Severity | Location |
-|-------|----------|----------|
-| Clickable `<div>`/`<tr>` without `role="button"` | High | FleetPanel, ServersPanel |
-| No `aria-sort` on sortable table headers | Medium | ServersPanel, TasksPanel |
-| No `aria-current="page"` on active nav tab | Medium | App.svelte:210 |
-| Color-only status indication (no text/icon fallback) | High | StatusDot, all panels |
-| No `aria-label` on icon-only buttons | Medium | App.svelte:222 (Cmd+K) |
-| Missing focus management on panel switch | Medium | App.svelte:237 |
-| No skip-to-content link | Low | App.svelte |
+### F3: Backlog delivery workflow needed executable hook integration
 
-### F3: Duplicated utility code (source: panel components)
+- Prior backlog guidance referenced checks but had no reusable verification helper.
+- Adding a script-level verification contract (`verify_local_loop.sh`) creates an executable gate for hooks/test/lint with repo-aware fallbacks.
 
-Functions duplicated across panels instead of centralized:
-- `formatTime()` / `relativeTime()` / `formatNumber()` — FleetPanel, TimelinePanel, LifecyclePanel
-- `truncateId()` / `truncatePath()` — FleetPanel, PresencePanel, TasksPanel
-- Status color mapping logic — repeated in 6+ panels
-- Entry type icons/labels — FleetPanel, StreamPanel
+### F4: Platform propagation path already exists and is reliable
 
-### F4: Performance concerns (source: stores, panel components)
+- `loom generate skills --target all` + `loom sync skills all` successfully regenerated/synced skills for codex/claude/kilocode/gemini.
+- This confirms registry-first updates are the right control point for universal workflow behavior.
 
-- **No virtual scrolling**: FleetPanel entries timeline, TasksPanel list, StreamPanel can grow unbounded. VirtualList widget exists (`VirtualList.svelte`) but is unused in main panels.
-- **Redundant polling**: Even with SSE connected, stores continue 30s fallback polling. No coordination between SSE receipt and poll suppression.
-- **Re-render on every SSE event**: Fleet/health snapshots trigger full store replacement, causing all derived values to recompute even when data hasn't changed.
-- **D3 force layout runs continuously**: TopologyPanel and EntityGraph tick on every animation frame even when data is static.
+## Constraints
 
-### F5: Information architecture issues (source: App.svelte panel list)
-
-13 panels is too many for a single nav bar at 1440px viewport:
-- Tab labels truncate or crowd at smaller widths
-- Related panels are scattered: Fleet(1), Presence(8), Topology(t), Lifecycle(l) all show "agent state"
-- Memory(5), Reasoning(0), Graph(6) all show "agent knowledge"
-- No visual grouping or hierarchy in navigation
-
-### F6: Missing interaction patterns
-
-- **No consistent drill-down**: FleetPanel has click-to-detail, ServersPanel has footer detail, others have none
-- **No bulk actions**: can't select multiple tasks/entities for batch operations
-- **No inline editing**: all mutations require navigating to a form or using command palette
-- **No confirmation on destructive actions**: file claim release, memory demote happen immediately
-- **No undo/redo**: actions are fire-and-forget
-
-### F7: Empty state inconsistency
-
-- Some panels show styled `.empty-state` with icon + message
-- Others show raw "No data" text in table cells
-- TasksPanel shows a "Create" button in empty state, others don't
-- No guidance for what to do when empty (onboarding flow)
-
-### F8: Typography and spacing irregularities (source: `theme.css`, `layout.css`)
-
-- **No type scale**: font sizes jump irregularly (9px, 10px, 11px, 12px, 14px, 16px, 20px)
-- **No spacing scale**: padding/gap values are ad-hoc (4, 5, 6, 8, 10, 12, 16, 20, 24px)
-- **Inconsistent text transforms**: some headers uppercase, some sentence case, some title case
-- **Mixed font usage**: `--font-mono` used for both data and UI labels inconsistently
-
-## Options
-
-### Option A: Incremental polish (panel-by-panel cleanup)
-
-Fix inconsistencies in each panel individually. No structural changes.
-- Pros: low risk, can ship incrementally.
-- Cons: doesn't address information architecture, nav crowding, or missing shared components. Whack-a-mole.
-
-### Option B: Design system first, then panel refactor
-
-Build a formal component library (tokens, primitives, composites), then rewrite panels to use it.
-- Pros: systematic, prevents future drift, enables theme switching.
-- Cons: larger upfront investment, panels frozen during component work.
-
-### Option C: IA restructure + design system in parallel (recommended)
-
-Restructure panels into grouped views (reducing nav items from 13 to 5-6), while simultaneously building shared components. Implement in phases.
-- Pros: addresses both structural and visual issues, delivers value in each phase.
-- Cons: requires careful phasing to avoid breaking existing workflows.
-- Risks: must preserve keyboard shortcuts and overlay mode compatibility.
+- Hook/test commands vary per repo; helper scripts must degrade gracefully.
+- Some servers lazy-start on first call; workflows should tolerate first-call latency.
+- Platform-specific guidance should stay in `instructions_append` only when truly needed.
 
 ## Recommendation
 
-Option C: IA restructure + design system, phased.
-
-Phase 1 establishes the token/component foundation. Phase 2 restructures navigation. Phase 3 adds missing interactions. Phase 4 polishes performance and accessibility.
+1. Keep `common.instructions` as canonical loop definitions.
+2. Enforce required delivery contract in instruction + skill layers:
+   - hooks/tests/lint
+   - commit/push by default
+   - CI poll/fix/retry loop
+3. Make codebase index/search explicit in planning, research, and exploration skills.
+4. Require agent-context task/session closure for durable handoffs.
+5. Continue measuring adoption via worklog + follow-up smoke checks.
 
 ## Sources
 
-- [S1] `internal/hud/frontend/src/App.svelte` — panel list, routing, keyboard shortcuts
-- [S2] `internal/hud/frontend/src/lib/styles/theme.css` — CSS variables, color palette, typography
-- [S3] `internal/hud/frontend/src/lib/styles/layout.css` — grid system, utility classes, component styles
-- [S4] `internal/hud/frontend/src/lib/components/FleetPanel.svelte` — main panel with session detail
-- [S5] `internal/hud/frontend/src/lib/components/ServersPanel.svelte` — server health table
-- [S6] `internal/hud/frontend/src/lib/components/OverviewPanel.svelte` — KPI dashboard
-- [S7] `internal/hud/frontend/src/lib/stores/events.svelte.ts` — SSE connection, circuit breaker
-- [S8] `internal/hud/frontend/src/lib/stores/fleet.svelte.ts` — fleet data, polling
-- [S9] `internal/hud/frontend/src/lib/widgets/VirtualList.svelte` — unused virtual scroll
-- [S10] `internal/hud/frontend/src/lib/widgets/StatusDot.svelte` — status indicator
-- [S11] Git log: 7 HUD commits from 2026-01-12 to 2026-02-13
-- [S12] `ROADMAP.md` — current priorities
+- Skills registry updates:
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:287`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:551`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:1072`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:1877`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2035`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2236`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2298`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2362`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2449`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2694`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2783`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2950`
+- Backlog verification assets:
+  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/scripts/verify_local_loop.sh:1`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/references/workflow.md:23`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/assets/templates/status-report.md:20`
+- Runtime inventory calls (2026-02-19):
+  - `read_mcp_resource(server="loom", uri="loom://config")`
+  - `read_mcp_resource(server="loom", uri="loom://tools/index")`
+  - `read_mcp_resource(server="loom", uri="loom://tools/server/agent_context/page/1")`
+  - `read_mcp_resource(server="loom", uri="loom://tools/server/codebase_memory/page/1")`
+  - `read_mcp_resource(server="loom", uri="loom://tools/server/gitlab/page/1")`

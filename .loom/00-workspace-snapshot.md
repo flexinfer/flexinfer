@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-17T10:04:46-05:00
+- Generated: 2026-02-18T19:56:37-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.3-arm64-arm-64bit`
@@ -8,27 +8,22 @@
 
 ## Git
 ```
-## main...origin/main
- M ROADMAP.md
- M docs/USER_GUIDE.md
- M internal/hud/bridge/agent.go
- M internal/hud/bridge/agent_test.go
- M internal/hud/frontend/dist/assets/index-DLdeH65w.js
-?? .loom/00-mcp-inventory.md
-?? .loom/00-workspace-snapshot.md
-?? .loom/10-research.md
-?? .loom/11-research-daemon-proxy.md
-?? .loom/12-research-market-trends-2026-02.md
-?? .loom/13-research-agentic-workflows-openclaw.md
-?? .loom/20-product-spec.md
-?? .loom/40-decisions.md
-?? .opencode/
-?? .zed/
-?? docs/roadmap-reconciliation-2026-02-12.md
-?? docs/roadmap-reconciliation-2026-02-14.md
-?? docs/roadmap-reconciliation-2026-02-15.md
-?? docs/roadmap-reconciliation-2026-02-16.md
-?? docs/roadmap-reconciliation-2026-02-17.md
+## codex/linkedin-auth-status-mode...origin/codex/linkedin-auth-status-mode [ahead 2]
+ M .codex/skills/plan-loom-core/SKILL.md
+ M .loom/00-index.md
+ M .loom/00-mcp-inventory.md
+ M .loom/00-workspace-snapshot.md
+ M .loom/10-research.md
+ M .loom/20-product-spec.md
+ M .loom/30-implementation-plan.md
+ M .loom/50-worklog.md
+ M .opencode/opencode.json
+ M .zed/mcp.json
+ M cmd/mcp-jobsearch/README.md
+ M cmd/mcp-jobsearch/main.go
+?? cmd/mcp-jobsearch/tools_resume.go
+?? cmd/mcp-jobsearch/tools_resume_test.go
+?? cmd/mcp-linkedin/__pycache__/
 ```
 
 ### Remotes
@@ -43,7 +38,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
+d755eaf daemon: prevent idle reaper race with in-flight local calls
 ```
 
 ## Top-Level Layout
@@ -60,6 +55,7 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `.kilocode/`
 - `.loom/`
 - `.opencode/`
+- `.ruff_cache/`
 - `.vscode/`
 - `.vscode-mcp/`
 - `.zed/`
@@ -169,11 +165,27 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `.gitlab-ci.yml`
 - `.golangci.yml`
 - `.loom/00-index.md`
+- `.loom/00-mcp-inventory.md`
+- `.loom/00-workspace-snapshot.md`
+- `.loom/10-research.md`
+- `.loom/11-research-daemon-proxy.md`
+- `.loom/12-research-market-trends-2026-02.md`
+- `.loom/13-research-agentic-workflows-openclaw.md`
+- `.loom/20-product-spec.md`
 - `.loom/30-implementation-plan.md`
 - `.loom/31-gap-to-backlog-map.md`
+- `.loom/32-rfc-registry-env-consistency.md`
+- `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
+- `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
+- `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
+- `.loom/54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
+- `.loom/55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - `.mcp.json`
+- `.opencode/opencode.json`
+- `.opencode/plugins/loom-hooks.ts`
 - `.pre-commit-config.yaml`
+- `.zed/mcp.json`
 - `AGENTS.md`
 - `CHANGELOG.md`
 - `Dockerfile`
@@ -191,6 +203,7 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/loom/auth.go`
 - `cmd/loom/check.go`
 - `cmd/loom/cmd_agent.go`
+- `cmd/loom/cmd_agent_hook_status_test.go`
 - `cmd/loom/cmd_doctor.go`
 - `cmd/loom/daemon.go`
 - `cmd/loom/daemon_control.go`
@@ -203,8 +216,12 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/loom/proxy_templates_test.go`
 - `cmd/loom/proxy_truncate.go`
 - `cmd/loom/proxy_truncate_test.go`
+- `cmd/loom/registry_diagnostics.go`
+- `cmd/loom/registry_diagnostics_test.go`
 - `cmd/loom/repl.go`
 - `cmd/loom/status.go`
+- `cmd/loom/tool_inventory.go`
+- `cmd/loom/tool_inventory_test.go`
 - `cmd/loomd/main.go`
 - `cmd/loomd/rlimit_unix.go`
 - `cmd/loomd/rlimit_windows.go`
@@ -260,10 +277,12 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/mcp-flux/kustomizations.go`
 - `cmd/mcp-flux/main.go`
 - `cmd/mcp-flux/operations.go`
+- `cmd/mcp-flux/operations_test.go`
 - `cmd/mcp-flux/probe_test.go`
 - `cmd/mcp-flux/sources.go`
 - `cmd/mcp-gcp/main.go`
 - `cmd/mcp-git-worktree/main.go`
+- `cmd/mcp-git-worktree/main_test.go`
 - `cmd/mcp-git/main.go`
 - `cmd/mcp-git/main_test.go`
 - `cmd/mcp-github-actions/main.go`
@@ -284,11 +303,26 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/mcp-itchio/main.go`
 - `cmd/mcp-itchio/main_test.go`
 - `cmd/mcp-jira/main.go`
+- `cmd/mcp-jobsearch/README.md`
+- `cmd/mcp-jobsearch/client.go`
+- `cmd/mcp-jobsearch/client_test.go`
+- `cmd/mcp-jobsearch/main.go`
+- `cmd/mcp-jobsearch/main_test.go`
+- `cmd/mcp-jobsearch/tools_common.go`
+- `cmd/mcp-jobsearch/tools_core.go`
+- `cmd/mcp-jobsearch/tools_passthrough.go`
+- `cmd/mcp-jobsearch/tools_test.go`
+- `cmd/mcp-jobsearch/tools_workflow_crm.go`
 - `cmd/mcp-k8s-ops/main.go`
 - `cmd/mcp-k8s-ops/main_test.go`
 - `cmd/mcp-k8s/main.go`
 - `cmd/mcp-k8s/main_test.go`
 - `cmd/mcp-linear/main.go`
+- `cmd/mcp-linkedin/README.md`
+- `cmd/mcp-linkedin/browserkit.go`
+- `cmd/mcp-linkedin/browserkit_helper.py`
+- `cmd/mcp-linkedin/main.go`
+- `cmd/mcp-linkedin/main_test.go`
 - `cmd/mcp-loki/main.go`
 - `cmd/mcp-loki/main_test.go`
 - `cmd/mcp-memory/main.go`
@@ -301,6 +335,7 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/mcp-morph-fast-apply/main.go`
 - `cmd/mcp-morph-fast-apply/main_test.go`
 - `cmd/mcp-neo4j/main.go`
+- `cmd/mcp-neo4j/main_test.go`
 - `cmd/mcp-notion/main.go`
 - `cmd/mcp-ops/main.go`
 - `cmd/mcp-ops/main_test.go`
@@ -315,45 +350,6 @@ f1a9ca7 hud: add runtime nudge policy controls and sectioned context accounting
 - `cmd/mcp-release/main.go`
 - `cmd/mcp-release/main_test.go`
 - `cmd/mcp-sentry/main.go`
-- `cmd/mcp-sequentialthinking/main.go`
-- `cmd/mcp-sequentialthinking/main_test.go`
-- `cmd/mcp-server-mgmt/main.go`
-- `cmd/mcp-server-mgmt/main_test.go`
-- `cmd/mcp-slack/main.go`
-- `cmd/mcp-substack/main.go`
-- `cmd/mcp-substack/main_test.go`
-- `cmd/mcp-tavily/main.go`
-- `cmd/mcp-tavily/main_test.go`
-- `cmd/mcp-terraform/main.go`
-- `cmd/mcp-time/main.go`
-- `cmd/mcp-time/main_test.go`
-- `cmd/mcp-vault/main.go`
-- `cmd/mcp-vault/main_test.go`
-- `cmd/mcp-youtube/main.go`
-- `cmd/mcp-youtube/main_test.go`
-- `cmd/mcp-zep/main.go`
-- `cmd/mcp-zep/main_test.go`
-- `contrib/ghostty/loom-vibrancy.glsl`
-- `docs/API_STABILITY.md`
-- `docs/ARCHITECTURE.md`
-- `docs/DEVELOPER_GUIDE.md`
-- `docs/DEV_BUILD_LIFECYCLE.md`
-- `docs/ENTERPRISE_SECURITY.md`
-- `docs/ERROR_HANDLING.md`
-- `docs/FLEXINFER_SITE_INTEGRATION.md`
-- `docs/README.md`
-- `docs/STREAMABLE_HTTP.md`
-- `docs/USER_GUIDE.md`
-- `docs/diagrams/README.md`
-- `docs/diagrams/component.mmd`
-- `docs/diagrams/config-flow.mmd`
-- `docs/diagrams/internal-modules.mmd`
-- `docs/diagrams/pkg-modules.mmd`
-- `docs/diagrams/tool-call-sequence.mmd`
-- `docs/planning/2026-01-improvements.md`
-- `docs/planning/2026-02-quality-onboarding-opportunities.md`
-- `docs/planning/README.md`
-- `go.mod`
 - `…`
 
 ## AGENTS.md Files

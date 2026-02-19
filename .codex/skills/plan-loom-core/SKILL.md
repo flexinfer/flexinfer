@@ -1,6 +1,6 @@
 ---
 name: plan-loom-core
-description: "Planning + working-context workflow: gather workspace/repo information, inventory available MCP servers/resources/templates, and produce standardized Markdown research briefs, product specs, and implementation plans (a Loom Context Pack in .loom/). Use when asked to plan work, do structured research, write specs, or establish shared context across agents."
+description: "Planning + working-context workflow: gather workspace/repo information, validate MCP/runtime capabilities, establish codebase index/search readiness, and produce standardized Markdown context/spec/plan docs in `.loom/`."
 ---
 
 # Plan Loom Core
@@ -15,10 +15,14 @@ Create and maintain an evidence-backed "Loom Context Pack" (usually in `.loom/`)
    - `python $CODEX_HOME/skills/plan-loom-core/scripts/init_loom_context.py --root .`
 2. Generate a workspace snapshot:
    - `python $CODEX_HOME/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
-3. Detect runtime mode and inventory MCP tools (in `.loom/00-mcp-inventory.md`):
+3. Validate codebase indexing/search baseline:
+   - `codebase_memory__codebase_stats`
+   - If missing/stale: `codebase_memory__codebase_index_start` + `codebase_memory__codebase_index_poll`
+   - Capture index state in `.loom/00-mcp-inventory.md` and `.loom/30-implementation-plan.md`
+4. Detect runtime mode and inventory MCP tools (in `.loom/00-mcp-inventory.md`):
    - Prefer loom-mode inventory via `loom://config`, `loom://servers`, and `loom://tools/*`
    - Fallback to per-server MCP resource/template discovery when loom proxy is not present
-4. Fill in the docs you need:
+5. Fill in the docs you need:
    - Research: `.loom/10-research.md`
    - Product spec: `.loom/20-product-spec.md`
    - Implementation plan: `.loom/30-implementation-plan.md`
@@ -27,6 +31,7 @@ Create and maintain an evidence-backed "Loom Context Pack" (usually in `.loom/`)
 
 - If the user asks for "plan this", "write a spec", "research approaches", or "establish context":
   - Create/refresh `.loom/` templates and generate a workspace snapshot.
+  - Verify index/search readiness and note gaps.
   - Add/refresh MCP inventory.
   - Produce (or update) the relevant standardized doc(s) and keep sources updated.
 - If the user asks "what's in this workspace/repo?":
@@ -62,7 +67,16 @@ Follow `references/doc-standards.md`:
    - `loom tools list --json`
    - `loom tools list --json --server <server> --page <n> --limit <n>`
 5. Capture findings in `.loom/00-mcp-inventory.md`:
-   - Runtime mode detection, server inventory, tool counts by server, paged capture strategy, auth/permission constraints, and delegation plan rationale.
+   - Runtime mode detection, server inventory, tool counts by server, paged capture strategy, auth/permission constraints, codebase index readiness, and delegation plan rationale.
+
+## Core Workflow Packs to Design
+
+When planning skill/workflow upgrades, explicitly cover:
+1. Research loop (local index + external validation)
+2. Technical writing loop (source-backed docs/specs)
+3. Testing + ship loop (hooks/tests/lint, commit/push, CI monitor/fix)
+4. Troubleshooting loop (triage/investigate/mitigate with handoff-ready context)
+5. Coordination loop (agent presence, task lifecycle, session summaries)
 
 ## Codex Delegation Addendum
 

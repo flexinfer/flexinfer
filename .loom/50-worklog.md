@@ -1,5 +1,116 @@
 # Worklog
 
+## 2026-02-19 (session 14)
+
+- What changed:
+  - Added GitLab CI watcher helper for backlog loop:
+    - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/scripts/verify_ci_loop.sh`
+  - Wired helper into backlog skill contract:
+    - `platform/gitops/mcp/context/skills-registry.yaml` Step 6 + scripts/always_allow
+  - Updated backlog reference/template:
+    - `.../backlog-delivery-loop/references/workflow.md`
+    - `.../backlog-delivery-loop/assets/templates/status-report.md`
+  - Re-ran skills generation/sync and daemon reload.
+- Why:
+  - Make CI watch/fail-summary loop executable, not just documented.
+- Verification:
+  - `verify_ci_loop.sh --help` — pass.
+  - `verify_ci_loop.sh --project services/loom-core --ref main --timeout-seconds 60 --poll-interval-seconds 5` — pass (resolved pipeline 1598, status success).
+  - `./bin/loom generate skills --registry ... --validate` — pass.
+  - `./bin/loom sync skills all` — pass.
+  - `./bin/loom sync all --regen` — pass.
+  - `./bin/loom reload` — pass (`{"reloaded":true,"servers":42}`).
+
+## 2026-02-19 (session 13)
+
+- What changed:
+  - Reoriented `.loom` planning artifacts from JobSearch-specific scope to universal workflow-skill upgrades:
+    - `.loom/00-index.md`
+    - `.loom/00-mcp-inventory.md`
+    - `.loom/10-research.md`
+    - `.loom/20-product-spec.md`
+    - `.loom/30-implementation-plan.md`
+    - `.loom/00-workspace-snapshot.md` (regenerated)
+  - Updated cross-platform skill definitions in `platform/gitops/mcp/context/skills-registry.yaml` for:
+    - `plan-loom-core`, `platform-config-sync`, `codebase-exploration-memory`, `documentation-style`
+    - `mcp-usage-core`, `research-docs-workflow`, `research`
+    - `k8s-debug`, `incident-response`, `code-review`
+    - `loom-skill-builder`, `backlog-delivery-loop`
+  - Added executable backlog verification helper:
+    - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/scripts/verify_local_loop.sh`
+  - Updated backlog reference/template artifacts:
+    - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/references/workflow.md`
+    - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/assets/templates/status-report.md`
+  - Regenerated and synced skills across platforms.
+- Why:
+  - Enforce repeatable "ship-to-green" loops so commit/push/CI watch and hook verification happen by default, with codebase index/search and agent context integrated.
+- Verification:
+  - `./bin/loom generate skills --registry /Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml --validate` — pass.
+  - `./bin/loom generate skills --target all --registry /Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml --workspace /Users/cblevins/workspace/services/loom-core --codex-home /Users/cblevins/workspace/services/loom-core/.codex` — pass.
+  - `./bin/loom sync skills all` — pass (codex/claude/kilocode/gemini).
+- Sources:
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/scripts/verify_local_loop.sh`
+  - `read_mcp_resource(loom://config|loom://servers|loom://tools/index|loom://health|loom://tools/server/agent_context/page/1|loom://tools/server/codebase_memory/page/1|loom://tools/server/gitlab/page/1)`
+
+## 2026-02-18 (session 12)
+
+- What changed:
+  - Re-focused `.loom` planning artifacts from LinkedIn roadmap to JobSearch MCP resume-management roadmap.
+  - Updated:
+    - `.loom/00-index.md`
+    - `.loom/00-mcp-inventory.md`
+    - `.loom/10-research.md`
+    - `.loom/20-product-spec.md`
+    - `.loom/30-implementation-plan.md`
+  - Implemented explicit resume tooling surface in `mcp-jobsearch`:
+    - Added startup registration hook: `registerResumeTools(server, s)`.
+    - Added `/cmd/mcp-jobsearch/tools_resume.go` with dedicated tools for:
+      - entity resume compose
+      - resume compose/preview/variant CRUD
+      - DB-backed resume + variants
+      - version lifecycle
+      - resume chat sessions + operation workflows
+  - Added tests in `cmd/mcp-jobsearch/tools_resume_test.go` for:
+    - tool name uniqueness
+    - critical endpoint coverage
+    - destructive operation confirm-gating
+  - Updated `cmd/mcp-jobsearch/README.md` to reflect explicit resume tooling model.
+- Why:
+  - Reduce reliance on generic passthrough and make resume workflows discoverable/safe for agent use.
+- Verification:
+  - `go test ./cmd/mcp-jobsearch -v` — pass.
+  - `gofmt -w cmd/mcp-jobsearch/main.go cmd/mcp-jobsearch/tools_resume.go cmd/mcp-jobsearch/tools_resume_test.go` — pass.
+- Runtime notes:
+  - During planning-time schema calls, `jobsearch` MCP exhibited intermittent transport errors (`recv init: read message: EOF`, `file already closed`) and needs daemon smoke follow-up after reload.
+- Sources:
+  - `cmd/mcp-jobsearch/main.go`
+  - `cmd/mcp-jobsearch/tools_resume.go`
+  - `cmd/mcp-jobsearch/tools_resume_test.go`
+  - `/Users/cblevins/workspace/services/jobsearch-app/src/jobsearch/routers/resume.py`
+  - `/Users/cblevins/workspace/services/jobsearch-app/src/jobsearch/routers/chat.py`
+  - `/Users/cblevins/workspace/platform/gitops/mcp/context/registry.yaml`
+
+## 2026-02-18 (session 11)
+
+- What changed:
+  - Rebuilt the `.loom` planning pack for a LinkedIn MCP roadmap initiative.
+  - Updated:
+    - `.loom/00-mcp-inventory.md`
+    - `.loom/10-research.md`
+    - `.loom/20-product-spec.md`
+    - `.loom/30-implementation-plan.md`
+    - `.loom/00-index.md` (current goal + quick-link labels)
+- Why:
+  - Shift planning focus from HUD/daemon refactors to full LinkedIn MCP feature roadmap and phased delivery plan.
+- Sources:
+  - `cmd/mcp-linkedin/main.go`
+  - `cmd/mcp-linkedin/main_test.go`
+  - `../../platform/gitops/mcp/context/registry.yaml`
+  - `Makefile`
+  - `read_mcp_resource(loom://servers|tools|config|health)`
+  - Microsoft Learn LinkedIn docs (auth, self-serve, sign-in, share)
+
 ## 2026-02-17 (session 10)
 
 - What changed:
