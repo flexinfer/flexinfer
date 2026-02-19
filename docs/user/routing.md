@@ -398,6 +398,106 @@ Latency guidance:
 - Treat this benchmark as a pass when `prefix` routing is non-regressive (similar p95) and
   route stability improves for repeated context traffic.
 
+## Troubleshooting Runbook (Prefix Routing)
+
+Use this checklist when `flexinfer.ai/routing: prefix` traffic shows unexpected
+latency, unstable target selection, or elevated service fallback.
+
+### 1. Capture a Baseline Snapshot
+
+```bash
+NS=flexinfer-system
+MODEL=<model-name>
+
+kubectl get modeldeployment -n "${NS}" "${MODEL}" -o yaml | rg "routing|replicas|conditions"
+kubectl get svc,endpoints -n "${NS}" -l "flexinfer.ai/model=${MODEL}" -o wide
+kubectl get pods -n "${NS}" -l "flexinfer.ai/model=${MODEL}" -o wide
+```
+
+Expected:
+- Routing annotation is `prefix`
+- Service and endpoints exist and point to Ready pods
+- Replica count and Ready pods align
+
+### 2. Check Routing Outcomes and Key Sources
+
+```bash
+# Proxy decision logs for this model
+kubectl logs -n "${NS}" deployment/flexinfer-proxy --since=15m | \
+  rg "model=${MODEL} .*strategy=prefix"
+
+# Fast signal for service fallback events
+kubectl logs -n "${NS}" deployment/flexinfer-proxy --since=15m | \
+  rg "model=${MODEL} .*strategy=prefix.*service-fallback|fallback to service"
+```
+
+PromQL quick checks:
+
+```promql
+# Fallback ratio by model
+sum(rate(flexinfer_proxy_routing_decisions_total{model="$MODEL",strategy="prefix",outcome="service-fallback"}[5m]))
+/
+sum(rate(flexinfer_proxy_routing_decisions_total{model="$MODEL",strategy="prefix"}[5m]))
+
+# Target-hit spread by pod/service
+sum by (target) (
+  rate(flexinfer_proxy_routing_target_hits_total{model="$MODEL",strategy="prefix"}[5m])
+)
+```
+
+Expected:
+- Stable traffic: fallback ratio remains low
+- `key_source` trends match workload phase (`explicit-header`, `canonical`, or fallback sources)
+- Target distribution changes gradually, not erratically
+
+### 3. Validate Behavior During Endpoint Churn
+
+In one terminal, watch endpoints and pods:
+
+```bash
+kubectl get endpoints -n "${NS}" -l "flexinfer.ai/model=${MODEL}" -w
+kubectl get pods -n "${NS}" -l "flexinfer.ai/model=${MODEL}" -w
+```
+
+In another terminal, run the Chat-with-Doc benchmark scenario from this doc while
+you restart the model deployment:
+
+```bash
+kubectl rollout restart deployment/"${MODEL}" -n "${NS}"
+kubectl rollout status deployment/"${MODEL}" -n "${NS}" --timeout=5m
+```
+
+Expected:
+- Temporary fallback increase during pod replacement is acceptable
+- Fallback ratio returns to baseline after rollout completion
+- No persistent `service-fallback` dominance after pods become Ready
+
+### 4. Pod Restart Triage Checklist
+
+If fallback does not recover after restart:
+
+```bash
+kubectl describe deployment -n "${NS}" "${MODEL}"
+kubectl describe endpoints -n "${NS}" -l "flexinfer.ai/model=${MODEL}"
+kubectl logs -n "${NS}" deployment/flexinfer-proxy --since=30m | \
+  rg "model=${MODEL} .*strategy=prefix|ring|endpoint|fallback"
+```
+
+Inspect for:
+- Pods failing readiness probes
+- Endpoint list not updating after pod replacement
+- Persistent malformed explicit keys (invalid charset/length) forcing fallback
+- Unexpected routing mode changes in `ModelDeployment` annotations
+
+### 5. Common Symptoms
+
+| Symptom | Likely cause | First action |
+|--------|---------------|--------------|
+| High fallback ratio in steady-state | Missing/NotReady endpoints | Verify pod readiness and endpoint objects |
+| Sudden target churn with stable traffic | Frequent pod restarts or rolling update in progress | Check rollout status and restart loops |
+| Prefix requests route like random service LB | Invalid explicit keys or no canonical context | Validate request keys and system/doc context fields |
+| Cardinality spike | Unbounded key input (client noise) | Tighten key-length/segment limits via proxy routing knobs |
+
 ## Recommendations
 
 ### When to Use Session Affinity

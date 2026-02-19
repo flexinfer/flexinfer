@@ -70,7 +70,7 @@ Acceptance:
 ### CAR-5: E2E Validation
 - [ ] Add E2E tests for context-aware routing behavior under multi-replica models.
 - [ ] Validate fallback behavior on endpoint churn and pod restart.
-- [ ] Capture runbook troubleshooting guidance.
+- [x] Capture runbook troubleshooting guidance (`docs/user/routing.md#troubleshooting-runbook-prefix-routing`).
 
 Acceptance:
 - E2E suite proves deterministic behavior for representative chat/doc traffic.
