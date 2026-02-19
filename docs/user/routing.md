@@ -262,6 +262,141 @@ routing to pod model=my-model strategy=prefix target=10.0.0.5:8000 key_source=ex
 routing fallback to service model=my-model strategy=prefix key_source=none
 ```
 
+## Chat-with-Doc Benchmark Scenario
+
+Use this benchmark to validate route stability and key-signal health for
+`flexinfer.ai/routing: prefix` workloads.
+
+### Scenario Goals
+
+- Verify deterministic routing under repeated document-context traffic
+- Verify malformed/invalid keys degrade safely (no routing failure)
+- Measure route-hit distribution and key cardinality behavior
+- Compare latency against a default-routing baseline
+
+### Test Profile
+
+Run three traffic phases against the same model service:
+
+1. `explicit-stable`: repeated requests with a small fixed set of explicit cache keys
+2. `canonical-context`: no explicit key, but stable system + document context segments
+3. `malformed-key`: malformed `X-Flexinfer-Cache-Key` values to exercise fallback
+
+### Example Load Generator (in-cluster)
+
+```bash
+kubectl -n flexinfer-system run routing-bench --image=python:3.11-alpine --restart=Never -- sleep 900
+kubectl -n flexinfer-system exec routing-bench -- python3 - <<'PY'
+import json, time, urllib.request
+
+model_service = "http://YOUR-MODEL.flexinfer-system.svc.cluster.local:8000/v1/chat/completions"
+headers = {"Content-Type": "application/json"}
+docs = [
+    ("tenant-a/doc-1", "FlexInfer routing guide section A"),
+    ("tenant-a/doc-2", "FlexInfer routing guide section B"),
+    ("tenant-a/doc-3", "FlexInfer routing guide section C"),
+]
+
+def run_phase(name, make_request, iterations=60):
+    lat = []
+    ok = 0
+    for i in range(iterations):
+        req = make_request(i)
+        start = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                if 200 <= resp.status < 300:
+                    ok += 1
+                _ = resp.read()
+        except Exception:
+            pass
+        lat.append(time.time() - start)
+    lat_sorted = sorted(lat)
+    p50 = lat_sorted[int(len(lat_sorted) * 0.50)]
+    p95 = lat_sorted[int(len(lat_sorted) * 0.95)]
+    print(f"{name}: ok={ok}/{iterations} p50={p50:.2f}s p95={p95:.2f}s")
+
+def body(doc_text):
+    return json.dumps({
+        "model": "/models",
+        "messages": [
+            {"role": "system", "content": "You answer using provided document context only."},
+            {"role": "user", "content": f"Summarize: {doc_text}"}
+        ],
+        "document_context": doc_text,
+        "max_tokens": 120
+    }).encode()
+
+def explicit_stable(i):
+    key, doc = docs[i % len(docs)]
+    h = dict(headers)
+    h["X-Flexinfer-Cache-Key"] = key
+    return urllib.request.Request(model_service, data=body(doc), headers=h)
+
+def canonical_context(i):
+    _, doc = docs[i % len(docs)]
+    return urllib.request.Request(model_service, data=body(doc), headers=headers)
+
+def malformed_key(i):
+    _, doc = docs[i % len(docs)]
+    h = dict(headers)
+    h["X-Flexinfer-Cache-Key"] = f"bad key with spaces {i}"
+    return urllib.request.Request(model_service, data=body(doc), headers=h)
+
+run_phase("explicit-stable", explicit_stable)
+run_phase("canonical-context", canonical_context)
+run_phase("malformed-key", malformed_key)
+PY
+kubectl -n flexinfer-system delete pod routing-bench
+```
+
+### PromQL Signals
+
+Replace `$MODEL` with the ModelDeployment name.
+
+```promql
+# Key source mix
+sum by (key_source) (
+  rate(flexinfer_proxy_routing_decisions_total{model="$MODEL",strategy="prefix"}[5m])
+)
+
+# Service fallback ratio (should stay low in stable phases)
+sum(rate(flexinfer_proxy_routing_decisions_total{model="$MODEL",strategy="prefix",outcome="service-fallback"}[5m]))
+/
+sum(rate(flexinfer_proxy_routing_decisions_total{model="$MODEL",strategy="prefix"}[5m]))
+
+# Route-hit distribution by target
+sum by (target) (
+  rate(flexinfer_proxy_routing_target_hits_total{model="$MODEL",strategy="prefix"}[5m])
+)
+
+# Approximate key cardinality by source
+max by (key_source) (
+  flexinfer_proxy_routing_key_cardinality{model="$MODEL",strategy="prefix"}
+)
+
+# Cardinality tracker cap hits (should remain 0 in normal traffic)
+increase(flexinfer_proxy_routing_key_cardinality_overflow_total{model="$MODEL",strategy="prefix"}[15m])
+
+# p95 request latency for before/after routing comparison
+histogram_quantile(0.95, sum by (le) (
+  rate(flexinfer_proxy_request_duration_seconds_bucket{model="$MODEL"}[5m])
+))
+```
+
+### Expected Signals
+
+| Phase | Expected key source | Expected routing outcome | Cardinality expectation |
+|------|----------------------|--------------------------|-------------------------|
+| `explicit-stable` | `explicit-header` dominates | `pod` dominates, low fallback ratio | tracks fixed explicit key set (small, stable) |
+| `canonical-context` | `canonical` dominates | `pod` dominates | tracks distinct normalized doc/system contexts |
+| `malformed-key` | explicit source drops; canonical/session fallback increases | no routing failure; fallback may rise but remains bounded | no uncontrolled growth; overflow counter stays `0` |
+
+Latency guidance:
+- Compare against a short baseline run with default routing on the same model/config.
+- Treat this benchmark as a pass when `prefix` routing is non-regressive (similar p95) and
+  route stability improves for repeated context traffic.
+
 ## Recommendations
 
 ### When to Use Session Affinity
