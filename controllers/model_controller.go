@@ -628,6 +628,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	// Build ModelSpec for backend
 	spec := r.buildBackendModelSpec(model, b, gpuVendor)
 	spec.GPUArch = gpuArch
+	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
 
 	// Get container configuration from backend
 	image := b.Image(gpuVendor, gpuArch)
@@ -672,10 +673,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		}
 	}
 
-	// If this is a HuggingFace source and we have a /models volume, store HF caches on it.
-	// This makes SharedPVC act as a real cache layer without adding a dedicated downloader job.
-	if strings.HasPrefix(model.Spec.Source, "HF://") && b.NeedsVolume() {
-		env = mergeEnv(env, hfCacheEnvVars("/models/.cache/huggingface"))
+	// Store HuggingFace cache metadata on the model volume when available.
+	if storagePlan.HFCacheBasePath != "" {
+		env = mergeEnv(env, hfCacheEnvVars(storagePlan.HFCacheBasePath))
 	}
 
 	// Build resource requirements
@@ -735,10 +735,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			Name:      "model",
 			MountPath: "/models",
 		}
-		// For diffusers + HF SharedPVC, prefetch materializes a full diffusers repo under /models/<modelName>.
-		// Mount that directory as /models so the server finds model_index.json at the expected root.
-		if b.Name() == "diffusers" && strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" {
-			volumeMount.SubPath = model.Name
+		// Backends can require a subpath view of the mounted model volume.
+		if storagePlan.ModelVolumeSubPath != "" {
+			volumeMount.SubPath = storagePlan.ModelVolumeSubPath
 		}
 		container.VolumeMounts = append(container.VolumeMounts, volumeMount)
 
@@ -972,65 +971,105 @@ func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backe
 		GPUVendor: gpuVendor,
 	}
 
-	// If we're using a SharedPVC cache with an HF source, point backends at a local artifact directory
-	// populated by the prefetch job. This keeps model startup deterministic and avoids pulling weights
-	// during container startup.
-	if strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" && model.Status.Cache != nil {
-		if model.Status.Cache.PVCName != "" {
-			spec.ModelPath = "/models/" + model.Name
-		}
-	}
-
-	// If the source points at a PVC path, construct an absolute path under /models.
-	// Example: pvc://my-pvc/subdir -> /models/subdir
-	if strings.HasPrefix(model.Spec.Source, "pvc://") {
-		if strings.HasPrefix(modelValue, "/") {
-			spec.ModelPath = "/models" + modelValue
-		} else {
-			spec.ModelPath = "/models"
-		}
-	}
-
-	// If the source is a file path, treat it as an in-container absolute path.
-	// Example: file:///models/model.gguf -> /models/model.gguf
-	if strings.HasPrefix(model.Spec.Source, "file://") {
-		spec.ModelPath = modelValue
-	}
-
 	// Parse config into the spec
 	if model.Spec.Config != nil {
 		spec.Config = model.Spec.GetConfigMap()
 	}
 
-	// llama.cpp needs an actual GGUF file path. For HF sources staged into /models/<modelName>,
-	// allow selecting the file via spec.config.ggufFile (or legacy modelFile).
-	if b != nil && b.Name() == "llamacpp" && strings.HasPrefix(model.Spec.Source, "HF://") && cacheStrategy(model) == "SharedPVC" && model.Status.Cache != nil {
-		if model.Status.Cache.PVCName != "" {
-			ggufFile := ""
-			if spec.Config != nil {
-				if v, ok := spec.Config["ggufFile"]; ok {
-					if s, ok := v.(string); ok {
-						ggufFile = s
-					}
-				}
-				if strings.TrimSpace(ggufFile) == "" {
-					if v, ok := spec.Config["modelFile"]; ok {
-						if s, ok := v.(string); ok {
-							ggufFile = s
-						}
-					}
-				}
-			}
+	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
+	spec.ModelPath = storagePlan.ModelPath
 
-			ggufFile = strings.TrimLeft(strings.TrimSpace(ggufFile), "/")
-			// Best-effort safety: ignore traversal attempts.
-			if ggufFile != "" && !strings.Contains(ggufFile, "..") {
-				spec.ModelPath = "/models/" + model.Name + "/" + ggufFile
+	return spec
+}
+
+type backendStoragePlan struct {
+	ModelPath          string
+	ModelVolumeSubPath string
+	HFCacheBasePath    string
+}
+
+// resolveBackendStoragePlan centralizes cache/storage path decisions so backend
+// and source quirks are handled in one place.
+func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, config map[string]interface{}) backendStoragePlan {
+	plan := backendStoragePlan{}
+	source := model.Spec.Source
+	modelValue := extractModelFromSource(source)
+	strategy := cacheStrategy(model)
+
+	backendName := ""
+	needsVolume := false
+	if b != nil {
+		backendName = b.Name()
+		needsVolume = b.NeedsVolume()
+	}
+
+	// HF sources can use the mounted model volume as a persistent hub cache.
+	if strings.HasPrefix(source, "HF://") && needsVolume {
+		plan.HFCacheBasePath = "/models/.cache/huggingface"
+	}
+
+	// SharedPVC + HF sources are prefetched into /models/<modelName>.
+	if strings.HasPrefix(source, "HF://") && strategy == "SharedPVC" && model.Status.Cache != nil && model.Status.Cache.PVCName != "" {
+		plan.ModelPath = "/models/" + model.Name
+		// diffusers expects model_index.json at mount root.
+		if backendName == "diffusers" {
+			plan.ModelVolumeSubPath = model.Name
+		}
+	}
+
+	// pvc://<pvc>/<subpath> is mounted at /models.
+	if strings.HasPrefix(source, "pvc://") {
+		if strings.HasPrefix(modelValue, "/") {
+			plan.ModelPath = "/models" + modelValue
+		} else {
+			plan.ModelPath = "/models"
+		}
+	}
+
+	// file:// paths are already in-container paths.
+	if strings.HasPrefix(source, "file://") {
+		plan.ModelPath = modelValue
+	}
+
+	// llama.cpp needs a concrete GGUF file path under the staged HF directory.
+	if backendName == "llamacpp" &&
+		strings.HasPrefix(source, "HF://") &&
+		strategy == "SharedPVC" &&
+		model.Status.Cache != nil &&
+		model.Status.Cache.PVCName != "" {
+		if ggufFile := resolveGGUFFile(config); ggufFile != "" {
+			plan.ModelPath = "/models/" + model.Name + "/" + ggufFile
+		}
+	}
+
+	return plan
+}
+
+func resolveGGUFFile(config map[string]interface{}) string {
+	if config == nil {
+		return ""
+	}
+
+	ggufFile := ""
+	if v, ok := config["ggufFile"]; ok {
+		if s, ok := v.(string); ok {
+			ggufFile = s
+		}
+	}
+	if strings.TrimSpace(ggufFile) == "" {
+		if v, ok := config["modelFile"]; ok {
+			if s, ok := v.(string); ok {
+				ggufFile = s
 			}
 		}
 	}
 
-	return spec
+	ggufFile = strings.TrimLeft(strings.TrimSpace(ggufFile), "/")
+	// Best-effort safety: ignore traversal attempts.
+	if ggufFile != "" && !strings.Contains(ggufFile, "..") {
+		return ggufFile
+	}
+	return ""
 }
 
 // extractModelFromSource parses the model name from the source URI.

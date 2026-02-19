@@ -296,6 +296,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		} else {
 			slog.Debug("routing fallback to service", "model", modelName, "strategy", strategy, "key_source", decision.KeySource)
 		}
+		p.recordRoutingObservability(resolvedModel, strategy, decision, targetPod)
 	}
 
 	// Fall back to Service DNS if no routing target

@@ -157,6 +157,7 @@ type Proxy struct {
 
 	// Endpoint tracking for metrics
 	endpointCache sync.Map // map[string][]string - model name -> list of endpoint addresses
+	routingKeySet sync.Map // map[string]*routingKeyTracker keyed by model|strategy|key_source
 
 	// Backoff configuration for failed activations
 	backoffEnabled     bool          // Enable exponential backoff for failed activations

@@ -326,6 +326,10 @@ The proxy exports Prometheus metrics at `/metrics`:
 | `flexinfer_proxy_endpoint_changes_total` | counter | model, change_type | Endpoint additions/removals (change_type: added, removed) |
 | `flexinfer_proxy_endpoint_count` | gauge | model | Current number of endpoints per model |
 | `flexinfer_proxy_endpoint_refresh_duration_seconds` | histogram | - | Time spent refreshing endpoints |
+| `flexinfer_proxy_routing_decisions_total` | counter | model, strategy, key_source, outcome | Routing decisions by source and result (`pod` vs `service-fallback`) |
+| `flexinfer_proxy_routing_target_hits_total` | counter | model, strategy, target | Route-hit distribution by selected target (pod or `service-dns`) |
+| `flexinfer_proxy_routing_key_cardinality` | gauge | model, strategy, key_source | Approximate unique routing-key cardinality per source (bounded tracker) |
+| `flexinfer_proxy_routing_key_cardinality_overflow_total` | counter | model, strategy, key_source | Number of times the key-cardinality tracker hit its cap |
 
 ### GPUGroup Metrics
 

@@ -1,6 +1,6 @@
 # Context-Aware Router Execution Plan
 
-> Last updated: 2026-02-18  
+> Last updated: 2026-02-19  
 > Tracking issue: [#8 Context-aware router (prefix caching workloads)](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8)
 
 This plan turns the roadmap item into PR-sized, testable slices for moving from
@@ -19,7 +19,7 @@ Gaps to full context-aware behavior:
 - [~] Canonical cache-key policy expanded to normalized multi-system + optional document context segments (needs E2E validation)
 - [x] Explicit request-level cache-key override contract
 - [x] Routing safety bounds for noisy/unstable prefixes (length/charset validation + deterministic fallback)
-- [ ] End-to-end Chat-with-Doc validation and benchmark signals
+- [~] End-to-end Chat-with-Doc validation (benchmark signals defined; E2E still open)
 
 ## Milestones
 
@@ -54,9 +54,14 @@ Acceptance:
 - Proxy always falls back to deterministic safe routing mode.
 
 ### CAR-4: Observability + Benchmark Signals
-- [ ] Add metrics for key cardinality and route-hit distribution.
-- [ ] Add proxy logs for key source (session/prefix/explicit/fallback).
-- [ ] Define Chat-with-Doc benchmark scenario and expected signals.
+- [x] Add metrics for key cardinality and route-hit distribution.
+- [x] Add proxy logs for key source (session/prefix/explicit/fallback).
+- [x] Define Chat-with-Doc benchmark scenario and expected signals.
+
+Benchmark definition:
+- `docs/user/routing.md#chat-with-doc-benchmark-scenario`
+- Includes: three-phase workload (`explicit-stable`, `canonical-context`, `malformed-key`),
+  PromQL signal queries, and expected route-stability/cardinality outcomes.
 
 Acceptance:
 - Operators can detect key explosion/hotspots from metrics.
