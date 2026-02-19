@@ -54,8 +54,8 @@ Acceptance:
 - Proxy always falls back to deterministic safe routing mode.
 
 ### CAR-4: Observability + Benchmark Signals
-- [ ] Add metrics for key cardinality and route-hit distribution.
-- [ ] Add proxy logs for key source (session/prefix/explicit/fallback).
+- [x] Add metrics for key cardinality and route-hit distribution.
+- [x] Add proxy logs for key source (session/prefix/explicit/fallback).
 - [ ] Define Chat-with-Doc benchmark scenario and expected signals.
 
 Acceptance:

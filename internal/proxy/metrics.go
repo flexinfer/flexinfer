@@ -116,6 +116,39 @@ var (
 		},
 	)
 
+	// Context-aware routing observability metrics
+	routingDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_routing_decisions_total",
+			Help: "Total routing decisions by model, strategy, key source, and outcome.",
+		},
+		[]string{"model", "strategy", "key_source", "outcome"},
+	)
+
+	routingTargetHitsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_routing_target_hits_total",
+			Help: "Total routed request hits per model, strategy, and selected target.",
+		},
+		[]string{"model", "strategy", "target"},
+	)
+
+	routingKeyCardinality = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_proxy_routing_key_cardinality",
+			Help: "Approximate unique routing key count observed per model/strategy/source (bounded in-memory set).",
+		},
+		[]string{"model", "strategy", "key_source"},
+	)
+
+	routingKeyCardinalityOverflowTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_routing_key_cardinality_overflow_total",
+			Help: "Total times routing key cardinality tracking reached its in-memory cap per model/strategy/source.",
+		},
+		[]string{"model", "strategy", "key_source"},
+	)
+
 	// Rate limiting metrics
 	rateLimitedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -162,6 +195,10 @@ func RegisterMetrics() {
 		prometheus.MustRegister(endpointChangesTotal)
 		prometheus.MustRegister(endpointCount)
 		prometheus.MustRegister(endpointRefreshDuration)
+		prometheus.MustRegister(routingDecisionsTotal)
+		prometheus.MustRegister(routingTargetHitsTotal)
+		prometheus.MustRegister(routingKeyCardinality)
+		prometheus.MustRegister(routingKeyCardinalityOverflowTotal)
 		prometheus.MustRegister(activationRetriesTotal)
 		prometheus.MustRegister(activationRetryWaitDuration)
 		prometheus.MustRegister(rateLimitedTotal)

@@ -248,13 +248,18 @@ Monitor routing effectiveness with these metrics:
 |--------|-------------|
 | `flexinfer_proxy_requests_total{model,status}` | Total requests per model (by status) |
 | `flexinfer_proxy_active_connections{model}` | Current connections per model |
+| `flexinfer_proxy_routing_decisions_total{model,strategy,key_source,outcome}` | Routing decisions by strategy and key source (`outcome`: `pod` or `service-fallback`) |
+| `flexinfer_proxy_routing_target_hits_total{model,strategy,target}` | Route-hit distribution by selected target (`target` is pod IP:port or `service-dns`) |
+| `flexinfer_proxy_routing_key_cardinality{model,strategy,key_source}` | Approximate unique routing-key count per source (bounded in-memory tracker) |
+| `flexinfer_proxy_routing_key_cardinality_overflow_total{model,strategy,key_source}` | Number of times cardinality tracking reached its cap |
 
 ### Logs
 
 Enable debug logging to see routing decisions:
 
-```
-routing model=my-model strategy=session-affinity session_id=user-123 target=10.0.0.5:8000
+```text
+routing to pod model=my-model strategy=prefix target=10.0.0.5:8000 key_source=explicit-header
+routing fallback to service model=my-model strategy=prefix key_source=none
 ```
 
 ## Recommendations

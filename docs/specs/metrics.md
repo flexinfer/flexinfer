@@ -64,6 +64,10 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_endpoint_changes_total{model,change_type}`
 - `flexinfer_proxy_endpoint_count{model}`
 - `flexinfer_proxy_endpoint_refresh_duration_seconds` (histogram)
+- `flexinfer_proxy_routing_decisions_total{model,strategy,key_source,outcome}`
+- `flexinfer_proxy_routing_target_hits_total{model,strategy,target}`
+- `flexinfer_proxy_routing_key_cardinality{model,strategy,key_source}`
+- `flexinfer_proxy_routing_key_cardinality_overflow_total{model,strategy,key_source}`
 - `flexinfer_proxy_rate_limited_total{model,scope}`
 - `flexinfer_proxy_activation_retries_total{model}`
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
