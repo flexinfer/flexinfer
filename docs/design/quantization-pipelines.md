@@ -1,6 +1,6 @@
 # Quantization Pipelines Design
 
-**Status:** In Progress (GGUF/AWQ/GPTQ/EXL2/FP8, auto-selection, and quality validation gate policy implemented)
+**Status:** Complete (GGUF/AWQ/GPTQ/EXL2/FP8, auto-selection, and quality validation gate policy implemented; tracking issues #7 and #10 closed)
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
 

@@ -251,7 +251,14 @@ func TestGetOrCreateQueue(t *testing.T) {
 
 	// Second call should return the same queue
 	queue2 := p.getOrCreateQueue("test-model")
-	assert.Equal(t, queue1, queue2)
+	// Under -race, the background queue processor can fail fast (fake client) and
+	// replace the queue between calls. When that happens, the previous queue must
+	// already be marked draining.
+	if queue1 != queue2 {
+		assert.True(t, queue1.draining.Load())
+	}
+	assert.Equal(t, "test-model", queue2.model)
+	assert.Equal(t, p.maxQueueSize, cap(queue2.items))
 
 	// Different model should get a different queue
 	queue3 := p.getOrCreateQueue("other-model")

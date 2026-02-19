@@ -4,7 +4,7 @@
 - [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 
-> Last Updated: 2026-02-18
+> Last Updated: 2026-02-19
 
 ## Current Status
 
@@ -22,7 +22,9 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 
 Open roadmap scope is now concentrated on:
 - Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
-- Quantization quality gate hardening and operations ([Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
+
+Recently closed roadmap slice:
+- Quantization pipelines and quality validation gate ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system
@@ -35,6 +37,7 @@ Open roadmap scope is now concentrated on:
 - ✅ **Resource Management**: Complete lifecycle management of AI workload deployments
 - ✅ **Serverless Proxy**: OpenAI-compatible proxy with scale-to-zero activation
 - ✅ **Advanced Routing**: Session affinity, prefix-based, and least-loaded routing
+- ✅ **Quantization Pipelines**: GGUF/AWQ/GPTQ/EXL2/FP8 builders, recommendation flow, and quality validation gate (`flexinfer quantize validate`)
 - ✅ **KV-Cache Tiering**: LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
 - ✅ **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM backend
 - ✅ **OCI Model Registry**: Harbor/GHCR/ECR integration via `ModelCatalog` CRD and `pkg/registry/`
