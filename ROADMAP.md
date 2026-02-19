@@ -196,11 +196,12 @@ These position Loom Core in ways competitors cannot easily replicate.
   - Add HUD catalog view for browse, enable/disable, and per-server health.
   - *Rationale: 40+ curated Go servers is a unique asset. Docker MCP Toolkit has a catalog; Loom should too.*
 
-- [ ] **Security hardening layer** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/15))
+- [ ] **Security hardening layer** ([#25](https://gitlab.flexinfer.ai/services/loom-core/-/issues/25), [#26](https://gitlab.flexinfer.ai/services/loom-core/-/issues/26), [#27](https://gitlab.flexinfer.ai/services/loom-core/-/issues/27), [#29](https://gitlab.flexinfer.ai/services/loom-core/-/issues/29))
   - Add input schema validation at proxy before forwarding to servers.
   - Add output scanning for PII/secrets in tool responses.
   - Add per-agent, per-tool rate limiting.
   - Add deny-list for blocking tool calls based on policy.
+  - Note: prior umbrella issue `#15` is closed; active work is tracked in the concrete slice issues above.
   - *Rationale: MCP security is enterprise-critical. Lasso, MCP Manager, MCP Total are emerging competitors.*
 
 ## Ongoing Engineering Goals
@@ -217,6 +218,7 @@ These position Loom Core in ways competitors cannot easily replicate.
 - `docs/ARCHITECTURE.md`
 - `docs/DEV_BUILD_LIFECYCLE.md`
 - `docs/STREAMABLE_HTTP.md` — Streamable HTTP transport setup and configuration
+- `docs/planning/2026-02-19-enterprise-gateway-rbac-devbox-plan.md` — Scoped enterprise delivery plan for gateway, RBAC, and devbox executor
 - `.loom/12-research-market-trends-2026-02.md` — Market & platform strategic analysis (2026-02-15)
 - `.loom/10-research.md` — HUD UI/UX research brief
 - `.loom/20-product-spec.md` — HUD overhaul product spec
