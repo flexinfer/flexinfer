@@ -25,6 +25,8 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var webhookToken string
 	var webhookResolve string
 	var adminToken string
+	var mobileOperatorToken string
+	var mobileOperatorScopes string
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
@@ -70,23 +72,25 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			}
 
 			return hud.Run(hud.Config{
-				SocketPath:          socketPath,
-				Dev:                 dev,
-				Port:                port,
-				MetricsAddr:         metricsAddr,
-				Overlay:             overlay,
-				OverlayEdge:         overlayEdge,
-				OverlayWidth:        overlayWidth,
-				OverlayOpacity:      overlayOpacity,
-				OverlayCornerRadius: overlayCornerRadius,
-				FlexInferURL:        flexinferURL,
-				FlexInferKey:        flexinferKey,
-				CoordinatorModel:    coordinatorModel,
-				WebhookURL:          webhookURL,
-				WebhookToken:        webhookToken,
-				WebhookResolve:      webhookResolve,
-				AdminToken:          adminToken,
-				TUI:                 tui,
+				SocketPath:           socketPath,
+				Dev:                  dev,
+				Port:                 port,
+				MetricsAddr:          metricsAddr,
+				Overlay:              overlay,
+				OverlayEdge:          overlayEdge,
+				OverlayWidth:         overlayWidth,
+				OverlayOpacity:       overlayOpacity,
+				OverlayCornerRadius:  overlayCornerRadius,
+				FlexInferURL:         flexinferURL,
+				FlexInferKey:         flexinferKey,
+				CoordinatorModel:     coordinatorModel,
+				WebhookURL:           webhookURL,
+				WebhookToken:         webhookToken,
+				WebhookResolve:       webhookResolve,
+				AdminToken:           adminToken,
+				MobileOperatorToken:  mobileOperatorToken,
+				MobileOperatorScopes: mobileOperatorScopes,
+				TUI:                  tui,
 			})
 		},
 	}
@@ -112,6 +116,8 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&webhookToken, "webhook-token", os.Getenv("HUD_WEBHOOK_TOKEN"), "Bearer token for webhook auth [$HUD_WEBHOOK_TOKEN]")
 	cmd.Flags().StringVar(&webhookResolve, "webhook-resolve", os.Getenv("HUD_WEBHOOK_RESOLVE"), "Override DNS for webhook hostname (e.g., 192.168.50.227) [$HUD_WEBHOOK_RESOLVE]")
 	cmd.Flags().StringVar(&adminToken, "admin-token", os.Getenv("HUD_ADMIN_TOKEN"), "Admin token required for protected HUD mutations [$HUD_ADMIN_TOKEN]")
+	cmd.Flags().StringVar(&mobileOperatorToken, "mobile-operator-token", os.Getenv("HUD_MOBILE_OPERATOR_TOKEN"), "Bearer token for /api/mobile/v1 routes [$HUD_MOBILE_OPERATOR_TOKEN]")
+	cmd.Flags().StringVar(&mobileOperatorScopes, "mobile-operator-scopes", os.Getenv("HUD_MOBILE_OPERATOR_SCOPES"), "Comma-separated scopes for mobile operator token [$HUD_MOBILE_OPERATOR_SCOPES]")
 
 	// Ghostty integration.
 	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")

@@ -665,6 +665,70 @@ func TestHandler_AgentNudgeQueuePolicy_Update(t *testing.T) {
 	}
 }
 
+func TestHandler_MobileSessionCreate_AllowsScopedToken(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{"agent_id":"mobile-agent","namespace":"loom-core/mobile"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_MobileSessionCreate_DeniesMissingScope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{"agent_id":"mobile-agent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_MobileToken_DeniedOnDirectAgentMutationRoute(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/agent/session-start", strings.NewReader(`{"agent_id":"mobile-agent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-123/end", strings.NewReader(`{"summarize":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- Mock daemon helpers (same pattern as bridge/daemon_test.go) ---
 
 func newMockDaemonForApp(t *testing.T) (string, *appMockHandlers) {
