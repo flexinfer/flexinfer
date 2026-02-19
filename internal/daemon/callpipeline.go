@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	gosync "sync"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -29,6 +30,8 @@ type callPipeline struct {
 	conn      *pool.Conn
 	target    router.Target
 	targetStr string
+	callMu    *gosync.Mutex
+	lockHeld  bool
 }
 
 func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipeline {
@@ -150,6 +153,19 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	case router.TargetLocal:
 		p.target = router.TargetLocal
 		p.targetStr = p.target.String()
+		p.callMu = p.daemon.callLock(p.serverName)
+		lockStart := time.Now()
+		p.callMu.Lock()
+		p.lockHeld = true
+		lockWait := time.Since(lockStart)
+		if lockWait > 100*time.Millisecond {
+			p.daemon.metrics.CallLockWaitTotal.WithLabelValues(p.serverName).Inc()
+			p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
+		}
+		// Mark server active before dialing so idle reaper won't classify this call as idle.
+		if p.daemon.procMgr != nil {
+			p.daemon.procMgr.MarkActivity(p.serverName)
+		}
 		p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
 	case router.TargetHub:
 		p.target = router.TargetHub
@@ -166,6 +182,10 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	}
 
 	if err != nil {
+		if p.lockHeld && p.callMu != nil {
+			p.callMu.Unlock()
+			p.lockHeld = false
+		}
 		p.daemon.router.RecordFailure(p.serverName, p.target, err)
 		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "connect")
 		return p.internalErrorWithAudit(p.targetStr, err.Error())
@@ -175,14 +195,17 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 }
 
 func (p *callPipeline) releaseConnection() {
-	if p.conn == nil {
-		return
+	if p.conn != nil {
+		if p.target == router.TargetLocal {
+			p.daemon.pool.Put(p.conn)
+		} else {
+			p.daemon.hubPool.Put(p.conn)
+		}
 	}
-	if p.target == router.TargetLocal {
-		p.daemon.pool.Put(p.conn)
-		return
+	if p.lockHeld && p.callMu != nil {
+		p.callMu.Unlock()
+		p.lockHeld = false
 	}
-	p.daemon.hubPool.Put(p.conn)
 }
 
 func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
@@ -215,18 +238,6 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 
 	p.daemon.metrics.RecordRequestStart(p.serverName)
 	defer p.daemon.metrics.RecordRequestEnd(p.serverName)
-
-	if p.target == router.TargetLocal {
-		mu := p.daemon.callLock(p.serverName)
-		lockStart := time.Now()
-		mu.Lock()
-		lockWait := time.Since(lockStart)
-		if lockWait > 100*time.Millisecond {
-			p.daemon.metrics.CallLockWaitTotal.WithLabelValues(p.serverName).Inc()
-			p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
-		}
-		defer mu.Unlock()
-	}
 
 	if err := p.conn.Transport.Send(p.ctx, req); err != nil {
 		return p.transportFailure("send", err, start)

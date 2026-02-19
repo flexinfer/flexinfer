@@ -577,6 +577,11 @@ func TestCallPipelineRouteAndConnect_LocalDialFailureEmitsAuditAndCost(t *testin
 	if !strings.Contains(resp.Error.Message, "dial failed") {
 		t.Fatalf("unexpected connect failure message: %q", resp.Error.Message)
 	}
+	mu := d.callLock("local_srv")
+	if !mu.TryLock() {
+		t.Fatal("expected local call lock to be released after connect failure")
+	}
+	mu.Unlock()
 
 	snap := d.cost.Snapshot()
 	if snap.Totals.CallCount != 1 {

@@ -573,7 +573,7 @@ func (d *Daemon) idleReaperLoop() {
 		case <-d.done:
 			return
 		case <-ticker.C:
-			reaped := d.procMgr.ReapIdle(idleTimeout)
+			reaped := d.reapIdleServers(idleTimeout)
 			if len(reaped) > 0 {
 				d.logger.Info("reaped idle servers", "servers", reaped, "count", len(reaped))
 				for _, name := range reaped {
@@ -588,6 +588,53 @@ func (d *Daemon) idleReaperLoop() {
 			}
 		}
 	}
+}
+
+// reapIdleServers reaps idle processes while respecting per-server call locks.
+// This prevents races where the reaper closes a process mid tools/call.
+func (d *Daemon) reapIdleServers(idleTimeout time.Duration) []string {
+	if d.procMgr == nil {
+		return nil
+	}
+
+	idleInfo := d.procMgr.GetIdleInfo()
+	if len(idleInfo) == 0 {
+		return nil
+	}
+
+	reaped := make([]string, 0)
+	for _, info := range idleInfo {
+		if info.IdleDuration <= idleTimeout {
+			continue
+		}
+
+		callMu := d.callLock(info.Name)
+		if !callMu.TryLock() {
+			// Server has an in-flight call; skip this reaper cycle.
+			continue
+		}
+
+		// Re-check idleness while holding the call lock to avoid stale snapshot races.
+		stillIdle := false
+		for _, current := range d.procMgr.GetIdleInfo() {
+			if current.Name == info.Name {
+				stillIdle = current.IdleDuration > idleTimeout
+				break
+			}
+		}
+
+		if stillIdle {
+			if err := d.procMgr.Stop(info.Name); err != nil {
+				d.logger.Warn("failed to reap idle server", "server", info.Name, "error", err)
+			} else {
+				reaped = append(reaped, info.Name)
+			}
+		}
+
+		callMu.Unlock()
+	}
+
+	return reaped
 }
 
 // metricsCollectorLoop periodically updates metrics that require polling.
