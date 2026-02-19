@@ -636,6 +636,82 @@ func TestBuildBackendModelSpec_LlamaCppHFUsesGGUFFile(t *testing.T) {
 	}
 }
 
+func TestResolveBackendStoragePlan_DiffusersHFSharedPVC(t *testing.T) {
+	b, ok := backend.Get("diffusers")
+	if !ok {
+		t.Fatal("diffusers backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "sdxl-turbo"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stabilityai/sdxl-turbo",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "SharedPVC",
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{
+				PVCName: "sdxl-cache",
+				Ready:   true,
+			},
+		},
+	}
+
+	plan := resolveBackendStoragePlan(model, b, nil)
+	if plan.ModelPath != "/models/sdxl-turbo" {
+		t.Fatalf("ModelPath = %q, want %q", plan.ModelPath, "/models/sdxl-turbo")
+	}
+	if plan.ModelVolumeSubPath != "sdxl-turbo" {
+		t.Fatalf("ModelVolumeSubPath = %q, want %q", plan.ModelVolumeSubPath, "sdxl-turbo")
+	}
+	if plan.HFCacheBasePath != "/models/.cache/huggingface" {
+		t.Fatalf("HFCacheBasePath = %q, want %q", plan.HFCacheBasePath, "/models/.cache/huggingface")
+	}
+}
+
+func TestResolveBackendStoragePlan_PVCAndFileSources(t *testing.T) {
+	b, ok := backend.Get("mlc-llm")
+	if !ok {
+		t.Fatal("mlc-llm backend not found")
+	}
+
+	pvcModel := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "pvc://models-pvc/qwen3",
+		},
+	}
+	pvcPlan := resolveBackendStoragePlan(pvcModel, b, nil)
+	if pvcPlan.ModelPath != "/models/qwen3" {
+		t.Fatalf("PVC ModelPath = %q, want %q", pvcPlan.ModelPath, "/models/qwen3")
+	}
+
+	fileModel := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "file:///models/qwen3.gguf",
+		},
+	}
+	filePlan := resolveBackendStoragePlan(fileModel, b, nil)
+	if filePlan.ModelPath != "/models/qwen3.gguf" {
+		t.Fatalf("file ModelPath = %q, want %q", filePlan.ModelPath, "/models/qwen3.gguf")
+	}
+}
+
+func TestResolveGGUFFile(t *testing.T) {
+	if got := resolveGGUFFile(map[string]interface{}{"ggufFile": "models/tinyllama.gguf"}); got != "models/tinyllama.gguf" {
+		t.Fatalf("resolveGGUFFile(ggufFile) = %q", got)
+	}
+	if got := resolveGGUFFile(map[string]interface{}{"modelFile": "legacy/tinyllama.gguf"}); got != "legacy/tinyllama.gguf" {
+		t.Fatalf("resolveGGUFFile(modelFile) = %q", got)
+	}
+	if got := resolveGGUFFile(map[string]interface{}{"ggufFile": "../escape.gguf"}); got != "" {
+		t.Fatalf("resolveGGUFFile traversal = %q, want empty", got)
+	}
+}
+
 func TestResolveHFDownloadOptions_LlamaCppAddsGGUFAndMmproj(t *testing.T) {
 	model := &aiv1alpha2.Model{
 		Spec: aiv1alpha2.ModelSpec{
