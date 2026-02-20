@@ -408,9 +408,22 @@ def load_pipeline(model_id: str):
         print(f"GPU memory after cache clear: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
         sys.stdout.flush()
 
-    # Use CPU offloading to avoid memory access faults on gfx1100
-    # This keeps the model on CPU and only moves components to GPU as needed
-    use_cpu_offload = os.environ.get("USE_CPU_OFFLOAD", "0") == "1"
+    # Determine whether to use CPU offloading.
+    # USE_CPU_OFFLOAD env: "1" = force on, "0" = force off, unset = auto-detect.
+    # Auto-detect: SDXL pipelines use CPU offload by default on ROCm/gfx1100
+    # because bulk .to("cuda") triggers memory access faults.
+    offload_env = os.environ.get("USE_CPU_OFFLOAD", "")
+    if offload_env == "1":
+        use_cpu_offload = True
+    elif offload_env == "0":
+        use_cpu_offload = False
+    else:
+        # Auto-detect: use CPU offload for SDXL pipelines on ROCm
+        is_sdxl = "XL" in type(pipeline).__name__
+        is_rocm = hasattr(torch.version, 'hip') and torch.version.hip is not None
+        use_cpu_offload = is_sdxl and is_rocm
+        if use_cpu_offload:
+            print(f"Auto-detected {type(pipeline).__name__} on ROCm, enabling CPU offload")
 
     if use_cpu_offload and torch.cuda.is_available():
         try:

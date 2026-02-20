@@ -38,6 +38,10 @@ spec:
       restartPolicy: OnFailure
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          value: gpu
+          effect: NoSchedule
       containers:
         - name: download
           image: curlimages/curl:8.11.1
