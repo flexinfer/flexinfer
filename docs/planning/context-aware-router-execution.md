@@ -19,7 +19,7 @@ Gaps to full context-aware behavior:
 - [x] Canonical cache-key policy expanded to model-scoped normalized multi-system + optional document context segments
 - [x] Explicit request-level cache-key override contract
 - [x] Routing safety bounds for noisy/unstable prefixes (length/charset validation + deterministic fallback)
-- [~] End-to-end Chat-with-Doc validation (benchmark signals defined; E2E still open)
+- [x] End-to-end Chat-with-Doc validation (benchmark signals defined; E2E assertions + runbook guidance landed)
 
 ## Milestones
 
