@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-18
+> Last updated: 2026-02-20
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
@@ -63,7 +63,7 @@ Shipped in pipeline #498 across 3 commits.
 - ✅ Spot-Instance Resilience — Termination detectors for AWS, Azure, GCP, Harvester; proactive draining
 - ✅ CNCF Sandbox Prep — GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning
 
-## M1: Multi-Tenancy Foundation 🚧 IN PROGRESS
+## M1: Multi-Tenancy Foundation ✅ COMPLETE
 
 Design: `docs/design/multi-tenancy.md`  
 Tracking issue: [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
@@ -75,7 +75,7 @@ Tracking issue: [#2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2)
 - [x] Define admission-policy follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-2)
 - [x] Define tenant-aware fair-share follow-up slice (`docs/planning/multi-tenancy-followups.md`, MT-3)
 
-## Innovation: Context-Aware Router 🚧 IN PROGRESS
+## Innovation: Context-Aware Router ✅ COMPLETE
 
 Tracking issue: [#8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8)  
 Execution plan: `docs/planning/context-aware-router-execution.md`
@@ -84,8 +84,8 @@ Execution plan: `docs/planning/context-aware-router-execution.md`
 - [x] Execution plan and closure criteria documented
 - [x] Explicit cache-key contract and precedence implemented (`X-Flexinfer-Cache-Key`, `cache_key`, `cacheKey`, `prefix`, canonical, session fallback)
 - [x] Safety/fallback controls implemented (key normalization, max length, malformed-key fallback)
-- [~] Canonical prefix keying expanded (normalized multi-system + optional document context; E2E still pending)
-- [~] Observability signals expanded (proxy logs include key source; metrics still pending)
+- [x] Canonical prefix keying expanded (normalized multi-system + optional document context)
+- [x] Observability signals expanded (key-source + routing-outcome metrics and proxy log signals)
 - [x] E2E Chat-with-Doc validation and runbook guidance (`e2e/routing_test.go`, `docs/user/routing.md`)
 
 ## Quantization: Quality Validation Gate ✅ COMPLETE
@@ -97,7 +97,7 @@ Execution plan: `docs/planning/quantization-pipelines-execution.md`
 - [x] `flexinfer quantize validate` deterministic gate command implemented
 - [x] User docs include quality-gate workflow and failure triage guidance
 
-## Phase 5: Multi-Cluster (Future)
+## Phase 5: Multi-Cluster ✅ COMPLETE
 
 Design: `docs/design/multi-cluster.md`
 Checklist: `docs/planning/phase-5-multi-cluster.md`
@@ -105,7 +105,7 @@ Checklist: `docs/planning/phase-5-multi-cluster.md`
 - [x] Cluster Registry (MVP)
 - [x] Cross-Cluster Model Sync
 - [x] Global Routing
-- [ ] Advanced Features
+- [x] Advanced Features
 
 Progress note:
 - Cluster CRD API scaffold has landed (`api/v1alpha2/cluster_types.go`, `config/crd/ai.flexinfer_clusters.yaml`).
@@ -114,7 +114,15 @@ Progress note:
 - FederatedModel CRD scaffold has landed (`api/v1alpha2/federatedmodel_types.go`, `config/crd/ai.flexinfer_federatedmodels.yaml`).
 - FederatedModel controller scaffold now resolves placement and updates aggregated cluster readiness status (`controllers/federatedmodel_controller.go`).
 - GlobalProxy CRD + global proxy binary + round-robin/failover/latency/weighted strategies are implemented (`api/v1alpha2/globalproxy_types.go`, `cmd/flexinfer-global-proxy/main.go`).
-- Remaining Phase 5 scope is advanced features: dynamic weight adjustment via CRD and GPU-aware routing.
+- Dynamic weight adjustment and GPU-aware routing are complete in the delivered advanced-features slice.
+
+## Maintenance: Dependency Refresh 🚧 IN PROGRESS
+
+Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
+
+- [ ] Process scheduled Renovate updates and validate affected test/build paths
+- [ ] Merge staged dependency update batches (minor/patch first, then majors)
+- [ ] Keep roadmap tracking issue `#1` synchronized with dependency rollout status
 
 ## Tech Debt (Ongoing)
 
