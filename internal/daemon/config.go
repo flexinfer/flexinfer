@@ -247,6 +247,11 @@ type HealthConfig struct {
 	// CheckIntervalSeconds between health checks (default: 30)
 	CheckIntervalSeconds int `yaml:"check_interval_seconds,omitempty"`
 
+	// DeepProbeIntervalMinutes between full process-spawning probes (default: 5).
+	// Between deep probes, lightweight pool-based probes are used to reduce
+	// CPU/memory churn. Set to 0 to always use deep probes.
+	DeepProbeIntervalMinutes int `yaml:"deep_probe_interval_minutes,omitempty"`
+
 	// HealthyThreshold consecutive successes to mark healthy (default: 2)
 	HealthyThreshold int `yaml:"healthy_threshold,omitempty"`
 
@@ -287,6 +292,11 @@ func (c *HealthConfig) ToHealthMonitorConfig() HealthMonitorConfig {
 	}
 	if c.RestartCooldownMinutes > 0 {
 		cfg.RestartCooldown = time.Duration(c.RestartCooldownMinutes) * time.Minute
+	}
+	if c.DeepProbeIntervalMinutes > 0 {
+		cfg.DeepProbeInterval = time.Duration(c.DeepProbeIntervalMinutes) * time.Minute
+	} else if c.DeepProbeIntervalMinutes < 0 {
+		cfg.DeepProbeInterval = 0 // explicit disable → always deep probe
 	}
 	return cfg
 }

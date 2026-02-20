@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -10,6 +12,9 @@ func TestDefaultHealthMonitorConfig(t *testing.T) {
 
 	if cfg.CheckInterval != 30*time.Second {
 		t.Errorf("CheckInterval = %v, want 30s", cfg.CheckInterval)
+	}
+	if cfg.DeepProbeInterval != 5*time.Minute {
+		t.Errorf("DeepProbeInterval = %v, want 5m", cfg.DeepProbeInterval)
 	}
 	if cfg.HealthyThreshold != 2 {
 		t.Errorf("HealthyThreshold = %d, want 2", cfg.HealthyThreshold)
@@ -202,6 +207,7 @@ func TestHealthMonitor_ResetRestartCount_NotFound(t *testing.T) {
 func TestHealthMonitorConfig_Fields(t *testing.T) {
 	cfg := HealthMonitorConfig{
 		CheckInterval:      10 * time.Second,
+		DeepProbeInterval:  3 * time.Minute,
 		HealthyThreshold:   5,
 		UnhealthyThreshold: 10,
 		RestartThreshold:   15,
@@ -211,6 +217,9 @@ func TestHealthMonitorConfig_Fields(t *testing.T) {
 
 	if cfg.CheckInterval != 10*time.Second {
 		t.Error("CheckInterval not set correctly")
+	}
+	if cfg.DeepProbeInterval != 3*time.Minute {
+		t.Error("DeepProbeInterval not set correctly")
 	}
 	if cfg.HealthyThreshold != 5 {
 		t.Error("HealthyThreshold not set correctly")
@@ -226,5 +235,70 @@ func TestHealthMonitorConfig_Fields(t *testing.T) {
 	}
 	if cfg.RestartCooldown != time.Hour {
 		t.Error("RestartCooldown not set correctly")
+	}
+}
+
+// --- Pool-based probe tests (TD-PERF-01 / DEBT-005) ---
+
+func TestNeedsDeepProbe_NilStatus(t *testing.T) {
+	h := &HealthMonitor{deepProbeInterval: 5 * time.Minute}
+	if !h.needsDeepProbe(nil) {
+		t.Fatal("nil status should always require deep probe")
+	}
+}
+
+func TestNeedsDeepProbe_ZeroLastDeepProbe(t *testing.T) {
+	h := &HealthMonitor{deepProbeInterval: 5 * time.Minute}
+	status := &ServerHealthStatus{Name: "s"}
+	if !h.needsDeepProbe(status) {
+		t.Fatal("zero LastDeepProbe should require deep probe")
+	}
+}
+
+func TestNeedsDeepProbe_IntervalNotElapsed(t *testing.T) {
+	h := &HealthMonitor{deepProbeInterval: 5 * time.Minute}
+	status := &ServerHealthStatus{
+		Name:          "s",
+		LastDeepProbe: time.Now().Add(-2 * time.Minute),
+	}
+	if h.needsDeepProbe(status) {
+		t.Fatal("deep probe should not be needed within interval")
+	}
+}
+
+func TestNeedsDeepProbe_IntervalElapsed(t *testing.T) {
+	h := &HealthMonitor{deepProbeInterval: 5 * time.Minute}
+	status := &ServerHealthStatus{
+		Name:          "s",
+		LastDeepProbe: time.Now().Add(-6 * time.Minute),
+	}
+	if !h.needsDeepProbe(status) {
+		t.Fatal("deep probe should be needed after interval elapsed")
+	}
+}
+
+func TestNeedsDeepProbe_ZeroInterval_AlwaysDeep(t *testing.T) {
+	h := &HealthMonitor{deepProbeInterval: 0}
+	status := &ServerHealthStatus{
+		Name:          "s",
+		LastDeepProbe: time.Now(),
+	}
+	if !h.needsDeepProbe(status) {
+		t.Fatal("zero deepProbeInterval should always require deep probe")
+	}
+}
+
+func TestNewHealthMonitor_DeepProbeIntervalWired(t *testing.T) {
+	cfg := HealthMonitorConfig{
+		CheckInterval:     30 * time.Second,
+		DeepProbeInterval: 10 * time.Minute,
+	}
+	d := &Daemon{
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		metrics: NewMetrics(),
+	}
+	h := NewHealthMonitor(d, cfg)
+	if h.deepProbeInterval != 10*time.Minute {
+		t.Fatalf("deepProbeInterval = %v, want 10m", h.deepProbeInterval)
 	}
 }

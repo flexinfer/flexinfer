@@ -1913,6 +1913,49 @@ func (d *Daemon) fetchServerTools(ctx context.Context, serverName string) ([]mcp
 	return toolsList.Tools, nil
 }
 
+// fetchServerToolsViaPool performs a tools/list health probe using the connection
+// pool, reusing an existing idle connection when available. This avoids spawning a
+// fresh process for every health check interval.
+func (d *Daemon) fetchServerToolsViaPool(ctx context.Context, serverName string) ([]mcp.Tool, error) {
+	if d.pool == nil {
+		return nil, fmt.Errorf("local pool not configured")
+	}
+
+	conn, err := d.pool.Get(ctx, serverName)
+	if err != nil {
+		return nil, fmt.Errorf("pool connect: %w", err)
+	}
+	defer d.pool.Put(conn)
+
+	mu := d.callLock(serverName)
+	mu.Lock()
+	defer mu.Unlock()
+
+	req, _ := mcp.NewRequest(1, "tools/list", nil)
+	if err := conn.Transport.Send(ctx, req); err != nil {
+		conn.Healthy = false
+		return nil, fmt.Errorf("send tools/list: %w", err)
+	}
+
+	resp, err := conn.Transport.Recv(ctx)
+	if err != nil {
+		conn.Healthy = false
+		return nil, fmt.Errorf("recv tools/list: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("server error: %s", resp.Error.Message)
+	}
+
+	var toolsList struct {
+		Tools []mcp.Tool `json:"tools"`
+	}
+	if err := json.Unmarshal(resp.Result, &toolsList); err != nil {
+		return nil, fmt.Errorf("unmarshal tools: %w", err)
+	}
+
+	return toolsList.Tools, nil
+}
+
 // initializeMCPTransport performs the MCP initialize handshake on a fresh transport.
 func initializeMCPTransport(ctx context.Context, transport mcp.Transport) error {
 	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
