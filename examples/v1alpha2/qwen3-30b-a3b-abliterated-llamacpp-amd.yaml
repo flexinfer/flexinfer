@@ -1,0 +1,56 @@
+# Qwen3-30B-A3B Abliterated (MoE) via llama.cpp on AMD gfx1100
+#
+# Model: huihui-ai/Qwen3-30B-A3B-abliterated
+# GGUF:  mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF (imatrix quant)
+# Arch:  Mixture-of-Experts — 30.5B total params, 3.3B active per token
+# VRAM:  ~18.7GB weights at Q4_K_M + KV cache (tight on 24GB, use q8_0 KV quant)
+# Alt:   Q3_K_M = 14.8GB weights (more context headroom)
+#
+# llama.cpp ROCm backend provides wide quantization support (Q2-Q8, IQ*)
+# and flash attention via rocWMMA on gfx1100.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-30b-a3b-abliterated
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  cache:
+    strategy: SharedPVC
+    # local-path bypasses Longhorn overhead for mmap. The 18.7GB GGUF loads
+    # in ~3min from local NVMe vs 15-20min through Longhorn's block layer.
+    storageClass: local-path
+    size: 25Gi
+  gpu:
+    vendor: amd
+    shared: amd-gpu-pool
+    priority: 120
+    vramEstimateMB: 20000
+  config:
+    ggufFile: Qwen3-30B-A3B-abliterated.i1-Q4_K_M.gguf
+    contextSize: 16384
+    flashAttention: true
+    parallel: 2
+    batchSize: 2048
+    cacheTypeK: q8_0
+    cacheTypeV: q8_0
+  resources:
+    requests:
+      memory: 16Gi
+    limits:
+      memory: 32Gi
+  serverless:
+    enabled: true
+    # Loading 18.7GB GGUF via mmap through Longhorn takes 10-12min.
+    # idleTimeout must exceed load time to prevent controller reaping mid-load.
+    idleTimeout: 20m
+    coldStartTimeout: 15m
+  litellm:
+    servedModelName: qwen3-30b-abliterated
+    aliases:
+      - qwen3-30b
+      - qwen3-moe

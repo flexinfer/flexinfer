@@ -512,6 +512,13 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 		return minReplicas
 	}
 
+	// Never scale down a model that is still loading. The proxy sets
+	// LastActiveTime once at request arrival; if loading takes longer than
+	// idleTimeout the model would be incorrectly reaped mid-load.
+	if model.Status.Phase == aiv1alpha2.ModelPhaseLoading {
+		return 1
+	}
+
 	idleTimeout := getIdleTimeout(model, b)
 	if time.Since(model.Status.LastActiveTime.Time) > idleTimeout {
 		return minReplicas

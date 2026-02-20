@@ -10,7 +10,7 @@ spec:
   backend: mlc-llm
   source: HF://mlc-ai/Qwen3-8B-q4f16_1-MLC
   nodeSelector:
-    gpu.amd.com/gpu-architecture: gfx1100   # Target RDNA3 GPUs
+    flexinfer.ai/gpu.arch: gfx1100   # Target RDNA3 GPUs
   gpu:
     vendor: amd
     shared: amd-gpu-pool
@@ -27,7 +27,7 @@ spec:
   backend: vllm
   source: HF://mistralai/Mistral-7B-Instruct-v0.2
   nodeSelector:
-    gpu.amd.com/gpu-architecture: gfx1100
+    flexinfer.ai/gpu.arch: gfx1100
   gpu:
     vendor: amd
     shared: amd-gpu-pool
