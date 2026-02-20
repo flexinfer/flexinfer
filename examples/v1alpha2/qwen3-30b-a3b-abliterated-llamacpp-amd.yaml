@@ -44,7 +44,9 @@ spec:
   serverless:
     enabled: true
     idleTimeout: 10m
-    coldStartTimeout: 300s
+    # 18.7GB GGUF + ROCm image pull takes >5m from cold.
+    # Pre-pull the image to reduce this to ~3m.
+    coldStartTimeout: 15m
   litellm:
     servedModelName: qwen3-30b-abliterated
     aliases:
