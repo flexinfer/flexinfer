@@ -43,9 +43,9 @@ spec:
       memory: 32Gi
   serverless:
     enabled: true
-    idleTimeout: 10m
-    # 18.7GB GGUF + ROCm image pull takes >5m from cold.
-    # Pre-pull the image to reduce this to ~3m.
+    # Loading 18.7GB GGUF via mmap through Longhorn takes 10-12min.
+    # idleTimeout must exceed load time to prevent controller reaping mid-load.
+    idleTimeout: 20m
     coldStartTimeout: 15m
   litellm:
     servedModelName: qwen3-30b-abliterated
