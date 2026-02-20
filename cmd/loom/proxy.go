@@ -6,7 +6,9 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,11 +17,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/internal/daemon"
+	"github.com/crb2nu/loom/pkg/env"
 )
 
 // agentHintGlobal stores the --agent-hint flag value for proxy-level heartbeats.
@@ -43,6 +47,12 @@ var (
 	proxyNamespace     string
 	proxyIdentityOnce  sync.Once
 	proxyAgentID       string
+)
+
+const (
+	defaultProxyControlRPCTimeout = 30 * time.Second
+	defaultProxyToolRPCTimeout    = 60 * time.Second
+	defaultProxyInitRPCTimeout    = 10 * time.Second
 )
 
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
@@ -118,16 +128,16 @@ func runProxy(socketPath string) error {
 				Capabilities:    mcp.Capabilities{},
 				ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
 			})
-			if err := transport.Send(ctx, initReq); err != nil {
+			if err := proxyRPCSend(ctx, transport, initReq, "initialize"); err != nil {
 				transport.Close()
 				return fmt.Errorf("remote initialize: %w", err)
 			}
-			if _, err := transport.Recv(ctx); err != nil {
+			if _, err := proxyRPCRecv(ctx, transport, "initialize"); err != nil {
 				transport.Close()
 				return fmt.Errorf("remote initialize recv: %w", err)
 			}
 			// Send initialized notification
-			transport.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
+			_ = proxyRPCSend(ctx, transport, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}, "notifications/initialized")
 
 			daemon = transport
 			return nil
@@ -155,8 +165,7 @@ func runProxy(socketPath string) error {
 				return lastErr
 			}
 		}
-		daemonConn = conn
-		daemon = mcp.NewStdioTransport(daemonConn, daemonConn)
+		transport := mcp.NewStdioTransport(conn, conn)
 
 		// Must initialize the daemon connection
 		initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
@@ -164,14 +173,20 @@ func runProxy(socketPath string) error {
 			Capabilities:    mcp.Capabilities{},
 			ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
 		})
-		if err := daemon.Send(ctx, initReq); err != nil {
+		if err := proxyRPCSend(ctx, transport, initReq, "initialize"); err != nil {
+			_ = transport.Close()
+			_ = conn.Close()
 			return err
 		}
-		if _, err := daemon.Recv(ctx); err != nil {
+		if _, err := proxyRPCRecv(ctx, transport, "initialize"); err != nil {
+			_ = transport.Close()
+			_ = conn.Close()
 			return err
 		}
 		// Send initialized notification
-		daemon.Send(ctx, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"})
+		_ = proxyRPCSend(ctx, transport, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}, "notifications/initialized")
+		daemonConn = conn
+		daemon = transport
 
 		return nil
 	}
@@ -240,7 +255,7 @@ func runProxy(socketPath string) error {
 
 		if err != nil {
 			// If it was a connection error, clear daemon so we reconnect next time
-			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
+			if shouldResetDaemonTransport(err) {
 				if daemonConn != nil {
 					daemonConn.Close()
 					daemonConn = nil
@@ -292,10 +307,7 @@ func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
 func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Use the daemon's cached tool aggregation endpoint
 	toolsReq, _ := mcp.NewRequest(1, "loom/tools", nil)
-	if err := daemon.Send(ctx, toolsReq); err != nil {
-		return nil, err
-	}
-	toolsResp, err := daemon.Recv(ctx)
+	toolsResp, err := proxyDaemonRoundTrip(ctx, daemon, toolsReq, "tools/list")
 	if err != nil {
 		return nil, err
 	}
@@ -375,11 +387,7 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 		"agent_id":  resolvedAgentID,
 	})
 
-	if err := daemon.Send(ctx, callReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := daemon.Recv(ctx)
+	resp, err := proxyDaemonRoundTrip(ctx, daemon, callReq, "tools/call")
 	if err != nil {
 		return nil, err
 	}
@@ -401,10 +409,7 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Preferred fast path: daemon-native cached resources endpoint.
 	resourcesReq, _ := mcp.NewRequest(1, "loom/resources", nil)
-	if err := daemon.Send(ctx, resourcesReq); err != nil {
-		return nil, err
-	}
-	resourcesResp, err := daemon.Recv(ctx)
+	resourcesResp, err := proxyDaemonRoundTrip(ctx, daemon, resourcesReq, "resources/list")
 	if err != nil {
 		return nil, err
 	}
@@ -474,10 +479,7 @@ func proxyBuiltinResources() []mcp.Resource {
 func handleProxyResourcesListLegacyFanout(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	// Legacy behavior: aggregate resources from all servers.
 	serversReq, _ := mcp.NewRequest(2, "loom/servers", nil)
-	if err := daemon.Send(ctx, serversReq); err != nil {
-		return nil, err
-	}
-	serversResp, err := daemon.Recv(ctx)
+	serversResp, err := proxyDaemonRoundTrip(ctx, daemon, serversReq, "resources/list")
 	if err != nil {
 		return nil, err
 	}
@@ -504,10 +506,7 @@ func handleProxyResourcesListLegacyFanout(ctx context.Context, daemon mcp.Transp
 			"server": server.Name,
 			"method": "resources/list",
 		})
-		if err := daemon.Send(ctx, req); err != nil {
-			continue
-		}
-		resp, err := daemon.Recv(ctx)
+		resp, err := proxyDaemonRoundTrip(ctx, daemon, req, "resources/list")
 		if err != nil || resp.Error != nil {
 			continue
 		}
@@ -560,10 +559,7 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 			return nil, err
 		}
 		nextID++
-		if err := daemon.Send(ctx, req); err != nil {
-			return nil, err
-		}
-		return daemon.Recv(ctx)
+		return proxyDaemonRoundTrip(ctx, daemon, req, method)
 	}
 
 	renderJSON := func(v any) (string, error) {
@@ -713,11 +709,7 @@ func handleProxyResourcesRead(ctx context.Context, daemon mcp.Transport, msg *mc
 		"params": map[string]any{"uri": uri},
 	})
 
-	if err := daemon.Send(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return daemon.Recv(ctx)
+	return proxyDaemonRoundTrip(ctx, daemon, req, "resources/read")
 }
 
 func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
@@ -777,10 +769,7 @@ func handleProxyResourceTemplatesList(ctx context.Context, daemon mcp.Transport,
 
 func handleProxyPromptsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
 	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
-	if err := daemon.Send(ctx, serversReq); err != nil {
-		return nil, err
-	}
-	serversResp, err := daemon.Recv(ctx)
+	serversResp, err := proxyDaemonRoundTrip(ctx, daemon, serversReq, "prompts/list")
 	if err != nil {
 		return nil, err
 	}
@@ -800,10 +789,7 @@ func handleProxyPromptsList(ctx context.Context, daemon mcp.Transport, msg *mcp.
 			"server": server.Name,
 			"method": "prompts/list",
 		})
-		if err := daemon.Send(ctx, req); err != nil {
-			continue
-		}
-		resp, err := daemon.Recv(ctx)
+		resp, err := proxyDaemonRoundTrip(ctx, daemon, req, "prompts/list")
 		if err != nil || resp.Error != nil {
 			continue
 		}
@@ -852,18 +838,83 @@ func handleProxyPromptsGet(ctx context.Context, daemon mcp.Transport, msg *mcp.M
 		},
 	})
 
-	if err := daemon.Send(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return daemon.Recv(ctx)
+	return proxyDaemonRoundTrip(ctx, daemon, req, "prompts/get")
 }
 
 func forwardToDaemon(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	if err := daemon.Send(ctx, msg); err != nil {
+	return proxyDaemonRoundTrip(ctx, daemon, msg, msg.Method)
+}
+
+func proxyDaemonRoundTrip(ctx context.Context, daemon mcp.Transport, req *mcp.Message, operation string) (*mcp.Message, error) {
+	if err := proxyRPCSend(ctx, daemon, req, operation); err != nil {
 		return nil, err
 	}
-	return daemon.Recv(ctx)
+	return proxyRPCRecv(ctx, daemon, operation)
+}
+
+func proxyRPCSend(ctx context.Context, transport mcp.Transport, msg *mcp.Message, operation string) error {
+	timeout := proxyRPCTimeoutForOperation(operation)
+	sendCtx, cancel := context.WithTimeout(ctx, timeout)
+	err := transport.Send(sendCtx, msg)
+	cancel()
+	if err != nil {
+		return proxyRPCPhaseError(operation, "send", timeout, err)
+	}
+	return nil
+}
+
+func proxyRPCRecv(ctx context.Context, transport mcp.Transport, operation string) (*mcp.Message, error) {
+	timeout := proxyRPCTimeoutForOperation(operation)
+	recvCtx, cancel := context.WithTimeout(ctx, timeout)
+	resp, err := transport.Recv(recvCtx)
+	cancel()
+	if err != nil {
+		return nil, proxyRPCPhaseError(operation, "recv", timeout, err)
+	}
+	return resp, nil
+}
+
+func proxyRPCTimeoutForOperation(operation string) time.Duration {
+	op := strings.TrimSpace(operation)
+	switch op {
+	case "initialize":
+		return normalizePositiveDuration(env.Duration("LOOM_PROXY_INIT_TIMEOUT", defaultProxyInitRPCTimeout), defaultProxyInitRPCTimeout)
+	case "tools/call":
+		return normalizePositiveDuration(env.Duration("LOOM_PROXY_TOOL_TIMEOUT", defaultProxyToolRPCTimeout), defaultProxyToolRPCTimeout)
+	default:
+		return normalizePositiveDuration(env.Duration("LOOM_PROXY_CONTROL_TIMEOUT", defaultProxyControlRPCTimeout), defaultProxyControlRPCTimeout)
+	}
+}
+
+func proxyRPCPhaseError(operation, phase string, timeout time.Duration, err error) error {
+	op := strings.TrimSpace(operation)
+	if op == "" {
+		op = "daemon rpc"
+	}
+	if isRPCTimeout(err) {
+		return fmt.Errorf("%s timeout during %s after %s (recoverable: proxy will reconnect and retry on the next request): %w", op, phase, timeout, err)
+	}
+	return fmt.Errorf("%s failed during %s: %w", op, phase, err)
+}
+
+func shouldResetDaemonTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRPCTimeout(err) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ENOTCONN) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "use of closed network connection") ||
+		strings.Contains(lower, "unexpected eof")
 }
 
 func splitToolName(name string) []string {
