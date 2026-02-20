@@ -12,11 +12,17 @@ apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: qwen3-30b-a3b-abliterated
+  namespace: flexinfer-system
 spec:
   backend: llamacpp
   source: HF://mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF
   nodeSelector:
-    gpu.amd.com/gpu-architecture: gfx1100
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  cache:
+    strategy: SharedPVC
+    storageClass: nvme-cache-1r
+    size: 25Gi
   gpu:
     vendor: amd
     shared: amd-gpu-pool
@@ -38,7 +44,7 @@ spec:
   serverless:
     enabled: true
     idleTimeout: 10m
-    coldStartTimeout: 120s
+    coldStartTimeout: 300s
   litellm:
     servedModelName: qwen3-30b-abliterated
     aliases:
