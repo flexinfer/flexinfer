@@ -188,6 +188,9 @@ func TestRoutingFallbackDuringPodRestart(t *testing.T) {
 	if sumDecisionOutcome(decisionDelta, routingOutcomePod) <= 0 {
 		t.Fatalf("expected pod routing decisions to recover after restart, got deltas=%v", decisionDelta)
 	}
+	if got := decisionDelta[routingKeySourceCanonical+"|"+routingOutcomePod]; got <= 0 {
+		t.Fatalf("expected malformed explicit keys to fall back to canonical pod routing, got canonical|pod delta=%v (all deltas=%v)", got, decisionDelta)
+	}
 	if sumDecisionOutcome(decisionDelta, routingOutcomeFallback) >= float64(attempts+3) {
 		t.Fatalf("all decisions used service fallback; expected pod recovery, got deltas=%v", decisionDelta)
 	}
