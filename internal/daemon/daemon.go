@@ -81,45 +81,47 @@ type ResourceCache struct {
 
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg                Config
-	fileCfg            FileConfig // File-based configuration
-	registry           *registry.Registry
-	repoRoot           string // Repository root for ${repo} expansion
-	procMgr            *process.Manager
-	pool               *pool.Pool
-	hubPool            *pool.Pool
-	router             *router.Router
-	hubClient          *mcp.WebSocketClient
-	callLocks          gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
-	listener           net.Listener
-	logger             *slog.Logger
-	toolCache          *ToolCache
-	resourceCache      *ResourceCache
-	manifest           *ManifestManager                // Persistent tool cache
-	profiles           *profiles.Manager               // Tool profile manager
-	metadata           *registry.Metadata              // Tool metadata for enhanced descriptions
-	watcher            *sync.Watcher                   // File watcher for hot reload
-	syncManager        *sync.Manager                   // Sync manager for profile operations
-	metrics            *Metrics                        // Prometheus metrics
-	healthMonitor      *HealthMonitor                  // Server health monitoring
-	tunnelMgr          *TunnelManager                  // SSH tunnel management
-	respCache          *ResponseCache                  // Response cache for read-only tools
-	eventBus           *EventBus                       // Event bus for SSE streaming
-	runningServers     gosync.Map                      // serverName -> true; tracks process starts for event emission
-	httpServer         *http.Server                    // Streamable HTTP listener
-	httpStreamable     *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
-	rbac               *RBACEnforcer                   // RBAC enforcer for tool access control
-	policy             *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
-	audit              *AuditLogger                    // Structured audit logger
-	cost               *CostTracker                    // Usage tracking and attribution
-	oauth              *OAuthServer                    // OAuth 2.1 authorization server
-	authMiddleware     func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
-	routingPreferences map[string]RoutingPreference    // Per-server routing overrides
-	refreshGroup       singleflight.Group              // Deduplicates concurrent tool cache refreshes
-	wg                 gosync.WaitGroup
-	done               chan struct{}
-	stopOnce           gosync.Once
-	stopErr            error
+	cfg                 Config
+	fileCfg             FileConfig // File-based configuration
+	registry            *registry.Registry
+	repoRoot            string // Repository root for ${repo} expansion
+	procMgr             *process.Manager
+	pool                *pool.Pool
+	hubPool             *pool.Pool
+	router              *router.Router
+	hubClient           *mcp.WebSocketClient
+	callLocks           gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
+	listener            net.Listener
+	logger              *slog.Logger
+	toolCache           *ToolCache
+	resourceCache       *ResourceCache
+	manifest            *ManifestManager                // Persistent tool cache
+	profiles            *profiles.Manager               // Tool profile manager
+	metadata            *registry.Metadata              // Tool metadata for enhanced descriptions
+	watcher             *sync.Watcher                   // File watcher for hot reload
+	syncManager         *sync.Manager                   // Sync manager for profile operations
+	metrics             *Metrics                        // Prometheus metrics
+	healthMonitor       *HealthMonitor                  // Server health monitoring
+	tunnelMgr           *TunnelManager                  // SSH tunnel management
+	respCache           *ResponseCache                  // Response cache for read-only tools
+	eventBus            *EventBus                       // Event bus for SSE streaming
+	runningServers      gosync.Map                      // serverName -> true; tracks process starts for event emission
+	httpServer          *http.Server                    // Streamable HTTP listener
+	httpStreamable      *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
+	rbac                *RBACEnforcer                   // RBAC enforcer for tool access control
+	policy              *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
+	audit               *AuditLogger                    // Structured audit logger
+	cost                *CostTracker                    // Usage tracking and attribution
+	oauth               *OAuthServer                    // OAuth 2.1 authorization server
+	authMiddleware      func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
+	routingPreferences  map[string]RoutingPreference    // Per-server routing overrides
+	refreshGroup        singleflight.Group              // Deduplicates concurrent tool cache refreshes
+	hubAuthDisabled     bool                            // Auth-gated hub discovery disabled hub fallback
+	hubAuthBackoffUntil time.Time                       // Backoff window for auth-gated hub discovery
+	wg                  gosync.WaitGroup
+	done                chan struct{}
+	stopOnce            gosync.Once
+	stopErr             error
 
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
@@ -1658,31 +1660,50 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 
 	var hubClient *router.HubClient
 	if d.cfg.HubFallback && d.hubClient != nil {
-		// Fetch token from secret store if needed.
-		token := d.expandVars("${secret:MCP_HUB_TOKEN}")
-		if token == "" {
-			token = os.Getenv("MCP_HUB_TOKEN")
-		}
-
-		hubClient = router.NewHubClient(d.cfg.HubURL, token)
-		hostNames, err := hubClient.DiscoverHosts(ctx)
-		if err != nil {
-			d.logger.Warn("failed to discover hub hosts", "error", err)
-			hubClient = nil
+		now := time.Now()
+		if d.hubAuthDisabled {
+			d.logger.Debug("hub fallback disabled after auth-gated discovery failure")
+		} else if !d.hubAuthBackoffUntil.IsZero() && now.Before(d.hubAuthBackoffUntil) {
+			d.logger.Debug("skipping hub discovery during auth backoff", "until", d.hubAuthBackoffUntil)
 		} else {
-			for _, host := range hostNames {
-				// Avoid shadowing local servers if they have the same name.
-				isLocal := false
-				for _, s := range d.registry.Servers {
-					if s.Name == host {
-						isLocal = true
-						break
+			// Fetch token from secret store if needed.
+			token := d.expandVars("${secret:MCP_HUB_TOKEN}")
+			if token == "" {
+				token = os.Getenv("MCP_HUB_TOKEN")
+			}
+
+			hubClient = router.NewHubClient(d.cfg.HubURL, token)
+			hostNames, err := hubClient.DiscoverHosts(ctx)
+			if err != nil {
+				if isHubAuthError(err) {
+					hint := "check MCP_HUB_TOKEN or Cloudflare Access credentials, or set hub.disable_on_auth_failure"
+					if d.fileCfg.Hub.DisableOnAuthFailure {
+						d.hubAuthDisabled = true
+						d.logger.Warn("hub discovery auth required; disabling hub fallback", "error", err, "hint", hint)
+					} else {
+						d.hubAuthBackoffUntil = now.Add(hubAuthBackoff)
+						d.logger.Warn("hub discovery auth required; backing off", "until", d.hubAuthBackoffUntil, "error", err, "hint", hint)
 					}
+				} else {
+					d.logger.Warn("failed to discover hub hosts", "error", err)
 				}
-				if isLocal {
-					continue
+				hubClient = nil
+			} else {
+				d.hubAuthBackoffUntil = time.Time{}
+				for _, host := range hostNames {
+					// Avoid shadowing local servers if they have the same name.
+					isLocal := false
+					for _, s := range d.registry.Servers {
+						if s.Name == host {
+							isLocal = true
+							break
+						}
+					}
+					if isLocal {
+						continue
+					}
+					sources = append(sources, toolSource{name: host, kind: toolSourceHub})
 				}
-				sources = append(sources, toolSource{name: host, kind: toolSourceHub})
 			}
 		}
 	}
