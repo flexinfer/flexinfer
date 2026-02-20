@@ -1,6 +1,6 @@
 # FlexInfer Implementation Status
 
-This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-16.
+This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-20.
 
 ## Executive Summary
 
@@ -190,7 +190,8 @@ See `docs/design/multi-cluster.md` for full design.
 
 **Remaining Work:**
 
-1. **Context-aware router completion** — finish the remaining canonical keying, route-stability observability, and Chat-with-Doc E2E validation slices (`docs/planning/context-aware-router-execution.md`, `docs/user/routing.md`)
+1. **Dependency refresh and validation cadence** — process scheduled Renovate batches and validate affected build/test paths ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
+2. **Roadmap tracking maintenance** — keep issue/document state synchronized as slices close ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
 
 **What's Ready:**
 - ✅ Helm charts complete
