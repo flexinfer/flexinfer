@@ -125,7 +125,7 @@ rules:
     resources: ["deployments", "daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
-    resources: ["services", "persistentvolumeclaims", "configmaps", "events", "secrets"]
+    resources: ["pods", "services", "persistentvolumeclaims", "configmaps", "events", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
