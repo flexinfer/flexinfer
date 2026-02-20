@@ -584,7 +584,8 @@ Platform output formats:
             .claude/rules/<name>.md (rules without frontmatter)
   Kilocode: .kilocode/rules/<name>.md (rules)
             .kilocode/workflows/<name>.yaml (workflows)
-  Gemini:   .gemini/instructions.md (composite from instruction-type skills)
+  Gemini:   .gemini/skills/<name>/SKILL.md + scripts/ + references/ + assets/
+            .gemini/instructions.md (composite from instruction-type skills)
 
 Skills with type=instruction are assembled into a composite instructions.md.
 

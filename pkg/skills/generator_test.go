@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -221,4 +222,173 @@ func TestEscapeYAMLString(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenerateForTarget_GeminiInstructionCreatesSkillBundle(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	sourceSkillDir := filepath.Join(sourceDir, "demo-skill")
+
+	if err := os.MkdirAll(filepath.Join(sourceSkillDir, "scripts"), 0755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceSkillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceSkillDir, "assets", "templates"), 0755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceSkillDir, "scripts", "run.sh"), []byte("#!/usr/bin/env bash\necho ok\n"), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceSkillDir, "references", "guide.md"), []byte("# Guide\n"), 0644); err != nil {
+		t.Fatalf("write reference: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceSkillDir, "assets", "templates", "default.yaml"), []byte("name: demo\n"), 0644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	enabled := true
+	skill := &Skill{
+		Name: "demo-skill",
+		Common: &SkillSpec{
+			Description:  "Gemini demo skill",
+			Instructions: "# Demo Skill\n\nRun ${SKILL_PATH}/scripts/run.sh",
+			Scripts: []*Script{
+				{Name: "run", Path: "scripts/run.sh"},
+			},
+			References: []string{"guide.md"},
+			Assets:     []string{"templates/default.yaml"},
+		},
+		Targets: map[string]*TargetSpec{
+			"gemini": {Enabled: &enabled, Type: "instruction"},
+		},
+	}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "gemini",
+		RepoRoot:  tmpDir,
+		CodexHome: "/tmp/codex",
+	}
+
+	if err := g.generateForTarget("gemini"); err != nil {
+		t.Fatalf("generateForTarget(gemini): %v", err)
+	}
+
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	skillMDPath := filepath.Join(geminiDir, "skills", "demo-skill", "SKILL.md")
+	if _, err := os.Stat(skillMDPath); err != nil {
+		t.Fatalf("expected SKILL.md to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "scripts", "run.sh")); err != nil {
+		t.Fatalf("expected script to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "references", "guide.md")); err != nil {
+		t.Fatalf("expected reference to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "assets", "templates", "default.yaml")); err != nil {
+		t.Fatalf("expected asset to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(geminiDir, "instructions.md")); err != nil {
+		t.Fatalf("expected instructions.md to exist: %v", err)
+	}
+
+	skillMD, err := os.ReadFile(skillMDPath)
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	skillMDText := string(skillMD)
+	if !strings.Contains(skillMDText, "name: demo-skill") {
+		t.Fatalf("expected skill frontmatter name, got:\n%s", skillMDText)
+	}
+	if !strings.Contains(skillMDText, "$HOME/.gemini/skills/demo-skill/scripts/run.sh") {
+		t.Fatalf("expected stable gemini skill path substitution, got:\n%s", skillMDText)
+	}
+
+	manifest, err := ReadManifest(geminiDir)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if manifest == nil {
+		t.Fatal("expected manifest to be written")
+	}
+
+	wantPaths := []string{
+		filepath.Join("skills", "demo-skill", "SKILL.md"),
+		filepath.Join("skills", "demo-skill", "scripts", "run.sh"),
+		filepath.Join("skills", "demo-skill", "references", "guide.md"),
+		filepath.Join("skills", "demo-skill", "assets", "templates", "default.yaml"),
+		"instructions.md",
+	}
+	for _, want := range wantPaths {
+		if !containsString(manifest.Generated, want) {
+			t.Fatalf("expected manifest to include %q, got %#v", want, manifest.Generated)
+		}
+	}
+}
+
+func TestGenerateForTarget_GeminiNonInstructionCreatesSkillWithoutCompositeInstructions(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	sourceSkillDir := filepath.Join(sourceDir, "ops-helper")
+	if err := os.MkdirAll(sourceSkillDir, 0755); err != nil {
+		t.Fatalf("mkdir source skill dir: %v", err)
+	}
+
+	enabled := true
+	skill := &Skill{
+		Name: "ops-helper",
+		Common: &SkillSpec{
+			Description:  "Ops helper skill",
+			Instructions: "# Ops Helper\n\nDo ops work.",
+		},
+		Targets: map[string]*TargetSpec{
+			"gemini": {Enabled: &enabled, Type: "command"},
+		},
+	}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "gemini",
+		RepoRoot:  tmpDir,
+		CodexHome: "/tmp/codex",
+	}
+
+	if err := g.generateForTarget("gemini"); err != nil {
+		t.Fatalf("generateForTarget(gemini): %v", err)
+	}
+
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "ops-helper", "SKILL.md")); err != nil {
+		t.Fatalf("expected non-instruction Gemini skill to be generated: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(geminiDir, "instructions.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected no instructions.md for non-instruction-only generation, err=%v", err)
+	}
+
+	manifest, err := ReadManifest(geminiDir)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if manifest == nil {
+		t.Fatal("expected manifest to be written")
+	}
+	if containsString(manifest.Generated, "instructions.md") {
+		t.Fatalf("did not expect instructions.md in manifest, got %#v", manifest.Generated)
+	}
+	if !containsString(manifest.Generated, filepath.Join("skills", "ops-helper", "SKILL.md")) {
+		t.Fatalf("expected skill path in manifest, got %#v", manifest.Generated)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

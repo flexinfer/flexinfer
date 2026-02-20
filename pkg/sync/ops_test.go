@@ -392,6 +392,171 @@ func TestEnsureGeminiExtensionManifests_RepairsInvalidFromBackup(t *testing.T) {
 	}
 }
 
+func TestEnsureGeminiExtensionCommands_RepairsInvalidFromBackup(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	commandPath := filepath.Join(homeGemini, "extensions", "code-review", "commands", "code-review.toml")
+	if err := os.MkdirAll(filepath.Dir(commandPath), 0755); err != nil {
+		t.Fatalf("mkdir command dir: %v", err)
+	}
+	if err := os.WriteFile(commandPath, []byte(""), 0600); err != nil {
+		t.Fatalf("write invalid command: %v", err)
+	}
+
+	backupPath := filepath.Join(homeGemini, "backups", "gemini_home_20990101_000000", "extensions", "code-review", "commands", "code-review.toml")
+	backup := []byte("name = \"code-review\"\nprompt = \"Run a review\"\n")
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0755); err != nil {
+		t.Fatalf("mkdir backup command dir: %v", err)
+	}
+	if err := os.WriteFile(backupPath, backup, 0600); err != nil {
+		t.Fatalf("write backup command: %v", err)
+	}
+
+	if err := ensureGeminiExtensionCommands(homeGemini); err != nil {
+		t.Fatalf("ensureGeminiExtensionCommands failed: %v", err)
+	}
+
+	got, err := os.ReadFile(commandPath)
+	if err != nil {
+		t.Fatalf("read command: %v", err)
+	}
+	if string(got) != string(backup) {
+		t.Fatalf("expected command restored from backup\nwant: %q\ngot:  %q", string(backup), string(got))
+	}
+}
+
+func TestEnsureGeminiExtensionCommands_QuarantinesInvalidWithoutBackup(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	commandPath := filepath.Join(homeGemini, "extensions", "code-review", "commands", "code-review.toml")
+	if err := os.MkdirAll(filepath.Dir(commandPath), 0755); err != nil {
+		t.Fatalf("mkdir command dir: %v", err)
+	}
+	if err := os.WriteFile(commandPath, []byte(""), 0600); err != nil {
+		t.Fatalf("write invalid command: %v", err)
+	}
+
+	if err := ensureGeminiExtensionCommands(homeGemini); err != nil {
+		t.Fatalf("ensureGeminiExtensionCommands failed: %v", err)
+	}
+
+	if _, err := os.Stat(commandPath); !os.IsNotExist(err) {
+		t.Fatalf("expected invalid command to be quarantined, stat err=%v", err)
+	}
+	quarantinePath := commandPath + ".loom-quarantined"
+	if _, err := os.Stat(quarantinePath); err != nil {
+		t.Fatalf("expected quarantined file at %s: %v", quarantinePath, err)
+	}
+}
+
+func TestEnsureGeminiAuthFiles_RepairsCorruptedAuthData(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(homeGemini, 0755); err != nil {
+		t.Fatalf("mkdir home gemini: %v", err)
+	}
+
+	originalGoogle := []byte("{\"email\":\"user@example.com\"}\n")
+	originalOAuth := []byte("{\"refresh_token\":\"abc\"}\n")
+	originalState := []byte("{\"session\":\"ok\"}\n")
+	originalInstall := []byte("installation-id-123\n")
+
+	if err := os.WriteFile(filepath.Join(homeGemini, "google_accounts.json"), originalGoogle, 0600); err != nil {
+		t.Fatalf("write google_accounts.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "oauth_creds.json"), originalOAuth, 0600); err != nil {
+		t.Fatalf("write oauth_creds.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "state.json"), originalState, 0600); err != nil {
+		t.Fatalf("write state.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "installation_id"), originalInstall, 0600); err != nil {
+		t.Fatalf("write installation_id: %v", err)
+	}
+
+	snapshot := readGeminiAuthSnapshot(homeGemini)
+
+	// Simulate corruption during sync or external write.
+	if err := os.WriteFile(filepath.Join(homeGemini, "google_accounts.json"), []byte(""), 0600); err != nil {
+		t.Fatalf("corrupt google_accounts.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "oauth_creds.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatalf("corrupt oauth_creds.json: %v", err)
+	}
+	if err := os.Remove(filepath.Join(homeGemini, "state.json")); err != nil {
+		t.Fatalf("remove state.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "installation_id"), []byte(" \n"), 0600); err != nil {
+		t.Fatalf("corrupt installation_id: %v", err)
+	}
+
+	if err := ensureGeminiAuthFiles(homeGemini, snapshot); err != nil {
+		t.Fatalf("ensureGeminiAuthFiles failed: %v", err)
+	}
+
+	assertFileEquals := func(name string, want []byte) {
+		got, err := os.ReadFile(filepath.Join(homeGemini, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("%s mismatch\nwant: %q\ngot:  %q", name, string(want), string(got))
+		}
+	}
+
+	assertFileEquals("google_accounts.json", originalGoogle)
+	assertFileEquals("oauth_creds.json", originalOAuth)
+	assertFileEquals("state.json", originalState)
+	assertFileEquals("installation_id", originalInstall)
+}
+
+func TestEnsureGeminiAuthFiles_DoesNotOverrideValidCurrentData(t *testing.T) {
+	homeDir := t.TempDir()
+	homeGemini := filepath.Join(homeDir, ".gemini")
+	if err := os.MkdirAll(homeGemini, 0755); err != nil {
+		t.Fatalf("mkdir home gemini: %v", err)
+	}
+
+	// Snapshot with old values.
+	if err := os.WriteFile(filepath.Join(homeGemini, "google_accounts.json"), []byte("{\"email\":\"old@example.com\"}\n"), 0600); err != nil {
+		t.Fatalf("write old google_accounts.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "installation_id"), []byte("old-install-id\n"), 0600); err != nil {
+		t.Fatalf("write old installation_id: %v", err)
+	}
+	snapshot := readGeminiAuthSnapshot(homeGemini)
+
+	// Simulate user re-auth producing new valid files.
+	newGoogle := []byte("{\"email\":\"new@example.com\"}\n")
+	newInstall := []byte("new-install-id\n")
+	if err := os.WriteFile(filepath.Join(homeGemini, "google_accounts.json"), newGoogle, 0600); err != nil {
+		t.Fatalf("write new google_accounts.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeGemini, "installation_id"), newInstall, 0600); err != nil {
+		t.Fatalf("write new installation_id: %v", err)
+	}
+
+	if err := ensureGeminiAuthFiles(homeGemini, snapshot); err != nil {
+		t.Fatalf("ensureGeminiAuthFiles failed: %v", err)
+	}
+
+	gotGoogle, err := os.ReadFile(filepath.Join(homeGemini, "google_accounts.json"))
+	if err != nil {
+		t.Fatalf("read google_accounts.json: %v", err)
+	}
+	if string(gotGoogle) != string(newGoogle) {
+		t.Fatalf("expected current valid google_accounts.json preserved\nwant: %q\ngot:  %q", string(newGoogle), string(gotGoogle))
+	}
+
+	gotInstall, err := os.ReadFile(filepath.Join(homeGemini, "installation_id"))
+	if err != nil {
+		t.Fatalf("read installation_id: %v", err)
+	}
+	if string(gotInstall) != string(newInstall) {
+		t.Fatalf("expected current valid installation_id preserved\nwant: %q\ngot:  %q", string(newInstall), string(gotInstall))
+	}
+}
+
 func TestSyncToHome_ClaudeRepairsInvalidSettingsFromSnapshot(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()

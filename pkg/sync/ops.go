@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,11 +73,13 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	repoPath := m.ResolveRepoPath(p)
 	homePath := m.ResolveHomePath(p)
 	var geminiSnapshot geminiConfigSnapshot
+	var geminiAuthSnapshot geminiAuthSnapshot
 	var claudeSnapshot claudeConfigSnapshot
 	var codexSnapshot codexConfigSnapshot
 	switch p.Name {
 	case "gemini":
 		geminiSnapshot = readGeminiConfigSnapshot(homePath)
+		geminiAuthSnapshot = readGeminiAuthSnapshot(homePath)
 	case "claude":
 		claudeSnapshot = readClaudeConfigSnapshot(homePath)
 	case "codex":
@@ -218,6 +221,9 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		if err := ensureGeminiConfigFiles(homePath, geminiSnapshot); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not verify Gemini config files: %v\n", err)
 		}
+		if err := ensureGeminiAuthFiles(homePath, geminiAuthSnapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not preserve Gemini auth files: %v\n", err)
+		}
 	case "claude":
 		if err := ensureClaudeConfigFiles(homePath, claudeSnapshot); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not verify Claude config files: %v\n", err)
@@ -237,6 +243,13 @@ type geminiConfigSnapshot struct {
 	extensionManifests  map[string][]byte
 }
 
+type geminiAuthSnapshot struct {
+	googleAccounts []byte
+	oauthCreds     []byte
+	state          []byte
+	installationID []byte
+}
+
 type claudeConfigSnapshot struct {
 	mcp      []byte
 	settings []byte
@@ -251,6 +264,15 @@ func readGeminiConfigSnapshot(homePath string) geminiConfigSnapshot {
 		trustedFolders:      readGeminiTrustedFoldersSnapshot(homePath),
 		extensionEnablement: readGeminiJSONSnapshot(filepath.Join(homePath, "extensions", "extension-enablement.json")),
 		extensionManifests:  readGeminiExtensionManifestSnapshots(homePath),
+	}
+}
+
+func readGeminiAuthSnapshot(homePath string) geminiAuthSnapshot {
+	return geminiAuthSnapshot{
+		googleAccounts: readGeminiAuthJSONSnapshot(filepath.Join(homePath, "google_accounts.json")),
+		oauthCreds:     readGeminiAuthJSONSnapshot(filepath.Join(homePath, "oauth_creds.json")),
+		state:          readGeminiAuthJSONSnapshot(filepath.Join(homePath, "state.json")),
+		installationID: readNonEmptyTextSnapshot(filepath.Join(homePath, "installation_id")),
 	}
 }
 
@@ -281,6 +303,28 @@ func readGeminiTrustedFoldersSnapshot(homePath string) []byte {
 
 func readGeminiJSONSnapshot(path string) []byte {
 	return readJSONSnapshot(path)
+}
+
+func readGeminiAuthJSONSnapshot(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if !isValidJSON(data) {
+		return nil
+	}
+	return append([]byte(nil), data...)
+}
+
+func readNonEmptyTextSnapshot(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	return append([]byte(nil), data...)
 }
 
 func readJSONSnapshot(path string) []byte {
@@ -341,6 +385,35 @@ func ensureGeminiConfigFiles(homePath string, snapshot geminiConfigSnapshot) err
 	if err := ensureGeminiExtensionManifests(homePath, snapshot.extensionManifests); err != nil {
 		errs = append(errs, fmt.Sprintf("extensions/*/gemini-extension.json: %v", err))
 	}
+	if err := ensureGeminiExtensionCommands(homePath); err != nil {
+		errs = append(errs, fmt.Sprintf("extensions/*/commands/*.toml: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func ensureGeminiAuthFiles(homePath string, snapshot geminiAuthSnapshot) error {
+	var errs []string
+	ensure := func(relPath string, fallback []byte, validate func([]byte) bool) {
+		if len(fallback) == 0 {
+			return
+		}
+		path := filepath.Join(homePath, relPath)
+		if current, err := os.ReadFile(path); err == nil && validate(current) {
+			return
+		}
+		if err := writeFileAtomic(path, fallback, 0o600); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
+		}
+	}
+
+	ensure("google_accounts.json", snapshot.googleAccounts, isValidJSON)
+	ensure("oauth_creds.json", snapshot.oauthCreds, isValidJSON)
+	ensure("state.json", snapshot.state, isValidJSON)
+	ensure("installation_id", snapshot.installationID, isValidNonEmptyText)
 
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
@@ -447,8 +520,76 @@ func repairGeminiManifestFile(homePath, relPath string, fallback []byte) error {
 	return writeFileAtomic(path, []byte("{}\n"), 0o600)
 }
 
+func ensureGeminiExtensionCommands(homePath string) error {
+	extensionsDir := filepath.Join(homePath, "extensions")
+	if info, err := os.Stat(extensionsDir); err != nil || !info.IsDir() {
+		return nil
+	}
+
+	var errs []string
+	err := filepath.WalkDir(extensionsDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			errs = append(errs, walkErr.Error())
+			return nil
+		}
+		if d.IsDir() || filepath.Ext(path) != ".toml" {
+			return nil
+		}
+
+		slashPath := filepath.ToSlash(path)
+		if !strings.Contains(slashPath, "/commands/") {
+			return nil
+		}
+
+		current, err := os.ReadFile(path)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+		if isValidTOML(current) {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(homePath, path)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+
+		backup := readGeminiBackupTOML(homePath, relPath)
+		if len(backup) == 0 {
+			quarantinePath := path + ".loom-quarantined"
+			_ = os.Remove(quarantinePath)
+			if err := os.Rename(path, quarantinePath); err != nil {
+				errs = append(errs, fmt.Sprintf("%s invalid and no backup available: %v", relPath, err))
+			}
+			return nil
+		}
+
+		mode := os.FileMode(0o644)
+		if info, err := os.Stat(path); err == nil {
+			mode = info.Mode().Perm()
+		}
+		if err := writeFileAtomic(path, backup, mode); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 func readGeminiBackupJSON(homePath, relPath string) []byte {
 	return readProfileBackupFile(homePath, "gemini", relPath, isValidGeminiJSONObject)
+}
+
+func readGeminiBackupTOML(homePath, relPath string) []byte {
+	return readProfileBackupFile(homePath, "gemini", relPath, isValidTOML)
 }
 
 func profileBackupRoots(homePath, profileName string) []string {
@@ -559,6 +700,17 @@ func isValidGeminiJSONObject(data []byte) bool {
 	}
 	var obj map[string]any
 	return json.Unmarshal(data, &obj) == nil
+}
+
+func isValidJSON(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	return json.Valid(data)
+}
+
+func isValidNonEmptyText(data []byte) bool {
+	return len(bytes.TrimSpace(data)) > 0
 }
 
 func isValidTOML(data []byte) bool {
