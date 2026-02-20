@@ -1,0 +1,79 @@
+# CyberRealistic XL v9.0 - CivitAI Download Job
+#
+# Model: CyberRealistic XL v9.0 (SDXL 1.0 checkpoint)
+# Source: https://civitai.com/models/312530/cyberrealistic-xl?modelVersionId=2611295
+# File:   cyberrealisticXL_v90.safetensors (~6.47 GB, fp16 pruned)
+# Format: Single safetensors file (requires from_single_file support in diffusers server)
+#
+# Downloads to a dedicated PVC on cblevins-7900xtx for future use with the
+# diffusers backend once from_single_file loading is added.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberrealistic-xl-cache
+  namespace: flexinfer-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cyberrealistic-xl-download
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: model-download
+        app.kubernetes.io/name: cyberrealistic-xl
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: download
+          image: curlimages/curl:8.11.1
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              DEST="/models/cyberrealisticXL_v90.safetensors"
+              if [ -f "$DEST" ]; then
+                echo "File already exists: $DEST"
+                ls -lh "$DEST"
+                exit 0
+              fi
+              echo "Downloading CyberRealistic XL v9.0 from CivitAI..."
+              curl -L --fail --retry 3 --retry-delay 10 \
+                -o "$DEST.tmp" \
+                "https://civitai.com/api/download/models/2611295?type=Model&format=SafeTensor&size=pruned&fp=fp16"
+              mv "$DEST.tmp" "$DEST"
+              echo "Download complete:"
+              ls -lh "$DEST"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: cyberrealistic-xl-cache
