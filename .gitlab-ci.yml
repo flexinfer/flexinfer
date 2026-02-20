@@ -210,6 +210,21 @@ security:govulncheck:
       - govulncheck-report.txt
     expire_in: 1 week
 
+lint:mcp-godot:
+  image: node:20
+  stage: lint
+  rules:
+    - changes:
+        - tools/mcp-godot/**/*
+    - if: '$RUN_MCP_GODOT_QUALITY == "true"'
+    - when: never
+  before_script: []
+  script:
+    - cd tools/mcp-godot
+    - npm ci
+    - npm run lint
+    - npm run test
+
 # =============================================================================
 # BUILD STAGE
 # Build binaries before tests to enable integration testing
