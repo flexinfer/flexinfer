@@ -55,6 +55,14 @@ const (
 	defaultProxyInitRPCTimeout    = 10 * time.Second
 )
 
+// proxyAutostartCooldown is the minimum interval between daemon autostart
+// attempts. Package-level var so tests can override.
+var proxyAutostartCooldown = 10 * time.Second
+
+// proxyAutostartMaxAttempts caps the total number of autostart attempts
+// to prevent process churn storms when the daemon is permanently unavailable.
+var proxyAutostartMaxAttempts = 5
+
 // proxyTransportError wraps daemon transport send/recv errors so the main loop
 // can deterministically identify and reset broken connections without relying
 // on string-based error classification.
@@ -93,14 +101,24 @@ func runProxy(socketPath string) error {
 	var daemon mcp.Transport
 	var daemonConn net.Conn
 
-	var autostartOnce sync.Once
+	// Bounded autostart: replaces sync.Once so the proxy can re-attempt
+	// daemon startup after crashes, while capping total attempts.
+	autostartAttempts := 0
+	lastAutostartAttempt := time.Time{}
 	autostart := func() {
-		autostartOnce.Do(func() {
-			// Never write to stdout in proxy mode (it would corrupt the MCP stream).
-			if err := startDaemonInBackground(socketPath); err != nil {
-				fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed: %v\n", err)
-			}
-		})
+		if autostartAttempts >= proxyAutostartMaxAttempts {
+			return
+		}
+		if !lastAutostartAttempt.IsZero() && time.Since(lastAutostartAttempt) < proxyAutostartCooldown {
+			return
+		}
+		autostartAttempts++
+		lastAutostartAttempt = time.Now()
+		// Never write to stdout in proxy mode (it would corrupt the MCP stream).
+		if err := startDaemonInBackground(socketPath); err != nil {
+			fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed (attempt %d/%d): %v\n",
+				autostartAttempts, proxyAutostartMaxAttempts, err)
+		}
 	}
 
 	dialWithTimeout := func(timeout time.Duration) (net.Conn, error) {
@@ -197,6 +215,7 @@ func runProxy(socketPath string) error {
 		_ = proxyRPCSend(ctx, transport, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}, "notifications/initialized")
 		daemonConn = conn
 		daemon = transport
+		autostartAttempts = 0 // Reset budget on successful connection.
 
 		return nil
 	}
