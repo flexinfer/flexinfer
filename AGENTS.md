@@ -991,7 +991,8 @@ These variables are automatically injected by the `ROCmEnvVars()` helper in `bac
 - [x] MLC-LLM compilation workflow documented (`build/README-rocm.md`)
 
 ### Open Focus
-- [ ] Multi-tenancy and multi-cluster roadmap execution tracked in `ROADMAP.md` issues `#2-#6`
+- [ ] Dependency refresh and upgrade rollout tracked in [Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
+- [ ] Roadmap tracking reconciliation and next-slice definition tracked in [Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 ---
 

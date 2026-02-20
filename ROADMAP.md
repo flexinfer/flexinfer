@@ -4,7 +4,7 @@
 - [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 
-> Last Updated: 2026-02-19
+> Last Updated: 2026-02-20
 
 ## Current Status
 
@@ -20,10 +20,12 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - Spot-instance resilience with proactive draining (AWS, Azure, GCP, Harvester)
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
-Open roadmap scope is now concentrated on:
-- Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
+Open roadmap scope is currently maintenance-focused:
+- Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
+- Next roadmap slice selection and tracking updates ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
 
-Recently closed roadmap slice:
+Recently closed roadmap slices:
+- Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
 - Quantization pipelines and quality validation gate ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
 
 ### Implemented Features
@@ -147,7 +149,7 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 ## Innovation Roadmap
 
 - ✅ **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O. (shipped: `flexinfer-flash-loader` binary)
-- **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (Partially complete - prefix routing available) ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
+- ✅ **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (shipped with canonical keying, explicit key contract, safety/fallback controls, observability, and E2E validation) ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
 - ✅ **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments. (shipped: `LoRAAdapter` CRD + vLLM integration)
 - ✅ **Spot-Instance Resilience**: Proactive draining on termination notice. (shipped: AWS, Azure, GCP, Harvester detectors)
 
