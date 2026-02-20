@@ -3,40 +3,51 @@
 ## Quick Links
 
 - Workspace snapshot: `00-workspace-snapshot.md`
-- MCP inventory (loom-mode + workflow tooling): `00-mcp-inventory.md`
-- Research brief (core workflow upgrades): `10-research.md`
-- Product spec (universal skills v2): `20-product-spec.md`
-- Implementation plan (propagation + adoption): `30-implementation-plan.md`
+- MCP inventory: `00-mcp-inventory.md`
+- Research (mobile companion): `10-research.md`
+- Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
+- Product spec (mobile companion): `20-product-spec.md`
+- Implementation plan (mobile companion): `30-implementation-plan.md`
+- Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
+- Mobile security draft: `../docs/MOBILE_COMPANION_SECURITY.md`
+- Historical roadmap mapping: `31-gap-to-backlog-map.md`
+- Mobile backlog mapping: `32-mobile-gap-to-backlog-map.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
 ## Current Goal
 
-Standardize repeatable day-to-day engineering loops across Codex/Claude/Kilocode/Gemini so agents:
+Plan and de-risk a companion iPhone/iPad app for loom-core that supports:
+1. real-time monitoring of agents/sessions/health,
+2. safe session control actions,
+3. new session creation from mobile,
+4. both LAN mode and gateway mode depending on deployment/use case.
 
-1. start with context recall + codebase index validation,
-2. execute to ship-ready outcomes by default (hooks/tests/lint, commit/push, CI watch/fix),
-3. leave durable agent-context handoff state.
+## Near-Term Success Criteria
 
-## Success Criteria (Near-Term)
+- Mobile scope is clearly bounded to operator workflows.
+- Backend auth and policy gaps are explicit and prioritized before mutation rollout.
+- API contracts and rollout milestones are documented and testable.
+- Planning artifacts are source-backed and ready for implementation handoff.
 
-- Core skill definitions in `platform/gitops/mcp/context/skills-registry.yaml` encode repeatable loops for:
-  - research
-  - technical writing/planning
-  - delivery/testing
-  - troubleshooting/incidents
-  - cross-agent context coordination
-- Codebase indexing/search is explicit in planning/research/exploration skills.
-- Backlog delivery includes executable local verification + CI retry loop.
-- Skills are regenerated and synced across supported platforms.
+## Risks
 
-## Current Risks
-
-- Policy can drift if registry updates are not followed by `loom generate skills` + `loom sync skills all`.
-- Hook/test parity varies by repo; helper scripts reduce but do not eliminate project-specific setup variance.
-- Some servers remain lazy-start/not-running until first invocation; workflows must tolerate startup latency.
+- HUD API is currently localhost-first and mostly unauthenticated for remote use.
+- SSE/reconnect behavior on mobile networks may require additional resilience work.
+- Mutation scope could expand too quickly without role/policy guardrails.
 
 ## Notes
 
-- This pack was refreshed on 2026-02-19 for "universal workflow + propagation" work.
-- Previous JobSearch roadmap artifacts remain in history/worklog for reference.
+- Context pack refreshed on 2026-02-19.
+- Codebase indexing with embeddings failed (Morph 400); lexical fallback indexing completed successfully (`1717` files, `26930` chunks).
+- This planning slice intentionally focuses on architecture/specs and does not include code implementation yet.
+
+## Sources
+
+- `.loom/00-mcp-inventory.md`
+- `.loom/10-research.md`
+- `.loom/20-product-spec.md`
+- `.loom/30-implementation-plan.md`
+- `internal/hud/app.go:317`
+- `internal/hud/api_agent.go:79`
+- `internal/hud/bridge/agent.go:1443`
