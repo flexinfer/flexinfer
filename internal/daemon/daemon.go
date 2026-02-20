@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	gosync "sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -122,6 +123,9 @@ type Daemon struct {
 	done                chan struct{}
 	stopOnce            gosync.Once
 	stopErr             error
+
+	// activeRPCs tracks in-flight RPC call count for drain-readiness checks.
+	activeRPCs atomic.Int64
 
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
@@ -1190,16 +1194,21 @@ type statusResult struct {
 	ActiveConns int      `json:"activeConns"`
 	IdleConns   int      `json:"idleConns"`
 	Processes   []string `json:"processes"`
+	ActiveRPCs  int64    `json:"activeRPCs"`
+	DrainReady  bool     `json:"drainReady"`
 }
 
 func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	stats := d.pool.Stats()
+	rpcs := d.activeRPCs.Load()
 	result := statusResult{
 		Running:     true,
 		Servers:     len(d.registry.Servers),
 		ActiveConns: stats.ActiveConns,
 		IdleConns:   stats.IdleConns,
 		Processes:   d.procMgr.List(),
+		ActiveRPCs:  rpcs,
+		DrainReady:  rpcs == 0,
 	}
 	return mcp.NewResponse(msg.ID, result)
 }
@@ -1966,6 +1975,9 @@ type callParams struct {
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	d.activeRPCs.Add(1)
+	defer d.activeRPCs.Add(-1)
+
 	pipeline := newCallPipeline(d, ctx, msg)
 
 	if resp := pipeline.parseAndResolve(); resp != nil {

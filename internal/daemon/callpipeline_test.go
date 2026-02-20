@@ -1206,6 +1206,129 @@ func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
 	}
 }
 
+// --- Drain readiness tests (TD-SESSION-05 / DEBT-006) ---
+
+func TestHandleStatus_DrainReady_WhenIdle(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	d.procMgr = process.NewManager(nil, "codex")
+	d.registry = &kitregistry.Registry{}
+	defer func() { _ = d.pool.Close() }()
+	msg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "status-1", Method: "loom/status"}
+
+	resp, err := d.handleStatus(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+
+	var status struct {
+		Running    bool  `json:"running"`
+		ActiveRPCs int64 `json:"activeRPCs"`
+		DrainReady bool  `json:"drainReady"`
+	}
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if !status.DrainReady {
+		t.Fatal("expected drainReady=true when no active RPCs")
+	}
+	if status.ActiveRPCs != 0 {
+		t.Fatalf("activeRPCs = %d, want 0", status.ActiveRPCs)
+	}
+}
+
+func TestHandleStatus_NotDrainReady_DuringCall(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+	d.registry = &kitregistry.Registry{}
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "drain_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Transport blocks on recv until we release it.
+	recvGate := make(chan struct{})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{
+				recvFn: func(ctx context.Context) (*mcp.Message, error) {
+					select {
+					case <-recvGate:
+						return &mcp.Message{
+							JSONRPC: mcp.JSONRPCVersion,
+							ID:      "ok",
+							Result:  json.RawMessage(`{"ok":true}`),
+						}, nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "drain_srv",
+		"tool":   "slow",
+	})
+
+	// Start a call in the background.
+	callDone := make(chan struct{})
+	go func() {
+		defer close(callDone)
+		d.handleCall(context.Background(), msg)
+	}()
+
+	// Wait briefly for the call to be in-flight.
+	time.Sleep(50 * time.Millisecond)
+
+	// Check activeRPCs and drainReady during active call.
+	rpcs := d.activeRPCs.Load()
+	if rpcs != 1 {
+		t.Fatalf("activeRPCs = %d, want 1 during in-flight call", rpcs)
+	}
+
+	statusMsg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "status-2", Method: "loom/status"}
+	resp, err := d.handleStatus(context.Background(), statusMsg)
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+
+	var status struct {
+		ActiveRPCs int64 `json:"activeRPCs"`
+		DrainReady bool  `json:"drainReady"`
+	}
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if status.DrainReady {
+		t.Fatal("expected drainReady=false during in-flight RPC")
+	}
+	if status.ActiveRPCs != 1 {
+		t.Fatalf("activeRPCs = %d, want 1", status.ActiveRPCs)
+	}
+
+	// Release the blocked call.
+	close(recvGate)
+	<-callDone
+
+	// After call completes, should be drain-ready again.
+	rpcs = d.activeRPCs.Load()
+	if rpcs != 0 {
+		t.Fatalf("activeRPCs = %d, want 0 after call completes", rpcs)
+	}
+}
+
 // --- Chaos / resilience tests (TD-SESSION-03 / DEBT-007) ---
 
 // TestCallPipeline_TransportFailureThenRecovery simulates a server crash
