@@ -1,0 +1,46 @@
+# Qwen3-30B-A3B Abliterated (MoE) via llama.cpp on AMD gfx1100
+#
+# Model: huihui-ai/Qwen3-30B-A3B-abliterated
+# GGUF:  mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF (imatrix quant)
+# Arch:  Mixture-of-Experts — 30.5B total params, 3.3B active per token
+# VRAM:  ~18.7GB weights at Q4_K_M + KV cache (tight on 24GB, use q8_0 KV quant)
+# Alt:   Q3_K_M = 14.8GB weights (more context headroom)
+#
+# llama.cpp ROCm backend provides wide quantization support (Q2-Q8, IQ*)
+# and flash attention via rocWMMA on gfx1100.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-30b-a3b-abliterated
+spec:
+  backend: llamacpp
+  source: HF://mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF
+  nodeSelector:
+    gpu.amd.com/gpu-architecture: gfx1100
+  gpu:
+    vendor: amd
+    shared: amd-gpu-pool
+    priority: 120
+    vramEstimateMB: 20000
+  config:
+    ggufFile: Qwen3-30B-A3B-abliterated.i1-Q4_K_M.gguf
+    contextSize: 16384
+    flashAttention: true
+    parallel: 2
+    batchSize: 2048
+    cacheTypeK: q8_0
+    cacheTypeV: q8_0
+  resources:
+    requests:
+      memory: 16Gi
+    limits:
+      memory: 32Gi
+  serverless:
+    enabled: true
+    idleTimeout: 10m
+    coldStartTimeout: 120s
+  litellm:
+    servedModelName: qwen3-30b-abliterated
+    aliases:
+      - qwen3-30b
+      - qwen3-moe
