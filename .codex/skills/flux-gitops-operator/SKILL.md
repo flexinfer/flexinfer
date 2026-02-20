@@ -16,6 +16,15 @@ Standardize safe GitOps operations in `platform/gitops` (Flux-managed clusters),
 3. Run status / troubleshoot:
    - `make status` / `make troubleshoot`
 
+## Specialized Workflows
+
+- Longhorn storage lifecycle and recovery-by-GitOps:
+  - `longhorn-gitops-ops`
+- Monitoring stack (Prometheus/Grafana/Alertmanager/Loki) operations:
+  - `monitoring-gitops-ops`
+- Routine k3s/Harvester maintenance operations:
+  - `k3s-harvester-maintenance`
+
 ## Guardrails (Non-Negotiable)
 
 - Prefer Git changes + Flux reconciliation; avoid hot-editing live objects (`kubectl edit`, `kubectl set env`) unless handling an incident.
