@@ -108,6 +108,17 @@ func TestDesiredReplicasServerless(t *testing.T) {
 	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
 		t.Errorf("desiredReplicas() = %d, want 1 (serverless disabled)", got)
 	}
+
+	// Loading phase: old activity should NOT cause scale-down while loading.
+	// This prevents the controller from killing a model mid-load when loading
+	// takes longer than idleTimeout (e.g. 18GB GGUF via Longhorn mmap).
+	model.Spec.Serverless.Enabled = &enabled
+	model.Spec.Serverless.MinReplicas = nil
+	model.Status.LastActiveTime = &oldTime
+	model.Status.Phase = aiv1alpha2.ModelPhaseLoading
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (loading phase protects against idle scale-down)", got)
+	}
 }
 
 func TestChooseSharedGroupLeader(t *testing.T) {
