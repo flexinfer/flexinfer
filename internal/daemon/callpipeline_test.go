@@ -1205,3 +1205,258 @@ func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
 		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
 	}
 }
+
+// --- Chaos / resilience tests (TD-SESSION-03 / DEBT-007) ---
+
+// TestCallPipeline_TransportFailureThenRecovery simulates a server crash
+// mid-session: call 1 succeeds, call 2 fails (same connection breaks),
+// call 3 succeeds with a fresh connection (simulating server restart).
+func TestCallPipeline_TransportFailureThenRecovery(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	// Use a high failure threshold so the circuit breaker doesn't trip.
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "chaos_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Track send count so the same transport can fail on its 2nd send
+	// (simulating a connection that was healthy then breaks mid-session).
+	sendCount := 0
+
+	dialCount := 0
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			dialCount++
+			if dialCount == 1 {
+				// First dial: transport succeeds on first send, then breaks.
+				return &fakeTransport{
+					sendFn: func(_ context.Context, _ *mcp.Message) error {
+						sendCount++
+						if sendCount >= 2 {
+							return errors.New("broken pipe")
+						}
+						return nil
+					},
+					recvMsg: &mcp.Message{
+						JSONRPC: mcp.JSONRPCVersion,
+						ID:      "ok",
+						Result:  json.RawMessage(`{"ok":true}`),
+					},
+				}, nil
+			}
+			// Subsequent dials: fully healthy (simulating server restart).
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "recovered",
+					Result:  json.RawMessage(`{"recovered":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "chaos_srv",
+		"tool":   "noop",
+	})
+
+	// Call 1: should succeed (sendCount goes from 0→1).
+	resp1, err1 := d.handleCall(context.Background(), msg)
+	if err1 != nil {
+		t.Fatalf("call 1: unexpected error: %v", err1)
+	}
+	if resp1.Error != nil {
+		t.Fatalf("call 1: unexpected error response: %+v", resp1.Error)
+	}
+
+	// Call 2: same connection reused from pool, send fails (sendCount=2).
+	resp2, err2 := d.handleCall(context.Background(), msg)
+	if err2 != nil {
+		t.Fatalf("call 2: unexpected error: %v", err2)
+	}
+	if resp2.Error == nil {
+		t.Fatal("call 2: expected transport failure error response")
+	}
+	if !strings.Contains(resp2.Error.Message, "broken pipe") {
+		t.Fatalf("call 2: expected broken pipe in error, got %q", resp2.Error.Message)
+	}
+
+	// Pool should be cleared after transport failure.
+	stats := d.pool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("pool idle conns = %d, want 0 after transport failure", stats.IdleConns)
+	}
+
+	// Call 3: recovery with fresh connection from new dial.
+	resp3, err3 := d.handleCall(context.Background(), msg)
+	if err3 != nil {
+		t.Fatalf("call 3: unexpected error: %v", err3)
+	}
+	if resp3.Error != nil {
+		t.Fatalf("call 3: expected recovery success, got error: %+v", resp3.Error)
+	}
+	if string(resp3.Result) != `{"recovered":true}` {
+		t.Fatalf("call 3: result = %s, want recovery response", string(resp3.Result))
+	}
+}
+
+// TestCallPipeline_ConsecutiveTimeoutsThenRecovery verifies that multiple
+// consecutive timeout failures don't permanently wedge the call pipeline,
+// and recovery succeeds once the transport is healthy again.
+func TestCallPipeline_ConsecutiveTimeoutsThenRecovery(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "1s")
+
+	dialCount := 0
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	// Set a high failure threshold so the circuit breaker allows recovery
+	// without waiting for the 30s recovery window.
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "timeout_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			dialCount++
+			if dialCount <= 3 {
+				return &fakeTransport{
+					recvFn: func(ctx context.Context) (*mcp.Message, error) {
+						<-ctx.Done()
+						return nil, ctx.Err()
+					},
+				}, nil
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "ok",
+					Result:  json.RawMessage(`{"finally":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "timeout_srv",
+		"tool":   "slow_op",
+	})
+
+	// 3 consecutive timeouts - each clears the pool and dials a new transport.
+	for i := 1; i <= 3; i++ {
+		resp, err := d.handleCall(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("timeout call %d: unexpected error: %v", i, err)
+		}
+		if resp.Error == nil {
+			t.Fatalf("timeout call %d: expected timeout error response", i)
+		}
+		if !strings.Contains(resp.Error.Message, "timeout") {
+			t.Fatalf("timeout call %d: expected timeout in error, got %q", i, resp.Error.Message)
+		}
+	}
+
+	// Recovery call should succeed with 4th dial returning healthy transport.
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("recovery call: unexpected error: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("recovery call: expected success, got error: %+v", resp.Error)
+	}
+	if string(resp.Result) != `{"finally":true}` {
+		t.Fatalf("recovery call: result = %s, want recovery response", string(resp.Result))
+	}
+}
+
+// TestCallPipeline_RecvEOFTriggersServerRestart verifies that an EOF during
+// recv (server process crashed) clears the pool and triggers server stop,
+// allowing the next call to re-dial a fresh server process.
+func TestCallPipeline_RecvEOFTriggersServerRestart(t *testing.T) {
+	callNum := 0
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "eof_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			callNum++
+			if callNum == 1 {
+				return &fakeTransport{recvErr: io.EOF}, nil
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "ok",
+					Result:  json.RawMessage(`{"restarted":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "eof_srv",
+		"tool":   "check",
+	})
+
+	// Call 1: EOF (simulating server process crash).
+	resp1, err1 := d.handleCall(context.Background(), msg)
+	if err1 != nil {
+		t.Fatalf("eof call: unexpected error: %v", err1)
+	}
+	if resp1.Error == nil {
+		t.Fatal("eof call: expected error response")
+	}
+
+	// Pool should be cleared.
+	stats := d.pool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("pool idle = %d, want 0 after EOF", stats.IdleConns)
+	}
+
+	// Call 2: recovery after server restart.
+	resp2, err2 := d.handleCall(context.Background(), msg)
+	if err2 != nil {
+		t.Fatalf("recovery call: unexpected error: %v", err2)
+	}
+	if resp2.Error != nil {
+		t.Fatalf("recovery call: expected success, got error: %+v", resp2.Error)
+	}
+	if string(resp2.Result) != `{"restarted":true}` {
+		t.Fatalf("recovery call: result = %s, want restarted response", string(resp2.Result))
+	}
+}
