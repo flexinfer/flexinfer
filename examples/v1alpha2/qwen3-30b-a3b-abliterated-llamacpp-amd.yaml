@@ -21,7 +21,9 @@ spec:
     kubernetes.io/hostname: cblevins-5930k
   cache:
     strategy: SharedPVC
-    storageClass: nvme-cache-1r
+    # local-path bypasses Longhorn overhead for mmap. The 18.7GB GGUF loads
+    # in ~3min from local NVMe vs 15-20min through Longhorn's block layer.
+    storageClass: local-path
     size: 25Gi
   gpu:
     vendor: amd

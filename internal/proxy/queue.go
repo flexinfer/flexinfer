@@ -301,20 +301,25 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 		}
 
 		// v1alpha2: update LastActiveTime to trigger controller scale-up.
-		m, err := p.getModel(ctx, modelName)
-		if err != nil {
-			return err
-		}
-
-		now := metav1.Now()
-		m.Status.LastActiveTime = &now
-		if err := p.client.Status().Update(ctx, m); err != nil {
-			if errors.IsConflict(err) {
-				return nil
+		// Retry on conflict since the controller may also be updating status.
+		for i := 0; i < 3; i++ {
+			m, err := p.getModel(ctx, modelName)
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
+
+			now := metav1.Now()
+			m.Status.LastActiveTime = &now
+			if err := p.client.Status().Update(ctx, m); err != nil {
+				if errors.IsConflict(err) {
+					slog.Debug("conflict updating lastActiveTime, retrying", "model", modelName, "attempt", i+1)
+					continue
+				}
+				return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
+			}
+			return nil
 		}
-		return nil
+		return fmt.Errorf("failed to update Model lastActiveTime after 3 retries (conflict)")
 	}
 
 	// Already scaled up?
