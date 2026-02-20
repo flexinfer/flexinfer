@@ -3,7 +3,10 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strings"
 	gosync "sync"
 	"time"
@@ -12,6 +15,12 @@ import (
 
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/router"
+	"github.com/crb2nu/loom/pkg/env"
+)
+
+const (
+	defaultDaemonControlRPCTimeout = 30 * time.Second
+	defaultDaemonToolRPCTimeout    = 60 * time.Second
 )
 
 // callPipeline executes the daemon tool-call flow in ordered stages.
@@ -259,17 +268,23 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 
 func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	start := time.Now()
+	callTimeout := daemonRPCTimeoutForMethod(p.method)
 
 	p.daemon.metrics.RecordRequestStart(p.serverName)
 	defer p.daemon.metrics.RecordRequestEnd(p.serverName)
 
-	if err := p.conn.Transport.Send(p.ctx, req); err != nil {
-		return p.transportFailure("send", err, start)
+	sendCtx, sendCancel := context.WithTimeout(p.ctx, callTimeout)
+	sendErr := p.conn.Transport.Send(sendCtx, req)
+	sendCancel()
+	if sendErr != nil {
+		return p.transportFailure("send", daemonRPCPhaseError(p.method, "send", callTimeout, sendErr), start)
 	}
 
-	resp, err := p.conn.Transport.Recv(p.ctx)
-	if err != nil {
-		return p.transportFailure("recv", err, start)
+	recvCtx, recvCancel := context.WithTimeout(p.ctx, callTimeout)
+	resp, recvErr := p.conn.Transport.Recv(recvCtx)
+	recvCancel()
+	if recvErr != nil {
+		return p.transportFailure("recv", daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr), start)
 	}
 
 	duration := time.Since(start)
@@ -367,4 +382,43 @@ func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
 
 func (p *callPipeline) emitErrorAudit(target, errMsg string) {
 	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil)
+}
+
+func daemonRPCTimeoutForMethod(method string) time.Duration {
+	if strings.TrimSpace(method) == "tools/call" {
+		return normalizePositiveDuration(env.Duration("LOOM_DAEMON_TOOL_TIMEOUT", defaultDaemonToolRPCTimeout), defaultDaemonToolRPCTimeout)
+	}
+	return normalizePositiveDuration(env.Duration("LOOM_DAEMON_CONTROL_TIMEOUT", defaultDaemonControlRPCTimeout), defaultDaemonControlRPCTimeout)
+}
+
+func normalizePositiveDuration(value, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func daemonRPCPhaseError(operation, phase string, timeout time.Duration, err error) error {
+	op := strings.TrimSpace(operation)
+	if op == "" {
+		op = "daemon call"
+	}
+	if isRPCTimeout(err) {
+		return fmt.Errorf("%s timeout during %s after %s (recoverable: daemon will reconnect upstream transport and retry on the next request): %w", op, phase, timeout, err)
+	}
+	return fmt.Errorf("%s failed during %s: %w", op, phase, err)
+}
+
+func isRPCTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "i/o timeout")
 }

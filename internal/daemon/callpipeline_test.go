@@ -26,9 +26,14 @@ type fakeTransport struct {
 	recvErr error
 	recvMsg *mcp.Message
 	sent    []*mcp.Message
+	sendFn  func(context.Context, *mcp.Message) error
+	recvFn  func(context.Context) (*mcp.Message, error)
 }
 
-func (f *fakeTransport) Send(_ context.Context, msg *mcp.Message) error {
+func (f *fakeTransport) Send(ctx context.Context, msg *mcp.Message) error {
+	if f.sendFn != nil {
+		return f.sendFn(ctx, msg)
+	}
 	if f.sendErr != nil {
 		return f.sendErr
 	}
@@ -36,7 +41,10 @@ func (f *fakeTransport) Send(_ context.Context, msg *mcp.Message) error {
 	return nil
 }
 
-func (f *fakeTransport) Recv(_ context.Context) (*mcp.Message, error) {
+func (f *fakeTransport) Recv(ctx context.Context) (*mcp.Message, error) {
+	if f.recvFn != nil {
+		return f.recvFn(ctx)
+	}
 	if f.recvErr != nil {
 		return nil, f.recvErr
 	}
@@ -125,6 +133,39 @@ func readAuditEntries(t *testing.T, path string) []AuditEntry {
 		t.Fatalf("scan audit log: %v", err)
 	}
 	return entries
+}
+
+func TestDaemonRPCTimeoutForMethod_Defaults(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
+
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != defaultDaemonControlRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want %v", got, defaultDaemonControlRPCTimeout)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want %v", got, defaultDaemonToolRPCTimeout)
+	}
+}
+
+func TestDaemonRPCTimeoutForMethod_EnvOverrideAndFallback(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "45s")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "75s")
+
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != 45*time.Second {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want 45s", got)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != 75*time.Second {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want 75s", got)
+	}
+
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "0s")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "-1s")
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != defaultDaemonControlRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want %v", got, defaultDaemonControlRPCTimeout)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want %v", got, defaultDaemonToolRPCTimeout)
+	}
 }
 
 func TestCallPipelineParseAndResolve_InvalidParams(t *testing.T) {
@@ -709,6 +750,82 @@ func TestCallPipelineExecute_RecvFailure(t *testing.T) {
 	}
 	if resp.Error.Code != mcp.InternalError {
 		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection to be marked unhealthy")
+	}
+}
+
+func TestCallPipelineExecute_SendTimeoutWrapped(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "7s")
+
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{sendErr: context.DeadlineExceeded}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "send-timeout"},
+		serverName: "prometheus",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "prometheus",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "send-timeout", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected timeout error response")
+	}
+	if !strings.Contains(resp.Error.Message, "tools/call timeout during send after 7s") {
+		t.Fatalf("timeout details missing from %q", resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "recoverable: daemon will reconnect upstream transport and retry on the next request") {
+		t.Fatalf("recoverability hint missing from %q", resp.Error.Message)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection to be marked unhealthy")
+	}
+}
+
+func TestCallPipelineExecute_RecvTimeoutWrapped(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "9s")
+
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{recvErr: context.DeadlineExceeded}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "recv-timeout"},
+		serverName: "prometheus",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "prometheus",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "recv-timeout", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected timeout error response")
+	}
+	if !strings.Contains(resp.Error.Message, "tools/call timeout during recv after 9s") {
+		t.Fatalf("timeout details missing from %q", resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "recoverable: daemon will reconnect upstream transport and retry on the next request") {
+		t.Fatalf("recoverability hint missing from %q", resp.Error.Message)
 	}
 	if p.conn.Healthy {
 		t.Fatal("expected connection to be marked unhealthy")
