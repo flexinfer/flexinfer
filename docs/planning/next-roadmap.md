@@ -86,7 +86,7 @@ Execution plan: `docs/planning/context-aware-router-execution.md`
 - [x] Safety/fallback controls implemented (key normalization, max length, malformed-key fallback)
 - [~] Canonical prefix keying expanded (normalized multi-system + optional document context; E2E still pending)
 - [~] Observability signals expanded (proxy logs include key source; metrics still pending)
-- [~] E2E Chat-with-Doc validation (runbook guidance shipped in `docs/user/routing.md`; E2E coverage pending)
+- [x] E2E Chat-with-Doc validation and runbook guidance (`e2e/routing_test.go`, `docs/user/routing.md`)
 
 ## Quantization: Quality Validation Gate ✅ COMPLETE
 

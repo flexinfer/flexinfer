@@ -2,6 +2,7 @@ package backend
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,10 +35,22 @@ func (b *OllamaBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			return img
 		}
 		return "ollama/ollama:latest"
-	default:
+	case GPUVendorNVIDIA:
+		// Check for Maxwell architecture (sm_52) — pre-built ollama CUDA 12.x
+		// binaries do not include sm_52 support.
+		if strings.HasPrefix(gpuArch, "sm_5") {
+			if img := os.Getenv("DEFAULT_BACKEND_IMAGE_MAXWELL"); img != "" {
+				return img
+			}
+		}
 		if img := os.Getenv("DEFAULT_BACKEND_IMAGE_NVIDIA"); img != "" {
 			return img
 		}
+		if img := os.Getenv("DEFAULT_BACKEND_IMAGE"); img != "" {
+			return img
+		}
+		return "ollama/ollama:latest"
+	default:
 		if img := os.Getenv("DEFAULT_BACKEND_IMAGE"); img != "" {
 			return img
 		}

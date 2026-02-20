@@ -68,8 +68,8 @@ Acceptance:
 - Benchmark report shows route stability and latency deltas.
 
 ### CAR-5: E2E Validation
-- [ ] Add E2E tests for context-aware routing behavior under multi-replica models.
-- [ ] Validate fallback behavior on endpoint churn and pod restart.
+- [x] Add E2E tests for context-aware routing behavior under multi-replica models (`e2e/routing_test.go::TestRoutingPrefixCanonicalDeterminism`).
+- [x] Validate fallback behavior on endpoint churn and pod restart (`e2e/routing_test.go::TestRoutingFallbackDuringPodRestart`).
 - [x] Capture runbook troubleshooting guidance (`docs/user/routing.md#troubleshooting-runbook-prefix-routing`).
 
 Acceptance:

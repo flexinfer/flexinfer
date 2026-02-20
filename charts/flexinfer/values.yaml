@@ -139,6 +139,13 @@ backend:
     repository: ollama/ollama
     tag: "latest"
 
+# Ollama backend configuration (used when spec.backend=ollama)
+ollama:
+  # Maxwell-specific image for older NVIDIA GPUs (compute 5.x)
+  # Pre-built ollama CUDA 12.x binaries do not include sm_52 support.
+  # Build from source with CUDA 11.8 and CUDA_ARCHITECTURES="50;52".
+  maxwellImage: ""
+
 # MLC-LLM backend configuration (used when spec.backend=mlc-llm)
 # Set these to your custom values or leave empty to use defaults
 mlcllm:

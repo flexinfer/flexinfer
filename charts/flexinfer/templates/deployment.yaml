@@ -157,6 +157,12 @@ spec:
             - name: DEFAULT_VLLM_ARGS
               value: {{ .Values.vllm.defaults.args | quote }}
             {{- end }}
+            {{- if .Values.ollama }}
+            {{- if .Values.ollama.maxwellImage }}
+            - name: DEFAULT_BACKEND_IMAGE_MAXWELL
+              value: {{ .Values.ollama.maxwellImage | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.llamacpp.cudaImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE
               value: {{ .Values.llamacpp.cudaImage | quote }}

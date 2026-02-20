@@ -1,0 +1,67 @@
+# Ollama built from source with CUDA 11.8 for Maxwell GPUs (sm_50, sm_52).
+#
+# Pre-built ollama binaries (CUDA 12.x) do not include compute capability 5.x.
+# This Dockerfile builds ollama from source against CUDA 11.8 — the last toolkit
+# version that ships full sm_52 support — so the GTX 980 Ti (and similar Maxwell
+# cards) can accelerate inference.
+#
+# Build:
+#   docker build -f build/Dockerfile.ollama-cuda-maxwell -t registry.harbor.lan/flexinfer/ollama:cuda-maxwell .
+#
+# Usage:
+#   Set ollama.maxwellImage in Helm values (maps to DEFAULT_BACKEND_IMAGE_MAXWELL).
+#   The controller selects this image automatically when the target node has
+#   flexinfer.ai/gpu.arch=sm_52.
+#
+# Target GPUs: GTX 750 Ti, GTX 9xx series, Quadro M-series, Tesla M-series
+# VRAM: 2-12 GB (typically 6 GB for GTX 980 Ti)
+# Limitations: No flash attention (requires CC >= 7.0)
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: build ──────────────────────────────────────────────────
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
+
+ARG OLLAMA_VERSION=v0.6.2
+ARG CUDA_ARCHITECTURES="50;52"
+ARG GO_VERSION=1.23.6
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake make gcc g++ curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /build
+RUN git clone --depth 1 --branch "${OLLAMA_VERSION}" https://github.com/ollama/ollama.git .
+
+# Build with Maxwell CUDA architectures
+ENV CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"
+ENV CGO_ENABLED=1
+ENV CMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"
+
+RUN go generate ./...
+RUN go build -trimpath -o /build/ollama .
+
+# ── Stage 2: runtime ───────────────────────────────────────────────
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/ollama /usr/local/bin/ollama
+
+# Ollama stores downloaded models here
+ENV OLLAMA_MODELS=/root/.ollama/models
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+EXPOSE 11434
+
+ENTRYPOINT ["/usr/local/bin/ollama"]
+CMD ["serve"]
