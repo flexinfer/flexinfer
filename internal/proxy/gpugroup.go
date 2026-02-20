@@ -103,8 +103,14 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
 
-	// Wait for request to be processed with timeout
-	queueCtx, cancel := context.WithTimeout(ctx, p.queueTimeout)
+	// Wait for request to be processed with timeout.
+	// Use the larger of the global queue timeout and the per-model cold start timeout
+	// so large models (e.g. 18GB GGUF) have enough time to load from storage.
+	timeout := p.queueTimeout
+	if coldStartTimeout := p.getColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {
+		timeout = coldStartTimeout
+	}
+	queueCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	select {
@@ -119,7 +125,7 @@ func (p *Proxy) handleGPUGroupColdStart(ctx context.Context, w http.ResponseWrit
 		// Timeout waiting in queue
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
 		if qr.responded.CompareAndSwap(false, true) {
-			validation.WriteGPUGroupTimeout(w, p.queueTimeout.String())
+			validation.WriteGPUGroupTimeout(w, timeout.String())
 		}
 		return fmt.Errorf("queue timeout for GPUGroup model %s", modelName)
 	}
