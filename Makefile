@@ -191,6 +191,7 @@ $(ENVTEST): $(LOCALBIN)
 HARBOR_REGISTRY ?= registry.harbor.lan
 MLC_ROCM64_IMAGE ?= $(HARBOR_REGISTRY)/library/mlc-llm:rocm64-src
 MLC_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/mlc-llm:cuda-maxwell-v7
+OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 
 # Docker context for GPU builds (requires remote builder with GPU access)
 DOCKER_CONTEXT_GPU ?= 7900xtx
@@ -210,6 +211,14 @@ build-mlc-maxwell: ## Build MLC-LLM Maxwell image on GPU node (sm_52, ~2 hours)
 .PHONY: push-mlc-maxwell
 push-mlc-maxwell: ## Push MLC-LLM Maxwell image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_MAXWELL_IMAGE)
+
+.PHONY: build-ollama-maxwell
+build-ollama-maxwell: ## Build Ollama Maxwell image (CUDA 11.8, sm_52)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.ollama-cuda-maxwell -t $(OLLAMA_MAXWELL_IMAGE) .
+
+.PHONY: push-ollama-maxwell
+push-ollama-maxwell: ## Push Ollama Maxwell image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(OLLAMA_MAXWELL_IMAGE)
 
 .PHONY: verify-images
 verify-images: ## Verify all backend images exist in Harbor registry
