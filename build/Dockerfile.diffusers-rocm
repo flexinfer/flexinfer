@@ -99,7 +99,13 @@ from PIL import Image
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from diffusers import AutoPipelineForText2Image, DiffusionPipeline, AutoencoderKL
+from diffusers import (
+    AutoPipelineForText2Image,
+    DiffusionPipeline,
+    AutoencoderKL,
+    StableDiffusionXLPipeline,
+    StableDiffusionPipeline,
+)
 
 # Global pipeline cache
 pipeline = None
@@ -208,6 +214,100 @@ class ImageGenerationResponse(BaseModel):
     created: int
     data: List[ImageData]
 
+def _detect_model_format(model_path: str) -> tuple:
+    """Detect whether the model path is diffusers format or a single checkpoint file.
+
+    Returns:
+        (format, path) where format is "diffusers", "single_file", or "unknown"
+        and path is the resolved path to use for loading.
+    """
+    if not os.path.isdir(model_path):
+        # Not a directory - check if it's a direct file path
+        if os.path.isfile(model_path) and model_path.endswith(".safetensors"):
+            return "single_file", model_path
+        return "unknown", model_path
+
+    # Check for diffusers format marker
+    if os.path.isfile(os.path.join(model_path, "model_index.json")):
+        return "diffusers", model_path
+
+    # Look for safetensors files (single-file checkpoint from CivitAI etc.)
+    safetensors_files = [
+        f for f in os.listdir(model_path)
+        if f.endswith(".safetensors") and not f.startswith(".")
+    ]
+    if len(safetensors_files) == 1:
+        return "single_file", os.path.join(model_path, safetensors_files[0])
+    if len(safetensors_files) > 1:
+        # Multiple safetensors but no model_index.json - pick the largest
+        # (the main checkpoint, not a VAE or text encoder)
+        largest = max(
+            safetensors_files,
+            key=lambda f: os.path.getsize(os.path.join(model_path, f)),
+        )
+        print(f"Multiple safetensors found, using largest: {largest}")
+        return "single_file", os.path.join(model_path, largest)
+
+    # Check subdirectories (prefetch may nest inside a named subdirectory)
+    for entry in os.listdir(model_path):
+        subdir = os.path.join(model_path, entry)
+        if os.path.isdir(subdir):
+            if os.path.isfile(os.path.join(subdir, "model_index.json")):
+                return "diffusers", subdir
+            sub_safetensors = [
+                f for f in os.listdir(subdir) if f.endswith(".safetensors")
+            ]
+            if len(sub_safetensors) >= 1:
+                largest = max(
+                    sub_safetensors,
+                    key=lambda f: os.path.getsize(os.path.join(subdir, f)),
+                )
+                return "single_file", os.path.join(subdir, largest)
+
+    return "unknown", model_path
+
+
+def _load_single_file(checkpoint_path: str, dtype, vae=None):
+    """Load a pipeline from a single safetensors checkpoint (CivitAI format).
+
+    Tries SDXL first (most CivitAI checkpoints are SDXL), then falls back to SD 1.5.
+    """
+    file_size_gb = os.path.getsize(checkpoint_path) / (1024 ** 3)
+    print(f"Loading single-file checkpoint: {os.path.basename(checkpoint_path)} ({file_size_gb:.1f} GB)")
+    sys.stdout.flush()
+
+    sf_kwargs = {"torch_dtype": dtype, "use_safetensors": True}
+    if vae is not None:
+        sf_kwargs["vae"] = vae
+
+    # SDXL checkpoints are typically 6-7GB (fp16 pruned). SD 1.5 is ~2-4GB.
+    # Try SDXL first if file > 4GB, otherwise try SD 1.5 first.
+    if file_size_gb > 4.0:
+        order = [
+            ("SDXL", StableDiffusionXLPipeline),
+            ("SD 1.5", StableDiffusionPipeline),
+        ]
+    else:
+        order = [
+            ("SD 1.5", StableDiffusionPipeline),
+            ("SDXL", StableDiffusionXLPipeline),
+        ]
+
+    last_err = None
+    for label, pipeline_cls in order:
+        try:
+            print(f"  Trying {label} pipeline ({pipeline_cls.__name__})...")
+            sys.stdout.flush()
+            pipe = pipeline_cls.from_single_file(checkpoint_path, **sf_kwargs)
+            print(f"  Loaded as {label} pipeline")
+            return pipe
+        except Exception as e:
+            print(f"  {label} failed: {e}")
+            last_err = e
+
+    raise RuntimeError(f"Could not load checkpoint as SDXL or SD 1.5: {last_err}")
+
+
 def load_pipeline(model_id: str):
     """Load or reload the diffusion pipeline."""
     global pipeline, current_model
@@ -260,38 +360,42 @@ def load_pipeline(model_id: str):
     print(f"GPU available: {torch.cuda.is_available()}")
     sys.stdout.flush()
 
-    # Try AutoPipeline first, fall back to DiffusionPipeline
-    # Pipelines load to CPU by default - do NOT use device_map (not supported)
-    # Use local_files_only=True to prevent network requests when loading local models
-    pipeline_kwargs = {
-        "torch_dtype": dtype,
-        "use_safetensors": True,
-        "local_files_only": True,
-        # Disable safety checker to save memory
-        "safety_checker": None,
-    }
-    # Only pass the VAE override when we actually loaded one. Passing vae=None
-    # explicitly can disable VAE loading for some pipelines (SDXL requires it).
-    if vae is not None:
-        pipeline_kwargs["vae"] = vae
+    # Detect model format: diffusers (multi-folder) or single-file (CivitAI)
+    model_format, resolved_path = _detect_model_format(resolved_model_id)
+    print(f"Detected model format: {model_format}")
+    sys.stdout.flush()
 
-    try:
-        print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
+    if model_format == "single_file":
+        # Single safetensors checkpoint (CivitAI, etc.)
+        pipeline = _load_single_file(resolved_path, dtype, vae=vae)
+    else:
+        # Standard diffusers format (from_pretrained)
+        pipeline_kwargs = {
+            "torch_dtype": dtype,
+            "use_safetensors": True,
+            "local_files_only": True,
+            "safety_checker": None,
+        }
         if vae is not None:
-            print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
-        sys.stdout.flush()
-        pipeline = AutoPipelineForText2Image.from_pretrained(
-            resolved_model_id,
-            requires_safety_checker=False,
-            **pipeline_kwargs,
-        )
-    except Exception as e:
-        print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
-        sys.stdout.flush()
-        pipeline = DiffusionPipeline.from_pretrained(
-            resolved_model_id,
-            **pipeline_kwargs,
-        )
+            pipeline_kwargs["vae"] = vae
+
+        try:
+            print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
+            if vae is not None:
+                print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
+            sys.stdout.flush()
+            pipeline = AutoPipelineForText2Image.from_pretrained(
+                resolved_path,
+                requires_safety_checker=False,
+                **pipeline_kwargs,
+            )
+        except Exception as e:
+            print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
+            sys.stdout.flush()
+            pipeline = DiffusionPipeline.from_pretrained(
+                resolved_path,
+                **pipeline_kwargs,
+            )
 
     print("Pipeline loaded to CPU, preparing GPU transfer...")
     sys.stdout.flush()
