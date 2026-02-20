@@ -72,17 +72,6 @@ func runProxy(socketPath string) error {
 
 	var daemon mcp.Transport
 	var daemonConn net.Conn
-	cleanupDaemon := func() {
-		if daemonConn != nil {
-			_ = daemonConn.Close()
-			daemonConn = nil
-		}
-		if daemon != nil {
-			_ = daemon.Close()
-			daemon = nil
-		}
-	}
-	defer cleanupDaemon()
 
 	var autostartOnce sync.Once
 	autostart := func() {
@@ -187,68 +176,14 @@ func runProxy(socketPath string) error {
 		return nil
 	}
 
-	type recvResult struct {
-		msg *mcp.Message
-		err error
-	}
-	recvCh := make(chan recvResult, 1)
-	go func() {
-		for {
-			msg, err := stdio.Recv(ctx)
-			recvCh <- recvResult{msg: msg, err: err}
-			if err != nil {
-				close(recvCh)
-				return
-			}
-		}
-	}()
-
-	idleTimeout := proxyIdleExitTimeout()
-	var idleTimer *time.Timer
-	if idleTimeout > 0 {
-		idleTimer = time.NewTimer(idleTimeout)
-		defer idleTimer.Stop()
-	}
-	resetIdleTimer := func() {
-		if idleTimer == nil {
-			return
-		}
-		if !idleTimer.Stop() {
-			select {
-			case <-idleTimer.C:
-			default:
-			}
-		}
-		idleTimer.Reset(idleTimeout)
-	}
-
 	// Main message loop
 	for {
-		var msg *mcp.Message
-		if idleTimer == nil {
-			recv, ok := <-recvCh
-			if !ok || recv.err != nil {
-				return nil // Client disconnected
-			}
-			msg = recv.msg
-		} else {
-			select {
-			case <-idleTimer.C:
-				fmt.Fprintf(os.Stderr, "loom proxy: idle timeout reached (%s), exiting\n", idleTimeout)
-				return nil
-			case recv, ok := <-recvCh:
-				if !ok || recv.err != nil {
-					return nil // Client disconnected
-				}
-				msg = recv.msg
-				resetIdleTimer()
-			}
+		msg, err := stdio.Recv(ctx)
+		if err != nil {
+			return nil // Client disconnected
 		}
 
-		var (
-			resp *mcp.Message
-			err  error
-		)
+		var resp *mcp.Message
 
 		switch msg.Method {
 		case "initialize":
@@ -306,7 +241,14 @@ func runProxy(socketPath string) error {
 		if err != nil {
 			// If it was a connection error, clear daemon so we reconnect next time
 			if strings.Contains(err.Error(), "broken pipe") || strings.Contains(err.Error(), "EOF") {
-				cleanupDaemon()
+				if daemonConn != nil {
+					daemonConn.Close()
+					daemonConn = nil
+				}
+				if daemon != nil {
+					daemon.Close()
+				}
+				daemon = nil
 			}
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
 		}
@@ -457,26 +399,45 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 }
 
 func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
-	// Similar to tools/list - aggregate resources from all servers
-	serversReq, _ := mcp.NewRequest(1, "loom/servers", nil)
-	if err := daemon.Send(ctx, serversReq); err != nil {
+	// Preferred fast path: daemon-native cached resources endpoint.
+	resourcesReq, _ := mcp.NewRequest(1, "loom/resources", nil)
+	if err := daemon.Send(ctx, resourcesReq); err != nil {
 		return nil, err
 	}
-	serversResp, err := daemon.Recv(ctx)
+	resourcesResp, err := daemon.Recv(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	var serversResult struct {
-		Servers []struct {
-			Name string `json:"name"`
-		} `json:"servers"`
+	if resourcesResp.Error == nil {
+		var cachedResult struct {
+			Resources []mcp.Resource `json:"resources"`
+		}
+		if err := json.Unmarshal(resourcesResp.Result, &cachedResult); err == nil {
+			merged := make([]mcp.Resource, 0, len(proxyBuiltinResources())+len(cachedResult.Resources))
+			seen := make(map[string]struct{}, len(proxyBuiltinResources())+len(cachedResult.Resources))
+			for _, r := range proxyBuiltinResources() {
+				merged = append(merged, r)
+				seen[r.URI] = struct{}{}
+			}
+			for _, r := range cachedResult.Resources {
+				if _, ok := seen[r.URI]; ok {
+					continue
+				}
+				merged = append(merged, r)
+				seen[r.URI] = struct{}{}
+			}
+			return mcp.NewResponse(msg.ID, struct {
+				Resources []mcp.Resource `json:"resources"`
+			}{Resources: merged})
+		}
 	}
-	if err := json.Unmarshal(serversResp.Result, &serversResult); err != nil {
-		return nil, err
-	}
 
-	allResources := []mcp.Resource{
+	// Backward-compatibility fallback for older daemons without loom/resources.
+	return handleProxyResourcesListLegacyFanout(ctx, daemon, msg)
+}
+
+func proxyBuiltinResources() []mcp.Resource {
+	return []mcp.Resource{
 		{
 			URI:         "loom://servers",
 			Name:        "Loom servers",
@@ -508,8 +469,38 @@ func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mc
 			MimeType:    "application/json",
 		},
 	}
+}
+
+func handleProxyResourcesListLegacyFanout(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
+	// Legacy behavior: aggregate resources from all servers.
+	serversReq, _ := mcp.NewRequest(2, "loom/servers", nil)
+	if err := daemon.Send(ctx, serversReq); err != nil {
+		return nil, err
+	}
+	serversResp, err := daemon.Recv(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var serversResult struct {
+		Servers []struct {
+			Name    string `json:"name"`
+			Running *bool  `json:"running,omitempty"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(serversResp.Result, &serversResult); err != nil {
+		return nil, err
+	}
+
+	allResources := proxyBuiltinResources()
 	for _, server := range serversResult.Servers {
-		req, _ := mcp.NewRequest(2, "loom/call", map[string]any{
+		// Avoid cold-starting every configured server just to enumerate resources.
+		// When the daemon explicitly reports running=false, skip probing.
+		if server.Running != nil && !*server.Running {
+			continue
+		}
+
+		req, _ := mcp.NewRequest(3, "loom/call", map[string]any{
 			"server": server.Name,
 			"method": "resources/list",
 		})
@@ -544,38 +535,7 @@ func handleProxyResourcesList(ctx context.Context, daemon mcp.Transport, msg *mc
 // handleProxyResourcesListBuiltinOnly returns only the built-in loom:// resources
 // without requiring a daemon connection. Used as fallback when daemon is unavailable.
 func handleProxyResourcesListBuiltinOnly(msg *mcp.Message) *mcp.Message {
-	allResources := []mcp.Resource{
-		{
-			URI:         "loom://servers",
-			Name:        "Loom servers",
-			Description: "List MCP servers managed by the loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://tools",
-			Name:        "Loom tools",
-			Description: "Cached aggregated tools from loom daemon",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://tools/index",
-			Name:        "Loom tools index",
-			Description: "Paginated tools inventory index for loom daemon tools",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://health",
-			Name:        "Loom health",
-			Description: "Health summary for all servers (local/hub) managed by loom",
-			MimeType:    "application/json",
-		},
-		{
-			URI:         "loom://config",
-			Name:        "Loom config",
-			Description: "Active profile and daemon configuration summary",
-			MimeType:    "application/json",
-		},
-	}
+	allResources := proxyBuiltinResources()
 
 	result := struct {
 		Resources []mcp.Resource `json:"resources"`

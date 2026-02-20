@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-18T19:56:37-05:00
+- Generated: 2026-02-19T13:57:02-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.3-arm64-arm-64bit`
@@ -8,7 +8,7 @@
 
 ## Git
 ```
-## codex/linkedin-auth-status-mode...origin/codex/linkedin-auth-status-mode [ahead 2]
+## codex/enterprise-policy-hooks-25...origin/codex/enterprise-policy-hooks-25
  M .codex/skills/plan-loom-core/SKILL.md
  M .loom/00-index.md
  M .loom/00-mcp-inventory.md
@@ -17,13 +17,6 @@
  M .loom/20-product-spec.md
  M .loom/30-implementation-plan.md
  M .loom/50-worklog.md
- M .opencode/opencode.json
- M .zed/mcp.json
- M cmd/mcp-jobsearch/README.md
- M cmd/mcp-jobsearch/main.go
-?? cmd/mcp-jobsearch/tools_resume.go
-?? cmd/mcp-jobsearch/tools_resume_test.go
-?? cmd/mcp-linkedin/__pycache__/
 ```
 
 ### Remotes
@@ -38,7 +31,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-d755eaf daemon: prevent idle reaper race with in-flight local calls
+4d1f4fa daemon: add gateway request/response policy hooks (#25)
 ```
 
 ## Top-Level Layout
@@ -220,8 +213,6 @@ d755eaf daemon: prevent idle reaper race with in-flight local calls
 - `cmd/loom/registry_diagnostics_test.go`
 - `cmd/loom/repl.go`
 - `cmd/loom/status.go`
-- `cmd/loom/tool_inventory.go`
-- `cmd/loom/tool_inventory_test.go`
 - `cmd/loomd/main.go`
 - `cmd/loomd/rlimit_unix.go`
 - `cmd/loomd/rlimit_windows.go`
@@ -303,24 +294,11 @@ d755eaf daemon: prevent idle reaper race with in-flight local calls
 - `cmd/mcp-itchio/main.go`
 - `cmd/mcp-itchio/main_test.go`
 - `cmd/mcp-jira/main.go`
-- `cmd/mcp-jobsearch/README.md`
-- `cmd/mcp-jobsearch/client.go`
-- `cmd/mcp-jobsearch/client_test.go`
-- `cmd/mcp-jobsearch/main.go`
-- `cmd/mcp-jobsearch/main_test.go`
-- `cmd/mcp-jobsearch/tools_common.go`
-- `cmd/mcp-jobsearch/tools_core.go`
-- `cmd/mcp-jobsearch/tools_passthrough.go`
-- `cmd/mcp-jobsearch/tools_test.go`
-- `cmd/mcp-jobsearch/tools_workflow_crm.go`
 - `cmd/mcp-k8s-ops/main.go`
 - `cmd/mcp-k8s-ops/main_test.go`
 - `cmd/mcp-k8s/main.go`
 - `cmd/mcp-k8s/main_test.go`
 - `cmd/mcp-linear/main.go`
-- `cmd/mcp-linkedin/README.md`
-- `cmd/mcp-linkedin/browserkit.go`
-- `cmd/mcp-linkedin/browserkit_helper.py`
 - `cmd/mcp-linkedin/main.go`
 - `cmd/mcp-linkedin/main_test.go`
 - `cmd/mcp-loki/main.go`
@@ -350,6 +328,21 @@ d755eaf daemon: prevent idle reaper race with in-flight local calls
 - `cmd/mcp-release/main.go`
 - `cmd/mcp-release/main_test.go`
 - `cmd/mcp-sentry/main.go`
+- `cmd/mcp-sequentialthinking/main.go`
+- `cmd/mcp-sequentialthinking/main_test.go`
+- `cmd/mcp-server-mgmt/main.go`
+- `cmd/mcp-server-mgmt/main_test.go`
+- `cmd/mcp-slack/main.go`
+- `cmd/mcp-substack/main.go`
+- `cmd/mcp-substack/main_test.go`
+- `cmd/mcp-tavily/main.go`
+- `cmd/mcp-tavily/main_test.go`
+- `cmd/mcp-terraform/main.go`
+- `cmd/mcp-time/main.go`
+- `cmd/mcp-time/main_test.go`
+- `cmd/mcp-vault/main.go`
+- `cmd/mcp-vault/main_test.go`
+- `cmd/mcp-youtube/main.go`
 - `…`
 
 ## AGENTS.md Files

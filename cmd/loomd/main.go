@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crb2nu/loom/internal/daemon"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 var version = "dev"
@@ -64,6 +65,13 @@ func run(cfg daemon.Config, metricsAddr string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Initialize OTel tracing for daemon lifecycle and request handling.
+	_, shutdownTracer, err := mcpotel.InitTracer(ctx, "loomd", slog.Default())
+	if err != nil {
+		slog.Warn("OTel tracer init failed, continuing without tracing", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
 
 	// Export socket path so child MCP servers (e.g., mcp-agent-context) can
 	// dial back to the daemon for tool execution (workflow loopback).

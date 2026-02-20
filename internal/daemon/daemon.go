@@ -21,6 +21,10 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
@@ -67,49 +71,62 @@ type ToolCache struct {
 	ttl       time.Duration
 }
 
+// ResourceCache holds cached aggregated resources from running servers.
+type ResourceCache struct {
+	mu        gosync.RWMutex
+	resources []mcp.Resource
+	updatedAt time.Time
+	ttl       time.Duration
+}
+
 // Daemon is the main Loom daemon.
 type Daemon struct {
-	cfg                Config
-	fileCfg            FileConfig // File-based configuration
-	registry           *registry.Registry
-	repoRoot           string // Repository root for ${repo} expansion
-	procMgr            *process.Manager
-	pool               *pool.Pool
-	hubPool            *pool.Pool
-	router             *router.Router
-	hubClient          *mcp.WebSocketClient
-	callLocks          gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
-	listener           net.Listener
-	logger             *slog.Logger
-	toolCache          *ToolCache
-	manifest           *ManifestManager                // Persistent tool cache
-	profiles           *profiles.Manager               // Tool profile manager
-	metadata           *registry.Metadata              // Tool metadata for enhanced descriptions
-	watcher            *sync.Watcher                   // File watcher for hot reload
-	syncManager        *sync.Manager                   // Sync manager for profile operations
-	metrics            *Metrics                        // Prometheus metrics
-	healthMonitor      *HealthMonitor                  // Server health monitoring
-	tunnelMgr          *TunnelManager                  // SSH tunnel management
-	respCache          *ResponseCache                  // Response cache for read-only tools
-	eventBus           *EventBus                       // Event bus for SSE streaming
-	runningServers     gosync.Map                      // serverName -> true; tracks process starts for event emission
-	httpServer         *http.Server                    // Streamable HTTP listener
-	httpStreamable     *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
-	rbac               *RBACEnforcer                   // RBAC enforcer for tool access control
-	policy             *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
-	audit              *AuditLogger                    // Structured audit logger
-	cost               *CostTracker                    // Usage tracking and attribution
-	oauth              *OAuthServer                    // OAuth 2.1 authorization server
-	authMiddleware     func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
-	routingPreferences map[string]RoutingPreference    // Per-server routing overrides
-	refreshGroup       singleflight.Group              // Deduplicates concurrent tool cache refreshes
-	wg                 gosync.WaitGroup
-	done               chan struct{}
-	stopOnce           gosync.Once
-	stopErr            error
+	cfg                 Config
+	fileCfg             FileConfig // File-based configuration
+	registry            *registry.Registry
+	repoRoot            string // Repository root for ${repo} expansion
+	procMgr             *process.Manager
+	pool                *pool.Pool
+	hubPool             *pool.Pool
+	router              *router.Router
+	hubClient           *mcp.WebSocketClient
+	callLocks           gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
+	listener            net.Listener
+	logger              *slog.Logger
+	toolCache           *ToolCache
+	resourceCache       *ResourceCache
+	manifest            *ManifestManager                // Persistent tool cache
+	profiles            *profiles.Manager               // Tool profile manager
+	metadata            *registry.Metadata              // Tool metadata for enhanced descriptions
+	watcher             *sync.Watcher                   // File watcher for hot reload
+	syncManager         *sync.Manager                   // Sync manager for profile operations
+	metrics             *Metrics                        // Prometheus metrics
+	healthMonitor       *HealthMonitor                  // Server health monitoring
+	tunnelMgr           *TunnelManager                  // SSH tunnel management
+	respCache           *ResponseCache                  // Response cache for read-only tools
+	eventBus            *EventBus                       // Event bus for SSE streaming
+	runningServers      gosync.Map                      // serverName -> true; tracks process starts for event emission
+	httpServer          *http.Server                    // Streamable HTTP listener
+	httpStreamable      *mcp.StreamableHTTPServer       // Streamable HTTP transport handler
+	rbac                *RBACEnforcer                   // RBAC enforcer for tool access control
+	policy              *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
+	audit               *AuditLogger                    // Structured audit logger
+	cost                *CostTracker                    // Usage tracking and attribution
+	oauth               *OAuthServer                    // OAuth 2.1 authorization server
+	authMiddleware      func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
+	routingPreferences  map[string]RoutingPreference    // Per-server routing overrides
+	refreshGroup        singleflight.Group              // Deduplicates concurrent tool cache refreshes
+	hubAuthDisabled     bool                            // Auth-gated hub discovery disabled hub fallback
+	hubAuthBackoffUntil time.Time                       // Backoff window for auth-gated hub discovery
+	wg                  gosync.WaitGroup
+	done                chan struct{}
+	stopOnce            gosync.Once
+	stopErr             error
 
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
+
+	tracer trace.Tracer
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
@@ -119,6 +136,13 @@ func (d *Daemon) callLock(serverName string) *gosync.Mutex {
 	}
 	v, _ := d.callLocks.LoadOrStore(serverName, &gosync.Mutex{})
 	return v.(*gosync.Mutex)
+}
+
+func (d *Daemon) daemonTracer() trace.Tracer {
+	if d != nil && d.tracer != nil {
+		return d.tracer
+	}
+	return otel.Tracer("loomd")
 }
 
 func (d *Daemon) acquireLock() error {
@@ -241,11 +265,23 @@ func New(cfg Config) (*Daemon, error) {
 		MaxOpen:     poolMaxOpen,
 		IdleTimeout: poolIdleTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
+			tracer := otel.Tracer("loomd")
+			if d != nil {
+				tracer = d.daemonTracer()
+			}
+			_, span := tracer.Start(ctx, "daemon.server.connect",
+				trace.WithAttributes(attribute.String("server.name", serverName)),
+			)
+			defer span.End()
+
 			_, wasRunning := d.runningServers.LoadOrStore(serverName, true)
+			span.SetAttributes(attribute.Bool("server.was_running", wasRunning))
 			// Process lifetime must not be tied to request/handshake timeout contexts.
 			transport, err := procMgr.Dial(context.Background(), serverName)
 			if err != nil {
 				d.runningServers.Delete(serverName)
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
 				return nil, err
 			}
 			if !wasRunning {
@@ -254,6 +290,8 @@ func New(cfg Config) (*Daemon, error) {
 				if err := initializeMCPTransport(initCtx, transport); err != nil {
 					d.runningServers.Delete(serverName)
 					_ = procMgr.Stop(serverName)
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					return nil, fmt.Errorf("initialize transport: %w", err)
 				}
 				if d.eventBus != nil {
@@ -262,6 +300,7 @@ func New(cfg Config) (*Daemon, error) {
 					})
 				}
 			}
+			span.SetAttributes(attribute.Bool("server.started", !wasRunning))
 			return transport, nil
 		},
 	})
@@ -374,6 +413,9 @@ func New(cfg Config) (*Daemon, error) {
 		toolCache: &ToolCache{
 			ttl: cacheTTL,
 		},
+		resourceCache: &ResourceCache{
+			ttl: cacheTTL,
+		},
 		manifest:           manifest,
 		profiles:           profileMgr,
 		metadata:           toolMetadata,
@@ -382,6 +424,7 @@ func New(cfg Config) (*Daemon, error) {
 		respCache:          NewResponseCache(fileCfg.Cache),
 		routingPreferences: routingPrefs,
 		done:               make(chan struct{}),
+		tracer:             otel.Tracer("loomd"),
 	}
 
 	// Initialize event bus for SSE streaming
@@ -436,14 +479,30 @@ func New(cfg Config) (*Daemon, error) {
 }
 
 // Start starts the daemon.
-func (d *Daemon) Start(ctx context.Context) error {
+func (d *Daemon) Start(ctx context.Context) (err error) {
+	ctx, span := d.daemonTracer().Start(ctx, "daemon.start",
+		trace.WithAttributes(
+			attribute.String("loom.socket_path", d.cfg.SocketPath),
+			attribute.Int("loom.warm_server_count", len(d.cfg.WarmOnStart)),
+			attribute.Bool("loom.streamable_http_enabled", d.cfg.HTTPAddr != ""),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	// Bail out early if registry was not provided; running without it will panic.
 	if d.registry == nil {
-		return fmt.Errorf("registry not loaded (pass --registry /path/to/registry.yaml)")
+		err = fmt.Errorf("registry not loaded (pass --registry /path/to/registry.yaml)")
+		return err
 	}
 
 	// Prevent multiple daemons from unlinking/rebinding the same socket path.
-	if err := d.acquireLock(); err != nil {
+	if err = d.acquireLock(); err != nil {
 		return err
 	}
 	started := false
@@ -557,13 +616,16 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	// Start Streamable HTTP listener if configured
 	if d.cfg.HTTPAddr != "" {
-		if err := d.startHTTPListener(ctx); err != nil {
-			d.logger.Error("failed to start HTTP listener", "error", err)
+		if httpErr := d.startHTTPListener(ctx); httpErr != nil {
+			d.logger.Error("failed to start HTTP listener", "error", httpErr)
+			span.RecordError(httpErr)
+			span.SetAttributes(attribute.Bool("loom.http_listener_start_failed", true))
 			// Non-fatal: Unix socket still works
 		}
 	}
 
 	started = true
+	span.SetAttributes(attribute.Bool("loom.started", true))
 	return nil
 }
 
@@ -782,7 +844,16 @@ func (d *Daemon) signalLoop(ctx context.Context) {
 }
 
 // Stop stops the daemon.
-func (d *Daemon) Stop() error {
+func (d *Daemon) Stop() (err error) {
+	_, span := d.daemonTracer().Start(context.Background(), "daemon.stop")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	d.stopOnce.Do(func() {
 		if d.done != nil {
 			close(d.done)
@@ -863,7 +934,8 @@ func (d *Daemon) Stop() error {
 			d.lockFile = nil
 		}
 	})
-	return d.stopErr
+	err = d.stopErr
+	return err
 }
 
 // Wait waits for the daemon to stop.
@@ -979,7 +1051,25 @@ func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
 	defer d.wg.Done()
 	defer conn.Close()
 
-	d.logger.Debug("client connected", "addr", conn.RemoteAddr())
+	remoteAddr := ""
+	if conn.RemoteAddr() != nil {
+		remoteAddr = conn.RemoteAddr().String()
+	}
+
+	ctx, connSpan := d.daemonTracer().Start(ctx, "daemon.connection",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("network.transport", "unix"),
+			attribute.String("loom.client_addr", remoteAddr),
+		),
+	)
+	messageCount := 0
+	defer func() {
+		connSpan.SetAttributes(attribute.Int("loom.message_count", messageCount))
+		connSpan.End()
+	}()
+
+	d.logger.Debug("client connected", "addr", remoteAddr)
 
 	transport := mcp.NewStdioTransport(conn, conn)
 
@@ -995,57 +1085,90 @@ func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
 		msg, err := transport.Recv(ctx)
 		if err != nil {
 			d.logger.Debug("client disconnected", "error", err)
+			connSpan.AddEvent("client_disconnected", trace.WithAttributes(attribute.String("error", err.Error())))
 			return
 		}
+		messageCount++
 
 		resp, err := d.handleMessage(ctx, msg)
 		if err != nil {
 			d.logger.Error("handle message error", "error", err)
+			connSpan.RecordError(err)
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
 		}
 
 		if resp != nil {
 			if err := transport.Send(ctx, resp); err != nil {
 				d.logger.Error("send response error", "error", err)
+				connSpan.RecordError(err)
+				connSpan.SetStatus(codes.Error, err.Error())
 				return
 			}
 		}
 	}
 }
 
-func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp.Message, err error) {
+	if msg == nil {
+		err = fmt.Errorf("nil message")
+		return nil, err
+	}
+
+	attrs := []attribute.KeyValue{
+		attribute.String("mcp.method", msg.Method),
+	}
+	if msg.ID != nil {
+		attrs = append(attrs, attribute.String("mcp.request_id", fmt.Sprint(msg.ID)))
+	}
+
+	ctx, span := d.daemonTracer().Start(ctx, "daemon.rpc."+msg.Method,
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(attrs...),
+	)
+	defer func() {
+		span.SetAttributes(attribute.Bool("loom.has_response", resp != nil))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	switch msg.Method {
 	case "initialize":
-		return d.handleInitialize(ctx, msg)
+		resp, err = d.handleInitialize(ctx, msg)
 	case "notifications/initialized":
-		return nil, nil
+		resp, err = nil, nil
 	case "loom/status":
-		return d.handleStatus(ctx, msg)
+		resp, err = d.handleStatus(ctx, msg)
 	case "loom/servers":
-		return d.handleServers(ctx, msg)
+		resp, err = d.handleServers(ctx, msg)
 	case "loom/health":
-		return d.handleHealth(ctx, msg)
+		resp, err = d.handleHealth(ctx, msg)
 	case "loom/tools":
-		return d.handleTools(ctx, msg)
+		resp, err = d.handleTools(ctx, msg)
+	case "loom/resources":
+		resp, err = d.handleResources(ctx, msg)
 	case "loom/call", "tools/call":
-		return d.handleCall(ctx, msg)
+		resp, err = d.handleCall(ctx, msg)
 	case "loom/reload":
-		return d.handleReload(ctx, msg)
+		resp, err = d.handleReload(ctx, msg)
 	case "loom/config-hash":
-		return d.handleConfigHash(ctx, msg)
+		resp, err = d.handleConfigHash(ctx, msg)
 	case "loom/profile":
-		return d.handleProfile(ctx, msg)
+		resp, err = d.handleProfile(ctx, msg)
 	case "loom/tunnels":
-		return d.handleTunnels(ctx, msg)
+		resp, err = d.handleTunnels(ctx, msg)
 	case "loom/cache/stats":
-		return d.handleCacheStats(ctx, msg)
+		resp, err = d.handleCacheStats(ctx, msg)
 	case "loom/cache/clear":
-		return d.handleCacheClear(ctx, msg)
+		resp, err = d.handleCacheClear(ctx, msg)
 	case "loom/cost-stats":
-		return d.handleCostStats(ctx, msg)
+		resp, err = d.handleCostStats(ctx, msg)
 	default:
-		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method)), nil
+		resp = mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method))
 	}
+	return resp, err
 }
 
 func (d *Daemon) handleInitialize(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -1174,6 +1297,102 @@ type toolsResult struct {
 	ServerCount int        `json:"serverCount"`
 }
 
+// resourcesResult holds the aggregated resources response.
+type resourcesResult struct {
+	Resources          []mcp.Resource `json:"resources"`
+	CachedAt           time.Time      `json:"cachedAt"`
+	ServerCount        int            `json:"serverCount"`
+	RunningServerCount int            `json:"runningServerCount"`
+}
+
+func daemonBuiltInResources() []mcp.Resource {
+	return []mcp.Resource{
+		{
+			URI:         "loom://servers",
+			Name:        "Loom servers",
+			Description: "List MCP servers managed by the loom daemon",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://tools",
+			Name:        "Loom tools",
+			Description: "Cached aggregated tools from loom daemon",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://health",
+			Name:        "Loom health",
+			Description: "Health summary for all servers (local/hub) managed by loom",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "loom://config",
+			Name:        "Loom config",
+			Description: "Active profile and daemon configuration summary",
+			MimeType:    "application/json",
+		},
+	}
+}
+
+func (d *Daemon) handleResources(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	serverCount := 0
+	if d.registry != nil {
+		serverCount = len(d.registry.Servers)
+	}
+
+	var runningServers []string
+	if d.procMgr != nil {
+		runningServers = d.procMgr.List()
+	}
+	runningSet := make(map[string]struct{}, len(runningServers))
+	for _, serverName := range runningServers {
+		runningSet[serverName] = struct{}{}
+	}
+
+	// Always return cached resources immediately if available (even if stale).
+	d.resourceCache.mu.RLock()
+	hasCache := len(d.resourceCache.resources) > 0
+	cacheStale := time.Since(d.resourceCache.updatedAt) >= d.resourceCache.ttl
+	cachedResources := d.resourceCache.resources
+	cachedAt := d.resourceCache.updatedAt
+	d.resourceCache.mu.RUnlock()
+
+	if hasCache {
+		if cacheStale {
+			go func() {
+				bgCtx := context.Background()
+				_, _ = d.refreshResourcesCacheDeduplicated(bgCtx)
+			}()
+		}
+		return mcp.NewResponse(msg.ID, resourcesResult{
+			Resources:          cachedResources,
+			CachedAt:           cachedAt,
+			ServerCount:        serverCount,
+			RunningServerCount: len(runningSet),
+		})
+	}
+
+	// No cache yet: return built-ins immediately and refresh asynchronously.
+	builtins := daemonBuiltInResources()
+	now := time.Now()
+	d.resourceCache.mu.Lock()
+	d.resourceCache.resources = builtins
+	d.resourceCache.updatedAt = now
+	d.resourceCache.mu.Unlock()
+
+	go func() {
+		bgCtx := context.Background()
+		_, _ = d.refreshResourcesCacheDeduplicated(bgCtx)
+	}()
+
+	return mcp.NewResponse(msg.ID, resourcesResult{
+		Resources:          builtins,
+		CachedAt:           now,
+		ServerCount:        serverCount,
+		RunningServerCount: len(runningSet),
+	})
+}
+
 func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	// Always return cached tools immediately if we have any (even if stale)
 	d.toolCache.mu.RLock()
@@ -1264,6 +1483,159 @@ func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
 	return tools
 }
 
+// refreshResourcesCacheDeduplicated wraps refreshResourcesCache via singleflight to
+// prevent redundant concurrent refreshes.
+func (d *Daemon) refreshResourcesCacheDeduplicated(ctx context.Context) ([]mcp.Resource, error) {
+	v, err, _ := d.refreshGroup.Do("resources-refresh", func() (any, error) {
+		return d.refreshResourcesCache(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]mcp.Resource), nil
+}
+
+// refreshResourcesCache fetches resources from currently running servers and updates the cache.
+func (d *Daemon) refreshResourcesCache(ctx context.Context) ([]mcp.Resource, error) {
+	refreshConcurrency := d.fileCfg.Resources.GetRefreshConcurrency()
+	if refreshConcurrency <= 0 {
+		refreshConcurrency = 1
+	}
+
+	base := daemonBuiltInResources()
+	var running []string
+	if d.procMgr != nil {
+		running = d.procMgr.List()
+	}
+	runningSet := make(map[string]struct{}, len(running))
+	for _, serverName := range running {
+		runningSet[serverName] = struct{}{}
+	}
+
+	if len(runningSet) == 0 {
+		d.resourceCache.mu.Lock()
+		d.resourceCache.resources = base
+		d.resourceCache.updatedAt = time.Now()
+		d.resourceCache.mu.Unlock()
+		return base, nil
+	}
+
+	if d.registry == nil {
+		d.resourceCache.mu.Lock()
+		d.resourceCache.resources = base
+		d.resourceCache.updatedAt = time.Now()
+		d.resourceCache.mu.Unlock()
+		return base, nil
+	}
+
+	serverResources := make(map[string][]mcp.Resource, len(runningSet))
+	var (
+		mu  gosync.Mutex
+		wg  gosync.WaitGroup
+		sem = make(chan struct{}, refreshConcurrency)
+	)
+
+	for _, server := range d.registry.Servers {
+		if server == nil {
+			continue
+		}
+		if _, ok := runningSet[server.Name]; !ok {
+			continue
+		}
+
+		wg.Add(1)
+		go func(serverName string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+
+			resources, err := d.fetchServerResources(callCtx, serverName)
+			if err != nil {
+				d.logger.Debug("resources probe failed", "server", serverName, "error", err)
+				return
+			}
+			if len(resources) == 0 {
+				return
+			}
+			mu.Lock()
+			serverResources[serverName] = resources
+			mu.Unlock()
+		}(server.Name)
+	}
+	wg.Wait()
+
+	// Keep output deterministic by walking servers in registry order.
+	allResources := make([]mcp.Resource, 0, len(base)+len(serverResources)*4)
+	allResources = append(allResources, base...)
+	for _, server := range d.registry.Servers {
+		if server == nil {
+			continue
+		}
+		resources, ok := serverResources[server.Name]
+		if !ok {
+			continue
+		}
+		for _, r := range resources {
+			r.URI = server.Name + "__" + r.URI
+			allResources = append(allResources, r)
+		}
+	}
+
+	d.resourceCache.mu.Lock()
+	d.resourceCache.resources = allResources
+	d.resourceCache.updatedAt = time.Now()
+	d.resourceCache.mu.Unlock()
+
+	return allResources, nil
+}
+
+func (d *Daemon) fetchServerResources(ctx context.Context, serverName string) ([]mcp.Resource, error) {
+	if d.pool == nil {
+		return nil, fmt.Errorf("local pool not configured")
+	}
+
+	conn, err := d.pool.Get(ctx, serverName)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer d.pool.Put(conn)
+
+	mu := d.callLock(serverName)
+	mu.Lock()
+	defer mu.Unlock()
+
+	req, _ := mcp.NewRequest(1, "resources/list", nil)
+	if err := conn.Transport.Send(ctx, req); err != nil {
+		conn.Healthy = false
+		return nil, fmt.Errorf("send resources/list: %w", err)
+	}
+
+	resp, err := conn.Transport.Recv(ctx)
+	if err != nil {
+		conn.Healthy = false
+		return nil, fmt.Errorf("recv resources/list: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("server error: %s", resp.Error.Message)
+	}
+
+	var result struct {
+		Resources []mcp.Resource `json:"resources"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("parse resources/list: %w", err)
+	}
+
+	return result.Resources, nil
+}
+
 // refreshToolCacheDeduplicated wraps refreshToolCache via singleflight to prevent
 // redundant concurrent refreshes. Multiple callers get the same result.
 func (d *Daemon) refreshToolCacheDeduplicated(ctx context.Context) ([]mcp.Tool, error) {
@@ -1288,31 +1660,50 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 
 	var hubClient *router.HubClient
 	if d.cfg.HubFallback && d.hubClient != nil {
-		// Fetch token from secret store if needed.
-		token := d.expandVars("${secret:MCP_HUB_TOKEN}")
-		if token == "" {
-			token = os.Getenv("MCP_HUB_TOKEN")
-		}
-
-		hubClient = router.NewHubClient(d.cfg.HubURL, token)
-		hostNames, err := hubClient.DiscoverHosts(ctx)
-		if err != nil {
-			d.logger.Warn("failed to discover hub hosts", "error", err)
-			hubClient = nil
+		now := time.Now()
+		if d.hubAuthDisabled {
+			d.logger.Debug("hub fallback disabled after auth-gated discovery failure")
+		} else if !d.hubAuthBackoffUntil.IsZero() && now.Before(d.hubAuthBackoffUntil) {
+			d.logger.Debug("skipping hub discovery during auth backoff", "until", d.hubAuthBackoffUntil)
 		} else {
-			for _, host := range hostNames {
-				// Avoid shadowing local servers if they have the same name.
-				isLocal := false
-				for _, s := range d.registry.Servers {
-					if s.Name == host {
-						isLocal = true
-						break
+			// Fetch token from secret store if needed.
+			token := d.expandVars("${secret:MCP_HUB_TOKEN}")
+			if token == "" {
+				token = os.Getenv("MCP_HUB_TOKEN")
+			}
+
+			hubClient = router.NewHubClient(d.cfg.HubURL, token)
+			hostNames, err := hubClient.DiscoverHosts(ctx)
+			if err != nil {
+				if isHubAuthError(err) {
+					hint := "check MCP_HUB_TOKEN or Cloudflare Access credentials, or set hub.disable_on_auth_failure"
+					if d.fileCfg.Hub.DisableOnAuthFailure {
+						d.hubAuthDisabled = true
+						d.logger.Warn("hub discovery auth required; disabling hub fallback", "error", err, "hint", hint)
+					} else {
+						d.hubAuthBackoffUntil = now.Add(hubAuthBackoff)
+						d.logger.Warn("hub discovery auth required; backing off", "until", d.hubAuthBackoffUntil, "error", err, "hint", hint)
 					}
+				} else {
+					d.logger.Warn("failed to discover hub hosts", "error", err)
 				}
-				if isLocal {
-					continue
+				hubClient = nil
+			} else {
+				d.hubAuthBackoffUntil = time.Time{}
+				for _, host := range hostNames {
+					// Avoid shadowing local servers if they have the same name.
+					isLocal := false
+					for _, s := range d.registry.Servers {
+						if s.Name == host {
+							isLocal = true
+							break
+						}
+					}
+					if isLocal {
+						continue
+					}
+					sources = append(sources, toolSource{name: host, kind: toolSourceHub})
 				}
-				sources = append(sources, toolSource{name: host, kind: toolSourceHub})
 			}
 		}
 	}

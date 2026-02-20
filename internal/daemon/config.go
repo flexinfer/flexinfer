@@ -220,6 +220,9 @@ type HubConfig struct {
 	// PreferHub forces routing to prefer hub over local servers when available.
 	PreferHub bool `yaml:"prefer_hub,omitempty"`
 
+	// DisableOnAuthFailure disables hub fallback if discovery is auth-gated.
+	DisableOnAuthFailure bool `yaml:"disable_on_auth_failure,omitempty"`
+
 	// Profile is the hub profile to use (e.g., "codex", "claude")
 	Profile string `yaml:"profile"`
 

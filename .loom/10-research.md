@@ -1,78 +1,167 @@
-# Research Brief: Universal Workflow Skills and Propagation
+# Research Brief: Loom Companion iPhone/iPad App
 
 ## Problem
 
-Current skill behavior is uneven across platforms and too dependent on ad-hoc prompts ("commit/push/watch CI"). We need repeatable loops that close work end-to-end and leverage loom-native context/index/search capabilities by default.
+Loom already has strong local observability/control surfaces (HUD + agent lifecycle APIs), but they are optimized for desktop localhost usage. We need a companion iOS/iPadOS app for:
+- monitoring agent sessions remotely,
+- performing safe control actions,
+- creating new sessions from mobile.
 
-## Questions
+## Research Questions
 
-- Q1: Do we have sufficient MCP/runtime primitives to enforce index-first + context-first + ship-to-green loops?
-- Q2: Which existing skills need stronger operational contracts for research/writing/testing/troubleshooting?
-- Q3: How do we propagate consistent behavior across Codex/Claude/Kilocode/Gemini without duplicating logic?
+- Q1: What backend capabilities already exist that the mobile app can reuse?
+- Q2: What gaps block secure mobile access today?
+- Q3: Which architecture minimizes net-new backend work while keeping security acceptable?
+- Q4: What should be v1 scope vs deferred scope?
 
-## Findings
+## Facts Found
 
-### F1: Runtime supports the full delivery loop now
+### F1: Session lifecycle APIs already exist
 
-- Loom runtime reports `42` servers and `379` tools with paged inventory (`totalPages: 4`), enough to build deterministic workflow packs.
-- `agent_context` exposes full session/task/handoff/presence lifecycle (`78` tools).
-- `codebase_memory` exposes async indexing and search/reference graph workflows (`17` tools).
-- `gitlab` exposes pipeline poll + summary + failed log retrieval (`30` tools), enabling CI close-the-loop behavior.
+HUD exposes explicit lifecycle endpoints:
+- `POST /api/agent/session-start`
+- `POST /api/agent/session-end`
+- `POST /api/agent/heartbeat`
+- `GET /api/agent/session`
 
-### F2: Existing global instruction skills were too generic
+The session-start path is idempotent and currently broadcasts immediate SSE updates.
 
-- `mcp-usage-core` and `research-docs-workflow` existed but did not enforce ship loop completion or index-first execution.
-- `research` skill was Tavily-centric and did not require local codebase context or durable outputs.
+### F2: Broad read APIs for monitoring already exist
 
-### F3: Backlog delivery workflow needed executable hook integration
+HUD already serves monitoring endpoints needed for mobile dashboards:
+- `/api/status`, `/api/health`, `/api/servers`, `/api/fleet`, `/api/sessions`, `/api/tasks`, `/api/presence`, `/api/kpis`, `/api/timeline`, `/api/events`.
 
-- Prior backlog guidance referenced checks but had no reusable verification helper.
-- Adding a script-level verification contract (`verify_local_loop.sh`) creates an executable gate for hooks/test/lint with repo-aware fallbacks.
+### F3: Real-time transport model exists and is production-tested in web HUD
 
-### F4: Platform propagation path already exists and is reliable
+- SSE endpoint exists at `/api/events`.
+- Frontend event store uses SSE-first and reconnect logic with circuit breaker.
+- Fleet store uses 30s fallback polling only when SSE is disconnected.
 
-- `loom generate skills --target all` + `loom sync skills all` successfully regenerated/synced skills for codex/claude/kilocode/gemini.
-- This confirms registry-first updates are the right control point for universal workflow behavior.
+This is a strong fit for iOS streaming clients (URLSession bytes/line parser or SSE client abstraction).
 
-## Constraints
+### F4: Current network model is localhost-bound
 
-- Hook/test commands vary per repo; helper scripts must degrade gracefully.
-- Some servers lazy-start on first call; workflows should tolerate first-call latency.
-- Platform-specific guidance should stay in `instructions_append` only when truly needed.
+HUD server binds to `127.0.0.1:<port>`. This prevents direct mobile access unless additional tunneling/proxying is introduced.
+
+### F5: Auth boundary is incomplete for remote/mobile exposure
+
+- Most endpoints are exposed without auth middleware.
+- Admin token enforcement currently exists for `POST /api/agent/nudge-queue-policy`.
+- CORS wildcard is enabled only in dev mode.
+
+This confirms a backend security hardening phase is mandatory before mobile remote control.
+
+### F6: Underlying bridge already maps to agent_context session primitives
+
+`AgentBridge` already wraps:
+- `agent_session_start`
+- `agent_session_end`
+- `agent_session_list`
+- `agent_presence_*`
+- context/task/workflow operations
+
+So mobile session creation/control can be implemented largely as API surface + auth policy work, not new orchestration primitives.
+
+### F7: Loom already supports remote HTTP transport in daemon roadmap/status
+
+Roadmap states remote MCP transport with auth is already shipped in daemon scope. That can inform companion connectivity patterns (pairing and remote-safe access), instead of inventing a separate control plane from scratch.
+
+## Assumptions
+
+- iOS app should be operator-focused first (observe + low-risk controls), not full desktop parity.
+- First release can target iPhone + iPad portrait/landscape with a shared SwiftUI codebase.
+- Mobile app should not expose arbitrary tool execution in v1.
+
+## Options
+
+### Option A: Thin mobile client over existing HUD APIs via tunnel/VPN
+
+Pros:
+- Fastest prototype.
+- Reuses existing endpoints with minimal backend changes.
+
+Cons:
+- Security posture depends on external tunnel setup.
+- No first-class device auth model in Loom itself.
+- Harder to standardize for non-technical operators.
+
+### Option B: Add a dedicated mobile API surface in HUD (recommended)
+
+Pros:
+- Clear, explicit mobile contract.
+- Introduces proper authn/authz for remote/device access.
+- Can reuse existing monitor + bridge internals behind stable DTOs.
+
+Cons:
+- Requires backend work (auth middleware, token lifecycle, endpoint hardening).
+
+### Option C: Read-only mobile app first, control later
+
+Pros:
+- Lowest risk launch.
+- Fast path to value for observability.
+
+Cons:
+- Does not meet the user goal of session creation/control in the first slice.
 
 ## Recommendation
 
-1. Keep `common.instructions` as canonical loop definitions.
-2. Enforce required delivery contract in instruction + skill layers:
-   - hooks/tests/lint
-   - commit/push by default
-   - CI poll/fix/retry loop
-3. Make codebase index/search explicit in planning, research, and exploration skills.
-4. Require agent-context task/session closure for durable handoffs.
-5. Continue measuring adoption via worklog + follow-up smoke checks.
+Use **Option B** with a **phased scope gate**:
+1. v1.0: monitoring + session create/end + safe task dispatch controls.
+2. v1.1+: broader mutations (workflow approvals, memory operations, policy mutation).
+
+Connectivity stance for this track:
+- Support **both** access modes in product design:
+  - **LAN mode** for local/trusted network operations.
+  - **Gateway mode** for remote/zero-trust operations.
+- Mode choice should be deployment-driven, not hardcoded by client platform.
+
+## v1 Scope Proposal
+
+Include:
+- Authenticated pairing/login flow.
+- Fleet overview, active sessions, health status, timeline stream.
+- Session detail view (status, tokens, tasks, recent events).
+- Start session (agent_id, namespace, description, auto_recall).
+- End session (session_id or agent_id, summarize).
+
+Exclude (defer):
+- Arbitrary tool execution.
+- Registry edits/platform sync.
+- Full graph/memory editing.
+- Complex workflow definition authoring.
+
+## Open Questions
+
+- What auth mechanism is preferred for mobile pairing: short-lived pairing code, local QR, or signed device token bootstrap?
+- Should mode selection be manual per endpoint/profile, auto-selected by reachability, or both?
+- What minimum audit events are required for mobile-originated control actions?
 
 ## Sources
 
-- Skills registry updates:
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:287`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:551`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:1072`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:1877`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2035`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2236`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2298`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2362`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2449`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2694`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2783`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/context/skills-registry.yaml:2950`
-- Backlog verification assets:
-  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/scripts/verify_local_loop.sh:1`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/references/workflow.md:23`
-  - `/Users/cblevins/workspace/platform/gitops/mcp/skills/backlog-delivery-loop/assets/templates/status-report.md:20`
-- Runtime inventory calls (2026-02-19):
-  - `read_mcp_resource(server="loom", uri="loom://config")`
-  - `read_mcp_resource(server="loom", uri="loom://tools/index")`
-  - `read_mcp_resource(server="loom", uri="loom://tools/server/agent_context/page/1")`
-  - `read_mcp_resource(server="loom", uri="loom://tools/server/codebase_memory/page/1")`
-  - `read_mcp_resource(server="loom", uri="loom://tools/server/gitlab/page/1")`
+- `internal/hud/app.go:317`
+- `internal/hud/app.go:473`
+- `internal/hud/app.go:528`
+- `internal/hud/app.go:540`
+- `internal/hud/app.go:546`
+- `internal/hud/app.go:547`
+- `internal/hud/app.go:549`
+- `internal/hud/app.go:1983`
+- `internal/hud/api_agent.go:79`
+- `internal/hud/api_agent.go:183`
+- `internal/hud/api_agent.go:231`
+- `internal/hud/api_agent.go:573`
+- `internal/hud/api_agent.go:735`
+- `internal/hud/api_agent.go:829`
+- `internal/hud/bridge/agent.go:335`
+- `internal/hud/bridge/agent.go:944`
+- `internal/hud/bridge/agent.go:1443`
+- `internal/hud/bridge/agent.go:1518`
+- `internal/hud/frontend/src/lib/stores/events.svelte.ts:62`
+- `internal/hud/frontend/src/lib/stores/events.svelte.ts:115`
+- `internal/hud/frontend/src/lib/stores/fleet.svelte.ts:2`
+- `internal/hud/frontend/src/lib/stores/fleet.svelte.ts:302`
+- `internal/hud/frontend/src/lib/stores/fleet.svelte.ts:306`
+- `AGENTS.md:41`
+- `AGENTS.md:124`
+- `ROADMAP.md:48`

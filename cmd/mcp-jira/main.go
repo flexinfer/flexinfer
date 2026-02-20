@@ -10,6 +10,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -61,8 +62,14 @@ func (s *jiraServer) getClient() (*jira.Client, error) {
 		return s.client, nil
 	}
 
-	if s.jiraURL == "" || s.username == "" || s.apiToken == "" {
-		return nil, fmt.Errorf("JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN must be set")
+	if s.jiraURL == "" {
+		return nil, mcperror.NotConfigured("JIRA_URL", "set JIRA_URL environment variable")
+	}
+	if s.username == "" {
+		return nil, mcperror.NotConfigured("JIRA_USERNAME", "set JIRA_USERNAME environment variable")
+	}
+	if s.apiToken == "" {
+		return nil, mcperror.NotConfigured("JIRA_API_TOKEN", "set JIRA_API_TOKEN environment variable")
 	}
 
 	tp := jira.BasicAuthTransport{
@@ -71,7 +78,7 @@ func (s *jiraServer) getClient() (*jira.Client, error) {
 	}
 	client, err := jira.NewClient(tp.Client(), s.jiraURL)
 	if err != nil {
-		return nil, fmt.Errorf("create jira client: %w", err)
+		return nil, mcperror.InvalidParam("JIRA_URL", fmt.Sprintf("invalid base URL: %v", err))
 	}
 
 	s.client = client
@@ -123,7 +130,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		jql := v.Required("jql")
-		limit := v.Int("limit", 50)
+		limit := validate.NormalizePerPage(v.Int("limit", 50), 50, 200)
 		if err := v.Validate(); err != nil {
 			return mcp.ErrorResult(err), nil
 		}

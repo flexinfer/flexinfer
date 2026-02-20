@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -541,6 +543,43 @@ func TestToolCache_ConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestHandleResources_ReturnsBuiltinsFromCache(t *testing.T) {
+	d := &Daemon{
+		resourceCache: &ResourceCache{ttl: time.Minute},
+	}
+
+	msg, err := mcp.NewRequest(1, "loom/resources", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	resp, err := d.handleResources(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleResources error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+
+	var got resourcesResult
+	if err := json.Unmarshal(resp.Result, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Resources) < 4 {
+		t.Fatalf("expected built-in resources, got %d", len(got.Resources))
+	}
+
+	seen := map[string]bool{}
+	for _, r := range got.Resources {
+		seen[r.URI] = true
+	}
+	for _, uri := range []string{"loom://servers", "loom://tools", "loom://health", "loom://config"} {
+		if !seen[uri] {
+			t.Fatalf("missing built-in resource %q", uri)
+		}
+	}
 }
 
 // =============================================================================

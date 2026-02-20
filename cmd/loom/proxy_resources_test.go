@@ -14,39 +14,18 @@ func TestProxy_ResourcesList_IncludesLoomServersResource(t *testing.T) {
 	ctx := context.Background()
 	client, server := mcp.NewPipeTransport()
 
-	// Fake daemon: respond to loom/servers and two resources/list calls.
+	// Fake daemon: respond with cached resources from loom/resources.
 	go func() {
 		defer server.Close()
-
-		// loom/servers
 		req, _ := server.Recv(ctx)
-		if req.Method == "loom/servers" {
-			resp, _ := mcp.NewResponse(req.ID, map[string]any{
-				"servers": []any{
-					map[string]any{"name": "alpha"},
-					map[string]any{"name": "beta"},
-				},
-			})
-			_ = server.Send(ctx, resp)
-		}
-
-		// alpha resources/list
-		req, _ = server.Recv(ctx)
-		if req.Method == "loom/call" {
+		if req.Method == "loom/resources" {
 			resp, _ := mcp.NewResponse(req.ID, map[string]any{
 				"resources": []any{
-					map[string]any{"uri": "r1", "name": "R1"},
-				},
-			})
-			_ = server.Send(ctx, resp)
-		}
-
-		// beta resources/list
-		req, _ = server.Recv(ctx)
-		if req.Method == "loom/call" {
-			resp, _ := mcp.NewResponse(req.ID, map[string]any{
-				"resources": []any{
-					map[string]any{"uri": "r2", "name": "R2"},
+					map[string]any{"uri": "loom://servers", "name": "Loom servers"},
+					map[string]any{"uri": "loom://tools", "name": "Loom tools"},
+					map[string]any{"uri": "loom://health", "name": "Loom health"},
+					map[string]any{"uri": "loom://config", "name": "Loom config"},
+					map[string]any{"uri": "alpha__r1", "name": "R1"},
 				},
 			})
 			_ = server.Send(ctx, resp)
@@ -85,6 +64,72 @@ func TestProxy_ResourcesList_IncludesLoomServersResource(t *testing.T) {
 		if !seen[uri] {
 			t.Fatalf("expected resources to include %q", uri)
 		}
+	}
+}
+
+func TestProxy_ResourcesList_SkipsStoppedServers(t *testing.T) {
+	ctx := context.Background()
+	client, server := mcp.NewPipeTransport()
+	requestedServers := make(chan string, 2)
+
+	go func() {
+		defer server.Close()
+
+		// Force legacy fallback path.
+		req, _ := server.Recv(ctx)
+		if req.Method == "loom/resources" {
+			_ = server.Send(ctx, mcp.NewErrorResponse(req.ID, mcp.MethodNotFound, "unknown method: loom/resources"))
+		}
+
+		// loom/servers
+		req, _ = server.Recv(ctx)
+		if req.Method == "loom/servers" {
+			resp, _ := mcp.NewResponse(req.ID, map[string]any{
+				"servers": []any{
+					map[string]any{"name": "alpha", "running": false},
+					map[string]any{"name": "beta", "running": true},
+				},
+			})
+			_ = server.Send(ctx, resp)
+		}
+
+		// Only running server should be queried.
+		req, _ = server.Recv(ctx)
+		if req.Method == "loom/call" {
+			var params struct {
+				Server string `json:"server"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			requestedServers <- params.Server
+			resp, _ := mcp.NewResponse(req.ID, map[string]any{
+				"resources": []any{
+					map[string]any{"uri": "r-beta", "name": "R-beta"},
+				},
+			})
+			_ = server.Send(ctx, resp)
+		}
+	}()
+
+	msg, err := mcp.NewRequest(1, "resources/list", map[string]any{})
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+
+	resp, err := handleProxyResourcesList(ctx, client, msg)
+	if err != nil {
+		t.Fatalf("handleProxyResourcesList returned error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got: %+v", resp)
+	}
+
+	select {
+	case serverName := <-requestedServers:
+		if serverName != "beta" {
+			t.Fatalf("expected only running server beta to be queried, got %q", serverName)
+		}
+	default:
+		t.Fatal("expected one resources/list probe request")
 	}
 }
 
