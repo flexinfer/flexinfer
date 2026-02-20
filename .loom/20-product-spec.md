@@ -2,70 +2,65 @@
 
 ## Summary
 
-Create and maintain a single planning home for FlexInfer that:
+Create a durable "Loom Context Pack baseline" for this FlexInfer workspace that provides:
 
-1) consolidates existing roadmap/status docs into an easy index (`docs/planning/`), and
-2) produces a prioritized “next series” feature plan grounded in real k3s operations.
+1. Current workspace and architecture context.
+2. Verified MCP/runtime tool inventory.
+3. A reliable implementation plan despite temporary semantic-index failure.
 
 ## Goals
 
-- Make it fast to answer: “what exists today?”, “what’s stable?”, “what should we build next?”
-- Establish a repeatable planning workflow (`docs/planning/` + `.loom/`) for ongoing iteration.
-- Prioritize reliability and operational clarity for v1alpha2 workflows.
+- Ensure planning and execution can start from reproducible, sourced `.loom` documents.
+- Make MCP/tool selection explicit and evidence-backed.
+- Define a concrete path to restore `codebase_memory` indexing readiness.
 
 ## Non-Goals
 
-- Rewrite the entire documentation set.
-- Decide long-term multi-tenancy / enterprise scope prematurely.
+- No runtime behavior changes to FlexInfer components.
+- No CRD, controller, or scheduler feature changes in this task.
+- No attempt to solve long-term roadmap scope inside this baseline refresh.
 
-## Users / Stakeholders
+## Stakeholders
 
-- Homelab operator (primary): wants reliable GPU scheduling, model routing, and low-toil ops.
-- Contributors: want clear backlog slices and acceptance criteria.
+- Contributors running multi-step implementation loops in this repo.
+- Agents/humans requiring handoff-safe planning artifacts.
 
 ## Requirements
 
 ### Functional
 
-- Provide a feature inventory + next roadmap docs under `docs/planning/`.
-- Produce a concrete near-term implementation plan with milestones and acceptance checks.
+- Refresh `.loom/00-workspace-snapshot.md`.
+- Produce current `.loom/00-mcp-inventory.md` with runtime-mode detection and fallback strategy.
+- Produce synchronized research/spec/plan artifacts (`10`, `20`, `30`) with explicit sources.
+- Record decisions and worklog entries for this run.
 
 ### Non-Functional
 
-- Planning docs should be easy to “site-sync” (plain Markdown; consistent structure).
-- Changes should be incremental and minimize churn across existing docs.
+- All non-trivial claims must cite file line refs or exact command outputs.
+- Artifacts must clearly separate facts from assumptions.
+- Plans must include explicit acceptance criteria.
 
-## UX / Flows
+## Acceptance Criteria
 
-- “Where do I start?” → `docs/README.md` → `docs/planning/README.md` → `docs/planning/next-roadmap.md`
-
-## Data / APIs
-
-- Plans should reference the active APIs:
-  - v1alpha2 `Model` (`ai.flexinfer/v1alpha2`)
-
-## Rollout / Migration
-
-- Add new planning docs without moving/renaming existing canonical docs.
-- Update navigation (`docs/nav.yaml`) to include Planning section.
-
-## Observability
-
-- Logs:
-- Metrics:
-- Traces:
+- `.loom` docs are internally consistent and reference this session's evidence.
+- MCP inventory states runtime mode and fallback used.
+- Plan contains a practical remediation sequence for `codebase_memory` readiness.
 
 ## Risks
 
-- Planning docs drift from reality if not updated with releases/ops learnings.
+- If indexing remains broken, subsequent planning cycles may regress to manual-only discovery.
+- MCP inventory can drift unless refreshed periodically.
 
 ## Open Questions
 
-- What is the “compatibility contract” for v1alpha2 (breaking vs non-breaking changes)?
+- Preferred ownership for fixing Qdrant schema/id compatibility (`codebase_memory` side vs environment configuration).
+- Canonical `repo_id` naming policy across workspace repositories.
 
 ## Sources
 
-- [S1] `ROADMAP.md`
-- [S2] `docs/IMPLEMENTATION_STATUS.md`
-- [S3] `docs/README.md`
-- [S4] `docs/nav.yaml`
+- [S1] `AGENTS.md:7`
+- [S2] `AGENTS.md:14`
+- [S3] `.loom/00-workspace-snapshot.md:11`
+- [C1] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/init_loom_context.py --root .`
+- [C2] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+- [C3] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`

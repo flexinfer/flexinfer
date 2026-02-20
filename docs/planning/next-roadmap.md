@@ -120,9 +120,10 @@ Progress note:
 
 Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
 
-- [ ] Process scheduled Renovate updates and validate affected test/build paths
-- [ ] Merge staged dependency update batches (minor/patch first, then majors)
-- [ ] Keep roadmap tracking issue `#1` synchronized with dependency rollout status
+- [x] Merge first minor/patch dependency batches (`prometheus`, `golang-x`) into `master` (`a16b2d1`)
+- [ ] Continue remaining minor/patch Renovate batches (`all-minor-patch`, `testing`, `helm`, `kubernetes`) with local + CI verification
+- [ ] Stage major docker updates in a separate rollout after minor/patch stabilization
+- [x] Keep roadmap tracking issue `#1` synchronized with dependency rollout status (updated 2026-02-20)
 
 ## Tech Debt (Ongoing)
 

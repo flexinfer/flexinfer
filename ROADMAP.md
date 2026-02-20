@@ -21,12 +21,14 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
 Open roadmap scope is currently maintenance-focused:
-- Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
+- Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)) — in progress, with Prometheus + golang-x minor/patch batches merged to `master` (`a16b2d1`)
 - Next roadmap slice selection and tracking updates ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
 
 Recently closed roadmap slices:
 - Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
 - Quantization pipelines and quality validation gate ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
+- Cold-start reliability guardrails for long-loading models merged to `master` (Loading-phase idle timeout guard + proxy conflict retry + per-model GPUGroup timeout path) (`fad43a7`)
+- Diffusers ROCm robustness updates merged to `master` (single-file checkpoint support + SDXL auto-detection/offload path) (`a16b2d1`)
 
 ### Implemented Features
 - ✅ **Node Agent**: Hardware detection and labeling system

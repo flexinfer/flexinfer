@@ -2,56 +2,76 @@
 
 ## Problem
 
-Planning and “what’s next” information is currently spread across `ROADMAP.md`, `docs/IMPLEMENTATION_STATUS.md`, and various spec/user/dev docs. We need a single planning entry point and a next-slice roadmap grounded in real operations.
+We need a current, evidence-backed planning baseline for FlexInfer that is safe to use immediately in this workspace, including tool/runtime capabilities and known blockers.
 
 ## Questions
 
-- What planning docs already exist, and which ones should remain canonical?
-- What is the current feature inventory (shipped vs partial vs missing)?
-- What should the next implementation series prioritize?
+- What is the current local repo state and architecture context?
+- Which MCP inventory path is actually available in this session?
+- Is `codebase_memory` indexing/search ready for planning workflows?
 
 ## Constraints
 
-- Keep existing canonical docs in place; add planning docs without renames/moves.
-- Keep planning docs “site-syncable” (plain Markdown).
+- Work with current branch state (do not discard local changes).
+- Treat unsupported/unavailable MCP resource APIs as hard constraints.
+- Separate observed facts from assumptions.
 
 ## Method
 
-- What you inspected (files/commands/tools) and why
+- Ran `plan-loom-core` scripts to refresh `.loom/` scaffolding and workspace snapshot.
+- Queried MCP resource discovery (`list_mcp_resources`, `list_mcp_resource_templates`).
+- Used `loom` CLI fallback for server/tool inventory and counts.
+- Ran `codebase_memory` stats/index start/poll checks for `repo_id=flexinfer`.
+- Collected architecture anchors from `AGENTS.md`.
 
-- Listed existing docs and roadmap/status docs under `docs/`.
-- Identified where navigation is defined (`docs/nav.yaml`) so planning docs are discoverable.
+## Findings (Facts)
 
-## Findings
+- FlexInfer architecture context remains six cooperating executables documented in `AGENTS.md`.
+- Initial snapshot in this research run showed `master` behind `origin/master`; repository has since been reconciled and `master` is aligned at `a16b2d1`.
+- MCP resource/template APIs returned empty collections, so loom-resource mode was not available through MCP resource reads.
+- CLI fallback succeeded and reported `42` running servers and `445` tools.
+- `codebase_memory` index readiness failed for this repo:
+  - baseline stats require `repo_id`,
+  - `repo_id=flexinfer` shows `0` chunks,
+  - two index attempts failed (vector schema mismatch, then invalid point-id format),
+  - subsequent stats calls returned transport closed.
 
-- Canonical “status + roadmap” already exists:
-  - `ROADMAP.md` (high-level)
-  - `docs/IMPLEMENTATION_STATUS.md` (detail)
-- There was no `docs/planning/` section; adding it improves discoverability and reduces “where should planning live?” ambiguity.
+## Update (2026-02-19, later in session)
 
-## Options
+- After recreating `codebase_memory_v1` with vector size `1536` and rebuilding `mcp-codebase-memory`, indexing succeeded:
+  - `job_id=1869e8aca6a0ab14`
+  - `chunks_total=1877`
+  - `errors=0`
+- Semantic lookup now returns expected symbols (for example `ModelReconciler` in `controllers/model_controller.go`).
+- The remaining issue is bridge-specific: direct `functions.mcp__loom__*` calls in this chat still return `Transport closed`, while `loom tools call ...` works.
 
-### Option A
+## Assumptions
 
-- Pros:
-- Cons:
-- Risks:
-
-### Option B
-
-- Pros:
-- Cons:
-- Risks:
+- `repo_id=flexinfer` is the intended identifier for this workspace until explicitly changed.
+- CLI inventory (`loom servers/tools`) is trustworthy enough for planning despite MCP resource discovery gaps.
 
 ## Recommendation
 
-Add `docs/planning/` as the canonical forward-looking planning home (index + feature inventory + next roadmap), and maintain deeper planning artifacts in `.loom/` for structured work and handoffs.
+- Use this `.loom` pack as the planning baseline now.
+- Prioritize a short recovery task to restore `codebase_memory` indexing before relying on semantic search-driven workflows.
+- Continue using shell-native discovery as primary mechanism until index health is verified.
 
 ## Sources
 
-Use stable references: workspace file paths with line numbers when possible (e.g. `src/foo.ts:42`), command outputs (include the command), and URLs.
-
-- [S1] `ROADMAP.md`
-- [S2] `docs/IMPLEMENTATION_STATUS.md`
-- [S3] `docs/nav.yaml`
-- [S4] `docs/README.md`
+- [S1] `AGENTS.md:7`
+- [S2] `AGENTS.md:12`
+- [S3] `AGENTS.md:13`
+- [S4] `AGENTS.md:14`
+- [S5] `AGENTS.md:15`
+- [S6] `AGENTS.md:16`
+- [S7] `.loom/00-workspace-snapshot.md:11`
+- [S8] `.loom/00-workspace-snapshot.md:12`
+- [C1] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+- [C2] `loom servers --json | jq '.servers | length'` -> `42`
+- [C3] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`
+- [C4] `functions.list_mcp_resources({})` -> `resources: []`
+- [C5] `functions.list_mcp_resource_templates({})` -> `resourceTemplates: []`
+- [C6] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"5380e4246b4b7cf1\"})`
+- [C7] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"237b41f443376c18\"})`
+- [C8] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json`
+- [C9] `loom tools call codebase_memory__codebase_get_definition --args '{"repo_id":"flexinfer","symbol":"ModelReconciler","limit":5}' --json`
