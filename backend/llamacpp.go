@@ -124,6 +124,11 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--chat-template", chatTemplate)
 	}
 
+	// Jinja template engine (required for tool/function calling support)
+	if spec.ConfigBool("jinja", false) {
+		args = append(args, "--jinja")
+	}
+
 	// Explicit device selection (useful on multi-GPU nodes).
 	// If "device" is unset, fall back to gpuDeviceOrdinal for compatibility.
 	if device := spec.ConfigString("device", ""); device != "" {

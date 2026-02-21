@@ -38,6 +38,7 @@ spec:
     batchSize: 2048
     cacheTypeK: q8_0
     cacheTypeV: q8_0
+    jinja: true
   resources:
     requests:
       memory: 16Gi

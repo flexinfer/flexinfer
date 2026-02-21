@@ -75,6 +75,36 @@ func TestLlamaCppBackendEnv_AMDDevicePinningFromOrdinal(t *testing.T) {
 	}
 }
 
+func TestLlamaCppBackendArgs_JinjaFlag(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	t.Run("enabled", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/test/model.gguf",
+			Config: map[string]interface{}{
+				"jinja": true,
+			},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--jinja") {
+			t.Fatalf("expected args to contain --jinja, got %#v", args)
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/test/model.gguf",
+			Config:    map[string]interface{}{},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--jinja") {
+			t.Fatalf("expected args to NOT contain --jinja, got %#v", args)
+		}
+	})
+}
+
 func argValue(args []string, key string) string {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == key {
