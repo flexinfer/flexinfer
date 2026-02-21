@@ -26,6 +26,11 @@ type Profile struct {
 	SyncGeneratedOnly bool
 	SkillsTarget      string // Target name for skills generator (mirrors GeneratorTarget)
 	SkillsManifest    string // Filename of skills manifest (e.g., ".loom-skills-manifest.json")
+	// SkillsDirectToHome generates skills directly into the home directory instead
+	// of the repo directory. This avoids duplication when the CLI discovers skills
+	// from both repo and home (e.g. Gemini CLI reading ~/.gemini/skills/ and
+	// <repo>/.gemini/skills/ simultaneously).
+	SkillsDirectToHome bool
 
 	// DefaultLoomMode generates a single loom proxy entry instead of individual servers.
 	// Useful for platforms that can't resolve template patterns at runtime (e.g. Claude Code).
@@ -132,6 +137,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:   true,
 		SkillsTarget:        "gemini",
 		SkillsManifest:      ".loom-skills-manifest.json",
+		SkillsDirectToHome:  true,
 		DefaultLoomMode:     true,
 	}
 

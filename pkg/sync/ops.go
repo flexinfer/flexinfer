@@ -162,8 +162,8 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
-	// Sync skill files from manifest
-	if p.SkillsManifest != "" {
+	// Sync skill files from manifest (skip when skills are generated directly to home)
+	if p.SkillsManifest != "" && !p.SkillsDirectToHome {
 		manifest, _ := skills.ReadManifest(repoPath)
 		if manifest != nil && len(manifest.Generated) > 0 {
 			for _, relPath := range manifest.Generated {
@@ -218,6 +218,12 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 
 	switch p.Name {
 	case "gemini":
+		// Prune extensions that define mcpServers (redundant with loom proxy).
+		pruned, pruneErr := pruneGeminiMCPExtensions(homePath)
+		if pruneErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: extension pruning failed: %v\n", pruneErr)
+		}
+		geminiSnapshot = filterPrunedExtensions(geminiSnapshot, pruned)
 		if err := ensureGeminiConfigFiles(homePath, geminiSnapshot); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not verify Gemini config files: %v\n", err)
 		}
@@ -862,14 +868,27 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 		return nil // No skills registry found, skip silently
 	}
 
+	// When skills go directly to home, clean stale repo copies first.
+	if p.SkillsDirectToHome {
+		m.cleanRepoSkills(p)
+	}
+
 	repoPath := m.ResolveRepoPath(p)
 	fmt.Printf("Generating skills for %s from %s...\n", p.Name, skillsRegPath)
+
+	// When SkillsDirectToHome, generate directly into the home directory
+	// so skills exist in only one place (avoiding duplication warnings).
+	outputDir := ""
+	if p.SkillsDirectToHome {
+		outputDir = m.ResolveHomePath(p)
+	}
 
 	gen, err := skills.NewGenerator(skills.GeneratorOptions{
 		RegistryPath:  skillsRegPath,
 		Target:        p.SkillsTarget,
 		RepoRoot:      m.RepoRoot,
 		WorkspaceRoot: m.RepoRoot,
+		OutputDir:     outputDir,
 		// Codex normally generates directly into ~/.codex/skills; for sync we generate
 		// into the repo's .codex/ so status + sync can verify and propagate changes.
 		CodexSkillsDir: func() string {
@@ -887,13 +906,168 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 		return fmt.Errorf("generate skills: %w", err)
 	}
 
-	// Count generated files from manifest
-	manifest, _ := skills.ReadManifest(repoPath)
+	// Read manifest from the directory where skills were generated.
+	manifestDir := repoPath
+	if p.SkillsDirectToHome {
+		manifestDir = m.ResolveHomePath(p)
+	}
+	manifest, _ := skills.ReadManifest(manifestDir)
 	if manifest != nil {
 		fmt.Printf("Generated %d skill files for %s\n", len(manifest.Generated), p.Name)
 	}
 
 	return nil
+}
+
+// cleanRepoSkills removes stale skill files from the repo directory when
+// skills are generated directly to home (SkillsDirectToHome).
+func (m *Manager) cleanRepoSkills(p *Profile) {
+	repoPath := m.ResolveRepoPath(p)
+
+	// Remove the skills directory (e.g. <repo>/.gemini/skills/)
+	skillsDir := filepath.Join(repoPath, "skills")
+	if Exists(skillsDir) {
+		if err := os.RemoveAll(skillsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove stale repo skills %s: %v\n", skillsDir, err)
+		} else {
+			fmt.Printf("Cleaned stale repo skills: %s\n", skillsDir)
+		}
+	}
+
+	// Remove the manifest file
+	manifestPath := filepath.Join(repoPath, skills.ManifestFilename)
+	if Exists(manifestPath) {
+		if err := os.Remove(manifestPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove stale manifest %s: %v\n", manifestPath, err)
+		}
+	}
+
+	// Remove instructions.md if it exists (generated alongside skills)
+	instructionsPath := filepath.Join(repoPath, "instructions.md")
+	if Exists(instructionsPath) {
+		if err := os.Remove(instructionsPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove stale instructions %s: %v\n", instructionsPath, err)
+		}
+	}
+}
+
+// pruneGeminiMCPExtensions scans ~/.gemini/extensions/*/gemini-extension.json
+// and removes any extension directory whose manifest defines mcpServers.
+// These are redundant because the loom proxy covers all MCP needs.
+// Returns the list of pruned extension names.
+func pruneGeminiMCPExtensions(homePath string) ([]string, error) {
+	extensionsDir := filepath.Join(homePath, "extensions")
+	if !Exists(extensionsDir) {
+		return nil, nil
+	}
+
+	entries, err := os.ReadDir(extensionsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read extensions dir: %w", err)
+	}
+
+	var pruned []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		manifestPath := filepath.Join(extensionsDir, name, "gemini-extension.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue // No manifest, skip
+		}
+
+		var manifest map[string]json.RawMessage
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+
+		if _, hasMCP := manifest["mcpServers"]; !hasMCP {
+			continue // No MCP servers, preserve this extension
+		}
+
+		extDir := filepath.Join(extensionsDir, name)
+		if err := os.RemoveAll(extDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not prune extension %s: %v\n", name, err)
+			continue
+		}
+		pruned = append(pruned, name)
+		fmt.Printf("Pruned Gemini MCP extension: %s\n", name)
+	}
+
+	if len(pruned) > 0 {
+		if err := removeFromExtensionEnablement(homePath, pruned); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not update extension-enablement.json: %v\n", err)
+		}
+	}
+
+	return pruned, nil
+}
+
+// removeFromExtensionEnablement removes pruned extension names from
+// ~/.gemini/extensions/extension-enablement.json.
+func removeFromExtensionEnablement(homePath string, names []string) error {
+	path := filepath.Join(homePath, "extensions", "extension-enablement.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil // Invalid JSON, leave as-is
+	}
+
+	changed := false
+	for _, name := range names {
+		if _, ok := obj[name]; ok {
+			delete(obj, name)
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	updated, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, append(updated, '\n'), 0o600)
+}
+
+// filterPrunedExtensions removes pruned extension manifests from the pre-sync
+// snapshot so ensureGeminiExtensionManifests() doesn't restore them.
+func filterPrunedExtensions(snapshot geminiConfigSnapshot, pruned []string) geminiConfigSnapshot {
+	if len(pruned) == 0 || len(snapshot.extensionManifests) == 0 {
+		return snapshot
+	}
+
+	prunedSet := make(map[string]struct{}, len(pruned))
+	for _, name := range pruned {
+		prunedSet[name] = struct{}{}
+	}
+
+	filtered := make(map[string][]byte, len(snapshot.extensionManifests))
+	for relPath, data := range snapshot.extensionManifests {
+		// relPath is like "extensions/<name>/gemini-extension.json"
+		parts := strings.Split(filepath.ToSlash(relPath), "/")
+		if len(parts) >= 2 {
+			extName := parts[1] // "extensions/<name>/..."
+			if _, isPruned := prunedSet[extName]; isPruned {
+				continue
+			}
+		}
+		filtered[relPath] = data
+	}
+
+	snapshot.extensionManifests = filtered
+	return snapshot
 }
 
 // SyncSkills generates and syncs skill files for a profile.
@@ -909,6 +1083,16 @@ func (m *Manager) SyncSkills(profileName string) error {
 	// Generate skills
 	if err := m.regenerateSkills(p); err != nil {
 		return err
+	}
+
+	// When skills are generated directly to home, no copy step needed.
+	if p.SkillsDirectToHome {
+		homePath := m.ResolveHomePath(p)
+		manifest, _ := skills.ReadManifest(homePath)
+		if manifest != nil {
+			fmt.Printf("Generated %d skill files directly to %s\n", len(manifest.Generated), homePath)
+		}
+		return nil
 	}
 
 	// Sync skill files from repo to home

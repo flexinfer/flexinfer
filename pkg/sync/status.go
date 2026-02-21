@@ -103,7 +103,13 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 
 	// Check skill files for drift via manifest
 	if profile.SkillsManifest != "" {
-		skillDrift := compareSkillFiles(repoPath, homePath, profile)
+		var skillDrift []DriftItem
+		if profile.SkillsDirectToHome {
+			// Skills live only in home; verify they exist there.
+			skillDrift = compareHomeSkillFiles(homePath)
+		} else {
+			skillDrift = compareSkillFiles(repoPath, homePath, profile)
+		}
 		status.DriftDetails = append(status.DriftDetails, skillDrift...)
 		for _, item := range skillDrift {
 			if item.Status != DriftInSync {
@@ -280,6 +286,27 @@ func compareSkillFiles(repoPath, homePath string, profile *Profile) []DriftItem 
 		}
 	}
 
+	return items
+}
+
+// compareHomeSkillFiles checks that skill files listed in the home manifest exist
+// in the home directory. Used when SkillsDirectToHome is true (no repo copy).
+func compareHomeSkillFiles(homePath string) []DriftItem {
+	manifest, _ := skills.ReadManifest(homePath)
+	if manifest == nil || len(manifest.Generated) == 0 {
+		return nil
+	}
+
+	var items []DriftItem
+	for _, relPath := range manifest.Generated {
+		homeFile := filepath.Join(homePath, relPath)
+		if Exists(homeFile) {
+			homeHash, _ := hashFile(homeFile)
+			items = append(items, DriftItem{File: relPath, HomeHash: homeHash, Status: DriftInSync})
+		} else {
+			items = append(items, DriftItem{File: relPath, Status: DriftMissing})
+		}
+	}
 	return items
 }
 
