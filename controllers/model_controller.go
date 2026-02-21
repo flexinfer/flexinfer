@@ -1956,6 +1956,10 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 				if node.Labels != nil {
 					arch = node.Labels["gpu.amd.com/gpu-architecture"]
 					if arch == "" {
+						// FlexInfer agent sets this label via rocminfo detection.
+						arch = node.Labels["flexinfer.ai/gpu.arch"]
+					}
+					if arch == "" {
 						// ROCm arch label isn't always present; fall back to common node-level labels.
 						// Prefer RDNA3 dGPU (GC 11.0.0) when multiple AMD GPUs exist on the same node.
 						if node.Labels["amd.com/gpu.family.GC_11_0_0"] != "" {
