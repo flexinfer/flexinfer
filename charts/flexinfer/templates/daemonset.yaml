@@ -25,7 +25,7 @@ spec:
       containers:
         - name: agent
           image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.agent.image }}
           securityContext:
             privileged: true # Required for hardware access
             runAsUser: 0     # Must run as root for GPU access

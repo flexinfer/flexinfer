@@ -89,6 +89,26 @@ Create the name of the service account to use
 {{- end -}}
 {{- end -}}
 
+{{/*
+Resolve imagePullPolicy for a given image config block.
+If pullPolicy is explicitly set, use it. Otherwise auto-detect:
+  - "Always" for mutable tags (master, latest, empty)
+  - "IfNotPresent" for immutable tags (anything else)
+Usage: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
+*/}}
+{{- define "flexinfer.imagePullPolicy" -}}
+{{- if .pullPolicy -}}
+  {{- .pullPolicy -}}
+{{- else -}}
+  {{- $tag := .tag | default "" -}}
+  {{- if or (eq $tag "") (eq $tag "latest") (eq $tag "master") (eq $tag "main") -}}
+    Always
+  {{- else -}}
+    IfNotPresent
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "flexinfer.benchmarkerServiceAccountName" -}}
 {{- if .Values.serviceAccounts.benchmarker.create -}}
 {{- default (printf "%s-benchmarker" (include "flexinfer.fullname" .)) .Values.serviceAccounts.benchmarker.name -}}

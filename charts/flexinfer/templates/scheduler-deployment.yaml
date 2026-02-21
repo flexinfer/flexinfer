@@ -40,7 +40,7 @@ spec:
       initContainers:
         - name: kubeconfig-init
           image: "{{ .Values.scheduler.kubeconfigInit.image.repository }}:{{ .Values.scheduler.kubeconfigInit.image.tag }}"
-          imagePullPolicy: {{ .Values.scheduler.kubeconfigInit.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.kubeconfigInit.image }}
           command:
             - /bin/sh
             - -ec
@@ -70,7 +70,7 @@ spec:
       containers:
         - name: flexinfer-scheduler
           image: "{{ .Values.scheduler.image.repository }}:{{ .Values.scheduler.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.scheduler.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.image }}
           args:
             - --port={{ .Values.scheduler.port }}
           ports:
@@ -106,7 +106,7 @@ spec:
               value: "{{ .Values.scheduler.tenantFairShare.tenantLabelKey }}"
         - name: kube-scheduler
           image: "{{ .Values.scheduler.kubeScheduler.image.repository }}:{{ .Values.scheduler.kubeScheduler.image.tag }}"
-          imagePullPolicy: {{ .Values.scheduler.kubeScheduler.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.kubeScheduler.image }}
           command:
             - kube-scheduler
           args:

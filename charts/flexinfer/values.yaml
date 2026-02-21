@@ -40,8 +40,8 @@ controller:
   replicas: 1
   image:
     repository: ghcr.io/flexinfer/flexinfer-controller
-    pullPolicy: IfNotPresent
-    # Overrides the image tag whose default is the chart appVersion.
+    # pullPolicy auto-detected from tag: Always for mutable (latest/master), IfNotPresent for SHA tags.
+    # Override with an explicit pullPolicy to disable auto-detection.
     tag: "latest"
   # Optional scheduling controls for the controller Deployment.
   # Useful when your cluster has mixed architectures (e.g., arm64 nodes).
@@ -71,7 +71,6 @@ agent:
   enabled: true
   image:
     repository: ghcr.io/flexinfer/flexinfer-agent
-    pullPolicy: IfNotPresent
     tag: "latest"
   resources:
     limits:
@@ -86,7 +85,6 @@ proxy:
   replicaCount: 1
   image:
     repository: ghcr.io/flexinfer/flexinfer-proxy
-    pullPolicy: IfNotPresent
     tag: "latest"
   service:
     type: ClusterIP
@@ -230,7 +228,6 @@ scheduler:
   port: 8082
   image:
     repository: ghcr.io/flexinfer/flexinfer-scheduler
-    pullPolicy: IfNotPresent
     tag: "latest"
   # Optional scheduling controls for the scheduler Deployment.
   # Useful when your cluster has mixed architectures (e.g., arm64 nodes).
@@ -276,7 +273,6 @@ benchmarker:
   postgresDsn: ""
   image:
     repository: ghcr.io/flexinfer/flexinfer-bench
-    pullPolicy: IfNotPresent
     tag: "latest"
 
 # Quantization runtime images used by ModelCache quantization jobs.

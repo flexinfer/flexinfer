@@ -24,7 +24,7 @@ spec:
       containers:
         - name: proxy
           image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.proxy.image }}
           ports:
             - name: http
               containerPort: 8080

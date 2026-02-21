@@ -40,7 +40,7 @@ spec:
       containers:
         - name: manager
           image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
           command:
             - /manager
           args:
