@@ -171,17 +171,10 @@ func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// Add ROCm environment for AMD GPUs.
 	// llama.cpp uses HIP directly (not PyTorch), so PYTORCH_* vars are
-	// irrelevant but harmless. HSA_OVERRIDE_GFX_VERSION, however, must
-	// match the actual GPU — gfx906 is natively supported and must NOT
-	// be overridden to 11.0.0.
+	// irrelevant but harmless. ROCmEnvVars handles per-arch differences
+	// (gfx906 gets HSA_ENABLE_SDMA=0 instead of gfx1100 HSA override).
 	if spec.GPUVendor == GPUVendorAMD {
-		if strings.HasPrefix(spec.GPUArch, "gfx906") {
-			// Radeon VII (Vega20): natively supported by ROCm.
-			// Disable SDMA for stability on Vega20.
-			env = append(env, corev1.EnvVar{Name: "HSA_ENABLE_SDMA", Value: "0"})
-		} else {
-			env = append(env, ROCmEnvVars()...)
-		}
+		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
 		// Optional device pinning for systems exposing multiple AMD GPUs.
 		// Keep behavior aligned with MLC-LLM config keys for easier migration.

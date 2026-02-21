@@ -4,6 +4,7 @@
 package backend
 
 import (
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -251,34 +252,47 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 	return 5 * time.Minute
 }
 
-// ROCmEnvVars returns common environment variables for AMD ROCm GPUs.
-// Use this helper in backend Env() implementations for AMD GPU support.
-// Optimized for gfx1100 (RX 7900 XTX) and RDNA3 architecture.
+// ROCmEnvVars returns environment variables appropriate for the given AMD GPU
+// architecture. Pass spec.GPUArch (e.g., "gfx1100", "gfx906").
 //
-// Note: Some AMD GPU device plugin setups do not set HIP_VISIBLE_DEVICES /
-// ROCR_VISIBLE_DEVICES automatically. Prefer leaving them unset, but allow
-// opting in via per-model config (e.g., to force the discrete GPU on systems
-// that expose both an iGPU and dGPU to the container runtime).
-//
-// Note: LD_LIBRARY_PATH and LD_PRELOAD are no longer needed as mlc-llm:rocm64-v4+
-// images bundle all required libraries with matching glibc version (Ubuntu 24.04).
-func ROCmEnvVars() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{
-			Name:  "HSA_OVERRIDE_GFX_VERSION",
-			Value: "11.0.0", // RDNA3 (RX 7900 series)
-		},
-		{
-			// Critical for gfx1100 stability - enables experimental AOTriton
-			// flash attention which prevents SIGSEGV crashes on RDNA3.
-			Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-			Value: "1",
-		},
-		{
-			Name:  "PYTORCH_ROCM_ARCH",
-			Value: "gfx1100",
-		},
+// Architecture-specific behavior:
+//   - gfx110x (RDNA3, RX 7900 series): HSA override 11.0.0, AOTriton, PYTORCH_ROCM_ARCH
+//   - gfx906 (Vega20, Radeon VII): disable SDMA for stability, PYTORCH_ROCM_ARCH
+//   - unknown/empty: only PYTORCH_ROCM_ARCH if arch is known, no HSA override
+func ROCmEnvVars(arch string) []corev1.EnvVar {
+	var env []corev1.EnvVar
+
+	switch {
+	case strings.HasPrefix(arch, "gfx110"):
+		// RDNA3 (RX 7900 series)
+		env = append(env,
+			corev1.EnvVar{Name: "HSA_OVERRIDE_GFX_VERSION", Value: "11.0.0"},
+			corev1.EnvVar{
+				// Critical for gfx1100 stability — enables experimental AOTriton
+				// flash attention which prevents SIGSEGV crashes on RDNA3.
+				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+				Value: "1",
+			},
+			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx1100"},
+		)
+	case strings.HasPrefix(arch, "gfx906"):
+		// Vega20 (Radeon VII): natively supported by ROCm, no HSA override needed.
+		// Disable SDMA for stability on Vega20.
+		env = append(env,
+			corev1.EnvVar{Name: "HSA_ENABLE_SDMA", Value: "0"},
+			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx906"},
+		)
+	default:
+		// Unknown or unspecified arch — set PYTORCH_ROCM_ARCH if known,
+		// but do not override HSA version.
+		if arch != "" {
+			env = append(env,
+				corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: arch},
+			)
+		}
 	}
+
+	return env
 }
 
 // HTTPReadinessProbe creates a standard HTTP readiness probe.

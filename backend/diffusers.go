@@ -96,7 +96,7 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
-		env = append(env, ROCmEnvVars()...)
+		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 		// CPU offload: moves pipeline components to GPU one at a time instead
 		// of bulk .to("cuda"). Avoids ROCm memory access faults with large
 		// models (e.g. full SDXL) on gfx1100. ~20-30% slower but stable.

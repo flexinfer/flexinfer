@@ -106,9 +106,7 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
-		// Only set HSA_OVERRIDE_GFX_VERSION if the GPU requires it.
-		// Native architectures like gfx906 shouldn't have the 11.0.0 override globally.
-		env = append(env, ROCmEnvVars()...)
+		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
 		// vLLM-specific ROCm enhancements
 		if strings.HasPrefix(spec.GPUArch, "gfx110") {

@@ -91,7 +91,7 @@ func (b *ComfyUIBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
-		env = append(env, ROCmEnvVars()...)
+		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 	}
 
 	return env
