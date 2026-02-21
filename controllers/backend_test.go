@@ -637,6 +637,9 @@ func TestGetBackendEnv_VLLMOmni_AMD_InheritsVLLMROCmEnv(t *testing.T) {
 			VLLM: &aiv1alpha1.VLLMSpec{
 				HIPVisibleDevices: "1",
 			},
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx1100",
+			},
 		},
 	}
 

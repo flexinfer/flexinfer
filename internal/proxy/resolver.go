@@ -200,6 +200,78 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	p.lastCacheRefresh = time.Now()
 }
 
+// modelAliasCacheTTL is how long the model alias cache is valid before refresh.
+const modelAliasCacheTTL = 5 * time.Second
+
+// resolveModelAlias resolves a servedModelName or alias to the K8s Model resource name.
+// Returns the K8s name if the alias was resolved, or the original input if no mapping found.
+func (p *Proxy) resolveModelAlias(ctx context.Context, nameOrAlias string) string {
+	// Check cache first
+	if k8sName, ok := p.modelAliasCache.Load(nameOrAlias); ok {
+		return k8sName.(string)
+	}
+
+	// Refresh cache if stale
+	p.refreshModelAliasCache(ctx)
+
+	// Check again after refresh
+	if k8sName, ok := p.modelAliasCache.Load(nameOrAlias); ok {
+		return k8sName.(string)
+	}
+
+	return nameOrAlias
+}
+
+// refreshModelAliasCache rebuilds the alias → K8s name mapping from all v1alpha2 Models.
+// It maps both spec.litellm.servedModelName and spec.litellm.aliases[] to the resource name.
+func (p *Proxy) refreshModelAliasCache(ctx context.Context) {
+	p.modelAliasCacheMu.Lock()
+	defer p.modelAliasCacheMu.Unlock()
+
+	if time.Since(p.lastAliasRefresh) < modelAliasCacheTTL {
+		return
+	}
+
+	var models aiv1alpha2.ModelList
+	if err := p.client.List(ctx, &models, client.InNamespace(p.namespace)); err != nil {
+		slog.Warn("failed to list models for alias cache refresh", "error", err)
+		return
+	}
+
+	// Collect all alias claims to detect conflicts
+	aliasClaims := make(map[string][]string) // alias -> []resourceName
+
+	for _, m := range models.Items {
+		resourceName := m.Name
+		if m.Spec.LiteLLM == nil {
+			continue
+		}
+		if served := m.Spec.LiteLLM.ServedModelName; served != "" && served != resourceName {
+			aliasClaims[served] = append(aliasClaims[served], resourceName)
+		}
+		for _, alias := range m.Spec.LiteLLM.Aliases {
+			alias = strings.TrimSpace(alias)
+			if alias != "" && alias != resourceName {
+				aliasClaims[alias] = append(aliasClaims[alias], resourceName)
+			}
+		}
+	}
+
+	// Clear and rebuild cache
+	p.modelAliasCache = sync.Map{}
+
+	for alias, claimants := range aliasClaims {
+		if len(claimants) > 1 {
+			slog.Warn("model alias claimed by multiple models",
+				"alias", alias, "models", claimants, "using", claimants[0])
+		}
+		p.modelAliasCache.Store(alias, claimants[0])
+		slog.Debug("model alias cache updated", "alias", alias, "model", claimants[0])
+	}
+
+	p.lastAliasRefresh = time.Now()
+}
+
 // extractModelFromSource extracts the model identifier from a v1alpha2 Source string.
 func extractModelFromSource(source string) string {
 	switch {

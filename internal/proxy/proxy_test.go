@@ -1006,3 +1006,215 @@ func TestGetBackendPort_ModelNotFound(t *testing.T) {
 	port := p.getBackendPort(ctx, "nonexistent-model")
 	assert.Equal(t, int32(8000), port, "Missing model should return default port 8000")
 }
+
+// Model Alias Resolution Tests
+
+func TestResolveModelAlias_ServedModelName(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create a v1alpha2 Model with servedModelName different from resource name
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-30b-a3b-abliterated",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://test/model",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "qwen3-30b-abliterated",
+				Aliases:         []string{"qwen3-30b", "qwen3-moe"},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// Resolve by servedModelName
+	result := p.resolveModelAlias(ctx, "qwen3-30b-abliterated")
+	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
+}
+
+func TestResolveModelAlias_Alias(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-30b-a3b-abliterated",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://test/model",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "qwen3-30b-abliterated",
+				Aliases:         []string{"qwen3-30b", "qwen3-moe"},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// Resolve by alias
+	result := p.resolveModelAlias(ctx, "qwen3-30b")
+	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
+
+	result = p.resolveModelAlias(ctx, "qwen3-moe")
+	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
+}
+
+func TestResolveModelAlias_DirectName(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "ollama",
+			Source:  "ollama://test",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "my-model-served",
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// K8s resource name should pass through unmodified (not in alias cache)
+	result := p.resolveModelAlias(ctx, "my-model")
+	assert.Equal(t, "my-model", result)
+}
+
+func TestResolveModelAlias_NoLiteLLMSpec(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Model without LiteLLM spec
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "plain-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://test/plain",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// Should return input as-is
+	result := p.resolveModelAlias(ctx, "unknown-alias")
+	assert.Equal(t, "unknown-alias", result)
+}
+
+func TestResolveModelAlias_ServedNameSameAsResource(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Model where servedModelName matches resource name (should not create mapping)
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "same-name-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "ollama",
+			Source:  "ollama://test",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "same-name-model",
+				Aliases:         []string{"same-name-model"},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// Neither servedModelName nor alias should create a mapping since they match the resource name
+	result := p.resolveModelAlias(ctx, "same-name-model")
+	assert.Equal(t, "same-name-model", result)
+
+	// Unrelated name should pass through
+	result = p.resolveModelAlias(ctx, "other-name")
+	assert.Equal(t, "other-name", result)
+}
+
+func TestResolveModelAlias_MultipleModels(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	// Create multiple models with different aliases
+	m1 := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-alpha",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://test/alpha",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "alpha-served",
+				Aliases:         []string{"fast-chat"},
+			},
+		},
+	}
+	m2 := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-beta",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "ollama",
+			Source:  "ollama://beta",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "beta-served",
+				Aliases:         []string{"embeddings"},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m1))
+	require.NoError(t, p.client.Create(ctx, m2))
+
+	assert.Equal(t, "model-alpha", p.resolveModelAlias(ctx, "alpha-served"))
+	assert.Equal(t, "model-alpha", p.resolveModelAlias(ctx, "fast-chat"))
+	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "beta-served"))
+	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "embeddings"))
+}
+
+func TestResolveModelAlias_CacheRefresh(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cached-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://test/cached",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "cached-served",
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	// First call populates cache
+	result := p.resolveModelAlias(ctx, "cached-served")
+	assert.Equal(t, "cached-model", result)
+
+	// Force cache expiry
+	p.modelAliasCacheMu.Lock()
+	p.lastAliasRefresh = time.Time{}
+	p.modelAliasCacheMu.Unlock()
+
+	// Update model aliases
+	require.NoError(t, p.client.Get(ctx, client.ObjectKey{Name: "cached-model", Namespace: "default"}, m))
+	m.Spec.LiteLLM.Aliases = []string{"new-alias"}
+	require.NoError(t, p.client.Update(ctx, m))
+
+	// Should pick up new alias after cache refresh
+	result = p.resolveModelAlias(ctx, "new-alias")
+	assert.Equal(t, "cached-model", result)
+}

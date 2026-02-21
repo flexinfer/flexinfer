@@ -141,6 +141,11 @@ type Proxy struct {
 	serviceLabelCacheMu sync.Mutex
 	lastCacheRefresh    time.Time
 
+	// Model alias cache: servedModelName/aliases -> K8s resource name
+	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
+	modelAliasCacheMu sync.Mutex
+	lastAliasRefresh  time.Time
+
 	// Configuration (can be overridden by env vars)
 	maxQueueSize       int           // Default: 100
 	queueTimeout       time.Duration // Default: 60s (how long request can wait in queue)
@@ -305,6 +310,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if resolvedName != modelName {
 		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
 		modelName = resolvedName
+		span.SetAttributes(attribute.String("flexinfer.model", modelName))
+	}
+
+	// 2b. Try to resolve model aliases (servedModelName / litellm aliases -> K8s name)
+	resolvedAlias := p.resolveModelAlias(ctx, modelName)
+	if resolvedAlias != modelName {
+		slog.Debug("resolved model alias", "alias", modelName, "model", resolvedAlias, "request_id", requestID)
+		modelName = resolvedAlias
 		span.SetAttributes(attribute.String("flexinfer.model", modelName))
 	}
 
