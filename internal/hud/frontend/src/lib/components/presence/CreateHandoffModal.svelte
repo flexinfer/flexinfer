@@ -3,7 +3,7 @@
   import Modal from '../../widgets/Modal.svelte';
 </script>
 
-<Modal title="Create Handoff" open={presenceActionsStore.showHandoffModal} onclose={() => presenceActionsStore.closeHandoffModal()}>
+<Modal title="Create Handoff" open={presenceActionsStore.showHandoffModal} onClose={() => presenceActionsStore.closeHandoffModal()}>
   <div class="form-group">
     <label class="form-label" for="handoff-to-agent">To Agent (optional)</label>
     <input id="handoff-to-agent" type="text" bind:value={presenceActionsStore.newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />

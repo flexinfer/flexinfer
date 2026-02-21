@@ -15,8 +15,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -395,6 +398,7 @@ not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentSessionStartCmd(),
 		newAgentSessionEndCmd(),
 		newAgentHeartbeatCmd(),
+		newAgentKeepaliveCmd(),
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
 		newAgentHookStatusCmd(),
@@ -628,6 +632,107 @@ func inferGitNamespace() string {
 	}
 
 	return repoName + "/" + branchName
+}
+
+// newAgentKeepaliveCmd creates the `loom agent keepalive` command.
+// It runs a background ticker loop that sends periodic heartbeats to keep
+// agent presence alive even when no tool use is occurring.
+func newAgentKeepaliveCmd() *cobra.Command {
+	var (
+		agentID   string
+		agentType string
+		interval  time.Duration
+		quiet     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "keepalive",
+		Short: "Background heartbeat daemon for agent presence",
+		Long: `Run a ticker loop that sends periodic heartbeats to keep agent presence
+alive. Designed to be spawned as a background process by session-start hooks
+and killed by session-end hooks via the PID file.
+
+Uses PID file deduplication: if a keepalive for the same agent-id is already
+running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if agentID == "" {
+				return fmt.Errorf("--agent-id is required")
+			}
+
+			pidFile := keepalivePIDPath(agentID)
+
+			// Dedup: if PID file exists and process is alive, exit silently.
+			if existing, err := os.ReadFile(pidFile); err == nil {
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(existing))); err == nil {
+					if proc, err := os.FindProcess(pid); err == nil {
+						// Signal 0 checks if process is alive without sending a real signal.
+						if proc.Signal(syscall.Signal(0)) == nil {
+							if !quiet {
+								fmt.Fprintf(os.Stderr, "keepalive already running (pid %d)\n", pid)
+							}
+							return nil
+						}
+					}
+				}
+			}
+
+			// Write PID file.
+			if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
+				return fmt.Errorf("create pid dir: %w", err)
+			}
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				return fmt.Errorf("write pid file: %w", err)
+			}
+			defer os.Remove(pidFile)
+
+			port := resolvePort(cmd)
+
+			// Set up signal handling for clean shutdown.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "keepalive started for %s (interval=%s, pid=%d)\n", agentID, interval, os.Getpid())
+			}
+
+			for {
+				select {
+				case <-ticker.C:
+					_, err := heartbeatWithFallback(cmd, port, agentID, "active")
+					if err != nil && !quiet {
+						fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
+					}
+				case <-sigCh:
+					if !quiet {
+						fmt.Fprintf(os.Stderr, "keepalive shutting down for %s\n", agentID)
+					}
+					// Best-effort deregister.
+					deregBody := map[string]string{"agent_id": agentID}
+					_, _ = hudPostFast(port, "/api/agent/deregister", deregBody, 3*time.Second)
+					return nil
+				}
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier (required)")
+	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type for bootstrap")
+	cmd.Flags().DurationVar(&interval, "interval", 20*time.Second, "Heartbeat interval")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
+
+	return cmd
+}
+
+// keepalivePIDPath returns the PID file path for a keepalive daemon.
+func keepalivePIDPath(agentID string) string {
+	tmpDir := os.Getenv("TMPDIR")
+	if tmpDir == "" {
+		tmpDir = "/tmp"
+	}
+	return filepath.Join(tmpDir, "loom-keepalive-"+agentID+".pid")
 }
 
 // newAgentTaskUpdateCmd creates the `loom agent task-update` command.

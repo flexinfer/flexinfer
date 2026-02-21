@@ -596,11 +596,16 @@ func claudeHooksConfig(reg *registry.Registry) map[string]any {
 
 // claudeHooks returns the hooks block for Claude Code settings.json.
 func claudeHooks(reg *registry.Registry) map[string]any {
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
 	policy := agentSafetyPolicyFromRegistry(reg)
 	sessionStartHooks := []map[string]any{
 		{
 			"type":    "command",
-			"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id claude-code --agent-type claude-code --description "Claude Code session" --auto-recall --quiet 2>/dev/null || true`,
+			"command": fmt.Sprintf(`loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "claude-code-$PPID" --agent-type claude-code --description "Claude Code session" --auto-recall --quiet %s || true`, log),
+		},
+		{
+			"type":    "command",
+			"command": fmt.Sprintf(`loom agent keepalive --agent-id "claude-code-$PPID" --agent-type claude-code --quiet %s &`, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -621,7 +626,7 @@ func claudeHooks(reg *registry.Registry) map[string]any {
 				"hooks": []map[string]any{
 					{
 						"type":    "command",
-						"command": "loom agent session-end --agent-id claude-code --summarize --quiet 2>/dev/null || true",
+						"command": fmt.Sprintf(`PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-claude-code-$PPID.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; loom agent session-end --agent-id "claude-code-$PPID" --summarize --quiet %s || true`, log),
 					},
 				},
 			},
@@ -643,7 +648,7 @@ func claudeHooks(reg *registry.Registry) map[string]any {
 				"hooks": []map[string]any{
 					{
 						"type":    "command",
-						"command": "loom agent heartbeat --agent-id claude-code --status active --ensure-session --agent-type claude-code --quiet 2>/dev/null || true",
+						"command": fmt.Sprintf(`loom agent heartbeat --agent-id "claude-code-$PPID" --status active --ensure-session --agent-type claude-code --quiet %s || true`, log),
 					},
 				},
 			},
@@ -875,8 +880,11 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		fmt.Fprintf(sb, "# Dirty-worktree mode: %s\n\n", policy.DirtyWorktreeMode)
 	}
 
+	// Codex notify uses a TOML string array with no shell expansion. Use sh -c
+	// to get $$ expansion for a per-process agent ID.
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-	sb.WriteString("notify = [\"loom\", \"agent\", \"heartbeat\", \"--agent-id\", \"codex\", \"--status\", \"active\", \"--ensure-session\", \"--infer-namespace\", \"--agent-type\", \"codex\", \"--quiet\"]\n\n")
+	sb.WriteString(`notify = ["sh", "-c", "exec loom agent heartbeat --agent-id \"codex-$$\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`)
+	sb.WriteString("\n\n")
 }
 
 // registryPlatformPerms returns the PlatformPermission for a given platform,
@@ -977,11 +985,16 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
 
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
 func geminiHooks(reg *registry.Registry) map[string]any {
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
 	policy := agentSafetyPolicyFromRegistry(reg)
 	sessionStartHooks := []map[string]any{
 		{
 			"type":    "command",
-			"command": `loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id gemini-cli --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet 2>/dev/null || true`,
+			"command": fmt.Sprintf(`loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "gemini-cli-$PPID" --agent-type gemini-cli --description "Gemini CLI session" --auto-recall --quiet %s || true`, log),
+		},
+		{
+			"type":    "command",
+			"command": fmt.Sprintf(`loom agent keepalive --agent-id "gemini-cli-$PPID" --agent-type gemini-cli --quiet %s &`, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -1002,7 +1015,7 @@ func geminiHooks(reg *registry.Registry) map[string]any {
 				"hooks": []map[string]any{
 					{
 						"type":    "command",
-						"command": "loom agent session-end --agent-id gemini-cli --summarize --quiet 2>/dev/null || true",
+						"command": fmt.Sprintf(`PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-gemini-cli-$PPID.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; loom agent session-end --agent-id "gemini-cli-$PPID" --summarize --quiet %s || true`, log),
 					},
 				},
 			},
@@ -1013,7 +1026,7 @@ func geminiHooks(reg *registry.Registry) map[string]any {
 				"hooks": []map[string]any{
 					{
 						"type":    "command",
-						"command": "loom agent heartbeat --agent-id gemini-cli --status active --ensure-session --agent-type gemini-cli --quiet 2>/dev/null || true",
+						"command": fmt.Sprintf(`loom agent heartbeat --agent-id "gemini-cli-$PPID" --status active --ensure-session --agent-type gemini-cli --quiet %s || true`, log),
 					},
 				},
 			},

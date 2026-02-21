@@ -132,7 +132,7 @@
 </div>
 
 <!-- Create Chain Modal -->
-<Modal title="New Reasoning Chain" open={showCreateModal} onclose={() => { showCreateModal = false; }}>
+<Modal title="New Reasoning Chain" open={showCreateModal} onClose={() => { showCreateModal = false; }}>
   <div class="form-field">
     <label class="form-label" for="reasoning-chain-title">Title</label>
     <input id="reasoning-chain-title" type="text" bind:value={newTitle} placeholder="Chain title..." />

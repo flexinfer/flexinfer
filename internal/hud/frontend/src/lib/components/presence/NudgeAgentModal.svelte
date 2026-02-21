@@ -3,7 +3,7 @@
   import Modal from '../../widgets/Modal.svelte';
 </script>
 
-<Modal title="Nudge Agent" open={presenceActionsStore.showNudgeModal} onclose={() => presenceActionsStore.closeNudgeModal()}>
+<Modal title="Nudge Agent" open={presenceActionsStore.showNudgeModal} onClose={() => presenceActionsStore.closeNudgeModal()}>
   <div class="form-group">
     <label class="form-label" for="nudge-target">Target Agent</label>
     <input id="nudge-target" type="text" bind:value={presenceActionsStore.nudgeTargetAgent} class="form-input" readonly />

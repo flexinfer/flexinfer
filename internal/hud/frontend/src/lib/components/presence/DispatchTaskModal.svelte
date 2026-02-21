@@ -3,7 +3,7 @@
   import Modal from '../../widgets/Modal.svelte';
 </script>
 
-<Modal title="Dispatch Task" open={presenceActionsStore.showDispatchModal} onclose={() => presenceActionsStore.closeDispatchModal()}>
+<Modal title="Dispatch Task" open={presenceActionsStore.showDispatchModal} onClose={() => presenceActionsStore.closeDispatchModal()}>
   <div class="form-group">
     <label class="form-label" for="dispatch-target">Target Agent</label>
     <input id="dispatch-target" type="text" bind:value={presenceActionsStore.dispatchTargetAgent} class="form-input" readonly />
