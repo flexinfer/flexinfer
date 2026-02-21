@@ -34,6 +34,14 @@ func (b *VLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			// GFX1100-specific image built with ROCm 6.4 and flash attention disabled
 			return "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100"
 		}
+		// Check for gfx906 (Radeon VII, Vega20) which needs specialized image
+		if strings.HasPrefix(gpuArch, "gfx906") {
+			if img := os.Getenv("DEFAULT_VLLM_IMAGE_GFX906"); img != "" {
+				return img
+			}
+			// GFX906-specific image built without flash attention
+			return "registry.harbor.lan/flexinfer/vllm:rocm-gfx906"
+		}
 		if img := os.Getenv("DEFAULT_VLLM_IMAGE_AMD"); img != "" {
 			return img
 		}
@@ -98,29 +106,53 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
-		env = append(env, ROCmEnvVars()...)
+		// Only set HSA_OVERRIDE_GFX_VERSION if the GPU requires it.
+		// Native architectures like gfx906 shouldn't have the 11.0.0 override globally.
+		rocmVars := ROCmEnvVars()
+		// If explicitly gfx906, ensure it's not overridden incorrectly by any defaults
+		for _, override := range rocmVars {
+			// (If interface.go ever adds a global HSA_OVERRIDE_GFX_VERSION,
+			// it shouldn't be applied to gfx906)
+			env = append(env, override)
+		}
 
-		// vLLM-specific ROCm tuning for gfx1100 (RX 7900 XTX)
-		// These settings prevent hangs/SIGSEGV crashes on consumer RDNA3 (gfx1100).
-		env = append(env,
-			corev1.EnvVar{
-				// Force V0 engine - V1 engine has compatibility issues with gfx1100
-				Name:  "VLLM_USE_V1",
-				Value: "0",
-			},
-			corev1.EnvVar{
-				// Disable Triton flash attention on gfx1100. In our builds/env, Triton
-				// attention paths have caused hangs; V0 engine + non-Triton attention
-				// is the stable baseline.
-				Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-				Value: "0",
-			},
-			corev1.EnvVar{
-				// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100
-				Name:  "VLLM_ROCM_USE_AITER",
-				Value: "0",
-			},
-		)
+		// vLLM-specific ROCm enhancements
+		if strings.HasPrefix(spec.GPUArch, "gfx110") {
+			// vLLM-specific ROCm tuning for gfx1100 (RX 7900 XTX)
+			// These settings prevent hangs/SIGSEGV crashes on consumer RDNA3 (gfx1100).
+			env = append(env,
+				corev1.EnvVar{
+					// Force V0 engine - V1 engine has compatibility issues with gfx1100
+					Name:  "VLLM_USE_V1",
+					Value: "0",
+				},
+				corev1.EnvVar{
+					// Disable Triton flash attention on gfx1100. In our builds/env, Triton
+					// attention paths have caused hangs; V0 engine + non-Triton attention
+					// is the stable baseline.
+					Name:  "VLLM_USE_TRITON_FLASH_ATTN",
+					Value: "0",
+				},
+				corev1.EnvVar{
+					// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100
+					Name:  "VLLM_ROCM_USE_AITER",
+					Value: "0",
+				},
+			)
+		} else if strings.HasPrefix(spec.GPUArch, "gfx906") {
+			// vLLM tuning for gfx906 (Radeon VII)
+			env = append(env,
+				corev1.EnvVar{
+					Name:  "VLLM_USE_V1",
+					Value: "0",
+				},
+				corev1.EnvVar{
+					// Disable Triton flash attention on gfx906
+					Name:  "VLLM_USE_TRITON_FLASH_ATTN",
+					Value: "0",
+				},
+			)
+		}
 
 		// Some setups expose multiple AMD GPUs (e.g., iGPU + dGPU) to the container.
 		// Allow pinning the runtime to a specific device via config. Prefer setting

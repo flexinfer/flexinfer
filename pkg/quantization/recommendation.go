@@ -57,6 +57,8 @@ func RecommendSpec(in RecommendationInput) Recommendation {
 		}
 		if strings.EqualFold(arch, "gfx1100") {
 			rec.Reason = "ROCm gfx1100 targets prioritize compatibility; GGUF is recommended over NVIDIA-focused quantizers."
+		} else if strings.EqualFold(arch, "gfx906") {
+			rec.Reason = "ROCm gfx906 targets prioritize compatibility; GGUF is recommended over NVIDIA-focused quantizers."
 		} else {
 			rec.Reason = "AMD targets prioritize broad runtime compatibility; GGUF is recommended."
 		}

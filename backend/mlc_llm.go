@@ -38,6 +38,14 @@ func (b *MLCLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			// GFX1100-specific image built with ROCm 6.4 and RDNA3 optimizations
 			return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
 		}
+		// Check for gfx906 (Radeon VII, Vega20) which needs specialized image
+		if strings.HasPrefix(gpuArch, "gfx906") {
+			if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_GFX906"); img != "" {
+				return img
+			}
+			// GFX906-specific image built with ROCm 6.4 and Vega20 optimizations
+			return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906"
+		}
 		if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_AMD"); img != "" {
 			return img
 		}

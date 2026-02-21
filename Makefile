@@ -190,7 +190,9 @@ $(ENVTEST): $(LOCALBIN)
 
 HARBOR_REGISTRY ?= registry.harbor.lan
 MLC_ROCM64_IMAGE ?= $(HARBOR_REGISTRY)/library/mlc-llm:rocm64-src
+MLC_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/mlc-llm:rocm64-gfx906
 MLC_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/mlc-llm:cuda-maxwell-v7
+VLLM_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 
 # Docker context for GPU builds (requires remote builder with GPU access)
@@ -203,6 +205,22 @@ build-mlc-rocm64: ## Build MLC-LLM ROCm 6.4 image on GPU node (gfx1100, ~3 hours
 .PHONY: push-mlc-rocm64
 push-mlc-rocm64: ## Push MLC-LLM ROCm 6.4 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_ROCM64_IMAGE)
+
+.PHONY: build-mlc-gfx906
+build-mlc-gfx906: ## Build MLC-LLM gfx906 image on GPU node (~3 hours)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-rocm64-gfx906 -t $(MLC_GFX906_IMAGE) build/
+
+.PHONY: push-mlc-gfx906
+push-mlc-gfx906: ## Push MLC-LLM gfx906 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_GFX906_IMAGE)
+
+.PHONY: build-vllm-gfx906
+build-vllm-gfx906: ## Build vLLM gfx906 image on GPU node
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906 -t $(VLLM_GFX906_IMAGE) build/
+
+.PHONY: push-vllm-gfx906
+push-vllm-gfx906: ## Push vLLM gfx906 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_IMAGE)
 
 .PHONY: build-mlc-maxwell
 build-mlc-maxwell: ## Build MLC-LLM Maxwell image on GPU node (sm_52, ~2 hours)

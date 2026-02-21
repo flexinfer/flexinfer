@@ -1,0 +1,158 @@
+# MLC-LLM Docker image for AMD gfx906 (Radeon VII, Vega20)
+# Built from source with ROCm 6.4 optimized for Vega20
+#
+# Key differences from generic ROCm build:
+# - PYTORCH_ROCM_ARCH=gfx906
+# - Flash attention configured for Vega20
+#
+# Build command:
+#   docker build -f build/Dockerfile.mlc-rocm64-gfx906 -t mlc-llm:rocm64-gfx906 .
+#
+# Target GPUs:
+#   - Radeon VII (gfx906, 16GB)
+
+ARG ROCM_VERSION=6.4
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
+
+# Build arguments for architecture targeting
+ARG PYTORCH_ROCM_ARCH=gfx906
+ARG HIP_AMDGPU_TARGET=gfx906
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+
+# gfx906-specific environment variables
+ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
+ENV HIP_AMDGPU_TARGET=${HIP_AMDGPU_TARGET}
+# Enable experimental AOTriton for stable flash attention
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# Install build dependencies and ROCm math libraries
+# NOTE: We need LLVM 19 to match ROCm 6.4's bitcode (compiled with LLVM 19)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    git \
+    curl \
+    cmake \
+    ninja-build \
+    libzstd-dev \
+    build-essential \
+    wget \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    hipblas \
+    rocblas \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Install LLVM 19 from official LLVM repository
+# This provides full development files and matches ROCm 6.4 bitcode LLVM version
+RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc && \
+    echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | tee /etc/apt/sources.list.d/llvm-19.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    llvm-19 \
+    llvm-19-dev \
+    libllvm19 \
+    clang-19 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set LLVM 19 as default
+ENV LLVM_CONFIG=/usr/bin/llvm-config-19
+ENV PATH="/usr/lib/llvm-19/bin:${PATH}"
+
+# Install Rust/Cargo (required by MLC-LLM tokenizers)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Create virtual environment for Python packages (PEP 668 compliance on Ubuntu 24.04)
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV VIRTUAL_ENV=/opt/venv
+
+# Upgrade pip and install build tools
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel cython numpy
+
+# Clone MLC-AI's TVM fork (relax) which has better MLC integration
+WORKDIR /build
+RUN git clone --recursive https://github.com/mlc-ai/relax.git tvm && \
+    cd tvm && \
+    git submodule update --init --recursive
+
+# Build TVM with ROCm support targeting gfx906
+# Note: Disable MIOpen/ROCBlas due to API incompatibilities in relax fork
+RUN cd /build/tvm && \
+    mkdir build && cd build && \
+    cp ../cmake/config.cmake . && \
+    echo "set(USE_ROCM ON)" >> config.cmake && \
+    echo "set(USE_LLVM /usr/bin/llvm-config-19)" >> config.cmake && \
+    echo "set(USE_ROCBLAS OFF)" >> config.cmake && \
+    echo "set(USE_MIOPEN OFF)" >> config.cmake && \
+    echo "set(ROCM_PATH /opt/rocm)" >> config.cmake && \
+    cmake -G Ninja \
+    -DROCM_PATH=/opt/rocm \
+    -DHIP_PATH=/opt/rocm/hip \
+    -DUSE_LLVM=/usr/bin/llvm-config-19 \
+    -DGPU_TARGETS=${HIP_AMDGPU_TARGET} \
+    -DAMDGPU_TARGETS=${HIP_AMDGPU_TARGET} \
+    .. && \
+    ninja
+
+# Install TVM Python package
+ENV TVM_HOME=/build/tvm
+ENV PYTHONPATH=/build/tvm/python:${PYTHONPATH}
+RUN cd /build/tvm/python && pip3 install -e .
+
+# Clone MLC-LLM
+RUN git clone --recursive https://github.com/mlc-ai/mlc-llm.git /build/mlc-llm && \
+    cd /build/mlc-llm && \
+    git submodule update --init --recursive
+
+# Install MLC-LLM dependencies
+RUN pip3 install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    transformers \
+    sentencepiece \
+    tiktoken \
+    safetensors \
+    huggingface_hub \
+    openai \
+    httpx \
+    shortuuid \
+    aiohttp \
+    pydantic \
+    typing_extensions \
+    scipy \
+    psutil
+
+# Build MLC-LLM with TVM from source
+WORKDIR /build/mlc-llm
+ENV TVM_SOURCE_DIR=/build/tvm
+ENV TVM_BUILD_PATH=/build/tvm/build
+RUN pip3 install --no-cache-dir .
+
+# Create non-root user (use UID 10000 to avoid conflicts with base image users)
+RUN useradd -m -u 10000 mlc && \
+    mkdir -p /models && \
+    chown -R mlc:mlc /models
+
+USER mlc
+WORKDIR /home/mlc
+
+# Expose MLC-LLM API port
+EXPOSE 8000
+
+# Health check for Kubernetes readiness
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/v1/models || exit 1
+
+ENTRYPOINT ["python", "-m", "mlc_llm"]
+CMD ["serve", "--help"]

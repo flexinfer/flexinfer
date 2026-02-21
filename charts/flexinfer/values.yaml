@@ -159,6 +159,9 @@ mlcllm:
   # GFX1100-specific image for AMD RX 7900 series (RDNA3)
   # Built with ROCm 6.4 and RDNA3-specific optimizations
   gfx1100Image: ""
+  # GFX906-specific image for AMD Radeon VII (Vega20)
+  # Built with ROCm 6.4 and Vega20-specific optimizations
+  gfx906Image: ""
 
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
@@ -184,6 +187,9 @@ vllm:
   # GFX1100-specific image for AMD RX 7900 series (RDNA3)
   # Built with flash attention disabled for stability
   gfx1100Image: ""
+  # GFX906-specific image for AMD Radeon VII (Vega20)
+  # Built with flash attention disabled for stability
+  gfx906Image: ""
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
     # Complete args override. Use for advanced cases only

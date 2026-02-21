@@ -23,10 +23,12 @@ HARBOR_REGISTRY="${HARBOR_REGISTRY:-registry.harbor.lan}"
 declare -A IMAGES=(
     # MLC-LLM backends
     ["mlc-llm:rocm64-src"]="library/mlc-llm:rocm64-src"
+    ["mlc-llm:rocm64-gfx906"]="flexinfer/mlc-llm:rocm64-gfx906"
     ["mlc-llm:cuda-maxwell-v7"]="flexinfer/mlc-llm:cuda-maxwell-v7"
     ["mlc-llm:latest"]="library/mlc-llm:latest"
 
     # vLLM backends
+    ["vllm-api:rocm-gfx906"]="library/vllm-api:rocm-gfx906"
     ["vllm-api:rocm-gfx1100"]="library/vllm-api:rocm-gfx1100"
     ["vllm-api:rocm-navi"]="library/vllm-api:rocm-navi"
 
