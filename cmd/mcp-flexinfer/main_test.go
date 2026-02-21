@@ -236,6 +236,98 @@ func TestCreateModel(t *testing.T) {
 	if decoded["ok"] != true {
 		t.Fatalf("ok=%v, want true", decoded["ok"])
 	}
+
+	// Verify the object was actually created with correct fields.
+	gvr := schema.GroupVersionResource{Group: "ai.flexinfer", Version: "v1alpha2", Resource: "models"}
+	created, err := f.dynamicClient.Resource(gvr).Namespace("flexinfer-system").Get(context.Background(), "new-model", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created model: %v", err)
+	}
+	backend, _, _ := unstructured.NestedString(created.Object, "spec", "backend")
+	if backend != "vllm" {
+		t.Fatalf("created backend=%v, want vllm", backend)
+	}
+	source, _, _ := unstructured.NestedString(created.Object, "spec", "source")
+	if source != "HF://meta-llama/Llama-3-8B" {
+		t.Fatalf("created source=%v, want HF://meta-llama/Llama-3-8B", source)
+	}
+}
+
+func TestCreateModel_InvalidBackend(t *testing.T) {
+	f := newTestServer(nil)
+
+	res, err := f.handleCreateModel(context.Background(), map[string]any{
+		"name":    "bad-model",
+		"backend": "nonexistent-backend",
+		"source":  "HF://org/model",
+	})
+	if err != nil {
+		t.Fatalf("handleCreateModel: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected error for invalid backend")
+	}
+}
+
+func TestUpdateModel(t *testing.T) {
+	model := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "ai.flexinfer/v1alpha2",
+			"kind":       "Model",
+			"metadata":   map[string]any{"name": "update-me", "namespace": "flexinfer-system"},
+			"spec": map[string]any{
+				"backend": "ollama",
+				"source":  "ollama://llama3:latest",
+			},
+		},
+	}
+
+	f := newTestServer([]runtime.Object{model})
+
+	res, err := f.handleUpdateModel(context.Background(), map[string]any{
+		"name":   "update-me",
+		"source": "ollama://llama3:8b",
+	})
+	if err != nil {
+		t.Fatalf("handleUpdateModel: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &decoded); err != nil {
+		t.Fatalf("output not JSON: %v", err)
+	}
+
+	if decoded["ok"] != true {
+		t.Fatalf("ok=%v, want true", decoded["ok"])
+	}
+
+	patched, _ := decoded["patched"].(map[string]any)
+	if patched["source"] != "ollama://llama3:8b" {
+		t.Fatalf("patched source=%v, want ollama://llama3:8b", patched["source"])
+	}
+}
+
+func TestUpdateModel_NoFields(t *testing.T) {
+	model := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "ai.flexinfer/v1alpha2",
+			"kind":       "Model",
+			"metadata":   map[string]any{"name": "empty-update", "namespace": "flexinfer-system"},
+			"spec":       map[string]any{"backend": "vllm", "source": "HF://org/model"},
+		},
+	}
+
+	f := newTestServer([]runtime.Object{model})
+
+	res, err := f.handleUpdateModel(context.Background(), map[string]any{
+		"name": "empty-update",
+	})
+	if err != nil {
+		t.Fatalf("handleUpdateModel: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected error for empty update")
+	}
 }
 
 func TestDeleteModel_RequiresConfirm(t *testing.T) {
@@ -394,7 +486,22 @@ func TestProbe_StructuredReport(t *testing.T) {
 		},
 	}
 
-	f := newTestServer([]runtime.Object{model}, pod)
+	// GPU node with BOTH labels and capacity — must be counted exactly once.
+	gpuNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "gpu-probe-node",
+			Labels: map[string]string{
+				"flexinfer.ai/gpu-vendor": "nvidia",
+			},
+		},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				"nvidia.com/gpu": resource.MustParse("1"),
+			},
+		},
+	}
+
+	f := newTestServer([]runtime.Object{model}, pod, gpuNode)
 
 	res, err := f.handleProbe(context.Background(), map[string]any{})
 	if err != nil {
@@ -423,6 +530,11 @@ func TestProbe_StructuredReport(t *testing.T) {
 	ctrlMgr, _ := controllers["flexinfer-controller-manager"].(map[string]any)
 	if cnt, ok := ctrlMgr["count"].(float64); !ok || cnt != 1 {
 		t.Fatalf("controller-manager count=%v, want 1", ctrlMgr["count"])
+	}
+
+	// GPU node should be counted exactly once (not double-counted).
+	if gpuCnt, _ := decoded["gpu_node_count"].(float64); gpuCnt != 1 {
+		t.Fatalf("gpu_node_count=%v, want 1 (no double-counting)", decoded["gpu_node_count"])
 	}
 }
 

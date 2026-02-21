@@ -62,12 +62,22 @@ func (f *flexinferServer) handleGetCatalog(ctx context.Context, args map[string]
 		return mcp.ErrorResult(fmt.Errorf("get catalog %q: %w", name, err)), nil
 	}
 
-	return mcp.JSONResult(map[string]any{
+	result := map[string]any{
 		"ok":       true,
 		"metadata": extractMetadata(obj),
 		"spec":     obj.Object["spec"],
 		"status":   obj.Object["status"],
-	})
+	}
+
+	cs, err := f.kubeClientset()
+	if err == nil {
+		events := listResourceEvents(ctx, cs, f.resolveNamespace(namespace), "ModelCatalog", name)
+		if len(events) > 0 {
+			result["events"] = events
+		}
+	}
+
+	return mcp.JSONResult(result)
 }
 
 func (f *flexinferServer) handleCreateCatalog(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

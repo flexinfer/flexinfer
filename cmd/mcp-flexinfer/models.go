@@ -110,7 +110,7 @@ func (f *flexinferServer) handleCreateModel(ctx context.Context, args map[string
 	v := validate.NewArgs(args)
 	name := v.Required("name")
 	namespace := v.String("namespace", f.namespace)
-	backend := v.Required("backend")
+	backend := v.Enum("backend", "", "ollama", "vllm", "llamacpp", "diffusers", "comfyui", "mlc-llm", "vllm-omni")
 	source := v.Required("source")
 	gpuVendor := v.String("gpu_vendor", "")
 	gpuShared := v.String("gpu_shared", "")
@@ -158,14 +158,13 @@ func (f *flexinferServer) handleCreateModel(ctx context.Context, args map[string
 		spec["cache"] = map[string]any{"strategy": cacheStrategy}
 	}
 
-	// Backend config.
+	// Backend config — store as parsed map so unstructured serialization works.
 	if configJSON != "" {
 		var configMap map[string]any
 		if err := json.Unmarshal([]byte(configJSON), &configMap); err != nil {
 			return mcp.ErrorResult(fmt.Errorf("invalid config JSON: %w", err)), nil
 		}
-		rawBytes, _ := json.Marshal(configMap)
-		spec["config"] = json.RawMessage(rawBytes)
+		spec["config"] = configMap
 	}
 
 	obj := &unstructured.Unstructured{
@@ -222,7 +221,7 @@ func (f *flexinferServer) handleUpdateModel(ctx context.Context, args map[string
 	if gv, ok := args["gpu_vendor"].(string); ok && gv != "" {
 		gpu["vendor"] = gv
 	}
-	if gs, ok := args["gpu_shared"].(string); ok {
+	if gs, ok := args["gpu_shared"].(string); ok { // empty string clears shared group
 		gpu["shared"] = gs
 	}
 	if gp, ok := asInt(args["gpu_priority"]); ok && gp >= 0 {
@@ -252,8 +251,7 @@ func (f *flexinferServer) handleUpdateModel(ctx context.Context, args map[string
 		if err := json.Unmarshal([]byte(configJSON), &configMap); err != nil {
 			return mcp.ErrorResult(fmt.Errorf("invalid config JSON: %w", err)), nil
 		}
-		rawBytes, _ := json.Marshal(configMap)
-		spec["config"] = json.RawMessage(rawBytes)
+		spec["config"] = configMap
 	}
 
 	if len(spec) == 0 {

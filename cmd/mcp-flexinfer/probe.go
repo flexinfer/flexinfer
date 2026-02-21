@@ -89,19 +89,24 @@ func (f *flexinferServer) handleProbe(ctx context.Context, args map[string]any) 
 		nodes, nerr := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if nerr == nil {
 			for _, node := range nodes.Items {
+				hasGPU := false
 				for k := range node.Labels {
 					if strings.HasPrefix(k, "flexinfer.ai/gpu") || strings.HasPrefix(k, "node.flexstack.io/gpu") {
-						gpuCount++
+						hasGPU = true
 						break
 					}
 				}
-				// Also count nodes with GPU capacity.
-				for resName := range node.Status.Capacity {
-					rn := string(resName)
-					if strings.Contains(rn, "nvidia.com/gpu") || strings.Contains(rn, "amd.com/gpu") {
-						gpuCount++
-						break
+				if !hasGPU {
+					for resName := range node.Status.Capacity {
+						rn := string(resName)
+						if strings.Contains(rn, "nvidia.com/gpu") || strings.Contains(rn, "amd.com/gpu") {
+							hasGPU = true
+							break
+						}
 					}
+				}
+				if hasGPU {
+					gpuCount++
 				}
 			}
 		}
