@@ -111,7 +111,7 @@ func (p *callPipeline) authorize() *mcp.Message {
 		return nil
 	}
 	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil)
-	return p.daemon.rbacDeniedResponse(p.msg.ID, decision)
+	return p.rbacDeniedError(decision)
 }
 
 func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
@@ -135,7 +135,7 @@ func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 		false,
 		&decision,
 	)
-	return p.daemon.policyDeniedResponse(p.msg.ID, decision)
+	return p.policyDeniedError(decision)
 }
 
 func (p *callPipeline) tryCachedResponse() *mcp.Message {
@@ -328,21 +328,49 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 	return p.internalError(err)
 }
 
+// errorResponse builds a JSON-RPC error message for the current pipeline call.
+// All pipeline error constructors funnel through this method so that envelope
+// structure (JSONRPC version, ID, optional Data) is defined in one place.
+func (p *callPipeline) errorResponse(code int, message string, data any) *mcp.Message {
+	return &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      p.msg.ID,
+		Error: &mcp.Error{
+			Code:    code,
+			Message: message,
+			Data:    data,
+		},
+	}
+}
+
 func (p *callPipeline) invalidParamsError(message string) *mcp.Message {
-	return mcp.NewErrorResponse(p.msg.ID, mcp.InvalidParams, message)
+	return p.errorResponse(mcp.InvalidParams, message, nil)
 }
 
 func (p *callPipeline) internalError(err error) *mcp.Message {
-	return p.internalErrorMessage(err.Error())
-}
-
-func (p *callPipeline) internalErrorMessage(message string) *mcp.Message {
-	return mcp.NewErrorResponse(p.msg.ID, mcp.InternalError, message)
+	return p.errorResponse(mcp.InternalError, err.Error(), nil)
 }
 
 func (p *callPipeline) internalErrorWithAudit(target, message string) *mcp.Message {
 	p.emitErrorAudit(target, message)
-	return p.internalErrorMessage(message)
+	return p.errorResponse(mcp.InternalError, message, nil)
+}
+
+func (p *callPipeline) rbacDeniedError(decision AccessDecision) *mcp.Message {
+	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
+		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
+	return p.errorResponse(mcp.InvalidRequest, reason, nil)
+}
+
+func (p *callPipeline) policyDeniedError(decision GatewayPolicyDecision) *mcp.Message {
+	return p.errorResponse(mcp.InvalidRequest,
+		fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason),
+		map[string]any{
+			"policy_rule_id":     decision.RuleID,
+			"policy_reason_code": decision.ReasonCode,
+			"policy_stage":       decision.Stage,
+			"policy_action":      decision.Action,
+		})
 }
 
 func (p *callPipeline) recordSuccessMetrics(duration time.Duration) {

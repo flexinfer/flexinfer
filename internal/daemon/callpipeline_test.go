@@ -1206,6 +1206,111 @@ func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
 	}
 }
 
+func TestHandleCall_RBACDenialEmitsAuditAndCost(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+	}, d.logger)
+
+	msg := newCallMessage(t, map[string]any{
+		"server":   "github",
+		"tool":     "delete_repo",
+		"agent_id": "agent-rbac",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected RBAC denial response")
+	}
+	if resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InvalidRequest)
+	}
+	if !strings.Contains(resp.Error.Message, "access denied") {
+		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
+	}
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != "denied" {
+		t.Fatalf("audit status = %q, want denied", entries[0].Status)
+	}
+	if entries[0].Server != "github" {
+		t.Fatalf("audit server = %q, want github", entries[0].Server)
+	}
+	if entries[0].Tool != "delete_repo" {
+		t.Fatalf("audit tool = %q, want delete_repo", entries[0].Tool)
+	}
+
+	snap := d.cost.Snapshot()
+	if snap.Totals.CallCount != 1 {
+		t.Fatalf("call_count = %d, want 1", snap.Totals.CallCount)
+	}
+	if snap.Totals.DeniedCount != 1 {
+		t.Fatalf("denied_count = %d, want 1", snap.Totals.DeniedCount)
+	}
+}
+
+// TestCallPipeline_ErrorResponseEnvelopeStructure validates that the unified
+// errorResponse helper produces correct JSON-RPC error envelopes with and
+// without the optional Data field.
+func TestCallPipeline_ErrorResponseEnvelopeStructure(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "envelope-test",
+	})
+
+	// Error without Data.
+	resp := p.invalidParamsError("bad input")
+	if resp.JSONRPC != mcp.JSONRPCVersion {
+		t.Fatalf("JSONRPC = %q, want %q", resp.JSONRPC, mcp.JSONRPCVersion)
+	}
+	if resp.ID != "envelope-test" {
+		t.Fatalf("ID = %v, want envelope-test", resp.ID)
+	}
+	if resp.Error.Code != mcp.InvalidParams {
+		t.Fatalf("Code = %d, want %d", resp.Error.Code, mcp.InvalidParams)
+	}
+	if resp.Error.Data != nil {
+		t.Fatalf("expected nil Data for plain error, got %v", resp.Error.Data)
+	}
+
+	// Error with Data (policy denial).
+	policyResp := p.policyDeniedError(GatewayPolicyDecision{
+		RuleID:     "rule-1",
+		ReasonCode: "BLOCKED",
+		Reason:     "test reason",
+		Stage:      "request",
+		Action:     "deny",
+	})
+	if policyResp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("Code = %d, want %d", policyResp.Error.Code, mcp.InvalidRequest)
+	}
+	data, ok := policyResp.Error.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Data map, got %T", policyResp.Error.Data)
+	}
+	if data["policy_rule_id"] != "rule-1" {
+		t.Fatalf("policy_rule_id = %v, want rule-1", data["policy_rule_id"])
+	}
+	if data["policy_reason_code"] != "BLOCKED" {
+		t.Fatalf("policy_reason_code = %v, want BLOCKED", data["policy_reason_code"])
+	}
+	if data["policy_stage"] != "request" {
+		t.Fatalf("policy_stage = %v, want request", data["policy_stage"])
+	}
+	if data["policy_action"] != "deny" {
+		t.Fatalf("policy_action = %v, want deny", data["policy_action"])
+	}
+}
+
 // --- Drain readiness tests (TD-SESSION-05 / DEBT-006) ---
 
 func TestHandleStatus_DrainReady_WhenIdle(t *testing.T) {

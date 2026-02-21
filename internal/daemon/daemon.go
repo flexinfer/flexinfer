@@ -2190,31 +2190,6 @@ func (d *Daemon) logAccessDecision(decision AccessDecision) {
 	d.metrics.RBACDenied.Inc()
 }
 
-// rbacDeniedResponse returns an MCP error for a denied tool call.
-func (d *Daemon) rbacDeniedResponse(msgID any, decision AccessDecision) *mcp.Message {
-	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
-		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
-	return mcp.NewErrorResponse(msgID, mcp.InvalidRequest, reason)
-}
-
-// policyDeniedResponse returns an MCP error for a denied policy hook decision.
-func (d *Daemon) policyDeniedResponse(msgID any, decision GatewayPolicyDecision) *mcp.Message {
-	return &mcp.Message{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      msgID,
-		Error: &mcp.Error{
-			Code:    mcp.InvalidRequest,
-			Message: fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason),
-			Data: map[string]any{
-				"policy_rule_id":     decision.RuleID,
-				"policy_reason_code": decision.ReasonCode,
-				"policy_stage":       decision.Stage,
-				"policy_action":      decision.Action,
-			},
-		},
-	}
-}
-
 // handleReload reloads the registry and refreshes the tool cache.
 func (d *Daemon) handleReload(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if err := d.Reload(ctx); err != nil {
