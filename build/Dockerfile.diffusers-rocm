@@ -87,6 +87,7 @@ COPY <<'EOF' /app/server.py
 Diffusers API Server with OpenAI-compatible /v1/images/generations endpoint.
 ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
 """
+import asyncio
 import os
 import io
 import base64
@@ -551,6 +552,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Diffusers API", lifespan=lifespan)
 
+# Serialize generation requests to avoid GPU OOM from concurrent inference
+_generation_lock = asyncio.Lock()
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "model": current_model, "gpu": gpu_info}
@@ -590,27 +594,29 @@ async def generate_images(request: ImageGenerationRequest):
     except ValueError:
         width, height = 1024, 1024
 
-    # Generate images
-    images = []
-    for _ in range(request.n):
-        with torch.inference_mode():
-            result = pipe(
-                prompt=request.prompt,
-                negative_prompt=negative_prompt,
-                num_inference_steps=steps,
-                guidance_scale=guidance_scale,
-                width=width,
-                height=height,
-            )
+    def _run_inference():
+        """Run blocking pipeline inference in a thread so the event loop stays responsive."""
+        results = []
+        for _ in range(request.n):
+            with torch.inference_mode():
+                result = pipe(
+                    prompt=request.prompt,
+                    negative_prompt=negative_prompt,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    width=width,
+                    height=height,
+                )
+            img = result.images[0]
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            results.append(ImageData(b64_json=b64_data))
+        return results
 
-        img = result.images[0]
-
-        # Convert to base64
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-        images.append(ImageData(b64_json=b64_data))
+    # Run generation in a thread pool so health checks keep responding
+    async with _generation_lock:
+        images = await asyncio.to_thread(_run_inference)
 
     return ImageGenerationResponse(
         created=int(time.time()),
