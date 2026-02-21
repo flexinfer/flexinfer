@@ -79,13 +79,7 @@ func extractStringField(payload any, key string) (string, bool) {
 // handleAgentSessionStart creates a new agent session (idempotent).
 // POST /api/agent/session-start
 func (a *App) handleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Namespace   string `json:"namespace"`
-		AgentID     string `json:"agent_id"`
-		AgentType   string `json:"agent_type"`
-		Description string `json:"description"`
-		AutoRecall  bool   `json:"auto_recall"`
-	}
+	var body bridge.SessionStartParams
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
@@ -95,13 +89,7 @@ func (a *App) handleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := a.agent.StartSession(bridge.SessionStartParams{
-		Namespace:   body.Namespace,
-		AgentID:     body.AgentID,
-		AgentType:   body.AgentType,
-		Description: body.Description,
-		AutoRecall:  body.AutoRecall,
-	})
+	result, err := a.agent.StartSession(body)
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to start session", err)
 		return
@@ -183,11 +171,7 @@ func (a *App) maybeAutoProvisionSandbox(namespace string) {
 // handleAgentSessionEnd ends an agent session.
 // POST /api/agent/session-end
 func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		SessionID string `json:"session_id"`
-		AgentID   string `json:"agent_id"`
-		Summarize bool   `json:"summarize"`
-	}
+	var body bridge.SessionEndParams
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
@@ -197,11 +181,7 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ended, err := a.agent.EndSession(bridge.SessionEndParams{
-		SessionID: body.SessionID,
-		AgentID:   body.AgentID,
-		Summarize: body.Summarize,
-	})
+	ended, err := a.agent.EndSession(body)
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to end session", err)
 		return
@@ -492,31 +472,23 @@ func isPresenceNotRegisteredErr(err error) bool {
 // handleAgentTaskUpdate updates a task's status via the lifecycle API.
 // POST /api/agent/task-update
 func (a *App) handleAgentTaskUpdate(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		TaskID     string `json:"task_id"`
-		Status     string `json:"status"`
-		Resolution string `json:"resolution,omitempty"`
-	}
+	var body bridge.UpdateTaskParams
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if body.TaskID == "" {
+	if body.ID == "" {
 		a.writeError(w, http.StatusBadRequest, "task_id is required", nil)
 		return
 	}
 
-	if err := a.agent.UpdateTask(bridge.UpdateTaskParams{
-		ID:         body.TaskID,
-		Status:     body.Status,
-		Resolution: body.Resolution,
-	}); err != nil {
+	if err := a.agent.UpdateTask(body); err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to update task", err)
 		return
 	}
 
 	a.broadcastAgentEvent("agent.task.update", map[string]any{
-		"task_id":    body.TaskID,
+		"task_id":    body.ID,
 		"status":     body.Status,
 		"resolution": body.Resolution,
 	})

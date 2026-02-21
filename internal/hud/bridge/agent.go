@@ -709,10 +709,10 @@ func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
 
 // UpdateTaskParams holds all fields for task updates.
 type UpdateTaskParams struct {
-	ID         string
-	Status     string
-	Priority   string
-	Resolution string // For completed tasks
+	ID         string `json:"task_id"`
+	Status     string `json:"status"`
+	Priority   string `json:"priority,omitempty"`
+	Resolution string `json:"resolution,omitempty"`
 }
 
 // UpdateTask updates a task's status, priority, and/or resolution.

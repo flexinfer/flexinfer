@@ -191,14 +191,6 @@ func withAgentFallback(op string, hudCall, daemonCall func() (json.RawMessage, e
 }
 
 func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionStartParams) (json.RawMessage, error) {
-	body := map[string]any{
-		"namespace":   p.Namespace,
-		"agent_id":    p.AgentID,
-		"agent_type":  p.AgentType,
-		"description": p.Description,
-		"auto_recall": p.AutoRecall,
-	}
-
 	return withAgentFallback(
 		"agent session-start",
 		func() (json.RawMessage, error) {
@@ -206,7 +198,7 @@ func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionS
 			if _, err := hudGetFast(port, "/api/ping", 1*time.Second); err != nil {
 				return nil, err
 			}
-			return hudPost(port, "/api/agent/session-start", body)
+			return hudPost(port, "/api/agent/session-start", p)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
@@ -221,18 +213,10 @@ func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionS
 }
 
 func endSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionEndParams) (json.RawMessage, error) {
-	body := map[string]any{
-		"agent_id":  p.AgentID,
-		"summarize": p.Summarize,
-	}
-	if p.SessionID != "" {
-		body["session_id"] = p.SessionID
-	}
-
 	return withAgentFallback(
 		"agent session-end",
 		func() (json.RawMessage, error) {
-			return hudPost(port, "/api/agent/session-end", body)
+			return hudPost(port, "/api/agent/session-end", p)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
@@ -290,18 +274,10 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status stri
 }
 
 func updateTaskWithFallback(cmd *cobra.Command, port string, p bridge.UpdateTaskParams) (json.RawMessage, error) {
-	body := map[string]any{
-		"task_id": p.ID,
-		"status":  p.Status,
-	}
-	if p.Resolution != "" {
-		body["resolution"] = p.Resolution
-	}
-
 	return withAgentFallback(
 		"agent task-update",
 		func() (json.RawMessage, error) {
-			return hudPost(port, "/api/agent/task-update", body)
+			return hudPost(port, "/api/agent/task-update", p)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
