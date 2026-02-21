@@ -108,13 +108,7 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		// Only set HSA_OVERRIDE_GFX_VERSION if the GPU requires it.
 		// Native architectures like gfx906 shouldn't have the 11.0.0 override globally.
-		rocmVars := ROCmEnvVars()
-		// If explicitly gfx906, ensure it's not overridden incorrectly by any defaults
-		for _, override := range rocmVars {
-			// (If interface.go ever adds a global HSA_OVERRIDE_GFX_VERSION,
-			// it shouldn't be applied to gfx906)
-			env = append(env, override)
-		}
+		env = append(env, ROCmEnvVars()...)
 
 		// vLLM-specific ROCm enhancements
 		if strings.HasPrefix(spec.GPUArch, "gfx110") {
