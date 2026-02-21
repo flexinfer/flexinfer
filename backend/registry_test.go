@@ -290,6 +290,60 @@ func TestConfigBool_StringValues(t *testing.T) {
 	}
 }
 
+func TestDeviceIsolationEnvVars(t *testing.T) {
+	tests := []struct {
+		name   string
+		config map[string]interface{}
+		expect map[string]string // expected env var name -> value
+	}{
+		{
+			"no config",
+			map[string]interface{}{},
+			map[string]string{},
+		},
+		{
+			"hipVisibleDevices mirrors to ROCR",
+			map[string]interface{}{"hipVisibleDevices": "1"},
+			map[string]string{"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
+		},
+		{
+			"rocrVisibleDevices mirrors to HIP",
+			map[string]interface{}{"rocrVisibleDevices": "1"},
+			map[string]string{"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
+		},
+		{
+			"both set independently",
+			map[string]interface{}{"hipVisibleDevices": "0", "rocrVisibleDevices": "1"},
+			map[string]string{"HIP_VISIBLE_DEVICES": "0", "ROCR_VISIBLE_DEVICES": "1"},
+		},
+		{
+			"gpuDeviceOrdinal mirrors to HIP and ROCR",
+			map[string]interface{}{"gpuDeviceOrdinal": "1"},
+			map[string]string{"GPU_DEVICE_ORDINAL": "1", "HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{Config: tt.config}
+			env := DeviceIsolationEnvVars(spec)
+			got := map[string]string{}
+			for _, e := range env {
+				got[e.Name] = e.Value
+			}
+			if len(got) != len(tt.expect) {
+				t.Errorf("got %d env vars %v, want %d %v", len(got), got, len(tt.expect), tt.expect)
+				return
+			}
+			for k, v := range tt.expect {
+				if got[k] != v {
+					t.Errorf("env %s = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
 func TestGPUVendorResourceName(t *testing.T) {
 	tests := []struct {
 		vendor   GPUVendor

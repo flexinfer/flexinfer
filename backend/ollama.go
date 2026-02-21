@@ -77,6 +77,7 @@ func (b *OllamaBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
+		env = append(env, DeviceIsolationEnvVars(spec)...)
 	}
 
 	return env

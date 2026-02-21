@@ -175,31 +175,7 @@ func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// (gfx906 gets HSA_ENABLE_SDMA=0 instead of gfx1100 HSA override).
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
-
-		// Optional device pinning for systems exposing multiple AMD GPUs.
-		// Keep behavior aligned with MLC-LLM config keys for easier migration.
-		hipVisible := spec.ConfigString("hipVisibleDevices", "")
-		rocrVisible := spec.ConfigString("rocrVisibleDevices", "")
-		ordinal := spec.ConfigString("gpuDeviceOrdinal", "")
-		if hipVisible == "" && rocrVisible == "" && ordinal != "" {
-			hipVisible = ordinal
-			rocrVisible = ordinal
-		}
-		if hipVisible != "" && rocrVisible == "" {
-			rocrVisible = hipVisible
-		}
-		if rocrVisible != "" && hipVisible == "" {
-			hipVisible = rocrVisible
-		}
-		if rocrVisible != "" {
-			env = append(env, corev1.EnvVar{Name: "ROCR_VISIBLE_DEVICES", Value: rocrVisible})
-		}
-		if hipVisible != "" {
-			env = append(env, corev1.EnvVar{Name: "HIP_VISIBLE_DEVICES", Value: hipVisible})
-		}
-		if ordinal != "" {
-			env = append(env, corev1.EnvVar{Name: "GPU_DEVICE_ORDINAL", Value: ordinal})
-		}
+		env = append(env, DeviceIsolationEnvVars(spec)...)
 	}
 
 	return env

@@ -309,6 +309,43 @@ func ROCmEnvVars(arch string) []corev1.EnvVar {
 	return env
 }
 
+// DeviceIsolationEnvVars returns env vars to pin AMD GPU device selection.
+// On systems with both iGPU and dGPU, the device plugin exposes both as
+// amd.com/gpu resources. Without explicit device pinning, workloads may
+// land on the iGPU which lacks dedicated VRAM and crashes on inference.
+//
+// Reads hipVisibleDevices and rocrVisibleDevices from model config.
+// If only one is set, mirrors to both for consistent ROCm isolation.
+func DeviceIsolationEnvVars(spec *ModelSpec) []corev1.EnvVar {
+	hipVisible := spec.ConfigString("hipVisibleDevices", "")
+	rocrVisible := spec.ConfigString("rocrVisibleDevices", "")
+	ordinal := spec.ConfigString("gpuDeviceOrdinal", "")
+
+	// gpuDeviceOrdinal acts as a fallback when neither HIP nor ROCR is set.
+	if hipVisible == "" && rocrVisible == "" && ordinal != "" {
+		hipVisible = ordinal
+		rocrVisible = ordinal
+	}
+	if hipVisible != "" && rocrVisible == "" {
+		rocrVisible = hipVisible
+	}
+	if rocrVisible != "" && hipVisible == "" {
+		hipVisible = rocrVisible
+	}
+
+	var env []corev1.EnvVar
+	if rocrVisible != "" {
+		env = append(env, corev1.EnvVar{Name: "ROCR_VISIBLE_DEVICES", Value: rocrVisible})
+	}
+	if hipVisible != "" {
+		env = append(env, corev1.EnvVar{Name: "HIP_VISIBLE_DEVICES", Value: hipVisible})
+	}
+	if ordinal != "" {
+		env = append(env, corev1.EnvVar{Name: "GPU_DEVICE_ORDINAL", Value: ordinal})
+	}
+	return env
+}
+
 // HTTPReadinessProbe creates a standard HTTP readiness probe.
 func HTTPReadinessProbe(path string, port int32, initialDelay, period, timeout int32) *corev1.Probe {
 	return &corev1.Probe{
