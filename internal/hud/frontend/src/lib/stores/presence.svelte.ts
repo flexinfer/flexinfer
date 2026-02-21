@@ -85,6 +85,17 @@ class PresenceStore {
     return [...new Set(this.agents.map((a) => a.agent_type).filter(Boolean))];
   }
 
+  get fileConflicts(): Array<{ path: string; agents: string[] }> {
+    const fileCounts: Record<string, string[]> = {};
+    for (const c of this.claims) {
+      if (!fileCounts[c.file_path]) fileCounts[c.file_path] = [];
+      fileCounts[c.file_path].push(c.agent_id);
+    }
+    return Object.entries(fileCounts)
+      .filter(([, agents]) => agents.length > 1)
+      .map(([path, agents]) => ({ path, agents: [...new Set(agents)] }));
+  }
+
   async fetch(): Promise<void> {
     this.loading = true;
     this.error = null;

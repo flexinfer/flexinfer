@@ -1,0 +1,7 @@
+# HUD frontend dist — auto-generated Vite bundles, embedded by Go via //go:embed.
+# linguist-generated: collapse in GitLab/GitHub MR diffs; exclude from language stats.
+# -diff: suppress line-by-line diff for minified/hashed bundles (meaningless noise).
+internal/hud/frontend/dist/** linguist-generated
+internal/hud/frontend/dist/**/*.js linguist-generated -diff
+internal/hud/frontend/dist/**/*.css linguist-generated -diff
+internal/hud/frontend/dist/**/*.html linguist-generated

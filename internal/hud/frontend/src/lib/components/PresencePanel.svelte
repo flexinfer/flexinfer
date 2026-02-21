@@ -1,12 +1,14 @@
 <script>
   import { presenceStore } from '../stores/presence.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
-  import Modal from '../widgets/Modal.svelte';
   import PresenceAgentsTab from './presence/PresenceAgentsTab.svelte';
   import PresenceClaimsTab from './presence/PresenceClaimsTab.svelte';
   import PresenceWorktreesTab from './presence/PresenceWorktreesTab.svelte';
   import PresenceHandoffsTab from './presence/PresenceHandoffsTab.svelte';
   import PresenceDiagnosticsTab from './presence/PresenceDiagnosticsTab.svelte';
+  import DispatchTaskModal from './presence/DispatchTaskModal.svelte';
+  import NudgeAgentModal from './presence/NudgeAgentModal.svelte';
+  import CreateHandoffModal from './presence/CreateHandoffModal.svelte';
 
   $effect(() => {
     presenceStore.startPolling(5000);
@@ -18,6 +20,7 @@
   let agents = $derived(presenceStore.agents ?? []);
   let claims = $derived(presenceStore.claims ?? []);
   let worktrees = $derived(presenceStore.worktrees ?? []);
+  let fileConflicts = $derived(presenceStore.fileConflicts);
 
   // --- Tab management ---
   let activeTab = $state('agents');
@@ -31,19 +34,6 @@
       presenceActionsStore.refreshHandoffs();
     }
   });
-
-  // --- File conflict detection ---
-  let fileConflicts = $derived.by(() => {
-    const fileCounts = {};
-    claims.forEach(c => {
-      if (!fileCounts[c.file_path]) fileCounts[c.file_path] = [];
-      fileCounts[c.file_path].push(c.agent_id);
-    });
-    return Object.entries(fileCounts)
-      .filter(([, agents]) => agents.length > 1)
-      .map(([path, agents]) => ({ path, agents: [...new Set(agents)] }));
-  });
-
 
   // --- Agents view toggle: table vs cards ---
   let agentView = $state('cards');
@@ -122,88 +112,9 @@
   </div>
 </div>
 
-<!-- Dispatch Task Modal -->
-<Modal title="Dispatch Task" open={presenceActionsStore.showDispatchModal} onclose={() => presenceActionsStore.closeDispatchModal()}>
-  <div class="form-group">
-    <label class="form-label" for="dispatch-target">Target Agent</label>
-    <input id="dispatch-target" type="text" bind:value={presenceActionsStore.dispatchTargetAgent} class="form-input" readonly />
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="dispatch-title">Title *</label>
-    <input id="dispatch-title" type="text" bind:value={presenceActionsStore.dispatchTitle} placeholder="Task title..." class="form-input" />
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="dispatch-context">Context</label>
-    <textarea id="dispatch-context" bind:value={presenceActionsStore.dispatchContext} placeholder="Additional instructions..." class="form-input" rows="4"></textarea>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="dispatch-priority">Priority</label>
-    <select id="dispatch-priority" bind:value={presenceActionsStore.dispatchPriority} class="form-input">
-      <option value="low">Low</option>
-      <option value="medium">Medium</option>
-      <option value="high">High</option>
-      <option value="critical">Critical</option>
-    </select>
-  </div>
-  <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeDispatchModal()}>Cancel</button>
-    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitDispatch()} disabled={presenceActionsStore.dispatchSubmitting || !presenceActionsStore.dispatchTitle.trim()}>
-      {presenceActionsStore.dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}
-    </button>
-  </div>
-</Modal>
-
-<!-- Nudge Agent Modal -->
-<Modal title="Nudge Agent" open={presenceActionsStore.showNudgeModal} onclose={() => presenceActionsStore.closeNudgeModal()}>
-  <div class="form-group">
-    <label class="form-label" for="nudge-target">Target Agent</label>
-    <input id="nudge-target" type="text" bind:value={presenceActionsStore.nudgeTargetAgent} class="form-input" readonly />
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="nudge-type">Type</label>
-    <select id="nudge-type" bind:value={presenceActionsStore.nudgeType} class="form-input">
-      <option value="message">Message</option>
-      <option value="context_inject">Context Inject</option>
-      <option value="task_redirect">Task Redirect</option>
-      <option value="pause_request">Pause Request</option>
-    </select>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="nudge-content">Content *</label>
-    <textarea id="nudge-content" bind:value={presenceActionsStore.nudgeContent} placeholder="Message or context to send to the agent..." class="form-input" rows="4"></textarea>
-  </div>
-  <div class="nudge-hint">
-    Nudge delivered on the agent's next heartbeat (5-15s latency).
-  </div>
-  <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeNudgeModal()}>Cancel</button>
-    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitNudge()} disabled={presenceActionsStore.nudgeSubmitting || !presenceActionsStore.nudgeContent.trim()}>
-      {presenceActionsStore.nudgeSubmitting ? 'Sending...' : 'Send Nudge'}
-    </button>
-  </div>
-</Modal>
-
-<!-- Create Handoff Modal -->
-<Modal title="Create Handoff" open={presenceActionsStore.showHandoffModal} onclose={() => presenceActionsStore.closeHandoffModal()}>
-  <div class="form-group">
-    <label class="form-label" for="handoff-to-agent">To Agent (optional)</label>
-    <input id="handoff-to-agent" type="text" bind:value={presenceActionsStore.newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="handoff-summary">Summary *</label>
-    <input id="handoff-summary" type="text" bind:value={presenceActionsStore.newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="handoff-context">Context</label>
-    <textarea id="handoff-context" bind:value={presenceActionsStore.newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
-  </div>
-  <div class="form-actions">
-    <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeHandoffModal()}>Cancel</button>
-    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitHandoff()} disabled={presenceActionsStore.creatingHandoff || !presenceActionsStore.newHandoffSummary.trim()}>
-      {presenceActionsStore.creatingHandoff ? 'Creating...' : 'Create Handoff'}
-    </button>
-  </div>
-</Modal>
+<DispatchTaskModal />
+<NudgeAgentModal />
+<CreateHandoffModal />
 
 <style>
   .presence-panel {
@@ -300,45 +211,4 @@
     flex: 1;
     overflow-y: auto;
   }
-
-  /* Form styles */
-  .form-group {
-    margin-bottom: 12px;
-  }
-
-  .form-label {
-    display: block;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    color: var(--fg-muted);
-    margin-bottom: 4px;
-  }
-
-  .form-input {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  textarea.form-input {
-    resize: vertical;
-    font-family: var(--font-sans);
-    font-size: 13px;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 16px;
-  }
-
-  .nudge-hint {
-    font-size: 11px;
-    color: var(--fg-muted);
-    font-style: italic;
-    margin-top: 8px;
-  }
-
 </style>

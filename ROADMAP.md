@@ -131,17 +131,17 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
   - Next: split and dedupe command/bridge surfaces (`cmd/loom/cmd_agent.go`, `internal/hud/bridge/agent.go`, `internal/hud/api_agent.go`) and align error envelopes.
   - Target outcome: single contract model for context-inspect, nudge queue, and policy mutation surfaces.
 
-- [ ] **Split oversized HUD panel/state surfaces** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/22))
-  - ✅ 2026-02-17 slice: moved diagnostics polling/fetch/mutation logic into `presenceDiagnosticsStore` and kept `PresenceDiagnosticsTab.svelte` view-only; added TUI claim-conflict visibility in `internal/tui/panels/presence.go` for HUD/TUI parity.
-  - Next: extract dispatch/nudge/handoff modal actions from `PresencePanel.svelte` into focused stores/clients.
+- [x] **Split oversized HUD panel/state surfaces** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/22)) ✅ Complete
+  - ✅ 2026-02-17: moved diagnostics polling/fetch/mutation logic into `presenceDiagnosticsStore` and kept `PresenceDiagnosticsTab.svelte` view-only; added TUI claim-conflict visibility in `internal/tui/panels/presence.go` for HUD/TUI parity.
+  - ✅ 2026-02-21: extracted dispatch/nudge/handoff modals from `PresencePanel.svelte` into `DispatchTaskModal`, `NudgeAgentModal`, `CreateHandoffModal` components; moved `fileConflicts` derived logic into `presenceStore` getter.
   - Target outcome: safer iteration for Fleet orchestration UX work ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
 
 - [ ] **Refactor devbox K8s backend by concern** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23))
   - Separate build pod orchestration from runtime lifecycle logic in `internal/devbox/backend/k8s.go`.
   - Target outcome: faster iteration and stronger integration-test coverage for Roadmap Issue #2 remaining devbox work.
 
-- [ ] **Reduce HUD dist artifact churn in feature commits** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/24))
-  - Adopt one policy: either separate dist-only commits or enforce regeneration/verification in CI.
+- [x] **Reduce HUD dist artifact churn in feature commits** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/24)) ✅ Complete
+  - ✅ 2026-02-21: added `.gitattributes` marking dist JS/CSS as `linguist-generated -diff` to collapse in MR diffs; added `make hud-dist-check` target for local/CI freshness verification.
   - Target outcome: cleaner review diffs and faster root-cause analysis during regressions.
 
 ## Tier 2: Capture Market Gaps (Next)

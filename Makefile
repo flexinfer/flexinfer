@@ -7,7 +7,7 @@
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-clean
+		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-dist-check hud-clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -680,6 +680,18 @@ hud-dev: loom
 	./bin/loom hud --dev --port 9800 & \
 	cd $(HUD_FRONTEND) && pnpm dev & \
 	wait
+
+# Verify committed dist/ matches a fresh build.
+# Use locally before committing or in CI (requires pnpm/node).
+hud-dist-check: hud-frontend
+	@echo "Checking HUD dist freshness..."
+	@if git diff --quiet $(HUD_FRONTEND)/dist/ 2>/dev/null; then \
+		echo "✓ HUD dist is up-to-date"; \
+	else \
+		echo "ERROR: HUD dist is stale. Run 'make hud-frontend' and commit the result."; \
+		git diff --stat $(HUD_FRONTEND)/dist/; \
+		exit 1; \
+	fi
 
 # Clean frontend artifacts
 hud-clean:
