@@ -10,10 +10,10 @@
 # - https://huggingface.co/madebyollin/sdxl-vae-fp16-fix (fixed VAE)
 
 # Use official ROCm PyTorch image with gfx1100 support
-# The 'latest' tag includes the most recent stable PyTorch + ROCm combination
+# Pin to a specific tag for reproducible builds (matches ComfyUI Dockerfile)
 # Supported architectures include gfx1100/gfx1101 (Navi31-based SKUs like 7900 XTX)
 # See: https://hub.docker.com/r/rocm/pytorch
-ARG ROCM_PYTORCH_TAG=latest
+ARG ROCM_PYTORCH_TAG=rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
 FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -62,23 +62,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install pinned Python dependencies
+COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    fastapi \
-    uvicorn[standard] \
-    diffusers>=0.30.0 \
-    "transformers>=4.40,<5" \
-    accelerate \
-    safetensors \
-    sentencepiece \
-    protobuf \
-    pillow \
-    pydantic \
-    python-multipart \
-    aiofiles
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
-# Force numpy < 2 for ROCm compatibility
+# Force numpy < 2 for ROCm compatibility (overrides any transitive upgrade)
 RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 
 # Create the API server

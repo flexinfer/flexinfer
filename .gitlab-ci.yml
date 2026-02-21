@@ -708,7 +708,7 @@ publish_diffusers_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=registry.harbor.lan/library/diffusers-api:rocm-latest,push=true"
+        --output "type=image,\"name=registry.harbor.lan/library/diffusers-api:rocm-latest,registry.harbor.lan/library/diffusers-api:rocm-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
       allow_failure: true

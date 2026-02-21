@@ -1,0 +1,19 @@
+# Pinned Python dependencies for Diffusers ROCm image
+# Aligned with Dockerfile.diffusers-cuda versions where possible
+# Last verified: 2026-02-21 on rocm/pytorch:rocm6.2.3
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+diffusers==0.30.2
+transformers==4.44.2
+accelerate==0.33.0
+safetensors==0.4.5
+sentencepiece==0.2.0
+protobuf==5.29.3
+pillow==11.1.0
+pydantic==2.10.5
+python-multipart==0.0.20
+aiofiles==24.1.0
+
+# Force numpy < 2 for ROCm compatibility (installed separately with --force-reinstall)
+# numpy<2
