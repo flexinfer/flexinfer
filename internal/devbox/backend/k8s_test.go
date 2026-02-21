@@ -125,6 +125,9 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 		t.Fatalf("unexpected builder image: %s", container.Image)
 	}
 	cmd := strings.Join(container.Command, " ")
+	if !strings.Contains(cmd, "registries.conf") {
+		t.Fatalf("expected registries.conf setup in build command: %s", cmd)
+	}
 	if !strings.Contains(cmd, "buildah build-using-dockerfile") ||
 		!strings.Contains(cmd, "-t registry.harbor.lan/devbox:tag") ||
 		!strings.Contains(cmd, "/workspace/services/loom-core") ||
@@ -132,8 +135,12 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 		t.Fatalf("unexpected build command: %s", cmd)
 	}
 
-	if envMap(container.Env)["BUILDAH_ISOLATION"] != "chroot" || envMap(container.Env)["STORAGE_DRIVER"] != "vfs" {
+	envs := envMap(container.Env)
+	if envs["BUILDAH_ISOLATION"] != "chroot" || envs["STORAGE_DRIVER"] != "vfs" {
 		t.Fatalf("unexpected buildah env: %#v", container.Env)
+	}
+	if envs["CONTAINERS_REGISTRIES_CONF"] != "/home/build/.config/containers/registries.conf" {
+		t.Fatalf("expected CONTAINERS_REGISTRIES_CONF env var, got: %#v", container.Env)
 	}
 	if container.SecurityContext == nil || *container.SecurityContext.RunAsUser != 1000 || *container.SecurityContext.RunAsGroup != 1000 {
 		t.Fatalf("unexpected security context: %#v", container.SecurityContext)

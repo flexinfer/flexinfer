@@ -505,6 +505,11 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 	runAsGroup := int64(1000)
 
 	buildAndPush := strings.Join([]string{
+		// Configure registries for short-name resolution (non-interactive builds)
+		"mkdir -p /home/build/.config/containers",
+		"&&",
+		`printf 'unqualified-search-registries = ["docker.io"]\nshort-name-mode = "permissive"\n' > /home/build/.config/containers/registries.conf`,
+		"&&",
 		"buildah build-using-dockerfile",
 		"--storage-driver=vfs",
 		"--isolation=chroot",
@@ -541,6 +546,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 					Env: []corev1.EnvVar{
 						{Name: "BUILDAH_ISOLATION", Value: "chroot"},
 						{Name: "STORAGE_DRIVER", Value: "vfs"},
+						{Name: "CONTAINERS_REGISTRIES_CONF", Value: "/home/build/.config/containers/registries.conf"},
 					},
 					SecurityContext: &corev1.SecurityContext{
 						RunAsUser:  &runAsUser,
