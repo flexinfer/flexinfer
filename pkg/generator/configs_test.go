@@ -621,6 +621,82 @@ func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	}
 }
 
+func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
+	config := claudeHooksConfig(testRegistry())
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in claude config")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]map[string]any)
+	if !ok || len(sessionStart) == 0 {
+		t.Fatal("expected SessionStart hooks")
+	}
+	sessionHooks, ok := sessionStart[0]["hooks"].([]map[string]any)
+	if !ok || len(sessionHooks) == 0 {
+		t.Fatal("expected session-start hooks list")
+	}
+
+	for _, h := range sessionHooks {
+		cmd, _ := h["command"].(string)
+		if cmd == "" {
+			continue
+		}
+		if strings.Contains(cmd, `--agent-id "claude-code-$PPID"`) {
+			t.Fatalf("found hardcoded ppid in claude session-start hook: %s", cmd)
+		}
+		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "loom-agent-id-claude-code") {
+			// Verify workspace hash is part of the bootstrap.
+			if !strings.Contains(cmd, "WS_HASH") {
+				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, "cksum") {
+				t.Fatalf("expected cksum in agent ID bootstrap, got: %s", cmd)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected claude hooks to use persistent AGENT_ID bootstrap and --agent-id \"$AGENT_ID\"")
+}
+
+func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
+	config := geminiHooksConfigFromRegistry(testRegistry())
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in gemini config")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]map[string]any)
+	if !ok || len(sessionStart) == 0 {
+		t.Fatal("expected SessionStart hooks")
+	}
+	sessionHooks, ok := sessionStart[0]["hooks"].([]map[string]any)
+	if !ok || len(sessionHooks) == 0 {
+		t.Fatal("expected session-start hooks list")
+	}
+
+	for _, h := range sessionHooks {
+		cmd, _ := h["command"].(string)
+		if cmd == "" {
+			continue
+		}
+		if strings.Contains(cmd, `--agent-id "gemini-cli-$PPID"`) {
+			t.Fatalf("found hardcoded ppid in gemini session-start hook: %s", cmd)
+		}
+		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "loom-agent-id-gemini-cli") {
+			// Verify workspace hash is part of the bootstrap.
+			if !strings.Contains(cmd, "WS_HASH") {
+				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, "cksum") {
+				t.Fatalf("expected cksum in agent ID bootstrap, got: %s", cmd)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected gemini hooks to use persistent AGENT_ID bootstrap and --agent-id \"$AGENT_ID\"")
+}
+
 func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	config := geminiHooksConfigFromRegistry(testRegistry())
 	hooks, ok := config["hooks"].(map[string]any)
@@ -692,5 +768,168 @@ func TestEmitCodexPreamble_WebSearchDisabled(t *testing.T) {
 
 	if !strings.Contains(content, `web_search = "disabled"`) {
 		t.Error("expected web_search = 'disabled'")
+	}
+}
+
+// --- Workspace-scoped agent ID tests ---
+
+func TestHookAgentIDBootstrap_ContainsWorkspaceHash(t *testing.T) {
+	output := hookAgentIDBootstrap("claude-code")
+
+	for _, want := range []string{
+		"WS_ROOT=",
+		"WS_HASH=",
+		"cksum",
+		"git rev-parse --show-toplevel",
+		"loom-agent-id-claude-code-${WS_HASH}",
+		`AGENT_ID="claude-code-${WS_HASH}-$PPID"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("hookAgentIDBootstrap output missing %q\ngot: %s", want, output)
+		}
+	}
+
+	// Verify the old global file pattern is gone.
+	if strings.Contains(output, `loom-agent-id-claude-code"`) &&
+		!strings.Contains(output, `loom-agent-id-claude-code-$`) {
+		t.Error("expected workspace-scoped file name, found global pattern")
+	}
+}
+
+func TestHookStaleCleanup_ChecksProcessLiveness(t *testing.T) {
+	output := hookStaleCleanup()
+
+	for _, want := range []string{
+		"loom-keepalive-${AGENT_ID}.pid",
+		`kill -0 "$OLD_PID"`,
+		`rm -f "$PID_FILE" "$AGENT_ID_FILE"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("hookStaleCleanup output missing %q\ngot: %s", want, output)
+		}
+	}
+}
+
+// --- Shared builder tests ---
+
+func TestBuildPlatformHooks_ClaudeEventNames(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	})
+
+	for _, key := range []string{"SessionStart", "Stop", "PostToolUse"} {
+		if _, ok := hooks[key]; !ok {
+			t.Errorf("expected key %q in claude platform hooks", key)
+		}
+	}
+
+	// Claude should NOT have SessionEnd or AfterTool (those are Gemini events).
+	for _, key := range []string{"SessionEnd", "AfterTool"} {
+		if _, ok := hooks[key]; ok {
+			t.Errorf("unexpected key %q in claude platform hooks", key)
+		}
+	}
+}
+
+func TestBuildPlatformHooks_GeminiEventNames(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+		AgentID:          "gemini-cli",
+		AgentType:        "gemini-cli",
+		Description:      "Gemini CLI session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "AfterTool",
+		HeartbeatMatcher: "run_shell_command",
+	})
+
+	for _, key := range []string{"SessionStart", "SessionEnd", "AfterTool"} {
+		if _, ok := hooks[key]; !ok {
+			t.Errorf("expected key %q in gemini platform hooks", key)
+		}
+	}
+
+	// Gemini should NOT have Stop or PostToolUse (those are Claude events).
+	for _, key := range []string{"Stop", "PostToolUse"} {
+		if _, ok := hooks[key]; ok {
+			t.Errorf("unexpected key %q in gemini platform hooks", key)
+		}
+	}
+}
+
+func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "test",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	})
+
+	sessionStart := hooks["SessionStart"].([]map[string]any)
+	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
+
+	foundAtomicWrite := false
+	for _, h := range sessionHooks {
+		cmd, _ := h["command"].(string)
+		// Keepalive hook should use atomic mv pattern.
+		if strings.Contains(cmd, "keepalive") && strings.Contains(cmd, `"${PID_FILE}.tmp"`) && strings.Contains(cmd, `mv "${PID_FILE}.tmp" "$PID_FILE"`) {
+			foundAtomicWrite = true
+			break
+		}
+	}
+	if !foundAtomicWrite {
+		t.Error("expected atomic PID write (mv .tmp pattern) in keepalive hook")
+	}
+}
+
+func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "test",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	})
+
+	sessionStart := hooks["SessionStart"].([]map[string]any)
+	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
+
+	foundStaleCleanup := false
+	for _, h := range sessionHooks {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "session-start") && strings.Contains(cmd, "kill -0") {
+			foundStaleCleanup = true
+			break
+		}
+	}
+	if !foundStaleCleanup {
+		t.Error("expected stale cleanup (kill -0) in session-start hook chain")
+	}
+}
+
+func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
+	var sb strings.Builder
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace")
+	content := sb.String()
+
+	for _, want := range []string{
+		"WS_HASH=",
+		"cksum",
+		"codex-${WS_HASH}-$$",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Codex preamble missing %q\ngot: %s", want, content)
+		}
+	}
+
+	// Old global pattern should be gone.
+	if strings.Contains(content, `--agent-id "codex-$$"`) {
+		t.Error("found old global agent ID pattern codex-$$ without workspace hash")
 	}
 }
