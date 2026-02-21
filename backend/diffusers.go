@@ -83,7 +83,7 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		// of bulk .to("cuda"). Avoids ROCm memory access faults with large
 		// models (e.g. full SDXL) on gfx1100. ~20-30% slower but stable.
 		cpuOffload := "0"
-		if spec.ConfigBool("cpuOffload", false) {
+		if v := spec.ConfigString("cpuOffload", ""); v == "true" || v == "1" {
 			cpuOffload = "1"
 		}
 		env = append(env, corev1.EnvVar{
