@@ -24,6 +24,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,10 +125,48 @@ func litellmAliases(model *aiv1alpha2.Model, servedModel string) []string {
 	return out
 }
 
+// ResolvedCapabilities is the fully-resolved set of model capabilities,
+// with auto-inference applied and explicit overrides merged.
+type ResolvedCapabilities struct {
+	ToolCalling     bool `json:"toolCalling"`
+	Vision          bool `json:"vision"`
+	ImageGeneration bool `json:"imageGeneration"`
+}
+
+// resolveCapabilities auto-infers capabilities from backend type and config,
+// then applies explicit overrides from spec.capabilities.
+func resolveCapabilities(model *aiv1alpha2.Model, b backend.Backend) ResolvedCapabilities {
+	caps := ResolvedCapabilities{
+		ImageGeneration: b.IsImageGeneration(),
+	}
+
+	switch model.Spec.Backend {
+	case "vllm", "ollama":
+		caps.ToolCalling = true
+	case "llamacpp":
+		caps.ToolCalling = model.Spec.ConfigBool("jinja", false)
+		caps.Vision = model.Spec.ConfigString("mmproj", "") != ""
+	}
+
+	if oc := model.Spec.Capabilities; oc != nil {
+		if oc.ToolCalling != nil {
+			caps.ToolCalling = *oc.ToolCalling
+		}
+		if oc.Vision != nil {
+			caps.Vision = *oc.Vision
+		}
+		if oc.ImageGeneration != nil {
+			caps.ImageGeneration = *oc.ImageGeneration
+		}
+	}
+	return caps
+}
+
 var managedModelAnnotations = []string{
 	"litellm.flexinfer.ai/served-model",
 	"litellm.flexinfer.ai/aliases",
 	"litellm.flexinfer.ai/copilot-model",
+	"litellm.flexinfer.ai/capabilities",
 	"flexinfer.ai/service-labels",
 }
 
@@ -833,6 +872,8 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 					if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
 						annotations["litellm.flexinfer.ai/copilot-model"] = model.Spec.LiteLLM.CopilotAlias
 					}
+					capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
+					annotations["litellm.flexinfer.ai/capabilities"] = string(capsJSON)
 				}
 				if len(model.Spec.ServiceLabels) > 0 {
 					annotations["flexinfer.ai/service-labels"] = strings.Join(model.Spec.ServiceLabels, ",")
@@ -2494,6 +2535,16 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 		envVars = append(envVars, corev1.EnvVar{Name: "HF_REVISION", Value: hfOpts.revision})
 	}
 
+	// If the model config specifies a VAE repo (e.g. madebyollin/sdxl-vae-fp16-fix),
+	// pass it to the download script so the VAE is prefetched alongside the model.
+	if vaeRepo := model.Spec.ConfigString("vaeRepo", ""); vaeRepo != "" {
+		vaeDest := "/models/.vae/" + filepath.Base(vaeRepo)
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "VAE_REPO", Value: vaeRepo},
+			corev1.EnvVar{Name: "VAE_DEST_DIR", Value: vaeDest},
+		)
+	}
+
 	destSubdir = strings.Trim(destSubdir, "/")
 	destDir := "/models/" + destSubdir
 
@@ -2580,6 +2631,13 @@ if revision:
     download_kwargs["revision"] = revision
 
 snapshot_download(**download_kwargs)
+
+# Download additional VAE repo if configured (e.g. madebyollin/sdxl-vae-fp16-fix).
+vae_repo = os.environ.get("VAE_REPO", "").strip()
+if vae_repo:
+    vae_dir = os.environ.get("VAE_DEST_DIR", "")
+    print(f"Downloading VAE: {vae_repo} -> {vae_dir}")
+    snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
 PY
 touch "$MARKER"
 echo "Download complete."

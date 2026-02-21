@@ -140,6 +140,26 @@ type KVCacheStatus struct {
 	LastAction string `json:"lastAction,omitempty"`
 }
 
+// ModelCapabilities declares model capabilities for downstream consumers.
+// Unset fields are auto-inferred from backend type and config.
+// +kubebuilder:object:generate=true
+type ModelCapabilities struct {
+	// ToolCalling enables OpenAI-compatible function/tool calling.
+	// Auto: true for vllm, ollama; true for llamacpp when jinja=true.
+	// +optional
+	ToolCalling *bool `json:"toolCalling,omitempty"`
+
+	// Vision enables multimodal image input.
+	// Auto: true for llamacpp when mmproj is configured.
+	// +optional
+	Vision *bool `json:"vision,omitempty"`
+
+	// ImageGeneration marks this as an image generation model.
+	// Auto: true for diffusers, comfyui, vllm-omni.
+	// +optional
+	ImageGeneration *bool `json:"imageGeneration,omitempty"`
+}
+
 // ModelSpec defines the desired state of Model
 // This is the simplified v1alpha2 spec optimized for homelab users.
 // +kubebuilder:object:generate=true
@@ -206,6 +226,11 @@ type ModelSpec struct {
 	// Only effective with backends that support KV-cache tuning (vLLM).
 	// +optional
 	KVCache *KVCacheSpec `json:"kvCache,omitempty"`
+
+	// Capabilities declares model capabilities for downstream consumers.
+	// Unset fields are auto-inferred from backend type and config.
+	// +optional
+	Capabilities *ModelCapabilities `json:"capabilities,omitempty"`
 }
 
 // GPUVendor selects which vendor GPU resource to request.
