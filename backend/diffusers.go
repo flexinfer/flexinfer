@@ -62,6 +62,20 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		},
 	}
 
+	// Inference defaults (passed to the server.py auto-detect logic)
+	if steps := spec.ConfigString("numInferenceSteps", ""); steps != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "DEFAULT_NUM_INFERENCE_STEPS",
+			Value: steps,
+		})
+	}
+	if scale := spec.ConfigString("guidanceScale", ""); scale != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "DEFAULT_GUIDANCE_SCALE",
+			Value: scale,
+		})
+	}
+
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars()...)
