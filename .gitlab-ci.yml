@@ -456,7 +456,7 @@ publish_mlcllm_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-rocm" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/mlc-llm:rocm,push=true"
+        --output "type=image,\"name=${REGISTRY}/mlc-llm:rocm,${REGISTRY}/mlc-llm:rocm-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
@@ -486,7 +486,7 @@ publish_mlcllm_rocm64:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-rocm64-full" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=registry.harbor.lan/library/mlc-llm:rocm64-src,push=true"
+        --output "type=image,\"name=registry.harbor.lan/library/mlc-llm:rocm64-src,registry.harbor.lan/library/mlc-llm:rocm64-src-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
@@ -513,7 +513,7 @@ publish_mlcllm_cuda:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-cuda" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/mlc-llm:cuda,push=true"
+        --output "type=image,\"name=${REGISTRY}/mlc-llm:cuda,${REGISTRY}/mlc-llm:cuda-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
@@ -544,11 +544,40 @@ publish_mlcllm_maxwell:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-cuda-maxwell" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=${REGISTRY}/mlc-llm:cuda-maxwell-v7,push=true"
+        --output "type=image,\"name=${REGISTRY}/mlc-llm:cuda-maxwell-v7,${REGISTRY}/mlc-llm:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
+
+# Ollama built from source with CUDA 11.8 for Maxwell GPUs (sm_52)
+# Pre-built binaries lack sm_52 support needed for GTX 980 Ti
+publish_ollama_maxwell:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Ollama Maxwell image (CUDA 11.8, sm_52)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.ollama-cuda-maxwell" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/ollama:cuda-maxwell,${REGISTRY}/ollama:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
 
 # --- Quantizer Images ---
 # CPU-only quantization tools for model weight compression
@@ -737,7 +766,7 @@ publish_vllm_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=registry.harbor.lan/library/vllm-api:rocm-navi,push=true"
+        --output "type=image,\"name=registry.harbor.lan/library/vllm-api:rocm-navi,registry.harbor.lan/library/vllm-api:rocm-navi-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
       allow_failure: true
@@ -767,7 +796,7 @@ publish_vllm_rocm_gfx1100:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm-gfx1100" \
         --opt platform=linux/amd64 \
-        --output "type=image,name=registry.harbor.lan/library/vllm-api:rocm-gfx1100,push=true"
+        --output "type=image,\"name=registry.harbor.lan/library/vllm-api:rocm-gfx1100,registry.harbor.lan/library/vllm-api:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
