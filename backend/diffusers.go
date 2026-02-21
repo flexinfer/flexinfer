@@ -75,6 +75,24 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: scale,
 		})
 	}
+	if sched := spec.ConfigString("scheduler", ""); sched != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "DEFAULT_SCHEDULER",
+			Value: sched,
+		})
+	}
+	if neg := spec.ConfigString("negativePrompt", ""); neg != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "DEFAULT_NEGATIVE_PROMPT",
+			Value: neg,
+		})
+	}
+	if fp16 := spec.ConfigString("useFp16", ""); fp16 != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "USE_FP16",
+			Value: fp16,
+		})
+	}
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {

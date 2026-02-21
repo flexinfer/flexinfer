@@ -205,6 +205,43 @@ def _default_guidance_scale(model_id: str) -> float:
         return 0.0
     return 7.5
 
+def _default_negative_prompt() -> Optional[str]:
+    """Return the server-wide default negative prompt from env, or None."""
+    return os.environ.get("DEFAULT_NEGATIVE_PROMPT") or None
+
+def _apply_scheduler(pipe, scheduler_name: Optional[str]):
+    """Override the pipeline scheduler if requested via env or config."""
+    if not scheduler_name:
+        scheduler_name = os.environ.get("DEFAULT_SCHEDULER", "")
+    if not scheduler_name:
+        return
+
+    from diffusers import (
+        DPMSolverMultistepScheduler,
+        EulerDiscreteScheduler,
+        EulerAncestralDiscreteScheduler,
+        UniPCMultistepScheduler,
+        DDIMScheduler,
+    )
+
+    scheduler_map = {
+        "dpm++2m": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=False),
+        "dpm++2m-karras": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=True),
+        "dpm++2m-sde-karras": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++"),
+        "euler": lambda cfg: EulerDiscreteScheduler.from_config(cfg),
+        "euler-a": lambda cfg: EulerAncestralDiscreteScheduler.from_config(cfg),
+        "unipc": lambda cfg: UniPCMultistepScheduler.from_config(cfg),
+        "ddim": lambda cfg: DDIMScheduler.from_config(cfg),
+    }
+
+    key = scheduler_name.lower().strip()
+    if key in scheduler_map:
+        pipe.scheduler = scheduler_map[key](pipe.scheduler.config)
+        print(f"Scheduler overridden to: {key} ({type(pipe.scheduler).__name__})")
+    else:
+        print(f"WARNING: Unknown scheduler '{scheduler_name}', keeping default. Options: {list(scheduler_map.keys())}")
+    sys.stdout.flush()
+
 class ImageData(BaseModel):
     b64_json: Optional[str] = None
     url: Optional[str] = None
@@ -325,9 +362,12 @@ def load_pipeline(model_id: str):
     print(f"Loading model: {resolved_model_id} (id: {model_id})")
     sys.stdout.flush()
 
-    # With the fixed VAE (madebyollin/sdxl-vae-fp16-fix), fp16 is safe on gfx1100
-    # The fixed VAE was finetuned to avoid NaN outputs that crash ROCm drivers
-    use_fp16 = os.environ.get("USE_FP16", "1") == "1"  # Default to fp16 now
+    # FP16 is faster and uses less VRAM, but the default SDXL VAE can produce NaN
+    # artifacts (graininess) in fp16 without the madebyollin/sdxl-vae-fp16-fix.
+    # Default to fp32 for safety; set USE_FP16=1 when VAE_PATH points to the fixed VAE.
+    is_rocm = hasattr(torch.version, 'hip') and torch.version.hip is not None
+    fp16_default = "0" if is_rocm else "1"
+    use_fp16 = os.environ.get("USE_FP16", fp16_default) == "1"
     dtype = torch.float16 if use_fp16 else torch.float32
     print(f"Using dtype: {dtype}")
     print(f"USE_FP16 env: {os.environ.get('USE_FP16', 'not set')}")
@@ -481,8 +521,17 @@ def load_pipeline(model_id: str):
         except Exception as e:
             print(f"Could not enable VAE slicing: {e}")
 
+    # Apply scheduler override if configured
+    _apply_scheduler(pipeline, None)
+
     current_model = model_id
     print(f"Model loaded successfully: {resolved_model_id} (id: {model_id})")
+    print(f"  Scheduler: {type(pipeline.scheduler).__name__}")
+    print(f"  Default steps: {_default_steps(model_id)}")
+    print(f"  Default guidance: {_default_guidance_scale(model_id)}")
+    neg = _default_negative_prompt()
+    if neg:
+        print(f"  Default negative prompt: {neg[:80]}...")
     sys.stdout.flush()
     return pipeline
 
@@ -531,6 +580,7 @@ async def generate_images(request: ImageGenerationRequest):
 
     steps = request.num_inference_steps if request.num_inference_steps is not None else _default_steps(model_id)
     guidance_scale = request.guidance_scale if request.guidance_scale is not None else _default_guidance_scale(model_id)
+    negative_prompt = request.negative_prompt or _default_negative_prompt()
 
     # Parse size
     try:
@@ -544,7 +594,7 @@ async def generate_images(request: ImageGenerationRequest):
         with torch.inference_mode():
             result = pipe(
                 prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
+                negative_prompt=negative_prompt,
                 num_inference_steps=steps,
                 guidance_scale=guidance_scale,
                 width=width,
