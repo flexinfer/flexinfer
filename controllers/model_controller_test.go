@@ -1598,3 +1598,142 @@ func labelSetMatches(metric *dto.Metric, want map[string]string) bool {
 	}
 	return true
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestResolveCapabilities(t *testing.T) {
+	tests := []struct {
+		name     string
+		backend  string
+		config   string
+		caps     *aiv1alpha2.ModelCapabilities
+		expected ResolvedCapabilities
+	}{
+		{
+			name:    "vllm auto-infers toolCalling",
+			backend: "vllm",
+			expected: ResolvedCapabilities{
+				ToolCalling: true,
+			},
+		},
+		{
+			name:    "ollama auto-infers toolCalling",
+			backend: "ollama",
+			expected: ResolvedCapabilities{
+				ToolCalling: true,
+			},
+		},
+		{
+			name:    "llamacpp with jinja auto-infers toolCalling",
+			backend: "llamacpp",
+			config:  `{"jinja":true}`,
+			expected: ResolvedCapabilities{
+				ToolCalling: true,
+			},
+		},
+		{
+			name:     "llamacpp without jinja defaults to no toolCalling",
+			backend:  "llamacpp",
+			expected: ResolvedCapabilities{},
+		},
+		{
+			name:    "llamacpp with mmproj auto-infers vision",
+			backend: "llamacpp",
+			config:  `{"mmproj":"mmproj-model-f16.gguf"}`,
+			expected: ResolvedCapabilities{
+				Vision: true,
+			},
+		},
+		{
+			name:    "llamacpp with jinja and mmproj",
+			backend: "llamacpp",
+			config:  `{"jinja":true,"mmproj":"mmproj-model-f16.gguf"}`,
+			expected: ResolvedCapabilities{
+				ToolCalling: true,
+				Vision:      true,
+			},
+		},
+		{
+			name:    "diffusers auto-infers imageGeneration",
+			backend: "diffusers",
+			expected: ResolvedCapabilities{
+				ImageGeneration: true,
+			},
+		},
+		{
+			name:    "comfyui auto-infers imageGeneration",
+			backend: "comfyui",
+			expected: ResolvedCapabilities{
+				ImageGeneration: true,
+			},
+		},
+		{
+			name:    "vllm-omni auto-infers imageGeneration",
+			backend: "vllm-omni",
+			expected: ResolvedCapabilities{
+				ImageGeneration: true,
+			},
+		},
+		{
+			name:     "mlc-llm defaults to all false",
+			backend:  "mlc-llm",
+			expected: ResolvedCapabilities{},
+		},
+		{
+			name:    "explicit override enables vision on vllm",
+			backend: "vllm",
+			caps: &aiv1alpha2.ModelCapabilities{
+				Vision: boolPtr(true),
+			},
+			expected: ResolvedCapabilities{
+				ToolCalling: true,
+				Vision:      true,
+			},
+		},
+		{
+			name:    "explicit override disables toolCalling on vllm",
+			backend: "vllm",
+			caps: &aiv1alpha2.ModelCapabilities{
+				ToolCalling: boolPtr(false),
+			},
+			expected: ResolvedCapabilities{
+				ToolCalling: false,
+			},
+		},
+		{
+			name:    "explicit override enables imageGeneration on llamacpp",
+			backend: "llamacpp",
+			caps: &aiv1alpha2.ModelCapabilities{
+				ImageGeneration: boolPtr(true),
+			},
+			expected: ResolvedCapabilities{
+				ImageGeneration: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, ok := backend.Get(tt.backend)
+			if !ok {
+				t.Fatalf("backend %q not found", tt.backend)
+			}
+
+			model := &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Backend:      tt.backend,
+					Source:       "HF://test/model",
+					Capabilities: tt.caps,
+				},
+			}
+			if tt.config != "" {
+				model.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(tt.config)}
+			}
+
+			got := resolveCapabilities(model, b)
+			if got != tt.expected {
+				t.Errorf("resolveCapabilities() = %+v, want %+v", got, tt.expected)
+			}
+		})
+	}
+}
