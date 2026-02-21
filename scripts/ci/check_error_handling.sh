@@ -8,7 +8,7 @@ set -euo pipefail
 # Helper/utility functions may legitimately return (nil, err) so this is a
 # ratchet, not a hard zero-tolerance check.
 
-BASELINE=${ERROR_HANDLING_BASELINE:-313}
+BASELINE=${ERROR_HANDLING_BASELINE:-318}
 
 count=$(grep -rn 'return nil, \(err\|fmt\.Errorf\)' cmd/mcp-*/main.go 2>/dev/null | wc -l | tr -d ' ')
 

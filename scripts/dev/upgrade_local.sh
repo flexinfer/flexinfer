@@ -101,14 +101,22 @@ case "$RESTART_DAEMON" in
     "$RUN_LOOM" restart
     ;;
   auto)
-    # Only restart if idle to avoid interrupting in-flight tool calls.
-    # Expected status line: "Connections: X active, Y idle"
+    # Prefer drain_ready field from status output (added in TD-SESSION-05).
+    # Falls back to legacy "Connections: X active" parsing for older daemons.
     if out=$("$RUN_LOOM" status 2>/dev/null); then
-      active="$(echo "$out" | awk '/^Connections:/{print $2}' | tr -d '[:space:]' || true)"
-      if [[ -n "${active:-}" && "${active:-0}" =~ ^[0-9]+$ && "${active:-0}" -eq 0 ]]; then
+      drain_ready="$(echo "$out" | awk -F'drain_ready=' '/drain_ready=/{print $2}' | tr -d '[:space:]' || true)"
+      if [[ "$drain_ready" == "true" ]]; then
         "$RUN_LOOM" restart
+      elif [[ "$drain_ready" == "false" ]]; then
+        echo "Daemon not drain-ready (in-flight RPCs); skipping restart (set RESTART_DAEMON=always to force)"
       else
-        echo "Daemon has active connections (${active:-unknown}); skipping restart (set RESTART_DAEMON=always to force)"
+        # Legacy fallback: parse "Connections: X active, Y idle"
+        active="$(echo "$out" | awk '/^Connections:/{print $2}' | tr -d '[:space:]' || true)"
+        if [[ -n "${active:-}" && "${active:-0}" =~ ^[0-9]+$ && "${active:-0}" -eq 0 ]]; then
+          "$RUN_LOOM" restart
+        else
+          echo "Daemon has active connections (${active:-unknown}); skipping restart (set RESTART_DAEMON=always to force)"
+        fi
       fi
     else
       echo "Could not query daemon status; skipping restart"

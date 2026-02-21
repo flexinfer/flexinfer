@@ -1,0 +1,7 @@
+{
+  "godot_host": "127.0.0.1",
+  "godot_port": 6550,
+  "log_path": "~/Library/Application Support/Godot/app_userdata/Kindred Keep (Slice)",
+  "auto_connect": true,
+  "reconnect_interval": 5000
+}

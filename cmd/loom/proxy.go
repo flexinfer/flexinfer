@@ -55,6 +55,24 @@ const (
 	defaultProxyInitRPCTimeout    = 10 * time.Second
 )
 
+// proxyAutostartCooldown is the minimum interval between daemon autostart
+// attempts. Package-level var so tests can override.
+var proxyAutostartCooldown = 10 * time.Second
+
+// proxyAutostartMaxAttempts caps the total number of autostart attempts
+// to prevent process churn storms when the daemon is permanently unavailable.
+var proxyAutostartMaxAttempts = 5
+
+// proxyTransportError wraps daemon transport send/recv errors so the main loop
+// can deterministically identify and reset broken connections without relying
+// on string-based error classification.
+type proxyTransportError struct {
+	err error
+}
+
+func (e *proxyTransportError) Error() string { return e.err.Error() }
+func (e *proxyTransportError) Unwrap() error { return e.err }
+
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
@@ -83,14 +101,24 @@ func runProxy(socketPath string) error {
 	var daemon mcp.Transport
 	var daemonConn net.Conn
 
-	var autostartOnce sync.Once
+	// Bounded autostart: replaces sync.Once so the proxy can re-attempt
+	// daemon startup after crashes, while capping total attempts.
+	autostartAttempts := 0
+	lastAutostartAttempt := time.Time{}
 	autostart := func() {
-		autostartOnce.Do(func() {
-			// Never write to stdout in proxy mode (it would corrupt the MCP stream).
-			if err := startDaemonInBackground(socketPath); err != nil {
-				fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed: %v\n", err)
-			}
-		})
+		if autostartAttempts >= proxyAutostartMaxAttempts {
+			return
+		}
+		if !lastAutostartAttempt.IsZero() && time.Since(lastAutostartAttempt) < proxyAutostartCooldown {
+			return
+		}
+		autostartAttempts++
+		lastAutostartAttempt = time.Now()
+		// Never write to stdout in proxy mode (it would corrupt the MCP stream).
+		if err := startDaemonInBackground(socketPath); err != nil {
+			fmt.Fprintf(os.Stderr, "loom proxy: daemon autostart failed (attempt %d/%d): %v\n",
+				autostartAttempts, proxyAutostartMaxAttempts, err)
+		}
 	}
 
 	dialWithTimeout := func(timeout time.Duration) (net.Conn, error) {
@@ -187,8 +215,22 @@ func runProxy(socketPath string) error {
 		_ = proxyRPCSend(ctx, transport, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}, "notifications/initialized")
 		daemonConn = conn
 		daemon = transport
+		autostartAttempts = 0 // Reset budget on successful connection.
 
 		return nil
+	}
+
+	// resetTransport atomically clears both daemon transport and underlying
+	// socket connection so the next ensureDaemon call reconnects cleanly.
+	resetTransport := func() {
+		if daemon != nil {
+			daemon.Close()
+			daemon = nil
+		}
+		if daemonConn != nil {
+			daemonConn.Close()
+			daemonConn = nil
+		}
 	}
 
 	// Main message loop
@@ -254,16 +296,12 @@ func runProxy(socketPath string) error {
 		}
 
 		if err != nil {
-			// If it was a connection error, clear daemon so we reconnect next time
-			if shouldResetDaemonTransport(err) {
-				if daemonConn != nil {
-					daemonConn.Close()
-					daemonConn = nil
-				}
-				if daemon != nil {
-					daemon.Close()
-				}
-				daemon = nil
+			// Transport errors from proxyRPCSend/proxyRPCRecv are wrapped as
+			// proxyTransportError, providing deterministic reset classification
+			// without relying on string matching.
+			var transportErr *proxyTransportError
+			if errors.As(err, &transportErr) {
+				resetTransport()
 			}
 			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
 		}
@@ -891,18 +929,23 @@ func proxyRPCPhaseError(operation, phase string, timeout time.Duration, err erro
 	if op == "" {
 		op = "daemon rpc"
 	}
+	var inner error
 	if isRPCTimeout(err) {
-		return fmt.Errorf("%s timeout during %s after %s (recoverable: proxy will reconnect and retry on the next request): %w", op, phase, timeout, err)
+		inner = fmt.Errorf("%s timeout during %s after %s (recoverable: proxy will reconnect and retry on the next request): %w", op, phase, timeout, err)
+	} else {
+		inner = fmt.Errorf("%s failed during %s: %w", op, phase, err)
 	}
-	return fmt.Errorf("%s failed during %s: %w", op, phase, err)
+	return &proxyTransportError{err: inner}
 }
 
 func shouldResetDaemonTransport(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Primary path: structured error classification via errors.Is/errors.As.
 	if isRPCTimeout(err) ||
 		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, syscall.EPIPE) ||
 		errors.Is(err, syscall.ECONNRESET) ||
@@ -910,6 +953,12 @@ func shouldResetDaemonTransport(err error) bool {
 		errors.Is(err, syscall.ENOTCONN) {
 		return true
 	}
+	// Any network operation error indicates a broken transport.
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	// Defense-in-depth: string fallbacks for non-standard error wrapping.
 	lower := strings.ToLower(err.Error())
 	return strings.Contains(lower, "broken pipe") ||
 		strings.Contains(lower, "connection reset") ||

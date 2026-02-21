@@ -22,6 +22,7 @@ type ServerHealthStatus struct {
 	RestartCount      int       `json:"restart_count"`
 	LastRestart       time.Time `json:"last_restart,omitempty"`
 	AutoRestartFailed bool      `json:"auto_restart_failed,omitempty"`
+	LastDeepProbe     time.Time `json:"last_deep_probe,omitempty"`
 }
 
 // HealthMonitor monitors server health and handles auto-restarts.
@@ -33,10 +34,11 @@ type HealthMonitor struct {
 
 	// Configuration
 	checkInterval      time.Duration
-	healthyThreshold   int // consecutive successes to mark healthy
-	unhealthyThreshold int // consecutive failures to mark unhealthy
-	restartThreshold   int // failures before auto-restart
-	maxRestarts        int // max restarts before giving up
+	deepProbeInterval  time.Duration // interval between full process-spawning probes
+	healthyThreshold   int           // consecutive successes to mark healthy
+	unhealthyThreshold int           // consecutive failures to mark unhealthy
+	restartThreshold   int           // failures before auto-restart
+	maxRestarts        int           // max restarts before giving up
 	restartCooldown    time.Duration
 
 	// Control
@@ -47,6 +49,7 @@ type HealthMonitor struct {
 // HealthMonitorConfig holds configuration for the health monitor.
 type HealthMonitorConfig struct {
 	CheckInterval      time.Duration
+	DeepProbeInterval  time.Duration // how often to run a full process-spawning probe (0 = every check)
 	HealthyThreshold   int
 	UnhealthyThreshold int
 	RestartThreshold   int
@@ -58,6 +61,7 @@ type HealthMonitorConfig struct {
 func DefaultHealthMonitorConfig() HealthMonitorConfig {
 	return HealthMonitorConfig{
 		CheckInterval:      30 * time.Second,
+		DeepProbeInterval:  5 * time.Minute,
 		HealthyThreshold:   2,
 		UnhealthyThreshold: 3,
 		RestartThreshold:   3,
@@ -73,6 +77,7 @@ func NewHealthMonitor(daemon *Daemon, cfg HealthMonitorConfig) *HealthMonitor {
 		logger:             daemon.logger.With("component", "health-monitor"),
 		statuses:           make(map[string]*ServerHealthStatus),
 		checkInterval:      cfg.CheckInterval,
+		deepProbeInterval:  cfg.DeepProbeInterval,
 		healthyThreshold:   cfg.HealthyThreshold,
 		unhealthyThreshold: cfg.UnhealthyThreshold,
 		restartThreshold:   cfg.RestartThreshold,
@@ -162,12 +167,40 @@ func (h *HealthMonitor) checkAllServers() {
 	wg.Wait()
 }
 
+// needsDeepProbe returns true when the server requires a full process-spawning
+// health probe (either no previous deep probe, or the interval has elapsed).
+func (h *HealthMonitor) needsDeepProbe(status *ServerHealthStatus) bool {
+	if h.deepProbeInterval <= 0 {
+		return true // deep probes disabled → always deep
+	}
+	return status == nil || status.LastDeepProbe.IsZero() || time.Since(status.LastDeepProbe) >= h.deepProbeInterval
+}
+
 // checkServer performs a health check on a single server.
+// It uses a lightweight pool-based probe when an idle connection exists and
+// falls back to a full process-spawning deep probe on the configured interval
+// or when the pool probe fails.
 func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 	start := time.Now()
 
-	// Try to list tools as a health check
-	_, err := h.daemon.fetchServerTools(ctx, serverName)
+	h.mu.RLock()
+	existing := h.statuses[serverName]
+	h.mu.RUnlock()
+
+	deep := h.needsDeepProbe(existing)
+	var err error
+	if !deep {
+		_, err = h.daemon.fetchServerToolsViaPool(ctx, serverName)
+		if err != nil {
+			// Pool probe failed; escalate to deep probe.
+			h.logger.Debug("pool probe failed, escalating to deep probe",
+				"server", serverName, "error", err)
+			deep = true
+			_, err = h.daemon.fetchServerTools(ctx, serverName)
+		}
+	} else {
+		_, err = h.daemon.fetchServerTools(ctx, serverName)
+	}
 
 	latencyMs := float64(time.Since(start).Milliseconds())
 	now := time.Now()
@@ -235,6 +268,9 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 		status.ConsecutiveFails = 0
 		status.LastHealthy = now
 		status.LastError = ""
+		if deep {
+			status.LastDeepProbe = now
+		}
 
 		// Update Prometheus metrics
 		if h.daemon.metrics != nil {

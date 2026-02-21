@@ -20,6 +20,8 @@ func showStatus(socketPath string) error {
 		ActiveConns int      `json:"activeConns"`
 		IdleConns   int      `json:"idleConns"`
 		Processes   []string `json:"processes"`
+		ActiveRPCs  int64    `json:"activeRPCs"`
+		DrainReady  bool     `json:"drainReady"`
 	}
 
 	if err := json.Unmarshal(result, &status); err != nil {
@@ -30,6 +32,7 @@ func showStatus(socketPath string) error {
 	fmt.Printf("Socket: %s\n", socketPath)
 	fmt.Printf("Servers: %d registered\n", status.Servers)
 	fmt.Printf("Connections: %d active, %d idle\n", status.ActiveConns, status.IdleConns)
+	fmt.Printf("RPCs: %d active, drain_ready=%v\n", status.ActiveRPCs, status.DrainReady)
 	if len(status.Processes) > 0 {
 		fmt.Printf("Processes: %v\n", status.Processes)
 	}

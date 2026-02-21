@@ -26,9 +26,14 @@ type fakeTransport struct {
 	recvErr error
 	recvMsg *mcp.Message
 	sent    []*mcp.Message
+	sendFn  func(context.Context, *mcp.Message) error
+	recvFn  func(context.Context) (*mcp.Message, error)
 }
 
-func (f *fakeTransport) Send(_ context.Context, msg *mcp.Message) error {
+func (f *fakeTransport) Send(ctx context.Context, msg *mcp.Message) error {
+	if f.sendFn != nil {
+		return f.sendFn(ctx, msg)
+	}
 	if f.sendErr != nil {
 		return f.sendErr
 	}
@@ -36,7 +41,10 @@ func (f *fakeTransport) Send(_ context.Context, msg *mcp.Message) error {
 	return nil
 }
 
-func (f *fakeTransport) Recv(_ context.Context) (*mcp.Message, error) {
+func (f *fakeTransport) Recv(ctx context.Context) (*mcp.Message, error) {
+	if f.recvFn != nil {
+		return f.recvFn(ctx)
+	}
 	if f.recvErr != nil {
 		return nil, f.recvErr
 	}
@@ -125,6 +133,39 @@ func readAuditEntries(t *testing.T, path string) []AuditEntry {
 		t.Fatalf("scan audit log: %v", err)
 	}
 	return entries
+}
+
+func TestDaemonRPCTimeoutForMethod_Defaults(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
+
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != defaultDaemonControlRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want %v", got, defaultDaemonControlRPCTimeout)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want %v", got, defaultDaemonToolRPCTimeout)
+	}
+}
+
+func TestDaemonRPCTimeoutForMethod_EnvOverrideAndFallback(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "45s")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "75s")
+
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != 45*time.Second {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want 45s", got)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != 75*time.Second {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want 75s", got)
+	}
+
+	t.Setenv("LOOM_DAEMON_CONTROL_TIMEOUT", "0s")
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "-1s")
+	if got := daemonRPCTimeoutForMethod("loom/status"); got != defaultDaemonControlRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(control) = %v, want %v", got, defaultDaemonControlRPCTimeout)
+	}
+	if got := daemonRPCTimeoutForMethod("tools/call"); got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("daemonRPCTimeoutForMethod(tools/call) = %v, want %v", got, defaultDaemonToolRPCTimeout)
+	}
 }
 
 func TestCallPipelineParseAndResolve_InvalidParams(t *testing.T) {
@@ -715,6 +756,82 @@ func TestCallPipelineExecute_RecvFailure(t *testing.T) {
 	}
 }
 
+func TestCallPipelineExecute_SendTimeoutWrapped(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "7s")
+
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{sendErr: context.DeadlineExceeded}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "send-timeout"},
+		serverName: "prometheus",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "prometheus",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "send-timeout", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected timeout error response")
+	}
+	if !strings.Contains(resp.Error.Message, "tools/call timeout during send after 7s") {
+		t.Fatalf("timeout details missing from %q", resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "recoverable: daemon will reconnect upstream transport and retry on the next request") {
+		t.Fatalf("recoverability hint missing from %q", resp.Error.Message)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection to be marked unhealthy")
+	}
+}
+
+func TestCallPipelineExecute_RecvTimeoutWrapped(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "9s")
+
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{recvErr: context.DeadlineExceeded}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "recv-timeout"},
+		serverName: "prometheus",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "prometheus",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "recv-timeout", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected timeout error response")
+	}
+	if !strings.Contains(resp.Error.Message, "tools/call timeout during recv after 9s") {
+		t.Fatalf("timeout details missing from %q", resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "recoverable: daemon will reconnect upstream transport and retry on the next request") {
+		t.Fatalf("recoverability hint missing from %q", resp.Error.Message)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection to be marked unhealthy")
+	}
+}
+
 func TestCallPipelineExecute_SuccessCachesResponse(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	d.respCache = NewResponseCache(CacheConfig{Enabled: true})
@@ -1086,5 +1203,383 @@ func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
 	}
 	if snap.Totals.ErrorCount != 1 {
 		t.Fatalf("error_count = %d, want 1", snap.Totals.ErrorCount)
+	}
+}
+
+// --- Drain readiness tests (TD-SESSION-05 / DEBT-006) ---
+
+func TestHandleStatus_DrainReady_WhenIdle(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	d.procMgr = process.NewManager(nil, "codex")
+	d.registry = &kitregistry.Registry{}
+	defer func() { _ = d.pool.Close() }()
+	msg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "status-1", Method: "loom/status"}
+
+	resp, err := d.handleStatus(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+
+	var status struct {
+		Running    bool  `json:"running"`
+		ActiveRPCs int64 `json:"activeRPCs"`
+		DrainReady bool  `json:"drainReady"`
+	}
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if !status.DrainReady {
+		t.Fatal("expected drainReady=true when no active RPCs")
+	}
+	if status.ActiveRPCs != 0 {
+		t.Fatalf("activeRPCs = %d, want 0", status.ActiveRPCs)
+	}
+}
+
+func TestHandleStatus_NotDrainReady_DuringCall(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+	d.registry = &kitregistry.Registry{}
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "drain_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Transport blocks on recv until we release it.
+	recvGate := make(chan struct{})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{
+				recvFn: func(ctx context.Context) (*mcp.Message, error) {
+					select {
+					case <-recvGate:
+						return &mcp.Message{
+							JSONRPC: mcp.JSONRPCVersion,
+							ID:      "ok",
+							Result:  json.RawMessage(`{"ok":true}`),
+						}, nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "drain_srv",
+		"tool":   "slow",
+	})
+
+	// Start a call in the background.
+	callDone := make(chan struct{})
+	go func() {
+		defer close(callDone)
+		d.handleCall(context.Background(), msg)
+	}()
+
+	// Wait briefly for the call to be in-flight.
+	time.Sleep(50 * time.Millisecond)
+
+	// Check activeRPCs and drainReady during active call.
+	rpcs := d.activeRPCs.Load()
+	if rpcs != 1 {
+		t.Fatalf("activeRPCs = %d, want 1 during in-flight call", rpcs)
+	}
+
+	statusMsg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "status-2", Method: "loom/status"}
+	resp, err := d.handleStatus(context.Background(), statusMsg)
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+
+	var status struct {
+		ActiveRPCs int64 `json:"activeRPCs"`
+		DrainReady bool  `json:"drainReady"`
+	}
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if status.DrainReady {
+		t.Fatal("expected drainReady=false during in-flight RPC")
+	}
+	if status.ActiveRPCs != 1 {
+		t.Fatalf("activeRPCs = %d, want 1", status.ActiveRPCs)
+	}
+
+	// Release the blocked call.
+	close(recvGate)
+	<-callDone
+
+	// After call completes, should be drain-ready again.
+	rpcs = d.activeRPCs.Load()
+	if rpcs != 0 {
+		t.Fatalf("activeRPCs = %d, want 0 after call completes", rpcs)
+	}
+}
+
+// --- Chaos / resilience tests (TD-SESSION-03 / DEBT-007) ---
+
+// TestCallPipeline_TransportFailureThenRecovery simulates a server crash
+// mid-session: call 1 succeeds, call 2 fails (same connection breaks),
+// call 3 succeeds with a fresh connection (simulating server restart).
+func TestCallPipeline_TransportFailureThenRecovery(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	// Use a high failure threshold so the circuit breaker doesn't trip.
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "chaos_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Track send count so the same transport can fail on its 2nd send
+	// (simulating a connection that was healthy then breaks mid-session).
+	sendCount := 0
+
+	dialCount := 0
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			dialCount++
+			if dialCount == 1 {
+				// First dial: transport succeeds on first send, then breaks.
+				return &fakeTransport{
+					sendFn: func(_ context.Context, _ *mcp.Message) error {
+						sendCount++
+						if sendCount >= 2 {
+							return errors.New("broken pipe")
+						}
+						return nil
+					},
+					recvMsg: &mcp.Message{
+						JSONRPC: mcp.JSONRPCVersion,
+						ID:      "ok",
+						Result:  json.RawMessage(`{"ok":true}`),
+					},
+				}, nil
+			}
+			// Subsequent dials: fully healthy (simulating server restart).
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "recovered",
+					Result:  json.RawMessage(`{"recovered":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "chaos_srv",
+		"tool":   "noop",
+	})
+
+	// Call 1: should succeed (sendCount goes from 0→1).
+	resp1, err1 := d.handleCall(context.Background(), msg)
+	if err1 != nil {
+		t.Fatalf("call 1: unexpected error: %v", err1)
+	}
+	if resp1.Error != nil {
+		t.Fatalf("call 1: unexpected error response: %+v", resp1.Error)
+	}
+
+	// Call 2: same connection reused from pool, send fails (sendCount=2).
+	resp2, err2 := d.handleCall(context.Background(), msg)
+	if err2 != nil {
+		t.Fatalf("call 2: unexpected error: %v", err2)
+	}
+	if resp2.Error == nil {
+		t.Fatal("call 2: expected transport failure error response")
+	}
+	if !strings.Contains(resp2.Error.Message, "broken pipe") {
+		t.Fatalf("call 2: expected broken pipe in error, got %q", resp2.Error.Message)
+	}
+
+	// Pool should be cleared after transport failure.
+	stats := d.pool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("pool idle conns = %d, want 0 after transport failure", stats.IdleConns)
+	}
+
+	// Call 3: recovery with fresh connection from new dial.
+	resp3, err3 := d.handleCall(context.Background(), msg)
+	if err3 != nil {
+		t.Fatalf("call 3: unexpected error: %v", err3)
+	}
+	if resp3.Error != nil {
+		t.Fatalf("call 3: expected recovery success, got error: %+v", resp3.Error)
+	}
+	if string(resp3.Result) != `{"recovered":true}` {
+		t.Fatalf("call 3: result = %s, want recovery response", string(resp3.Result))
+	}
+}
+
+// TestCallPipeline_ConsecutiveTimeoutsThenRecovery verifies that multiple
+// consecutive timeout failures don't permanently wedge the call pipeline,
+// and recovery succeeds once the transport is healthy again.
+func TestCallPipeline_ConsecutiveTimeoutsThenRecovery(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "1s")
+
+	dialCount := 0
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	// Set a high failure threshold so the circuit breaker allows recovery
+	// without waiting for the 30s recovery window.
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "timeout_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			dialCount++
+			if dialCount <= 3 {
+				return &fakeTransport{
+					recvFn: func(ctx context.Context) (*mcp.Message, error) {
+						<-ctx.Done()
+						return nil, ctx.Err()
+					},
+				}, nil
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "ok",
+					Result:  json.RawMessage(`{"finally":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "timeout_srv",
+		"tool":   "slow_op",
+	})
+
+	// 3 consecutive timeouts - each clears the pool and dials a new transport.
+	for i := 1; i <= 3; i++ {
+		resp, err := d.handleCall(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("timeout call %d: unexpected error: %v", i, err)
+		}
+		if resp.Error == nil {
+			t.Fatalf("timeout call %d: expected timeout error response", i)
+		}
+		if !strings.Contains(resp.Error.Message, "timeout") {
+			t.Fatalf("timeout call %d: expected timeout in error, got %q", i, resp.Error.Message)
+		}
+	}
+
+	// Recovery call should succeed with 4th dial returning healthy transport.
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("recovery call: unexpected error: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("recovery call: expected success, got error: %+v", resp.Error)
+	}
+	if string(resp.Result) != `{"finally":true}` {
+		t.Fatalf("recovery call: result = %s, want recovery response", string(resp.Result))
+	}
+}
+
+// TestCallPipeline_RecvEOFTriggersServerRestart verifies that an EOF during
+// recv (server process crashed) clears the pool and triggers server stop,
+// allowing the next call to re-dial a fresh server process.
+func TestCallPipeline_RecvEOFTriggersServerRestart(t *testing.T) {
+	callNum := 0
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "eof_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			callNum++
+			if callNum == 1 {
+				return &fakeTransport{recvErr: io.EOF}, nil
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "ok",
+					Result:  json.RawMessage(`{"restarted":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "eof_srv",
+		"tool":   "check",
+	})
+
+	// Call 1: EOF (simulating server process crash).
+	resp1, err1 := d.handleCall(context.Background(), msg)
+	if err1 != nil {
+		t.Fatalf("eof call: unexpected error: %v", err1)
+	}
+	if resp1.Error == nil {
+		t.Fatal("eof call: expected error response")
+	}
+
+	// Pool should be cleared.
+	stats := d.pool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("pool idle = %d, want 0 after EOF", stats.IdleConns)
+	}
+
+	// Call 2: recovery after server restart.
+	resp2, err2 := d.handleCall(context.Background(), msg)
+	if err2 != nil {
+		t.Fatalf("recovery call: unexpected error: %v", err2)
+	}
+	if resp2.Error != nil {
+		t.Fatalf("recovery call: expected success, got error: %+v", resp2.Error)
+	}
+	if string(resp2.Result) != `{"restarted":true}` {
+		t.Fatalf("recovery call: result = %s, want restarted response", string(resp2.Result))
 	}
 }

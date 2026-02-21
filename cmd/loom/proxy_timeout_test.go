@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"syscall"
 	"testing"
@@ -86,20 +88,70 @@ func TestProxyRPCPhaseError_TimeoutIncludesRecoverability(t *testing.T) {
 	}
 }
 
+func TestProxyRPCPhaseError_ReturnsTransportError(t *testing.T) {
+	err := proxyRPCPhaseError("tools/call", "send", 30*time.Second, io.EOF)
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError, got %T: %v", err, err)
+	}
+	// The underlying EOF should be reachable via Unwrap chain.
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected io.EOF in error chain, got %v", err)
+	}
+}
+
+func TestProxyRPCPhaseError_TimeoutReturnsTransportError(t *testing.T) {
+	err := proxyRPCPhaseError("loom/status", "recv", 10*time.Second, context.DeadlineExceeded)
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError for timeout, got %T: %v", err, err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded in chain, got %v", err)
+	}
+}
+
+func TestProxyTransportError_NotMatchedByNonTransportErrors(t *testing.T) {
+	// JSON parse errors should NOT match proxyTransportError.
+	err := &json.SyntaxError{}
+	var transportErr *proxyTransportError
+	if errors.As(err, &transportErr) {
+		t.Fatal("json.SyntaxError should not match proxyTransportError")
+	}
+
+	// Generic errors should NOT match.
+	generic := errors.New("permission denied")
+	if errors.As(generic, &transportErr) {
+		t.Fatal("generic error should not match proxyTransportError")
+	}
+}
+
 func TestShouldResetDaemonTransport(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want bool
 	}{
+		{name: "nil", err: nil, want: false},
 		{name: "deadline exceeded", err: context.DeadlineExceeded, want: true},
 		{name: "eof", err: io.EOF, want: true},
+		{name: "unexpected eof structured", err: io.ErrUnexpectedEOF, want: true},
+		{name: "wrapped unexpected eof", err: fmt.Errorf("read: %w", io.ErrUnexpectedEOF), want: true},
+		{name: "net.ErrClosed", err: net.ErrClosed, want: true},
 		{name: "wrapped epipe", err: fmt.Errorf("wrapped: %w", syscall.EPIPE), want: true},
 		{name: "wrapped econnreset", err: fmt.Errorf("wrapped: %w", syscall.ECONNRESET), want: true},
+		{name: "wrapped econnaborted", err: fmt.Errorf("wrapped: %w", syscall.ECONNABORTED), want: true},
+		{name: "wrapped enotconn", err: fmt.Errorf("wrapped: %w", syscall.ENOTCONN), want: true},
+		{name: "net.OpError", err: &net.OpError{Op: "read", Err: errors.New("connection refused")}, want: true},
+		{name: "wrapped net.OpError", err: fmt.Errorf("transport: %w", &net.OpError{Op: "write", Err: syscall.EPIPE}), want: true},
+		// String fallbacks (defense-in-depth for non-standard wrapping).
 		{name: "broken pipe text", err: errors.New("write unix /tmp/loom.sock: broken pipe"), want: true},
 		{name: "closed network text", err: errors.New("use of closed network connection"), want: true},
 		{name: "unexpected eof text", err: errors.New("stream read failed: unexpected EOF"), want: true},
+		{name: "connection reset text", err: errors.New("connection reset by peer"), want: true},
+		// Non-transport errors should NOT trigger reset.
 		{name: "generic", err: errors.New("permission denied"), want: false},
+		{name: "json syntax", err: &json.SyntaxError{}, want: false},
 	}
 
 	for _, tc := range cases {
@@ -120,18 +172,33 @@ func TestProxyRPCSendTimeoutErrorIncludesRecoverabilityHint(t *testing.T) {
 	if !strings.Contains(err.Error(), "recoverable") {
 		t.Fatalf("expected recoverable hint in error, got %q", err.Error())
 	}
-	if !shouldResetDaemonTransport(err) {
-		t.Fatalf("expected timeout wrapper to require transport reset, got %v", err)
+	// The error should be a proxyTransportError.
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError, got %T", err)
 	}
 }
 
-func TestProxyDaemonRoundTripRecvFailureRequiresReset(t *testing.T) {
+func TestProxyDaemonRoundTripRecvFailureReturnsTransportError(t *testing.T) {
 	req, _ := mcp.NewRequest(1, "tools/list", nil)
 	_, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{recvErr: io.EOF}, req, "tools/list")
 	if err == nil {
 		t.Fatal("expected recv error")
 	}
-	if !shouldResetDaemonTransport(err) {
-		t.Fatalf("expected recv EOF to require reset, got %v", err)
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError for recv EOF, got %T: %v", err, err)
+	}
+}
+
+func TestProxyDaemonRoundTripSendFailureReturnsTransportError(t *testing.T) {
+	req, _ := mcp.NewRequest(1, "loom/status", nil)
+	_, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{sendErr: syscall.EPIPE}, req, "loom/status")
+	if err == nil {
+		t.Fatal("expected send error")
+	}
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError for send EPIPE, got %T: %v", err, err)
 	}
 }
