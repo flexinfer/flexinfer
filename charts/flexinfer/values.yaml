@@ -202,6 +202,9 @@ llamacpp:
   cudaImage: ""
   # ROCm image for AMD GPUs (default: ghcr.io/ggerganov/llama.cpp:server-rocm)
   rocmImage: ""
+  # Architecture-specific AMD images (override rocmImage for specific GPU families)
+  gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
+  gfx906Image: ""    # AMD Radeon VII (Vega20)
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
     # Complete args override. Use for advanced cases only
@@ -270,6 +273,7 @@ scheduler:
 
 benchmarker:
   enabled: true
+  postgresDsn: ""
   image:
     repository: ghcr.io/flexinfer/flexinfer-bench
     pullPolicy: IfNotPresent

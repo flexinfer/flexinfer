@@ -73,6 +73,10 @@ spec:
               value: "{{ .Values.benchmarker.image.repository }}:{{ .Values.benchmarker.image.tag }}"
             - name: BENCHMARK_SERVICE_ACCOUNT
               value: {{ include "flexinfer.benchmarkerServiceAccountName" . | quote }}
+            {{- if .Values.benchmarker.postgresDsn }}
+            - name: POSTGRES_DSN
+              value: {{ .Values.benchmarker.postgresDsn | quote }}
+            {{- end }}
             {{- if .Values.controller.runtime.shmSizeLimit }}
             - name: DEFAULT_SHM_SIZE_LIMIT
               value: {{ .Values.controller.runtime.shmSizeLimit | quote }}
@@ -178,6 +182,14 @@ spec:
             {{- if .Values.llamacpp.rocmImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE_AMD
               value: {{ .Values.llamacpp.rocmImage | quote }}
+            {{- end }}
+            {{- if .Values.llamacpp.gfx1100Image }}
+            - name: DEFAULT_LLAMA_CPP_IMAGE_GFX1100
+              value: {{ .Values.llamacpp.gfx1100Image | quote }}
+            {{- end }}
+            {{- if .Values.llamacpp.gfx906Image }}
+            - name: DEFAULT_LLAMA_CPP_IMAGE_GFX906
+              value: {{ .Values.llamacpp.gfx906Image | quote }}
             {{- end }}
             {{- if .Values.llamacpp.defaults.args }}
             - name: DEFAULT_LLAMA_CPP_ARGS

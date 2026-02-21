@@ -3,6 +3,7 @@ package backend
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +30,18 @@ func (b *LlamaCppBackend) Aliases() []string {
 func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
+		// Check for gfx1100 (RX 7900 series, RDNA3)
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+		}
+		// Check for gfx906 (Radeon VII, Vega20)
+		if strings.HasPrefix(gpuArch, "gfx906") {
+			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX906"); img != "" {
+				return img
+			}
+		}
 		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_AMD"); img != "" {
 			return img
 		}
@@ -156,9 +169,19 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	var env []corev1.EnvVar
 
-	// Add ROCm environment for AMD GPUs
+	// Add ROCm environment for AMD GPUs.
+	// llama.cpp uses HIP directly (not PyTorch), so PYTORCH_* vars are
+	// irrelevant but harmless. HSA_OVERRIDE_GFX_VERSION, however, must
+	// match the actual GPU — gfx906 is natively supported and must NOT
+	// be overridden to 11.0.0.
 	if spec.GPUVendor == GPUVendorAMD {
-		env = append(env, ROCmEnvVars()...)
+		if strings.HasPrefix(spec.GPUArch, "gfx906") {
+			// Radeon VII (Vega20): natively supported by ROCm.
+			// Disable SDMA for stability on Vega20.
+			env = append(env, corev1.EnvVar{Name: "HSA_ENABLE_SDMA", Value: "0"})
+		} else {
+			env = append(env, ROCmEnvVars()...)
+		}
 
 		// Optional device pinning for systems exposing multiple AMD GPUs.
 		// Keep behavior aligned with MLC-LLM config keys for easier migration.
