@@ -244,6 +244,52 @@ func TestModelSpecConfigHelpers(t *testing.T) {
 	}
 }
 
+func TestConfigBool_StringValues(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     map[string]interface{}
+		key        string
+		defaultVal bool
+		want       bool
+	}{
+		// Native bool values (existing behavior)
+		{"native true", map[string]interface{}{"k": true}, "k", false, true},
+		{"native false", map[string]interface{}{"k": false}, "k", true, false},
+
+		// String values from CRD config (the bug fix)
+		{"string true", map[string]interface{}{"k": "true"}, "k", false, true},
+		{"string false", map[string]interface{}{"k": "false"}, "k", true, false},
+		{"string True", map[string]interface{}{"k": "True"}, "k", false, true},
+		{"string FALSE", map[string]interface{}{"k": "FALSE"}, "k", true, false},
+		{"string 1", map[string]interface{}{"k": "1"}, "k", false, true},
+		{"string 0", map[string]interface{}{"k": "0"}, "k", true, false},
+
+		// Missing key returns default
+		{"missing key default false", map[string]interface{}{}, "k", false, false},
+		{"missing key default true", map[string]interface{}{}, "k", true, true},
+
+		// Nil config returns default
+		{"nil config", nil, "k", true, true},
+
+		// Invalid string returns default
+		{"invalid string", map[string]interface{}{"k": "notabool"}, "k", false, false},
+		{"empty string", map[string]interface{}{"k": ""}, "k", true, true},
+
+		// Non-bool non-string type returns default
+		{"int value", map[string]interface{}{"k": 42}, "k", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{Config: tt.config}
+			got := spec.ConfigBool(tt.key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("ConfigBool(%q, %v) = %v, want %v", tt.key, tt.defaultVal, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGPUVendorResourceName(t *testing.T) {
 	tests := []struct {
 		vendor   GPUVendor

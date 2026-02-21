@@ -4,6 +4,7 @@
 package backend
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,16 +97,29 @@ func (s *ModelSpec) ConfigInt(key string, defaultVal int) int {
 }
 
 // ConfigBool returns a bool config value with a default.
+// Handles both native bool values and string representations
+// ("true", "false", "1", "0") since CRD config values arrive as
+// JSON strings after json.Unmarshal into map[string]interface{}.
 func (s *ModelSpec) ConfigBool(key string, defaultVal bool) bool {
 	if s.Config == nil {
 		return defaultVal
 	}
-	if v, ok := s.Config[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
+	v, ok := s.Config[key]
+	if !ok {
+		return defaultVal
 	}
-	return defaultVal
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return defaultVal
+		}
+		return b
+	default:
+		return defaultVal
+	}
 }
 
 // Backend defines the interface that all inference backends must implement.
