@@ -585,9 +585,9 @@ Platform output formats:
   Kilocode: .kilocode/rules/<name>.md (rules)
             .kilocode/workflows/<name>.yaml (workflows)
   Gemini:   .gemini/skills/<name>/SKILL.md + scripts/ + references/ + assets/
-            .gemini/instructions.md (composite from instruction-type skills)
+            .gemini/GEMINI.md (composite from instruction-type skills)
 
-Skills with type=instruction are assembled into a composite instructions.md.
+Skills with type=instruction are assembled into a composite instructions.md (or GEMINI.md for Gemini).
 
 Example:
   loom generate skills --target all

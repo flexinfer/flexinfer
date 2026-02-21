@@ -117,12 +117,10 @@ func (g *Generator) generateForTarget(target string) error {
 
 		skillType := skill.GetType(target)
 
-		// Collect instruction-type skills for composite instructions.md
+		// Collect instruction-type skills for composite instructions.md / GEMINI.md
 		if skillType == "instruction" {
 			instructionSkills = append(instructionSkills, skill)
-			if target != "gemini" {
-				continue
-			}
+			continue
 		}
 
 		var files []string
@@ -155,9 +153,13 @@ func (g *Generator) generateForTarget(target string) error {
 
 	// Generate composite instructions.md for platforms that support it
 	if len(instructionSkills) > 0 {
+		filename := "instructions.md"
+		if target == "gemini" {
+			filename = "GEMINI.md"
+		}
 		files, err := g.generateInstructionsFile(target, instructionSkills)
 		if err != nil {
-			return fmt.Errorf("generate %s instructions.md: %w", target, err)
+			return fmt.Errorf("generate %s %s: %w", target, filename, err)
 		}
 		generatedFiles = append(generatedFiles, files...)
 	}
@@ -764,24 +766,27 @@ func (g *Generator) generateKilocodeWorkflow(skill *Skill) ([]string, error) {
 	return []string{filepath.Join("workflows", skill.Name+".yaml")}, nil
 }
 
-// =========================================================================
-// Composite instructions.md Generation
-// =========================================================================
+// Composite instructions.md / GEMINI.md Generation
 
-// generateInstructionsFile assembles instructions.md from all instruction-type skills for a platform.
+// generateInstructionsFile assembles instructions.md (or GEMINI.md for Gemini) from all instruction-type skills for a platform.
 func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]string, error) {
 	baseDir := g.resolveTargetDir(target)
 	if baseDir == "" {
 		return nil, nil
 	}
 
+	filename := "instructions.md"
+	if target == "gemini" {
+		filename = "GEMINI.md"
+	}
+
 	if g.Verbose {
-		fmt.Printf("Generating %s instructions.md from %d skills\n", target, len(skills))
+		fmt.Printf("Generating %s %s from %d skills\n", target, filename, len(skills))
 	}
 
 	if g.DryRun {
-		fmt.Printf("[dry-run] Would create %s/instructions.md from %d skills\n", baseDir, len(skills))
-		return []string{"instructions.md"}, nil
+		fmt.Printf("[dry-run] Would create %s/%s from %d skills\n", baseDir, filename, len(skills))
+		return []string{filename}, nil
 	}
 
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
@@ -812,12 +817,12 @@ func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]
 		sb.WriteString("\n")
 	}
 
-	outputPath := filepath.Join(baseDir, "instructions.md")
+	outputPath := filepath.Join(baseDir, filename)
 	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
-		return nil, fmt.Errorf("write instructions.md: %w", err)
+		return nil, fmt.Errorf("write %s: %w", filename, err)
 	}
 
-	return []string{"instructions.md"}, nil
+	return []string{filename}, nil
 }
 
 // =========================================================================

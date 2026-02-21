@@ -223,6 +223,17 @@ Selected env controls:
 - `ALERTMANAGER_MAX_RESPONSE_BYTES`
 - `LOOM_PROXY_TOOL_PAGE_SIZE` (default `100`, clamped `10..500`)
 
+## Platform-Specific Quirks
+
+### Gemini CLI
+
+Gemini CLI has several unique behaviors that Loom manages automatically:
+
+- **Instruction Filename:** Unlike Claude Code (`instructions.md`), Gemini CLI expects core instructions in `GEMINI.md`. Loom generates this file into `~/.gemini/GEMINI.md` for instruction-type skills.
+- **Skill Locations:** Gemini CLI searches for skills in both workspace (`.gemini/skills/`) and user (`~/.gemini/skills/`) directories.
+- **Duplicate Skills Error:** A known quirk/bug in Gemini CLI causes it to error if the same skill name is discovered in both the workspace and user directories, even if the content is identical.
+- **Loom Solution:** To avoid duplication errors, the `gemini` profile in Loom sets `SkillsDirectToHome: true`. This ensures skills are only generated into the user directory (`~/.gemini/skills/`) and are automatically cleaned from the repository's `.gemini/skills/` directory during sync operations.
+
 ## Troubleshooting
 
 - Daemon offline: `loom status`, then `loom restart`

@@ -942,11 +942,13 @@ func (m *Manager) cleanRepoSkills(p *Profile) {
 		}
 	}
 
-	// Remove instructions.md if it exists (generated alongside skills)
-	instructionsPath := filepath.Join(repoPath, "instructions.md")
-	if Exists(instructionsPath) {
-		if err := os.Remove(instructionsPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not remove stale instructions %s: %v\n", instructionsPath, err)
+	// Remove instructions.md/GEMINI.md if it exists (generated alongside skills)
+	for _, f := range []string{"instructions.md", "GEMINI.md"} {
+		p := filepath.Join(repoPath, f)
+		if Exists(p) {
+			if err := os.Remove(p); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove stale %s %s: %v\n", f, p, err)
+			}
 		}
 	}
 }

@@ -224,7 +224,7 @@ func TestEscapeYAMLString(t *testing.T) {
 	}
 }
 
-func TestGenerateForTarget_GeminiInstructionCreatesSkillBundle(t *testing.T) {
+func TestGenerateForTarget_GeminiInstructionCreatesGEMINIMD(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
 	sourceSkillDir := filepath.Join(sourceDir, "demo-skill")
@@ -235,17 +235,8 @@ func TestGenerateForTarget_GeminiInstructionCreatesSkillBundle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(sourceSkillDir, "references"), 0755); err != nil {
 		t.Fatalf("mkdir references: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(sourceSkillDir, "assets", "templates"), 0755); err != nil {
-		t.Fatalf("mkdir assets: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(sourceSkillDir, "scripts", "run.sh"), []byte("#!/usr/bin/env bash\necho ok\n"), 0755); err != nil {
 		t.Fatalf("write script: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceSkillDir, "references", "guide.md"), []byte("# Guide\n"), 0644); err != nil {
-		t.Fatalf("write reference: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceSkillDir, "assets", "templates", "default.yaml"), []byte("name: demo\n"), 0644); err != nil {
-		t.Fatalf("write asset: %v", err)
 	}
 
 	enabled := true
@@ -257,8 +248,6 @@ func TestGenerateForTarget_GeminiInstructionCreatesSkillBundle(t *testing.T) {
 			Scripts: []*Script{
 				{Name: "run", Path: "scripts/run.sh"},
 			},
-			References: []string{"guide.md"},
-			Assets:     []string{"templates/default.yaml"},
 		},
 		Targets: map[string]*TargetSpec{
 			"gemini": {Enabled: &enabled, Type: "instruction"},
@@ -278,58 +267,26 @@ func TestGenerateForTarget_GeminiInstructionCreatesSkillBundle(t *testing.T) {
 	}
 
 	geminiDir := filepath.Join(tmpDir, ".gemini")
-	skillMDPath := filepath.Join(geminiDir, "skills", "demo-skill", "SKILL.md")
-	if _, err := os.Stat(skillMDPath); err != nil {
-		t.Fatalf("expected SKILL.md to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "scripts", "run.sh")); err != nil {
-		t.Fatalf("expected script to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "references", "guide.md")); err != nil {
-		t.Fatalf("expected reference to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "demo-skill", "assets", "templates", "default.yaml")); err != nil {
-		t.Fatalf("expected asset to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(geminiDir, "instructions.md")); err != nil {
-		t.Fatalf("expected instructions.md to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(geminiDir, "GEMINI.md")); err != nil {
+		t.Fatalf("expected GEMINI.md to exist: %v", err)
 	}
 
-	skillMD, err := os.ReadFile(skillMDPath)
-	if err != nil {
-		t.Fatalf("read SKILL.md: %v", err)
-	}
-	skillMDText := string(skillMD)
-	if !strings.Contains(skillMDText, "name: demo-skill") {
-		t.Fatalf("expected skill frontmatter name, got:\n%s", skillMDText)
-	}
-	if !strings.Contains(skillMDText, "$HOME/.gemini/skills/demo-skill/scripts/run.sh") {
-		t.Fatalf("expected stable gemini skill path substitution, got:\n%s", skillMDText)
+	// Instructions-only generation should NOT create a bundle
+	skillMDPath := filepath.Join(geminiDir, "skills", "demo-skill", "SKILL.md")
+	if _, err := os.Stat(skillMDPath); !os.IsNotExist(err) {
+		t.Fatalf("did not expect SKILL.md to exist for instruction-type Gemini skill: %v", err)
 	}
 
 	manifest, err := ReadManifest(geminiDir)
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if manifest == nil {
-		t.Fatal("expected manifest to be written")
-	}
-
-	wantPaths := []string{
-		filepath.Join("skills", "demo-skill", "SKILL.md"),
-		filepath.Join("skills", "demo-skill", "scripts", "run.sh"),
-		filepath.Join("skills", "demo-skill", "references", "guide.md"),
-		filepath.Join("skills", "demo-skill", "assets", "templates", "default.yaml"),
-		"instructions.md",
-	}
-	for _, want := range wantPaths {
-		if !containsString(manifest.Generated, want) {
-			t.Fatalf("expected manifest to include %q, got %#v", want, manifest.Generated)
-		}
+	if !containsString(manifest.Generated, "GEMINI.md") {
+		t.Fatalf("expected manifest to include GEMINI.md, got %#v", manifest.Generated)
 	}
 }
 
-func TestGenerateForTarget_GeminiNonInstructionCreatesSkillWithoutCompositeInstructions(t *testing.T) {
+func TestGenerateForTarget_GeminiSkillCreatesBundle(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
 	sourceSkillDir := filepath.Join(sourceDir, "ops-helper")
@@ -345,7 +302,7 @@ func TestGenerateForTarget_GeminiNonInstructionCreatesSkillWithoutCompositeInstr
 			Instructions: "# Ops Helper\n\nDo ops work.",
 		},
 		Targets: map[string]*TargetSpec{
-			"gemini": {Enabled: &enabled, Type: "command"},
+			"gemini": {Enabled: &enabled, Type: "skill"},
 		},
 	}
 
@@ -363,10 +320,10 @@ func TestGenerateForTarget_GeminiNonInstructionCreatesSkillWithoutCompositeInstr
 
 	geminiDir := filepath.Join(tmpDir, ".gemini")
 	if _, err := os.Stat(filepath.Join(geminiDir, "skills", "ops-helper", "SKILL.md")); err != nil {
-		t.Fatalf("expected non-instruction Gemini skill to be generated: %v", err)
+		t.Fatalf("expected Gemini skill bundle to be generated: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(geminiDir, "instructions.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected no instructions.md for non-instruction-only generation, err=%v", err)
+	if _, err := os.Stat(filepath.Join(geminiDir, "GEMINI.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected no GEMINI.md for skill-type generation, err=%v", err)
 	}
 
 	manifest, err := ReadManifest(geminiDir)
@@ -376,8 +333,8 @@ func TestGenerateForTarget_GeminiNonInstructionCreatesSkillWithoutCompositeInstr
 	if manifest == nil {
 		t.Fatal("expected manifest to be written")
 	}
-	if containsString(manifest.Generated, "instructions.md") {
-		t.Fatalf("did not expect instructions.md in manifest, got %#v", manifest.Generated)
+	if containsString(manifest.Generated, "GEMINI.md") {
+		t.Fatalf("did not expect GEMINI.md in manifest, got %#v", manifest.Generated)
 	}
 	if !containsString(manifest.Generated, filepath.Join("skills", "ops-helper", "SKILL.md")) {
 		t.Fatalf("expected skill path in manifest, got %#v", manifest.Generated)

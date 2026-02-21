@@ -117,7 +117,7 @@ func TestSkill_GetType_PlatformDefaults(t *testing.T) {
 		{"claude", "command"},
 		{"codex", "skill"},
 		{"kilocode", "rule"},
-		{"gemini", "instruction"},
+		{"gemini", "skill"},
 		{"unknown", "skill"},
 	}
 

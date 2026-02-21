@@ -150,7 +150,7 @@ func (s *Skill) GetType(target string) string {
 	case "kilocode":
 		return "rule"
 	case "gemini":
-		return "instruction"
+		return "skill"
 	default:
 		return "skill"
 	}
