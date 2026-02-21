@@ -276,34 +276,31 @@ publish:
 
         echo "Publishing ${name}: $*"
 
-        # Build one --output flag per tag. BuildKit v0.12.x treats commas in
-        # --output as option delimiters, so "name=tag1,tag2,push=true" parses
-        # tag2 as an invalid standalone key instead of part of name=.
-        output_flags=""
+        # BuildKit v0.12.x only supports a single --output and treats commas
+        # in --output as option delimiters. Push each tag with a separate
+        # buildctl invocation; layers are cached so only the first build
+        # compiles, subsequent calls just push the manifest.
         for tag in "$@"; do
-          output_flags="${output_flags} --output type=image,name=${tag},push=true"
-        done
-
-        attempts=5
-        delay=2
-        for i in $(seq 1 "${attempts}"); do
-          # shellcheck disable=SC2086
-          if buildctl --addr "${BUILDKIT_HOST}" --timeout 2700 build \
-            --frontend dockerfile.v0 \
-            --local context=. \
-            --local dockerfile=build \
-            --opt filename="${dockerfile}" \
-            --opt platform=linux/amd64 \
-            ${output_flags}; then
-            break
-          fi
-          if [ "${i}" -eq "${attempts}" ]; then
-            echo "ERROR: failed to publish ${name} ($*) after ${attempts} attempts"
-            exit 1
-          fi
-          echo "WARN: publish failed (${i}/${attempts}); retrying in ${delay}s..."
-          sleep "${delay}"
-          delay=$((delay * 2))
+          attempts=5
+          delay=2
+          for i in $(seq 1 "${attempts}"); do
+            if buildctl --addr "${BUILDKIT_HOST}" --timeout 2700 build \
+              --frontend dockerfile.v0 \
+              --local context=. \
+              --local dockerfile=build \
+              --opt filename="${dockerfile}" \
+              --opt platform=linux/amd64 \
+              --output "type=image,name=${tag},push=true"; then
+              break
+            fi
+            if [ "${i}" -eq "${attempts}" ]; then
+              echo "ERROR: failed to publish ${name} (${tag}) after ${attempts} attempts"
+              exit 1
+            fi
+            echo "WARN: publish ${tag} failed (${i}/${attempts}); retrying in ${delay}s..."
+            sleep "${delay}"
+            delay=$((delay * 2))
+          done
         done
       }
 
