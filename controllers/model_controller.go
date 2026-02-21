@@ -619,6 +619,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 	service.Spec.Selector = desiredService.Spec.Selector
 	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
+	log.Info("Updating Service", "name", model.Name)
 	return r.Update(ctx, service)
 }
 
@@ -951,6 +952,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return r.Create(ctx, desiredDeployment)
 	}
 
+	// Capture existing state for change detection.
+	oldImage := ""
+	if cs := deployment.Spec.Template.Spec.Containers; len(cs) > 0 {
+		oldImage = cs[0].Image
+	}
+	oldReplicas := ptr.Deref(deployment.Spec.Replicas, 1)
+
 	// Update deployment
 	existingPodAnnotations := deployment.Spec.Template.Annotations
 	desiredSpec := desiredDeployment.Spec
@@ -966,6 +974,19 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
 	deployment.Spec.Template.Annotations = applyManagedAnnotations(existingPodAnnotations, desiredDeployment.Spec.Template.Annotations, managedModelPodAnnotations)
+
+	// Log meaningful changes to aid debugging.
+	newImage := ""
+	if cs := deployment.Spec.Template.Spec.Containers; len(cs) > 0 {
+		newImage = cs[0].Image
+	}
+	newReplicas := ptr.Deref(deployment.Spec.Replicas, 1)
+	if oldImage != newImage || oldReplicas != newReplicas {
+		log.Info("Updating Deployment", "name", model.Name,
+			"oldImage", oldImage, "newImage", newImage,
+			"oldReplicas", oldReplicas, "newReplicas", newReplicas)
+	}
+
 	return r.Update(ctx, deployment)
 }
 
