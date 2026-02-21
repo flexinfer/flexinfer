@@ -93,6 +93,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: fp16,
 		})
 	}
+	if vaePath := spec.ConfigString("vaePath", ""); vaePath != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "VAE_PATH",
+			Value: vaePath,
+		})
+	}
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
