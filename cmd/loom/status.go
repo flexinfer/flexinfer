@@ -15,13 +15,15 @@ func showStatus(socketPath string) error {
 	}
 
 	var status struct {
-		Running     bool     `json:"running"`
-		Servers     int      `json:"servers"`
-		ActiveConns int      `json:"activeConns"`
-		IdleConns   int      `json:"idleConns"`
-		Processes   []string `json:"processes"`
-		ActiveRPCs  int64    `json:"activeRPCs"`
-		DrainReady  bool     `json:"drainReady"`
+		Running             bool     `json:"running"`
+		Servers             int      `json:"servers"`
+		ActiveConns         int      `json:"activeConns"`
+		IdleConns           int      `json:"idleConns"`
+		Processes           []string `json:"processes"`
+		ActiveRPCs          int64    `json:"activeRPCs"`
+		DrainReady          bool     `json:"drainReady"`
+		DaemonEpoch         int64    `json:"daemonEpoch"`
+		ActiveProxySessions int      `json:"activeProxySessions"`
 	}
 
 	if err := json.Unmarshal(result, &status); err != nil {
@@ -30,6 +32,7 @@ func showStatus(socketPath string) error {
 
 	fmt.Println("Daemon: running")
 	fmt.Printf("Socket: %s\n", socketPath)
+	fmt.Printf("Epoch: %d, Proxy Sessions: %d\n", status.DaemonEpoch, status.ActiveProxySessions)
 	fmt.Printf("Servers: %d registered\n", status.Servers)
 	fmt.Printf("Connections: %d active, %d idle\n", status.ActiveConns, status.IdleConns)
 	fmt.Printf("RPCs: %d active, drain_ready=%v\n", status.ActiveRPCs, status.DrainReady)

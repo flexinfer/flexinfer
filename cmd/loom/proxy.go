@@ -49,6 +49,13 @@ var (
 	proxyAgentID       string
 )
 
+// Proxy session state for daemon lease/epoch tracking.
+var (
+	proxySessionID       string
+	proxyDaemonEpoch     int64
+	proxySessionDisabled bool
+)
+
 const (
 	defaultProxyControlRPCTimeout = 30 * time.Second
 	defaultProxyToolRPCTimeout    = 60 * time.Second
@@ -94,6 +101,9 @@ func runProxy(socketPath string) error {
 			heartbeatIntervalNanos = int64(time.Duration(fileCfg.Proxy.HeartbeatIntervalMs) * time.Millisecond)
 		}
 	}
+
+	// Check session disable env var.
+	proxySessionDisabled = os.Getenv("LOOM_PROXY_SESSION_DISABLE") == "1"
 
 	// Create stdio transport for client communication
 	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
@@ -168,6 +178,10 @@ func runProxy(socketPath string) error {
 			_ = proxyRPCSend(ctx, transport, &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}, "notifications/initialized")
 
 			daemon = transport
+
+			// Open a proxy session with the remote daemon (non-blocking, non-fatal).
+			proxyOpenSession(ctx, transport)
+
 			return nil
 		}
 
@@ -217,12 +231,19 @@ func runProxy(socketPath string) error {
 		daemon = transport
 		autostartAttempts = 0 // Reset budget on successful connection.
 
+		// Open a proxy session with the daemon (non-blocking, non-fatal).
+		proxyOpenSession(ctx, transport)
+
 		return nil
 	}
 
 	// resetTransport atomically clears both daemon transport and underlying
 	// socket connection so the next ensureDaemon call reconnects cleanly.
 	resetTransport := func() {
+		// Attempt graceful session close before tearing down transport.
+		if daemon != nil && proxySessionID != "" && !proxySessionDisabled {
+			proxyCloseSession(ctx, daemon)
+		}
 		if daemon != nil {
 			daemon.Close()
 			daemon = nil
@@ -416,14 +437,18 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	}
 	paramsJSON, _ := json.Marshal(toolCallParams)
 
-	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", map[string]any{
+	callPayload := map[string]any{
 		"server":    serverName,
 		"tool":      toolName,
 		"method":    "tools/call",
 		"params":    json.RawMessage(paramsJSON),
 		"arguments": params.Arguments,
 		"agent_id":  resolvedAgentID,
-	})
+	}
+	if proxySessionID != "" && !proxySessionDisabled {
+		callPayload["session_id"] = proxySessionID
+	}
+	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", callPayload)
 
 	resp, err := proxyDaemonRoundTrip(ctx, daemon, callReq, "tools/call")
 	if err != nil {
@@ -974,6 +999,81 @@ func splitToolName(name string) []string {
 		}
 	}
 	return []string{name}
+}
+
+// proxyOpenSession opens a session with the daemon after a successful initialize.
+// Non-blocking and non-fatal: older daemons that don't support sessions will return
+// method_not_found, which is silently ignored.
+func proxyOpenSession(ctx context.Context, transport mcp.Transport) {
+	if proxySessionDisabled {
+		return
+	}
+
+	openParams := map[string]any{
+		"version":  version,
+		"host_pid": strconv.Itoa(os.Getpid()),
+	}
+	if agentHintGlobal != "" {
+		openParams["agent_hint"] = agentHintGlobal
+	}
+	if proxySessionID != "" {
+		openParams["prior_session_id"] = proxySessionID
+	}
+
+	req, _ := mcp.NewRequest(99, "loom/session/open", openParams)
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
+	err := transport.Send(sendCtx, req)
+	sendCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loom proxy: session open send failed: %v\n", err)
+		return
+	}
+
+	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
+	resp, err := transport.Recv(recvCtx)
+	recvCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loom proxy: session open recv failed: %v\n", err)
+		return
+	}
+
+	// Older daemons return method_not_found -- silently ignore.
+	if resp.Error != nil {
+		return
+	}
+
+	var result struct {
+		SessionID   string `json:"session_id"`
+		DaemonEpoch int64  `json:"daemon_epoch"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return
+	}
+
+	proxySessionID = result.SessionID
+	proxyDaemonEpoch = result.DaemonEpoch
+}
+
+// proxyCloseSession sends a graceful session close to the daemon with a short timeout.
+// The prior session ID is preserved so the next open can pass it for resume tracking.
+func proxyCloseSession(ctx context.Context, transport mcp.Transport) {
+	if proxySessionID == "" {
+		return
+	}
+
+	req, _ := mcp.NewRequest(98, "loom/session/close", map[string]any{
+		"session_id": proxySessionID,
+	})
+
+	closeCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	_ = transport.Send(closeCtx, req)
+	// Best-effort recv; ignore errors (transport may already be broken).
+	_, _ = transport.Recv(closeCtx)
+
+	// proxySessionID is preserved as prior_session_id for the next open call.
 }
 
 // proxyHeartbeat fires an async heartbeat to the HUD for proxy-level agent identification.

@@ -127,6 +127,11 @@ type Daemon struct {
 	// activeRPCs tracks in-flight RPC call count for drain-readiness checks.
 	activeRPCs atomic.Int64
 
+	// daemonEpoch is incremented on each daemon startup for deterministic restart detection.
+	daemonEpoch int64
+	// sessions manages proxy session leases.
+	sessions *SessionManager
+
 	// lockFile prevents multiple loomd instances from unlinking/rebinding the same socket.
 	lockFile *os.File
 
@@ -404,16 +409,17 @@ func New(cfg Config) (*Daemon, error) {
 	cacheTTL := fileCfg.Resources.GetManifestTTL()
 
 	d = &Daemon{
-		cfg:       cfg,
-		fileCfg:   fileCfg,
-		registry:  reg,
-		repoRoot:  repoRoot,
-		procMgr:   procMgr,
-		pool:      connPool,
-		hubPool:   hubPool,
-		router:    rtr,
-		hubClient: hubClient,
-		logger:    logger,
+		cfg:         cfg,
+		fileCfg:     fileCfg,
+		daemonEpoch: 1,
+		registry:    reg,
+		repoRoot:    repoRoot,
+		procMgr:     procMgr,
+		pool:        connPool,
+		hubPool:     hubPool,
+		router:      rtr,
+		hubClient:   hubClient,
+		logger:      logger,
 		toolCache: &ToolCache{
 			ttl: cacheTTL,
 		},
@@ -571,6 +577,21 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 		}
 	}()
 
+	// Initialize proxy session manager
+	sessMax := d.fileCfg.HTTP.MaxSessions
+	if sessMax <= 0 {
+		sessMax = 1000
+	}
+	sessTimeout := time.Duration(d.fileCfg.HTTP.SessionTimeoutMinutes) * time.Minute
+	if sessTimeout <= 0 {
+		sessTimeout = 30 * time.Minute
+	}
+	d.sessions = NewSessionManager(sessMax, sessTimeout, d.daemonEpoch, d.logger)
+	d.logger.Info("proxy session manager initialized", "max_sessions", sessMax, "lease_minutes", int(sessTimeout.Minutes()))
+
+	// Start session reaper
+	go d.sessionReaperLoop()
+
 	// Start idle server reaper
 	go d.idleReaperLoop()
 
@@ -707,6 +728,25 @@ func (d *Daemon) reapIdleServers(idleTimeout time.Duration) []string {
 	}
 
 	return reaped
+}
+
+// sessionReaperLoop periodically reaps expired proxy sessions.
+func (d *Daemon) sessionReaperLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.done:
+			return
+		case <-ticker.C:
+			if d.sessions != nil {
+				if reaped := d.sessions.ReapExpired(); reaped > 0 {
+					d.logger.Info("reaped expired proxy sessions", "count", reaped)
+				}
+			}
+		}
+	}
 }
 
 // metricsCollectorLoop periodically updates metrics that require polling.
@@ -861,6 +901,11 @@ func (d *Daemon) Stop() (err error) {
 	d.stopOnce.Do(func() {
 		if d.done != nil {
 			close(d.done)
+		}
+
+		// Drain all proxy sessions
+		if d.sessions != nil {
+			d.sessions.DrainAll()
 		}
 
 		// Stop health monitor first
@@ -1169,6 +1214,14 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleCacheClear(ctx, msg)
 	case "loom/cost-stats":
 		resp, err = d.handleCostStats(ctx, msg)
+	case "loom/session/open":
+		resp, err = d.handleSessionOpen(ctx, msg)
+	case "loom/session/heartbeat":
+		resp, err = d.handleSessionHeartbeat(ctx, msg)
+	case "loom/session/status":
+		resp, err = d.handleSessionStatus(ctx, msg)
+	case "loom/session/close":
+		resp, err = d.handleSessionClose(ctx, msg)
 	default:
 		resp = mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method))
 	}
@@ -1189,26 +1242,36 @@ func (d *Daemon) handleInitialize(ctx context.Context, msg *mcp.Message) (*mcp.M
 }
 
 type statusResult struct {
-	Running     bool     `json:"running"`
-	Servers     int      `json:"servers"`
-	ActiveConns int      `json:"activeConns"`
-	IdleConns   int      `json:"idleConns"`
-	Processes   []string `json:"processes"`
-	ActiveRPCs  int64    `json:"activeRPCs"`
-	DrainReady  bool     `json:"drainReady"`
+	Running             bool     `json:"running"`
+	Servers             int      `json:"servers"`
+	ActiveConns         int      `json:"activeConns"`
+	IdleConns           int      `json:"idleConns"`
+	Processes           []string `json:"processes"`
+	ActiveRPCs          int64    `json:"activeRPCs"`
+	DrainReady          bool     `json:"drainReady"`
+	DaemonEpoch         int64    `json:"daemonEpoch"`
+	ActiveProxySessions int      `json:"activeProxySessions"`
 }
 
 func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	stats := d.pool.Stats()
 	rpcs := d.activeRPCs.Load()
+
+	activeSessions := 0
+	if d.sessions != nil {
+		activeSessions = d.sessions.ActiveCount()
+	}
+
 	result := statusResult{
-		Running:     true,
-		Servers:     len(d.registry.Servers),
-		ActiveConns: stats.ActiveConns,
-		IdleConns:   stats.IdleConns,
-		Processes:   d.procMgr.List(),
-		ActiveRPCs:  rpcs,
-		DrainReady:  rpcs == 0,
+		Running:             true,
+		Servers:             len(d.registry.Servers),
+		ActiveConns:         stats.ActiveConns,
+		IdleConns:           stats.IdleConns,
+		Processes:           d.procMgr.List(),
+		ActiveRPCs:          rpcs,
+		DrainReady:          rpcs == 0,
+		DaemonEpoch:         d.daemonEpoch,
+		ActiveProxySessions: activeSessions,
 	}
 	return mcp.NewResponse(msg.ID, result)
 }
@@ -2015,6 +2078,7 @@ type callParams struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`  // For smart routing
 	AgentID   string          `json:"agent_id,omitempty"`   // Agent identity for RBAC
 	AgentType string          `json:"agent_type,omitempty"` // Agent type for RBAC
+	SessionID string          `json:"session_id,omitempty"` // Proxy session lease ID
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -2025,6 +2089,11 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 
 	if resp := pipeline.parseAndResolve(); resp != nil {
 		return resp, nil
+	}
+
+	// Implicitly touch session lease on every call that carries a session_id.
+	if pipeline.params.SessionID != "" && d.sessions != nil {
+		d.sessions.Touch(pipeline.params.SessionID)
 	}
 
 	if resp := pipeline.authorize(); resp != nil {
