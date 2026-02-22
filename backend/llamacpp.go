@@ -35,12 +35,14 @@ func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX1100"); img != "" {
 				return img
 			}
+			return "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100"
 		}
 		// Check for gfx906 (Radeon VII, Vega20)
 		if strings.HasPrefix(gpuArch, "gfx906") {
 			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX906"); img != "" {
 				return img
 			}
+			return "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx906"
 		}
 		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_AMD"); img != "" {
 			return img
@@ -53,6 +55,14 @@ func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 		}
 		return "ghcr.io/ggerganov/llama.cpp:server"
 	default:
+		// Check for Maxwell architecture (sm_52) — CUDA 12.x does not include sm_52.
+		// Requires a build with CUDA 11.8 and CUDA_ARCHITECTURES="50;52".
+		if strings.HasPrefix(gpuArch, "sm_5") {
+			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_MAXWELL"); img != "" {
+				return img
+			}
+			return "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell"
+		}
 		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE"); img != "" {
 			return img
 		}

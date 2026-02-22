@@ -105,6 +105,104 @@ func TestLlamaCppBackendArgs_JinjaFlag(t *testing.T) {
 	})
 }
 
+func TestLlamaCppBackendImage(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	tests := []struct {
+		name      string
+		gpuVendor GPUVendor
+		gpuArch   string
+		envKey    string
+		envVal    string
+		wantImage string
+	}{
+		{
+			name:      "AMD gfx1100 returns hardcoded default",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100",
+		},
+		{
+			name:      "AMD gfx1101 matches gfx110x prefix",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1101",
+			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100",
+		},
+		{
+			name:      "AMD gfx1100 with env override",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			envKey:    "DEFAULT_LLAMA_CPP_IMAGE_GFX1100",
+			envVal:    "custom-registry/llamacpp:gfx1100-custom",
+			wantImage: "custom-registry/llamacpp:gfx1100-custom",
+		},
+		{
+			name:      "AMD gfx906 returns hardcoded default",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx906",
+			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx906",
+		},
+		{
+			name:      "AMD gfx906 with env override",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx906",
+			envKey:    "DEFAULT_LLAMA_CPP_IMAGE_GFX906",
+			envVal:    "custom-registry/llamacpp:gfx906-custom",
+			wantImage: "custom-registry/llamacpp:gfx906-custom",
+		},
+		{
+			name:      "AMD generic falls through to server-rocm",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx900",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
+		},
+		{
+			name:      "NVIDIA sm_52 Maxwell returns hardcoded default",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_52",
+			wantImage: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell",
+		},
+		{
+			name:      "NVIDIA sm_50 Maxwell returns hardcoded default",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_50",
+			wantImage: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell",
+		},
+		{
+			name:      "NVIDIA sm_52 with env override",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_52",
+			envKey:    "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL",
+			envVal:    "custom-registry/llamacpp:maxwell-custom",
+			wantImage: "custom-registry/llamacpp:maxwell-custom",
+		},
+		{
+			name:      "NVIDIA sm_89 ignores Maxwell path",
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_89",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
+		},
+		{
+			name:      "CPU returns server image",
+			gpuVendor: GPUVendorCPU,
+			gpuArch:   "",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envKey != "" {
+				t.Setenv(tt.envKey, tt.envVal)
+			}
+			got := b.Image(tt.gpuVendor, tt.gpuArch)
+			if got != tt.wantImage {
+				t.Errorf("Image(%v, %q) = %q, want %q", tt.gpuVendor, tt.gpuArch, got, tt.wantImage)
+			}
+		})
+	}
+}
+
 func argValue(args []string, key string) string {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == key {

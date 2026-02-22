@@ -46,9 +46,37 @@ func TestOllamaBackendImage_Maxwell(t *testing.T) {
 			wantImage: "ollama/ollama:latest",
 		},
 		{
-			name:      "AMD returns ROCm image",
+			name:      "AMD gfx1100 without env returns generic rocm",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
+			wantImage: "ollama/ollama:rocm",
+		},
+		{
+			name:      "AMD gfx1100 with env override",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			envKey:    "DEFAULT_OLLAMA_IMAGE_GFX1100",
+			envVal:    "registry.harbor.lan/flexinfer/ollama:rocm-gfx1100",
+			wantImage: "registry.harbor.lan/flexinfer/ollama:rocm-gfx1100",
+		},
+		{
+			name:      "AMD gfx906 without env returns generic rocm",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx906",
+			wantImage: "ollama/ollama:rocm",
+		},
+		{
+			name:      "AMD gfx906 with env override",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx906",
+			envKey:    "DEFAULT_OLLAMA_IMAGE_GFX906",
+			envVal:    "registry.harbor.lan/flexinfer/ollama:rocm-gfx906",
+			wantImage: "registry.harbor.lan/flexinfer/ollama:rocm-gfx906",
+		},
+		{
+			name:      "AMD gfx900 generic returns rocm",
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx900",
 			wantImage: "ollama/ollama:rocm",
 		},
 	}

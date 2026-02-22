@@ -209,6 +209,36 @@ The GFX1100-specific images include:
 - `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` for stable flash attention
 - Flash attention disabled in vLLM (`BUILD_FA=0`) to prevent GPU hangs
 
+## GFX906 Support (Radeon VII / MI50)
+
+For AMD gfx906 (Vega20) GPUs, see [README-gfx906.md](README-gfx906.md) for dedicated documentation.
+
+### Key Differences from gfx1100
+
+| Setting | gfx1100 (RDNA3) | gfx906 (Vega20) |
+|---------|------------------|------------------|
+| `HSA_OVERRIDE_GFX_VERSION` | `11.0.0` | Not set |
+| `HSA_ENABLE_SDMA` | Not set | `0` (critical) |
+| `PYTORCH_ROCM_ARCH` | `gfx1100` | `gfx906` |
+| VRAM | 24GB (7900 XTX) | 16GB (Radeon VII) |
+| Flash attention | Supported (AOTriton) | Not supported |
+
+### Building GFX906 Images
+
+```bash
+# llama.cpp for gfx906
+docker build \
+  -f build/Dockerfile.llamacpp-rocm-gfx906 \
+  -t registry.harbor.lan/flexinfer/llamacpp:rocm-gfx906 \
+  build/
+
+# vLLM for gfx906
+docker build \
+  -f build/Dockerfile.vllm-rocm-gfx906 \
+  -t registry.harbor.lan/flexinfer/vllm:rocm-gfx906 \
+  build/
+```
+
 ## References
 
 - [ROCm Installation Guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)

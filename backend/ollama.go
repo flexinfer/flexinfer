@@ -26,6 +26,17 @@ func (b *OllamaBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	// Check for environment variable overrides
 	switch gpuVendor {
 	case GPUVendorAMD:
+		// Check for arch-specific overrides before generic AMD fallback
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_OLLAMA_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+		}
+		if strings.HasPrefix(gpuArch, "gfx906") {
+			if img := os.Getenv("DEFAULT_OLLAMA_IMAGE_GFX906"); img != "" {
+				return img
+			}
+		}
 		if img := os.Getenv("DEFAULT_BACKEND_IMAGE_AMD"); img != "" {
 			return img
 		}

@@ -1,0 +1,15 @@
+# Ollama inference on AMD Radeon VII (gfx906)
+# Ollama downloads models on-demand; no PVC needed
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: mistral-7b-ollama-gfx906
+spec:
+  backend: ollama
+  source: "ollama://mistral:7b"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx906
+  resources:
+    limits:
+      amd.com/gpu: 1
+      memory: 20Gi

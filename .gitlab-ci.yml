@@ -742,6 +742,101 @@ publish_diffusers_rocm:
     - when: manual
       allow_failure: true
 
+# --- llama.cpp Backend Images ---
+# llama.cpp built from source with GGML_HIPBLAS for gfx1100 (RX 7900 series)
+publish_llamacpp_rocm_gfx1100:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 30m
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building llama.cpp ROCm image for gfx1100..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.llamacpp-rocm-gfx1100" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx1100,${REGISTRY}/llamacpp:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.llamacpp-rocm-gfx1100]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# llama.cpp built from source with GGML_HIPBLAS for gfx906 (Radeon VII)
+publish_llamacpp_rocm_gfx906:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 30m
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building llama.cpp ROCm image for gfx906..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.llamacpp-rocm-gfx906" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx906,${REGISTRY}/llamacpp:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.llamacpp-rocm-gfx906]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# llama.cpp built with CUDA 11.8 for Maxwell GPUs (sm_50/sm_52)
+# CUDA 12.x dropped sm_52 support; CUDA 11.8 is the last supporting toolkit
+publish_llamacpp_cuda_maxwell:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 30m
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building llama.cpp CUDA Maxwell image (CUDA 11.8, sm_52)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.llamacpp-cuda-maxwell" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/llamacpp:cuda-maxwell,${REGISTRY}/llamacpp:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.llamacpp-cuda-maxwell]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # --- vLLM Backend Images ---
 # vLLM OpenAI-compatible API server for AMD GPUs
 publish_vllm_rocm:

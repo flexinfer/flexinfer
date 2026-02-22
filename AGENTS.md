@@ -917,12 +917,14 @@ qwen3-3b-ram   Memory     /dev/shm/flexinfer/qwen3-3b-ram  Ready  HF://mlc-ai/..
 
 ## GPU Compatibility Matrix
 
-| Backend | RDNA3 (7900XTX) | Maxwell (980Ti) | Notes |
-|---------|-----------------|-----------------|-------|
-| Ollama | ✅ Full | ✅ Full | Universal compatibility |
-| vLLM | ✅ Full | ❌ Not supported | Requires sm_70+ |
-| MLC-LLM | ✅ Full | ⚠️ Pre-compiled only | Needs `modelLibPath` |
-| llama.cpp | ✅ Full | ✅ Full | GGUF format |
+| Backend | RDNA3 (7900XTX) | Vega20 (Radeon VII) | Maxwell (980Ti) | Notes |
+|---------|-----------------|---------------------|-----------------|-------|
+| Ollama | ✅ Full | ✅ Full | ✅ Full | Universal compatibility |
+| vLLM | ✅ Full | ✅ Full | ❌ Not supported | gfx906: BUILD_FA=0 image |
+| MLC-LLM | ✅ Full | ✅ Full | ⚠️ Pre-compiled only | Needs `modelLibPath` on Maxwell |
+| llama.cpp | ✅ Full | ✅ Full | ✅ Full | GGUF format, arch-specific images |
+| Diffusers | ✅ Full | ⚠️ Experimental | ❌ N/A | gfx906: runtime env override |
+| ComfyUI | ✅ Full | ⚠️ Experimental | ❌ N/A | gfx906: runtime env override |
 
 ### Maxwell (GTX 980 Ti) Configuration
 
@@ -972,6 +974,38 @@ PyTorch-based backends (diffusers, vLLM) on gfx1100 (RX 7900 XTX) require specif
 **Note**: The `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` setting is essential for stability on gfx1100. Without it, PyTorch operations like attention can trigger SIGSEGV crashes.
 
 These variables are automatically injected by the `ROCmEnvVars()` helper in `backend/interface.go` and are baked into all ROCm Dockerfiles.
+
+### Vega20 (gfx906) Configuration
+
+AMD Radeon VII / MI50 with 16GB HBM2 VRAM:
+
+```yaml
+spec:
+  backend: llamacpp
+  source: "HF://TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+  modelFileName: "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx906
+  resources:
+    limits:
+      amd.com/gpu: 1
+  config:
+    contextSize: 8192
+    nGPULayers: 999
+```
+
+### ROCm gfx906 Environment
+
+| Environment Variable | Value | Purpose |
+|---------------------|-------|---------|
+| `HSA_ENABLE_SDMA` | `0` | **Critical**: Disables SDMA engine to prevent memory faults |
+| `PYTORCH_ROCM_ARCH` | `gfx906` | Target architecture |
+
+**Note**: `HSA_ENABLE_SDMA=0` is essential on gfx906 (Vega20). Without it, the SDMA engine causes `HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION` errors. Unlike gfx1100, do NOT set `HSA_OVERRIDE_GFX_VERSION` or `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`.
+
+These variables are automatically injected by `ROCmEnvVars()` in `backend/interface.go`.
+
+See `build/README-gfx906.md` for detailed hardware documentation and troubleshooting.
 
 ---
 

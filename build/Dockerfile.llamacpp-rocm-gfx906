@@ -1,0 +1,73 @@
+# llama.cpp Docker image for AMD gfx906 (Radeon VII, Vega20)
+# Built from source with GGML_HIPBLAS=ON targeting gfx906
+#
+# Build command:
+#   docker build -f build/Dockerfile.llamacpp-rocm-gfx906 -t llamacpp:rocm-gfx906 .
+
+ARG ROCM_VERSION=6.4.1
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder
+
+ARG AMDGPU_TARGETS=gfx906
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    cmake \
+    ninja-build \
+    build-essential \
+    curl \
+    hipblas \
+    rocblas \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone llama.cpp
+WORKDIR /opt/src
+RUN git clone https://github.com/ggerganov/llama.cpp.git
+
+# Build llama.cpp with HIP (ROCm) support
+WORKDIR /opt/src/llama.cpp
+RUN cmake -B build -G Ninja \
+    -DGGML_HIPBLAS=ON \
+    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# Runtime stage
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ROCm environment for gfx906 (Radeon VII / Vega20)
+# HSA_ENABLE_SDMA=0 prevents DMA engine issues on Vega20
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+ENV HSA_ENABLE_SDMA=0
+ENV PYTORCH_ROCM_ARCH=gfx906
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+# Install runtime ROCm libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    hipblas \
+    rocblas \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binary
+COPY --from=builder /opt/src/llama.cpp/build/bin/llama-server /opt/src/llama.cpp/build/bin/llama-server
+
+# Create model directory
+RUN mkdir -p /models
+
+WORKDIR /opt/src/llama.cpp
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["tini", "--"]
+CMD ["/opt/src/llama.cpp/build/bin/llama-server", "--host", "0.0.0.0", "--port", "8080"]

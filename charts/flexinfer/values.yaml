@@ -143,6 +143,9 @@ ollama:
   # Pre-built ollama CUDA 12.x binaries do not include sm_52 support.
   # Build from source with CUDA 11.8 and CUDA_ARCHITECTURES="50;52".
   maxwellImage: ""
+  # Architecture-specific AMD images (override generic ollama:rocm for specific GPU families)
+  gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
+  gfx906Image: ""    # AMD Radeon VII (Vega20)
 
 # MLC-LLM backend configuration (used when spec.backend=mlc-llm)
 # Set these to your custom values or leave empty to use defaults
@@ -203,6 +206,9 @@ llamacpp:
   # Architecture-specific AMD images (override rocmImage for specific GPU families)
   gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
   gfx906Image: ""    # AMD Radeon VII (Vega20)
+  # Maxwell-specific image for older NVIDIA GPUs (compute 5.x)
+  # Requires CUDA 11.8 build with CUDA_ARCHITECTURES="50;52"
+  maxwellImage: ""
   # Operator-level defaults (can be overridden per-deployment via CRD)
   defaults:
     # Complete args override. Use for advanced cases only
@@ -215,6 +221,17 @@ diffusers:
   cudaImage: ""
   # ROCm image for AMD GPUs (default: registry.harbor.lan/library/diffusers-api:rocm-latest)
   rocmImage: ""
+  # Architecture-specific AMD images (override rocmImage for specific GPU families)
+  gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
+  gfx906Image: ""    # AMD Radeon VII (Vega20)
+
+# ComfyUI backend configuration (used when spec.backend=comfyui)
+comfyui:
+  # ROCm image for AMD GPUs (default: registry.harbor.lan/library/comfyui:rocm6.2.3-v8)
+  rocmImage: ""
+  # Architecture-specific AMD images (override rocmImage for specific GPU families)
+  gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
+  gfx906Image: ""    # AMD Radeon VII (Vega20)
 
 # ORAS configuration for OCI artifact downloads (ModelCache with oci:// or oras:// sources)
 oras:

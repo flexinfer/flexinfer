@@ -2,6 +2,7 @@ package backend
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +25,17 @@ func (b *DiffusersBackend) Name() string {
 func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
+		// Check for arch-specific overrides before generic AMD fallback
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+		}
+		if strings.HasPrefix(gpuArch, "gfx906") {
+			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX906"); img != "" {
+				return img
+			}
+		}
 		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_AMD"); img != "" {
 			return img
 		}

@@ -1,0 +1,59 @@
+# llama.cpp Docker image for NVIDIA Maxwell GPUs (GTX 980 Ti, sm_52)
+# Built with CUDA 11.8 — the last CUDA toolkit supporting compute capability 5.x
+#
+# Build command:
+#   docker build -f build/Dockerfile.llamacpp-cuda-maxwell -t llamacpp:cuda-maxwell .
+
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    cmake \
+    ninja-build \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone llama.cpp
+WORKDIR /opt/src
+RUN git clone https://github.com/ggerganov/llama.cpp.git
+
+# Build llama.cpp with CUDA support for Maxwell (sm_50, sm_52)
+WORKDIR /opt/src/llama.cpp
+RUN cmake -B build -G Ninja \
+    -DGGML_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="50;52" \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# Runtime stage — use runtime image (smaller, no compiler)
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binary
+COPY --from=builder /opt/src/llama.cpp/build/bin/llama-server /opt/src/llama.cpp/build/bin/llama-server
+
+# Create model directory
+RUN mkdir -p /models
+
+WORKDIR /opt/src/llama.cpp
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["tini", "--"]
+CMD ["/opt/src/llama.cpp/build/bin/llama-server", "--host", "0.0.0.0", "--port", "8080"]

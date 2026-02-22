@@ -491,13 +491,32 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 }
 
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
-// This is primarily used for Maxwell (sm_5x), where several backends assume newer SMs.
+// Handles Maxwell (sm_5x) hard blocks, FP16 rejection, and AMD gfx906 experimental warnings.
 func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
+	// --- AMD gfx906 warnings (non-blocking) ---
+	if gpuVendor == backend.GPUVendorAMD && strings.HasPrefix(gpuArch, "gfx906") {
+		switch b.Name() {
+		case "diffusers":
+			r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
+				"diffusers on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
+		case "comfyui":
+			r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
+				"comfyui on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
+		}
+	}
+
+	// --- Maxwell (sm_5x) hard blocks ---
 	if !isMaxwellGPUArch(gpuArch) {
 		return nil
 	}
 	if gpuVendor != backend.GPUVendorNVIDIA {
 		return nil
+	}
+
+	// Reject FP16 models on Maxwell — Maxwell lacks native FP16 support.
+	src := strings.ToLower(model.Spec.Source)
+	if strings.Contains(src, "f16") || strings.Contains(src, "fp16") {
+		return fmt.Errorf("FP16 models are not supported on Maxwell GPUs (no native FP16). Use q4f32_1, q0f32, or GGUF quantized models instead")
 	}
 
 	switch b.Name() {

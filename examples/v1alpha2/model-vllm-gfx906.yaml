@@ -1,0 +1,19 @@
+# vLLM inference on AMD Radeon VII (gfx906)
+# Uses AWQ quantization for efficient VRAM usage on 16GB HBM2
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: mistral-7b-vllm-gfx906
+spec:
+  backend: vllm
+  source: "HF://TheBloke/Mistral-7B-Instruct-v0.2-AWQ"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx906
+  resources:
+    limits:
+      amd.com/gpu: 1
+      memory: 20Gi
+  config:
+    maxModelLen: 8192
+    dtype: auto
+    gpuMemoryUtilization: "0.90"

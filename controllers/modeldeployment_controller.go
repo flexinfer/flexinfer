@@ -2085,17 +2085,42 @@ func (r *ModelDeploymentReconciler) isMaxwellGPU(m *aiv1alpha1.ModelDeployment) 
 
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU.
 // Returns an error if the combination is invalid (e.g., vLLM on Maxwell).
+// Emits warning events for experimental combinations (e.g., diffusers on gfx906).
 func (r *ModelDeploymentReconciler) validateBackendGPUCompatibility(m *aiv1alpha1.ModelDeployment) error {
-	backend := canonicalBackend(m.Spec.Backend)
+	bk := canonicalBackend(m.Spec.Backend)
 	isMaxwell := r.isMaxwellGPU(m)
+	gpuArch := strings.ToLower(r.getGPUArchitecture(m))
+
+	// --- AMD gfx906 warnings (non-blocking) ---
+	if r.detectGPUResourceFromSpec(m) == GPUResourceAMD && strings.HasPrefix(gpuArch, "gfx906") {
+		switch bk {
+		case "diffusers":
+			r.Recorder.Event(m, corev1.EventTypeWarning, "ExperimentalGPUSupport",
+				"diffusers on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
+		case "comfyui":
+			r.Recorder.Event(m, corev1.EventTypeWarning, "ExperimentalGPUSupport",
+				"comfyui on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
+		}
+	}
+
+	// --- Maxwell (sm_5x) hard blocks ---
+	if !isMaxwell {
+		return nil
+	}
+
+	// Reject FP16 models on Maxwell — Maxwell lacks native FP16 support.
+	modelLower := strings.ToLower(m.Spec.Model)
+	if strings.Contains(modelLower, "f16") || strings.Contains(modelLower, "fp16") {
+		return fmt.Errorf("FP16 models are not supported on Maxwell GPUs (no native FP16). Use q4f32_1, q0f32, or GGUF quantized models instead")
+	}
 
 	// vLLM requires sm_70+ (Volta or newer), Maxwell (sm_52) is not supported
-	if backend == "vllm" && isMaxwell {
+	if bk == "vllm" {
 		return fmt.Errorf("vLLM backend is not supported on Maxwell GPUs (compute capability 5.x). Use ollama, mlc-llm with pre-compiled library, or llamacpp instead")
 	}
 
 	// MLC-LLM on Maxwell requires pre-compiled model library (no JIT support)
-	if (backend == "mlc-llm" || backend == "mlc") && isMaxwell {
+	if bk == "mlc-llm" || bk == "mlc" {
 		if m.Spec.MLCLLM == nil || m.Spec.MLCLLM.ModelLibPath == "" {
 			return fmt.Errorf("MLC-LLM on Maxwell GPUs requires a pre-compiled modelLibPath (JIT compilation not supported on compute capability 5.x)")
 		}

@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 )
 
 func TestGetBackendImage_MlcLlm_AMD(t *testing.T) {
@@ -2462,8 +2463,102 @@ func TestDeploymentForModelDeployment_LegacyPVCVolume(t *testing.T) {
 	}
 }
 
+func TestValidateBackendGPUCompatibility_FP16OnMaxwell_V1(t *testing.T) {
+	r := &ModelDeploymentReconciler{Recorder: record.NewFakeRecorder(5)}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "llamacpp",
+			Model:   "TheBloke/Mistral-7B-fp16-GGUF",
+			NodeSelector: map[string]string{
+				"nvidia.com/gpu.compute.major": "5",
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err == nil {
+		t.Fatal("Expected error for FP16 model on Maxwell, got nil")
+	}
+	if !strings.Contains(err.Error(), "FP16") {
+		t.Fatalf("Expected FP16 error message, got: %v", err)
+	}
+
+	// f16 variant
+	m.Spec.Model = "TheBloke/Mistral-7B-f16"
+	err = r.validateBackendGPUCompatibility(m)
+	if err == nil {
+		t.Fatal("Expected error for f16 model on Maxwell, got nil")
+	}
+}
+
+func TestValidateBackendGPUCompatibility_DiffusersOnGFX906_V1(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelDeploymentReconciler{Recorder: rec}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "diffusers",
+			Model:   "stabilityai/stable-diffusion-xl-base-1.0",
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx906",
+			},
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Fatalf("Expected diffusers on gfx906 to pass (warning only), got: %v", err)
+	}
+
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "ExperimentalGPUSupport") {
+			t.Fatalf("Expected ExperimentalGPUSupport event, got: %s", event)
+		}
+	default:
+		t.Fatal("Expected warning event for diffusers on gfx906, got none")
+	}
+}
+
+func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906_V1(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelDeploymentReconciler{Recorder: rec}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "comfyui",
+			Model:   "stabilityai/stable-diffusion-xl-base-1.0",
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx906",
+			},
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(m)
+	if err != nil {
+		t.Fatalf("Expected comfyui on gfx906 to pass (warning only), got: %v", err)
+	}
+
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "comfyui on gfx906") {
+			t.Fatalf("Expected gfx906 comfyui warning, got: %s", event)
+		}
+	default:
+		t.Fatal("Expected warning event for comfyui on gfx906, got none")
+	}
+}
+
 func TestValidateBackendGPUCompatibility_VLLMOnMaxwell(t *testing.T) {
-	r := &ModelDeploymentReconciler{}
+	r := &ModelDeploymentReconciler{Recorder: record.NewFakeRecorder(5)}
 	m := &aiv1alpha1.ModelDeployment{
 		Spec: aiv1alpha1.ModelDeploymentSpec{
 			Backend: "vllm",

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -839,7 +841,7 @@ func TestJobForPrefetch_IncludesHFPatternEnv(t *testing.T) {
 }
 
 func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
-	r := &ModelReconciler{}
+	r := &ModelReconciler{Recorder: record.NewFakeRecorder(5)}
 
 	// vLLM should be rejected on Maxwell.
 	vllmBackend, _ := backend.Get("vllm")
@@ -885,6 +887,117 @@ func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
 	model.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"}
 	if err := r.validateBackendGPUCompatibility(model, mlcBackend, backend.GPUVendorNVIDIA, "sm_52"); err != nil {
 		t.Fatalf("expected /models/<name>/maxwell-lib.so default to pass, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_FP16OnMaxwell(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelReconciler{Recorder: rec}
+
+	llamacppBackend, _ := backend.Get("llamacpp")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TheBloke/Mistral-7B-Instruct-v0.2-fp16-GGUF",
+		},
+	}
+	err := r.validateBackendGPUCompatibility(model, llamacppBackend, backend.GPUVendorNVIDIA, "sm_52")
+	if err == nil {
+		t.Fatal("expected FP16 model on Maxwell to error, got nil")
+	}
+	if !strings.Contains(err.Error(), "FP16") {
+		t.Fatalf("expected FP16 error message, got: %v", err)
+	}
+
+	// f16 variant
+	model.Spec.Source = "HF://TheBloke/Mistral-7B-f16"
+	err = r.validateBackendGPUCompatibility(model, llamacppBackend, backend.GPUVendorNVIDIA, "sm_52")
+	if err == nil {
+		t.Fatal("expected f16 model on Maxwell to error, got nil")
+	}
+
+	// Non-FP16 model should pass on Maxwell
+	model.Spec.Source = "HF://TheBloke/Mistral-7B-q4_k_m-GGUF"
+	err = r.validateBackendGPUCompatibility(model, llamacppBackend, backend.GPUVendorNVIDIA, "sm_52")
+	if err != nil {
+		t.Fatalf("expected non-FP16 model on Maxwell to pass, got: %v", err)
+	}
+}
+
+func TestValidateBackendGPUCompatibility_DiffusersOnGFX906(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelReconciler{Recorder: rec}
+
+	diffusersBackend, _ := backend.Get("diffusers")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stabilityai/stable-diffusion-xl-base-1.0",
+		},
+	}
+
+	// Should pass (no hard error) but emit a warning event
+	err := r.validateBackendGPUCompatibility(model, diffusersBackend, backend.GPUVendorAMD, "gfx906")
+	if err != nil {
+		t.Fatalf("expected diffusers on gfx906 to pass (warning only), got: %v", err)
+	}
+
+	// Drain events and check for warning
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "ExperimentalGPUSupport") {
+			t.Fatalf("expected ExperimentalGPUSupport event, got: %s", event)
+		}
+		if !strings.Contains(event, "diffusers on gfx906") {
+			t.Fatalf("expected gfx906 warning in event, got: %s", event)
+		}
+	default:
+		t.Fatal("expected warning event for diffusers on gfx906, got none")
+	}
+}
+
+func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelReconciler{Recorder: rec}
+
+	comfyBackend, _ := backend.Get("comfyui")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "comfyui",
+			Source:  "HF://stabilityai/stable-diffusion-xl-base-1.0",
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(model, comfyBackend, backend.GPUVendorAMD, "gfx906")
+	if err != nil {
+		t.Fatalf("expected comfyui on gfx906 to pass (warning only), got: %v", err)
+	}
+
+	select {
+	case event := <-rec.Events:
+		if !strings.Contains(event, "comfyui on gfx906") {
+			t.Fatalf("expected gfx906 comfyui warning, got: %s", event)
+		}
+	default:
+		t.Fatal("expected warning event for comfyui on gfx906, got none")
+	}
+}
+
+func TestValidateBackendGPUCompatibility_LlamaCppOnMaxwell_V2(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
+	r := &ModelReconciler{Recorder: rec}
+
+	llamacppBackend, _ := backend.Get("llamacpp")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://TheBloke/Mistral-7B-q4_k_m-GGUF",
+		},
+	}
+
+	err := r.validateBackendGPUCompatibility(model, llamacppBackend, backend.GPUVendorNVIDIA, "sm_52")
+	if err != nil {
+		t.Fatalf("expected llamacpp on Maxwell to pass, got: %v", err)
 	}
 }
 
