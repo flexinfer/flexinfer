@@ -1,8 +1,13 @@
 # llama.cpp Docker image for AMD gfx906 (Radeon VII, Vega20)
-# Built from source with GGML_HIPBLAS=ON targeting gfx906
+# Built from source with GGML_HIP=ON targeting gfx906
 #
-# Build command:
-#   docker build -f build/Dockerfile.llamacpp-rocm-gfx906 -t llamacpp:rocm-gfx906 .
+# Includes a patch for hipMemGetInfo returning hipErrorInvalidValue on
+# gfx906 when VMM is not supported (ROCm 6.x). The patch falls back to
+# reading VRAM from sysfs instead of aborting.
+#
+# Build command (on GPU node with docker):
+#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx906 \
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx906 build/
 
 ARG ROCM_VERSION=6.4.1
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder
@@ -18,18 +23,59 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     build-essential \
     curl \
+    python3 \
     hipblas \
     rocblas \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone llama.cpp
 WORKDIR /opt/src
-RUN git clone https://github.com/ggerganov/llama.cpp.git
+RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp.git
+
+# Patch ggml_backend_cuda_device_get_memory to handle hipMemGetInfo failure
+# on gfx906 where VMM is not supported. Falls back to 16 GB (Radeon VII VRAM).
+WORKDIR /opt/src/llama.cpp
+RUN python3 -c "
+import re, pathlib
+p = pathlib.Path('ggml/src/ggml-cuda/ggml-cuda.cu')
+src = p.read_text()
+# Find the function and replace CUDA_CHECK(cudaMemGetInfo) with a fallback
+old = 'CUDA_CHECK(cudaMemGetInfo(free, total));'
+new = '''hipError_t mem_err = cudaMemGetInfo(free, total);
+    if (mem_err != hipSuccess) {
+        // gfx906 (Radeon VII) returns hipErrorInvalidValue when VMM is not supported.
+        // Fall back to reading VRAM size from sysfs.
+        *total = 0;
+        *free = 0;
+        FILE *f = fopen(\"/sys/class/drm/card0/device/mem_info_vram_total\", \"r\");
+        if (f) {
+            fscanf(f, \"%zu\", total);
+            fclose(f);
+            *free = *total;  // assume all VRAM is available
+        }
+        if (*total == 0) {
+            // Hardcoded fallback for Radeon VII (16 GB HBM2)
+            *total = (size_t)16 * 1024 * 1024 * 1024;
+            *free  = (size_t)16 * 1024 * 1024 * 1024;
+        }
+        GGML_LOG_WARN(\"%s: hipMemGetInfo failed (err=%d), using sysfs fallback: %.2f GB\\\\n\",
+                       __func__, mem_err, *total / 1e9);
+    }'''
+if old in src:
+    src = src.replace(old, new, 1)
+    p.write_text(src)
+    print('Patched ggml_backend_cuda_device_get_memory successfully')
+else:
+    print('WARNING: Could not find exact match for hipMemGetInfo patch')
+    print('Searching for alternative patterns...')
+    # Try to find any cudaMemGetInfo call in a get_memory function
+    import sys
+    sys.exit(1)
+"
 
 # Build llama.cpp with HIP (ROCm) support
-WORKDIR /opt/src/llama.cpp
 RUN cmake -B build -G Ninja \
-    -DGGML_HIPBLAS=ON \
+    -DGGML_HIP=ON \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
@@ -41,26 +87,29 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ROCm environment for gfx906 (Radeon VII / Vega20)
 # HSA_ENABLE_SDMA=0 prevents DMA engine issues on Vega20
+# HSA_USE_SVM=0 works around SVM-related issues on gfx906
 ENV ROCM_PATH=/opt/rocm
 ENV HIP_PATH=/opt/rocm/hip
 ENV HSA_ENABLE_SDMA=0
+ENV HSA_USE_SVM=0
 ENV PYTORCH_ROCM_ARCH=gfx906
-ENV HIP_VISIBLE_DEVICES=0
-ENV ROCR_VISIBLE_DEVICES=0
 
-# Install runtime ROCm libraries
+# Install runtime ROCm libraries + Python (for HF prefetch jobs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     hipblas \
     rocblas \
     curl \
     tini \
+    python3 \
+    python3-pip \
+    && pip3 install --no-cache-dir huggingface_hub \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built binary
-COPY --from=builder /opt/src/llama.cpp/build/bin/llama-server /opt/src/llama.cpp/build/bin/llama-server
+# Copy built binaries and shared libraries
+COPY --from=builder /opt/src/llama.cpp/build/bin/ /opt/src/llama.cpp/build/bin/
 
-# Create model directory
-RUN mkdir -p /models
+# Create non-root user and model directory
+RUN useradd -u 1000 -m app && mkdir -p /models && chown app:app /models
 
 WORKDIR /opt/src/llama.cpp
 
