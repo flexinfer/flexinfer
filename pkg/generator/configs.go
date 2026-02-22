@@ -74,7 +74,10 @@ func inferRegistryRoot(registryPath string) string {
 	return filepath.Dir(registryPath)
 }
 
-func inferWorkspaceRoot(candidate string) string {
+// InferWorkspaceRoot walks up from candidate looking for the workspace root
+// (identified by a services/loom-core subdirectory). Returns candidate as
+// fallback if no match is found.
+func InferWorkspaceRoot(candidate string) string {
 	if candidate == "" {
 		return ""
 	}
@@ -118,7 +121,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	}
 
 	// Resolve repo root from registry path
-	workspaceRoot := inferWorkspaceRoot(registry.GetRepoRoot(registryPath))
+	workspaceRoot := InferWorkspaceRoot(registry.GetRepoRoot(registryPath))
 	registryRoot := inferRegistryRoot(registryPath)
 
 	for _, target := range targets {
@@ -682,7 +685,7 @@ func claudePreToolUseHooks() []map[string]any {
 			"hooks": []map[string]any{
 				{
 					"type":    "command",
-					"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; exit 0`,
+					"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; if echo "$CMD" | grep -qE '^\s*git\s+commit'; then echo '{"systemMessage":"Pre-commit quality reminder: consider running quality_check (or quality_lint / quality_test) before committing to catch issues early."}'; fi; exit 0`,
 				},
 			},
 		},
@@ -699,6 +702,10 @@ func claudePostToolUseExtras() []map[string]any {
 				{
 					"type":    "command",
 					"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.py ]] && black "$f" 2>/dev/null; exit 0; }`,
+				},
+				{
+					"type":    "command",
+					"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.go ]] && gofmt -w "$f" 2>/dev/null && goimports -w "$f" 2>/dev/null; exit 0; }`,
 				},
 				{
 					"type":    "command",

@@ -787,6 +787,97 @@ func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, 
 	return nil
 }
 
+// SyncAllProjects propagates the canonical hooks from the current repo's
+// settings.json into all other workspace projects that have a matching
+// <profileRepoDir>/settings.json. Only the "hooks" key is replaced; other
+// top-level keys (permissions, mcpServers, etc.) are preserved.
+func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktrees, dryRun bool) (int, error) {
+	p, err := m.GetProfile(profileName)
+	if err != nil {
+		return 0, err
+	}
+
+	// Verify this profile has settings.json as an extra generated file
+	hasSettings := false
+	for _, f := range p.ExtraGeneratedFiles {
+		if f == "settings.json" {
+			hasSettings = true
+			break
+		}
+	}
+	if !hasSettings {
+		return 0, fmt.Errorf("profile %s does not generate settings.json", profileName)
+	}
+
+	// Read canonical settings.json from the current repo
+	canonicalPath := filepath.Join(m.ResolveRepoPath(p), "settings.json")
+	canonicalData, err := os.ReadFile(canonicalPath)
+	if err != nil {
+		return 0, fmt.Errorf("read canonical settings: %w", err)
+	}
+
+	canonicalHooks, err := ExtractHooksFromSettings(canonicalData)
+	if err != nil {
+		return 0, fmt.Errorf("extract hooks from canonical settings: %w", err)
+	}
+	if canonicalHooks == nil {
+		return 0, fmt.Errorf("canonical settings.json has no hooks key")
+	}
+
+	// Discover projects
+	projects, err := DiscoverProjects(workspaceRoot, p.RepoDir, skipWorktrees)
+	if err != nil {
+		return 0, fmt.Errorf("discover projects: %w", err)
+	}
+
+	updated := 0
+	for _, projRoot := range projects {
+		// Skip the current repo
+		if filepath.Clean(projRoot) == filepath.Clean(m.RepoRoot) {
+			continue
+		}
+
+		settingsPath := filepath.Join(projRoot, p.RepoDir, "settings.json")
+		existing, _ := os.ReadFile(settingsPath)
+
+		merged, changed, err := MergeHooksIntoSettings(existing, canonicalHooks)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v\n", settingsPath, err)
+			continue
+		}
+
+		rel, _ := filepath.Rel(workspaceRoot, projRoot)
+		if !changed {
+			fmt.Printf("  %-40s already up-to-date\n", rel)
+			continue
+		}
+
+		if dryRun {
+			action := "would update"
+			if len(existing) == 0 {
+				action = "would create"
+			}
+			fmt.Printf("  %-40s %s\n", rel, action)
+			updated++
+			continue
+		}
+
+		if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: write failed for %s: %v\n", settingsPath, err)
+			continue
+		}
+
+		action := "updated"
+		if len(existing) == 0 {
+			action = "created"
+		}
+		fmt.Printf("  %-40s %s\n", rel, action)
+		updated++
+	}
+
+	return updated, nil
+}
+
 // Regenerate generates the configuration for a profile and updates the repo directory.
 func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets bool) error {
 	if p.GeneratorTarget == "" {
