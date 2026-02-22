@@ -564,6 +564,46 @@ func (a *App) handleAgentSession(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
 
+// handleAgentSessionList lists sessions with optional filters.
+// POST /api/agent/session-list
+func (a *App) handleAgentSessionList(w http.ResponseWriter, r *http.Request) {
+	var params map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	result, err := a.agent.ListSessions(params)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list sessions", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(result)
+}
+
+// handleAgentSessionPrune prunes stale sessions.
+// POST /api/agent/session-prune
+func (a *App) handleAgentSessionPrune(w http.ResponseWriter, r *http.Request) {
+	var params map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	result, err := a.agent.PruneSessions(params)
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to prune sessions", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(result)
+}
+
 // handleAgentContextAdd proxies context entries to agent-context and broadcasts
 // SSE events for devbox-titled entries so the sandbox panel shows live activity.
 // POST /api/agent/context/add

@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -75,7 +76,7 @@ type App struct {
 	config Config
 	client *bridge.DaemonClient
 	agent  *bridge.AgentBridge
-	cache  *bridge.Cache
+	cache  loomcache.Store
 	logger *slog.Logger
 
 	// Background monitors — poll the bridge and maintain cached snapshots.
@@ -118,14 +119,19 @@ func Run(cfg Config) error {
 
 	agent := bridge.NewAgentBridge(client)
 
+	cacheCfg := loomcache.LoadConfigFromEnv()
+	appCache := loomcache.New(cacheCfg, logger)
+
 	app := &App{
 		config:     cfg,
 		client:     client,
 		agent:      agent,
-		cache:      bridge.NewCache(),
+		cache:      appCache,
 		logger:     logger,
 		nudgeQueue: NewNudgeQueue(),
 	}
+
+	defer appCache.Close()
 
 	// Initialize and start background monitors.
 	app.fleetMonitor = monitor.NewFleetMonitor(client, agent, logger)
@@ -555,6 +561,8 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/heartbeat", a.withCORS(a.handleAgentHeartbeat))
 	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
 	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
+	mux.HandleFunc("POST /api/agent/session-list", a.withCORS(a.handleAgentSessionList))
+	mux.HandleFunc("POST /api/agent/session-prune", a.withCORS(a.handleAgentSessionPrune))
 	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
 	mux.HandleFunc("GET /api/agent/context-inspect", a.withCORS(a.handleAgentContextInspect))
 	mux.HandleFunc("POST /api/agent/nudge", a.withCORS(a.handleAgentNudge))

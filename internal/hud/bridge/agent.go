@@ -17,11 +17,12 @@ import (
 // and unmarshals the result into a clean Go struct.
 type AgentBridge struct {
 	client *DaemonClient
+	cache  *Cache // session lookup cache (internal, always in-memory)
 }
 
 // NewAgentBridge creates an AgentBridge backed by the given DaemonClient.
 func NewAgentBridge(client *DaemonClient) *AgentBridge {
-	return &AgentBridge{client: client}
+	return &AgentBridge{client: client, cache: NewCache()}
 }
 
 // --- DTO structs ---
@@ -329,6 +330,60 @@ func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target
 	return nil
 }
 
+// callAgentToolTimeout is like callAgentTool but uses a per-call timeout
+// override on the underlying DaemonClient RPC.
+func (a *AgentBridge) callAgentToolTimeout(toolName string, args map[string]any, target any, timeout time.Duration) error {
+	raw, err := a.client.CallToolWithTimeout("agent_context__"+toolName, args, timeout)
+	if err != nil {
+		return fmt.Errorf("agent tool %s: %w", toolName, err)
+	}
+
+	var envelope mcpCallToolResult
+	if err := json.Unmarshal(raw, &envelope); err == nil {
+		if envelope.IsError {
+			errText := "tool returned error"
+			for _, c := range envelope.Content {
+				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
+					errText = strings.TrimSpace(c.Text)
+					break
+				}
+			}
+			return fmt.Errorf("agent tool %s: %s", toolName, errText)
+		}
+		if target == nil {
+			return nil
+		}
+		for _, c := range envelope.Content {
+			if c.Type == "text" && c.Text != "" {
+				if err := json.Unmarshal([]byte(c.Text), target); err != nil {
+					jsonBytes, toonErr := mcp.DecodeTOONToJSON(c.Text)
+					if toonErr != nil {
+						return fmt.Errorf("unmarshal %s text (json: %v, toon: %v)", toolName, err, toonErr)
+					}
+					if err := json.Unmarshal(jsonBytes, target); err != nil {
+						return fmt.Errorf("unmarshal %s decoded toon: %w", toolName, err)
+					}
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("unmarshal %s result: no text content in envelope", toolName)
+	}
+
+	if target == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
+	}
+	return nil
+}
+
+// invalidateSessionCache removes the cached active-session entry for an agent.
+func (a *AgentBridge) invalidateSessionCache(agentID string) {
+	a.cache.Invalidate("active_session:" + agentID)
+}
+
 // --- Public methods ---
 
 // Sessions returns all agent sessions.
@@ -340,6 +395,33 @@ func (a *AgentBridge) Sessions() ([]SessionInfo, error) {
 		return nil, err
 	}
 	return result.Sessions, nil
+}
+
+// ListSessions calls agent_session_list with arbitrary parameters and returns raw JSON.
+func (a *AgentBridge) ListSessions(params map[string]any) (json.RawMessage, error) {
+	var result json.RawMessage
+	if err := a.callAgentTool("agent_session_list", params, &result); err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(result)
+	return raw, nil
+}
+
+// PruneSessions calls agent_session_prune with arbitrary parameters and returns raw JSON.
+func (a *AgentBridge) PruneSessions(params map[string]any) (json.RawMessage, error) {
+	var result json.RawMessage
+	if err := a.callAgentTool("agent_session_prune", params, &result); err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(result)
+	return raw, nil
+}
+
+// DeleteSession calls agent_session_delete for a single session.
+func (a *AgentBridge) DeleteSession(sessionID string) error {
+	return a.callAgentTool("agent_session_delete", map[string]any{
+		"session_id": sessionID,
+	}, nil)
 }
 
 // Tasks returns tasks for a specific session.
@@ -1440,8 +1522,11 @@ type SessionStartResult struct {
 // StartSession creates a session, registers presence, and optionally recalls context.
 // It is idempotent: if the agent already has an active session in the same namespace,
 // it returns the existing session ID instead of creating a new one.
+//
+// Presence registration and context recall are fire-and-forget: they run in
+// background goroutines so the caller is not blocked by non-critical MCP calls.
 func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, error) {
-	// Check for existing active session in the same namespace.
+	// Check for existing active session in the same namespace (cached, fast path).
 	if existing, err := a.GetActiveSession(p.AgentID); err == nil && existing != nil {
 		if existing.Namespace == p.Namespace && existing.Status == "active" {
 			return &SessionStartResult{
@@ -1451,7 +1536,7 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 		}
 	}
 
-	// Start a new session.
+	// Start a new session (blocking, required, 8s timeout).
 	args := map[string]any{
 		"namespace":   p.Namespace,
 		"description": p.Description,
@@ -1462,11 +1547,19 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	var sessionResult struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := a.callAgentTool("agent_session_start", args, &sessionResult); err != nil {
+	if err := a.callAgentToolTimeout("agent_session_start", args, &sessionResult, 8*time.Second); err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
 	}
 
-	// Register presence.
+	// Invalidate the session cache so subsequent GetActiveSession picks up
+	// the newly created session.
+	a.invalidateSessionCache(p.AgentID)
+
+	result := &SessionStartResult{
+		SessionID: sessionResult.SessionID,
+	}
+
+	// Fire-and-forget: register presence (non-critical, error already ignored).
 	presenceArgs := map[string]any{
 		"agent_id":   p.AgentID,
 		"session_id": sessionResult.SessionID,
@@ -1477,13 +1570,9 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	if p.Description != "" {
 		presenceArgs["description"] = p.Description
 	}
-	_ = a.callAgentTool("agent_presence_register", presenceArgs, nil)
+	go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
 
-	result := &SessionStartResult{
-		SessionID: sessionResult.SessionID,
-	}
-
-	// Optional: recall context.
+	// Fire-and-forget: recall context (best-effort, not returned to caller).
 	if p.AutoRecall {
 		recallArgs := map[string]any{
 			"query":        p.Description,
@@ -1492,12 +1581,7 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 		if p.Namespace != "" {
 			recallArgs["file_context"] = p.Namespace
 		}
-		var recallResult struct {
-			Summary string `json:"summary"`
-		}
-		if err := a.callAgentTool("agent_context_recall_enhanced", recallArgs, &recallResult); err == nil {
-			result.RecalledContext = recallResult.Summary
-		}
+		go func() { _ = a.callAgentTool("agent_context_recall_enhanced", recallArgs, nil) }()
 	}
 
 	return result, nil
@@ -1534,6 +1618,11 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 	}
 	if err := a.callAgentTool("agent_session_end", args, nil); err != nil {
 		return false, fmt.Errorf("end session: %w", err)
+	}
+
+	// Invalidate the session cache so subsequent lookups reflect the ended session.
+	if p.AgentID != "" {
+		a.invalidateSessionCache(p.AgentID)
 	}
 
 	// Deregister presence (best-effort).
@@ -1600,18 +1689,31 @@ func (a *AgentBridge) PresenceRegister(agentID, sessionID, agentType, descriptio
 }
 
 // GetActiveSession finds the currently active session for an agent.
-// Returns nil if no active session exists.
+// Results are cached for 30 seconds to avoid repeated full session list
+// fetches from the MCP server. Returns nil if no active session exists.
 func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
+	cacheKey := "active_session:" + agentID
+	if cached, ok := a.cache.Get(cacheKey); ok {
+		// Cache hit — may be nil (*SessionInfo) for "no active session".
+		s, _ := cached.(*SessionInfo)
+		return s, nil
+	}
+
 	sessions, err := a.Sessions()
 	if err != nil {
 		return nil, err
 	}
+	var result *SessionInfo
 	for i := range sessions {
 		if sessions[i].AgentID == agentID && sessions[i].Status == "active" {
-			return &sessions[i], nil
+			result = &sessions[i]
+			break
 		}
 	}
-	return nil, nil
+
+	// Cache both hits and misses to avoid redundant fetches.
+	a.cache.Set(cacheKey, result, 30*time.Second)
+	return result, nil
 }
 
 // --- Dispatch + Claim methods ---

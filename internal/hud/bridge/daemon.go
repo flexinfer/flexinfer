@@ -190,8 +190,21 @@ func (c *DaemonClient) reconnect() error {
 // auto-reconnection on transport errors and circuit-breaking on downstream
 // server failures. Caller must NOT hold c.mu.
 func (c *DaemonClient) call(method string, params any) (json.RawMessage, error) {
+	return c.callOpt(method, params, 0)
+}
+
+// callOpt is like call but accepts an optional per-call timeout override.
+// A zero or negative timeout uses the client's default callTimeout.
+func (c *DaemonClient) callOpt(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Apply per-call timeout override while holding the lock.
+	saved := c.callTimeout
+	if timeout > 0 {
+		c.callTimeout = timeout
+	}
+	defer func() { c.callTimeout = saved }()
 
 	// Circuit breaker: check state before making the call.
 	if c.cbState == circuitOpen {
@@ -513,4 +526,13 @@ func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessa
 		"arguments": args,
 	}
 	return c.call("tools/call", params)
+}
+
+// CallToolWithTimeout is like CallTool but uses a per-call timeout override.
+func (c *DaemonClient) CallToolWithTimeout(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+	params := map[string]any{
+		"name":      name,
+		"arguments": args,
+	}
+	return c.callOpt("tools/call", params, timeout)
 }

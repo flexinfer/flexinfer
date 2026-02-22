@@ -391,6 +391,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 		"compaction_enabled", s.cfg.CompactionEnabled,
 		"task_reconciler_enabled", s.cfg.TaskReconcilerEnabled,
 		"worktree_reconciler_enabled", s.cfg.WorktreeReconcilerEnabled,
+		"session_reaper_enabled", s.cfg.SessionReaperEnabled,
 		"presence_cleanup_interval_s", s.cfg.PresenceCleanupInterval,
 	)
 
@@ -413,6 +414,15 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 
 	// Start presence cleanup goroutine
 	go s.runPresenceCleanup(bgCtx)
+
+	// Start session reaper
+	if s.cfg.SessionReaperEnabled {
+		s.logger.Info("starting session reaper",
+			"interval_s", s.cfg.SessionReaperInterval,
+			"max_age_hours", s.cfg.SessionReaperMaxAge,
+		)
+		go s.runSessionReaper(bgCtx)
+	}
 }
 
 // StopBackgroundServices stops all background goroutines
@@ -727,6 +737,153 @@ func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*
 		"sessions": sessions,
 		"count":    len(sessions),
 	})
+}
+
+// HandleSessionDelete deletes a single session by ID from both memory and Qdrant.
+func (s *Service) HandleSessionDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	sessionID := v.Required("session_id")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	// Remove from in-memory map
+	s.sessionsMu.Lock()
+	_, existed := s.sessions[sessionID]
+	delete(s.sessions, sessionID)
+	s.sessionsMu.Unlock()
+
+	// Remove from Qdrant
+	if s.sessionsQdrant != nil {
+		if err := s.sessionsQdrant.Delete(ctx, []string{sessionID}); err != nil {
+			return mcp.ErrorResult(fmt.Errorf("delete session from Qdrant: %w", err)), nil
+		}
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":         true,
+		"session_id": sessionID,
+		"existed":    existed,
+	})
+}
+
+// HandleSessionPrune deletes stale sessions matching status and age criteria.
+func (s *Service) HandleSessionPrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	maxAgeHours := v.Int("max_age_hours", 72)
+	statusFilter := v.String("status", "ended,summarized")
+	dryRun := v.Bool("dry_run", false)
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	pruned, err := s.pruneSessions(ctx, maxAgeHours, statusFilter, dryRun)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Errorf("prune sessions: %w", err)), nil
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":      true,
+		"pruned":  pruned,
+		"dry_run": dryRun,
+	})
+}
+
+// pruneSessions deletes sessions matching status and age criteria.
+// Returns the number of sessions pruned.
+func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilter string, dryRun bool) (int, error) {
+	if s.sessionsQdrant == nil {
+		return 0, nil
+	}
+
+	statuses := strings.Split(statusFilter, ",")
+	for i, st := range statuses {
+		statuses[i] = strings.TrimSpace(st)
+	}
+
+	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour)
+
+	// Query sessions matching the status filter
+	var statusConds []any
+	for _, st := range statuses {
+		if st != "" {
+			statusConds = append(statusConds, Match("status", st))
+		}
+	}
+	if len(statusConds) == 0 {
+		return 0, nil
+	}
+
+	filter := FilterMust(FilterShould(statusConds...))
+	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 1000, false)
+	if err != nil {
+		return 0, fmt.Errorf("scroll sessions: %w", err)
+	}
+
+	var toDelete []string
+	for _, p := range points {
+		sess, err := PayloadToSession(p.Payload)
+		if err != nil || sess == nil {
+			continue
+		}
+
+		// Check age: use EndedAt if available, otherwise StartedAt
+		ts := sess.StartedAt
+		if sess.EndedAt != nil {
+			ts = *sess.EndedAt
+		}
+		if ts.Before(cutoff) {
+			toDelete = append(toDelete, sess.ID)
+		}
+	}
+
+	if dryRun || len(toDelete) == 0 {
+		return len(toDelete), nil
+	}
+
+	// Delete from Qdrant
+	if err := s.sessionsQdrant.Delete(ctx, toDelete); err != nil {
+		return 0, fmt.Errorf("delete sessions: %w", err)
+	}
+
+	// Remove from in-memory map
+	s.sessionsMu.Lock()
+	for _, id := range toDelete {
+		delete(s.sessions, id)
+	}
+	s.sessionsMu.Unlock()
+
+	s.logger.Info("pruned stale sessions", "count", len(toDelete), "max_age_hours", maxAgeHours, "statuses", statusFilter)
+	return len(toDelete), nil
+}
+
+// runSessionReaper periodically prunes old ended/summarized sessions.
+func (s *Service) runSessionReaper(ctx context.Context) {
+	interval := time.Duration(s.cfg.SessionReaperInterval) * time.Second
+	if interval <= 0 {
+		interval = 30 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			statusFilter := "ended,summarized"
+			pruned, err := s.pruneSessions(ctx, s.cfg.SessionReaperMaxAge, statusFilter, false)
+			if err != nil {
+				s.logger.Warn("session reaper failed", "error", err)
+				continue
+			}
+			if pruned > 0 {
+				s.logger.Info("session reaper completed", "pruned", pruned)
+			}
+		}
+	}
 }
 
 // Context Storage Handlers

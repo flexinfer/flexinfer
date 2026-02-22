@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 )
@@ -105,7 +106,7 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 		config:     Config{Dev: true},
 		client:     client,
 		agent:      agent,
-		cache:      bridge.NewCache(),
+		cache:      loomcache.NewMemoryStore(),
 		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		sseHub:     NewSSEHub(nil),
 		eventLog:   NewEventLog(1000),

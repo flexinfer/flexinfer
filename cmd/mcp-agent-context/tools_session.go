@@ -96,4 +96,45 @@ func registerSessionTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleSessionList(ctx, args)
 	})
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_session_delete",
+		Description: "Delete a single session by ID from both memory and Qdrant.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session ID to delete.",
+				},
+			},
+			Required: []string{"session_id"},
+		},
+	}, traced(tracer, "agent_session_delete", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleSessionDelete(ctx, args)
+	}))
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_session_prune",
+		Description: "Delete stale sessions matching status and age criteria. Defaults to pruning ended/summarized sessions older than 72 hours.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"max_age_hours": map[string]any{
+					"type":        "integer",
+					"description": "Maximum age in hours (default: 72). Sessions older than this are pruned.",
+				},
+				"status": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated status filter (default: 'ended,summarized').",
+				},
+				"dry_run": map[string]any{
+					"type":        "boolean",
+					"description": "Preview what would be pruned without deleting (default: false).",
+				},
+			},
+		},
+	}, traced(tracer, "agent_session_prune", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleSessionPrune(ctx, args)
+	}))
 }

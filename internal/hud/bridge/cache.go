@@ -12,6 +12,10 @@ type cacheEntry struct {
 }
 
 // Cache is a simple in-memory TTL cache. It is safe for concurrent use.
+//
+// Deprecated: Use internal/cache.MemoryStore or cache.Store for new code.
+// Cache is retained for AgentBridge's internal typed-struct caching where
+// Redis serialization overhead is unnecessary.
 type Cache struct {
 	entries sync.Map
 }
@@ -66,3 +70,7 @@ func (c *Cache) Len() int {
 	})
 	return count
 }
+
+// Close is a no-op for in-memory Cache. It exists so Cache satisfies the
+// cache.Store interface.
+func (c *Cache) Close() error { return nil }
