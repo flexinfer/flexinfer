@@ -574,6 +574,10 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 				"app.kubernetes.io/managed-by": "mcp-devbox",
 				"devbox/build":                 "buildah",
 			},
+			Annotations: map[string]string{
+				// Belt-and-suspenders: deprecated annotation for pre-1.30 clusters
+				"container.apparmor.security.beta.kubernetes.io/buildah": "unconfined",
+			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy:                 corev1.RestartPolicyNever,
@@ -593,6 +597,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 						{Name: "CONTAINERS_REGISTRIES_CONF", Value: "/etc/containers/registries.conf"},
 					},
 					SecurityContext: &corev1.SecurityContext{
+						Privileged: boolPtr(true),
 						RunAsUser:  &runAsUser,
 						RunAsGroup: &runAsGroup,
 					},
@@ -782,6 +787,7 @@ func (k *K8sBackend) registryTag(tag string) string {
 	return k.registry + "/" + tag
 }
 
+func boolPtr(b bool) *bool                               { return &b }
 func resourcePtr(q resource.Quantity) *resource.Quantity { return &q }
 
 // parseExitCode extracts the exit code from a K8s exec error.

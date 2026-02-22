@@ -120,6 +120,9 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	if pod.Name != "build-pod" || pod.Namespace != "devbox" {
 		t.Fatalf("unexpected pod metadata: %#v", pod.ObjectMeta)
 	}
+	if pod.Annotations["container.apparmor.security.beta.kubernetes.io/buildah"] != "unconfined" {
+		t.Fatalf("expected unconfined apparmor annotation, got: %#v", pod.Annotations)
+	}
 	container := pod.Spec.Containers[0]
 	if container.Image != "quay.io/buildah/stable:v1.38.0" {
 		t.Fatalf("unexpected builder image: %s", container.Image)
@@ -144,6 +147,9 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	}
 	if container.SecurityContext == nil || *container.SecurityContext.RunAsUser != 0 || *container.SecurityContext.RunAsGroup != 0 {
 		t.Fatalf("unexpected security context: %#v", container.SecurityContext)
+	}
+	if container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged {
+		t.Fatalf("expected privileged build pod, got: %#v", container.SecurityContext)
 	}
 
 	if len(pod.Spec.Volumes) != 4 {
