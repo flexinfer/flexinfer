@@ -124,12 +124,18 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 		return nil, fmt.Errorf("context dir %q is not under workspace root %q", opts.ContextDir, k.workspaceRoot)
 	}
 
+	// Detach from the request context: builds are long-running and must
+	// survive MCP proxy timeouts / client disconnects. Use a generous
+	// build-scoped timeout instead.
+	buildCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
 	buildName := sanitizeBuildName(opts.Tag)
 
 	// Inject Dockerfile via ConfigMap so it's accessible to the Buildah pod
 	// without requiring the local filesystem to be the NFS volume.
 	cmName := "buildah-dockerfile-" + buildName
-	if err := k.createDockerfileConfigMap(ctx, cmName, opts.Dockerfile); err != nil {
+	if err := k.createDockerfileConfigMap(buildCtx, cmName, opts.Dockerfile); err != nil {
 		return nil, fmt.Errorf("create dockerfile configmap: %w", err)
 	}
 	defer func() {
@@ -140,14 +146,14 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 
 	var lastErr error
 	for attempt := range buildMaxRetries {
-		result, err := k.runBuildPod(ctx, podName, registryTag, cmName, contextRel)
+		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, contextRel)
 		if err == nil {
 			return result, nil
 		}
 		lastErr = err
 
 		// Don't retry on context cancellation
-		if ctx.Err() != nil {
+		if buildCtx.Err() != nil {
 			break
 		}
 
