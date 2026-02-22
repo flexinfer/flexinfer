@@ -178,6 +178,12 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--metrics")
 	}
 
+	// Disable auto-fit when GPU doesn't support VMM (e.g., gfx906/Vega20).
+	// hipMemGetInfo crashes on these GPUs; -fit off skips the memory query.
+	if spec.ConfigBool("fitOff", false) {
+		args = append(args, "-fit", "off")
+	}
+
 	return args
 }
 

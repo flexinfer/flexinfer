@@ -749,6 +749,12 @@ publish_llamacpp_rocm_gfx1100:
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 30m
   needs: []
+  resource_group: buildkit-llamacpp
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   script:
     - |
       echo "Waiting for BuildKit..."
@@ -760,13 +766,26 @@ publish_llamacpp_rocm_gfx1100:
       done
     - |
       echo "Building llama.cpp ROCm image for gfx1100..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.llamacpp-rocm-gfx1100" \
-        --opt platform=linux/amd64 \
-        --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx1100,${REGISTRY}/llamacpp:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.llamacpp-rocm-gfx1100" \
+          --opt platform=linux/amd64 \
+          --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx1100,${REGISTRY}/llamacpp:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: llama.cpp gfx1100 build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: llama.cpp gfx1100 build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: [build/Dockerfile.llamacpp-rocm-gfx1100]
@@ -780,6 +799,12 @@ publish_llamacpp_rocm_gfx906:
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 30m
   needs: []
+  resource_group: buildkit-llamacpp
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   script:
     - |
       echo "Waiting for BuildKit..."
@@ -791,13 +816,26 @@ publish_llamacpp_rocm_gfx906:
       done
     - |
       echo "Building llama.cpp ROCm image for gfx906..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.llamacpp-rocm-gfx906" \
-        --opt platform=linux/amd64 \
-        --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx906,${REGISTRY}/llamacpp:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.llamacpp-rocm-gfx906" \
+          --opt platform=linux/amd64 \
+          --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx906,${REGISTRY}/llamacpp:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: llama.cpp gfx906 build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: llama.cpp gfx906 build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: [build/Dockerfile.llamacpp-rocm-gfx906]
@@ -812,6 +850,12 @@ publish_llamacpp_cuda_maxwell:
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 30m
   needs: []
+  resource_group: buildkit-llamacpp
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   script:
     - |
       echo "Waiting for BuildKit..."
@@ -823,13 +867,26 @@ publish_llamacpp_cuda_maxwell:
       done
     - |
       echo "Building llama.cpp CUDA Maxwell image (CUDA 11.8, sm_52)..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.llamacpp-cuda-maxwell" \
-        --opt platform=linux/amd64 \
-        --output "type=image,\"name=${REGISTRY}/llamacpp:cuda-maxwell,${REGISTRY}/llamacpp:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.llamacpp-cuda-maxwell" \
+          --opt platform=linux/amd64 \
+          --output "type=image,\"name=${REGISTRY}/llamacpp:cuda-maxwell,${REGISTRY}/llamacpp:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: llama.cpp cuda-maxwell build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: llama.cpp cuda-maxwell build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: [build/Dockerfile.llamacpp-cuda-maxwell]
