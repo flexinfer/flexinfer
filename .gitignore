@@ -47,6 +47,13 @@ dist/
 # Claude Desktop app config (local)
 claude_desktop_config/
 
+# Build logs
+build_*.log
+
+# Throwaway test files
+test_*.go
+!*_test.go
+
 # Compiled binaries (root-level only)
 /flexinfer-proxy
 /flexinfer-manager
