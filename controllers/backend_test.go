@@ -2700,3 +2700,97 @@ func TestGetGPUVendor(t *testing.T) {
 		})
 	}
 }
+
+// TestGetBackendEnv_MLCLLMOnGFX906_NoVLLMVars verifies that the mlc-llm backend
+// on gfx906 receives correct ROCm env vars (HSA_ENABLE_SDMA=0) and does NOT
+// receive vLLM-specific vars (VLLM_USE_V1, VLLM_USE_TRITON_FLASH_ATTN).
+func TestGetBackendEnv_MLCLLMOnGFX906_NoVLLMVars(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx906",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	got := make(map[string]string)
+	for _, e := range env {
+		got[e.Name] = e.Value
+	}
+
+	// Must have gfx906 ROCm vars
+	if v, ok := got["HSA_ENABLE_SDMA"]; !ok || v != "0" {
+		t.Errorf("expected HSA_ENABLE_SDMA=0, got %q (present=%v)", v, ok)
+	}
+	if v, ok := got["PYTORCH_ROCM_ARCH"]; !ok || v != "gfx906" {
+		t.Errorf("expected PYTORCH_ROCM_ARCH=gfx906, got %q (present=%v)", v, ok)
+	}
+
+	// Must NOT have vLLM-specific vars
+	for _, forbidden := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN", "VLLM_ROCM_USE_AITER"} {
+		if _, ok := got[forbidden]; ok {
+			t.Errorf("unexpected vLLM-specific env var %s present in mlc-llm backend", forbidden)
+		}
+	}
+
+	// Must NOT have gfx1100-specific vars
+	if _, ok := got["HSA_OVERRIDE_GFX_VERSION"]; ok {
+		t.Errorf("unexpected HSA_OVERRIDE_GFX_VERSION for gfx906")
+	}
+}
+
+// TestGetBackendEnv_MLCLLMOnGFX1100_NoVLLMVars verifies that the mlc-llm backend
+// on gfx1100 receives correct ROCm env vars but no vLLM-specific vars.
+func TestGetBackendEnv_MLCLLMOnGFX1100_NoVLLMVars(t *testing.T) {
+	r := &ModelDeploymentReconciler{}
+	m := &aiv1alpha1.ModelDeployment{
+		Spec: aiv1alpha1.ModelDeploymentSpec{
+			Backend: "mlc-llm",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					"amd.com/gpu": resource.MustParse("1"),
+				},
+			},
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx1100",
+			},
+		},
+	}
+
+	env := r.getBackendEnv(m)
+	got := make(map[string]string)
+	for _, e := range env {
+		got[e.Name] = e.Value
+	}
+
+	// Must have gfx1100 ROCm vars
+	if v, ok := got["HSA_OVERRIDE_GFX_VERSION"]; !ok || v != "11.0.0" {
+		t.Errorf("expected HSA_OVERRIDE_GFX_VERSION=11.0.0, got %q (present=%v)", v, ok)
+	}
+	if v, ok := got["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"]; !ok || v != "1" {
+		t.Errorf("expected TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1, got %q (present=%v)", v, ok)
+	}
+	if v, ok := got["PYTORCH_ROCM_ARCH"]; !ok || v != "gfx1100" {
+		t.Errorf("expected PYTORCH_ROCM_ARCH=gfx1100, got %q (present=%v)", v, ok)
+	}
+
+	// Must NOT have vLLM-specific vars
+	for _, forbidden := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN", "VLLM_ROCM_USE_AITER"} {
+		if _, ok := got[forbidden]; ok {
+			t.Errorf("unexpected vLLM-specific env var %s present in mlc-llm backend", forbidden)
+		}
+	}
+
+	// Must NOT have gfx906-specific vars
+	if _, ok := got["HSA_ENABLE_SDMA"]; ok {
+		t.Errorf("unexpected HSA_ENABLE_SDMA for gfx1100")
+	}
+}

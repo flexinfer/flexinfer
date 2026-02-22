@@ -43,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 )
@@ -1648,7 +1649,8 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 
 		// ROCm environment variables for AMD GPUs
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
-			env = append(env, r.rocmEnvVars(m)...)
+			gpuArch := strings.ToLower(r.getGPUArchitecture(m))
+			env = append(env, backend.ROCmEnvVars(gpuArch)...)
 		}
 
 		return env
@@ -1675,16 +1677,7 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 		// ROCm-specific environment for AMD GPUs
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
 			gpuArch := strings.ToLower(r.getGPUArchitecture(m))
-			if strings.HasPrefix(gpuArch, "gfx110") {
-				// Override GFX version for RDNA3 (RX 7900 series)
-				env = append(env, corev1.EnvVar{
-					Name:  "HSA_OVERRIDE_GFX_VERSION",
-					Value: "11.0.0",
-				})
-			}
-			// Note: Don't set HIP_VISIBLE_DEVICES - the device plugin allocates
-			// specific GPUs to the container, and within the container, the
-			// allocated GPU is always at index 0.
+			env = append(env, backend.ROCmEnvVars(gpuArch)...)
 		}
 		return env
 	case "vllm":
@@ -1736,14 +1729,9 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 		// ROCm-specific environment for AMD GPUs
 		if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
 			gpuArch := strings.ToLower(r.getGPUArchitecture(m))
-			isGFX1100 := strings.HasPrefix(gpuArch, "gfx110")
+			// Common ROCm env vars (HSA overrides, PYTORCH_ROCM_ARCH, AOTriton, SDMA)
+			env = append(env, backend.ROCmEnvVars(gpuArch)...)
 
-			if isGFX1100 {
-				env = append(env, corev1.EnvVar{
-					Name:  "HSA_OVERRIDE_GFX_VERSION",
-					Value: "11.0.0",
-				})
-			}
 			// Force ROCm/HIP to only use the first visible GPU device.
 			// Even with device plugin isolation, KFD sees all system GPUs.
 			// Set both ROCR and HIP environment variables for complete isolation.
@@ -1769,13 +1757,8 @@ func (r *ModelDeploymentReconciler) getBackendEnv(m *aiv1alpha1.ModelDeployment)
 				Name:  "HIP_LAUNCH_BLOCKING",
 				Value: "0",
 			})
-			// Enable AOTriton flash attention for gfx1100 performance/stability
-			if isGFX1100 {
-				env = append(env, corev1.EnvVar{
-					Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-					Value: "1",
-				})
-				// Disable CPU offload - CPU offload causes ~10x slowdown on modern RDNA3 GPUs
+			// Disable CPU offload on gfx1100 - causes ~10x slowdown on modern RDNA3 GPUs
+			if strings.HasPrefix(gpuArch, "gfx110") {
 				env = append(env, corev1.EnvVar{
 					Name:  "USE_CPU_OFFLOAD",
 					Value: "0",
@@ -1860,7 +1843,22 @@ func (r *ModelDeploymentReconciler) buildVLLMEnv(m *aiv1alpha1.ModelDeployment, 
 
 	// ROCm-specific environment for AMD GPUs.
 	if r.detectGPUResourceFromSpec(m) == GPUResourceAMD {
-		env = append(env, r.rocmEnvVars(m)...)
+		gpuArch := strings.ToLower(r.getGPUArchitecture(m))
+		env = append(env, backend.ROCmEnvVars(gpuArch)...)
+
+		// vLLM-specific ROCm tuning
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			env = append(env,
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "0"},
+				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "0"},
+			)
+		} else if strings.HasPrefix(gpuArch, "gfx906") {
+			env = append(env,
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "0"},
+			)
+		}
 
 		// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
 		// This helps on hosts where KFD can still enumerate multiple GPUs.
@@ -2050,79 +2048,6 @@ func (r *ModelDeploymentReconciler) detectGPUResourceFromSpec(m *aiv1alpha1.Mode
 
 	// Default: assume NVIDIA GPU if unspecified.
 	return GPUResourceNVIDIA
-}
-
-// rocmEnvVars returns common environment variables for AMD ROCm GPUs.
-// These help with GPU detection and stability on RDNA3 architecture.
-// Note: LD_LIBRARY_PATH and LD_PRELOAD are no longer needed as mlc-llm:rocm64-v4+
-// images bundle all required libraries with matching glibc version.
-func (r *ModelDeploymentReconciler) rocmEnvVars(m *aiv1alpha1.ModelDeployment) []corev1.EnvVar {
-	gpuArch := strings.ToLower(r.getGPUArchitecture(m))
-	isGFX1100 := strings.HasPrefix(gpuArch, "gfx110")
-	isGFX906 := strings.HasPrefix(gpuArch, "gfx906")
-
-	var env []corev1.EnvVar
-
-	if isGFX1100 {
-		env = append(env,
-			corev1.EnvVar{
-				Name:  "HSA_OVERRIDE_GFX_VERSION",
-				Value: "11.0.0", // RDNA3 (RX 7900 series)
-			},
-			corev1.EnvVar{
-				// Critical for gfx1100 stability - enables experimental AOTriton
-				// flash attention which prevents SIGSEGV crashes on RDNA3.
-				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-				Value: "1",
-			},
-			corev1.EnvVar{
-				Name:  "PYTORCH_ROCM_ARCH",
-				Value: "gfx1100",
-			},
-			corev1.EnvVar{
-				Name: "VLLM_USE_TRITON_FLASH_ATTN",
-				// Prefer CK flash attention on consumer RDNA3 (gfx1100). This avoids
-				// Triton FP8 dtype issues during prefill and improves stability for
-				// some architectures (e.g., SWA support).
-				Value: "0",
-			},
-			corev1.EnvVar{
-				// Disable AITER (AI Tensor Engine for ROCm) on consumer RDNA3 GPUs.
-				// AITER is optimized for MI300X/CDNA3 architecture, not gfx1100.
-				// Enabling AITER on gfx1100 causes GPU hangs during attention ops.
-				Name:  "VLLM_ROCM_USE_AITER",
-				Value: "0",
-			},
-			corev1.EnvVar{
-				// Force vLLM V0 engine on RDNA3 GPUs.
-				// V1 engine only supports Triton-based attention which causes GPU hangs on gfx1100.
-				// V0 engine supports CK flash attention via VLLM_USE_TRITON_FLASH_ATTN=0.
-				Name:  "VLLM_USE_V1",
-				Value: "0",
-			},
-		)
-	} else if isGFX906 {
-		env = append(env,
-			corev1.EnvVar{
-				Name:  "PYTORCH_ROCM_ARCH",
-				Value: "gfx906",
-			},
-			corev1.EnvVar{
-				Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-				Value: "0", // Disable for Vega20 stability
-			},
-			corev1.EnvVar{
-				Name:  "VLLM_ROCM_USE_AITER",
-				Value: "0",
-			},
-			corev1.EnvVar{
-				Name:  "VLLM_USE_V1",
-				Value: "0",
-			},
-		)
-	}
-
-	return env
 }
 
 // getRuntimeClassName returns the appropriate RuntimeClassName for the GPU type.
