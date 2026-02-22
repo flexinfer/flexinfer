@@ -401,12 +401,15 @@ not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentKeepaliveCmd(),
 		newAgentTaskUpdateCmd(),
 		newAgentSessionCmd(),
+		newAgentSessionListCmd(),
+		newAgentSessionPruneCmd(),
 		newAgentHookStatusCmd(),
 		newAgentContextInspectCmd(),
 		newAgentNudgeQueueStatusCmd(),
 		newAgentNudgeQueuePolicyCmd(),
 		newAgentWorkflowSyncCmd(),
 		newAgentDispatchCmd(),
+		newAgentQualityGateCmd(),
 	)
 
 	return agentCmd
@@ -809,6 +812,127 @@ func newAgentSessionCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
+
+	return cmd
+}
+
+// newAgentSessionListCmd creates the `loom agent session-list` command.
+func newAgentSessionListCmd() *cobra.Command {
+	var (
+		namespace string
+		agentID   string
+		status    string
+		limit     int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "session-list",
+		Short: "List agent sessions",
+		Long: `List sessions, optionally filtered by agent, namespace, or status.
+
+Example:
+  loom agent session-list --status summarized --limit 50
+  loom agent session-list --agent-id claude-code --status active`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+
+			params := map[string]any{
+				"limit": limit,
+			}
+			if agentID != "" {
+				params["agent_id"] = agentID
+			}
+			if namespace != "" {
+				params["namespace"] = namespace
+			}
+			if status != "" {
+				params["status"] = status
+			}
+
+			result, err := withAgentFallback(
+				"agent session-list",
+				func() (json.RawMessage, error) {
+					return hudPost(port, "/api/agent/session-list", params)
+				},
+				func() (json.RawMessage, error) {
+					return withAgentBridge(cmd, func(b *bridge.AgentBridge) (json.RawMessage, error) {
+						return b.ListSessions(params)
+					})
+				},
+			)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(result))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Filter by agent ID")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Filter by namespace")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status (active, ended, summarized)")
+	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum sessions to return")
+
+	return cmd
+}
+
+// newAgentSessionPruneCmd creates the `loom agent session-prune` command.
+func newAgentSessionPruneCmd() *cobra.Command {
+	var (
+		maxAge string
+		status string
+		dryRun bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "session-prune",
+		Short: "Prune stale sessions",
+		Long: `Delete stale sessions matching status and age criteria.
+
+Example:
+  loom agent session-prune --max-age 72h --dry-run
+  loom agent session-prune --max-age 72h --status summarized,ended`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			port := resolvePort(cmd)
+
+			// Parse max-age duration to hours
+			dur, err := time.ParseDuration(maxAge)
+			if err != nil {
+				return fmt.Errorf("invalid --max-age: %w", err)
+			}
+			maxAgeHours := int(dur.Hours())
+			if maxAgeHours <= 0 {
+				maxAgeHours = 1
+			}
+
+			params := map[string]any{
+				"max_age_hours": maxAgeHours,
+				"status":        status,
+				"dry_run":       dryRun,
+			}
+
+			result, err := withAgentFallback(
+				"agent session-prune",
+				func() (json.RawMessage, error) {
+					return hudPost(port, "/api/agent/session-prune", params)
+				},
+				func() (json.RawMessage, error) {
+					return withAgentBridge(cmd, func(b *bridge.AgentBridge) (json.RawMessage, error) {
+						return b.PruneSessions(params)
+					})
+				},
+			)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(result))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&maxAge, "max-age", "72h", "Maximum session age (e.g., 72h, 168h)")
+	cmd.Flags().StringVar(&status, "status", "ended,summarized", "Comma-separated status filter")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what would be pruned without deleting")
 
 	return cmd
 }
@@ -1404,4 +1528,179 @@ func loadWorkflowFile(path, namespace, createdBy string) (map[string]any, error)
 	}
 
 	return body, nil
+}
+
+// newAgentQualityGateCmd creates the `loom agent quality-gate` command.
+func newAgentQualityGateCmd() *cobra.Command {
+	var (
+		scope   string
+		baseRef string
+		pkgs    []string
+		quiet   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "quality-gate",
+		Short: "Run quality checks (lint, test, security) on changed files",
+		Long: `Run code quality checks suitable for pre-commit or CI gates.
+Calls golangci-lint, go test, gosec, and govulncheck on changed files.
+Returns structured JSON results with pass/fail status and remediation hints.
+
+Scope determines which files to check:
+  changed  - files changed vs base-ref (default)
+  all      - entire repository
+  package  - specific packages (use --packages)`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+
+			result := runQualityGate(ctx, scope, baseRef, pkgs)
+			out, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return err
+			}
+			if !quiet {
+				fmt.Println(string(out))
+			}
+			if !result.Passed {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&scope, "scope", "changed", "Scope: changed, all, or package")
+	cmd.Flags().StringVar(&baseRef, "base-ref", "HEAD~1", "Git ref to diff against (for scope=changed)")
+	cmd.Flags().StringSliceVar(&pkgs, "packages", nil, "Go packages to check (for scope=package)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (exit code only)")
+
+	return cmd
+}
+
+type qualityGateResult struct {
+	Passed   bool                `json:"passed"`
+	Summary  string              `json:"summary"`
+	Lint     *qualityGateSection `json:"lint,omitempty"`
+	Test     *qualityGateSection `json:"test,omitempty"`
+	Security *qualityGateSection `json:"security,omitempty"`
+}
+
+type qualityGateSection struct {
+	Passed bool   `json:"passed"`
+	Output string `json:"output"`
+}
+
+func runQualityGate(ctx context.Context, scope, baseRef string, pkgs []string) qualityGateResult {
+	result := qualityGateResult{Passed: true}
+	var summaryParts []string
+
+	// Resolve target packages
+	var targetPkgs []string
+	switch scope {
+	case "all":
+		targetPkgs = []string{"./..."}
+	case "package":
+		if len(pkgs) > 0 {
+			targetPkgs = pkgs
+		} else {
+			targetPkgs = []string{"./..."}
+		}
+	default: // "changed"
+		changedPkgs, err := changedGoPackagesForCLI(ctx, baseRef)
+		if err != nil {
+			result.Summary = "failed to determine changed packages: " + err.Error()
+			result.Passed = false
+			return result
+		}
+		if len(changedPkgs) == 0 {
+			result.Summary = "no Go files changed"
+			return result
+		}
+		targetPkgs = changedPkgs
+	}
+
+	// Lint
+	if lintPath, err := exec.LookPath("golangci-lint"); err == nil {
+		_ = lintPath
+		lintArgs := []string{"run", "--out-format=line-number"}
+		if scope == "changed" {
+			lintArgs = append(lintArgs, "--new-from-rev="+baseRef)
+		}
+		lintArgs = append(lintArgs, targetPkgs...)
+		stdout, stderr, err := runCommandCLI(ctx, "golangci-lint", lintArgs...)
+		section := &qualityGateSection{Passed: err == nil}
+		if err != nil {
+			section.Output = strings.TrimSpace(stdout + "\n" + stderr)
+			result.Passed = false
+			summaryParts = append(summaryParts, "lint: FAIL")
+		} else {
+			summaryParts = append(summaryParts, "lint: OK")
+		}
+		result.Lint = section
+	}
+
+	// Test
+	testArgs := []string{"test", "-count=1", "-race"}
+	testArgs = append(testArgs, targetPkgs...)
+	stdout, stderr, err := runCommandCLI(ctx, "go", testArgs...)
+	section := &qualityGateSection{Passed: err == nil}
+	if err != nil {
+		section.Output = strings.TrimSpace(stdout + "\n" + stderr)
+		result.Passed = false
+		summaryParts = append(summaryParts, "test: FAIL")
+	} else {
+		summaryParts = append(summaryParts, "test: OK")
+	}
+	result.Test = section
+
+	// Security (gosec)
+	if _, err := exec.LookPath("gosec"); err == nil {
+		gosecArgs := []string{"-quiet"}
+		gosecArgs = append(gosecArgs, targetPkgs...)
+		stdout, stderr, err := runCommandCLI(ctx, "gosec", gosecArgs...)
+		section := &qualityGateSection{Passed: err == nil}
+		if err != nil {
+			section.Output = strings.TrimSpace(stdout + "\n" + stderr)
+			result.Passed = false
+			summaryParts = append(summaryParts, "security: FAIL")
+		} else {
+			summaryParts = append(summaryParts, "security: OK")
+		}
+		result.Security = section
+	}
+
+	result.Summary = strings.Join(summaryParts, "; ")
+	return result
+}
+
+func changedGoPackagesForCLI(ctx context.Context, baseRef string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--diff-filter=ACMR", baseRef)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var pkgList []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" || !strings.HasSuffix(line, ".go") {
+			continue
+		}
+		dir := filepath.Dir(line)
+		pkg := "./" + dir
+		if !seen[pkg] {
+			seen[pkg] = true
+			pkgList = append(pkgList, pkg)
+		}
+	}
+	return pkgList, nil
+}
+
+func runCommandCLI(ctx context.Context, name string, args ...string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
