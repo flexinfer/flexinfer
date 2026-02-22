@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: federatedmodels.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -176,6 +176,27 @@ spec:
                         - SharedPVC
                         - None
                         type: string
+                    type: object
+                  capabilities:
+                    description: |-
+                      Capabilities declares model capabilities for downstream consumers.
+                      Unset fields are auto-inferred from backend type and config.
+                    properties:
+                      imageGeneration:
+                        description: |-
+                          ImageGeneration marks this as an image generation model.
+                          Auto: true for diffusers, comfyui, vllm-omni.
+                        type: boolean
+                      toolCalling:
+                        description: |-
+                          ToolCalling enables OpenAI-compatible function/tool calling.
+                          Auto: true for vllm, ollama; true for llamacpp when jinja=true.
+                        type: boolean
+                      vision:
+                        description: |-
+                          Vision enables multimodal image input.
+                          Auto: true for llamacpp when mmproj is configured.
+                        type: boolean
                     type: object
                   config:
                     description: |-
