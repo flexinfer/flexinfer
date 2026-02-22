@@ -539,20 +539,20 @@ func podFailureReason(pod *corev1.Pod) string {
 }
 
 // buildBuildahPodSpec creates a Pod spec for a Buildah in-cluster build.
-// Buildah runs rootless with --storage-driver=vfs --isolation=chroot —
-// no privileged containers or SYS_ADMIN capability required.
+// Buildah runs as root with --storage-driver=vfs --isolation=chroot.
+// Root is required because chroot isolation needs to remount / (MS_REC|MS_SLAVE).
 // The Dockerfile is injected via a ConfigMap (dockerfileCM) so it doesn't
 // need to exist on the NFS workspace volume.
 func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, contextRel string) *corev1.Pod {
 	gracePeriod := int64(0)
-	runAsUser := int64(1000)
-	runAsGroup := int64(1000)
+	runAsUser := int64(0)
+	runAsGroup := int64(0)
 
 	buildAndPush := strings.Join([]string{
 		// Configure registries for short-name resolution (non-interactive builds)
-		"mkdir -p /home/build/.config/containers",
+		"mkdir -p /etc/containers",
 		"&&",
-		`printf 'unqualified-search-registries = ["docker.io"]\nshort-name-mode = "permissive"\n' > /home/build/.config/containers/registries.conf`,
+		`printf 'unqualified-search-registries = ["docker.io"]\nshort-name-mode = "permissive"\n' > /etc/containers/registries.conf`,
 		"&&",
 		"buildah build-using-dockerfile",
 		"--storage-driver=vfs",
@@ -590,7 +590,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 					Env: []corev1.EnvVar{
 						{Name: "BUILDAH_ISOLATION", Value: "chroot"},
 						{Name: "STORAGE_DRIVER", Value: "vfs"},
-						{Name: "CONTAINERS_REGISTRIES_CONF", Value: "/home/build/.config/containers/registries.conf"},
+						{Name: "CONTAINERS_REGISTRIES_CONF", Value: "/etc/containers/registries.conf"},
 					},
 					SecurityContext: &corev1.SecurityContext{
 						RunAsUser:  &runAsUser,
@@ -609,7 +609,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "workspace", MountPath: "/workspace"},
 						{Name: "dockerfile", MountPath: "/buildah-dockerfile", ReadOnly: true},
-						{Name: "buildah-storage", MountPath: "/home/build/.local/share/containers/storage"},
+						{Name: "buildah-storage", MountPath: "/var/lib/containers/storage"},
 						{Name: "auth", MountPath: "/run/containers/0/auth.json", SubPath: "config.json", ReadOnly: true},
 					},
 				},

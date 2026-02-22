@@ -139,10 +139,10 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	if envs["BUILDAH_ISOLATION"] != "chroot" || envs["STORAGE_DRIVER"] != "vfs" {
 		t.Fatalf("unexpected buildah env: %#v", container.Env)
 	}
-	if envs["CONTAINERS_REGISTRIES_CONF"] != "/home/build/.config/containers/registries.conf" {
+	if envs["CONTAINERS_REGISTRIES_CONF"] != "/etc/containers/registries.conf" {
 		t.Fatalf("expected CONTAINERS_REGISTRIES_CONF env var, got: %#v", container.Env)
 	}
-	if container.SecurityContext == nil || *container.SecurityContext.RunAsUser != 1000 || *container.SecurityContext.RunAsGroup != 1000 {
+	if container.SecurityContext == nil || *container.SecurityContext.RunAsUser != 0 || *container.SecurityContext.RunAsGroup != 0 {
 		t.Fatalf("unexpected security context: %#v", container.SecurityContext)
 	}
 
