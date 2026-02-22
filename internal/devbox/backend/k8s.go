@@ -455,6 +455,8 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		labels["devbox/agent-id"] = opts.AgentID
 	}
 
+	gracePeriod := int64(3)
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      opts.Name,
@@ -462,8 +464,9 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:      corev1.RestartPolicyNever,
-			ServiceAccountName: "mcp-devbox",
+			RestartPolicy:                 corev1.RestartPolicyNever,
+			TerminationGracePeriodSeconds: &gracePeriod,
+			ServiceAccountName:            "mcp-devbox",
 			ImagePullSecrets: []corev1.LocalObjectReference{
 				{Name: k.imagePullSecret},
 			},
