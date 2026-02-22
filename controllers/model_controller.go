@@ -945,8 +945,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 							return nil
 						}
 						return &corev1.PodSecurityContext{
-							// GID 992 is the render group on most ROCm hosts
-							SupplementalGroups: []int64{992},
+							// Render group GID varies by distro: 992 (Arch), 109 (Debian/Ubuntu).
+							// Include both so GPU device access works on either.
+							SupplementalGroups: []int64{109, 992},
 						}
 					}(),
 					Affinity: func() *corev1.Affinity {
@@ -2079,6 +2080,10 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 				arch := ""
 				if major != "" {
 					arch = "sm_" + major
+				}
+				// Fall back to flexinfer.ai/gpu.arch label (same as AMD detection).
+				if arch == "" && node.Labels != nil {
+					arch = node.Labels["flexinfer.ai/gpu.arch"]
 				}
 				return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
 			case backend.GPUVendorAMD:

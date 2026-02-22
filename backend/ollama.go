@@ -83,6 +83,13 @@ func (b *OllamaBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Name:  "OLLAMA_HOST",
 			Value: "0.0.0.0",
 		},
+		{
+			// Prevent Ollama from unloading models after idle timeout.
+			// Without this, the first request after ~5min idle pays a
+			// multi-second cold-start penalty to reload weights into GPU.
+			Name:  "OLLAMA_KEEP_ALIVE",
+			Value: "-1",
+		},
 	}
 
 	// Add ROCm environment for AMD GPUs

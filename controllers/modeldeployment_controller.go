@@ -994,8 +994,9 @@ ls -la /checkpoints || true
 							return nil
 						}
 						return &corev1.PodSecurityContext{
-							// GID 992 is the render group on most ROCm hosts
-							SupplementalGroups: []int64{992},
+							// Render group GID varies by distro: 992 (Arch), 109 (Debian/Ubuntu).
+							// Include both so GPU device access works on either.
+							SupplementalGroups: []int64{109, 992},
 						}
 					}(),
 					InitContainers: initContainers,
