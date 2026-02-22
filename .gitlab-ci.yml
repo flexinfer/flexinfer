@@ -53,13 +53,13 @@ lint:
     - |
       set -e
       if ! command -v golangci-lint >/dev/null 2>&1; then
-        echo "Installing golangci-lint binary..."
+        echo "Installing golangci-lint v2..."
         if ! curl --retry 5 --retry-delay 2 --retry-connrefused -sSfL \
           https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-          | sh -s -- -b "$GOPATH/bin" v1.64.8; then
+          | sh -s -- -b "$GOPATH/bin" v2.10.1; then
           echo "WARN: installer script failed; falling back to go install via module proxies"
           GOPROXY="http://athens.ci.svc.cluster.local:3000,https://proxy.golang.org,direct" \
-            go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
         fi
       fi
   script:
