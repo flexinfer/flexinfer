@@ -30,14 +30,14 @@ func (b *LlamaCppBackend) Aliases() []string {
 func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
-		// Check for gfx1100 (RX 7900 series, RDNA3)
+		// Architecture-specific overrides via env var.
 		if strings.HasPrefix(gpuArch, "gfx110") {
 			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX1100"); img != "" {
 				return img
 			}
-			return "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100"
+			// Fall through to generic AMD image.
 		}
-		// Check for gfx906 (Radeon VII, Vega20)
+		// gfx906 (Radeon VII, Vega20) needs a patched build for hipMemGetInfo.
 		if strings.HasPrefix(gpuArch, "gfx906") {
 			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX906"); img != "" {
 				return img

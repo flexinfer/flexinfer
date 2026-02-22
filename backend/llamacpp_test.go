@@ -117,16 +117,16 @@ func TestLlamaCppBackendImage(t *testing.T) {
 		wantImage string
 	}{
 		{
-			name:      "AMD gfx1100 returns hardcoded default",
+			name:      "AMD gfx1100 falls through to generic AMD default",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
-			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
 		},
 		{
-			name:      "AMD gfx1101 matches gfx110x prefix",
+			name:      "AMD gfx1101 falls through to generic AMD default",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1101",
-			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx1100",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
 		},
 		{
 			name:      "AMD gfx1100 with env override",
