@@ -1,0 +1,118 @@
+{
+  "items": [
+    {
+      "id": "DEBT-001",
+      "title": "Harden proxy transport state reset and reconnect classification",
+      "component": "cmd/loom/proxy.go",
+      "impact": 5,
+      "risk_reduction": 5,
+      "drag_reduction": 4,
+      "effort": 2,
+      "evidence": [
+        "cmd/loom/proxy.go:93",
+        "cmd/loom/proxy.go:158",
+        "cmd/loom/proxy.go:167",
+        "cmd/loom/proxy.go:170",
+        "cmd/loom/proxy.go:243"
+      ]
+    },
+    {
+      "id": "DEBT-002",
+      "title": "Enforce end-to-end RPC deadlines for proxy and CLI daemon calls",
+      "component": "cmd/loom/proxy.go, cmd/loom/daemon.go, internal/daemon/daemon.go",
+      "impact": 5,
+      "risk_reduction": 5,
+      "drag_reduction": 5,
+      "effort": 3,
+      "evidence": [
+        "cmd/loom/proxy.go:60",
+        "cmd/loom/proxy.go:181",
+        "cmd/loom/proxy.go:378",
+        "cmd/loom/proxy.go:382",
+        "cmd/loom/daemon.go:32",
+        "cmd/loom/daemon.go:43"
+      ]
+    },
+    {
+      "id": "DEBT-003",
+      "title": "Replace one-shot autostart with retryable daemon reconnection policy",
+      "component": "cmd/loom/proxy.go, internal/daemon/ensure.go",
+      "impact": 4,
+      "risk_reduction": 4,
+      "drag_reduction": 4,
+      "effort": 3,
+      "evidence": [
+        "cmd/loom/proxy.go:76",
+        "cmd/loom/proxy.go:144",
+        "cmd/loom/proxy.go:264",
+        "internal/daemon/ensure.go:31"
+      ]
+    },
+    {
+      "id": "DEBT-004",
+      "title": "Introduce unified local proxy session lease/epoch management",
+      "component": "internal/daemon/http_handler.go, internal/daemon/session.go, cmd/loom/proxy.go",
+      "impact": 4,
+      "risk_reduction": 5,
+      "drag_reduction": 4,
+      "effort": 4,
+      "evidence": [
+        "internal/daemon/http_handler.go:13",
+        "internal/daemon/http_handler.go:140",
+        "internal/daemon/session.go:8",
+        "internal/daemon/session.go:25",
+        "docs/STREAMABLE_HTTP.md:88"
+      ]
+    },
+    {
+      "id": "DEBT-005",
+      "title": "Reduce health monitor process churn for local dev efficiency",
+      "component": "internal/daemon/health.go, internal/daemon/daemon.go",
+      "impact": 4,
+      "risk_reduction": 4,
+      "drag_reduction": 3,
+      "effort": 3,
+      "evidence": [
+        "internal/daemon/health.go:127",
+        "internal/daemon/health.go:154",
+        "internal/daemon/health.go:170",
+        "internal/daemon/daemon.go:1825",
+        "internal/daemon/daemon.go:1850",
+        "internal/daemon/daemon.go:1874"
+      ]
+    },
+    {
+      "id": "DEBT-006",
+      "title": "Make dev-upgrade daemon restart safety session-aware and resilience-aware",
+      "component": "scripts/dev/upgrade_local.sh, cmd/loom/status.go, internal/daemon/daemon.go",
+      "impact": 4,
+      "risk_reduction": 4,
+      "drag_reduction": 3,
+      "effort": 2,
+      "evidence": [
+        "scripts/dev/upgrade_local.sh:104",
+        "scripts/dev/upgrade_local.sh:107",
+        "scripts/dev/upgrade_local.sh:141",
+        "cmd/loom/status.go:20",
+        "internal/daemon/daemon.go:1190",
+        "internal/daemon/daemon.go:1196"
+      ]
+    },
+    {
+      "id": "DEBT-007",
+      "title": "Add restart/reconnect chaos tests for proxy-daemon sessions",
+      "component": "internal/integration/proxy_daemon_test.go",
+      "impact": 4,
+      "risk_reduction": 4,
+      "drag_reduction": 5,
+      "effort": 2,
+      "evidence": [
+        "internal/integration/proxy_daemon_test.go:59",
+        "internal/integration/proxy_daemon_test.go:110",
+        "internal/integration/proxy_daemon_test.go:158",
+        "internal/integration/proxy_daemon_test.go:224",
+        "internal/integration/proxy_daemon_test.go:272"
+      ]
+    }
+  ]
+}

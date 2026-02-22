@@ -1,0 +1,36 @@
+# Architectural constraint rules for loom-core.
+# Checked by mcp-quality quality_arch tool.
+#
+# Rule types:
+#   deny:       block specific import paths from specific packages
+#   allow_only: restrict a package to only listed imports
+#
+# Patterns:
+#   *   matches a single path segment
+#   **  matches zero or more path segments
+
+rules:
+  - name: "MCP servers must not import internal/hud"
+    deny:
+      from: "cmd/mcp-*/**"
+      import: "internal/hud/**"
+
+  - name: "MCP servers must not import internal/tui"
+    deny:
+      from: "cmd/mcp-*/**"
+      import: "internal/tui/**"
+
+  - name: "MCP servers must not import internal/daemon"
+    deny:
+      from: "cmd/mcp-*/**"
+      import: "internal/daemon/**"
+
+  - name: "pkg packages must not import cmd"
+    deny:
+      from: "pkg/**"
+      import: "cmd/**"
+
+  - name: "pkg packages must not import internal"
+    deny:
+      from: "pkg/**"
+      import: "internal/**"

@@ -1,22 +1,47 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-19T13:57:02-05:00
+- Generated: 2026-02-22T14:07:11-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
-- Platform: `macOS-26.3-arm64-arm-64bit`
+- Platform: `macOS-26.4-arm64-arm-64bit`
 - Python: `3.12.11`
 
 ## Git
 ```
-## codex/enterprise-policy-hooks-25...origin/codex/enterprise-policy-hooks-25
- M .codex/skills/plan-loom-core/SKILL.md
- M .loom/00-index.md
- M .loom/00-mcp-inventory.md
+## main...origin/main
  M .loom/00-workspace-snapshot.md
- M .loom/10-research.md
- M .loom/20-product-spec.md
- M .loom/30-implementation-plan.md
- M .loom/50-worklog.md
+ M .opencode/opencode.json
+ M .zed/mcp.json
+ M cmd/loom/cmd_agent.go
+ M cmd/loom/main.go
+ M cmd/mcp-codebase-memory/README.md
+ M cmd/mcp-codebase-memory/tools.go
+ M internal/devbox/backend/k8s.go
+ M internal/devbox/backend/k8s_test.go
+ M internal/hud/frontend/dist/assets/index-DIF7q4RN.js
+ M pkg/codebase/index/goindex/indexer.go
+ M pkg/codebase/index/pyindex/indexer.go
+ M pkg/codebase/index/pyindex/indexer_nocgo.go
+ M pkg/codebase/index/registry.go
+ M pkg/codebase/index/registry_test.go
+ M pkg/codebase/index/rsindex/indexer.go
+ M pkg/codebase/index/rsindex/indexer_nocgo.go
+ M pkg/codebase/index/tsindex/indexer.go
+ M pkg/codebase/index/tsindex/indexer_nocgo.go
+ M pkg/codebase/service.go
+ M pkg/codebase/watch.go
+ M pkg/generator/configs.go
+ M pkg/sync/ops.go
+?? .loom/tech-debt-inventory.json
+?? .loom/tech-debt-inventory.md
+?? .loom/tech-debt-plan.md
+?? .loom/tech-debt-priority.md
+?? .loom/tech-debt-session-architecture.md
+?? pkg/codebase/index/ignore_test.go
+?? pkg/sync/merge.go
+?? pkg/sync/merge_test.go
+?? pkg/sync/projects.go
+?? pkg/sync/projects_test.go
 ```
 
 ### Remotes
@@ -31,7 +56,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-4d1f4fa daemon: add gateway request/response policy hooks (#25)
+29b8a2c fix(hud): GetActiveSession queries by agent_id+status instead of unfiltered list
 ```
 
 ## Top-Level Layout
@@ -63,9 +88,11 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `launchd/`
 - `pkg/`
 - `scripts/`
+- `tools/`
 
 ### Files
 - `.editorconfig`
+- `.gitattributes`
 - `.gitignore`
 - `.gitlab-ci.yml`
 - `.golangci.yml`
@@ -84,6 +111,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `Dockerfile.local`
 - `go.mod`
 - `go.sum`
+- `gosec-report.json`
 - `loom`
 - `loomd`
 - `Makefile`
@@ -100,6 +128,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `mcp-docker`
 - `mcp-elasticsearch`
 - `mcp-filesystem`
+- `mcp-flexinfer`
 - `mcp-flux`
 - `mcp-gcp`
 - `mcp-git`
@@ -152,6 +181,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.codex/skills/polyglot-release-bumper/SKILL.md`
 - `.codex/skills/workspace-branding-maintenance/SKILL.md`
 - `.editorconfig`
+- `.gitattributes`
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
 - `.gitignore`
@@ -164,9 +194,11 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.loom/11-research-daemon-proxy.md`
 - `.loom/12-research-market-trends-2026-02.md`
 - `.loom/13-research-agentic-workflows-openclaw.md`
+- `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
 - `.loom/20-product-spec.md`
 - `.loom/30-implementation-plan.md`
 - `.loom/31-gap-to-backlog-map.md`
+- `.loom/32-mobile-gap-to-backlog-map.md`
 - `.loom/32-rfc-registry-env-consistency.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
@@ -200,19 +232,24 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/loom/cmd_doctor.go`
 - `cmd/loom/daemon.go`
 - `cmd/loom/daemon_control.go`
+- `cmd/loom/daemon_timeout_test.go`
 - `cmd/loom/hud.go`
 - `cmd/loom/main.go`
 - `cmd/loom/proxy.go`
 - `cmd/loom/proxy_autostart_test.go`
 - `cmd/loom/proxy_heartbeat_test.go`
 - `cmd/loom/proxy_resources_test.go`
+- `cmd/loom/proxy_session_test.go`
 - `cmd/loom/proxy_templates_test.go`
+- `cmd/loom/proxy_timeout_test.go`
 - `cmd/loom/proxy_truncate.go`
 - `cmd/loom/proxy_truncate_test.go`
 - `cmd/loom/registry_diagnostics.go`
 - `cmd/loom/registry_diagnostics_test.go`
 - `cmd/loom/repl.go`
 - `cmd/loom/status.go`
+- `cmd/loom/tool_inventory.go`
+- `cmd/loom/tool_inventory_test.go`
 - `cmd/loomd/main.go`
 - `cmd/loomd/rlimit_unix.go`
 - `cmd/loomd/rlimit_windows.go`
@@ -263,6 +300,16 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-elasticsearch/main.go`
 - `cmd/mcp-elasticsearch/main_test.go`
 - `cmd/mcp-filesystem/main.go`
+- `cmd/mcp-flexinfer/benchmarks.go`
+- `cmd/mcp-flexinfer/catalogs.go`
+- `cmd/mcp-flexinfer/gpu.go`
+- `cmd/mcp-flexinfer/lora.go`
+- `cmd/mcp-flexinfer/main.go`
+- `cmd/mcp-flexinfer/main_test.go`
+- `cmd/mcp-flexinfer/models.go`
+- `cmd/mcp-flexinfer/probe.go`
+- `cmd/mcp-flexinfer/proxy.go`
+- `cmd/mcp-flexinfer/scale.go`
 - `cmd/mcp-flux/detect_test.go`
 - `cmd/mcp-flux/helmreleases.go`
 - `cmd/mcp-flux/kustomizations.go`
@@ -294,11 +341,27 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-itchio/main.go`
 - `cmd/mcp-itchio/main_test.go`
 - `cmd/mcp-jira/main.go`
+- `cmd/mcp-jira/main_test.go`
+- `cmd/mcp-jobsearch/README.md`
+- `cmd/mcp-jobsearch/client.go`
+- `cmd/mcp-jobsearch/client_test.go`
+- `cmd/mcp-jobsearch/main.go`
+- `cmd/mcp-jobsearch/main_test.go`
+- `cmd/mcp-jobsearch/tools_common.go`
+- `cmd/mcp-jobsearch/tools_core.go`
+- `cmd/mcp-jobsearch/tools_passthrough.go`
+- `cmd/mcp-jobsearch/tools_resume.go`
+- `cmd/mcp-jobsearch/tools_resume_test.go`
+- `cmd/mcp-jobsearch/tools_test.go`
+- `cmd/mcp-jobsearch/tools_workflow_crm.go`
 - `cmd/mcp-k8s-ops/main.go`
 - `cmd/mcp-k8s-ops/main_test.go`
 - `cmd/mcp-k8s/main.go`
 - `cmd/mcp-k8s/main_test.go`
 - `cmd/mcp-linear/main.go`
+- `cmd/mcp-linkedin/README.md`
+- `cmd/mcp-linkedin/browserkit.go`
+- `cmd/mcp-linkedin/browserkit_helper.py`
 - `cmd/mcp-linkedin/main.go`
 - `cmd/mcp-linkedin/main_test.go`
 - `cmd/mcp-loki/main.go`
@@ -309,40 +372,6 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-minio/main_test.go`
 - `cmd/mcp-mongodb/main.go`
 - `cmd/mcp-morph-embeddings/main.go`
-- `cmd/mcp-morph-embeddings/main_test.go`
-- `cmd/mcp-morph-fast-apply/main.go`
-- `cmd/mcp-morph-fast-apply/main_test.go`
-- `cmd/mcp-neo4j/main.go`
-- `cmd/mcp-neo4j/main_test.go`
-- `cmd/mcp-notion/main.go`
-- `cmd/mcp-ops/main.go`
-- `cmd/mcp-ops/main_test.go`
-- `cmd/mcp-pagerduty/main.go`
-- `cmd/mcp-postgres/main.go`
-- `cmd/mcp-prometheus/main.go`
-- `cmd/mcp-prometheus/main_test.go`
-- `cmd/mcp-qdrant/main.go`
-- `cmd/mcp-qdrant/main_test.go`
-- `cmd/mcp-redis/main.go`
-- `cmd/mcp-redis/main_test.go`
-- `cmd/mcp-release/main.go`
-- `cmd/mcp-release/main_test.go`
-- `cmd/mcp-sentry/main.go`
-- `cmd/mcp-sequentialthinking/main.go`
-- `cmd/mcp-sequentialthinking/main_test.go`
-- `cmd/mcp-server-mgmt/main.go`
-- `cmd/mcp-server-mgmt/main_test.go`
-- `cmd/mcp-slack/main.go`
-- `cmd/mcp-substack/main.go`
-- `cmd/mcp-substack/main_test.go`
-- `cmd/mcp-tavily/main.go`
-- `cmd/mcp-tavily/main_test.go`
-- `cmd/mcp-terraform/main.go`
-- `cmd/mcp-time/main.go`
-- `cmd/mcp-time/main_test.go`
-- `cmd/mcp-vault/main.go`
-- `cmd/mcp-vault/main_test.go`
-- `cmd/mcp-youtube/main.go`
 - `…`
 
 ## AGENTS.md Files
