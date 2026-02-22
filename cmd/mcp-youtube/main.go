@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -122,17 +124,27 @@ func handleGetTranscript(ctx context.Context, args map[string]any) (*mcp.CallToo
 	client := getYouTubeClient()
 	video, err := client.GetVideoContext(ctx, videoID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get video: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("failed to get video: %w", err)), nil
 	}
 
-	// Get transcript
+	// Get transcript via library first, then fall back to yt-dlp
 	transcript, err := client.GetTranscript(video, language)
 	if err != nil {
-		// Try without language specification
 		transcript, err = client.GetTranscript(video, "")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get transcript: %w", err)
+	}
+	if err != nil {
+		// Library transcript API failed — try yt-dlp fallback
+		text, fbErr := transcriptViaYTDLP(ctx, videoID, language, includeTimestamps)
+		if fbErr != nil {
+			return mcp.ErrorResult(fmt.Errorf("failed to get transcript: %w (yt-dlp fallback: %v)", err, fbErr)), nil
 		}
+		return mcp.JSONResult(map[string]any{
+			"video_id":   videoID,
+			"title":      video.Title,
+			"language":   language,
+			"source":     "yt-dlp",
+			"transcript": text,
+		})
 	}
 
 	var builder strings.Builder
@@ -168,7 +180,7 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 	client := getYouTubeClient()
 	video, err := client.GetVideoContext(ctx, videoID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get video: %w", err)
+		return mcp.ErrorResult(fmt.Errorf("failed to get video: %w", err)), nil
 	}
 
 	return mcp.JSONResult(map[string]any{
@@ -185,4 +197,113 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 			return video.PublishDate.Format("2006-01-02")
 		}(),
 	})
+}
+
+// transcriptViaYTDLP fetches a transcript using yt-dlp as a fallback when the
+// Go library's GetTranscript API fails (e.g., YouTube internal API changes).
+func transcriptViaYTDLP(ctx context.Context, videoID, language string, includeTimestamps bool) (string, error) {
+	if _, err := exec.LookPath("yt-dlp"); err != nil {
+		return "", fmt.Errorf("yt-dlp not found in PATH")
+	}
+
+	url := "https://www.youtube.com/watch?v=" + videoID
+	args := []string{
+		"--skip-download",
+		"--write-subs",
+		"--write-auto-subs",
+		"--sub-format", "json3",
+		"--sub-langs", language,
+		"--dump-json",
+		url,
+	}
+
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("yt-dlp failed: %w", err)
+	}
+
+	// Parse the JSON output for subtitle URL
+	var info struct {
+		Subtitles    map[string][]subtitleEntry `json:"subtitles"`
+		AutoCaptions map[string][]subtitleEntry `json:"automatic_captions"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return "", fmt.Errorf("failed to parse yt-dlp output: %w", err)
+	}
+
+	// Prefer manual subtitles, fall back to auto-captions
+	subs := info.Subtitles[language]
+	if len(subs) == 0 {
+		subs = info.AutoCaptions[language]
+	}
+	if len(subs) == 0 {
+		// Try "en" fallback if requested language unavailable
+		subs = info.Subtitles["en"]
+		if len(subs) == 0 {
+			subs = info.AutoCaptions["en"]
+		}
+	}
+	if len(subs) == 0 {
+		return "", fmt.Errorf("no subtitles available for language %q", language)
+	}
+
+	// Find json3 format subtitle URL and fetch it
+	var subURL string
+	for _, s := range subs {
+		if s.Ext == "json3" {
+			subURL = s.URL
+			break
+		}
+	}
+	if subURL == "" {
+		return "", fmt.Errorf("no json3 subtitle format available")
+	}
+
+	// Fetch subtitle content
+	subCmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "-o", "-", subURL)
+	subOut, err := subCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch subtitle content: %w", err)
+	}
+
+	// Parse json3 subtitle format
+	var subData struct {
+		Events []struct {
+			TStartMs int `json:"tStartMs"`
+			Segs     []struct {
+				UTF8 string `json:"utf8"`
+			} `json:"segs"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(subOut, &subData); err != nil {
+		return "", fmt.Errorf("failed to parse subtitle json3: %w", err)
+	}
+
+	var builder strings.Builder
+	for _, event := range subData.Events {
+		var text string
+		for _, seg := range event.Segs {
+			text += seg.UTF8
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		if includeTimestamps {
+			ms := event.TStartMs
+			m, s := ms/60000, (ms%60000)/1000
+			builder.WriteString(fmt.Sprintf("[%d:%02d] %s\n", m, s, text))
+		} else {
+			builder.WriteString(text + " ")
+		}
+	}
+
+	return strings.TrimSpace(builder.String()), nil
+}
+
+type subtitleEntry struct {
+	Ext  string `json:"ext"`
+	URL  string `json:"url"`
+	Name string `json:"name"`
 }
