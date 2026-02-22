@@ -88,6 +88,7 @@ class TopologyStore {
       // Structure-changing events trigger full re-fetch.
       eventStore.on('agent.session.start', () => this.fetch()),
       eventStore.on('agent.session.end', () => this.fetch()),
+      eventStore.on('agent.session.bootstrap', () => this.fetch()),
       eventStore.on('hud.handoff.created', () => this.fetch()),
     );
   }

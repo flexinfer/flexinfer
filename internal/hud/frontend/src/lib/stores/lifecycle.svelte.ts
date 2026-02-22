@@ -128,6 +128,7 @@ function eventLabel(e: TimelineEntry): string {
     case 'agent.session.start': return 'Session started';
     case 'agent.session.end': return 'Session ended';
     case 'agent.session.reaped': return 'Session reaped';
+    case 'agent.session.bootstrap': return 'Session bootstrapped';
     case 'agent.task.update': return 'Task updated';
     case 'agent.task.dispatched': return 'Task dispatched';
     case 'hud.conflict': return 'File conflict';

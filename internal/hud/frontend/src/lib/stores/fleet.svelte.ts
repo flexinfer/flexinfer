@@ -312,8 +312,9 @@ class FleetStore {
       eventStore.on('config.reload', () => this.fetch()),
       eventStore.on('process.start', () => this.fetch()),
       eventStore.on('process.stop', () => this.fetch()),
-      // Granular agent events — trigger re-derive of namespaceGroups immediately.
-      eventStore.on('agent.session.start', () => { this.lastUpdated = new Date(); }),
+      // Granular agent events — fetch full session data so new sessions appear immediately.
+      eventStore.on('agent.session.start', () => this.fetch()),
+      eventStore.on('agent.session.bootstrap', () => this.fetch()),
       // Reaped sessions should be treated the same as ended.
       eventStore.on('agent.session.reaped', (e) => {
         const sessionId = (e.data as Record<string, unknown>).session_id as string;

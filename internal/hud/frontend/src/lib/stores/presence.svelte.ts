@@ -160,9 +160,10 @@ class PresenceStore {
         );
         this.lastUpdated = new Date();
       }),
-      // Session start/end — trigger full refresh for complete data.
+      // Session start/end/bootstrap — trigger full refresh for complete data.
       eventStore.on('agent.session.start', () => this.fetch()),
       eventStore.on('agent.session.end', () => this.fetch()),
+      eventStore.on('agent.session.bootstrap', () => this.fetch()),
     );
   }
 
