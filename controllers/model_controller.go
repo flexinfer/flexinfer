@@ -33,6 +33,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -993,14 +994,12 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return r.Create(ctx, desiredDeployment)
 	}
 
-	// Capture existing state for change detection.
-	oldImage := ""
-	if cs := deployment.Spec.Template.Spec.Containers; len(cs) > 0 {
-		oldImage = cs[0].Image
-	}
-	oldReplicas := ptr.Deref(deployment.Spec.Replicas, 1)
+	// Snapshot existing state for change detection.
+	existingSpec := deployment.Spec.DeepCopy()
+	existingLabels := deployment.Labels
+	existingAnnotations := deployment.Annotations
 
-	// Update deployment
+	// Apply desired state onto the existing deployment.
 	existingPodAnnotations := deployment.Spec.Template.Annotations
 	desiredSpec := desiredDeployment.Spec
 	// Deployment selectors are immutable. Preserve the existing selector on updates to avoid
@@ -1016,19 +1015,73 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
 	deployment.Spec.Template.Annotations = applyManagedAnnotations(existingPodAnnotations, desiredDeployment.Spec.Template.Annotations, managedModelPodAnnotations)
 
-	// Log meaningful changes to aid debugging.
-	newImage := ""
-	if cs := deployment.Spec.Template.Spec.Containers; len(cs) > 0 {
-		newImage = cs[0].Image
-	}
-	newReplicas := ptr.Deref(deployment.Spec.Replicas, 1)
-	if oldImage != newImage || oldReplicas != newReplicas {
-		log.Info("Updating Deployment", "name", model.Name,
-			"oldImage", oldImage, "newImage", newImage,
-			"oldReplicas", oldReplicas, "newReplicas", newReplicas)
+	// Skip update if nothing changed.
+	if apiequality.Semantic.DeepEqual(&deployment.Spec, existingSpec) &&
+		apiequality.Semantic.DeepEqual(deployment.Labels, existingLabels) &&
+		apiequality.Semantic.DeepEqual(deployment.Annotations, existingAnnotations) {
+		return nil
 	}
 
+	// Log which fields changed to aid debugging.
+	changed := deploymentChangedFields(existingSpec, &deployment.Spec)
+	log.Info("Updating Deployment", "name", model.Name, "changedFields", changed)
+
 	return r.Update(ctx, deployment)
+}
+
+// deploymentChangedFields returns a human-readable summary of what changed
+// between two deployment specs. Compares the most operationally relevant fields.
+func deploymentChangedFields(old, new *appsv1.DeploymentSpec) []string {
+	var fields []string
+
+	if !ptr.Equal(old.Replicas, new.Replicas) {
+		fields = append(fields, fmt.Sprintf("replicas(%d→%d)",
+			ptr.Deref(old.Replicas, 1), ptr.Deref(new.Replicas, 1)))
+	}
+
+	oldC, newC := firstContainer(old), firstContainer(new)
+	if oldC != nil && newC != nil {
+		if oldC.Image != newC.Image {
+			fields = append(fields, fmt.Sprintf("image(%s→%s)", oldC.Image, newC.Image))
+		}
+		if !apiequality.Semantic.DeepEqual(oldC.Args, newC.Args) {
+			fields = append(fields, "args")
+		}
+		if !apiequality.Semantic.DeepEqual(oldC.Env, newC.Env) {
+			fields = append(fields, "env")
+		}
+		if !apiequality.Semantic.DeepEqual(oldC.Resources, newC.Resources) {
+			fields = append(fields, "resources")
+		}
+		if !apiequality.Semantic.DeepEqual(oldC.VolumeMounts, newC.VolumeMounts) {
+			fields = append(fields, "volumeMounts")
+		}
+	}
+
+	if !apiequality.Semantic.DeepEqual(old.Template.Spec.NodeSelector, new.Template.Spec.NodeSelector) {
+		fields = append(fields, "nodeSelector")
+	}
+	if !apiequality.Semantic.DeepEqual(old.Template.Spec.Volumes, new.Template.Spec.Volumes) {
+		fields = append(fields, "volumes")
+	}
+	if !apiequality.Semantic.DeepEqual(old.Template.Spec.InitContainers, new.Template.Spec.InitContainers) {
+		fields = append(fields, "initContainers")
+	}
+	if !apiequality.Semantic.DeepEqual(old.Template.Annotations, new.Template.Annotations) {
+		fields = append(fields, "podAnnotations")
+	}
+
+	if len(fields) == 0 {
+		fields = append(fields, "metadata")
+	}
+	return fields
+}
+
+func firstContainer(spec *appsv1.DeploymentSpec) *corev1.Container {
+	if len(spec.Template.Spec.Containers) > 0 {
+		return &spec.Template.Spec.Containers[0]
+	}
+	return nil
 }
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.

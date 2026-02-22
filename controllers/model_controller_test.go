@@ -1737,3 +1737,111 @@ func TestResolveCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestDeploymentChangedFields(t *testing.T) {
+	base := func() *appsv1.DeploymentSpec {
+		replicas := int32(1)
+		return &appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "model",
+							Image: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100",
+							Args:  []string{"--model", "Qwen/Qwen3-8B"},
+							Env: []corev1.EnvVar{
+								{Name: "HSA_OVERRIDE_GFX_VERSION", Value: "11.0.0"},
+							},
+							Resources: corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{
+									"amd.com/gpu": resource.MustParse("1"),
+								},
+							},
+						},
+					},
+					NodeSelector: map[string]string{
+						"flexinfer.ai/gpu.arch": "gfx1100",
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		modify     func(s *appsv1.DeploymentSpec)
+		wantFields []string
+	}{
+		{
+			name:       "no changes returns metadata",
+			modify:     func(s *appsv1.DeploymentSpec) {},
+			wantFields: []string{"metadata"},
+		},
+		{
+			name: "replica change",
+			modify: func(s *appsv1.DeploymentSpec) {
+				r := int32(2)
+				s.Replicas = &r
+			},
+			wantFields: []string{"replicas(1→2)"},
+		},
+		{
+			name: "image change",
+			modify: func(s *appsv1.DeploymentSpec) {
+				s.Template.Spec.Containers[0].Image = "registry.harbor.lan/flexinfer/vllm:rocm-gfx906"
+			},
+			wantFields: []string{"image(registry.harbor.lan/flexinfer/vllm:rocm-gfx1100→registry.harbor.lan/flexinfer/vllm:rocm-gfx906)"},
+		},
+		{
+			name: "env change",
+			modify: func(s *appsv1.DeploymentSpec) {
+				s.Template.Spec.Containers[0].Env = append(s.Template.Spec.Containers[0].Env,
+					corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"})
+			},
+			wantFields: []string{"env"},
+		},
+		{
+			name: "args change",
+			modify: func(s *appsv1.DeploymentSpec) {
+				s.Template.Spec.Containers[0].Args = []string{"--model", "Qwen/Qwen3-30B"}
+			},
+			wantFields: []string{"args"},
+		},
+		{
+			name: "nodeSelector change",
+			modify: func(s *appsv1.DeploymentSpec) {
+				s.Template.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx906"
+			},
+			wantFields: []string{"nodeSelector"},
+		},
+		{
+			name: "multiple changes",
+			modify: func(s *appsv1.DeploymentSpec) {
+				r := int32(0)
+				s.Replicas = &r
+				s.Template.Spec.Containers[0].Image = "new:image"
+			},
+			wantFields: []string{"replicas(1→0)", "image(registry.harbor.lan/flexinfer/vllm:rocm-gfx1100→new:image)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			old := base()
+			new := base()
+			tt.modify(new)
+
+			got := deploymentChangedFields(old, new)
+			if len(got) != len(tt.wantFields) {
+				t.Errorf("got %v, want %v", got, tt.wantFields)
+				return
+			}
+			for i, f := range tt.wantFields {
+				if got[i] != f {
+					t.Errorf("field[%d] = %q, want %q", i, got[i], f)
+				}
+			}
+		})
+	}
+}
