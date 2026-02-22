@@ -14,10 +14,10 @@ Create a durable "Loom Context Pack baseline" for this FlexInfer workspace that 
 - Make MCP/tool selection explicit and evidence-backed.
 - Define a concrete path to restore `codebase_memory` indexing readiness.
 
-## Non-Goals
+## Non-Goals (original scope)
 
-- No runtime behavior changes to FlexInfer components.
-- No CRD, controller, or scheduler feature changes in this task.
+- ~~No runtime behavior changes to FlexInfer components.~~ (Superseded: cold-start reliability fixes were merged as MR !40.)
+- No CRD schema changes in this task.
 - No attempt to solve long-term roadmap scope inside this baseline refresh.
 
 ## Stakeholders
@@ -50,6 +50,10 @@ Create a durable "Loom Context Pack baseline" for this FlexInfer workspace that 
 
 - If indexing remains broken, subsequent planning cycles may regress to manual-only discovery.
 - MCP inventory can drift unless refreshed periodically.
+
+## Scope Extension (2026-02-20)
+
+During Qwen3-30B-A3B model deployment, three cold-start reliability bugs were discovered and fixed (controller Loading guard, proxy conflict retry, GPUGroup per-model timeout). These changes shipped as MR !40 and are deployed to the cluster. The `.loom` pack now also tracks model fleet status and operational findings.
 
 ## Open Questions
 

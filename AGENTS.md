@@ -1233,3 +1233,17 @@ kubectl get modeldeployment -n flexinfer-system -o json | jq '.items[] | select(
 
 ## Planning
 - See `ROADMAP.md` for project status and plans.
+
+<!-- BEGIN LOOM:AGENT-SAFETY -->
+## Loom Agent Safety Policy (Generated)
+
+- Pre-existing uncommitted/untracked files are baseline context, not an automatic blocker.
+- Continue on the current branch/worktree by default.
+- Stage and commit only files intentionally changed for the active task.
+- Escalate only when new unexpected changes appear in files you are editing, or when a branch/worktree switch is explicitly requested.
+- Dirty-worktree mode: `continue_scoped_commits`.
+
+Canonical nudge for CLI hooks:
+> Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing.
+
+<!-- END LOOM:AGENT-SAFETY -->

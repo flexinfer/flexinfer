@@ -20,10 +20,21 @@
 ## Current State (2026-02-20)
 
 - FlexInfer architecture baseline remains six cooperating executables (`agent`, `bench`, `manager`, `sched`, `global-proxy`, metrics embedded) and is documented in `AGENTS.md`.
-- Workspace is on `master`, aligned with `origin/master` after reconciliation merges (`fad43a7`, `a16b2d1`) and push.
+- Workspace is on `master` at `d01972d` after MR !40 merge (`fad43a7`). Cold-start reliability fixes and dependency batches are all on `master`.
 - MCP inventory is available through `loom` CLI fallback (`42` servers, `445` tools) because direct MCP resource listing returned empty sets.
 - `codebase_memory` indexing is operational via `loom tools call` after collection repair + binary rebuild (`total_chunks=1877`).
-- In this chat session, direct `functions.mcp__loom__*` calls still return `Transport closed`; use CLI fallback until bridge stability is restored.
+
+### Cluster Model Fleet (2026-02-20)
+
+| Model | Backend | Phase | GPU Pool | Serverless | Notes |
+|-------|---------|-------|----------|------------|-------|
+| `nomic-embed-text` | ollama | Ready | — | idle 30m | Embedding model, always warm |
+| `qwen3-30b-a3b-abliterated` | llamacpp | Idle | amd-gpu-pool | idle 30m, cold 25m | MoE 18.7GB GGUF, local-path NVMe cache, 108 tok/s gen |
+| `qwen3-8b-fast` | mlc-llm | Idle | 5930k-models | idle 5m, cold 10m | Dense 8B, NFS cache |
+| `sdxl-turbo-imagegen` | diffusers | Ready | 7900xtx-image | idle 10m | Image generation, ROCm |
+
+- Controller and proxy images deployed with cold-start fixes (Loading phase guard, conflict retry, GPUGroup per-model timeout).
+- Proxy timeouts: `queue=25m`, `coldStart=25m` (via Helm values).
 
 ## Open Questions
 

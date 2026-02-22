@@ -47,6 +47,23 @@
 - Remaining issue:
   - This chat's direct MCP bridge (`functions.mcp__loom__*`) still returns `Transport closed`; use `loom tools call` as operational fallback.
 
+## Status Update (2026-02-20)
+
+- Cold-start reliability work completed and deployed:
+  - Three bugs fixed: controller Loading phase guard (`4fecee3`), proxy conflict retry (`d9fc215`), GPUGroup per-model timeout (`bc60e05`).
+  - MR !40 merged to master (`fad43a7`). CI pipeline #1787 — all 16 jobs green.
+  - New controller + proxy images deployed to k3s cluster via Flux reconciliation.
+  - Model cache switched from Longhorn to `local-path` for Qwen3-30B (18.7GB GGUF mmap: ~3min vs 15-20min).
+  - Proxy timeouts set to 25m globally via Helm values.
+- Model fleet verified:
+  - `qwen3-30b-a3b-abliterated`: Idle (serverless), 108 tok/s gen, 72.5 tok/s prompt on AMD gfx1100.
+  - `sdxl-turbo-imagegen`: Ready (warm), diffusers ROCm.
+  - `nomic-embed-text`: Ready (warm), ollama.
+  - `qwen3-8b-fast`: Idle (serverless), mlc-llm.
+- Remaining:
+  - E2E cold start test without manual `kubectl patch` workarounds (new images should handle it natively now).
+  - Dependency refresh batch (Issue #9) still in progress on separate branch.
+
 ## Test Plan
 
 - Tool-readiness checks:

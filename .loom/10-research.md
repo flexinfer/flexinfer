@@ -50,11 +50,22 @@ We need a current, evidence-backed planning baseline for FlexInfer that is safe 
 - `repo_id=flexinfer` is the intended identifier for this workspace until explicitly changed.
 - CLI inventory (`loom servers/tools`) is trustworthy enough for planning despite MCP resource discovery gaps.
 
+## Update (2026-02-20)
+
+- Three serverless cold-start bugs found and fixed during Qwen3-30B-A3B deployment:
+  1. Controller `desiredReplicas()` reaped Loading models when `LastActiveTime` exceeded `idleTimeout`.
+  2. Proxy `triggerScaleUp()` silently swallowed Kubernetes conflict errors, leaving `LastActiveTime` stale.
+  3. GPUGroup queue path used global timeout, ignoring per-model `ColdStartTimeoutSeconds`.
+- Performance finding: Longhorn mmap overhead for 18.7GB GGUF is 15-20 minutes. Switching to `local-path` (direct NVMe) reduces load to ~3 minutes.
+- Qwen3-30B-A3B benchmark on AMD gfx1100: 108 tok/s generation, 72.5 tok/s prompt processing, Q4_K_M quantization.
+- All fixes merged via MR !40, CI pipeline #1787 green, deployed to cluster via Flux.
+
 ## Recommendation
 
 - Use this `.loom` pack as the planning baseline now.
 - Prioritize a short recovery task to restore `codebase_memory` indexing before relying on semantic search-driven workflows.
 - Continue using shell-native discovery as primary mechanism until index health is verified.
+- For new large GGUF models (>10GB), use `storageClass: local-path` to avoid Longhorn mmap overhead.
 
 ## Sources
 
