@@ -140,7 +140,7 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			name:      "AMD gfx906 returns hardcoded default",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
-			wantImage: "registry.harbor.lan/flexinfer/llamacpp:rocm-gfx906",
+			wantImage: "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched",
 		},
 		{
 			name:      "AMD gfx906 with env override",
