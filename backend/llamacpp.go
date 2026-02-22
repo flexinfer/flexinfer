@@ -42,7 +42,7 @@ func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX906"); img != "" {
 				return img
 			}
-			return "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched"
+			return "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3"
 		}
 		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_AMD"); img != "" {
 			return img
