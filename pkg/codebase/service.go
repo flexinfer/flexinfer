@@ -1691,6 +1691,13 @@ func (s *Service) runIndexJob(
 		text   string
 		vector []float64
 	}
+	type indexedFile struct {
+		rel       string
+		chunks    []schema.Chunk
+		fileCache map[string][]float64
+		skipped   bool
+		err       error
+	}
 
 	var (
 		pending     []pendingChunk
@@ -1811,103 +1818,171 @@ func (s *Service) runIndexJob(
 		return nil
 	}
 
-	for _, file := range files {
+	workerJobs := make(chan string, max(1, min(len(files), s.cfg.IndexConcurrency*4)))
+	results := make(chan indexedFile, max(1, min(len(files), s.cfg.IndexConcurrency*4)))
+	workers := s.cfg.IndexConcurrency
+	if workers <= 0 {
+		workers = 4
+	}
+
+	var wg sync.WaitGroup
+	sendResult := func(r indexedFile) {
+		select {
+		case results <- r:
+		case <-ctx.Done():
+		}
+	}
+
+	worker := func() {
+		defer wg.Done()
+		for absPath := range workerJobs {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			rel, err := filepath.Rel(absRoot, absPath)
+			if err != nil {
+				sendResult(indexedFile{err: fmt.Errorf("rel path: %v", err)})
+				continue
+			}
+			relSlash := filepath.ToSlash(rel)
+			content, err := os.ReadFile(absPath)
+			if err != nil {
+				sendResult(indexedFile{rel: relSlash, err: fmt.Errorf("read file %s: %v", relSlash, err)})
+				continue
+			}
+
+			if !fullRefresh {
+				hash := schema.ContentHash(string(content))
+				prev, ok, hashErr := s.qdrant.GetModuleContentHash(ctx, repoID, relSlash)
+				if hashErr != nil {
+					s.incrementJobError(jobID, fmt.Sprintf("module hash lookup %s: %v", relSlash, hashErr))
+				} else if ok && prev == hash {
+					sendResult(indexedFile{rel: relSlash, skipped: true})
+					continue
+				}
+			}
+
+			var fileCache map[string][]float64
+			if embeddings && !fullRefresh {
+				cache, cacheErr := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.embed.Model(), 4096)
+				if cacheErr != nil {
+					s.incrementJobError(jobID, fmt.Sprintf("embedding cache %s: %v", relSlash, cacheErr))
+				} else {
+					fileCache = cache
+				}
+			}
+
+			if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, relSlash); deleteFileErr != nil {
+				if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
+					// ignore
+				} else {
+					s.incrementJobError(jobID, fmt.Sprintf("delete file: %v", deleteFileErr))
+				}
+			}
+
+			chunks, indexErr := s.indexers.IndexFileFromContent(ctx, absRoot, absPath, repoID, content)
+			if indexErr != nil {
+				sendResult(indexedFile{rel: relSlash, err: fmt.Errorf("index %s: %v", relSlash, indexErr)})
+				continue
+			}
+			if gitMetadata {
+				if err := annotateChunksWithGitMetadata(ctx, gitRoot, absPath, chunks); err != nil {
+					s.incrementJobError(jobID, fmt.Sprintf("git metadata %s: %v", relSlash, err))
+				}
+			}
+
+			// Split large chunks into overlapping windows
+			chunks = chunker.SplitLargeChunks(chunks, chunker.Config{
+				MaxTokens:     s.cfg.ChunkMaxTokens,
+				OverlapTokens: s.cfg.ChunkOverlapTokens,
+				MinTokens:     s.cfg.ChunkMinTokens,
+			})
+
+			for i := range chunks {
+				chunker.EnrichChunkIdentifiers(&chunks[i])
+			}
+
+			sendResult(indexedFile{
+				rel:       relSlash,
+				chunks:    chunks,
+				fileCache: fileCache,
+			})
+		}
+	}
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	enqueued := 0
+enqueueLoop:
+	for _, absPath := range files {
+		select {
+		case <-ctx.Done():
+			break enqueueLoop
+		case workerJobs <- absPath:
+			enqueued++
+		}
+	}
+	close(workerJobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	if enqueued == 0 {
+		s.setJobDone(jobID)
+		return
+	}
+
+	for received := 0; received < enqueued; {
 		select {
 		case <-ctx.Done():
 			s.setJobCanceled(jobID)
+			for range results {
+			}
 			return
-		default:
-		}
-
-		rel, err := filepath.Rel(absRoot, file)
-		if err != nil {
-			s.incrementJobError(jobID, fmt.Sprintf("rel path: %v", err))
-			continue
-		}
-		relSlash := filepath.ToSlash(rel)
-
-		if !fullRefresh {
-			b, readErr := os.ReadFile(file)
-			if readErr != nil {
-				s.incrementJobError(jobID, fmt.Sprintf("read file for hash %s: %v", relSlash, readErr))
+		case r, ok := <-results:
+			if !ok {
+				s.setJobDone(jobID)
+				return
+			}
+			received++
+			if r.err != nil {
+				s.incrementJobError(jobID, r.err.Error())
 				s.incrementFilesDone(jobID, 0)
 				continue
 			}
-			hash := schema.ContentHash(string(b))
-
-			prev, ok, hashErr := s.qdrant.GetModuleContentHash(ctx, repoID, relSlash)
-			if hashErr != nil {
-				s.incrementJobError(jobID, fmt.Sprintf("module hash lookup %s: %v", relSlash, hashErr))
-			} else if ok && prev == hash {
+			if r.skipped {
 				s.incrementFilesSkipped(jobID)
 				continue
 			}
-		}
 
-		var fileCache map[string][]float64
-		if embeddings && !fullRefresh {
-			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.embed.Model(), 4096)
-			if err != nil {
-				s.incrementJobError(jobID, fmt.Sprintf("embedding cache %s: %v", relSlash, err))
-			} else {
-				fileCache = cache
-			}
-		}
-
-		if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, relSlash); deleteFileErr != nil {
-			// If collection doesn't exist yet, deletion can fail; treat as non-fatal before first ensure.
-			if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
-				// ignore
-			} else {
-				s.incrementJobError(jobID, fmt.Sprintf("delete file: %v", deleteFileErr))
-			}
-		}
-
-		chunks, err := s.indexers.IndexFile(ctx, absRoot, file, repoID)
-		if err != nil {
-			s.incrementJobError(jobID, fmt.Sprintf("index %s: %v", rel, err))
-			s.incrementFilesDone(jobID, 0)
-			continue
-		}
-
-		if gitMetadata {
-			if err := annotateChunksWithGitMetadata(ctx, gitRoot, file, chunks); err != nil {
-				s.incrementJobError(jobID, fmt.Sprintf("git metadata %s: %v", relSlash, err))
-			}
-		}
-
-		// Split large chunks into overlapping windows
-		chunks = chunker.SplitLargeChunks(chunks, chunker.Config{
-			MaxTokens:     s.cfg.ChunkMaxTokens,
-			OverlapTokens: s.cfg.ChunkOverlapTokens,
-			MinTokens:     s.cfg.ChunkMinTokens,
-		})
-
-		// Extract identifiers for hybrid search
-		for i := range chunks {
-			chunker.EnrichChunkIdentifiers(&chunks[i])
-		}
-
-		for _, ch := range chunks {
-			text := ch.Content
-			if ch.Docstring != "" {
-				text = ch.Docstring + "\n\n" + text
-			}
-			var vec []float64
-			if embeddings && fileCache != nil {
-				if v, ok := fileCache[ch.ContentHash]; ok && len(v) > 0 {
-					vec = v
+			for _, ch := range r.chunks {
+				text := ch.Content
+				if ch.Docstring != "" {
+					text = ch.Docstring + "\n\n" + text
 				}
+				var vec []float64
+				if embeddings && r.fileCache != nil {
+					if v, ok := r.fileCache[ch.ContentHash]; ok && len(v) > 0 {
+						vec = v
+					}
+				}
+				pending = append(pending, pendingChunk{chunk: ch, text: text, vector: vec})
 			}
-			pending = append(pending, pendingChunk{chunk: ch, text: text, vector: vec})
-		}
+			s.incrementFilesDone(jobID, len(r.chunks))
 
-		s.incrementFilesDone(jobID, len(chunks))
-
-		if len(pending) >= embedBatch {
-			if err := flush(); err != nil {
-				s.setJobFailed(jobID, fmt.Sprintf("flush chunks: %v", err))
-				return
+			if len(pending) >= embedBatch {
+				if err := flush(); err != nil {
+					s.setJobFailed(jobID, fmt.Sprintf("flush chunks: %v", err))
+					return
+				}
 			}
 		}
 	}

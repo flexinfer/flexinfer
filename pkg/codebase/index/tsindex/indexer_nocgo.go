@@ -41,7 +41,18 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	if err != nil {
 		return nil, err
 	}
-	src := string(srcBytes)
+
+	return i.IndexFileFromContent(ctx, absRoot, absPath, repoID, srcBytes)
+}
+
+func (i *Indexer) IndexFileFromContent(ctx context.Context, absRoot, absPath, repoID string, content []byte) ([]schema.Chunk, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	src := string(content)
 	fileHash := schema.ContentHash(src)
 
 	rel, err := filepath.Rel(absRoot, absPath)

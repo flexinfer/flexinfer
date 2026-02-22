@@ -83,3 +83,94 @@ func TestCollectFiles_RespectsCustomExclude(t *testing.T) {
 		t.Fatalf("expected no files, got %d", len(files))
 	}
 }
+
+func TestCollectFiles_RespectsNestedGitignoreAndNegation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	nested := filepath.Join(root, "src")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	absNestedGitignore := filepath.Join(nested, ".gitignore")
+	if err := os.WriteFile(absNestedGitignore, []byte("*.go\n!keep.go\n"), 0o644); err != nil {
+		t.Fatalf("write nested .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "root.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write root.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "ignore.go"), []byte("package nested\n"), 0o644); err != nil {
+		t.Fatalf("write nested ignore.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "keep.go"), []byte("package nested\n"), 0o644); err != nil {
+		t.Fatalf("write nested keep.go: %v", err)
+	}
+
+	r := NewRegistry(0)
+	files, err := r.CollectFiles(root, []string{"go"}, nil)
+	if err != nil {
+		t.Fatalf("CollectFiles: %v", err)
+	}
+
+	got := map[string]bool{}
+	for _, abs := range files {
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			t.Fatalf("rel: %v", err)
+		}
+		got[filepath.ToSlash(rel)] = true
+	}
+
+	if !got["root.go"] {
+		t.Fatalf("expected root.go")
+	}
+	if got["src/ignore.go"] {
+		t.Fatalf("expected src/ignore.go to be ignored by nested .gitignore")
+	}
+	if !got["src/keep.go"] {
+		t.Fatalf("expected src/keep.go to be re-included by nested ! rule")
+	}
+}
+
+func TestCollectFiles_ExplicitNegationOverridesNestedGitignore(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	nested := filepath.Join(root, "src")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(nested, ".gitignore"), []byte("*.go\n"), 0o644); err != nil {
+		t.Fatalf("write nested .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "ignored.go"), []byte("package ignored\n"), 0o644); err != nil {
+		t.Fatalf("write ignored.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "kept.go"), []byte("package kept\n"), 0o644); err != nil {
+		t.Fatalf("write kept.go: %v", err)
+	}
+
+	r := NewRegistry(0)
+	files, err := r.CollectFiles(root, []string{"go"}, []string{"!src/kept.go"})
+	if err != nil {
+		t.Fatalf("CollectFiles: %v", err)
+	}
+
+	got := map[string]bool{}
+	for _, abs := range files {
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			t.Fatalf("rel: %v", err)
+		}
+		got[filepath.ToSlash(rel)] = true
+	}
+
+	if got["src/ignored.go"] {
+		t.Fatalf("expected src/ignored.go to remain ignored by nested .gitignore")
+	}
+	if !got["src/kept.go"] {
+		t.Fatalf("expected src/kept.go to be re-included by explicit ! rule")
+	}
+}

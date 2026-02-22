@@ -12,7 +12,6 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/crb2nu/loom/pkg/codebase/index"
@@ -225,7 +224,7 @@ func (s *Service) runWatchJob(
 		return
 	}
 
-	allExcludes := append(index.DefaultExcludeGlobs(), exclude...)
+	ignoreMatcher := index.NewIgnoreMatcher(absRoot, exclude)
 
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -257,7 +256,7 @@ func (s *Service) runWatchJob(
 		if rel == "." {
 			return addDir(path)
 		}
-		if indexGlobMatchAny(rel+"/", allExcludes) {
+		if ignoreMatcher.IsIgnored(rel+"/", true) {
 			return filepath.SkipDir
 		}
 		if err := addDir(path); err != nil {
@@ -372,7 +371,7 @@ func (s *Service) runWatchJob(
 						}
 						rel, relErr := filepath.Rel(absRoot, p)
 						if relErr == nil {
-							if indexGlobMatchAny(filepath.ToSlash(rel)+"/", allExcludes) {
+							if ignoreMatcher.IsIgnored(filepath.ToSlash(rel)+"/", true) {
 								return filepath.SkipDir
 							}
 						}
@@ -391,7 +390,7 @@ func (s *Service) runWatchJob(
 			if strings.HasPrefix(rel, "../") || rel == ".." {
 				continue
 			}
-			if indexGlobMatchAny(rel, allExcludes) {
+			if ignoreMatcher.IsIgnored(rel, false) {
 				continue
 			}
 
@@ -466,7 +465,7 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			return fmt.Errorf("delete before upsert %s: %v", t.relPath, delErr)
 		}
 
-		chunks, err := s.indexers.IndexFile(ctx, absRoot, t.absPath, repoID)
+		chunks, err := s.indexers.IndexFileFromContent(ctx, absRoot, t.absPath, repoID, b)
 		if err != nil {
 			return fmt.Errorf("index %s: %v", t.relPath, err)
 		}
@@ -571,19 +570,4 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 		s.incrementWatchIndexed(watchID, len(chunks))
 		return nil
 	}
-}
-
-func indexGlobMatchAny(path string, globs []string) bool {
-	for _, g := range globs {
-		if ok := indexGlobMatch(g, path); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func indexGlobMatch(pattern, path string) bool {
-	// Reuse index glob semantics (doublestar).
-	ok, err := doublestar.PathMatch(filepath.ToSlash(pattern), filepath.ToSlash(path))
-	return err == nil && ok
 }

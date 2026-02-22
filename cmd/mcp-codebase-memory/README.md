@@ -45,7 +45,7 @@ Indexing:
 - `CODEBASE_DISABLE_EMBEDDINGS` (default: `false`) (if true, defaults `codebase_index_start`/`codebase_watch_start` to store chunks with dummy vectors)
 - `CODEBASE_EMBED_BATCH_SIZE` (default: `64`)
 - `CODEBASE_UPSERT_BATCH_SIZE` (default: `64`)
-- `CODEBASE_INDEX_CONCURRENCY` (default: `4`) (reserved for future parallel indexing)
+- `CODEBASE_INDEX_CONCURRENCY` (default: `4`) (controls full-index and watch worker concurrency)
 - `CODEBASE_SCROLL_LIMIT` (default: `256`)
 - `CODEBASE_MAX_FILE_BYTES` (default: `2097152`)
 - `CODEBASE_GIT_METADATA` (default: `false`) (if true, attempts `git blame` to attach author/commit metadata)
@@ -63,6 +63,10 @@ HTTP:
 ## Notes
 
 - `codebase_index_start` defaults to indexing all supported languages if `languages` is omitted.
+- Ignore behavior:
+  - Built-in default globs ignore common paths (for example: `.git`, `node_modules`, `vendor`, `dist`, `build`).
+  - Root and nested `.gitignore` files are honored for both full indexing and watch modes.
+  - The matcher uses last-rule-wins semantics with `!` negation, and explicit `exclude` arguments are applied after `.gitignore` rules, so negation can re-include paths even if earlier rules would skip them.
 - Use `embeddings=false` on `codebase_index_start` / `codebase_watch_start` to index without an embeddings API key (semantic search will not be useful).
 - Set `full_refresh=false` for incremental indexing (skips unchanged files using the module chunk file hash).
 - `codebase_search` supports `rerank=hybrid` and `lexical_weight` for lightweight hybrid reranking.

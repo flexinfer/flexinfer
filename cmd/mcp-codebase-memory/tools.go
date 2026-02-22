@@ -100,7 +100,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service, tracer trace.Trace
 				"exclude": map[string]any{
 					"type":        "array",
 					"items":       map[string]any{"type": "string"},
-					"description": "Glob patterns to exclude (relative to root).",
+					"description": "Glob patterns to exclude (relative to root). Supports .gitignore-style patterns with optional ! negation. Rules from nested .gitignore files are also applied; explicit exclude patterns are evaluated after built-in and .gitignore patterns (so later ! rules can re-include).",
 				},
 				"full_refresh": map[string]any{
 					"type":        "boolean",
@@ -153,7 +153,7 @@ func registerTools(server *mcp.Server, svc *codebase.Service, tracer trace.Trace
 				"exclude": map[string]any{
 					"type":        "array",
 					"items":       map[string]any{"type": "string"},
-					"description": "Glob patterns to exclude (relative to root).",
+					"description": "Glob patterns to exclude (relative to root). Supports .gitignore-style patterns with optional ! negation. Rules from nested .gitignore files are also applied; explicit exclude patterns are evaluated after built-in and .gitignore patterns (so later ! rules can re-include).",
 				},
 				"debounce_ms": map[string]any{
 					"type":        "integer",

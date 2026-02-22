@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
-
 	"github.com/crb2nu/loom/pkg/codebase/index/goindex"
 	"github.com/crb2nu/loom/pkg/codebase/index/pyindex"
 	"github.com/crb2nu/loom/pkg/codebase/index/rsindex"
@@ -92,7 +90,7 @@ func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []st
 		return nil, err
 	}
 
-	allExcludes := append(DefaultExcludeGlobs(), exclude...)
+	matcher := NewIgnoreMatcher(absRoot, exclude)
 
 	var files []string
 	err = filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
@@ -109,13 +107,13 @@ func (r *Registry) CollectFiles(absRoot string, languages []string, exclude []st
 		}
 
 		if d.IsDir() {
-			if matchesAnyGlob(rel+"/", allExcludes) {
+			if matcher.IsIgnored(rel+"/", true) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if matchesAnyGlob(rel, allExcludes) {
+		if matcher.IsIgnored(rel, false) {
 			return nil
 		}
 
@@ -152,18 +150,28 @@ func (r *Registry) IndexFile(ctx context.Context, absRoot, absPath, repoID strin
 	return nil, nil
 }
 
-func matchesAnyGlob(path string, globs []string) bool {
-	for _, g := range globs {
-		if ok := globMatch(g, path); ok {
-			return true
-		}
-	}
-	return false
+// contentIndexer optionally avoids re-reading file bytes inside indexers.
+type contentIndexer interface {
+	IndexFileFromContent(ctx context.Context, absRoot, absPath, repoID string, content []byte) ([]schema.Chunk, error)
 }
 
-func globMatch(pattern, path string) bool {
-	p := filepath.ToSlash(pattern)
-	s := filepath.ToSlash(path)
-	ok, err := doublestar.PathMatch(p, s)
-	return err == nil && ok
+func (r *Registry) IndexFileFromContent(
+	ctx context.Context,
+	absRoot,
+	absPath,
+	repoID string,
+	content []byte,
+) ([]schema.Chunk, error) {
+	ext := strings.ToLower(filepath.Ext(absPath))
+	for _, ix := range r.indexers {
+		for _, e := range ix.Extensions() {
+			if e == ext {
+				if ci, ok := ix.(contentIndexer); ok {
+					return ci.IndexFileFromContent(ctx, absRoot, absPath, repoID, content)
+				}
+				return ix.IndexFile(ctx, absRoot, absPath, repoID)
+			}
+		}
+	}
+	return nil, nil
 }

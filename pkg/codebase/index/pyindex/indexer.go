@@ -36,6 +36,18 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 		return nil, err
 	}
 
+	return i.IndexFileFromContent(ctx, absRoot, absPath, repoID, src)
+}
+
+func (i *Indexer) IndexFileFromContent(ctx context.Context, absRoot, absPath, repoID string, content []byte) ([]schema.Chunk, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	src := content
+
 	rel, err := filepath.Rel(absRoot, absPath)
 	if err != nil {
 		return nil, err
@@ -45,7 +57,7 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	parser := sitter.NewParser()
 	defer parser.Close()
 	parser.SetLanguage(py.GetLanguage())
-	tree, parseErr := parser.ParseCtx(ctx, nil, src)
+	tree, parseErr := parser.ParseCtx(ctx, nil, content)
 	if parseErr != nil {
 		return nil, parseErr
 	}

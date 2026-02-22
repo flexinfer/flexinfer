@@ -32,13 +32,31 @@ func (i *Indexer) IndexFile(ctx context.Context, absRoot, absPath, repoID string
 	default:
 	}
 
-	src, err := os.ReadFile(absPath)
+	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, err
 	}
 
+	return i.IndexFileFromContent(ctx, absRoot, absPath, repoID, content)
+}
+
+func (i *Indexer) IndexFileFromContent(
+	ctx context.Context,
+	absRoot,
+	absPath,
+	repoID string,
+	content []byte,
+) ([]schema.Chunk, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	src := content
+
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, absPath, src, parser.ParseComments)
+	file, err := parser.ParseFile(fset, absPath, content, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
