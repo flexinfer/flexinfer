@@ -23,7 +23,7 @@ BASELINE_DIR ?= .loom/baselines
 REGISTRY ?= registry.harbor.lan
 LOOM_CORE_IMAGE := $(REGISTRY)/mcp/loom-core
 CUSTOM_SERVER_IMAGE := $(REGISTRY)/mcp/custom-server
-IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
+IMAGE_TAG ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "dev")
 
 # Workspace root (for local Docker builds that need libs/)
 WORKSPACE_ROOT ?= $(shell realpath ../.. 2>/dev/null || echo "$(HOME)/workspace")
@@ -770,6 +770,8 @@ deploy-update-images:
 		echo "Set GITOPS_DIR to override"; \
 		exit 1; \
 	fi
+	@echo "Updating kustomization.yaml newTag to $(IMAGE_TAG)"
+	@sed -i '' 's|newTag: [a-zA-Z0-9._-]*|newTag: $(IMAGE_TAG)|' "$(LOOM_HUB_DIR)/servers/kustomization.yaml"
 	@echo "Updating deployments to use $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
 	@for f in $(LOOM_HUB_DIR)/servers/*/deployment.yaml; do \
 		if [ -f "$$f" ]; then \
