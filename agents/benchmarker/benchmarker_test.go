@@ -119,6 +119,7 @@ func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {
 		now:        clock.Now,
 		nodeName:   "node1",
 		resultsCM:  defaultBenchmarkResultsConfigMap,
+		store:      NewConfigMapStore(clientset),
 	}
 
 	err = b.Run(context.Background(), model, configMapName)
@@ -185,6 +186,7 @@ func TestRun_VLLM_ComputesTPS(t *testing.T) {
 		}.withDefaults(),
 		httpClient: httpClient,
 		now:        clock.Now,
+		store:      NewConfigMapStore(clientset),
 	}
 
 	err := b.Run(context.Background(), model, configMapName)
@@ -242,6 +244,7 @@ func TestRun_VLLM_ServerTimingViaMetrics(t *testing.T) {
 		}.withDefaults(),
 		httpClient: httpClient,
 		now:        clock.Now,
+		store:      NewConfigMapStore(clientset),
 	}
 
 	err := b.Run(context.Background(), "test-model", "test-cm")
@@ -305,6 +308,7 @@ func TestRun_OpenAICompatibleBackends_ComputesTPS(t *testing.T) {
 				}.withDefaults(),
 				httpClient: httpClient,
 				now:        clock.Now,
+				store:      NewConfigMapStore(clientset),
 			}
 
 			cmName := "test-cm-" + backendType

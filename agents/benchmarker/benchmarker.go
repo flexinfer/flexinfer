@@ -18,8 +18,6 @@ import (
 
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -76,10 +74,11 @@ type Benchmarker struct {
 	now         func() time.Time
 	nodeName    string
 	resultsCM   string
+	store       ResultStore
 }
 
 // NewBenchmarker creates a new Benchmarker.
-func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
+func NewBenchmarker(backendType string, opts Options, dsn string) (*Benchmarker, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
@@ -114,6 +113,16 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 		backendType = "mlc-llm"
 	}
 
+	var stores []ResultStore
+	stores = append(stores, NewConfigMapStore(clientset))
+	if dsn != "" {
+		pgStore, err := NewPostgresStore(dsn, clientset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create postgres store: %w", err)
+		}
+		stores = append(stores, pgStore)
+	}
+
 	return &Benchmarker{
 		kubeClient:  clientset,
 		namespace:   namespace,
@@ -125,6 +134,7 @@ func NewBenchmarker(backendType string, opts Options) (*Benchmarker, error) {
 		now:         time.Now,
 		nodeName:    os.Getenv("NODE_NAME"),
 		resultsCM:   benchmarkconfig.GlobalResultsConfigMapName(),
+		store:       NewMultiStore(stores...),
 	}, nil
 }
 
@@ -168,114 +178,31 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		"samples", result.Samples,
 	)
 
-	now := b.now().UTC().Format(time.RFC3339)
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: b.namespace,
-		},
-		Data: map[string]string{
-			"tokensPerSecond":  strconv.FormatFloat(result.TokensPerSecond, 'f', -1, 64),
-			"model":            model,
-			"backend":          b.backendType,
-			"warmupIterations": strconv.Itoa(b.opts.WarmupIterations),
-			"iterations":       strconv.Itoa(b.opts.Iterations),
-			"batchSize":        strconv.Itoa(b.opts.BatchSize),
-			"minDuration":      b.opts.MinDuration.String(),
-			"completionTokens": strconv.Itoa(result.CompletionTokens),
-			"durationSeconds":  strconv.FormatFloat(result.Duration.Seconds(), 'f', -1, 64),
-			"samples":          strconv.Itoa(result.Samples),
-			"timestamp":        now,
-		},
+	record := BenchmarkRecord{
+		ModelName:        model,
+		Backend:          b.backendType,
+		NodeName:         b.nodeName,
+		Namespace:        b.namespace,
+		ConfigMapName:    configMapName,
+		GlobalConfigMap:  b.resultsCM,
+		TokensPerSecond:  result.TokensPerSecond,
+		CompletionTokens: result.CompletionTokens,
+		Duration:         result.Duration,
+		Samples:          result.Samples,
+		BatchSize:        b.opts.BatchSize,
+		Iterations:       b.opts.Iterations,
+		WarmupIterations: b.opts.WarmupIterations,
+		MinDuration:      b.opts.MinDuration,
+		Timestamp:        b.now(),
 	}
 
-	log.Info("Upserting ConfigMap with benchmark results", "configMap", configMapName)
-	_, err = b.kubeClient.CoreV1().ConfigMaps(b.namespace).Create(ctx, cm, metav1.CreateOptions{})
-	if err != nil && apierrors.IsAlreadyExists(err) {
-		existing, getErr := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Get(ctx, configMapName, metav1.GetOptions{})
-		if getErr != nil {
-			return fmt.Errorf("failed to get existing benchmark result configmap: %w", getErr)
+	if b.store != nil {
+		if err := b.store.Save(ctx, record); err != nil {
+			return fmt.Errorf("failed to save benchmark result: %w", err)
 		}
-		existing.Data = cm.Data
-		_, err = b.kubeClient.CoreV1().ConfigMaps(b.namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("failed to upsert benchmark result configmap: %w", err)
-	}
-
-	if err := b.upsertGlobalResult(ctx, model, result); err != nil {
-		log.Error(err, "Failed to write global benchmark result")
 	}
 
 	return nil
-}
-
-func (b *Benchmarker) upsertGlobalResult(ctx context.Context, model string, result benchmarkResult) error {
-	if b.nodeName == "" || b.resultsCM == "" {
-		return nil
-	}
-
-	node, err := b.kubeClient.CoreV1().Nodes().Get(ctx, b.nodeName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	deviceClass := deviceClassFromNode(node)
-	key := benchmarkKey(b.backendType, model, deviceClass)
-	metaKey := "meta_" + key
-
-	meta := map[string]interface{}{
-		"backend":          b.backendType,
-		"model":            model,
-		"deviceClass":      deviceClass,
-		"tokensPerSecond":  result.TokensPerSecond,
-		"completionTokens": result.CompletionTokens,
-		"durationSeconds":  result.Duration.Seconds(),
-		"samples":          result.Samples,
-		"timestamp":        b.now().UTC().Format(time.RFC3339),
-	}
-	metaJSON, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("failed to marshal benchmark result metadata: %w", err)
-	}
-
-	for i := 0; i < 3; i++ {
-		cm, err := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Get(ctx, b.resultsCM, metav1.GetOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				cm = &corev1.ConfigMap{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      b.resultsCM,
-						Namespace: b.namespace,
-					},
-					Data: map[string]string{},
-				}
-				_, createErr := b.kubeClient.CoreV1().ConfigMaps(b.namespace).Create(ctx, cm, metav1.CreateOptions{})
-				if createErr != nil && !apierrors.IsAlreadyExists(createErr) {
-					return createErr
-				}
-				continue
-			}
-			return err
-		}
-
-		if cm.Data == nil {
-			cm.Data = map[string]string{}
-		}
-		cm.Data[key] = strconv.FormatFloat(result.TokensPerSecond, 'f', -1, 64)
-		cm.Data[metaKey] = string(metaJSON)
-
-		_, err = b.kubeClient.CoreV1().ConfigMaps(b.namespace).Update(ctx, cm, metav1.UpdateOptions{})
-		if err != nil {
-			if apierrors.IsConflict(err) {
-				continue
-			}
-			return err
-		}
-		return nil
-	}
-
-	return fmt.Errorf("failed to update global benchmark configmap after retries")
 }
 
 func deviceClassFromNode(node *corev1.Node) string {

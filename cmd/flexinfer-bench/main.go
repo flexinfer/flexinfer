@@ -24,6 +24,7 @@ func main() {
 	batchSize := flag.Int("batch-size", 128, "Target tokens to generate per request.")
 	maxTokensAlias := flag.Int("max-tokens", 0, "Alias for --batch-size (deprecated).")
 	coldStartTimeout := flag.Duration("cold-start-timeout", 5*time.Minute, "Timeout waiting for model to become ready (cold start).")
+	postgresDsn := flag.String("postgres-dsn", "", "Optional Postgres DSN to store benchmarks in a database (e.g. postgres://user:pass@host:5432/db). If omitted, falls back to env POSTGRES_DSN.")
 
 	opts := zap.Options{
 		Development: true,
@@ -51,6 +52,11 @@ func main() {
 		*batchSize = *maxTokensAlias
 	}
 
+	dsn := *postgresDsn
+	if dsn == "" {
+		dsn = os.Getenv("POSTGRES_DSN")
+	}
+
 	bm, err := benchmarker.NewBenchmarker(*backend, benchmarker.Options{
 		WarmupIterations: *warmupIterations,
 		MinDuration:      *minDuration,
@@ -58,7 +64,7 @@ func main() {
 		BatchSize:        *batchSize,
 		ModelName:        *modelName,
 		ColdStartTimeout: *coldStartTimeout,
-	})
+	}, dsn)
 	if err != nil {
 		setupLog.Error(err, "Failed to create benchmarker")
 		os.Exit(1)

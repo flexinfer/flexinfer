@@ -1182,6 +1182,10 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 										},
 									},
 								},
+								{
+									Name:  "POSTGRES_DSN",
+									Value: os.Getenv("POSTGRES_DSN"),
+								},
 							},
 							// Simple execution - just run the benchmark
 							// Proxy handles model scale-up via GPUGroup
