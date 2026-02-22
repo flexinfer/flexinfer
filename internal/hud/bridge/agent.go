@@ -1699,16 +1699,23 @@ func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
 		return s, nil
 	}
 
-	sessions, err := a.Sessions()
-	if err != nil {
+	// Query with agent_id + status filter to avoid hitting the default 20-item
+	// limit when the agent's sessions fall outside the unfiltered window.
+	var listResult struct {
+		Sessions []SessionInfo `json:"sessions"`
+	}
+	args := map[string]any{
+		"agent_id": agentID,
+		"status":   "active",
+		"limit":    1,
+	}
+	if err := a.callAgentTool("agent_session_list", args, &listResult); err != nil {
 		return nil, err
 	}
+
 	var result *SessionInfo
-	for i := range sessions {
-		if sessions[i].AgentID == agentID && sessions[i].Status == "active" {
-			result = &sessions[i]
-			break
-		}
+	if len(listResult.Sessions) > 0 {
+		result = &listResult.Sessions[0]
 	}
 
 	// Cache both hits and misses to avoid redundant fetches.
