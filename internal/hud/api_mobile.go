@@ -2,12 +2,15 @@ package hud
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -15,6 +18,59 @@ const (
 	mobileScopeSessionCreate = "mobile:session:create"
 	mobileScopeSessionEnd    = "mobile:session:end"
 )
+
+// mobileEnvelope is the standard response shape for /api/mobile/v1 endpoints.
+type mobileEnvelope struct {
+	OK    bool    `json:"ok"`
+	Data  any     `json:"data,omitempty"`
+	Error any     `json:"error,omitempty"`
+	Meta  mobMeta `json:"meta"`
+}
+
+type mobMeta struct {
+	RequestID string `json:"request_id"`
+	Timestamp string `json:"timestamp"`
+}
+
+type mobError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func newRequestID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "req_unknown"
+	}
+	return "req_" + hex.EncodeToString(buf[:])
+}
+
+func (a *App) writeMobileJSON(w http.ResponseWriter, status int, data any) {
+	env := mobileEnvelope{
+		OK:   true,
+		Data: data,
+		Meta: mobMeta{
+			RequestID: newRequestID(),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+	a.writeJSON(w, status, env)
+}
+
+func (a *App) writeMobileError(w http.ResponseWriter, status int, code, message string) {
+	env := mobileEnvelope{
+		OK: false,
+		Error: mobError{
+			Code:    code,
+			Message: message,
+		},
+		Meta: mobMeta{
+			RequestID: newRequestID(),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+	a.writeJSON(w, status, env)
+}
 
 func extractBearerToken(r *http.Request) string {
 	if r == nil {
@@ -53,23 +109,23 @@ func (a *App) mobileTokenOutsideMobileAPI(r *http.Request) bool {
 func (a *App) requireMobileScope(w http.ResponseWriter, r *http.Request, requiredScope string) bool {
 	expected := strings.TrimSpace(a.config.MobileOperatorToken)
 	if expected == "" {
-		a.writeError(w, http.StatusForbidden, "mobile operator token is not configured; set HUD_MOBILE_OPERATOR_TOKEN", nil)
+		a.writeMobileError(w, http.StatusForbidden, "not_configured", "mobile operator token is not configured; set HUD_MOBILE_OPERATOR_TOKEN")
 		return false
 	}
 
 	actual := extractBearerToken(r)
 	if actual == "" {
-		a.writeError(w, http.StatusUnauthorized, "mobile bearer token is required", nil)
+		a.writeMobileError(w, http.StatusUnauthorized, "unauthorized", "mobile bearer token is required")
 		return false
 	}
 
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) != 1 {
-		a.writeError(w, http.StatusUnauthorized, "invalid mobile bearer token", nil)
+		a.writeMobileError(w, http.StatusUnauthorized, "unauthorized", "invalid mobile bearer token")
 		return false
 	}
 
 	if !a.mobileScopeAllowed(requiredScope) {
-		a.writeError(w, http.StatusForbidden, "mobile token missing required scope", nil)
+		a.writeMobileError(w, http.StatusForbidden, "forbidden", "mobile token missing required scope")
 		return false
 	}
 
@@ -92,13 +148,31 @@ func (a *App) mobileScopeAllowed(required string) bool {
 	return false
 }
 
+// logMobileAudit records a structured audit entry for mobile mutation operations.
+func (a *App) logMobileAudit(r *http.Request, action string, targets map[string]string, outcome string, auditErr error) {
+	attrs := []any{
+		"source", "mobile",
+		"action", action,
+		"endpoint", r.Method + " " + r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+		"outcome", outcome,
+	}
+	for k, v := range targets {
+		attrs = append(attrs, k, v)
+	}
+	if auditErr != nil {
+		attrs = append(attrs, "error", auditErr.Error())
+	}
+	a.logger.Info("mobile_audit", attrs...)
+}
+
 // --- Mobile companion v1 handlers ---
 
 func (a *App) handleMobilePing(w http.ResponseWriter, r *http.Request) {
 	if !a.requireMobileScope(w, r, mobileScopeRead) {
 		return
 	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"pong": true})
 }
 
 func (a *App) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
@@ -106,15 +180,34 @@ func (a *App) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snap := a.fleetMonitor.Snapshot()
-	a.writeJSON(w, http.StatusOK, map[string]any{
-		"daemon_running":  snap.DaemonRunning,
-		"server_count":    snap.ServerCount,
-		"active_sessions": snap.ActiveSessions,
-		"active_agents":   snap.ActiveAgents,
-		"idle_agents":     snap.IdleAgents,
-		"offline_agents":  snap.OfflineAgents,
-		"updated_at":      snap.UpdatedAt,
+	fleetSnap := a.fleetMonitor.Snapshot()
+	healthSum := a.healthMonitor.Summary()
+
+	// Collect recent critical timeline entries (last 10).
+	var recentTimeline []TimelineEntry
+	if a.eventLog != nil {
+		recentTimeline = a.eventLog.All(10)
+	}
+	if recentTimeline == nil {
+		recentTimeline = []TimelineEntry{}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"daemon_running":  fleetSnap.DaemonRunning,
+		"server_count":    fleetSnap.ServerCount,
+		"active_sessions": fleetSnap.ActiveSessions,
+		"active_agents":   fleetSnap.ActiveAgents,
+		"idle_agents":     fleetSnap.IdleAgents,
+		"offline_agents":  fleetSnap.OfflineAgents,
+		"updated_at":      fleetSnap.UpdatedAt,
+		"health": map[string]any{
+			"total_servers":    healthSum.TotalServers,
+			"healthy_servers":  healthSum.HealthyServers,
+			"degraded_servers": healthSum.DegradedServers,
+			"down_servers":     healthSum.DownServers,
+			"idle_servers":     healthSum.IdleServers,
+		},
+		"recent_timeline": recentTimeline,
 	})
 }
 
@@ -122,7 +215,13 @@ func (a *App) handleMobileSessions(w http.ResponseWriter, r *http.Request) {
 	if !a.requireMobileScope(w, r, mobileScopeRead) {
 		return
 	}
-	a.handleSessions(w, r)
+
+	sessions, err := a.agent.Sessions()
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list sessions")
+		return
+	}
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) {
@@ -132,24 +231,24 @@ func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) 
 
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	if sessionID == "" {
-		a.writeError(w, http.StatusBadRequest, "session_id is required", nil)
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
 		return
 	}
 
 	sessions, err := a.agent.Sessions()
 	if err != nil {
-		a.writeError(w, http.StatusBadGateway, "failed to list sessions", err)
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list sessions")
 		return
 	}
 
 	for _, s := range sessions {
 		if strings.TrimSpace(s.ID) == sessionID {
-			a.writeJSON(w, http.StatusOK, map[string]any{"session": s})
+			a.writeMobileJSON(w, http.StatusOK, map[string]any{"session": s})
 			return
 		}
 	}
 
-	a.writeError(w, http.StatusNotFound, "session not found", nil)
+	a.writeMobileError(w, http.StatusNotFound, "not_found", "session not found")
 }
 
 func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +258,7 @@ func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) 
 
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	if sessionID == "" {
-		a.writeError(w, http.StatusBadRequest, "session_id is required", nil)
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
 		return
 	}
 
@@ -182,7 +281,7 @@ func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	a.writeJSON(w, http.StatusOK, map[string]any{
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID,
 		"events":     events,
 	})
@@ -199,6 +298,25 @@ func (a *App) handleMobileSessionCreate(w http.ResponseWriter, r *http.Request) 
 	if !a.requireMobileScope(w, r, mobileScopeSessionCreate) {
 		return
 	}
+
+	// Read the body to extract audit fields before forwarding.
+	var reqBody struct {
+		AgentID   string `json:"agent_id"`
+		Namespace string `json:"namespace"`
+	}
+	bodyBytes, _ := io.ReadAll(r.Body)
+	if len(bytes.TrimSpace(bodyBytes)) > 0 {
+		_ = json.Unmarshal(bodyBytes, &reqBody)
+	}
+
+	a.logMobileAudit(r, "session_create", map[string]string{
+		"agent_id":  reqBody.AgentID,
+		"namespace": reqBody.Namespace,
+	}, "initiated", nil)
+
+	// Reconstruct request body for the downstream handler.
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	r.ContentLength = int64(len(bodyBytes))
 	a.handleAgentSessionStart(w, r)
 }
 
@@ -209,7 +327,7 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	if sessionID == "" {
-		a.writeError(w, http.StatusBadRequest, "session_id is required", nil)
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
 		return
 	}
 
@@ -219,16 +337,21 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
-			a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+			a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
 		if len(bytes.TrimSpace(data)) > 0 {
 			if err := json.Unmarshal(data, &body); err != nil {
-				a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+				a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 				return
 			}
 		}
 	}
+
+	a.logMobileAudit(r, "session_end", map[string]string{
+		"session_id": sessionID,
+		"summarize":  strconv.FormatBool(body.Summarize),
+	}, "initiated", nil)
 
 	proxyBody, _ := json.Marshal(map[string]any{
 		"session_id": sessionID,

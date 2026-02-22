@@ -729,6 +729,261 @@ func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
 	}
 }
 
+func TestHandler_MobilePing_ReturnsEnvelope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode envelope: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected non-empty request_id in meta")
+	}
+	if !strings.HasPrefix(env.Meta.RequestID, "req_") {
+		t.Fatalf("expected request_id to start with req_, got %q", env.Meta.RequestID)
+	}
+	if env.Meta.Timestamp == "" {
+		t.Fatal("expected non-empty timestamp in meta")
+	}
+}
+
+func TestHandler_MobileDashboard_EnrichedWithHealthAndTimeline(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	// Add a timeline event so it appears in the dashboard.
+	app.eventLog.Append(TimelineEntry{
+		Timestamp: time.Now(),
+		EventType: "agent.session.start",
+		AgentID:   "test-agent",
+	})
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/dashboard", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			DaemonRunning  bool `json:"daemon_running"`
+			ServerCount    int  `json:"server_count"`
+			ActiveSessions int  `json:"active_sessions"`
+			Health         struct {
+				TotalServers   int `json:"total_servers"`
+				HealthyServers int `json:"healthy_servers"`
+			} `json:"health"`
+			RecentTimeline []json.RawMessage `json:"recent_timeline"`
+		} `json:"data"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode dashboard envelope: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id in meta")
+	}
+	// The mock daemon has 2 healthy servers (git, time).
+	if env.Data.Health.TotalServers < 1 {
+		t.Logf("health.total_servers=%d (expected >=1 from mock)", env.Data.Health.TotalServers)
+	}
+	if len(env.Data.RecentTimeline) < 1 {
+		t.Fatal("expected at least 1 recent_timeline entry")
+	}
+}
+
+func TestHandler_MobileSessions_ReturnsEnvelope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Sessions []json.RawMessage `json:"sessions"`
+		} `json:"data"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode sessions envelope: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id in meta")
+	}
+}
+
+func TestHandler_MobileErrorReturnsEnvelope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	// Request session detail for a session that doesn't exist.
+	req := httptest.NewRequest("GET", "/api/mobile/v1/sessions/nonexistent-id", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode error envelope: %v", err)
+	}
+	if env.OK {
+		t.Fatal("expected ok=false for error response")
+	}
+	if env.Error.Code != "not_found" {
+		t.Fatalf("expected error code not_found, got %q", env.Error.Code)
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id even in error responses")
+	}
+}
+
+func TestHandler_MobileSessionCreate_AuditAndEnvelope(t *testing.T) {
+	// Use a log buffer to verify audit logging.
+	var logBuf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	app, mux := newTestApp(t)
+	app.logger = logger
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{"agent_id":"mobile-agent","namespace":"loom-core/mobile"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify audit log was written.
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "mobile_audit") {
+		t.Fatal("expected mobile_audit log entry")
+	}
+	if !strings.Contains(logOutput, "session_create") {
+		t.Fatal("expected session_create action in audit log")
+	}
+	if !strings.Contains(logOutput, "mobile-agent") {
+		t.Fatal("expected agent_id in audit log")
+	}
+}
+
+func TestHandler_MobileSessionEnd_AuditLog(t *testing.T) {
+	var logBuf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	app, mux := newTestApp(t)
+	app.logger = logger
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-456/end", strings.NewReader(`{"summarize":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "mobile_audit") {
+		t.Fatal("expected mobile_audit log entry")
+	}
+	if !strings.Contains(logOutput, "session_end") {
+		t.Fatal("expected session_end action in audit log")
+	}
+	if !strings.Contains(logOutput, "sess-456") {
+		t.Fatal("expected session_id in audit log")
+	}
+}
+
+func TestHandler_MobileAuthError_ReturnsEnvelope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	// Send request with wrong token.
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode auth error envelope: %v", err)
+	}
+	if env.OK {
+		t.Fatal("expected ok=false for auth error")
+	}
+	if env.Error.Code != "unauthorized" {
+		t.Fatalf("expected error code unauthorized, got %q", env.Error.Code)
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id in auth error response")
+	}
+}
+
 // --- Mock daemon helpers (same pattern as bridge/daemon_test.go) ---
 
 func newMockDaemonForApp(t *testing.T) (string, *appMockHandlers) {
