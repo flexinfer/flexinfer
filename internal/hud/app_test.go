@@ -984,6 +984,227 @@ func TestHandler_MobileAuthError_ReturnsEnvelope(t *testing.T) {
 	}
 }
 
+// TestHandler_MobilePolicy_AllowlistDenylistMatrix validates that the mobile
+// operator token is allowed on /api/mobile/v1 endpoints and denied on all
+// other API routes per the MOBILE_COMPANION_API.md authorization matrix.
+func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+
+	// Allowed: mobile endpoints that should return non-403 with valid token.
+	allowedEndpoints := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/mobile/v1/ping"},
+		{"GET", "/api/mobile/v1/dashboard"},
+		{"GET", "/api/mobile/v1/sessions"},
+		{"GET", "/api/mobile/v1/sessions/test-sess"},
+		{"GET", "/api/mobile/v1/sessions/test-sess/events"},
+		{"POST", "/api/mobile/v1/sessions"},
+		{"POST", "/api/mobile/v1/sessions/test-sess/end"},
+	}
+
+	for _, ep := range allowedEndpoints {
+		t.Run("allow_"+ep.method+"_"+ep.path, func(t *testing.T) {
+			body := ""
+			if ep.method == "POST" {
+				body = `{"agent_id":"test","namespace":"test/ns"}`
+			}
+			req := httptest.NewRequest(ep.method, ep.path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code == http.StatusForbidden {
+				t.Errorf("mobile token should be allowed on %s %s, got 403: %s", ep.method, ep.path, w.Body.String())
+			}
+		})
+	}
+
+	// Denied: non-mobile API routes that must reject mobile tokens.
+	deniedEndpoints := []struct {
+		method string
+		path   string
+	}{
+		// Agent lifecycle (CLI hooks — direct access denied for mobile).
+		{"POST", "/api/agent/session-start"},
+		{"POST", "/api/agent/session-end"},
+		{"POST", "/api/agent/heartbeat"},
+		{"POST", "/api/agent/task-update"},
+		{"GET", "/api/agent/session"},
+		{"POST", "/api/agent/context/add"},
+		{"GET", "/api/agent/context-inspect"},
+		{"POST", "/api/agent/nudge"},
+		{"POST", "/api/agent/workflow-define"},
+		{"POST", "/api/agent/dispatch"},
+		// Coordinator (LLM operations — not for mobile).
+		{"GET", "/api/coordinator/status"},
+		{"POST", "/api/coordinator/compress"},
+		{"POST", "/api/coordinator/plan"},
+		// Destructive operations (forbidden for mobile).
+		{"DELETE", "/api/memory/mem-1"},
+		{"POST", "/api/sandbox/start"},
+		{"POST", "/api/sandbox/stop"},
+		{"DELETE", "/api/graph/entities/ent-1"},
+		{"DELETE", "/api/graph/relations/rel-1"},
+		// Read-only HUD endpoints (still denied — mobile token is restricted to /api/mobile/v1).
+		{"GET", "/api/status"},
+		{"GET", "/api/health"},
+		{"GET", "/api/servers"},
+		{"GET", "/api/fleet"},
+		{"GET", "/api/sessions"},
+		{"GET", "/api/tasks"},
+		{"GET", "/api/events"},
+	}
+
+	for _, ep := range deniedEndpoints {
+		t.Run("deny_"+ep.method+"_"+ep.path, func(t *testing.T) {
+			body := ""
+			if ep.method == "POST" || ep.method == "DELETE" || ep.method == "PATCH" {
+				body = `{}`
+			}
+			req := httptest.NewRequest(ep.method, ep.path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Errorf("mobile token should be denied on %s %s, got %d (expected 403)", ep.method, ep.path, w.Code)
+			}
+		})
+	}
+}
+
+// TestHandler_MobilePolicy_ScopeIsolation verifies that each mobile scope
+// grants only its intended access, preventing scope escalation.
+func TestHandler_MobilePolicy_ScopeIsolation(t *testing.T) {
+	tests := []struct {
+		name           string
+		scopes         string
+		method         string
+		path           string
+		body           string
+		expectedStatus int
+	}{
+		// mobile:read can access read endpoints.
+		{"read_scope_allows_ping", "mobile:read", "GET", "/api/mobile/v1/ping", "", http.StatusOK},
+		{"read_scope_allows_dashboard", "mobile:read", "GET", "/api/mobile/v1/dashboard", "", http.StatusOK},
+		{"read_scope_allows_sessions_list", "mobile:read", "GET", "/api/mobile/v1/sessions", "", http.StatusOK},
+
+		// mobile:read cannot create or end sessions.
+		{"read_scope_denies_create", "mobile:read", "POST", "/api/mobile/v1/sessions",
+			`{"agent_id":"a","namespace":"n"}`, http.StatusForbidden},
+		{"read_scope_denies_end", "mobile:read", "POST", "/api/mobile/v1/sessions/s1/end",
+			`{"summarize":true}`, http.StatusForbidden},
+
+		// mobile:session:create alone cannot read.
+		{"create_scope_denies_read", "mobile:session:create", "GET", "/api/mobile/v1/ping",
+			"", http.StatusForbidden},
+		// mobile:session:create alone can create.
+		{"create_scope_allows_create", "mobile:session:create", "POST", "/api/mobile/v1/sessions",
+			`{"agent_id":"a","namespace":"n"}`, http.StatusOK},
+		// mobile:session:create cannot end sessions.
+		{"create_scope_denies_end", "mobile:session:create", "POST", "/api/mobile/v1/sessions/s1/end",
+			`{"summarize":true}`, http.StatusForbidden},
+
+		// mobile:session:end alone cannot read or create.
+		{"end_scope_denies_read", "mobile:session:end", "GET", "/api/mobile/v1/dashboard",
+			"", http.StatusForbidden},
+		{"end_scope_denies_create", "mobile:session:end", "POST", "/api/mobile/v1/sessions",
+			`{"agent_id":"a"}`, http.StatusForbidden},
+		// mobile:session:end can end sessions.
+		{"end_scope_allows_end", "mobile:session:end", "POST", "/api/mobile/v1/sessions/s1/end",
+			`{"summarize":false}`, http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, mux := newTestApp(t)
+			app.config.MobileOperatorToken = "mobile-secret"
+			app.config.MobileOperatorScopes = tt.scopes
+
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("scopes=%q %s %s: expected %d, got %d: %s",
+					tt.scopes, tt.method, tt.path, tt.expectedStatus, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandler_MobilePolicy_NoTokenPassesThrough verifies that requests
+// without the mobile token are NOT blocked by the mobile guard (they're
+// normal HUD requests that proceed to their own auth/no-auth logic).
+func TestHandler_MobilePolicy_NoTokenPassesThrough(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	// A request to a normal API endpoint without any mobile token should
+	// pass through the mobile guard and be handled normally.
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/status"},
+		{"GET", "/api/health"},
+		{"GET", "/api/fleet"},
+	}
+
+	for _, ep := range endpoints {
+		t.Run(ep.method+"_"+ep.path, func(t *testing.T) {
+			req := httptest.NewRequest(ep.method, ep.path, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			// Should get 200 (normal response), not 403.
+			if w.Code == http.StatusForbidden {
+				t.Errorf("unauthenticated request to %s should not be blocked by mobile guard", ep.path)
+			}
+		})
+	}
+}
+
+// TestHandler_MobilePolicy_WrongTokenPassesThrough verifies that a
+// non-mobile bearer token is not mistaken for a mobile token and blocked.
+func TestHandler_MobilePolicy_WrongTokenPassesThrough(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	req.Header.Set("Authorization", "Bearer some-other-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	// A non-matching token should pass through (not be treated as mobile).
+	if w.Code == http.StatusForbidden {
+		t.Error("non-mobile token should not trigger mobile guard on /api/status")
+	}
+}
+
+// TestHandler_MobilePolicy_UnconfiguredTokenAllowsNormalAccess verifies
+// that when MobileOperatorToken is empty, the mobile guard is inert.
+func TestHandler_MobilePolicy_UnconfiguredTokenAllowsNormalAccess(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = ""
+
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code == http.StatusForbidden {
+		t.Error("when mobile token is unconfigured, no request should be blocked by mobile guard")
+	}
+}
+
 // --- Mock daemon helpers (same pattern as bridge/daemon_test.go) ---
 
 func newMockDaemonForApp(t *testing.T) (string, *appMockHandlers) {
