@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/crb2nu/loom/internal/devbox/detect"
 )
@@ -92,7 +93,7 @@ func generateCustomBase(fp *detect.EnvFingerprint) ([]byte, error) {
 	}
 
 	// Try to detect the package manager from the base image name
-	if containsAny(fp.Overrides.BaseImage, "alpine") {
+	if strings.Contains(fp.Overrides.BaseImage, "alpine") {
 		data.PackageManager = "apk add --no-cache"
 		data.PackageInstallCmd = "git make bash curl"
 	} else {
@@ -163,17 +164,4 @@ func generateDevContainer(fp *detect.EnvFingerprint) ([]byte, error) {
 	buf.WriteString("\nWORKDIR /workspace\n")
 
 	return buf.Bytes(), nil
-}
-
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

@@ -113,6 +113,8 @@ func (k *K8sBackend) Health(ctx context.Context) error {
 	return nil
 }
 
+const buildMaxRetries = 2
+
 func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, error) {
 	registryTag := k.registryTag(opts.Tag)
 
@@ -134,8 +136,30 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 		_ = k.deleteConfigMap(context.Background(), cmName)
 	}()
 
-	// Create the Buildah build pod
 	podName := "buildah-build-" + buildName
+
+	var lastErr error
+	for attempt := range buildMaxRetries {
+		result, err := k.runBuildPod(ctx, podName, registryTag, cmName, contextRel)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		// Don't retry on context cancellation
+		if ctx.Err() != nil {
+			break
+		}
+
+		if attempt < buildMaxRetries-1 {
+			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		}
+	}
+	return nil, lastErr
+}
+
+// runBuildPod creates a Buildah build pod, waits for completion, and returns the result.
+func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmName, contextRel string) (*BuildResult, error) {
 	pod := k.buildBuildahPodSpec(podName, registryTag, cmName, contextRel)
 
 	// Delete any leftover build pod with the same name
@@ -480,7 +504,7 @@ func (k *K8sBackend) waitForPodRunning(ctx context.Context, name string, timeout
 		case corev1.PodRunning:
 			return nil
 		case corev1.PodFailed, corev1.PodSucceeded:
-			return fmt.Errorf("pod entered terminal phase: %s", pod.Status.Phase)
+			return fmt.Errorf("pod entered terminal phase: %s", podFailureReason(pod))
 		}
 		// Early exit on image pull errors
 		for _, cs := range pod.Status.ContainerStatuses {
@@ -492,6 +516,26 @@ func (k *K8sBackend) waitForPodRunning(ctx context.Context, name string, timeout
 		}
 	}
 	return fmt.Errorf("watch closed for pod %s", name)
+}
+
+// podFailureReason extracts a diagnostic string from a failed pod's container statuses.
+func podFailureReason(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.State.Terminated; t != nil {
+			parts := []string{fmt.Sprintf("exit_code=%d", t.ExitCode)}
+			if t.Reason != "" {
+				parts = append(parts, "reason="+t.Reason)
+			}
+			if t.Message != "" {
+				parts = append(parts, "message="+t.Message)
+			}
+			return strings.Join(parts, " ")
+		}
+	}
+	if pod.Status.Message != "" {
+		return pod.Status.Message
+	}
+	return string(pod.Status.Phase)
 }
 
 // buildBuildahPodSpec creates a Pod spec for a Buildah in-cluster build.
@@ -592,7 +636,9 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 				{
 					Name: "buildah-storage",
 					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							SizeLimit: resourcePtr(resource.MustParse("10Gi")),
+						},
 					},
 				},
 				{
@@ -635,7 +681,7 @@ func (k *K8sBackend) waitForPodDone(ctx context.Context, name string, timeout ti
 		case corev1.PodSucceeded:
 			return nil
 		case corev1.PodFailed:
-			return fmt.Errorf("build pod failed (phase: %s)", pod.Status.Phase)
+			return fmt.Errorf("build pod failed: %s", podFailureReason(pod))
 		}
 		// Early exit on image pull errors
 		for _, cs := range pod.Status.ContainerStatuses {
@@ -735,6 +781,8 @@ func (k *K8sBackend) registryTag(tag string) string {
 	}
 	return k.registry + "/" + tag
 }
+
+func resourcePtr(q resource.Quantity) *resource.Quantity { return &q }
 
 // parseExitCode extracts the exit code from a K8s exec error.
 // Returns 1 as default for non-zero exits when code can't be parsed.
