@@ -453,8 +453,6 @@ func TestFleetMonitor_BridgeBackedRefreshAndDebounce(t *testing.T) {
 			return toolEnvelope(map[string]any{
 				"handoffs": []map[string]any{},
 			}), nil
-		case "agent_context__agent_handoff_list":
-			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
 		default:
 			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
 		}

@@ -1453,32 +1453,17 @@ func (a *AgentBridge) handoffInbox(agentID string, includeViewed bool) ([]Handof
 	return out, nil
 }
 
-func (a *AgentBridge) handoffListLegacy() ([]HandoffInfo, error) {
-	var result struct {
-		Handoffs []HandoffInfo `json:"handoffs"`
-	}
-	if err := a.callAgentTool("agent_handoff_list", nil, &result); err != nil {
-		return nil, err
-	}
-	return result.Handoffs, nil
-}
-
-// HandoffList returns pending/viewed handoffs across active/offline agents.
-// It prefers the newer inbox API and falls back to the legacy list tool.
+// HandoffList returns pending/viewed handoffs across active/offline agents
+// by querying each agent's inbox via agent_handoff_inbox.
 func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 	agents, err := a.PresenceList(true)
 	if err != nil {
-		legacy, legacyErr := a.handoffListLegacy()
-		if legacyErr == nil {
-			return legacy, nil
-		}
 		return nil, err
 	}
 
 	seen := make(map[string]struct{})
 	combined := make([]HandoffInfo, 0)
 	var inboxErr error
-	var inboxSuccess bool
 
 	for _, agent := range agents {
 		agentID := strings.TrimSpace(agent.AgentID)
@@ -1488,14 +1473,13 @@ func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 		handoffs, err := a.handoffInbox(agentID, true)
 		if err != nil {
 			if isUnknownToolErr(err, "agent_handoff_inbox") {
-				return a.handoffListLegacy()
+				return nil, nil // tool unavailable, return empty
 			}
 			if inboxErr == nil {
 				inboxErr = err
 			}
 			continue
 		}
-		inboxSuccess = true
 		for _, h := range handoffs {
 			if strings.TrimSpace(h.ID) == "" {
 				continue
@@ -1508,11 +1492,7 @@ func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 		}
 	}
 
-	if inboxSuccess || len(agents) == 0 {
-		return combined, nil
-	}
-
-	if inboxErr != nil {
+	if inboxErr != nil && len(combined) == 0 {
 		return nil, inboxErr
 	}
 	return combined, nil
@@ -1923,17 +1903,7 @@ func (a *AgentBridge) HandoffListForAgent(agentID string) ([]HandoffInfo, error)
 	handoffs, err := a.handoffInbox(agentID, false)
 	if err != nil {
 		if isUnknownToolErr(err, "agent_handoff_inbox") {
-			all, legacyErr := a.handoffListLegacy()
-			if legacyErr != nil {
-				return nil, legacyErr
-			}
-			result := make([]HandoffInfo, 0, len(all))
-			for _, h := range all {
-				if h.Status == "pending" && (h.ToAgent == agentID || h.ToAgent == "") {
-					result = append(result, h)
-				}
-			}
-			return result, nil
+			return nil, nil // tool unavailable, return empty
 		}
 		return nil, err
 	}
