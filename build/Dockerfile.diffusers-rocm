@@ -211,6 +211,7 @@ def _apply_scheduler(pipe, scheduler_name: Optional[str]):
 
     from diffusers import (
         DPMSolverMultistepScheduler,
+        DPMSolverSinglestepScheduler,
         EulerDiscreteScheduler,
         EulerAncestralDiscreteScheduler,
         UniPCMultistepScheduler,
@@ -221,6 +222,8 @@ def _apply_scheduler(pipe, scheduler_name: Optional[str]):
         "dpm++2m": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=False),
         "dpm++2m-karras": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=True),
         "dpm++2m-sde-karras": lambda cfg: DPMSolverMultistepScheduler.from_config(cfg, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++"),
+        "dpm++sde": lambda cfg: DPMSolverSinglestepScheduler.from_config(cfg),
+        "dpm++sde-karras": lambda cfg: DPMSolverSinglestepScheduler.from_config(cfg, use_karras_sigmas=True),
         "euler": lambda cfg: EulerDiscreteScheduler.from_config(cfg),
         "euler-a": lambda cfg: EulerAncestralDiscreteScheduler.from_config(cfg),
         "unipc": lambda cfg: UniPCMultistepScheduler.from_config(cfg),
