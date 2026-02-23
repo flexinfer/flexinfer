@@ -16,7 +16,6 @@ import (
 	"cloud.google.com/go/storage"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
@@ -37,26 +36,21 @@ var (
 )
 
 func initGCP(ctx context.Context) error {
-	var opts []option.ClientOption
-
-	// Use credentials file if specified
-	if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-		opts = append(opts, option.WithCredentialsFile(credFile)) //nolint:staticcheck // TODO: migrate to workload identity or ADC
-	}
-
 	var err error
 
-	storageClient, err = storage.NewClient(ctx, opts...)
+	// All clients use Application Default Credentials (ADC).
+	// ADC checks GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, and GCE metadata natively.
+	storageClient, err = storage.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	instancesClient, err = compute.NewInstancesRESTClient(ctx, opts...)
+	instancesClient, err = compute.NewInstancesRESTClient(ctx)
 	if err != nil {
 		return fmt.Errorf("create instances client: %w", err)
 	}
 
-	functionsClient, err = functions.NewFunctionClient(ctx, opts...)
+	functionsClient, err = functions.NewFunctionClient(ctx)
 	if err != nil {
 		return fmt.Errorf("create functions client: %w", err)
 	}
