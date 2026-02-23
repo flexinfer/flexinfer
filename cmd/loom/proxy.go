@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -92,7 +93,34 @@ func runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken string) erro
 
 // runProxy runs loom as an MCP server, bridging stdio to the daemon
 func runProxy(socketPath string) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Graceful shutdown on SIGTERM/SIGINT.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		select {
+		case sig := <-sigCh:
+			fmt.Fprintf(os.Stderr, "loom proxy: received %s, shutting down\n", sig)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	defer signal.Stop(sigCh)
+
+	// Idle timeout for orphan prevention. Resets on every inbound message.
+	// Uses proxyIdleExitTimeout() which supports LOOM_PROXY_IDLE_EXIT_SECONDS
+	// env var, file config, and a 30s minimum bound.
+	idleTimeout := proxyIdleExitTimeout()
+	var idleTimer *time.Timer
+	if idleTimeout > 0 {
+		idleTimer = time.AfterFunc(idleTimeout, func() {
+			fmt.Fprintf(os.Stderr, "loom proxy: idle timeout (%s), shutting down\n", idleTimeout)
+			cancel()
+		})
+		defer idleTimer.Stop()
+	}
 
 	// Load file config once for proxy-side settings.
 	if fileCfg, err := daemon.LoadConfigFile(); err == nil {
@@ -254,11 +282,19 @@ func runProxy(socketPath string) error {
 		}
 	}
 
+	// Cleanup daemon state on exit (signal, idle timeout, or client disconnect).
+	defer resetTransport()
+
 	// Main message loop
 	for {
 		msg, err := stdio.Recv(ctx)
 		if err != nil {
-			return nil // Client disconnected
+			return nil // Client disconnected or shutdown signal
+		}
+
+		// Reset idle timer on activity.
+		if idleTimer != nil {
+			idleTimer.Reset(idleTimeout)
 		}
 
 		var resp *mcp.Message
