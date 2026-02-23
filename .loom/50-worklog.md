@@ -1,5 +1,56 @@
 # Worklog
 
+## 2026-02-23 (session 16)
+
+- What changed:
+  - Completed M1: Backend Mobile Auth + API Hardening.
+  - Created `internal/hud/mobile_ratelimit.go`:
+    - Per-actor, per-category rate limiter using UTC minute-window counters.
+    - Configurable mutation (default 10/min) and read (default 60/min) limits.
+  - Created `internal/hud/mobile_revoke.go`:
+    - In-memory token revocation list with SHA-256 hashing.
+    - `Revoke()` and `IsRevoked()` methods.
+  - Updated `internal/hud/api_mobile.go`:
+    - Integrated revocation check and rate limiting in `requireMobileScope()`.
+    - Added `extractDeviceID()` for `X-Device-ID` header extraction (max 128 chars).
+    - Extended `logMobileAudit()` with `device_id` attribute.
+    - Added `handleMobileAdminRevoke` endpoint (admin-token protected).
+  - Updated `internal/hud/app.go`:
+    - Added `TLSCert`, `TLSKey`, `BindAddress`, `MobileRateLimitMutation`, `MobileRateLimitRead` to Config.
+    - Added TLS listener wrapping with `tls.NewListener()` when cert/key configured.
+    - Added configurable bind address (default `127.0.0.1`).
+    - Added warning log for mobile token without TLS on non-localhost.
+    - Added `mobileRateLimiter` and `mobileRevocationList` to App struct + initialization.
+    - Registered `POST /api/mobile/v1/admin/revoke` route.
+  - Updated `cmd/loom/hud.go`:
+    - Added flags: `--tls-cert`, `--tls-key`, `--bind`, `--mobile-rate-limit-mutation`, `--mobile-rate-limit-read`.
+    - Added `envInt()` helper for int env var parsing with defaults.
+  - Added 12 tests in `internal/hud/app_test.go`:
+    - Rate limiting: 6 tests (unit + integration).
+    - Token revocation: 4 tests (unit + admin endpoint).
+    - Device ID: 1 test (extraction + truncation).
+    - All existing 16 mobile tests continue to pass.
+  - Updated docs:
+    - `docs/MOBILE_COMPANION_API.md`: added revoke endpoint, rate limiting, device ID sections.
+    - `docs/MOBILE_COMPANION_SECURITY.md`: updated threat model status, hardening checklist, cross-cutting controls, and added M1 signoff.
+  - Marked M1 complete in `.loom/30-implementation-plan.md`.
+- Why:
+  - M1 closes the security gaps deferred from M0: rate limiting, token revocation, device tracking, TLS support.
+- Verification:
+  - `go build ./cmd/loom` — pass.
+  - `go vet ./internal/hud/...` — pass.
+  - `go test ./internal/hud/... -count=1` — pass.
+  - `go test ./cmd/loom -count=1` — pass.
+- Sources:
+  - [S1] `internal/hud/mobile_ratelimit.go`
+  - [S2] `internal/hud/mobile_revoke.go`
+  - [S3] `internal/hud/api_mobile.go`
+  - [S4] `internal/hud/app.go`
+  - [S5] `cmd/loom/hud.go`
+  - [S6] `internal/hud/app_test.go`
+  - [S7] `docs/MOBILE_COMPANION_API.md`
+  - [S8] `docs/MOBILE_COMPANION_SECURITY.md`
+
 ## 2026-02-23 (session 15)
 
 - What changed:

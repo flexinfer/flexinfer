@@ -3,11 +3,22 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"github.com/crb2nu/loom/internal/hud"
 )
+
+// envInt reads an integer from an environment variable, falling back to a default.
+func envInt(key string, defaultVal int) int {
+	if raw := os.Getenv(key); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			return v
+		}
+	}
+	return defaultVal
+}
 
 func newHudCmd(socketPath string) *cobra.Command {
 	var dev bool
@@ -27,6 +38,11 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var adminToken string
 	var mobileOperatorToken string
 	var mobileOperatorScopes string
+	var mobileRateLimitMutation int
+	var mobileRateLimitRead int
+	var tlsCert string
+	var tlsKey string
+	var bindAddress string
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
@@ -72,25 +88,30 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			}
 
 			return hud.Run(hud.Config{
-				SocketPath:           socketPath,
-				Dev:                  dev,
-				Port:                 port,
-				MetricsAddr:          metricsAddr,
-				Overlay:              overlay,
-				OverlayEdge:          overlayEdge,
-				OverlayWidth:         overlayWidth,
-				OverlayOpacity:       overlayOpacity,
-				OverlayCornerRadius:  overlayCornerRadius,
-				FlexInferURL:         flexinferURL,
-				FlexInferKey:         flexinferKey,
-				CoordinatorModel:     coordinatorModel,
-				WebhookURL:           webhookURL,
-				WebhookToken:         webhookToken,
-				WebhookResolve:       webhookResolve,
-				AdminToken:           adminToken,
-				MobileOperatorToken:  mobileOperatorToken,
-				MobileOperatorScopes: mobileOperatorScopes,
-				TUI:                  tui,
+				SocketPath:              socketPath,
+				Dev:                     dev,
+				Port:                    port,
+				MetricsAddr:             metricsAddr,
+				Overlay:                 overlay,
+				OverlayEdge:             overlayEdge,
+				OverlayWidth:            overlayWidth,
+				OverlayOpacity:          overlayOpacity,
+				OverlayCornerRadius:     overlayCornerRadius,
+				FlexInferURL:            flexinferURL,
+				FlexInferKey:            flexinferKey,
+				CoordinatorModel:        coordinatorModel,
+				WebhookURL:              webhookURL,
+				WebhookToken:            webhookToken,
+				WebhookResolve:          webhookResolve,
+				AdminToken:              adminToken,
+				MobileOperatorToken:     mobileOperatorToken,
+				MobileOperatorScopes:    mobileOperatorScopes,
+				MobileRateLimitMutation: mobileRateLimitMutation,
+				MobileRateLimitRead:     mobileRateLimitRead,
+				TLSCert:                 tlsCert,
+				TLSKey:                  tlsKey,
+				BindAddress:             bindAddress,
+				TUI:                     tui,
 			})
 		},
 	}
@@ -118,6 +139,13 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&adminToken, "admin-token", os.Getenv("HUD_ADMIN_TOKEN"), "Admin token required for protected HUD mutations [$HUD_ADMIN_TOKEN]")
 	cmd.Flags().StringVar(&mobileOperatorToken, "mobile-operator-token", os.Getenv("HUD_MOBILE_OPERATOR_TOKEN"), "Bearer token for /api/mobile/v1 routes [$HUD_MOBILE_OPERATOR_TOKEN]")
 	cmd.Flags().StringVar(&mobileOperatorScopes, "mobile-operator-scopes", os.Getenv("HUD_MOBILE_OPERATOR_SCOPES"), "Comma-separated scopes for mobile operator token [$HUD_MOBILE_OPERATOR_SCOPES]")
+	cmd.Flags().IntVar(&mobileRateLimitMutation, "mobile-rate-limit-mutation", envInt("HUD_MOBILE_RATE_LIMIT_MUTATION", 10), "Max mobile mutation requests per actor per minute (0 = disabled) [$HUD_MOBILE_RATE_LIMIT_MUTATION]")
+	cmd.Flags().IntVar(&mobileRateLimitRead, "mobile-rate-limit-read", envInt("HUD_MOBILE_RATE_LIMIT_READ", 60), "Max mobile read requests per actor per minute (0 = disabled) [$HUD_MOBILE_RATE_LIMIT_READ]")
+
+	// TLS and bind address (gateway mode).
+	cmd.Flags().StringVar(&tlsCert, "tls-cert", os.Getenv("HUD_TLS_CERT"), "Path to TLS certificate PEM file [$HUD_TLS_CERT]")
+	cmd.Flags().StringVar(&tlsKey, "tls-key", os.Getenv("HUD_TLS_KEY"), "Path to TLS private key PEM file [$HUD_TLS_KEY]")
+	cmd.Flags().StringVar(&bindAddress, "bind", os.Getenv("HUD_BIND_ADDRESS"), "Listen address (default: 127.0.0.1) [$HUD_BIND_ADDRESS]")
 
 	// Ghostty integration.
 	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")

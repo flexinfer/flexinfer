@@ -4,6 +4,20 @@ This document defines the API contract for the Loom Companion iPhone/iPad app.
 
 Status: **v1 contract freeze** (2026-02-23). All 8 endpoints implemented in `internal/hud/api_mobile.go`.
 
+## Tracking
+
+- [MBL-1: Auth bootstrap decision gate (M0)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/30)
+- [MBL-2: Token lifecycle hardening (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31)
+- [MBL-3: Mobile policy and mutation guardrails (M1/M3)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32)
+- [MBL-4: LAN permission diagnostics and profile health (M2)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/33)
+- [MBL-5: SSE resilience and fallback SLOs (M2/M5)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/34)
+- [MBL-6: Notification severity and action policy (M4)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/35)
+- [MBL-7: Push reliability and throttling controls (M4/M5)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/36)
+- [MBL-8: Scope discipline enforcement (cross-cutting)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/37)
+- [MBL-9: Gateway TLS validation enforcement (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42)
+- [MBL-10: Rate limiting for mobile mutation endpoints (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/43)
+- [MBL-11: Mobile credential revocation steps in incident runbook](https://gitlab.flexinfer.ai/services/loom-core/-/issues/44)
+
 ## Goals
 
 - Provide a stable mobile-facing contract without coupling the app to internal HUD handler shapes.
@@ -34,7 +48,7 @@ Notes:
 ## Auth Model (Contract-Level)
 
 - `Authorization: Bearer <token>` required for protected endpoints.
-- Bootstrap decision (`MBL-1`):
+- Bootstrap decision ([MBL-1](https://gitlab.flexinfer.ai/services/loom-core/-/issues/30)):
   - v1 default: direct native OAuth authorization code + PKCE in an external browser/system auth session.
   - v1 fallback: device-code pairing for profiles where direct browser-mediated auth is not practical.
   - Fallback path is explicit and profile/policy selected; do not silently downgrade from OAuth+PKCE.
@@ -369,6 +383,59 @@ Event allowlist in v1:
 - `agent.heartbeat`
 
 Source: `internal/hud/api_mobile.go:290-295`
+
+---
+
+### POST `/api/mobile/v1/admin/revoke`
+
+Revoke a mobile operator token at runtime. Protected by admin token (`X-Admin-Token` header), not by mobile bearer auth.
+
+**Request headers:**
+- `X-Admin-Token: <admin_token>` (required)
+
+**Request body:**
+
+```json
+{
+  "token": "<mobile_token_to_revoke>"
+}
+```
+
+**Response `data`:**
+
+```json
+{
+  "revoked": true
+}
+```
+
+**Error cases:**
+- `400 bad_request` — missing `token` field
+- `401 unauthorized` — invalid admin token
+- `403 forbidden` — admin token not configured
+
+**Audit:** Logs `token_revoke` action.
+
+Source: `internal/hud/api_mobile.go` (handleMobileAdminRevoke)
+
+---
+
+## Rate Limiting
+
+Mobile API endpoints enforce per-actor, per-minute rate limits:
+
+| Category | Default limit | Config flag | Env var |
+|---|---|---|---|
+| Mutation (`POST`) | 10 req/min | `--mobile-rate-limit-mutation` | `HUD_MOBILE_RATE_LIMIT_MUTATION` |
+| Read (`GET`) | 60 req/min | `--mobile-rate-limit-read` | `HUD_MOBILE_RATE_LIMIT_READ` |
+
+- Actor is identified by remote IP address.
+- Set limit to `0` to disable rate limiting for that category.
+- Rate-limited requests receive `429 Too Many Requests` with error code `rate_limited`.
+
+## Device Identity
+
+Mobile clients may include an `X-Device-ID` header on all requests. When present, the device ID is included in audit log entries for mutation operations. Maximum length: 128 characters (truncated if longer).
 
 ---
 

@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxDeviceIDLen = 128
+
 const (
 	mobileScopeRead          = "mobile:read"
 	mobileScopeSessionCreate = "mobile:session:create"
@@ -124,9 +126,24 @@ func (a *App) requireMobileScope(w http.ResponseWriter, r *http.Request, require
 		return false
 	}
 
+	// Check revocation list.
+	if a.mobileRevocationList != nil && a.mobileRevocationList.IsRevoked(actual) {
+		a.writeMobileError(w, http.StatusUnauthorized, "token_revoked", "mobile bearer token has been revoked")
+		return false
+	}
+
 	if !a.mobileScopeAllowed(requiredScope) {
 		a.writeMobileError(w, http.StatusForbidden, "forbidden", "mobile token missing required scope")
 		return false
+	}
+
+	// Check rate limit.
+	if a.mobileRateLimiter != nil {
+		isMutation := requiredScope != mobileScopeRead
+		if !a.mobileRateLimiter.Allow(actorFromRequest(r), isMutation) {
+			a.writeMobileError(w, http.StatusTooManyRequests, "rate_limited", "mobile API rate limit exceeded")
+			return false
+		}
 	}
 
 	return true
@@ -148,6 +165,15 @@ func (a *App) mobileScopeAllowed(required string) bool {
 	return false
 }
 
+// extractDeviceID reads the optional X-Device-ID header from the request.
+func extractDeviceID(r *http.Request) string {
+	id := strings.TrimSpace(r.Header.Get("X-Device-ID"))
+	if len(id) > maxDeviceIDLen {
+		id = id[:maxDeviceIDLen]
+	}
+	return id
+}
+
 // logMobileAudit records a structured audit entry for mobile mutation operations.
 func (a *App) logMobileAudit(r *http.Request, action string, targets map[string]string, outcome string, auditErr error) {
 	attrs := []any{
@@ -156,6 +182,9 @@ func (a *App) logMobileAudit(r *http.Request, action string, targets map[string]
 		"endpoint", r.Method + " " + r.URL.Path,
 		"remote_addr", r.RemoteAddr,
 		"outcome", outcome,
+	}
+	if deviceID := extractDeviceID(r); deviceID != "" {
+		attrs = append(attrs, "device_id", deviceID)
 	}
 	for k, v := range targets {
 		attrs = append(attrs, k, v)
@@ -362,6 +391,41 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 	proxyReq.ContentLength = int64(len(proxyBody))
 	proxyReq.Header.Set("Content-Type", "application/json")
 	a.handleAgentSessionEnd(w, proxyReq)
+}
+
+func (a *App) handleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdminToken(w, r) {
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if r.Body != nil {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			return
+		}
+		if len(bytes.TrimSpace(data)) > 0 {
+			if err := json.Unmarshal(data, &body); err != nil {
+				a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+				return
+			}
+		}
+	}
+
+	if strings.TrimSpace(body.Token) == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "token field is required")
+		return
+	}
+
+	if a.mobileRevocationList != nil {
+		a.mobileRevocationList.Revoke(body.Token)
+	}
+
+	a.logMobileAudit(r, "token_revoke", nil, "success", nil)
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"revoked": true})
 }
 
 func eventHasSessionID(raw json.RawMessage, sessionID string) bool {

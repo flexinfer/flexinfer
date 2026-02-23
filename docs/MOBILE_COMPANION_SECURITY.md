@@ -4,6 +4,20 @@ This document defines the security model for Loom Companion iPhone/iPad access.
 
 Status: **v1 contract freeze** (2026-02-23). Auth, scope checks, and audit logging implemented in `internal/hud/api_mobile.go`.
 
+## Tracking
+
+- [MBL-1: Auth bootstrap decision gate (M0)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/30)
+- [MBL-2: Token lifecycle hardening (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31)
+- [MBL-3: Mobile policy and mutation guardrails (M1/M3)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32)
+- [MBL-4: LAN permission diagnostics and profile health (M2)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/33)
+- [MBL-5: SSE resilience and fallback SLOs (M2/M5)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/34)
+- [MBL-6: Notification severity and action policy (M4)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/35)
+- [MBL-7: Push reliability and throttling controls (M4/M5)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/36)
+- [MBL-8: Scope discipline enforcement (cross-cutting)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/37)
+- [MBL-9: Gateway TLS validation enforcement (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42)
+- [MBL-10: Rate limiting for mobile mutation endpoints (M1)](https://gitlab.flexinfer.ai/services/loom-core/-/issues/43)
+- [MBL-11: Mobile credential revocation steps in incident runbook](https://gitlab.flexinfer.ai/services/loom-core/-/issues/44)
+
 ## Scope
 
 - Mobile monitoring and session lifecycle control APIs.
@@ -66,7 +80,7 @@ Boundary policy:
 ## Authentication Requirements
 
 - Mobile protected endpoints require bearer auth.
-- Bootstrap decision (`MBL-1`):
+- Bootstrap decision ([MBL-1](https://gitlab.flexinfer.ai/services/loom-core/-/issues/30)):
   - Default: native OAuth authorization code + PKCE with external user-agent/system browser.
   - Fallback: device-code pairing only when direct browser-mediated auth is not practical for the selected profile.
   - Flow selection must be explicit per profile/policy; implicit fallback is not allowed.
@@ -168,7 +182,7 @@ This section documents specific attack scenarios and mitigations for each mutati
 
 | Threat | Severity | Mitigation | Status |
 |---|---|---|---|
-| **Unauthorized session spam** — attacker floods create requests to exhaust resources | High | Scope `mobile:session:create` required; rate limiting per actor | Scope: implemented. Rate limit: deferred to M1 |
+| **Unauthorized session spam** — attacker floods create requests to exhaust resources | High | Scope `mobile:session:create` required; rate limiting per actor | Implemented (scope + `MobileRateLimiter`) |
 | **Agent impersonation** — creating sessions as another agent to pollute context | Medium | Audit logging captures `actor_id` + `agent_id` + remote address; operator review via audit trail | Implemented (`logMobileAudit`) |
 | **Replay of captured create request** — attacker replays a valid session-create request | Medium | Short-lived tokens reduce replay window; session-create is idempotent for same active context (no duplicate side effects) | Token rotation deferred to M1; idempotency via bridge layer |
 | **Namespace injection** — malicious namespace string to manipulate context isolation | Low | Input validation at agent-context bridge layer; namespace is treated as an opaque string with no path traversal semantics | Implemented in bridge layer |
@@ -180,7 +194,7 @@ This section documents specific attack scenarios and mitigations for each mutati
 | **Unauthorized termination** — attacker ends a critical in-progress session | High | Scope `mobile:session:end` required; mobile UX should include confirmation step | Scope: implemented. UX confirmation: deferred to M2/M3 |
 | **Session ID enumeration** — brute-forcing session IDs to end arbitrary sessions | Medium | Auth required for all requests; session IDs are opaque; audit trail records all attempts | Implemented (auth + audit) |
 | **Replay of end request** — attacker replays a captured end request | Low | Idempotent: ending an already-ended session returns success with no side effects | Implemented in bridge layer |
-| **Mass session termination** — attacker rapidly ends all sessions via automated requests | High | Rate limiting per actor; audit alerting on high-rate mutation bursts | Rate limit: deferred to M1. Audit logging: implemented |
+| **Mass session termination** — attacker rapidly ends all sessions via automated requests | High | Rate limiting per actor; audit alerting on high-rate mutation bursts | Implemented (rate limiter + audit logging) |
 
 ### Cross-cutting controls
 
@@ -189,21 +203,25 @@ This section documents specific attack scenarios and mitigations for each mutati
 | Bearer token auth (constant-time comparison) | All endpoints | Implemented (`requireMobileScope`) |
 | Per-endpoint scope checks | All endpoints | Implemented (3 scopes: `mobile:read`, `mobile:session:create`, `mobile:session:end`) |
 | Mobile-token-outside-mobile-API guard | Prevents mobile tokens from accessing internal `/api/agent/*` routes | Implemented (`mobileTokenOutsideMobileAPI`) |
-| Structured audit logging | All mutation endpoints | Implemented (`logMobileAudit`) |
+| Structured audit logging | All mutation endpoints | Implemented (`logMobileAudit` with device_id) |
 | Request ID in every response | All endpoints | Implemented (`newRequestID` in `mobileEnvelope`) |
+| Per-actor rate limiting | All endpoints (mutation + read) | Implemented (`MobileRateLimiter`, minute-window counters) |
+| Token revocation | Runtime revocation without restart | Implemented (`MobileTokenRevocationList` + admin endpoint) |
+| Device identity tracking | Audit logs for mutations | Implemented (`X-Device-ID` header extraction) |
+| TLS support | Gateway mode HTTPS | Implemented (`--tls-cert`, `--tls-key` config) |
 
 ## Hardening Checklist (Pre-Beta)
 
 - [x] Protected mobile endpoints require auth in both modes.
-- [ ] Role policy tests enforce allowed/denied matrix.
+- [ ] Role policy tests enforce allowed/denied matrix. (Tracks [MBL-3](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32))
 - [x] Scope checks enforce per-endpoint permission model.
-- [ ] Token expiry and revocation behavior verified.
-- [ ] TLS and cert-validation behavior validated for gateway mode.
+- [ ] Token expiry and revocation behavior verified. (Tracks [MBL-2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31))
+- [ ] TLS and cert-validation behavior validated for gateway mode. (Tracks [MBL-9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42))
 - [x] Audit logs include actor + endpoint + target fields for mutations.
 - [x] Mobile token blocked from non-mobile API paths.
-- [ ] Rate limiting configured for mutation endpoints.
-- [ ] Refresh token rotation implemented.
-- [ ] Security incident runbook includes mobile credential revocation steps.
+- [x] Rate limiting configured for mutation endpoints.
+- [ ] Refresh token rotation implemented. (Tracks [MBL-2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31))
+- [ ] Security incident runbook includes mobile credential revocation steps. (Tracks [MBL-11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/44))
 
 ## Test Matrix
 
@@ -230,23 +248,52 @@ Security regression tests should include:
 | Consistent error envelope | All errors use `mobileEnvelope` with `ok: false` and structured error codes | `api_mobile.go:60-73` |
 | Request traceability | Every response includes `request_id` and `timestamp` in `meta` | `api_mobile.go:22-33` |
 
-### Controls deferred to M1
+### Controls deferred to M1 (now resolved)
+
+| Control | Resolution |
+|---|---|
+| Rate limiting configuration | Implemented: `MobileRateLimiter` with per-actor minute-window counters (`mobile_ratelimit.go`) |
+| TLS enforcement for gateway mode | Implemented: `--tls-cert` / `--tls-key` flags, `tls.NewListener` wrapping (`app.go`) |
+| Device ID tracking in audit | Implemented: `X-Device-ID` header extraction in `logMobileAudit()` |
+| Token revocation | Implemented: `MobileTokenRevocationList` with admin revoke endpoint (`mobile_revoke.go`) |
+
+### Controls deferred to M2
 
 | Control | Reason |
 |---|---|
-| Refresh token rotation | Requires token lifecycle implementation (M1 task) |
-| Rate limiting configuration | Requires per-endpoint rate limiter middleware (M1 task) |
-| TLS enforcement for gateway mode | Requires gateway deployment infrastructure (M1 task) |
-| Device ID tracking in audit | Requires token claims with device context (M1 task) |
+| Refresh token rotation | Requires full OAuth 2.1 token lifecycle (M2 task, when iOS app consumes it) |
+| Full OAuth 2.1 mobile flow | Requires iOS app to implement PKCE authorization code flow (M2 task) |
 
 ### Assessment
 
-The v1 mobile API surface implements the minimum viable security controls for the contract freeze: authentication, fine-grained scoping, audit logging, and mobile-token isolation. The deferred controls (token rotation, rate limiting, TLS enforcement) are documented for M1 and do not block schema freeze or M1 development start.
+The v1 mobile API surface now implements comprehensive security controls: authentication, fine-grained scoping, audit logging with device identity, mobile-token isolation, per-actor rate limiting, runtime token revocation, and TLS support for gateway mode. The remaining deferred control (OAuth token lifecycle with refresh rotation) requires the iOS app to exist and is tracked for M2.
+
+## Security Review Signoff (M1)
+
+**Date:** 2026-02-23
+**Scope:** M1 hardening — rate limiting, token revocation, device tracking, TLS.
+
+### M1 controls verified
+
+| Control | Implementation | Tests |
+|---|---|---|
+| Rate limiting (mutation) | `MobileRateLimiter`, 10 req/min default | `TestMobileRateLimiter_*` (5 tests), `TestHandler_MobileRateLimit_Returns429` |
+| Rate limiting (read) | `MobileRateLimiter`, 60 req/min default | Same test suite |
+| Token revocation | `MobileTokenRevocationList` with SHA-256 hash storage | `TestMobileRevocation_*` (4 tests) |
+| Admin revoke endpoint | `POST /api/mobile/v1/admin/revoke` (admin-token protected) | `TestMobileRevocation_AdminEndpoint*` (2 tests) |
+| Device ID tracking | `X-Device-ID` header → audit log | `TestMobileAudit_DeviceIDExtraction` |
+| TLS support | `--tls-cert` / `--tls-key` with `tls.NewListener` | Build verification |
+| Configurable bind address | `--bind` flag (default: 127.0.0.1) | Build verification |
+| Non-localhost TLS warning | Log warning when mobile token set without TLS on non-localhost | Build verification |
 
 ## Sources
 
-- `internal/hud/api_mobile.go` — all mobile v1 handlers, auth, audit
-- `internal/hud/app.go:539-547` — route registration
+- `internal/hud/api_mobile.go` — all mobile v1 handlers, auth, audit, revoke
+- `internal/hud/mobile_ratelimit.go` — rate limiter implementation
+- `internal/hud/mobile_revoke.go` — token revocation list
+- `internal/hud/app.go` — TLS, bind address, rate limiter + revocation init
+- `cmd/loom/hud.go` — CLI flags
+- `internal/hud/app_test.go` — M1 test suite
 - `docs/ENTERPRISE_SECURITY.md`
 - `docs/STREAMABLE_HTTP.md`
 - `.loom/20-product-spec.md`

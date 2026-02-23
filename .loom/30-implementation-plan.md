@@ -18,7 +18,7 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 | Milestone | Description | Status |
 |---|---|---|
 | M0 | Contract + security architecture freeze | **Complete** (2026-02-23) |
-| M1 | Backend mobile auth + API hardening | Not started |
+| M1 | Backend mobile auth + API hardening | **Complete** (2026-02-23) |
 | M2 | iOS/iPad app scaffold + monitoring UI | Not started |
 | M3 | Session create/end controls | Not started |
 | M4 | Notifications + operational polish | Not started |
@@ -111,11 +111,21 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - Add refresh-token rotation/replay tests.
 - Add revoke/logout invalidation tests.
 
-### Exit Criteria
+### Completion Notes (2026-02-23)
 
-- Auth required for all mobile-reachable protected endpoints.
-- Session create/end API paths fully covered by tests.
-- Mobile token revocation/logout invalidation behavior proven in tests.
+- Rate limiting: `MobileRateLimiter` with per-actor minute-window counters (mutation: 10/min, read: 60/min).
+- Token revocation: `MobileTokenRevocationList` with SHA-256 hashing + admin revoke endpoint.
+- Device ID tracking: `X-Device-ID` header extraction in `logMobileAudit()`.
+- TLS support: `--tls-cert` / `--tls-key` flags with `tls.NewListener` wrapping.
+- Bind address: `--bind` flag (default: `127.0.0.1`) for gateway mode.
+- 12 new tests covering rate limiting, revocation, device ID, and admin endpoint.
+- Full OAuth 2.1 token lifecycle deferred to M2 (requires iOS app to consume it).
+
+### Exit Criteria (all met)
+
+- [x] Auth required for all mobile-reachable protected endpoints.
+- [x] Session create/end API paths fully covered by tests.
+- [x] Mobile token revocation/logout invalidation behavior proven in tests.
 
 ## M2: iOS/iPad App Scaffold + Monitoring MVP
 

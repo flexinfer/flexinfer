@@ -7,6 +7,7 @@ package hud
 
 import (
 	"context"
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -65,6 +66,15 @@ type Config struct {
 	MobileOperatorToken  string // Bearer token for /api/mobile/v1 routes.
 	MobileOperatorScopes string // Comma-separated scopes granted to mobile token.
 
+	// Mobile rate limiting.
+	MobileRateLimitMutation int // Max mutation requests per actor per minute (0 = disabled).
+	MobileRateLimitRead     int // Max read requests per actor per minute (0 = disabled).
+
+	// TLS for gateway mode.
+	TLSCert     string // Path to PEM certificate file.
+	TLSKey      string // Path to PEM private key file.
+	BindAddress string // Listen address (default: 127.0.0.1).
+
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
 }
@@ -97,6 +107,10 @@ type App struct {
 
 	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
 	nudgeQueue *NudgeQueue
+
+	// Mobile API hardening.
+	mobileRateLimiter    *MobileRateLimiter
+	mobileRevocationList *MobileTokenRevocationList
 }
 
 // Run creates and starts the HUD application. This is the main entry point
@@ -123,12 +137,17 @@ func Run(cfg Config) error {
 	appCache := loomcache.New(cacheCfg, logger)
 
 	app := &App{
-		config:     cfg,
-		client:     client,
-		agent:      agent,
-		cache:      appCache,
-		logger:     logger,
-		nudgeQueue: NewNudgeQueue(),
+		config:               cfg,
+		client:               client,
+		agent:                agent,
+		cache:                appCache,
+		logger:               logger,
+		nudgeQueue:           NewNudgeQueue(),
+		mobileRevocationList: NewMobileTokenRevocationList(),
+		mobileRateLimiter: NewMobileRateLimiter(MobileRateLimitConfig{
+			MutationPerMinute: cfg.MobileRateLimitMutation,
+			ReadPerMinute:     cfg.MobileRateLimitRead,
+		}),
 	}
 
 	defer appCache.Close()
@@ -323,14 +342,38 @@ func Run(cfg Config) error {
 	mux := http.NewServeMux()
 	app.registerRoutes(mux)
 
-	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
+	bindAddr := cfg.BindAddress
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	addr := bindAddr + ":" + strconv.Itoa(cfg.Port)
 	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
 
+	// Wrap with TLS if cert and key are configured.
+	scheme := "http"
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		cert, tlsErr := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if tlsErr != nil {
+			ln.Close()
+			return fmt.Errorf("load TLS cert/key: %w", tlsErr)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		ln = tls.NewListener(ln, tlsCfg)
+		scheme = "https"
+		logger.Info("TLS enabled", "cert", cfg.TLSCert)
+	} else if cfg.MobileOperatorToken != "" && bindAddr != "127.0.0.1" && bindAddr != "localhost" {
+		logger.Warn("mobile operator token configured without TLS on non-localhost address",
+			"bind", bindAddr)
+	}
+
 	actualAddr := ln.Addr().String()
-	url := "http://" + actualAddr
+	url := scheme + "://" + actualAddr
 
 	// Write the bound port to a file so CLI commands can discover it.
 	portFile := PortFilePath()
@@ -545,6 +588,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/v1/events/stream", a.withCORS(a.handleMobileEventsStream))
 	mux.HandleFunc("POST /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessionCreate))
 	mux.HandleFunc("POST /api/mobile/v1/sessions/{session_id}/end", a.withCORS(a.handleMobileSessionEnd))
+	mux.HandleFunc("POST /api/mobile/v1/admin/revoke", a.withCORS(a.handleMobileAdminRevoke))
 
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))

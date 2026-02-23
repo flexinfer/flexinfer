@@ -1307,3 +1307,226 @@ func (m *appMockHandlers) handleConn(conn net.Conn) {
 		conn.Write(resp)
 	}
 }
+
+// --- M1: Rate limiting tests ---
+
+func TestMobileRateLimiter_AllowsWithinLimit(t *testing.T) {
+	rl := NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 5, ReadPerMinute: 10})
+	for i := 0; i < 5; i++ {
+		if !rl.Allow("1.2.3.4", true) {
+			t.Fatalf("expected allow on mutation request %d", i+1)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if !rl.Allow("1.2.3.4", false) {
+			t.Fatalf("expected allow on read request %d", i+1)
+		}
+	}
+}
+
+func TestMobileRateLimiter_BlocksOverLimit(t *testing.T) {
+	rl := NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 2, ReadPerMinute: 3})
+	rl.Allow("1.2.3.4", true)
+	rl.Allow("1.2.3.4", true)
+	if rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected deny on 3rd mutation request")
+	}
+}
+
+func TestMobileRateLimiter_WindowResets(t *testing.T) {
+	rl := NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 1})
+	now := time.Date(2026, 2, 23, 12, 0, 30, 0, time.UTC)
+	rl.now = func() time.Time { return now }
+
+	if !rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected allow on first request")
+	}
+	if rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected deny on second request in same window")
+	}
+
+	// Advance to next minute.
+	rl.now = func() time.Time { return now.Add(time.Minute) }
+	if !rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected allow after window reset")
+	}
+}
+
+func TestMobileRateLimiter_SeparateActors(t *testing.T) {
+	rl := NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 1})
+	if !rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected allow for actor A")
+	}
+	if !rl.Allow("5.6.7.8", true) {
+		t.Fatal("expected allow for actor B (independent counter)")
+	}
+	if rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected deny for actor A (limit reached)")
+	}
+}
+
+func TestMobileRateLimiter_MutationVsRead(t *testing.T) {
+	rl := NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 1, ReadPerMinute: 2})
+	if !rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected allow for mutation")
+	}
+	if rl.Allow("1.2.3.4", true) {
+		t.Fatal("expected deny for second mutation")
+	}
+	// Read should still be allowed (separate category).
+	if !rl.Allow("1.2.3.4", false) {
+		t.Fatal("expected allow for read (separate limit)")
+	}
+}
+
+func TestHandler_MobileRateLimit_Returns429(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.mobileRateLimiter = NewMobileRateLimiter(MobileRateLimitConfig{ReadPerMinute: 1})
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// First request should succeed.
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Second request should be rate limited.
+	req = httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	json.Unmarshal(w.Body.Bytes(), &env)
+	if env.OK {
+		t.Error("expected ok=false for rate limited response")
+	}
+}
+
+// --- M1: Token revocation tests ---
+
+func TestMobileRevocation_RevokedTokenDenied(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// Revoke the token.
+	app.mobileRevocationList.Revoke("mobile-secret")
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	json.Unmarshal(w.Body.Bytes(), &env)
+	errObj, _ := env.Error.(map[string]any)
+	if errObj["code"] != "token_revoked" {
+		t.Errorf("expected error code 'token_revoked', got %v", errObj["code"])
+	}
+}
+
+func TestMobileRevocation_UnrevokedTokenAllowed(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// Revoke a different token.
+	app.mobileRevocationList.Revoke("other-token")
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_AdminEndpoint(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.config.AdminToken = "admin-secret"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// Revoke via admin endpoint.
+	req := httptest.NewRequest("POST", "/api/mobile/v1/admin/revoke", strings.NewReader(`{"token":"mobile-secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "admin-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Now the mobile token should be rejected.
+	req = httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 after revocation, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_AdminEndpoint_RequiresAdminToken(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "admin-secret"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/admin/revoke", strings.NewReader(`{"token":"some-token"}`))
+	req.Header.Set("Content-Type", "application/json")
+	// No admin token header.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- M1: Device ID tracking tests ---
+
+func TestMobileAudit_DeviceIDExtraction(t *testing.T) {
+	// Test extractDeviceID helper directly.
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("X-Device-ID", "iphone-abc123")
+
+	got := extractDeviceID(req)
+	if got != "iphone-abc123" {
+		t.Errorf("expected 'iphone-abc123', got %q", got)
+	}
+
+	// Test truncation.
+	long := strings.Repeat("x", 200)
+	req.Header.Set("X-Device-ID", long)
+	got = extractDeviceID(req)
+	if len(got) != maxDeviceIDLen {
+		t.Errorf("expected truncation to %d chars, got %d", maxDeviceIDLen, len(got))
+	}
+
+	// Test missing header.
+	req.Header.Del("X-Device-ID")
+	got = extractDeviceID(req)
+	if got != "" {
+		t.Errorf("expected empty string for missing header, got %q", got)
+	}
+}
