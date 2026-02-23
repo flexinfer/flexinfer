@@ -8,6 +8,11 @@ public final class SessionDetailViewModel {
     public var isLoading = false
     public var error: LoomAPIError?
 
+    // Session end state
+    public var isEnding = false
+    public var endError: String?
+    public var sessionEnded = false
+
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
 
@@ -32,6 +37,26 @@ public final class SessionDetailViewModel {
             error = err
         } catch {
             self.error = .networkError(underlying: error.localizedDescription)
+        }
+    }
+
+    /// End the current session.
+    public func endSession(summarize: Bool = false) async {
+        guard let sessionId = session?.id else { return }
+        isEnding = true
+        endError = nil
+        defer { isEnding = false }
+
+        do {
+            let _: SessionEndResponse = try await apiClient.request(
+                .endSession(id: sessionId, summarize: summarize)
+            )
+            session?.status = .ended
+            sessionEnded = true
+        } catch let err as LoomAPIError {
+            endError = err.description
+        } catch {
+            endError = error.localizedDescription
         }
     }
 }

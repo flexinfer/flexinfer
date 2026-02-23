@@ -12,6 +12,10 @@ public final class SessionsViewModel {
     public var agentFilter: String?
     public var searchText: String = ""
 
+    // Session creation state
+    public var isCreating = false
+    public var createError: String?
+
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
 
@@ -31,6 +35,29 @@ public final class SessionsViewModel {
             error = err
         } catch {
             self.error = .networkError(underlying: error.localizedDescription)
+        }
+    }
+
+    /// Create a new session and reload the sessions list on success.
+    public func createSession(
+        agentId: String,
+        namespace: String? = nil,
+        description: String? = nil,
+        autoRecall: Bool? = nil
+    ) async {
+        isCreating = true
+        createError = nil
+        defer { isCreating = false }
+
+        do {
+            let _: SessionCreateResponse = try await apiClient.request(
+                .createSession(agentId: agentId, namespace: namespace, description: description, autoRecall: autoRecall)
+            )
+            await load()
+        } catch let err as LoomAPIError {
+            createError = err.description
+        } catch {
+            createError = error.localizedDescription
         }
     }
 

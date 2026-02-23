@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 const maxDeviceIDLen = 128
@@ -328,25 +330,40 @@ func (a *App) handleMobileSessionCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Read the body to extract audit fields before forwarding.
-	var reqBody struct {
-		AgentID   string `json:"agent_id"`
-		Namespace string `json:"namespace"`
+	var body bridge.SessionStartParams
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+		return
 	}
-	bodyBytes, _ := io.ReadAll(r.Body)
-	if len(bytes.TrimSpace(bodyBytes)) > 0 {
-		_ = json.Unmarshal(bodyBytes, &reqBody)
+	if body.AgentID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "agent_id is required")
+		return
 	}
 
 	a.logMobileAudit(r, "session_create", map[string]string{
-		"agent_id":  reqBody.AgentID,
-		"namespace": reqBody.Namespace,
+		"agent_id":  body.AgentID,
+		"namespace": body.Namespace,
 	}, "initiated", nil)
 
-	// Reconstruct request body for the downstream handler.
-	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-	r.ContentLength = int64(len(bodyBytes))
-	a.handleAgentSessionStart(w, r)
+	result, err := a.agent.StartSession(body)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to start session")
+		return
+	}
+
+	a.broadcastAgentEvent("agent.session.start", map[string]any{
+		"session_id": result.SessionID,
+		"agent_id":   body.AgentID,
+		"agent_type": body.AgentType,
+		"namespace":  body.Namespace,
+	})
+	if !result.AlreadyExisted {
+		a.fleetMonitor.IncrementKPI("sessions", 1)
+	}
+	go a.fleetMonitor.Refresh()
+	go a.maybeAutoProvisionSandbox(body.Namespace)
+
+	a.writeMobileJSON(w, http.StatusOK, result)
 }
 
 func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
@@ -382,15 +399,30 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 		"summarize":  strconv.FormatBool(body.Summarize),
 	}, "initiated", nil)
 
-	proxyBody, _ := json.Marshal(map[string]any{
+	endParams := bridge.SessionEndParams{
+		SessionID: sessionID,
+		Summarize: body.Summarize,
+	}
+	ended, err := a.agent.EndSession(endParams)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to end session")
+		return
+	}
+
+	if ended {
+		a.broadcastAgentEvent("agent.session.end", map[string]any{
+			"session_id": sessionID,
+		})
+		go a.fleetMonitor.Refresh()
+		if a.coordinator != nil {
+			go a.coordinator.OnSessionEnd(sessionID, "")
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"ended":      ended,
 		"session_id": sessionID,
-		"summarize":  body.Summarize,
 	})
-	proxyReq := r.Clone(r.Context())
-	proxyReq.Body = io.NopCloser(bytes.NewReader(proxyBody))
-	proxyReq.ContentLength = int64(len(proxyBody))
-	proxyReq.Header.Set("Content-Type", "application/json")
-	a.handleAgentSessionEnd(w, proxyReq)
 }
 
 func (a *App) handleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {

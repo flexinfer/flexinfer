@@ -11,7 +11,7 @@ public struct SessionInfo: Decodable, Identifiable, Sendable {
     public let id: String
     public let agentId: String
     public let namespace: String
-    public let status: SessionStatus
+    public var status: SessionStatus
     public let description: String
     public let startedAt: String
     public let endedAt: String?
@@ -58,5 +58,40 @@ public struct SessionDetailResponse: Decodable, Sendable {
 
     public init(session: SessionInfo) {
         self.session = session
+    }
+}
+
+/// Response from POST /api/mobile/v1/sessions (create session).
+public struct SessionCreateResponse: Decodable, Sendable {
+    public let sessionId: String
+    public let recalledContext: String?
+    public let alreadyExisted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId = "session_id"
+        case recalledContext = "recalled_context"
+        case alreadyExisted = "already_existed"
+    }
+
+    public init(sessionId: String, recalledContext: String? = nil, alreadyExisted: Bool = false) {
+        self.sessionId = sessionId
+        self.recalledContext = recalledContext
+        self.alreadyExisted = alreadyExisted
+    }
+}
+
+/// Response from POST /api/mobile/v1/sessions/{id}/end.
+public struct SessionEndResponse: Decodable, Sendable {
+    public let ended: Bool
+    public let sessionId: String
+
+    enum CodingKeys: String, CodingKey {
+        case ended
+        case sessionId = "session_id"
+    }
+
+    public init(ended: Bool, sessionId: String) {
+        self.ended = ended
+        self.sessionId = sessionId
     }
 }

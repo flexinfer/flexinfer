@@ -20,7 +20,7 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 | M0 | Contract + security architecture freeze | **Complete** (2026-02-23) |
 | M1 | Backend mobile auth + API hardening | **Complete** (2026-02-23) |
 | M2 | iOS/iPad app scaffold + monitoring UI | **Complete** (2026-02-23) |
-| M3 | Session create/end controls | Not started |
+| M3 | Session create/end controls | **Complete** (2026-02-23) |
 | M4 | Notifications + operational polish | Not started |
 | M5 | Beta rollout + telemetry tuning | Not started |
 
@@ -188,9 +188,24 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - Integration tests for create/end happy path and auth failures.
 - UI tests for form validation and confirmation flows.
 
-### Exit Criteria
+### Completion Notes (2026-02-23)
 
-- Operator can reliably create/end sessions from phone/tablet.
+- Backend fix: Mobile mutation handlers (`handleMobileSessionCreate`, `handleMobileSessionEnd`) now call the bridge directly and wrap responses in `writeMobileJSON` envelope, matching the v1 contract. Previously delegated to agent handlers which used raw `writeJSON`.
+- `SessionCreateResponse` and `SessionEndResponse` DTOs added matching backend response shapes.
+- `SessionsViewModel.createSession()` method calls endpoint and reloads list on success.
+- `SessionDetailViewModel.endSession()` method with optimistic status update (`session.status = .ended`).
+- `CreateSessionView` form sheet: agent ID (with presets), namespace, description, auto-recall toggle, validation, error display.
+- `SessionDetailView` end session: toolbar button (active sessions only), confirmation dialog with summarize option, error alert.
+- `SessionsListView` toolbar "+" button presenting create sheet, reloads on dismiss.
+- `SessionInfo.status` changed from `let` to `var` for optimistic UI updates.
+- 7 new tests: create session success/error, end session success/error, detail load, endpoint body serialization (2).
+- Total: 56 tests across 11 suites, all passing.
+
+### Exit Criteria (all met)
+
+- [x] Operator can create sessions from phone/tablet via New Session flow.
+- [x] Operator can end sessions from phone/tablet via End Session confirmation.
+- [x] Backend mutation responses wrapped in mobile envelope (contract compliance).
 
 ## M4: Notifications + Operational Polish
 

@@ -81,6 +81,41 @@ struct SessionsViewModelTests {
         #expect(vm.availableAgents.contains("claude-code"))
         #expect(vm.availableAgents.contains("codex"))
     }
+
+    @Test("Create session success reloads list")
+    func createSessionSuccess() async {
+        let client = MockAPIClient()
+        client.sessionsResponse = SessionsResponse(sessions: [
+            makeSession(id: "s1", status: .active),
+        ])
+        client.createSessionResponse = SessionCreateResponse(sessionId: "s2")
+
+        let vm = SessionsViewModel(apiClient: client)
+        await vm.load()
+        #expect(vm.sessions.count == 1)
+
+        await vm.createSession(agentId: "claude-code", namespace: "test/ns")
+
+        #expect(vm.createError == nil)
+        #expect(vm.isCreating == false)
+        // After create, load() is called again — sessions re-fetched from mock
+        #expect(vm.sessions.count == 1)
+    }
+
+    @Test("Create session error sets createError")
+    func createSessionError() async {
+        let client = MockAPIClient()
+        client.sessionsResponse = SessionsResponse(sessions: [])
+        client.shouldFail = true
+        client.failError = .apiError(code: .rateLimited, message: "too many requests", requestId: "r1")
+
+        let vm = SessionsViewModel(apiClient: client)
+
+        await vm.createSession(agentId: "claude-code")
+
+        #expect(vm.createError != nil)
+        #expect(vm.isCreating == false)
+    }
 }
 
 private func makeSession(

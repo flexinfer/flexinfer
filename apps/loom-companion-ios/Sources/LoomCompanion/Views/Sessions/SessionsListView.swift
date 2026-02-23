@@ -3,6 +3,7 @@ import LoomCompanionKit
 
 struct SessionsListView: View {
     @State private var viewModel: SessionsViewModel
+    @State private var showingCreateSheet = false
     private let apiClient: any LoomAPIClientProtocol
 
     init(apiClient: APIClient?) {
@@ -32,6 +33,20 @@ struct SessionsListView: View {
         .searchable(text: $viewModel.searchText, prompt: "Search sessions")
         .refreshable {
             await viewModel.load()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingCreateSheet = true
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingCreateSheet) {
+            Task { await viewModel.load() }
+        } content: {
+            CreateSessionView(viewModel: viewModel)
         }
         .overlay {
             if viewModel.isLoading && viewModel.sessions.isEmpty {

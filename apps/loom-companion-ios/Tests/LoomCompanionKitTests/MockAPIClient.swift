@@ -10,6 +10,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var sessionsResponse: SessionsResponse?
     var sessionDetailResponse: SessionDetailResponse?
     var sessionEventsResponse: SessionEventsResponse?
+    var createSessionResponse: SessionCreateResponse?
+    var endSessionResponse: SessionEndResponse?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if shouldFail {
@@ -25,6 +27,10 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = sessionDetailResponse as? T { return r }
         case .sessionEvents:
             if let r = sessionEventsResponse as? T { return r }
+        case .createSession:
+            if let r = createSessionResponse as? T { return r }
+        case .endSession:
+            if let r = endSessionResponse as? T { return r }
         default:
             break
         }

@@ -57,6 +57,32 @@ struct APIClientTests {
         #expect(json["description"] as? String == "Test session")
     }
 
+    @Test("End session includes body")
+    func endSessionBody() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.endSession(id: "s1", summarize: true).urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(json["summarize"] as? Bool == true)
+        #expect(request.url?.path.hasSuffix("/sessions/s1/end") == true)
+    }
+
+    @Test("Create session auto_recall field")
+    func createSessionAutoRecall() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.createSession(
+            agentId: "codex",
+            autoRecall: true
+        ).urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(json["agent_id"] as? String == "codex")
+        #expect(json["auto_recall"] as? Bool == true)
+        #expect(json["namespace"] == nil)
+    }
+
     @Test("Error code parsing")
     func errorCodeParsing() {
         #expect(APIErrorCode(rawValue: "unauthorized") == .unauthorized)
