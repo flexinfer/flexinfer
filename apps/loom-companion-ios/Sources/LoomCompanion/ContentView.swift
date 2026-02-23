@@ -4,11 +4,13 @@ import LoomCompanionKit
 struct ContentView: View {
     @Bindable var connectionVM: ConnectionViewModel
     @State private var healthMonitor = ConnectionHealthMonitor()
+    @State private var alertsViewModel = AlertsViewModel()
     @State private var selectedTab: AppTab = .dashboard
 
     enum AppTab {
         case dashboard
         case sessions
+        case alerts
         case connection
     }
 
@@ -36,7 +38,7 @@ struct ContentView: View {
     private var iPhoneLayout: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel)
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
@@ -46,6 +48,13 @@ struct ContentView: View {
             }
             .tabItem { Label("Sessions", systemImage: "list.bullet.rectangle") }
             .tag(AppTab.sessions)
+
+            NavigationStack {
+                AlertsListView(viewModel: alertsViewModel)
+            }
+            .tabItem { Label("Alerts", systemImage: "bell") }
+            .tag(AppTab.alerts)
+            .badge(alertsViewModel.unreadCount)
 
             NavigationStack {
                 ConnectionDiagnosticsView(
@@ -65,6 +74,23 @@ struct ContentView: View {
                     .tag(AppTab.dashboard)
                 Label("Sessions", systemImage: "list.bullet.rectangle")
                     .tag(AppTab.sessions)
+                Label {
+                    Text("Alerts")
+                } icon: {
+                    Image(systemName: "bell")
+                        .overlay(alignment: .topTrailing) {
+                            if alertsViewModel.unreadCount > 0 {
+                                Text("\(min(alertsViewModel.unreadCount, 99))")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(.white)
+                                    .padding(3)
+                                    .background(.red, in: Circle())
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
+                }
+                .tag(AppTab.alerts)
                 Label("Connection", systemImage: "network")
                     .tag(AppTab.connection)
             }
@@ -72,9 +98,11 @@ struct ContentView: View {
         } detail: {
             switch selectedTab {
             case .dashboard:
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel)
             case .sessions:
                 SessionsListView(apiClient: connectionVM.buildAPIClient())
+            case .alerts:
+                AlertsListView(viewModel: alertsViewModel)
             case .connection:
                 ConnectionDiagnosticsView(
                     connectionVM: connectionVM,

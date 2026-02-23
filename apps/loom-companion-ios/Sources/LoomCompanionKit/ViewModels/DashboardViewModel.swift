@@ -13,8 +13,12 @@ public final class DashboardViewModel {
     @ObservationIgnored
     private var sseTask: Task<Void, Never>?
 
-    public init(apiClient: any LoomAPIClientProtocol) {
+    @ObservationIgnored
+    public var alertsViewModel: AlertsViewModel?
+
+    public init(apiClient: any LoomAPIClientProtocol, alertsViewModel: AlertsViewModel? = nil) {
         self.apiClient = apiClient
+        self.alertsViewModel = alertsViewModel
     }
 
     /// Fetch dashboard data from REST API.
@@ -46,13 +50,40 @@ public final class DashboardViewModel {
         sseTask = nil
     }
 
+    /// SSE event types that trigger a dashboard data refresh.
+    private static let refreshEventTypes: Set<String> = [
+        "hud.fleet",
+        "hud.health",
+        "agent.session.start",
+        "agent.session.end",
+        "agent.session.reaped",
+        "agent.heartbeat",
+        "hud.handoff.created",
+    ]
+
+    /// SSE event types that are notification-worthy (forwarded to AlertsViewModel).
+    private static let notificationEventTypes: Set<String> = [
+        "hud.health",
+        "agent.session.start",
+        "agent.session.end",
+        "agent.session.reaped",
+        "agent.nudge.created",
+        "hud.workflow.approve",
+        "hud.workflow.reject",
+        "hud.handoff.created",
+        "coordinator.plan.complete",
+    ]
+
     @MainActor
     private func handleSSEEvent(_ event: SSEEvent) async {
-        switch event.type {
-        case "hud.fleet", "hud.health", "agent.session.start", "agent.session.end":
+        // Forward notification-worthy events to the alerts VM.
+        if Self.notificationEventTypes.contains(event.type) {
+            alertsViewModel?.handleSSEEvent(event)
+        }
+
+        // Refresh dashboard data for relevant events.
+        if Self.refreshEventTypes.contains(event.type) {
             await load()
-        default:
-            break
         }
     }
 }

@@ -10,10 +10,11 @@ public enum Endpoint: Sendable {
     case createSession(agentId: String, namespace: String? = nil, description: String? = nil, autoRecall: Bool? = nil)
     case endSession(id: String, summarize: Bool? = nil)
     case eventsStream
+    case audit(source: String? = nil, limit: Int? = nil)
 
     var method: String {
         switch self {
-        case .ping, .dashboard, .sessions, .sessionDetail, .sessionEvents, .eventsStream:
+        case .ping, .dashboard, .sessions, .sessionDetail, .sessionEvents, .eventsStream, .audit:
             return "GET"
         case .createSession, .endSession:
             return "POST"
@@ -38,6 +39,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/sessions/\(id)/end"
         case .eventsStream:
             return "/api/mobile/v1/events/stream"
+        case .audit:
+            return "/api/mobile/v1/audit"
         }
     }
 
@@ -56,6 +59,11 @@ public enum Endpoint: Sendable {
             if let limit {
                 components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
             }
+        case let .audit(source, limit):
+            var items: [URLQueryItem] = []
+            if let source { items.append(URLQueryItem(name: "source", value: source)) }
+            if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+            if !items.isEmpty { components.queryItems = items }
         default:
             break
         }

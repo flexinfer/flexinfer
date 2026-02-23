@@ -31,7 +31,7 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = createSessionResponse as? T { return r }
         case .endSession:
             if let r = endSessionResponse as? T { return r }
-        default:
+        case .audit, .ping, .eventsStream:
             break
         }
 

@@ -425,6 +425,45 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) handleMobileAudit(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+	sourceFilter := strings.TrimSpace(r.URL.Query().Get("source"))
+
+	// Audit entries are currently only in structured log output, not in a
+	// queryable store. Return matching event-log entries as a best-effort
+	// proxy until persistent audit storage is added (M5).
+	var entries []TimelineEntry
+	if a.eventLog != nil {
+		for _, evt := range a.eventLog.All(500) {
+			if sourceFilter != "" && !eventHasField(evt.Data, "source", sourceFilter) {
+				continue
+			}
+			entries = append(entries, evt)
+			if len(entries) >= limit {
+				break
+			}
+		}
+	}
+	if entries == nil {
+		entries = []TimelineEntry{}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"entries": entries,
+		"source":  sourceFilter,
+		"count":   len(entries),
+	})
+}
+
 func (a *App) handleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdminToken(w, r) {
 		return
@@ -458,6 +497,18 @@ func (a *App) handleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {
 
 	a.logMobileAudit(r, "token_revoke", nil, "success", nil)
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"revoked": true})
+}
+
+func eventHasField(raw json.RawMessage, field, value string) bool {
+	if len(raw) == 0 || field == "" {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	got, _ := payload[field].(string)
+	return strings.TrimSpace(got) == value
 }
 
 func eventHasSessionID(raw json.RawMessage, sessionID string) bool {
