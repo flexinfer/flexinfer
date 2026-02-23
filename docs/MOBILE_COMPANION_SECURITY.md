@@ -329,6 +329,7 @@ The v1 mobile API surface now implements comprehensive security controls: authen
 
 ## Sources
 
+- `docs/MOBILE_COMPANION_AUTH_BOOTSTRAP.md` — consolidated auth bootstrap decision, flow descriptions, and LAN/gateway comparison
 - `internal/hud/api_mobile.go` — all mobile v1 handlers, auth, audit, revoke
 - `internal/hud/mobile_ratelimit.go` — rate limiter implementation
 - `internal/hud/mobile_revoke.go` — token revocation list

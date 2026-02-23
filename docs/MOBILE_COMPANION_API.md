@@ -48,6 +48,7 @@ Notes:
 ## Auth Model (Contract-Level)
 
 - `Authorization: Bearer <token>` required for protected endpoints.
+- See [Mobile Companion Auth Bootstrap](MOBILE_COMPANION_AUTH_BOOTSTRAP.md) for the full auth bootstrap decision, flow diagrams, and LAN/gateway comparison.
 - Bootstrap decision ([MBL-1](https://gitlab.flexinfer.ai/services/loom-core/-/issues/30)):
   - v1 default: direct native OAuth authorization code + PKCE in an external browser/system auth session.
   - v1 fallback: device-code pairing for profiles where direct browser-mediated auth is not practical.
@@ -480,6 +481,7 @@ All mutation endpoints must record:
 
 ## Sources
 
+- `docs/MOBILE_COMPANION_AUTH_BOOTSTRAP.md` — consolidated auth bootstrap decision, flow descriptions, and LAN/gateway comparison
 - `internal/hud/api_mobile.go` — all mobile v1 handlers, envelope types, auth helpers
 - `internal/hud/app.go:539-547` — route registration
 - `internal/hud/bridge/agent.go:30-41` — `SessionInfo` struct
