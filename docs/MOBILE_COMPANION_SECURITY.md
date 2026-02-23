@@ -221,7 +221,7 @@ This section documents specific attack scenarios and mitigations for each mutati
 - [x] Mobile token blocked from non-mobile API paths.
 - [x] Rate limiting configured for mutation endpoints.
 - [ ] Refresh token rotation implemented. (Tracks [MBL-2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31))
-- [ ] Security incident runbook includes mobile credential revocation steps. (Tracks [MBL-11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/44))
+- [x] Security incident runbook includes mobile credential revocation steps. (Tracks [MBL-11](https://gitlab.flexinfer.ai/services/loom-core/-/issues/44))
 
 ## Test Matrix
 
@@ -294,6 +294,7 @@ The v1 mobile API surface now implements comprehensive security controls: authen
 - `internal/hud/app.go` — TLS, bind address, rate limiter + revocation init
 - `cmd/loom/hud.go` — CLI flags
 - `internal/hud/app_test.go` — M1 test suite
+- `docs/MOBILE_CREDENTIAL_REVOCATION_RUNBOOK.md` — incident runbook for mobile token revocation
 - `docs/ENTERPRISE_SECURITY.md`
 - `docs/STREAMABLE_HTTP.md`
 - `.loom/20-product-spec.md`
