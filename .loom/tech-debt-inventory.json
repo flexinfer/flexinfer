@@ -8,10 +8,12 @@
       "risk_reduction": 5,
       "drag_reduction": 4,
       "effort": 4,
+      "status": "done",
+      "closed_by": "already implemented (session.go, session_handlers.go, proxy.go)",
       "evidence": [
         "internal/daemon/session.go:8",
-        "internal/daemon/http_handler.go:13",
-        "docs/STREAMABLE_HTTP.md:88"
+        "internal/daemon/session_handlers.go",
+        "cmd/loom/proxy.go (proxyOpenSession, proxyCloseSession)"
       ]
     },
     {
@@ -39,8 +41,10 @@
       "risk_reduction": 2,
       "drag_reduction": 1,
       "effort": 4,
+      "status": "done",
+      "closed_by": "background reader goroutine in transport.go",
       "evidence": [
-        "libs/mcp-go/transport.go:127-130 (t.Close on ctx.Done)"
+        "libs/mcp-go/transport.go (readLoop, atomic useContentLength, channel-based Recv)"
       ]
     },
     {

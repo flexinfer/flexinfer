@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-22T14:07:11-05:00
+- Generated: 2026-02-23T17:15:20-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -9,39 +9,14 @@
 ## Git
 ```
 ## main...origin/main
- M .loom/00-workspace-snapshot.md
- M .opencode/opencode.json
- M .zed/mcp.json
- M cmd/loom/cmd_agent.go
- M cmd/loom/main.go
- M cmd/mcp-codebase-memory/README.md
- M cmd/mcp-codebase-memory/tools.go
- M internal/devbox/backend/k8s.go
- M internal/devbox/backend/k8s_test.go
- M internal/hud/frontend/dist/assets/index-DIF7q4RN.js
- M pkg/codebase/index/goindex/indexer.go
- M pkg/codebase/index/pyindex/indexer.go
- M pkg/codebase/index/pyindex/indexer_nocgo.go
- M pkg/codebase/index/registry.go
- M pkg/codebase/index/registry_test.go
- M pkg/codebase/index/rsindex/indexer.go
- M pkg/codebase/index/rsindex/indexer_nocgo.go
- M pkg/codebase/index/tsindex/indexer.go
- M pkg/codebase/index/tsindex/indexer_nocgo.go
- M pkg/codebase/service.go
- M pkg/codebase/watch.go
- M pkg/generator/configs.go
- M pkg/sync/ops.go
-?? .loom/tech-debt-inventory.json
-?? .loom/tech-debt-inventory.md
-?? .loom/tech-debt-plan.md
-?? .loom/tech-debt-priority.md
-?? .loom/tech-debt-session-architecture.md
-?? pkg/codebase/index/ignore_test.go
-?? pkg/sync/merge.go
-?? pkg/sync/merge_test.go
-?? pkg/sync/projects.go
-?? pkg/sync/projects_test.go
+ M .loom/tech-debt-inventory.json
+ M .loom/tech-debt-inventory.md
+ M .loom/tech-debt-plan.md
+ M .loom/tech-debt-priority.md
+ M apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift
+ M docs/MOBILE_COMPANION_SECURITY.md
+?? apps/loom-companion-ios/.build/
+?? docs/roadmap-reconciliation-2026-02-23.md
 ```
 
 ### Remotes
@@ -56,7 +31,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-29b8a2c fix(hud): GetActiveSession queries by agent_id+status instead of unfiltered list
+5c6dd8f docs(mobile): add credential revocation incident runbook (MBL-11)
 ```
 
 ## Top-Level Layout
@@ -77,6 +52,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.vscode/`
 - `.vscode-mcp/`
 - `.zed/`
+- `apps/`
 - `assets/`
 - `bin/`
 - `claude_desktop_config/`
@@ -152,6 +128,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `mcp-postgres`
 - `mcp-prometheus`
 - `mcp-qdrant`
+- `mcp-quality`
 - `mcp-sentry`
 - `mcp-slack`
 - `mcp-tavily`
@@ -206,6 +183,12 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
 - `.loom/54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
 - `.loom/55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
+- `.loom/arch-rules.yaml`
+- `.loom/tech-debt-inventory.json`
+- `.loom/tech-debt-inventory.md`
+- `.loom/tech-debt-plan.md`
+- `.loom/tech-debt-priority.md`
+- `.loom/tech-debt-session-architecture.md`
 - `.mcp.json`
 - `.opencode/opencode.json`
 - `.opencode/plugins/loom-hooks.ts`
@@ -221,6 +204,72 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `Makefile`
 - `README.md`
 - `ROADMAP.md`
+- `apps/loom-companion-ios/Package.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/ContentView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/LoomCompanionApp.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Utilities/DeviceInfo.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Alerts/AlertRowView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Alerts/AlertsListView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/ConnectionDiagnosticsView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/ConnectionProfileView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/LANPermissionView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/LoginView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/DashboardView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/FleetSummaryCard.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/HealthStatusCard.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/TimelineListView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionDetailView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionEventsView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionMetadataView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Sessions/CreateSessionView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Sessions/SessionFilterView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Sessions/SessionRowView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Sessions/SessionsListView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/ErrorBanner.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/StatusBadge.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIEnvelope.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIError.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertItem.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AnyCodable.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionProfile.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionRemediation.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/DashboardData.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/HealthSummary.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionInfo.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/TimelineEntry.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/APIClient.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/Endpoint.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/SSEClient.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/TokenStore.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Services/ConnectionHealthMonitor.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/AlertsViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/DashboardViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionDetailViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionsViewModel.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/dashboard_response.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/error_rate_limited.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/error_unauthorized.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/session_detail_response.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/session_events_response.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/sessions_response.json`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/MockAPIClient.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/APIEnvelopeTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/AlertItemTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/ConnectionRemediationTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/DashboardDataTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/SessionInfoTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/TimelineEntryTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/APIClientTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/ConnectionHealthTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/SSEClientReconnectTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/SSEParserTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/AlertsViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/DashboardViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionDetailViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionsViewModelTests.swift`
 - `assets/banner.png`
 - `assets/header.svg`
 - `assets/icon.png`
@@ -238,6 +287,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/loom/proxy.go`
 - `cmd/loom/proxy_autostart_test.go`
 - `cmd/loom/proxy_heartbeat_test.go`
+- `cmd/loom/proxy_lifecycle_test.go`
 - `cmd/loom/proxy_resources_test.go`
 - `cmd/loom/proxy_session_test.go`
 - `cmd/loom/proxy_templates_test.go`
@@ -299,79 +349,6 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-docker/main_test.go`
 - `cmd/mcp-elasticsearch/main.go`
 - `cmd/mcp-elasticsearch/main_test.go`
-- `cmd/mcp-filesystem/main.go`
-- `cmd/mcp-flexinfer/benchmarks.go`
-- `cmd/mcp-flexinfer/catalogs.go`
-- `cmd/mcp-flexinfer/gpu.go`
-- `cmd/mcp-flexinfer/lora.go`
-- `cmd/mcp-flexinfer/main.go`
-- `cmd/mcp-flexinfer/main_test.go`
-- `cmd/mcp-flexinfer/models.go`
-- `cmd/mcp-flexinfer/probe.go`
-- `cmd/mcp-flexinfer/proxy.go`
-- `cmd/mcp-flexinfer/scale.go`
-- `cmd/mcp-flux/detect_test.go`
-- `cmd/mcp-flux/helmreleases.go`
-- `cmd/mcp-flux/kustomizations.go`
-- `cmd/mcp-flux/main.go`
-- `cmd/mcp-flux/operations.go`
-- `cmd/mcp-flux/operations_test.go`
-- `cmd/mcp-flux/probe_test.go`
-- `cmd/mcp-flux/sources.go`
-- `cmd/mcp-gcp/main.go`
-- `cmd/mcp-git-worktree/main.go`
-- `cmd/mcp-git-worktree/main_test.go`
-- `cmd/mcp-git/main.go`
-- `cmd/mcp-git/main_test.go`
-- `cmd/mcp-github-actions/main.go`
-- `cmd/mcp-github-actions/main_test.go`
-- `cmd/mcp-github/main.go`
-- `cmd/mcp-github/main_test.go`
-- `cmd/mcp-gitlab/issues.go`
-- `cmd/mcp-gitlab/main.go`
-- `cmd/mcp-gitlab/main_test.go`
-- `cmd/mcp-gitlab/merge_requests.go`
-- `cmd/mcp-gitlab/pipelines.go`
-- `cmd/mcp-gitlab/repositories.go`
-- `cmd/mcp-godot/main.go`
-- `cmd/mcp-grafana/main.go`
-- `cmd/mcp-grafana/main_test.go`
-- `cmd/mcp-helm/main.go`
-- `cmd/mcp-helm/main_test.go`
-- `cmd/mcp-itchio/main.go`
-- `cmd/mcp-itchio/main_test.go`
-- `cmd/mcp-jira/main.go`
-- `cmd/mcp-jira/main_test.go`
-- `cmd/mcp-jobsearch/README.md`
-- `cmd/mcp-jobsearch/client.go`
-- `cmd/mcp-jobsearch/client_test.go`
-- `cmd/mcp-jobsearch/main.go`
-- `cmd/mcp-jobsearch/main_test.go`
-- `cmd/mcp-jobsearch/tools_common.go`
-- `cmd/mcp-jobsearch/tools_core.go`
-- `cmd/mcp-jobsearch/tools_passthrough.go`
-- `cmd/mcp-jobsearch/tools_resume.go`
-- `cmd/mcp-jobsearch/tools_resume_test.go`
-- `cmd/mcp-jobsearch/tools_test.go`
-- `cmd/mcp-jobsearch/tools_workflow_crm.go`
-- `cmd/mcp-k8s-ops/main.go`
-- `cmd/mcp-k8s-ops/main_test.go`
-- `cmd/mcp-k8s/main.go`
-- `cmd/mcp-k8s/main_test.go`
-- `cmd/mcp-linear/main.go`
-- `cmd/mcp-linkedin/README.md`
-- `cmd/mcp-linkedin/browserkit.go`
-- `cmd/mcp-linkedin/browserkit_helper.py`
-- `cmd/mcp-linkedin/main.go`
-- `cmd/mcp-linkedin/main_test.go`
-- `cmd/mcp-loki/main.go`
-- `cmd/mcp-loki/main_test.go`
-- `cmd/mcp-memory/main.go`
-- `cmd/mcp-memory/main_test.go`
-- `cmd/mcp-minio/main.go`
-- `cmd/mcp-minio/main_test.go`
-- `cmd/mcp-mongodb/main.go`
-- `cmd/mcp-morph-embeddings/main.go`
 - `…`
 
 ## AGENTS.md Files

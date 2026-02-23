@@ -1,5 +1,34 @@
 # Worklog
 
+## 2026-02-23 (session 18) — Tech Debt Closure
+
+- What changed:
+  - **DEBT-004**: Marked as done (no code changes needed). All acceptance criteria already implemented:
+    - `ProxySession` struct with ID, epoch, expiry, state (`internal/daemon/session.go`)
+    - Full session RPC handlers: open/heartbeat/status/close (`internal/daemon/session_handlers.go`)
+    - Epoch validation on heartbeat (`SessionManager.Heartbeat()`)
+    - Graceful drain protocol (`SessionManager.DrainAll()` + `StateDraining`)
+    - `prior_session_id` support in proxy open (`cmd/loom/proxy.go`)
+  - **DEBT-009**: Implemented background reader goroutine for `StdioTransport` in `libs/mcp-go/transport.go`:
+    - Removed `readMu sync.Mutex` — channel serializes reads, no lock needed.
+    - Changed `useContentLength` from `bool` to `atomic.Bool` — fixes data race between readLoop and Send.
+    - Added `msgCh chan recvResult` and `readerWg sync.WaitGroup` fields.
+    - `NewStdioTransport` now starts persistent `readLoop()` goroutine.
+    - Simplified `Recv()` — selects on `msgCh`/`ctx.Done()`/`done`; context cancel no longer calls `Close()`.
+    - `Close()` now calls `readerWg.Wait()` to ensure goroutine exits before returning.
+    - Added `TestStdioTransportRecv_ReusableAfterCancel` — verifies transport works after context timeout.
+    - Added `t.Cleanup(func() { _ = tr.Close() })` to existing tests for proper goroutine cleanup.
+  - **All tech debt items are now resolved.** Inventory cleared (0 active items).
+- Files modified:
+  - `../../libs/mcp-go/transport.go` (background reader, atomic bool, channel-based Recv)
+  - `../../libs/mcp-go/transport_test.go` (new test + cleanup additions)
+  - `.loom/tech-debt-inventory.md` (DEBT-004 + DEBT-009 marked done)
+  - `.loom/tech-debt-inventory.json` (status + closed_by fields added)
+  - `.loom/tech-debt-plan.md` (Wave 3 marked COMPLETED)
+  - `.loom/tech-debt-priority.md` (all items struck through)
+- Tests: `go test ./...` in mcp-go (all pass), `go test ./...` in loom-core (all pass, 0 failures)
+- Next: No remaining tech debt items. Ready for feature work or next planning cycle.
+
 ## 2026-02-23 (session 17)
 
 - What changed:

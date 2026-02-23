@@ -14,6 +14,9 @@
 - Mobile backlog mapping: `32-mobile-gap-to-backlog-map.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+- Tech debt inventory: `tech-debt-inventory.md` (all items resolved)
+- Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
+- Tech debt priority: `tech-debt-priority.md`
 
 ## Current Goal
 
@@ -38,7 +41,7 @@ Plan and de-risk a companion iPhone/iPad app for loom-core that supports:
 
 ## Notes
 
-- Context pack refreshed on 2026-02-19.
+- Context pack refreshed on 2026-02-23.
 - Codebase indexing with embeddings failed (Morph 400); lexical fallback indexing completed successfully (`1717` files, `26930` chunks).
 - This planning slice intentionally focuses on architecture/specs and does not include code implementation yet.
 

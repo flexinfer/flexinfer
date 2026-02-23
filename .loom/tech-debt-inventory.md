@@ -20,13 +20,12 @@
 | DEBT-008 | done | Split daemon.go monolith into focused files | `1fc56e0` |
 | DEBT-010 | done | Migrate GCP MCP server from explicit credentials to ADC | `812c638` |
 | DEBT-011 | done | Add signal handling and idle timeout to proxy process | `b6ca3da` |
+| DEBT-004 | done | Session lease/epoch management fully implemented | Already implemented: `internal/daemon/session.go`, `internal/daemon/session_handlers.go`, `cmd/loom/proxy.go` |
+| DEBT-009 | done | StdioTransport background reader for non-destructive context cancel | Background reader goroutine in `libs/mcp-go/transport.go` |
 
 ## Active Items
 
-| ID | Component | Debt Statement | Evidence | Impact (1-5) | Risk Reduction (1-5) | Drag Reduction (1-5) | Effort (1-5) | Dependencies | Notes |
-|---|---|---|---|---:|---:|---:|---:|---|---|
-| DEBT-004 | `internal/daemon/session.go`, `cmd/loom/proxy.go`, `internal/daemon/http_handler.go` | No unified session lifecycle for local stdio proxy clients (lease, epoch, resume, heartbeat, graceful drain); HTTP has session semantics while local path does not. | `internal/daemon/session.go:8`, `internal/daemon/http_handler.go:13`, `docs/STREAMABLE_HTTP.md:88` | 4 | 5 | 4 | 4 | None (Wave 1+2 prereqs complete) | Carried from Wave 3; all blocking prereqs now resolved. |
-| DEBT-009 | `libs/mcp-go/transport.go` | StdioTransport.Recv() context cancellation permanently closes the transport. Canceling a per-request context destroys the connection rather than just aborting the current read. | `libs/mcp-go/transport.go:127-130` (`t.Close()` on ctx.Done). Acceptable for loom-core (pool recycles), but library consumers expecting reusable transports after timeout will be surprised. | 2 | 2 | 1 | 4 | None | Library-level concern. Would require background reader goroutine architecture to fix properly. Low priority given loom-core's pool-based lifecycle. |
+No active items remain. All tech debt has been resolved.
 
 ## Source Links
 

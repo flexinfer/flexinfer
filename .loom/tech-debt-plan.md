@@ -56,20 +56,15 @@ Additional fixes this cycle (not in previous inventory):
   - New files: `daemon_dispatch.go` (618), `daemon_toolcache.go` (731), `daemon_call.go` (130), `daemon_loops.go` (182).
   - No behavior changes; all existing tests pass unchanged; golangci-lint clean.
 
-## Wave 3 (Strategic)
+## Wave 3 (Strategic) — COMPLETED
 
 - Goal: Enterprise-grade session lifecycle and transport library correctness.
 - Items:
-  - `DEBT-004` (score 80) Unified local+HTTP session lease/epoch management.
-  - `DEBT-009` (score 52) Non-destructive context cancellation for StdioTransport.
-- Acceptance criteria:
-  - DEBT-004: Local proxy sessions receive lease metadata (`session_id`, `daemon_epoch`, `last_seen`) and support resume after daemon restart. Daemon supports graceful drain states for reload/restart. Backward-compatible.
-  - DEBT-009: StdioTransport uses background reader goroutine; context cancellation aborts current read without closing transport. Transport remains usable after timeout.
-- Risks/mitigations:
-  - Risk: DEBT-004 protocol changes could break older clients. Mitigation: additive fields + capability negotiation.
-  - Risk: DEBT-009 background goroutine adds complexity and resource overhead. Mitigation: benchmark before/after; keep current approach as opt-in fast path.
-- Not in this wave:
-  - Non-session-related feature roadmap work.
+  - `DEBT-004` (score 80) Unified local+HTTP session lease/epoch management. **Done** (already implemented: `session.go`, `session_handlers.go`, `proxy.go`).
+  - `DEBT-009` (score 52) Non-destructive context cancellation for StdioTransport. **Done** (background reader goroutine in `transport.go`).
+- Result:
+  - DEBT-004: All acceptance criteria met by existing code — `ProxySession` struct with lease/epoch/state, full session RPC handlers, epoch validation on heartbeat, graceful drain protocol, `prior_session_id` support.
+  - DEBT-009: Background reader goroutine decouples blocking I/O from context cancellation. `useContentLength` converted to `atomic.Bool` to fix data race. Transport remains usable after context timeout. New test `TestStdioTransportRecv_ReusableAfterCancel` verifies.
 
 ## Backlog Conversion
 
@@ -78,8 +73,8 @@ Additional fixes this cycle (not in previous inventory):
 | DEBT-011 | TD-PROXY-01 | proxy lifecycle | Wave 1 | done (`b6ca3da`) |
 | DEBT-010 | TD-GCP-01 | mcp-gcp | Wave 1 | done (`812c638`) |
 | DEBT-008 | TD-MAINT-01 | daemon runtime | Wave 2 | done (`1fc56e0`) |
-| DEBT-004 | TD-SESSION-06 | architecture/runtime | Wave 3 | planned |
-| DEBT-009 | TD-TRANSPORT-01 | mcp-go library | Wave 3 | planned |
+| DEBT-004 | TD-SESSION-06 | architecture/runtime | Wave 3 | done (already implemented) |
+| DEBT-009 | TD-TRANSPORT-01 | mcp-go library | Wave 3 | done (background reader goroutine) |
 
 ## Backlog-Ready Slices
 
