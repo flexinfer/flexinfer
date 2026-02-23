@@ -2,7 +2,88 @@ package backend
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
+
+func TestDiffusersBackendEnv(t *testing.T) {
+	b := &DiffusersBackend{}
+
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	tests := []struct {
+		name      string
+		config    map[string]interface{}
+		wantEnv   map[string]string // env vars that must be present with exact values
+		absentEnv []string          // env vars that must NOT be present
+	}{
+		{
+			name: "inpainting mode sets PIPELINE_MODE and DEFAULT_STRENGTH",
+			config: map[string]interface{}{
+				"pipelineMode": "inpainting",
+				"strength":     "0.75",
+			},
+			wantEnv: map[string]string{
+				"PIPELINE_MODE":    "inpainting",
+				"DEFAULT_STRENGTH": "0.75",
+			},
+			absentEnv: []string{"DEFAULT_IMAGE_GUIDANCE_SCALE"},
+		},
+		{
+			name: "instruct mode sets PIPELINE_MODE and DEFAULT_IMAGE_GUIDANCE_SCALE",
+			config: map[string]interface{}{
+				"pipelineMode":       "instruct",
+				"imageGuidanceScale": "1.5",
+			},
+			wantEnv: map[string]string{
+				"PIPELINE_MODE":                "instruct",
+				"DEFAULT_IMAGE_GUIDANCE_SCALE": "1.5",
+			},
+			absentEnv: []string{"DEFAULT_STRENGTH"},
+		},
+		{
+			name:   "no pipelineMode omits all three env vars",
+			config: map[string]interface{}{},
+			absentEnv: []string{
+				"PIPELINE_MODE",
+				"DEFAULT_STRENGTH",
+				"DEFAULT_IMAGE_GUIDANCE_SCALE",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{
+				Model:  "test-model",
+				Config: tt.config,
+			}
+			envs := b.Env(spec)
+
+			for wantName, wantVal := range tt.wantEnv {
+				got, ok := findEnv(envs, wantName)
+				if !ok {
+					t.Errorf("expected env %s to be present", wantName)
+				} else if got != wantVal {
+					t.Errorf("env %s = %q, want %q", wantName, got, wantVal)
+				}
+			}
+
+			for _, absent := range tt.absentEnv {
+				if _, ok := findEnv(envs, absent); ok {
+					t.Errorf("expected env %s to be absent", absent)
+				}
+			}
+		})
+	}
+}
 
 func TestDiffusersBackendImage(t *testing.T) {
 	b := &DiffusersBackend{}

@@ -1,5 +1,5 @@
 # Diffusers API Server for AMD GPUs (ROCm)
-# Provides OpenAI-compatible /v1/images/generations endpoint
+# Provides OpenAI-compatible /v1/images/generations and /v1/images/edits endpoints
 # Optimized for RX 7900 XTX (gfx1100)
 #
 # Based on research from:
@@ -74,8 +74,9 @@ RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 # Create the API server
 COPY <<'EOF' /app/server.py
 """
-Diffusers API Server with OpenAI-compatible /v1/images/generations endpoint.
+Diffusers API Server with OpenAI-compatible /v1/images/generations and /v1/images/edits endpoints.
 ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
+Supports text2image, inpainting, and InstructPix2Pix modes via PIPELINE_MODE env var.
 """
 import asyncio
 import os
@@ -89,21 +90,26 @@ from contextlib import asynccontextmanager
 
 import torch
 from PIL import Image
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from diffusers import (
     AutoPipelineForText2Image,
+    AutoPipelineForInpainting,
     DiffusionPipeline,
     AutoencoderKL,
     StableDiffusionXLPipeline,
     StableDiffusionPipeline,
+    StableDiffusionInstructPix2PixPipeline,
 )
 
 # Global pipeline cache
 pipeline = None
 current_model = None
 gpu_info = None
+
+# Pipeline mode: "text2image" (default), "inpainting", or "instruct"
+PIPELINE_MODE = os.environ.get("PIPELINE_MODE", "text2image")
 
 def check_gpu():
     """Check GPU availability and print diagnostics."""
@@ -201,6 +207,48 @@ def _default_guidance_scale(model_id: str) -> float:
 def _default_negative_prompt() -> Optional[str]:
     """Return the server-wide default negative prompt from env, or None."""
     return os.environ.get("DEFAULT_NEGATIVE_PROMPT") or None
+
+def _default_strength() -> float:
+    """Return the default denoising strength for inpainting."""
+    val = _env_float("DEFAULT_STRENGTH")
+    return val if val is not None else 0.75
+
+def _default_image_guidance_scale() -> float:
+    """Return the default image guidance scale for InstructPix2Pix."""
+    val = _env_float("DEFAULT_IMAGE_GUIDANCE_SCALE")
+    return val if val is not None else 1.5
+
+def _decode_image(data: bytes) -> Image.Image:
+    """Decode raw bytes (PNG/JPEG) or base64 string into a PIL RGB image."""
+    try:
+        img = Image.open(io.BytesIO(data))
+    except Exception:
+        img = Image.open(io.BytesIO(base64.b64decode(data)))
+    return img.convert("RGB")
+
+def _decode_mask(data: bytes, target_size: tuple) -> Image.Image:
+    """Decode mask bytes into a grayscale PIL image, resized to target_size."""
+    try:
+        mask = Image.open(io.BytesIO(data))
+    except Exception:
+        mask = Image.open(io.BytesIO(base64.b64decode(data)))
+    mask = mask.convert("L").resize(target_size, Image.LANCZOS)
+    return mask
+
+def _resize_for_pipeline(img: Image.Image, target_size: Optional[str] = None) -> Image.Image:
+    """Resize image so both dimensions are multiples of 8."""
+    if target_size:
+        try:
+            w, h = map(int, target_size.split("x"))
+            img = img.resize((w, h), Image.LANCZOS)
+        except ValueError:
+            pass
+    w, h = img.size
+    w = (w // 8) * 8
+    h = (h // 8) * 8
+    if (w, h) != img.size:
+        img = img.resize((w, h), Image.LANCZOS)
+    return img
 
 def _apply_scheduler(pipe, scheduler_name: Optional[str]):
     """Override the pipeline scheduler if requested via env or config."""
@@ -415,23 +463,41 @@ def load_pipeline(model_id: str):
         if vae is not None:
             pipeline_kwargs["vae"] = vae
 
-        try:
-            print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
-            if vae is not None:
-                print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
+        print(f"Pipeline mode: {PIPELINE_MODE}")
+        if PIPELINE_MODE == "inpainting":
+            print("Loading AutoPipelineForInpainting (loading to CPU, local files only)...")
             sys.stdout.flush()
-            pipeline = AutoPipelineForText2Image.from_pretrained(
-                resolved_path,
-                requires_safety_checker=False,
-                **pipeline_kwargs,
-            )
-        except Exception as e:
-            print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
-            sys.stdout.flush()
-            pipeline = DiffusionPipeline.from_pretrained(
+            pipeline = AutoPipelineForInpainting.from_pretrained(
                 resolved_path,
                 **pipeline_kwargs,
             )
+        elif PIPELINE_MODE == "instruct":
+            print("Loading StableDiffusionInstructPix2PixPipeline (loading to CPU, local files only)...")
+            sys.stdout.flush()
+            # InstructPix2Pix does not use safety_checker kwarg
+            instruct_kwargs = {k: v for k, v in pipeline_kwargs.items() if k != "safety_checker"}
+            pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
+                resolved_path,
+                **instruct_kwargs,
+            )
+        else:
+            try:
+                print("Attempting AutoPipelineForText2Image (loading to CPU, local files only)...")
+                if vae is not None:
+                    print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
+                sys.stdout.flush()
+                pipeline = AutoPipelineForText2Image.from_pretrained(
+                    resolved_path,
+                    requires_safety_checker=False,
+                    **pipeline_kwargs,
+                )
+            except Exception as e:
+                print(f"AutoPipeline failed: {e}, trying DiffusionPipeline...")
+                sys.stdout.flush()
+                pipeline = DiffusionPipeline.from_pretrained(
+                    resolved_path,
+                    **pipeline_kwargs,
+                )
 
     print("Pipeline loaded to CPU, preparing GPU transfer...")
     sys.stdout.flush()
@@ -610,6 +676,98 @@ async def generate_images(request: ImageGenerationRequest):
     # Run generation in a thread pool so health checks keep responding
     async with _generation_lock:
         images = await asyncio.to_thread(_run_inference)
+
+    return ImageGenerationResponse(
+        created=int(time.time()),
+        data=images
+    )
+
+@app.post("/v1/images/edits")
+async def edit_images(
+    image: UploadFile = File(...),
+    prompt: str = Form(...),
+    mask: Optional[UploadFile] = File(None),
+    model: Optional[str] = Form(None),
+    n: int = Form(1),
+    size: Optional[str] = Form(None),
+    response_format: str = Form("b64_json"),
+    num_inference_steps: Optional[int] = Form(None),
+    guidance_scale: Optional[float] = Form(None),
+    strength: Optional[float] = Form(None),
+    image_guidance_scale: Optional[float] = Form(None),
+    negative_prompt: Optional[str] = Form(None),
+):
+    """OpenAI-compatible image editing endpoint.
+
+    Supports inpainting (mask-based) and instruction-based editing
+    depending on PIPELINE_MODE.
+    """
+    global pipeline
+
+    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or model
+    if not model_id:
+        raise HTTPException(status_code=400, detail="No model specified")
+
+    pipe = load_pipeline(model_id)
+
+    if PIPELINE_MODE not in ("inpainting", "instruct"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"PIPELINE_MODE '{PIPELINE_MODE}' does not support /v1/images/edits. "
+                   f"Use 'inpainting' or 'instruct'.",
+        )
+
+    # Read uploaded files before entering the thread
+    image_bytes = await image.read()
+    mask_bytes = await mask.read() if mask else None
+
+    steps = num_inference_steps if num_inference_steps is not None else _default_steps(model_id)
+    cfg_scale = guidance_scale if guidance_scale is not None else _default_guidance_scale(model_id)
+    neg = negative_prompt or _default_negative_prompt()
+
+    def _run_edit():
+        src_img = _decode_image(image_bytes)
+        src_img = _resize_for_pipeline(src_img, size)
+
+        results = []
+        for _ in range(n):
+            with torch.inference_mode():
+                if PIPELINE_MODE == "inpainting":
+                    if mask_bytes is None:
+                        raise ValueError("Inpainting mode requires a mask image")
+                    mask_img = _decode_mask(mask_bytes, src_img.size)
+                    s = strength if strength is not None else _default_strength()
+                    result = pipe(
+                        prompt=prompt,
+                        image=src_img,
+                        mask_image=mask_img,
+                        strength=s,
+                        guidance_scale=cfg_scale,
+                        num_inference_steps=steps,
+                        negative_prompt=neg,
+                    )
+                elif PIPELINE_MODE == "instruct":
+                    img_scale = image_guidance_scale if image_guidance_scale is not None else _default_image_guidance_scale()
+                    result = pipe(
+                        prompt=prompt,
+                        image=src_img,
+                        guidance_scale=cfg_scale,
+                        image_guidance_scale=img_scale,
+                        num_inference_steps=steps,
+                    )
+
+            img = result.images[0]
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            results.append(ImageData(b64_json=b64_data))
+        return results
+
+    async with _generation_lock:
+        try:
+            images = await asyncio.to_thread(_run_edit)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     return ImageGenerationResponse(
         created=int(time.time()),

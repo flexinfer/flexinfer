@@ -112,6 +112,17 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
+	// Image editing pipeline mode (inpainting, instruct, or default text2image)
+	if mode := spec.ConfigString("pipelineMode", ""); mode != "" {
+		env = append(env, corev1.EnvVar{Name: "PIPELINE_MODE", Value: mode})
+	}
+	if strength := spec.ConfigString("strength", ""); strength != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_STRENGTH", Value: strength})
+	}
+	if imgScale := spec.ConfigString("imageGuidanceScale", ""); imgScale != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_IMAGE_GUIDANCE_SCALE", Value: imgScale})
+	}
+
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
