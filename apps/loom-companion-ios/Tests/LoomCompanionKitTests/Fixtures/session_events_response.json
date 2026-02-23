@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "data": {
+    "session_id": "sess_abc123",
+    "events": [
+      {
+        "timestamp": "2026-02-23T10:00:00Z",
+        "event_type": "agent.session.start",
+        "agent_id": "claude-code",
+        "agent_type": "claude-code",
+        "data": {"session_id": "sess_abc123"}
+      },
+      {
+        "timestamp": "2026-02-23T10:05:00Z",
+        "event_type": "agent.heartbeat",
+        "agent_id": "claude-code",
+        "data": {"status": "active", "current_task": "Implementing SSE client"}
+      }
+    ]
+  },
+  "meta": {
+    "request_id": "req_events001",
+    "timestamp": "2026-02-23T12:00:04Z"
+  }
+}

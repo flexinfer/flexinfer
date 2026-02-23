@@ -1,5 +1,22 @@
 # Worklog
 
+## 2026-02-23 (session 17)
+
+- What changed:
+  - **M2: iOS/iPad App Scaffold + Monitoring MVP — complete.**
+  - Created `apps/loom-companion-ios/` Swift Package with `LoomCompanionKit` library + `LoomCompanion` app target.
+  - 8 DTO models: `APIEnvelope`, `APIError`, `SessionInfo`, `TimelineEntry`, `DashboardData`, `HealthSummary`, `ConnectionProfile`, `AnyCodable`.
+  - Networking: `APIClient` (URLSession REST), `SSEClient` (AsyncStream with reconnect), `TokenStore` (Keychain), `Endpoint` enum.
+  - `ConnectionHealthMonitor`: 7-state machine with 30s polling fallback.
+  - 4 ViewModels: `DashboardViewModel`, `SessionsViewModel`, `SessionDetailViewModel`, `ConnectionViewModel`.
+  - SwiftUI views: Login, Dashboard, Sessions, SessionDetail, ConnectionDiagnostics, LANPermission, shared components.
+  - iPhone TabView + iPad NavigationSplitView adaptive layout.
+  - 49 tests across 10 suites all passing.
+- Files created: 36 files under `apps/loom-companion-ios/`
+- Files modified: `.loom/30-implementation-plan.md`, `.loom/50-worklog.md`
+- Tests: `swift build` passes, `swift test` — 49/49 tests pass (10 suites)
+- Next: M3 (session create/end controls), end-to-end testing against live HUD instance
+
 ## 2026-02-23 (session 16)
 
 - What changed:

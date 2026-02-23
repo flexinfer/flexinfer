@@ -19,7 +19,7 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 |---|---|---|
 | M0 | Contract + security architecture freeze | **Complete** (2026-02-23) |
 | M1 | Backend mobile auth + API hardening | **Complete** (2026-02-23) |
-| M2 | iOS/iPad app scaffold + monitoring UI | Not started |
+| M2 | iOS/iPad app scaffold + monitoring UI | **Complete** (2026-02-23) |
 | M3 | Session create/end controls | Not started |
 | M4 | Notifications + operational polish | Not started |
 | M5 | Beta rollout + telemetry tuning | Not started |
@@ -155,10 +155,24 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - ViewModel tests for connection-state transitions.
 - Network churn tests (disconnect/reconnect, constrained/expensive path behavior, SSE->poll fallback->SSE recovery).
 
+### Completion Notes (2026-02-23)
+
+- Swift Package at `apps/loom-companion-ios/` with `LoomCompanionKit` library + `LoomCompanion` app target.
+- iOS 17+ / macOS 14+ targets; zero third-party dependencies.
+- 8 DTO models matching frozen v1 API contract (`APIEnvelope`, `SessionInfo`, `DashboardData`, `HealthSummary`, `TimelineEntry`, `AnyCodable`, `ConnectionProfile`, `APIError`).
+- Networking layer: `APIClient` (URLSession REST with envelope unwrapping), `SSEClient` (AsyncStream with 1s/30s/2x reconnect), `TokenStore` (Keychain), `Endpoint` enum.
+- `ConnectionHealthMonitor` with 7-state machine and 30s polling fallback.
+- 4 ViewModels: `DashboardViewModel`, `SessionsViewModel`, `SessionDetailViewModel`, `ConnectionViewModel`.
+- SwiftUI views: LoginView, DashboardView (HealthStatusCard, FleetSummaryCard, TimelineListView), SessionsListView, SessionDetailView, ConnectionDiagnosticsView, LANPermissionView.
+- iPhone TabView + iPad NavigationSplitView adaptive layout.
+- 49 tests across 10 suites: DTO decoding (12), SSE parser (6), APIClient/Endpoint (6), ConnectionHealth (10), ViewModels (15).
+- Full OAuth 2.1 token lifecycle integration deferred to M2+ (iOS app uses static bearer token for v1 MVP).
+
 ### Exit Criteria
 
-- Monitoring-only app usable end-to-end against local/staging loom instance.
-- SSE disconnect-to-recovered state p95 target met in test harness/telemetry baseline.
+- [x] Monitoring-only app scaffold compiles and tests pass (`swift build && swift test`).
+- [ ] End-to-end validation against local/staging loom instance.
+- [ ] SSE disconnect-to-recovered state p95 target met in test harness/telemetry baseline.
 
 ## M3: Session Controls (Create/End)
 

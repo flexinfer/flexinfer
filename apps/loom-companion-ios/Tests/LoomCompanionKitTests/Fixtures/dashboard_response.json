@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "data": {
+    "daemon_running": true,
+    "server_count": 5,
+    "active_sessions": 2,
+    "active_agents": 3,
+    "idle_agents": 1,
+    "offline_agents": 0,
+    "updated_at": "2026-02-23T12:00:00Z",
+    "health": {
+      "total_servers": 5,
+      "healthy_servers": 4,
+      "degraded_servers": 1,
+      "down_servers": 0,
+      "idle_servers": 0
+    },
+    "recent_timeline": [
+      {
+        "timestamp": "2026-02-23T11:59:00Z",
+        "event_type": "agent.session.start",
+        "agent_id": "claude-code",
+        "agent_type": "claude-code",
+        "data": {"session_id": "sess_abc123"}
+      },
+      {
+        "timestamp": "2026-02-23T11:58:00Z",
+        "event_type": "agent.heartbeat",
+        "agent_id": "codex",
+        "agent_type": "codex",
+        "data": {"status": "active"}
+      }
+    ]
+  },
+  "meta": {
+    "request_id": "req_dash001",
+    "timestamp": "2026-02-23T12:00:01Z"
+  }
+}

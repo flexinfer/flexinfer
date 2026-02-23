@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "data": {
+    "sessions": [
+      {
+        "id": "sess_abc123",
+        "agent_id": "claude-code",
+        "namespace": "loom-core/main",
+        "status": "active",
+        "description": "Working on mobile API",
+        "started_at": "2026-02-23T10:00:00Z",
+        "entry_count": 42,
+        "total_tokens": 8500
+      },
+      {
+        "id": "sess_def456",
+        "agent_id": "codex",
+        "namespace": "loom-core/feature",
+        "status": "ended",
+        "description": "Bug fix for SSE handler",
+        "started_at": "2026-02-23T08:00:00Z",
+        "ended_at": "2026-02-23T09:30:00Z",
+        "entry_count": 15,
+        "total_tokens": 3200
+      }
+    ]
+  },
+  "meta": {
+    "request_id": "req_sess001",
+    "timestamp": "2026-02-23T12:00:02Z"
+  }
+}
