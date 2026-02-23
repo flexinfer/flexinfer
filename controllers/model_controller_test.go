@@ -146,6 +146,8 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 		t.Fatalf("expected high-priority fallback leader, got %v", leader)
 	}
 
+	// When the ready model is idle (no LastActiveTime) and a non-ready model
+	// has recent demand, the demanded model should preempt the idle one.
 	readyLow := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{Name: "ready-low"},
 		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &low}},
@@ -161,8 +163,22 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 		},
 	}
 	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyLow, recentHigh}, now)
-	if leader == nil || leader.Name != "ready-low" {
-		t.Fatalf("expected ready model to win over recent activity, got %v", leader)
+	if leader == nil || leader.Name != "recent-high" {
+		t.Fatalf("expected demanded model to preempt idle ready model, got %v", leaderName(leader))
+	}
+
+	// When both models have recent traffic, the ready model stays.
+	readyActive := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-active"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &low}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyActive, recentHigh}, now)
+	if leader == nil || leader.Name != "ready-active" {
+		t.Fatalf("expected busy ready model to stay over demanded model, got %v", leaderName(leader))
 	}
 
 	oldHigh := &aiv1alpha2.Model{
@@ -183,6 +199,121 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 	if leader == nil || leader.Name != "recent-mid" {
 		t.Fatalf("expected recent active model to win when none are ready, got %v", leader)
 	}
+}
+
+func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
+	now := time.Now()
+	shared := "test-shared"
+	highPri := int32(100)
+	lowPri := int32(80)
+
+	// Scenario: active model is Ready but idle, queued model has recent demand.
+	// Expected: swap to the demanded model.
+	activeIdle := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "active-idle"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &highPri}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-5 * time.Minute)}, // idle
+		},
+	}
+	demandedQueued := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "demanded"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &lowPri}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)}, // recent demand
+		},
+	}
+
+	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{activeIdle, demandedQueued}, now)
+	if leader == nil || leader.Name != "demanded" {
+		t.Fatalf("expected demanded model to preempt idle active, got %v", leaderName(leader))
+	}
+
+	// Scenario: active model is Ready AND has recent traffic.
+	// Expected: keep active model (don't swap while it's busy).
+	activeBusy := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "active-busy"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &highPri}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)}, // recent traffic
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{activeBusy, demandedQueued}, now)
+	if leader == nil || leader.Name != "active-busy" {
+		t.Fatalf("expected busy active model to stay, got %v", leaderName(leader))
+	}
+
+	// Scenario: recent swap (within cooldown) — keep the currently Active model
+	// even if another model has demand.
+	recentlySwappedIn := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "swapped-in"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &lowPri}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-1 * time.Minute)},
+			SharedGroup:    &aiv1alpha2.SharedGroupStatus{State: "Active", GroupName: shared},
+		},
+	}
+	preemptedRecently := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "preempted-recent"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &highPri}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhasePreempted,
+			LastActiveTime: &metav1.Time{Time: now.Add(-10 * time.Second)}, // demand
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				State:       "Queued",
+				GroupName:   shared,
+				PreemptedAt: &metav1.Time{Time: now.Add(-1 * time.Minute)}, // recent swap
+			},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{recentlySwappedIn, preemptedRecently}, now)
+	if leader == nil || leader.Name != "swapped-in" {
+		t.Fatalf("expected cooldown to keep current active model, got %v", leaderName(leader))
+	}
+
+	// Scenario: cooldown expired — demand-based swap allowed again.
+	preemptedLongAgo := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "preempted-old"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &lowPri}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhasePreempted,
+			LastActiveTime: &metav1.Time{Time: now.Add(-10 * time.Minute)},
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				State:       "Queued",
+				GroupName:   shared,
+				PreemptedAt: &metav1.Time{Time: now.Add(-10 * time.Minute)}, // well past cooldown
+			},
+		},
+	}
+	idleReady := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "idle-ready"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &highPri}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-10 * time.Minute)}, // idle
+			SharedGroup:    &aiv1alpha2.SharedGroupStatus{State: "Active", GroupName: shared},
+		},
+	}
+	newDemand := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-demand"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &lowPri}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-20 * time.Second)}, // fresh demand
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{preemptedLongAgo, idleReady, newDemand}, now)
+	if leader == nil || leader.Name != "new-demand" {
+		t.Fatalf("expected demand swap after cooldown, got %v", leaderName(leader))
+	}
+}
+
+func leaderName(m *aiv1alpha2.Model) string {
+	if m == nil {
+		return "<nil>"
+	}
+	return m.Name
 }
 
 func TestQueuePositionForSharedModel(t *testing.T) {

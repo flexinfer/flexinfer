@@ -1728,6 +1728,18 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 }
 
 // handleSharedGPU implements GPU sharing logic for models with gpu.shared set.
+// Demand-based swap tuning constants for shared GPU groups.
+const (
+	// sharedDemandWindow is how recent a LastActiveTime must be to count as
+	// active demand from the proxy.
+	sharedDemandWindow = 2 * time.Minute
+
+	// sharedSwapCooldown prevents thrashing by blocking demand-based swaps
+	// for this duration after the most recent preemption.  Set high enough
+	// to cover model loading (large diffusers models need 3-5 min).
+	sharedSwapCooldown = 5 * time.Minute
+)
+
 func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *aiv1alpha2.Model {
 	if len(groupModels) == 0 {
 		return nil
@@ -1762,9 +1774,29 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		return b
 	}
 
+	// Anti-thrashing: if a swap happened recently, keep the currently
+	// active model regardless of demand or priority.
+	recentSwap := false
+	for _, m := range groupModels {
+		if m.Status.SharedGroup != nil && m.Status.SharedGroup.PreemptedAt != nil {
+			if now.Sub(m.Status.SharedGroup.PreemptedAt.Time) < sharedSwapCooldown {
+				recentSwap = true
+				break
+			}
+		}
+	}
+	if recentSwap {
+		for _, m := range groupModels {
+			if m.Status.SharedGroup != nil && m.Status.SharedGroup.State == "Active" {
+				return m
+			}
+		}
+	}
+
 	var readyLeader *aiv1alpha2.Model
 	var recentLeader *aiv1alpha2.Model
 	var fallbackLeader *aiv1alpha2.Model
+	var demandedLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
@@ -1776,6 +1808,20 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		}
 		if now.Sub(m.Status.LastActiveTime.Time) < 5*time.Minute {
 			recentLeader = better(recentLeader, m)
+		}
+		if now.Sub(m.Status.LastActiveTime.Time) < sharedDemandWindow {
+			demandedLeader = better(demandedLeader, m)
+		}
+	}
+
+	// Demand-based preemption: if a non-ready model has recent demand
+	// (proxy set its LastActiveTime) and the current ready leader is idle,
+	// swap to the demanded model.
+	if demandedLeader != nil && readyLeader != nil {
+		readyIdle := readyLeader.Status.LastActiveTime == nil ||
+			now.Sub(readyLeader.Status.LastActiveTime.Time) > sharedDemandWindow
+		if readyIdle {
+			return demandedLeader
 		}
 	}
 
