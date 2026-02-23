@@ -1312,13 +1312,21 @@ func (d *Daemon) handleServers(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 }
 
 type healthResult struct {
-	Servers map[string]serverHealth `json:"servers"`
+	Servers    map[string]serverHealth `json:"servers"`
+	Divergence []healthDivergenceEntry `json:"divergence,omitempty"`
+}
+
+type healthDivergenceEntry struct {
+	Server string `json:"server"`
+	Reason string `json:"reason"`
 }
 
 type serverHealth struct {
-	Local  *healthStatus `json:"local,omitempty"`
-	Hub    *healthStatus `json:"hub,omitempty"`
-	Target string        `json:"target"`
+	Local      *healthStatus     `json:"local,omitempty"`
+	Hub        *healthStatus     `json:"hub,omitempty"`
+	Monitor    *healthStatus     `json:"monitor,omitempty"`
+	Target     string            `json:"target"`
+	Divergence *HealthDivergence `json:"divergence,omitempty"`
 }
 
 type healthStatus struct {
@@ -1331,12 +1339,21 @@ type healthStatus struct {
 func (d *Daemon) handleHealth(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	allHealth := d.router.GetAllHealth()
 	servers := make(map[string]serverHealth)
+	var divergences []healthDivergenceEntry
+
+	// Collect monitor statuses for divergence comparison.
+	var monitorStatuses map[string]*ServerHealthStatus
+	if d.healthMonitor != nil {
+		monitorStatuses = d.healthMonitor.GetAllStatuses()
+	}
 
 	for name, h := range allHealth {
 		decision, _ := d.router.Route(ctx, name)
 		target := "unavailable"
+		routerAvailable := false
 		if decision != nil {
 			target = decision.Target.String()
+			routerAvailable = decision.Target != router.TargetUnavailable
 		}
 
 		sh := serverHealth{Target: target}
@@ -1356,10 +1373,34 @@ func (d *Daemon) handleHealth(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 				ErrorMessage: h.Hub.ErrorMessage,
 			}
 		}
+
+		// Include monitor slice if available.
+		monStatus := monitorStatuses[name]
+		if monStatus != nil {
+			sh.Monitor = &healthStatus{
+				Healthy:      monStatus.Healthy,
+				ConsecFails:  monStatus.ConsecutiveFails,
+				AvgLatencyMs: monStatus.AvgLatencyMs,
+				ErrorMessage: monStatus.LastError,
+			}
+		}
+
+		// Check for divergence between monitor and router.
+		if div := computeHealthDivergence(monStatus, routerAvailable); div != nil {
+			sh.Divergence = div
+			divergences = append(divergences, healthDivergenceEntry{
+				Server: name,
+				Reason: div.Reason,
+			})
+		}
+
 		servers[name] = sh
 	}
 
-	return mcp.NewResponse(msg.ID, healthResult{Servers: servers})
+	return mcp.NewResponse(msg.ID, healthResult{
+		Servers:    servers,
+		Divergence: divergences,
+	})
 }
 
 // toolsResult holds the aggregated tools response.

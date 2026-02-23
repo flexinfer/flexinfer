@@ -340,6 +340,32 @@ func (h *HealthMonitor) handleRestart(serverName string, status *ServerHealthSta
 	}
 }
 
+// HealthDivergence represents a disagreement between the health monitor and the router.
+type HealthDivergence struct {
+	Monitor         bool   `json:"monitor_healthy"`
+	RouterAvailable bool   `json:"router_available"`
+	Reason          string `json:"reason"`
+}
+
+// computeHealthDivergence returns non-nil when the monitor and router disagree on server health.
+func computeHealthDivergence(monitor *ServerHealthStatus, routerAvailable bool) *HealthDivergence {
+	if monitor == nil {
+		return nil
+	}
+	if monitor.Healthy == routerAvailable {
+		return nil
+	}
+	reason := "monitor_healthy_router_unavailable"
+	if !monitor.Healthy {
+		reason = "monitor_unhealthy_router_available"
+	}
+	return &HealthDivergence{
+		Monitor:         monitor.Healthy,
+		RouterAvailable: routerAvailable,
+		Reason:          reason,
+	}
+}
+
 // ResetRestartCount resets the restart count for a server (e.g., after manual intervention).
 func (h *HealthMonitor) ResetRestartCount(serverName string) {
 	h.mu.Lock()

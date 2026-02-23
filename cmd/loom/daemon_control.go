@@ -250,7 +250,11 @@ func statusDaemon(socketPath string) error {
 	healthResult, err := call(socketPath, "loom/health", nil)
 	if err == nil {
 		var health struct {
-			Servers map[string]json.RawMessage `json:"servers"`
+			Servers    map[string]json.RawMessage `json:"servers"`
+			Divergence []struct {
+				Server string `json:"server"`
+				Reason string `json:"reason"`
+			} `json:"divergence"`
 		}
 		if json.Unmarshal(healthResult, &health) == nil {
 			healthy, unhealthy := 0, 0
@@ -270,6 +274,12 @@ func statusDaemon(socketPath string) error {
 			}
 			if healthy+unhealthy > 0 {
 				fmt.Printf("  Health:  %d healthy, %d unhealthy\n", healthy, unhealthy)
+			}
+			if len(health.Divergence) > 0 {
+				fmt.Printf("  Divergence: %d server(s) with monitor/router mismatch\n", len(health.Divergence))
+				for _, d := range health.Divergence {
+					fmt.Printf("    - %s: %s\n", d.Server, d.Reason)
+				}
 			}
 		}
 	}
