@@ -2,156 +2,128 @@
 
 ## Summary
 
-- Planning date: 2026-02-20
-- Scope: stale CLI -> proxy -> `loomd` -> MCP session behavior, hot rebuild/reload survivability, stale socket prevention, local CPU/memory efficiency in loom-mode.
-- Total items considered: 7
+- Planning date: 2026-02-23
+- Previous cycle: 2026-02-20 (7 items; 6 completed, 1 carried forward)
+- Scope: session lifecycle, proxy resilience, daemon maintainability, library transport correctness
+- Total active items: 2
+- Scoring model: impact 35%, risk reduction 30%, drag reduction 20%, effort inverse 15%
+
+## Completed Since Last Cycle
+
+| ID | Summary | Closed By |
+|---|---|---|
+| DEBT-001 | Proxy transport reset hardened | Structured error types + `errors.Is`/`errors.As` classification |
+| DEBT-002 | End-to-end RPC deadlines + response ID validation | `ddd4e85` (ID mismatch detection, lock ordering fix) |
+| DEBT-003 | Bounded autostart replaces `sync.Once` | `proxy.go:114-132` (5 attempts, 10s cooldown) |
+| DEBT-005 | Health monitor process churn reduced | Pool-reusing passive checks |
+| DEBT-006 | Dev-upgrade safety gates strengthened | Session-aware drain + smoke checks |
+| DEBT-007 | Restart/reconnect chaos tests added | `internal/integration/proxy_daemon_test.go` |
+
+Additional fixes this cycle (not in previous inventory):
+- `454ecf8` - Removed dead `agent_handoff_list` tool causing -32602 HUD errors
+- `352d8a2` (mcp-go) - StdioTransport Close/Recv lifecycle fix (was no-op + blocking)
+- Killed 88 orphaned proxy processes manually
 
 ## Scoring Snapshot
 
 - Ranking artifact: `.loom/tech-debt-priority.md`
-- Scoring model: impact 35%, risk reduction 30%, drag reduction 20%, effort inverse 15%
-- Top-ranked items: `DEBT-002` (94), `DEBT-001` (93), `DEBT-007` (84)
+- Top-ranked: `DEBT-004` (80), `DEBT-010` (61), `DEBT-011` (59), `DEBT-008` (58), `DEBT-009` (52)
 
-## Wave 1 (Immediate)
+## Wave 1 (Quick Wins + High Leverage)
 
-- Goal: Eliminate hung-agent failure modes and make reconnect deterministic under daemon/proxy churn.
+- Goal: Eliminate remaining proxy orphan risk and low-effort credential cleanup.
 - Items:
-  - `DEBT-002` Enforce end-to-end RPC deadlines.
-  - `DEBT-001` Harden proxy transport reset and reconnect classification.
-  - `DEBT-007` Add restart/reconnect chaos tests for confidence gates.
+  - `DEBT-011` (score 59) Add signal handling and idle timeout to proxy process.
+  - `DEBT-010` (score 61) Migrate GCP credentials to ADC.
 - Acceptance criteria:
-  - Proxy and CLI never block indefinitely on daemon send/recv; timeout errors are explicit and recoverable.
-  - Proxy always clears poisoned daemon transports after init/send/recv failures and reconnects on next request.
-  - New integration suite covers: daemon restart during active proxy session, stale socket path, and MCP server transport drop.
-  - `go test ./cmd/loom ./internal/daemon ./internal/integration -run 'ProxyDaemon|CallPipeline|Daemon'` passes.
+  - Proxy handles SIGTERM/SIGINT with graceful shutdown (close daemon transport, close session, exit).
+  - Proxy self-terminates after configurable idle period (default 30m, env override).
+  - GCP server uses ADC by default; explicit credentials file as optional override.
+  - `go test ./cmd/loom -run Proxy` passes; manual test: kill parent process, verify proxy exits.
 - Risks/mitigations:
-  - Risk: timeout defaults may break long-running tools. Mitigation: add method-level timeout tiers and config overrides.
-  - Risk: reconnect loops could amplify CPU if daemon is down. Mitigation: exponential backoff + jitter + cap.
+  - Risk: idle timeout could kill proxies during legitimate long pauses. Mitigation: configurable via `LOOM_PROXY_IDLE_TIMEOUT`, default conservative (30m), reset on any message.
 - Not in this wave:
-  - Full session lease protocol (`DEBT-004`).
-  - Health monitor efficiency redesign (`DEBT-005`).
+  - Session lease protocol (`DEBT-004`).
+  - Daemon file split (`DEBT-008`).
 
-## Wave 2 (Near-Term)
+## Wave 2 (Medium Effort / Maintainability) — COMPLETED
 
-- Goal: Stabilize developer hot-upgrade lifecycle and lower local runtime cost.
+- Goal: Improve daemon codebase maintainability and prepare for session architecture.
 - Items:
-  - `DEBT-003` Retryable autostart/reconnection policy (replace one-shot `sync.Once` behavior).
-  - `DEBT-006` Make `dev-upgrade` restart guard session-aware and strengthen smoke checks.
-  - `DEBT-005` Reduce health monitor process churn in loom-mode.
-- Acceptance criteria:
-  - Proxy reconnect/autostart survives daemon restarts without manual user intervention.
-  - `scripts/dev/upgrade_local.sh` blocks/retries based on explicit proxy-session drain state, not just pool active connections.
-  - Upgrade smoke validates `initialize`, `tools/list`, and a representative `tools/call` across a daemon restart.
-  - Health monitor no longer forks per-server process every interval for local checks; CPU and RSS baseline improves versus current baseline capture.
-- Risks/mitigations:
-  - Risk: session-aware drain adds state complexity. Mitigation: keep read-only status endpoint first, then enforce.
-  - Risk: health probe changes can hide server failures. Mitigation: keep fallback deep probe path on configurable interval.
-- Not in this wave:
-  - Cross-transport unified lease/epoch architecture finalization (`DEBT-004`).
+  - `DEBT-008` (score 58) Split daemon.go monolith into focused files. **Done** (`1fc56e0`).
+- Result:
+  - `daemon.go` reduced from 2535 to 919 lines (core lifecycle, networking).
+  - New files: `daemon_dispatch.go` (618), `daemon_toolcache.go` (731), `daemon_call.go` (130), `daemon_loops.go` (182).
+  - No behavior changes; all existing tests pass unchanged; golangci-lint clean.
 
 ## Wave 3 (Strategic)
 
-- Goal: Enterprise-grade session lifecycle with seamless hot reload/restart semantics.
+- Goal: Enterprise-grade session lifecycle and transport library correctness.
 - Items:
-  - `DEBT-004` Unified local+HTTP session lease/epoch management.
-  - Complete shared daemon client abstraction reuse across proxy/CLI/HUD where practical.
+  - `DEBT-004` (score 80) Unified local+HTTP session lease/epoch management.
+  - `DEBT-009` (score 52) Non-destructive context cancellation for StdioTransport.
 - Acceptance criteria:
-  - Local proxy sessions receive lease metadata (`session_id`, `daemon_epoch`, `last_seen`) and support resume after daemon restart.
-  - Daemon supports graceful drain states for reload/restart: `accepting=false`, in-flight completion window, hard cutoff.
-  - Proxy transparently re-initializes session on epoch mismatch without requiring CLI/IDE restart.
-  - Backward compatibility preserved for existing `loom proxy` protocol behavior and generated client configs.
+  - DEBT-004: Local proxy sessions receive lease metadata (`session_id`, `daemon_epoch`, `last_seen`) and support resume after daemon restart. Daemon supports graceful drain states for reload/restart. Backward-compatible.
+  - DEBT-009: StdioTransport uses background reader goroutine; context cancellation aborts current read without closing transport. Transport remains usable after timeout.
 - Risks/mitigations:
-  - Risk: protocol changes could break older clients. Mitigation: additive fields + capability negotiation + compatibility tests.
-  - Risk: more session bookkeeping could increase memory footprint. Mitigation: bounded LRU session table + idle reap + lightweight structs.
+  - Risk: DEBT-004 protocol changes could break older clients. Mitigation: additive fields + capability negotiation.
+  - Risk: DEBT-009 background goroutine adds complexity and resource overhead. Mitigation: benchmark before/after; keep current approach as opt-in fast path.
 - Not in this wave:
-  - Non-session-related feature roadmap work (catalog UX, Fleet orchestration UX, etc.).
+  - Non-session-related feature roadmap work.
 
 ## Backlog Conversion
 
-| Debt ID | Backlog ID | Owner | Target Sprint/Milestone | Status |
+| Debt ID | Backlog ID | Owner | Wave | Status |
 |---|---|---|---|---|
-| DEBT-002 | TD-SESSION-01 | daemon/proxy runtime | Sprint 1 | done |
-| DEBT-001 | TD-SESSION-02 | daemon/proxy runtime | Sprint 1 | done |
-| DEBT-007 | TD-SESSION-03 | qa/runtime | Sprint 1 | done |
-| DEBT-003 | TD-SESSION-04 | proxy lifecycle | Sprint 2 | done |
-| DEBT-006 | TD-SESSION-05 | dev lifecycle | Sprint 2 | done |
-| DEBT-005 | TD-PERF-01 | daemon runtime | Sprint 2 | done |
-| DEBT-004 | TD-SESSION-06 | architecture/runtime | Sprint 3 | planned |
+| DEBT-011 | TD-PROXY-01 | proxy lifecycle | Wave 1 | done (`b6ca3da`) |
+| DEBT-010 | TD-GCP-01 | mcp-gcp | Wave 1 | done (`812c638`) |
+| DEBT-008 | TD-MAINT-01 | daemon runtime | Wave 2 | done (`1fc56e0`) |
+| DEBT-004 | TD-SESSION-06 | architecture/runtime | Wave 3 | planned |
+| DEBT-009 | TD-TRANSPORT-01 | mcp-go library | Wave 3 | planned |
 
 ## Backlog-Ready Slices
 
-### TD-SESSION-01 (DEBT-002)
+### TD-PROXY-01 (DEBT-011)
 
-- Problem statement: unbounded send/recv contexts in proxy/CLI can deadlock agent sessions when daemon or downstream server stalls.
+- Problem statement: proxy process has no signal handling and no idle self-termination. Before the StdioTransport fix (`352d8a2`), orphaned proxies accumulated indefinitely (88 killed manually). Post-fix, stdin EOF propagates correctly, but no graceful signal handling or idle watchdog exists.
 - Acceptance criteria:
-  - Configurable call timeout envelope (default <= 30s for control-plane calls, <= 60s for tool calls).
-  - Timeout errors include phase (`dial`, `send`, `recv`) and recoverability hint.
+  - `signal.Notify` for SIGTERM/SIGINT triggers graceful shutdown: close daemon transport, end proxy session, exit 0.
+  - Configurable idle timeout (`LOOM_PROXY_IDLE_TIMEOUT`, default 30m) terminates proxy after no messages received.
+  - Idle timer resets on every inbound message from stdin.
 - Test/verification strategy:
-  - Unit tests for timeout paths in proxy + CLI call helper.
-  - Integration test with intentionally blocking mock daemon transport.
+  - Unit test: send SIGTERM to proxy subprocess, verify clean exit within 2s.
+  - Integration test: start proxy, wait past idle timeout, verify process exited.
+  - Manual: kill IDE process, verify proxy exits (stdin EOF path, already working post-fix).
 - Rollback/safety notes:
-  - Timeout config guarded with defaults and env override to quickly relax limits if a regression appears.
+  - Idle timeout disabled by setting `LOOM_PROXY_IDLE_TIMEOUT=0`.
+  - Signal handling is additive; no existing behavior changes.
 
-### TD-SESSION-02 (DEBT-001)
+### TD-GCP-01 (DEBT-010)
 
-- Problem statement: proxy can retain a bad daemon transport after failed initialize, and reconnect reset logic misses non-EOF transport failures.
+- Problem statement: GCP MCP server hardcodes `option.WithCredentialsFile()` for auth, suppressing `staticcheck` with `//nolint`. Should use ADC as default.
 - Acceptance criteria:
-  - Any initialize/send/recv failure resets transport state atomically.
-  - Failure classification uses structured checks (`errors.Is`, `net.Error`) instead of brittle string matching only.
+  - Remove explicit `WithCredentialsFile`; use `storage.NewClient(ctx)` which auto-discovers credentials via ADC.
+  - Optionally accept `GOOGLE_APPLICATION_CREDENTIALS` env var (ADC already supports this natively).
+  - Remove `//nolint:staticcheck` suppression.
 - Test/verification strategy:
-  - Table tests for failure classes (`EOF`, `EPIPE`, `ECONNRESET`, closed network connection, timeout).
-  - Regression tests for init-fail then successful reconnect.
+  - Verify GCP client initializes with ADC in local dev (gcloud auth application-default login).
+  - Verify explicit credentials file still works via env var.
 - Rollback/safety notes:
-  - Keep previous fallback classification as secondary path during rollout.
+  - ADC is Google's recommended approach and supports all existing credential sources.
 
-### TD-SESSION-03 (DEBT-007)
+### TD-MAINT-01 (DEBT-008)
 
-- Problem statement: no automated confidence for restart/reload chaos cases.
+- Problem statement: `internal/daemon/daemon.go` at 2,535 lines mixes 6+ concerns, making code review, navigation, and targeted refactoring harder.
 - Acceptance criteria:
-  - New integration suite exercises restart during active proxy session and stale socket recovery.
-  - Tests run in CI profile (or nightly) with deterministic pass/fail criteria.
+  - Split into: `daemon.go` (lifecycle/init, ~500 lines), `daemon_cache.go` (tool/resource cache), `daemon_health.go` (health monitoring), `daemon_reaper.go` (idle/session reaping), `daemon_metrics.go` (metrics collection).
+  - Same package, no API changes, no behavior changes.
+  - All tests pass unchanged; golangci-lint clean.
 - Test/verification strategy:
-  - Extend `internal/integration/proxy_daemon_test.go` with restart scenario harness.
-  - Add daemon lifecycle chaos fixtures under `internal/daemon/*_test.go`.
+  - `go test ./internal/daemon/...` before and after; identical results.
+  - `golangci-lint run ./internal/daemon/...` clean.
+  - `git diff --stat` confirms no logic changes, only file moves.
 - Rollback/safety notes:
-  - Mark as optional/nightly first if CI duration impact exceeds threshold.
-
-### TD-SESSION-04 (DEBT-003)
-
-- Problem statement: one-shot autostart leaves proxy stranded after subsequent daemon outages.
-- Acceptance criteria:
-  - Replace `sync.Once` autostart gate with bounded retry policy + jitter/backoff.
-  - Proxy auto-recovers from daemon restarts without external commands.
-- Test/verification strategy:
-  - Simulated daemon-down -> daemon-up reconnection test.
-  - Ensure no excessive spawn attempts when daemon is permanently unavailable.
-- Rollback/safety notes:
-  - Backoff max cap and attempt cap prevent process churn storms.
-
-### TD-SESSION-05 (DEBT-006)
-
-- Problem statement: `dev-upgrade` restart decision uses pool active connection count that does not represent user proxy session lifecycle; smoke test only covers initialize.
-- Acceptance criteria:
-  - Daemon exposes explicit proxy session count/drain readiness endpoint.
-  - Upgrade script uses this endpoint and verifies restart resilience with an actual tool call.
-- Test/verification strategy:
-  - Script unit tests for parsing fallback behaviors.
-  - End-to-end dev-upgrade dry-run in CI/dev sandbox.
-- Rollback/safety notes:
-  - Keep current status-based guard as fallback while session endpoint rolls out.
-
-### TD-PERF-01 (DEBT-005)
-
-- Problem statement: health checks spawn short-lived processes for each server every interval, creating avoidable local CPU/memory pressure.
-- Acceptance criteria:
-  - Health check mode reuses existing pools/running processes by default.
-  - Introduce adaptive/degraded deep probe schedule for expensive checks.
-  - Baseline comparison shows reduced CPU and process churn in loom-mode.
-- Test/verification strategy:
-  - Add benchmark/metrics capture before and after.
-  - Verify unhealthy server detection quality is maintained.
-- Rollback/safety notes:
-  - Feature flag to revert to deep-probe mode if false negatives appear.
+  - Pure mechanical refactor; revert is a single commit.
 
 ### TD-SESSION-06 (DEBT-004)
 
@@ -159,12 +131,27 @@
 - Acceptance criteria:
   - Session lease API for local proxy clients (ID, epoch, expiry, state).
   - Graceful daemon drain protocol for reload/restart with in-flight completion window.
+  - Proxy transparently re-initializes session on epoch mismatch without requiring IDE restart.
   - Backward-compatible proxy behavior for old clients.
 - Test/verification strategy:
   - Contract tests for lease creation, heartbeat, epoch mismatch, and resume paths.
   - Chaos tests for daemon restarts under concurrent tool traffic.
 - Rollback/safety notes:
   - Additive protocol fields only; legacy flow preserved behind capability checks.
+
+### TD-TRANSPORT-01 (DEBT-009)
+
+- Problem statement: StdioTransport.Recv() calls Close() on context cancellation, permanently destroying the transport. Library consumers expecting reusable connections after timeout are not served.
+- Acceptance criteria:
+  - Background reader goroutine architecture: persistent goroutine reads from reader and publishes to channel. Recv selects on channel + ctx.Done without closing reader.
+  - Transport remains functional after context cancellation (next Recv call works).
+  - Existing tests pass; new test verifies: cancel Recv, then successfully Recv again.
+- Test/verification strategy:
+  - `go test ./...` in mcp-go passes.
+  - New test: Recv with short timeout (no data), cancel, write data, Recv again succeeds.
+  - Benchmark: goroutine overhead vs current approach.
+- Rollback/safety notes:
+  - Feature flag or build tag to select between current (close-on-cancel) and new (background-reader) mode.
 
 ## Deferred / Not In Scope
 
