@@ -1,8 +1,8 @@
-# Mobile Companion API (Draft v1)
+# Mobile Companion API v1 (Contract Freeze)
 
-This document defines the planned API contract for the Loom Companion iPhone/iPad app.
+This document defines the API contract for the Loom Companion iPhone/iPad app.
 
-Status: planning draft (not yet implemented).
+Status: **v1 contract freeze** (2026-02-23). All 8 endpoints implemented in `internal/hud/api_mobile.go`.
 
 ## Goals
 
@@ -97,43 +97,209 @@ Errors:
 }
 ```
 
-## Endpoints (Planned v1)
+## Endpoints (v1 Frozen)
+
+All endpoints return the standard envelope. The `data` field for each is defined below.
+
+---
+
+### GET `/api/mobile/v1/ping`
+
+Connectivity probe. Scope: `mobile:read`.
+
+**Response `data`:**
+
+```json
+{
+  "pong": true
+}
+```
+
+Source: `internal/hud/api_mobile.go:171-176`
+
+---
 
 ### GET `/api/mobile/v1/dashboard`
 
-Mobile dashboard aggregate for quick app open.
+Mobile dashboard aggregate for quick app open. Scope: `mobile:read`.
 
-Contains:
-- daemon status summary
-- server health summary
-- active session count
-- recent critical timeline entries
+**Response `data`:**
+
+```json
+{
+  "daemon_running": true,
+  "server_count": 5,
+  "active_sessions": 2,
+  "active_agents": 3,
+  "idle_agents": 1,
+  "offline_agents": 0,
+  "updated_at": "2026-02-23T12:00:00Z",
+  "health": {
+    "total_servers": 5,
+    "healthy_servers": 4,
+    "degraded_servers": 1,
+    "down_servers": 0,
+    "idle_servers": 0
+  },
+  "recent_timeline": [
+    {
+      "timestamp": "2026-02-23T11:59:00Z",
+      "event_type": "agent.session.start",
+      "agent_id": "claude-code",
+      "agent_type": "claude-code",
+      "data": {}
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `daemon_running` | bool | Whether `loomd` is running |
+| `server_count` | int | Total registered MCP servers |
+| `active_sessions` | int | Sessions with status `active` |
+| `active_agents` | int | Agents with presence status `active` |
+| `idle_agents` | int | Agents with presence status `idle` |
+| `offline_agents` | int | Agents with presence status `offline` |
+| `updated_at` | string (RFC3339) | Fleet snapshot timestamp |
+| `health` | object | Server health summary (see `HealthSummary`) |
+| `health.total_servers` | int | Total servers monitored |
+| `health.healthy_servers` | int | Servers passing health checks |
+| `health.degraded_servers` | int | Servers with intermittent failures |
+| `health.down_servers` | int | Servers failing health checks |
+| `health.idle_servers` | int | Servers with no recent activity |
+| `recent_timeline` | array | Last 10 `TimelineEntry` objects |
+
+**`TimelineEntry` schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | string (RFC3339) | Event time |
+| `event_type` | string | Event type identifier |
+| `agent_id` | string | Agent that generated the event (omitted if N/A) |
+| `agent_type` | string | Agent type (omitted if N/A) |
+| `data` | object | Event-specific payload |
+
+Source: `internal/hud/api_mobile.go:178-212`, `internal/hud/monitor/fleet.go:18-63`, `internal/hud/monitor/health.go:98-105`, `internal/hud/eventlog.go:10-16`
+
+---
 
 ### GET `/api/mobile/v1/sessions`
 
-List sessions with optional filters:
-- `status=active|ended`
-- `agent_id=...`
-- `namespace=...`
-- `since=<RFC3339>`
-- `page`, `per_page`
+List all sessions. Scope: `mobile:read`.
+
+**Response `data`:**
+
+```json
+{
+  "sessions": [
+    {
+      "id": "sess_abc123",
+      "agent_id": "claude-code",
+      "namespace": "loom-core/main",
+      "status": "active",
+      "description": "Working on mobile API",
+      "started_at": "2026-02-23T10:00:00Z",
+      "entry_count": 42,
+      "total_tokens": 8500
+    }
+  ]
+}
+```
+
+**`SessionInfo` schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Session identifier |
+| `agent_id` | string | Owning agent |
+| `namespace` | string | Session namespace |
+| `status` | string | `active` or `ended` |
+| `description` | string | Human-readable session description |
+| `started_at` | string (RFC3339) | Session start time |
+| `ended_at` | string (RFC3339) | Session end time (omitted if active) |
+| `entry_count` | int | Number of context entries |
+| `total_tokens` | int | Estimated token usage |
+
+Source: `internal/hud/api_mobile.go:214-225`, `internal/hud/bridge/agent.go:30-41`
+
+---
 
 ### GET `/api/mobile/v1/sessions/{session_id}`
 
-Session detail summary:
-- lifecycle fields
-- token/cost summary (when available)
-- task summary
+Single session detail. Scope: `mobile:read`.
+
+**Response `data`:**
+
+```json
+{
+  "session": {
+    "id": "sess_abc123",
+    "agent_id": "claude-code",
+    "namespace": "loom-core/main",
+    "status": "active",
+    "description": "Working on mobile API",
+    "started_at": "2026-02-23T10:00:00Z",
+    "entry_count": 42,
+    "total_tokens": 8500
+  }
+}
+```
+
+Returns a single `SessionInfo` (same schema as above) under `data.session`.
+
+**Error cases:**
+- `400 bad_request` — missing `session_id`
+- `404 not_found` — session not found
+
+Source: `internal/hud/api_mobile.go:227-252`
+
+---
 
 ### GET `/api/mobile/v1/sessions/{session_id}/events`
 
-Session-scoped event feed (paged pull fallback).
+Session-scoped event feed. Scope: `mobile:read`.
+
+**Query parameters:**
+
+| Param | Type | Default | Max | Description |
+|---|---|---|---|---|
+| `limit` | int | 100 | 500 | Maximum events to return |
+
+**Response `data`:**
+
+```json
+{
+  "session_id": "sess_abc123",
+  "events": [
+    {
+      "timestamp": "2026-02-23T11:00:00Z",
+      "event_type": "agent.session.start",
+      "agent_id": "claude-code",
+      "agent_type": "claude-code",
+      "data": {"session_id": "sess_abc123"}
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `session_id` | string | Echo of requested session ID |
+| `events` | array | `TimelineEntry` objects matching this session |
+
+**Error cases:**
+- `400 bad_request` — missing `session_id`
+
+Source: `internal/hud/api_mobile.go:254-288`
+
+---
 
 ### POST `/api/mobile/v1/sessions`
 
-Create/start session (idempotent by agent + namespace semantics).
+Create/start a new session. Scope: `mobile:session:create`.
 
-Body:
+**Request body:**
 
 ```json
 {
@@ -144,11 +310,26 @@ Body:
 }
 ```
 
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `agent_id` | string | yes | Agent to create the session for |
+| `namespace` | string | no | Session namespace |
+| `description` | string | no | Human-readable description |
+| `auto_recall` | bool | no | Auto-recall previous context |
+
+**Response:** Delegates to internal `handleAgentSessionStart` handler. Returns the session envelope from the agent-context bridge.
+
+**Audit:** Logs `session_create` with `agent_id` and `namespace` targets.
+
+Source: `internal/hud/api_mobile.go:297-321`
+
+---
+
 ### POST `/api/mobile/v1/sessions/{session_id}/end`
 
-End session.
+End an active session. Scope: `mobile:session:end`.
 
-Body:
+**Request body:**
 
 ```json
 {
@@ -156,12 +337,26 @@ Body:
 }
 ```
 
-Alternative selector variant for agent-based end can be added if needed:
-- `POST /api/mobile/v1/agents/{agent_id}/session/end`
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `summarize` | bool | no | Generate summary on end |
+
+**Response:** Delegates to internal `handleAgentSessionEnd` handler. Returns the session-end result from the agent-context bridge.
+
+**Error cases:**
+- `400 bad_request` — missing `session_id` or invalid body
+
+**Audit:** Logs `session_end` with `session_id` and `summarize` targets.
+
+Source: `internal/hud/api_mobile.go:323-365`
+
+---
 
 ### GET `/api/mobile/v1/events/stream`
 
-SSE endpoint for mobile realtime feed.
+SSE endpoint for mobile realtime feed. Scope: `mobile:read`.
+
+Delegates to the existing `/api/events` SSE handler after auth validation.
 
 Event allowlist in v1:
 - `hud.fleet`
@@ -173,16 +368,26 @@ Event allowlist in v1:
 - `agent.session.reaped`
 - `agent.heartbeat`
 
-## Internal Mapping (Current HUD/Bridge)
+Source: `internal/hud/api_mobile.go:290-295`
 
-Planned mobile endpoints map to existing internal surfaces:
-- Session start: `/api/agent/session-start`
-- Session end: `/api/agent/session-end`
-- Sessions list/detail inputs: `/api/sessions`, bridge session helpers
-- Realtime stream: `/api/events`
-- Fleet/health: `/api/fleet`, `/api/health`, `/api/status`
+---
 
-The mobile API layer should normalize these into stable DTOs.
+## Internal Mapping
+
+Mobile endpoints delegate to existing internal surfaces:
+
+| Mobile endpoint | Internal handler |
+|---|---|
+| `POST /sessions` | `handleAgentSessionStart` |
+| `POST /sessions/{id}/end` | `handleAgentSessionEnd` |
+| `GET /sessions` | `AgentBridge.Sessions()` |
+| `GET /sessions/{id}` | `AgentBridge.Sessions()` + filter |
+| `GET /sessions/{id}/events` | `EventLog.All()` + filter |
+| `GET /events/stream` | `handleSSE` |
+| `GET /dashboard` | `FleetMonitor.Snapshot()` + `HealthMonitor.Summary()` + `EventLog.All()` |
+| `GET /ping` | Direct response |
+
+The mobile API layer normalizes these into stable DTOs with the `mobileEnvelope` wrapper.
 
 ## Idempotency and Retry
 
@@ -208,15 +413,11 @@ All mutation endpoints must record:
 
 ## Sources
 
-- `internal/hud/app.go:473`
-- `internal/hud/app.go:495`
-- `internal/hud/app.go:528`
-- `internal/hud/app.go:540`
-- `internal/hud/app.go:546`
-- `internal/hud/api_agent.go:79`
-- `internal/hud/api_agent.go:183`
-- `internal/hud/api_agent.go:573`
-- `internal/hud/bridge/agent.go:1443`
-- `internal/hud/bridge/agent.go:1518`
+- `internal/hud/api_mobile.go` — all mobile v1 handlers, envelope types, auth helpers
+- `internal/hud/app.go:539-547` — route registration
+- `internal/hud/bridge/agent.go:30-41` — `SessionInfo` struct
+- `internal/hud/monitor/fleet.go:18-63` — `FleetSnapshot` struct
+- `internal/hud/monitor/health.go:98-105` — `HealthSummary` struct
+- `internal/hud/eventlog.go:10-16` — `TimelineEntry` struct
 - `docs/STREAMABLE_HTTP.md`
 - `.loom/20-product-spec.md`

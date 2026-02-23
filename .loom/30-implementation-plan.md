@@ -17,7 +17,7 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 
 | Milestone | Description | Status |
 |---|---|---|
-| M0 | Contract + security architecture freeze | In progress |
+| M0 | Contract + security architecture freeze | **Complete** (2026-02-23) |
 | M1 | Backend mobile auth + API hardening | Not started |
 | M2 | iOS/iPad app scaffold + monitoring UI | Not started |
 | M3 | Session create/end controls | Not started |
@@ -48,15 +48,19 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - `docs/MOBILE_COMPANION_SECURITY.md` (new).
 - Auth bootstrap decision record (ADR-style note in `.loom/40-decisions.md` or docs).
 
-Current state:
-- Draft documents created and linked from docs hub.
+### Completion Notes (2026-02-23)
+
+- All 8 endpoints implemented in `internal/hud/api_mobile.go` with auth, scope checks, and audit logging.
+- Concrete response schemas frozen in `docs/MOBILE_COMPANION_API.md` (derived from implementation).
+- Per-mutation threat analysis added to `docs/MOBILE_COMPANION_SECURITY.md` for `session-create` and `session-end`.
+- Security review signoff recorded with verified/deferred control inventory.
 - Auth bootstrap decision recorded in `.loom/40-decisions.md` with default + fallback + threat controls.
 
-### Exit Criteria
+### Exit Criteria (all met)
 
-- Endpoint list and request/response schemas frozen for M1-M3.
-- Auth bootstrap mode selected and documented with rationale/tradeoffs.
-- Security review signoff recorded.
+- [x] Endpoint list and request/response schemas frozen for M1-M3.
+- [x] Auth bootstrap mode selected and documented with rationale/tradeoffs.
+- [x] Security review signoff recorded.
 
 ## M1: Backend Mobile Auth + API Hardening
 

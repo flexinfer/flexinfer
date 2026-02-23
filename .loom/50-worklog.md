@@ -1,5 +1,33 @@
 # Worklog
 
+## 2026-02-23 (session 15)
+
+- What changed:
+  - Froze v1 response schemas in `docs/MOBILE_COMPANION_API.md`:
+    - Added concrete `data` payload definitions for all 8 endpoints with field tables and example JSON.
+    - Defined `SessionInfo` and `TimelineEntry` schemas with types and descriptions.
+    - Added internal mapping table showing mobile endpoints to internal handlers.
+    - Updated doc status from "planning draft" to "v1 contract freeze".
+  - Updated `docs/MOBILE_COMPANION_SECURITY.md`:
+    - Added per-mutation threat analysis for `session-create` (4 threats) and `session-end` (4 threats) with severity, mitigation, and implementation status.
+    - Added cross-cutting controls summary table.
+    - Updated hardening checklist with implemented items checked off.
+    - Added security review signoff section with verified/deferred control inventory.
+    - Updated doc status to "v1 contract freeze".
+  - Marked M0 complete in `.loom/30-implementation-plan.md` with completion notes and exit criteria checked off.
+- Why:
+  - M0 exit criteria required frozen schemas, per-mutation threat model, and security signoff before M1 can begin.
+  - Backend implementation was ahead of docs; schemas derived from actual `api_mobile.go` handler output.
+- Sources:
+  - [S1] `docs/MOBILE_COMPANION_API.md`
+  - [S2] `docs/MOBILE_COMPANION_SECURITY.md`
+  - [S3] `.loom/30-implementation-plan.md`
+  - [S4] `internal/hud/api_mobile.go`
+  - [S5] `internal/hud/bridge/agent.go:30-41`
+  - [S6] `internal/hud/monitor/fleet.go:18-63`
+  - [S7] `internal/hud/monitor/health.go:98-105`
+  - [S8] `internal/hud/eventlog.go:10-16`
+
 ## 2026-02-19 (session 14)
 
 - What changed:
