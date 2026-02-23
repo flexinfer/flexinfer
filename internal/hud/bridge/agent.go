@@ -1407,8 +1407,53 @@ type HandoffInfo struct {
 	AcceptedAt string `json:"accepted_at,omitempty"`
 }
 
-// HandoffList returns pending handoffs.
-func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
+type handoffInboxEntry struct {
+	HandoffID    string `json:"handoff_id"`
+	SourceAgent  string `json:"source_agent"`
+	Status       string `json:"status"`
+	Instructions string `json:"instructions,omitempty"`
+	Summary      string `json:"summary"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func isUnknownToolErr(err error, toolName string) bool {
+	if err == nil || strings.TrimSpace(toolName) == "" {
+		return false
+	}
+	return strings.Contains(err.Error(), "unknown tool: "+toolName)
+}
+
+func (a *AgentBridge) handoffInbox(agentID string, includeViewed bool) ([]HandoffInfo, error) {
+	args := map[string]any{
+		"agent_id": agentID,
+	}
+	if includeViewed {
+		args["include_viewed"] = true
+	}
+
+	var result struct {
+		Handoffs []handoffInboxEntry `json:"handoffs"`
+	}
+	if err := a.callAgentTool("agent_handoff_inbox", args, &result); err != nil {
+		return nil, err
+	}
+
+	out := make([]HandoffInfo, 0, len(result.Handoffs))
+	for _, h := range result.Handoffs {
+		out = append(out, HandoffInfo{
+			ID:        h.HandoffID,
+			FromAgent: h.SourceAgent,
+			ToAgent:   agentID,
+			Status:    h.Status,
+			Summary:   h.Summary,
+			Context:   h.Instructions,
+			CreatedAt: h.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (a *AgentBridge) handoffListLegacy() ([]HandoffInfo, error) {
 	var result struct {
 		Handoffs []HandoffInfo `json:"handoffs"`
 	}
@@ -1416,6 +1461,61 @@ func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 		return nil, err
 	}
 	return result.Handoffs, nil
+}
+
+// HandoffList returns pending/viewed handoffs across active/offline agents.
+// It prefers the newer inbox API and falls back to the legacy list tool.
+func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
+	agents, err := a.PresenceList(true)
+	if err != nil {
+		legacy, legacyErr := a.handoffListLegacy()
+		if legacyErr == nil {
+			return legacy, nil
+		}
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	combined := make([]HandoffInfo, 0)
+	var inboxErr error
+	var inboxSuccess bool
+
+	for _, agent := range agents {
+		agentID := strings.TrimSpace(agent.AgentID)
+		if agentID == "" {
+			continue
+		}
+		handoffs, err := a.handoffInbox(agentID, true)
+		if err != nil {
+			if isUnknownToolErr(err, "agent_handoff_inbox") {
+				return a.handoffListLegacy()
+			}
+			if inboxErr == nil {
+				inboxErr = err
+			}
+			continue
+		}
+		inboxSuccess = true
+		for _, h := range handoffs {
+			if strings.TrimSpace(h.ID) == "" {
+				continue
+			}
+			if _, ok := seen[h.ID]; ok {
+				continue
+			}
+			seen[h.ID] = struct{}{}
+			combined = append(combined, h)
+		}
+	}
+
+	if inboxSuccess || len(agents) == 0 {
+		return combined, nil
+	}
+
+	if inboxErr != nil {
+		return nil, inboxErr
+	}
+	return combined, nil
 }
 
 // HandoffCreate creates a new handoff.
@@ -1816,17 +1916,28 @@ func (a *AgentBridge) ReleaseFileClaim(agentID, filePath string) error {
 
 // HandoffListForAgent returns pending handoffs targeted at a specific agent.
 func (a *AgentBridge) HandoffListForAgent(agentID string) ([]HandoffInfo, error) {
-	all, err := a.HandoffList()
+	if strings.TrimSpace(agentID) == "" {
+		return []HandoffInfo{}, nil
+	}
+
+	handoffs, err := a.handoffInbox(agentID, false)
 	if err != nil {
+		if isUnknownToolErr(err, "agent_handoff_inbox") {
+			all, legacyErr := a.handoffListLegacy()
+			if legacyErr != nil {
+				return nil, legacyErr
+			}
+			result := make([]HandoffInfo, 0, len(all))
+			for _, h := range all {
+				if h.Status == "pending" && (h.ToAgent == agentID || h.ToAgent == "") {
+					result = append(result, h)
+				}
+			}
+			return result, nil
+		}
 		return nil, err
 	}
-	var result []HandoffInfo
-	for _, h := range all {
-		if h.Status == "pending" && (h.ToAgent == agentID || h.ToAgent == "") {
-			result = append(result, h)
-		}
-	}
-	return result, nil
+	return handoffs, nil
 }
 
 // --- Tunnel/cache methods ---
