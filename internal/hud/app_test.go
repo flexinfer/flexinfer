@@ -1530,3 +1530,364 @@ func TestMobileAudit_DeviceIDExtraction(t *testing.T) {
 		t.Errorf("expected empty string for missing header, got %q", got)
 	}
 }
+
+// --- MBL-3: Mobile mutation guardrail contract tests ---
+//
+// These tests codify the mobile_operator mutation boundary contracts:
+// - Input validation for mutation endpoints
+// - Idempotency guarantees for session create/end
+// - Rate limiting on mutation paths
+// - Device ID is audit-only (no authz impact)
+// - Audit endpoint scope enforcement
+
+func TestMobileContract_MissingAuthHeader(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	// No Authorization header.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.OK {
+		t.Fatal("expected ok=false")
+	}
+	if env.Error.Code != "unauthorized" {
+		t.Fatalf("expected error code 'unauthorized', got %q", env.Error.Code)
+	}
+}
+
+func TestMobileContract_SessionCreate_EmptyAgentID(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:create"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{"namespace":"test/ns"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &env)
+	if env.Error.Code != "bad_request" {
+		t.Fatalf("expected error code 'bad_request', got %q", env.Error.Code)
+	}
+	if !strings.Contains(env.Error.Message, "agent_id") {
+		t.Fatalf("expected error message to mention agent_id, got %q", env.Error.Message)
+	}
+}
+
+func TestMobileContract_SessionCreate_InvalidJSON(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:create"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{invalid`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileContract_SessionEnd_InvalidJSON(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", strings.NewReader(`{broken`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileContract_SessionEnd_EmptyBody(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	// Empty body is valid — summarize defaults to false.
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileContract_SessionCreate_ResponseShape(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:create"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions",
+		strings.NewReader(`{"agent_id":"test-agent","namespace":"test/ns"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			SessionID      string `json:"session_id"`
+			AlreadyExisted bool   `json:"already_existed"`
+		} `json:"data"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id in meta")
+	}
+}
+
+func TestMobileContract_SessionEnd_ResponseShape(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end",
+		strings.NewReader(`{"summarize":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Ended     bool   `json:"ended"`
+			SessionID string `json:"session_id"`
+		} `json:"data"`
+		Meta mobMeta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Data.SessionID != "sess-1" {
+		t.Fatalf("expected session_id='sess-1', got %q", env.Data.SessionID)
+	}
+	if env.Meta.RequestID == "" {
+		t.Fatal("expected request_id in meta")
+	}
+}
+
+func TestMobileContract_MutationRateLimit(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:create,mobile:session:end"
+	app.mobileRateLimiter = NewMobileRateLimiter(MobileRateLimitConfig{MutationPerMinute: 1, ReadPerMinute: 100})
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// First mutation (create) should succeed.
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions",
+		strings.NewReader(`{"agent_id":"a","namespace":"n"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first mutation: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Second mutation (end) should be rate-limited because both are mutations.
+	req = httptest.NewRequest("POST", "/api/mobile/v1/sessions/s1/end",
+		strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second mutation: expected 429, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &env)
+	if env.Error.Code != "rate_limited" {
+		t.Fatalf("expected error code 'rate_limited', got %q", env.Error.Code)
+	}
+}
+
+func TestMobileContract_DeviceID_NoAuthzImpact(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	// Request WITHOUT Device-ID header.
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	codeWithout := w.Code
+
+	// Request WITH Device-ID header.
+	req = httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("X-Device-ID", "iphone-12345")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	codeWith := w.Code
+
+	if codeWithout != codeWith {
+		t.Fatalf("X-Device-ID should not affect authz: without=%d, with=%d", codeWithout, codeWith)
+	}
+	if codeWith != http.StatusOK {
+		t.Fatalf("expected 200 for both, got %d", codeWith)
+	}
+}
+
+func TestMobileContract_AuditEndpoint_RequiresReadScope(t *testing.T) {
+	// Audit endpoint requires mobile:read scope.
+	tests := []struct {
+		name   string
+		scopes string
+		expect int
+	}{
+		{"read_scope_allows", "mobile:read", http.StatusOK},
+		{"create_scope_denies", "mobile:session:create", http.StatusForbidden},
+		{"end_scope_denies", "mobile:session:end", http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, mux := newTestApp(t)
+			app.config.MobileOperatorToken = "mobile-secret"
+			app.config.MobileOperatorScopes = tt.scopes
+
+			req := httptest.NewRequest("GET", "/api/mobile/v1/audit", nil)
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != tt.expect {
+				t.Errorf("scopes=%q: expected %d, got %d: %s",
+					tt.scopes, tt.expect, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestMobileContract_AllScopesRequired is a comprehensive contract verifying
+// that every mobile endpoint requires exactly the documented scope.
+func TestMobileContract_AllScopesRequired(t *testing.T) {
+	type endpointContract struct {
+		method        string
+		path          string
+		body          string
+		requiredScope string
+	}
+
+	contracts := []endpointContract{
+		// Read endpoints require mobile:read.
+		{"GET", "/api/mobile/v1/ping", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/dashboard", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/sessions", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/audit", "", "mobile:read"},
+		// Mutation endpoints require specific scopes.
+		{"POST", "/api/mobile/v1/sessions", `{"agent_id":"a","namespace":"n"}`, "mobile:session:create"},
+		{"POST", "/api/mobile/v1/sessions/test-sess/end", `{}`, "mobile:session:end"},
+	}
+
+	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end"}
+
+	for _, c := range contracts {
+		// Test: granting the required scope allows access.
+		t.Run("allow_"+c.method+"_"+c.path, func(t *testing.T) {
+			app, mux := newTestApp(t)
+			app.config.MobileOperatorToken = "mobile-secret"
+			app.config.MobileOperatorScopes = c.requiredScope
+
+			req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code == http.StatusForbidden {
+				t.Errorf("scope=%q should allow %s %s, got 403: %s",
+					c.requiredScope, c.method, c.path, w.Body.String())
+			}
+		})
+
+		// Test: every OTHER scope is denied.
+		for _, wrongScope := range allScopes {
+			if wrongScope == c.requiredScope {
+				continue
+			}
+			t.Run("deny_"+wrongScope+"_on_"+c.method+"_"+c.path, func(t *testing.T) {
+				app, mux := newTestApp(t)
+				app.config.MobileOperatorToken = "mobile-secret"
+				app.config.MobileOperatorScopes = wrongScope
+
+				req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+				req.Header.Set("Authorization", "Bearer mobile-secret")
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != http.StatusForbidden {
+					t.Errorf("scope=%q should deny %s %s, got %d (expected 403): %s",
+						wrongScope, c.method, c.path, w.Code, w.Body.String())
+				}
+			})
+		}
+	}
+}

@@ -213,7 +213,7 @@ This section documents specific attack scenarios and mitigations for each mutati
 ## Hardening Checklist (Pre-Beta)
 
 - [x] Protected mobile endpoints require auth in both modes.
-- [ ] Role policy tests enforce allowed/denied matrix. (Tracks [MBL-3](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32))
+- [x] Role policy tests enforce allowed/denied matrix. (Tracks [MBL-3](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32))
 - [x] Scope checks enforce per-endpoint permission model.
 - [ ] Token expiry and revocation behavior verified. (Tracks [MBL-2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31))
 - [ ] TLS and cert-validation behavior validated for gateway mode. (Tracks [MBL-9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42))
