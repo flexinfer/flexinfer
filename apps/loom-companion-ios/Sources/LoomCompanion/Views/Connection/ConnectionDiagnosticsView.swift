@@ -5,11 +5,17 @@ struct ConnectionDiagnosticsView: View {
     @Bindable var connectionVM: ConnectionViewModel
     let healthMonitor: ConnectionHealthMonitor
 
+    private var profile: ConnectionProfile? { TokenStore().loadProfile() }
+
+    private var remediation: ConnectionRemediation {
+        ConnectionRemediation.forHealth(healthMonitor.health, mode: profile?.mode)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 // Profile info
-                if let profile = TokenStore().loadProfile() {
+                if let profile {
                     ConnectionProfileView(profile: profile)
                 }
 
@@ -21,16 +27,34 @@ struct ConnectionDiagnosticsView: View {
                     HStack {
                         Image(systemName: healthIcon)
                             .font(.title2)
-                            .foregroundStyle(healthColor)
+                            .foregroundStyle(severityColor)
                         VStack(alignment: .leading) {
-                            Text(healthLabel)
+                            Text(remediation.title)
                                 .font(.subheadline)
                                 .fontWeight(.medium)
-                            Text(healthDescription)
+                            Text(remediation.description)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                    }
+
+                    if !remediation.steps.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Remediation Steps")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            ForEach(Array(remediation.steps.enumerated()), id: \.offset) { _, step in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text("\u{2022}")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(step)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
 
                     if healthMonitor.isPollingFallback {
@@ -56,6 +80,11 @@ struct ConnectionDiagnosticsView: View {
                 .padding()
                 .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                // LAN permission guidance when unreachable on local network
+                if case .unreachable = healthMonitor.health, profile?.mode == .lan {
+                    LANPermissionView()
+                }
 
                 // Actions
                 VStack(spacing: 12) {
@@ -102,36 +131,11 @@ struct ConnectionDiagnosticsView: View {
         }
     }
 
-    private var healthColor: Color {
-        switch healthMonitor.health {
-        case .healthy: return .green
-        case .degradedStream, .rateLimited: return .orange
-        case .authFailure, .permissionDenied, .unreachable: return .red
-        case .unknown: return .secondary
-        }
-    }
-
-    private var healthLabel: String {
-        switch healthMonitor.health {
-        case .healthy: return "Connected"
-        case .degradedStream: return "Degraded"
-        case .authFailure: return "Auth Failed"
-        case .permissionDenied: return "Permission Denied"
-        case .unreachable: return "Unreachable"
-        case .rateLimited: return "Rate Limited"
-        case .unknown: return "Unknown"
-        }
-    }
-
-    private var healthDescription: String {
-        switch healthMonitor.health {
-        case .healthy: return "REST and SSE connections are working normally."
-        case .degradedStream: return "REST API works but real-time stream is disconnected."
-        case let .authFailure(msg): return msg
-        case let .permissionDenied(msg): return msg
-        case .unreachable: return "Cannot reach the server. Check network and URL."
-        case .rateLimited: return "Too many requests. Will resume automatically."
-        case .unknown: return "No connection probe has been completed yet."
+    private var severityColor: Color {
+        switch remediation.severity {
+        case .ok: return .green
+        case .warning: return .orange
+        case .error: return .red
         }
     }
 }
