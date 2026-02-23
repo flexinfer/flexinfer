@@ -1714,15 +1714,18 @@ func (d *Daemon) fetchServerResources(ctx context.Context, serverName string) ([
 		return nil, fmt.Errorf("local pool not configured")
 	}
 
+	// Acquire callLock BEFORE pool.Get to match callPipeline.routeAndConnect
+	// ordering. Reversed ordering (pool→lock) can deadlock against the
+	// callPipeline path (lock→pool) when the pool is at capacity.
+	mu := d.callLock(serverName)
+	mu.Lock()
+	defer mu.Unlock()
+
 	conn, err := d.pool.Get(ctx, serverName)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 	defer d.pool.Put(conn)
-
-	mu := d.callLock(serverName)
-	mu.Lock()
-	defer mu.Unlock()
 
 	req, _ := mcp.NewRequest(1, "resources/list", nil)
 	if err := conn.Transport.Send(ctx, req); err != nil {
@@ -2025,15 +2028,18 @@ func (d *Daemon) fetchServerToolsViaPool(ctx context.Context, serverName string)
 		return nil, fmt.Errorf("local pool not configured")
 	}
 
+	// Acquire callLock BEFORE pool.Get to match callPipeline.routeAndConnect
+	// ordering. Reversed ordering (pool→lock) can deadlock against the
+	// callPipeline path (lock→pool) when the pool is at capacity.
+	mu := d.callLock(serverName)
+	mu.Lock()
+	defer mu.Unlock()
+
 	conn, err := d.pool.Get(ctx, serverName)
 	if err != nil {
 		return nil, fmt.Errorf("pool connect: %w", err)
 	}
 	defer d.pool.Put(conn)
-
-	mu := d.callLock(serverName)
-	mu.Lock()
-	defer mu.Unlock()
 
 	req, _ := mcp.NewRequest(1, "tools/list", nil)
 	if err := conn.Transport.Send(ctx, req); err != nil {

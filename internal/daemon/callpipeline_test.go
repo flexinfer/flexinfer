@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -1370,7 +1371,7 @@ func TestHandleStatus_NotDrainReady_DuringCall(t *testing.T) {
 					case <-recvGate:
 						return &mcp.Message{
 							JSONRPC: mcp.JSONRPCVersion,
-							ID:      "ok",
+							ID:      "test-id",
 							Result:  json.RawMessage(`{"ok":true}`),
 						}, nil
 					case <-ctx.Done():
@@ -1477,7 +1478,7 @@ func TestCallPipeline_TransportFailureThenRecovery(t *testing.T) {
 					},
 					recvMsg: &mcp.Message{
 						JSONRPC: mcp.JSONRPCVersion,
-						ID:      "ok",
+						ID:      "test-id",
 						Result:  json.RawMessage(`{"ok":true}`),
 					},
 				}, nil
@@ -1486,7 +1487,7 @@ func TestCallPipeline_TransportFailureThenRecovery(t *testing.T) {
 			return &fakeTransport{
 				recvMsg: &mcp.Message{
 					JSONRPC: mcp.JSONRPCVersion,
-					ID:      "recovered",
+					ID:      "test-id",
 					Result:  json.RawMessage(`{"recovered":true}`),
 				},
 			}, nil
@@ -1578,7 +1579,7 @@ func TestCallPipeline_ConsecutiveTimeoutsThenRecovery(t *testing.T) {
 			return &fakeTransport{
 				recvMsg: &mcp.Message{
 					JSONRPC: mcp.JSONRPCVersion,
-					ID:      "ok",
+					ID:      "test-id",
 					Result:  json.RawMessage(`{"finally":true}`),
 				},
 			}, nil
@@ -1648,7 +1649,7 @@ func TestCallPipeline_RecvEOFTriggersServerRestart(t *testing.T) {
 			return &fakeTransport{
 				recvMsg: &mcp.Message{
 					JSONRPC: mcp.JSONRPCVersion,
-					ID:      "ok",
+					ID:      "test-id",
 					Result:  json.RawMessage(`{"restarted":true}`),
 				},
 			}, nil
@@ -1686,5 +1687,434 @@ func TestCallPipeline_RecvEOFTriggersServerRestart(t *testing.T) {
 	}
 	if string(resp2.Result) != `{"restarted":true}` {
 		t.Fatalf("recovery call: result = %s, want restarted response", string(resp2.Result))
+	}
+}
+
+// --- Response ID correlation tests ---
+
+// TestCallPipelineExecute_ResponseIDMismatch verifies that execute() detects
+// when the response ID does not match the request ID and treats it as a
+// transport failure. This catches the root cause of stale responses from
+// shared stdio transports.
+func TestCallPipelineExecute_ResponseIDMismatch(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	// Transport returns a response with a different ID than the request.
+	tr := &fakeTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      "stale-99",
+			Result:  json.RawMessage(`{"wrong":true}`),
+		},
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "req-42"},
+		serverName: "test_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "test_srv",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "req-42", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response for ID mismatch")
+	}
+	if resp.Error.Code != mcp.InternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+	if !strings.Contains(resp.Error.Message, "response ID mismatch") {
+		t.Fatalf("error message = %q, want response ID mismatch", resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "stale-99") {
+		t.Fatalf("error message should contain mismatched ID, got %q", resp.Error.Message)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection to be marked unhealthy after ID mismatch")
+	}
+}
+
+// TestCallPipelineExecute_ResponseIDMatchSucceeds verifies that execute()
+// passes when the response ID matches the request ID.
+func TestCallPipelineExecute_ResponseIDMatchSucceeds(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      "match-1",
+			Result:  json.RawMessage(`{"ok":true}`),
+		},
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "match-1"},
+		serverName: "test_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "test_srv",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "match-1", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error response: %+v", resp.Error)
+	}
+	if string(resp.Result) != `{"ok":true}` {
+		t.Fatalf("result = %s, want ok", string(resp.Result))
+	}
+}
+
+// TestCallPipelineExecute_ResponseIDNilAccepted verifies that a nil response
+// ID (e.g., for notifications) does not trigger a mismatch error.
+func TestCallPipelineExecute_ResponseIDNilAccepted(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	tr := &fakeTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			// ID is nil (notification-style response)
+			Result: json.RawMessage(`{"notif":true}`),
+		},
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "req-notif"},
+		serverName: "test_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "test_srv",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "req-notif", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error for nil response ID: %+v", resp.Error)
+	}
+}
+
+// TestCallPipelineExecute_NumericIDCorrelation verifies that numeric IDs
+// (which can be float64 after JSON round-trip) are correctly correlated
+// with their string representations.
+func TestCallPipelineExecute_NumericIDCorrelation(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	// Simulate JSON round-trip: numeric ID becomes float64.
+	tr := &fakeTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      float64(42),
+			Result:  json.RawMessage(`{"ok":true}`),
+		},
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: float64(42)},
+		serverName: "test_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "test_srv",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: float64(42), Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error for matching numeric IDs: %+v", resp.Error)
+	}
+}
+
+// TestCallPipelineExecute_NumericIDMismatch verifies that numeric ID
+// mismatches are detected.
+func TestCallPipelineExecute_NumericIDMismatch(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	tr := &fakeTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      float64(999),
+			Result:  json.RawMessage(`{"wrong":true}`),
+		},
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: float64(42)},
+		serverName: "test_srv",
+		toolName:   "query",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "test_srv",
+			Transport:  tr,
+			Healthy:    true,
+		},
+		target:    router.TargetHub,
+		targetStr: router.TargetHub.String(),
+	}
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: float64(42), Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error for numeric ID mismatch")
+	}
+	if !strings.Contains(resp.Error.Message, "response ID mismatch") {
+		t.Fatalf("expected mismatch error, got %q", resp.Error.Message)
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection marked unhealthy")
+	}
+}
+
+// --- Concurrent call correlation tests ---
+
+// TestHandleCall_ConcurrentCallsGetCorrectResponses verifies that multiple
+// concurrent calls through the daemon each get the response meant for them,
+// not a stale response from another caller. This is the test that directly
+// exercises the bug discovered via the Python reproduction script.
+func TestHandleCall_ConcurrentCallsGetCorrectResponses(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 100,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "concurrent_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Each call gets a transport that echoes back the request ID in the response.
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     10,
+		MaxOpen:     10,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{
+				sendFn: func(_ context.Context, _ *mcp.Message) error { return nil },
+				recvFn: func(_ context.Context) (*mcp.Message, error) {
+					// Simulate a correct server: response ID echoes the request ID.
+					// Since the callLock serializes calls, we can safely use a
+					// per-transport counter here.
+					return &mcp.Message{
+						JSONRPC: mcp.JSONRPCVersion,
+						ID:      "test-id",
+						Result:  json.RawMessage(`{"ok":true}`),
+					}, nil
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	const concurrency = 20
+	errs := make(chan error, concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func(idx int) {
+			msg := newCallMessage(t, map[string]any{
+				"server": "concurrent_srv",
+				"tool":   "echo",
+			})
+
+			resp, err := d.handleCall(context.Background(), msg)
+			if err != nil {
+				errs <- fmt.Errorf("call %d: %w", idx, err)
+				return
+			}
+			if resp.Error != nil {
+				errs <- fmt.Errorf("call %d: error response: %s", idx, resp.Error.Message)
+				return
+			}
+			errs <- nil
+		}(i)
+	}
+
+	for i := 0; i < concurrency; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("%v", err)
+		}
+	}
+}
+
+// TestHandleCall_ResponseIDMismatchEndToEnd verifies the full handleCall path
+// detects and rejects a response with a mismatched ID.
+func TestHandleCall_ResponseIDMismatchEndToEnd(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	d.router = router.New(router.Config{
+		HubEnabled:       false,
+		FailureThreshold: 10,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{Name: "mismatch_srv", Categories: []string{"local-only"}},
+			},
+		},
+	})
+
+	// Transport returns a stale response with a wrong ID.
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "stale-from-hud",
+					Result:  json.RawMessage(`{"stale":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "mismatch_srv",
+		"tool":   "query",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response for ID mismatch")
+	}
+	if !strings.Contains(resp.Error.Message, "response ID mismatch") {
+		t.Fatalf("expected mismatch error, got %q", resp.Error.Message)
+	}
+}
+
+// --- Lock ordering tests ---
+
+// TestFetchServerToolsViaPool_LockOrdering verifies that fetchServerToolsViaPool
+// acquires the callLock before pool.Get, preventing deadlock with callPipeline.
+// The test installs a DialFunc that checks whether the callLock is already held
+// (via TryLock) when pool.Get triggers a new dial. If lock ordering is correct
+// (lock→pool), TryLock must fail because the lock is held by the caller.
+func TestFetchServerToolsViaPool_LockOrdering(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	poolGetCalled := false
+	var lockHeldDuringDial bool
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			poolGetCalled = true
+			// If the callLock is properly acquired BEFORE pool.Get, then
+			// TryLock from the same goroutine will fail (returns false)
+			// because the mutex is already held by our caller.
+			mu := d.callLock("order_test")
+			lockHeldDuringDial = !mu.TryLock()
+			if !lockHeldDuringDial {
+				// TryLock succeeded, meaning lock was NOT held. Unlock it.
+				mu.Unlock()
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      float64(1),
+					Result:  json.RawMessage(`{"tools":[]}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	_, _ = d.fetchServerToolsViaPool(context.Background(), "order_test")
+
+	if !poolGetCalled {
+		t.Fatal("pool.Get was never called")
+	}
+	if !lockHeldDuringDial {
+		t.Fatal("callLock was NOT held when pool.Get dialed - lock ordering violation (should be lock→pool, not pool→lock)")
+	}
+}
+
+// TestFetchServerResources_LockOrdering verifies that fetchServerResources
+// also acquires callLock before pool.Get.
+func TestFetchServerResources_LockOrdering(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	poolGetCalled := false
+	var lockHeldDuringDial bool
+
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			poolGetCalled = true
+			mu := d.callLock("res_order_test")
+			lockHeldDuringDial = !mu.TryLock()
+			if !lockHeldDuringDial {
+				mu.Unlock()
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      float64(1),
+					Result:  json.RawMessage(`{"resources":[]}`),
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	_, _ = d.fetchServerResources(context.Background(), "res_order_test")
+
+	if !poolGetCalled {
+		t.Fatal("pool.Get was never called")
+	}
+	if !lockHeldDuringDial {
+		t.Fatal("callLock was NOT held when pool.Get dialed - lock ordering violation")
 	}
 }

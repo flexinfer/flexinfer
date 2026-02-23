@@ -287,6 +287,15 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 		return p.transportFailure("recv", daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr), start)
 	}
 
+	// Validate response ID matches request ID. A mismatch indicates transport
+	// corruption—typically a stale response from an interleaved request on a
+	// shared stdio transport. Treat as a transport failure so the connection
+	// is recycled and the caller gets a clear error instead of wrong data.
+	if resp.ID != nil && req.ID != nil && fmt.Sprint(resp.ID) != fmt.Sprint(req.ID) {
+		err := fmt.Errorf("response ID mismatch: sent %v, got %v (possible transport corruption)", req.ID, resp.ID)
+		return p.transportFailure("recv", err, start)
+	}
+
 	duration := time.Since(start)
 	p.recordSuccessMetrics(duration)
 	p.markLocalActivity()
