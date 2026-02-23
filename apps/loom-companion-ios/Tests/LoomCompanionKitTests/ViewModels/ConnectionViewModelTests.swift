@@ -43,6 +43,30 @@ struct ConnectionViewModelTests {
         #expect(vm.pairingError == "Gateway mode requires HTTPS")
     }
 
+    @Test("Gateway mode accepts HTTPS URL")
+    func gatewayAcceptsHTTPS() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "https://192.0.2.1:1" // TEST-NET, unreachable but HTTPS
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .gateway
+        await vm.pair()
+        // Should fail with network error, NOT the HTTPS validation error
+        #expect(vm.pairingError != nil)
+        #expect(vm.pairingError != "Gateway mode requires HTTPS")
+    }
+
+    @Test("LAN mode allows HTTP")
+    func lanAllowsHTTP() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "http://192.0.2.1:1" // TEST-NET, unreachable but HTTP
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .lan
+        await vm.pair()
+        // Should fail with network error, NOT a scheme validation error
+        #expect(vm.pairingError != nil)
+        #expect(vm.pairingError != "Gateway mode requires HTTPS")
+    }
+
     @Test("Logout clears state")
     func logout() {
         let vm = ConnectionViewModel(tokenStore: TokenStore())

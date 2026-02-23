@@ -145,6 +145,47 @@ Additional authorization rules:
 - LAN mode: HTTPS strongly preferred; plaintext only for explicitly local debug scenarios.
 - Certificate validation must be enforced on mobile clients (no blanket trust bypass).
 
+### iOS TLS Enforcement (Validated)
+
+The Loom Companion iOS app enforces TLS validation at two levels:
+
+**1. Gateway HTTPS-only gate (application layer)**
+
+`ConnectionViewModel.pair()` rejects gateway connections with non-HTTPS URLs before any network request:
+```swift
+if connectionMode == .gateway, url.scheme != "https" {
+    pairingError = "Gateway mode requires HTTPS"
+    return
+}
+```
+Reference: `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift:46-48`
+
+**2. Certificate validation (platform layer)**
+
+iOS `URLSession` validates server certificates by default:
+- Rejects expired certificates.
+- Rejects self-signed certificates.
+- Rejects certificates with hostname mismatch.
+- Validates full certificate chain to a trusted root CA.
+
+The app does not override `URLSessionDelegate` certificate evaluation and has no `NSAppTransportSecurity` exceptions. LAN mode permits HTTP for local debug scenarios but still validates certificates when HTTPS is used.
+
+**3. Server-side TLS support**
+
+The HUD server supports TLS via `--tls-cert` and `--tls-key` flags. A log warning is emitted when a mobile operator token is configured without TLS on a non-localhost bind address.
+
+Reference: `internal/hud/app.go` (TLS listener wrapping)
+
+**Remediation for TLS failures**
+
+Certificate validation failures surface as network errors in the app. The `ConnectionRemediation` model provides gateway-specific guidance including "Verify TLS certificate validity if using HTTPS."
+
+Common remediation steps:
+- Ensure the server certificate is issued by a trusted CA (not self-signed).
+- Verify the certificate hostname matches the gateway URL.
+- Check certificate expiry date.
+- For development/testing with self-signed certs, use LAN mode instead of gateway mode.
+
 ## Session and Token Lifecycle
 
 - Access token lifetime should be short (minutes to low hours).
@@ -216,7 +257,7 @@ This section documents specific attack scenarios and mitigations for each mutati
 - [x] Role policy tests enforce allowed/denied matrix. (Tracks [MBL-3](https://gitlab.flexinfer.ai/services/loom-core/-/issues/32))
 - [x] Scope checks enforce per-endpoint permission model.
 - [ ] Token expiry and revocation behavior verified. (Tracks [MBL-2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/31))
-- [ ] TLS and cert-validation behavior validated for gateway mode. (Tracks [MBL-9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42))
+- [x] TLS and cert-validation behavior validated for gateway mode. (Tracks [MBL-9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/42))
 - [x] Audit logs include actor + endpoint + target fields for mutations.
 - [x] Mobile token blocked from non-mobile API paths.
 - [x] Rate limiting configured for mutation endpoints.
