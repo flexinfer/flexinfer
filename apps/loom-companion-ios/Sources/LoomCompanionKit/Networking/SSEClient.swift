@@ -42,6 +42,17 @@ public final class SSEClient: Sendable {
     private static let baseDelay: TimeInterval = 1.0
     private static let maxDelay: TimeInterval = 30.0
 
+    // Internal test hooks — override delays for fast test cycles.
+    nonisolated(unsafe) var _testBaseDelay: TimeInterval?
+    nonisolated(unsafe) var _testMaxDelay: TimeInterval?
+
+    /// Test hook: sequence of stream outcomes. `.fail` throws before connected,
+    /// `.succeed` enters connected then returns normally (clean disconnect),
+    /// `.succeedWithEvents` enters connected, yields events, then returns.
+    /// When exhausted, defaults to `.fail`.
+    nonisolated(unsafe) var _testStreamResults: [SSETestStreamResult]?
+    nonisolated(unsafe) var _testStreamIndex = 0
+
     public init(request: URLRequest, session: URLSession = .shared) {
         self.request = request
         self.session = session
@@ -64,13 +75,15 @@ public final class SSEClient: Sendable {
     }
 
     private func connectLoop() async {
-        var delay = Self.baseDelay
+        let base = _testBaseDelay ?? Self.baseDelay
+        let cap = _testMaxDelay ?? Self.maxDelay
+        var delay = base
 
         while !Task.isCancelled {
             updateState(.connecting)
             do {
                 try await stream()
-                delay = Self.baseDelay // Reset on clean disconnect
+                delay = base // Reset on clean disconnect
             } catch {
                 if Task.isCancelled { return }
                 updateState(.reconnecting(delay: delay))
@@ -80,11 +93,23 @@ public final class SSEClient: Sendable {
             } catch {
                 return // Cancelled
             }
-            delay = min(delay * 2, Self.maxDelay)
+            delay = min(delay * 2, cap)
         }
     }
 
     private func stream() async throws {
+        if let results = _testStreamResults {
+            let idx = _testStreamIndex
+            _testStreamIndex += 1
+            let result = idx < results.count ? results[idx] : .fail
+            if case .fail = result { throw SSEError.badStatus }
+            updateState(.connected)
+            if case .succeedWithEvents(let events) = result {
+                for event in events { continuation.yield(event) }
+            }
+            return
+        }
+
         let (bytes, response) = try await session.bytes(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
@@ -138,6 +163,16 @@ public final class SSEClient: Sendable {
 
 enum SSEError: Error {
     case badStatus
+}
+
+/// Stream outcomes for SSE client testing.
+public enum SSETestStreamResult: Sendable {
+    /// Connection fails (throws before reaching connected state).
+    case fail
+    /// Enters connected, then returns normally (simulates clean disconnect).
+    case succeed
+    /// Enters connected, yields the given events, then returns.
+    case succeedWithEvents([SSEEvent])
 }
 
 // MARK: - SSE Line Parser (standalone, for testing)
