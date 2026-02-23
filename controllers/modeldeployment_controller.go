@@ -1085,7 +1085,7 @@ func (r *ModelDeploymentReconciler) pvcForModelDeployment(m *aiv1alpha1.ModelDep
 			AccessModes: []corev1.PersistentVolumeAccessMode{
 				corev1.ReadWriteOnce,
 			},
-			Resources: corev1.ResourceRequirements{
+			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: m.Spec.Resources.Requests[corev1.ResourceStorage],
 				},

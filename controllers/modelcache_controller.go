@@ -230,7 +230,7 @@ func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) (*core
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: modes,
-			Resources: corev1.ResourceRequirements{
+			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse(storageSize),
 				},
