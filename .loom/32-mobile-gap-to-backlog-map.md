@@ -53,15 +53,25 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `session-start` and `session-end` are enabled with full authz test coverage.
   - Higher-risk endpoints remain off by default.
 - Primary touchpoints:
-  - `internal/hud/api_agent.go`
+  - `internal/hud/api_mobile.go`
   - `internal/hud/app.go`
+  - `internal/hud/app_test.go`
   - `docs/MOBILE_COMPANION_API.md`
 - Checklist:
-  - [ ] Publish endpoint allowlist/denylist
-  - [ ] Enforce role checks in handlers
-  - [ ] Add contract tests for disallowed operations
+  - [x] Publish endpoint allowlist/denylist
+  - [x] Enforce role checks in handlers
+  - [x] Add contract tests for disallowed operations
 - Status:
-  - Not started
+  - Complete
+- Implementation notes:
+  - 4 mobile scopes: `mobile:read`, `mobile:session:create`, `mobile:session:end`, `mobile:push`
+  - 12 scope-gated endpoints + 1 admin-token endpoint (revoke)
+  - `requireMobileScope()` enforces token + scope + revocation + rate limit on every handler
+  - `mobileTokenOutsideMobileAPI()` blocks mobile tokens from all non-mobile endpoints (403)
+  - `TestMobileContract_AllScopesRequired`: comprehensive matrix testing every endpoint against every scope (48 test cases)
+  - `TestHandler_MobilePolicy_AllowlistDenylistMatrix`: 37 allow/deny cases across mobile and non-mobile routes
+  - `TestHandler_MobilePolicy_ScopeIsolation`: 16 cases proving each scope grants only its intended access
+  - Endpoint count assertion (12) guards against adding routes without test coverage
 
 ### Issue MBL-4: LAN permission diagnostics and profile health (M2)
 

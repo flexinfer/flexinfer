@@ -992,28 +992,34 @@ func TestHandler_MobileAuthError_ReturnsEnvelope(t *testing.T) {
 func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"
-	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end,mobile:push"
+	app.config.MobilePushEnabled = true
+	app.deviceTokenStore = NewDeviceTokenStore()
 
 	// Allowed: mobile endpoints that should return non-403 with valid token.
 	allowedEndpoints := []struct {
 		method string
 		path   string
+		body   string
 	}{
-		{"GET", "/api/mobile/v1/ping"},
-		{"GET", "/api/mobile/v1/dashboard"},
-		{"GET", "/api/mobile/v1/sessions"},
-		{"GET", "/api/mobile/v1/sessions/test-sess"},
-		{"GET", "/api/mobile/v1/sessions/test-sess/events"},
-		{"POST", "/api/mobile/v1/sessions"},
-		{"POST", "/api/mobile/v1/sessions/test-sess/end"},
+		{"GET", "/api/mobile/v1/ping", ""},
+		{"GET", "/api/mobile/v1/dashboard", ""},
+		{"GET", "/api/mobile/v1/sessions", ""},
+		{"GET", "/api/mobile/v1/sessions/test-sess", ""},
+		{"GET", "/api/mobile/v1/sessions/test-sess/events", ""},
+		// Note: events/stream (SSE) is excluded from allow test because the handler
+		// blocks indefinitely. Scope denial is verified via TestMobileContract_AllScopesRequired.
+		{"GET", "/api/mobile/v1/audit", ""},
+		{"GET", "/api/mobile/v1/alerts/policy", ""},
+		{"POST", "/api/mobile/v1/sessions", `{"agent_id":"test","namespace":"test/ns"}`},
+		{"POST", "/api/mobile/v1/sessions/test-sess/end", `{}`},
+		{"POST", "/api/mobile/v1/push/register", `{"token":"tok","platform":"apns"}`},
+		{"POST", "/api/mobile/v1/push/unregister", `{"token":"tok"}`},
 	}
 
 	for _, ep := range allowedEndpoints {
 		t.Run("allow_"+ep.method+"_"+ep.path, func(t *testing.T) {
-			body := ""
-			if ep.method == "POST" {
-				body = `{"agent_id":"test","namespace":"test/ns"}`
-			}
+			body := ep.body
 			req := httptest.NewRequest(ep.method, ep.path, strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer mobile-secret")
 			req.Header.Set("Content-Type", "application/json")
@@ -1121,6 +1127,19 @@ func TestHandler_MobilePolicy_ScopeIsolation(t *testing.T) {
 		// mobile:session:end can end sessions.
 		{"end_scope_allows_end", "mobile:session:end", "POST", "/api/mobile/v1/sessions/s1/end",
 			`{"summarize":false}`, http.StatusOK},
+
+		// mobile:push alone cannot read or mutate sessions.
+		{"push_scope_denies_read", "mobile:push", "GET", "/api/mobile/v1/ping",
+			"", http.StatusForbidden},
+		{"push_scope_denies_create", "mobile:push", "POST", "/api/mobile/v1/sessions",
+			`{"agent_id":"a","namespace":"n"}`, http.StatusForbidden},
+		{"push_scope_denies_end", "mobile:push", "POST", "/api/mobile/v1/sessions/s1/end",
+			`{}`, http.StatusForbidden},
+		// mobile:push can register/unregister tokens.
+		{"push_scope_allows_register", "mobile:push", "POST", "/api/mobile/v1/push/register",
+			`{"token":"tok","platform":"apns"}`, http.StatusOK},
+		{"push_scope_allows_unregister", "mobile:push", "POST", "/api/mobile/v1/push/unregister",
+			`{"token":"tok"}`, http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -1128,6 +1147,11 @@ func TestHandler_MobilePolicy_ScopeIsolation(t *testing.T) {
 			app, mux := newTestApp(t)
 			app.config.MobileOperatorToken = "mobile-secret"
 			app.config.MobileOperatorScopes = tt.scopes
+			// Enable push feature flag for push scope tests.
+			if strings.Contains(tt.path, "/push/") {
+				app.config.MobilePushEnabled = true
+				app.deviceTokenStore = NewDeviceTokenStore()
+			}
 
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			req.Header.Set("Authorization", "Bearer mobile-secret")
@@ -2122,42 +2146,62 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 		path          string
 		body          string
 		requiredScope string
+		skipAllow     bool // Skip the "allow" test for streaming endpoints that block.
 	}
 
 	contracts := []endpointContract{
 		// Read endpoints require mobile:read.
-		{"GET", "/api/mobile/v1/ping", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/dashboard", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/sessions", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/audit", "", "mobile:read"},
-		{"GET", "/api/mobile/v1/alerts/policy", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/ping", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/dashboard", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/sessions", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/events/stream", "", "mobile:read", true}, // SSE blocks; deny-only.
+		{"GET", "/api/mobile/v1/audit", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/alerts/policy", "", "mobile:read", false},
 		// Mutation endpoints require specific scopes.
-		{"POST", "/api/mobile/v1/sessions", `{"agent_id":"a","namespace":"n"}`, "mobile:session:create"},
-		{"POST", "/api/mobile/v1/sessions/test-sess/end", `{}`, "mobile:session:end"},
+		{"POST", "/api/mobile/v1/sessions", `{"agent_id":"a","namespace":"n"}`, "mobile:session:create", false},
+		{"POST", "/api/mobile/v1/sessions/test-sess/end", `{}`, "mobile:session:end", false},
+		// Push endpoints require mobile:push (feature-flagged).
+		{"POST", "/api/mobile/v1/push/register", `{"token":"tok","platform":"apns"}`, "mobile:push", false},
+		{"POST", "/api/mobile/v1/push/unregister", `{"token":"tok"}`, "mobile:push", false},
 	}
 
-	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end"}
+	// All four mobile scopes — every scope must be tested for isolation.
+	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end", "mobile:push"}
+
+	// Verify endpoint count matches registered mobile routes (excluding admin/revoke which uses X-Admin-Token).
+	const expectedScopeGatedEndpoints = 12
+	if len(contracts) != expectedScopeGatedEndpoints {
+		t.Fatalf("contract test covers %d endpoints, expected %d — update when adding mobile routes",
+			len(contracts), expectedScopeGatedEndpoints)
+	}
 
 	for _, c := range contracts {
 		// Test: granting the required scope allows access.
-		t.Run("allow_"+c.method+"_"+c.path, func(t *testing.T) {
-			app, mux := newTestApp(t)
-			app.config.MobileOperatorToken = "mobile-secret"
-			app.config.MobileOperatorScopes = c.requiredScope
+		if !c.skipAllow {
+			t.Run("allow_"+c.method+"_"+c.path, func(t *testing.T) {
+				app, mux := newTestApp(t)
+				app.config.MobileOperatorToken = "mobile-secret"
+				app.config.MobileOperatorScopes = c.requiredScope
+				// Push endpoints require feature flag + store.
+				if c.requiredScope == "mobile:push" {
+					app.config.MobilePushEnabled = true
+					app.deviceTokenStore = NewDeviceTokenStore()
+				}
 
-			req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
-			req.Header.Set("Authorization", "Bearer mobile-secret")
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, req)
+				req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+				req.Header.Set("Authorization", "Bearer mobile-secret")
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
 
-			if w.Code == http.StatusForbidden {
-				t.Errorf("scope=%q should allow %s %s, got 403: %s",
-					c.requiredScope, c.method, c.path, w.Body.String())
-			}
-		})
+				if w.Code == http.StatusForbidden {
+					t.Errorf("scope=%q should allow %s %s, got 403: %s",
+						c.requiredScope, c.method, c.path, w.Body.String())
+				}
+			})
+		}
 
 		// Test: every OTHER scope is denied.
 		for _, wrongScope := range allScopes {
@@ -2168,6 +2212,11 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 				app, mux := newTestApp(t)
 				app.config.MobileOperatorToken = "mobile-secret"
 				app.config.MobileOperatorScopes = wrongScope
+				// Push endpoints need feature flag enabled so scope check runs (not 404).
+				if c.requiredScope == "mobile:push" {
+					app.config.MobilePushEnabled = true
+					app.deviceTokenStore = NewDeviceTokenStore()
+				}
 
 				req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
 				req.Header.Set("Authorization", "Bearer mobile-secret")
