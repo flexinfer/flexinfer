@@ -85,11 +85,13 @@ spec:
                               items:
                                 type: string
                               type: array
+                              x-kubernetes-list-type: atomic
                           required:
                           - key
                           - operator
                           type: object
                         type: array
+                        x-kubernetes-list-type: atomic
                       matchLabels:
                         additionalProperties:
                           type: string
@@ -151,6 +153,32 @@ spec:
                       Cache configures model caching behavior.
                       If not specified, cache strategy is inferred from gpu.shared.
                     properties:
+                      compilationCache:
+                        description: |-
+                          CompilationCache configures persistent GPU kernel compilation caching.
+                          When enabled, MIOpen/PyTorch/Triton compilation artifacts are stored on
+                          a hostPath volume that survives pod restarts, eliminating recompilation
+                          on GPU swaps. Only effective for AMD ROCm backends.
+                        properties:
+                          enabled:
+                            description: |-
+                              Enabled controls whether compilation cache persistence is active.
+                              Default: true when gpu.shared is set and gpu.vendor is amd.
+                            type: boolean
+                          hostPath:
+                            default: /var/lib/flexinfer/compile-cache
+                            description: |-
+                              HostPath is the base directory on the node for compilation caches.
+                              A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+                            type: string
+                          sizeLimit:
+                            default: 2Gi
+                            description: |-
+                              SizeLimit is a soft limit for the compilation cache directory.
+                              Not enforced by Kubernetes (hostPath has no built-in quota), but
+                              used by the controller to set resource expectations.
+                            type: string
+                        type: object
                       pvcName:
                         description: |-
                           PVCName is the PVC to use for SharedPVC strategy.
@@ -354,6 +382,12 @@ spec:
                                 Name must match the name of one entry in pod.spec.resourceClaims of
                                 the Pod where this field is used. It makes that resource available
                                 inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
                               type: string
                           required:
                           - name

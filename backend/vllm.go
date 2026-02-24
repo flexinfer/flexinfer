@@ -201,3 +201,15 @@ func (b *VLLMBackend) UnloadLoRAEndpoint() string {
 func (b *VLLMBackend) SupportedQuantFormats() []string {
 	return []string{"AWQ", "GPTQ", "FP8"}
 }
+
+// CompilationCacheEnvVars implements CompilationCacheConfigurer.
+// Redirects MIOpen, TorchInductor, and Triton caches for vLLM on ROCm.
+func (b *VLLMBackend) CompilationCacheEnvVars(cacheMountPath string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "MIOPEN_CUSTOM_CACHE_DIR", Value: cacheMountPath + "/miopen"},
+		{Name: "MIOPEN_USER_DB_PATH", Value: cacheMountPath + "/miopen/user.db"},
+		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: cacheMountPath + "/inductor"},
+		{Name: "TRITON_CACHE_DIR", Value: cacheMountPath + "/triton"},
+		{Name: "TORCH_HOME", Value: cacheMountPath + "/torch"},
+	}
+}

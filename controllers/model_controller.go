@@ -876,6 +876,27 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		})
 	}
 
+	// Compilation cache: persistent hostPath for MIOpen/PyTorch/Triton caches.
+	// Survives pod restarts to avoid recompilation on GPU swaps.
+	if hostDir, ccEnabled := resolveCompilationCache(model); ccEnabled {
+		if ccConfigurer, ok := b.(backend.CompilationCacheConfigurer); ok {
+			volumes = append(volumes, corev1.Volume{
+				Name: "compile-cache",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hostDir,
+						Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+					},
+				},
+			})
+			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+				Name:      "compile-cache",
+				MountPath: compilationCacheMountPath,
+			})
+			container.Env = append(container.Env, ccConfigurer.CompilationCacheEnvVars(compilationCacheMountPath)...)
+		}
+	}
+
 	desiredDeployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      model.Name,
@@ -1335,6 +1356,34 @@ func cacheSize(model *aiv1alpha2.Model) string {
 		return model.Spec.Cache.Size
 	}
 	return "50Gi"
+}
+
+// compilationCacheMountPath is where compilation caches are mounted inside the container.
+const compilationCacheMountPath = "/cache/compile"
+
+// resolveCompilationCache determines whether compilation cache should be injected
+// and returns the hostPath directory for this model. Returns ("", false) if disabled.
+func resolveCompilationCache(model *aiv1alpha2.Model) (hostPath string, enabled bool) {
+	// Check explicit CRD configuration
+	if model.Spec.Cache != nil && model.Spec.Cache.CompilationCache != nil {
+		cc := model.Spec.Cache.CompilationCache
+		if cc.Enabled != nil && !*cc.Enabled {
+			return "", false
+		}
+		basePath := "/var/lib/flexinfer/compile-cache"
+		if cc.HostPath != "" {
+			basePath = cc.HostPath
+		}
+		return filepath.Join(basePath, model.Namespace, model.Name), true
+	}
+
+	// Auto-enable for shared AMD GPU models (the common swap case)
+	if model.Spec.IsShared() && model.Spec.GPU != nil &&
+		(model.Spec.GPU.Vendor == "amd" || model.Spec.GPU.Vendor == "auto") {
+		return filepath.Join("/var/lib/flexinfer/compile-cache", model.Namespace, model.Name), true
+	}
+
+	return "", false
 }
 
 func parsePVCSource(source string) (pvcName string, subPath string, ok bool) {

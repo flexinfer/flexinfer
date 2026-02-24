@@ -221,6 +221,16 @@ type QuantizationSupporter interface {
 	SupportedQuantFormats() []string
 }
 
+// CompilationCacheConfigurer is an optional interface that backends can
+// implement to declare which environment variables redirect GPU kernel
+// compilation caches to a persistent mount path. The controller calls
+// this when compilation cache is enabled to inject the correct env vars.
+type CompilationCacheConfigurer interface {
+	// CompilationCacheEnvVars returns env vars that redirect compilation
+	// caches (MIOpen, TorchInductor, Triton, etc.) to the given mount path.
+	CompilationCacheEnvVars(cacheMountPath string) []corev1.EnvVar
+}
+
 // BaseBackend provides common default implementations for Backend methods.
 // Embed this in concrete backend implementations to inherit defaults.
 type BaseBackend struct{}

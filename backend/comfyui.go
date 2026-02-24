@@ -128,3 +128,15 @@ func (b *ComfyUIBackend) IsImageGeneration() bool {
 func (b *ComfyUIBackend) DefaultIdleTimeout() time.Duration {
 	return 10 * time.Minute
 }
+
+// CompilationCacheEnvVars implements CompilationCacheConfigurer.
+// Redirects MIOpen, TorchInductor, and Triton caches for ComfyUI on ROCm.
+func (b *ComfyUIBackend) CompilationCacheEnvVars(cacheMountPath string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "MIOPEN_CUSTOM_CACHE_DIR", Value: cacheMountPath + "/miopen"},
+		{Name: "MIOPEN_USER_DB_PATH", Value: cacheMountPath + "/miopen/user.db"},
+		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: cacheMountPath + "/inductor"},
+		{Name: "TRITON_CACHE_DIR", Value: cacheMountPath + "/triton"},
+		{Name: "TORCH_HOME", Value: cacheMountPath + "/torch"},
+	}
+}

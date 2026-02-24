@@ -2089,3 +2089,108 @@ func TestDeploymentChangedFields(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveCompilationCache_SharedAMD(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "sdxl-turbo", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+				Shared: "7900xtx-image",
+			},
+		},
+	}
+	hostDir, enabled := resolveCompilationCache(model)
+	if !enabled {
+		t.Fatal("expected compilation cache to be auto-enabled for shared AMD GPU model")
+	}
+	want := "/var/lib/flexinfer/compile-cache/default/sdxl-turbo"
+	if hostDir != want {
+		t.Fatalf("hostDir = %q, want %q", hostDir, want)
+	}
+}
+
+func TestResolveCompilationCache_ExplicitDisable(t *testing.T) {
+	disabled := false
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "sdxl-inpaint", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+				Shared: "7900xtx-image",
+			},
+			Cache: &aiv1alpha2.CacheSpec{
+				CompilationCache: &aiv1alpha2.CompilationCacheSpec{
+					Enabled: &disabled,
+				},
+			},
+		},
+	}
+	_, enabled := resolveCompilationCache(model)
+	if enabled {
+		t.Fatal("expected compilation cache to be disabled when explicitly set to false")
+	}
+}
+
+func TestResolveCompilationCache_CustomHostPath(t *testing.T) {
+	enabled := true
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "prod"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+				Shared: "gpu-group",
+			},
+			Cache: &aiv1alpha2.CacheSpec{
+				CompilationCache: &aiv1alpha2.CompilationCacheSpec{
+					Enabled:  &enabled,
+					HostPath: "/mnt/fast-nvme/compile-cache",
+				},
+			},
+		},
+	}
+	hostDir, ok := resolveCompilationCache(model)
+	if !ok {
+		t.Fatal("expected compilation cache to be enabled")
+	}
+	want := "/mnt/fast-nvme/compile-cache/prod/my-model"
+	if hostDir != want {
+		t.Fatalf("hostDir = %q, want %q", hostDir, want)
+	}
+}
+
+func TestResolveCompilationCache_NonShared(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "exclusive-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+			},
+		},
+	}
+	_, enabled := resolveCompilationCache(model)
+	if enabled {
+		t.Fatal("expected compilation cache to be disabled for non-shared model")
+	}
+}
+
+func TestResolveCompilationCache_NVIDIANotAutoEnabled(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "sdxl-nvidia", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "nvidia",
+				Shared: "gpu-group",
+			},
+		},
+	}
+	_, enabled := resolveCompilationCache(model)
+	if enabled {
+		t.Fatal("expected compilation cache to not auto-enable for NVIDIA (no MIOpen)")
+	}
+}

@@ -338,6 +338,35 @@ type CacheSpec struct {
 	// +kubebuilder:default="50Gi"
 	// +optional
 	Size string `json:"size,omitempty"`
+
+	// CompilationCache configures persistent GPU kernel compilation caching.
+	// When enabled, MIOpen/PyTorch/Triton compilation artifacts are stored on
+	// a hostPath volume that survives pod restarts, eliminating recompilation
+	// on GPU swaps. Only effective for AMD ROCm backends.
+	// +optional
+	CompilationCache *CompilationCacheSpec `json:"compilationCache,omitempty"`
+}
+
+// CompilationCacheSpec configures host-persistent GPU compilation caching.
+// +kubebuilder:object:generate=true
+type CompilationCacheSpec struct {
+	// Enabled controls whether compilation cache persistence is active.
+	// Default: true when gpu.shared is set and gpu.vendor is amd.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// HostPath is the base directory on the node for compilation caches.
+	// A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+	// +kubebuilder:default="/var/lib/flexinfer/compile-cache"
+	// +optional
+	HostPath string `json:"hostPath,omitempty"`
+
+	// SizeLimit is a soft limit for the compilation cache directory.
+	// Not enforced by Kubernetes (hostPath has no built-in quota), but
+	// used by the controller to set resource expectations.
+	// +kubebuilder:default="2Gi"
+	// +optional
+	SizeLimit string `json:"sizeLimit,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.
