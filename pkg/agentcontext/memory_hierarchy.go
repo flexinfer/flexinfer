@@ -10,6 +10,40 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/crb2nu/loom/pkg/env"
+)
+
+// Retention policy defaults for each memory tier.
+// Operators can override key values via environment variables.
+const (
+	// Working memory defaults.
+	defaultWorkingTTLHours         = 24
+	defaultWorkingCompressAfter    = 4
+	defaultWorkingCompressionRatio = 0.5
+	defaultWorkingMaxItems         = 1000
+	defaultWorkingMaxTokens        = 100000
+	defaultWorkingDedupeSimilarity = 0.9
+
+	// Short-term memory defaults.
+	defaultShortTermTTLHours           = 168 // 7 days
+	defaultShortTermCompressAfter      = 24
+	defaultShortTermCompressionRatio   = 0.3
+	defaultShortTermMergeThreshold     = 0.8
+	defaultShortTermPromotionThreshold = 0.7
+	defaultShortTermDemotionThreshold  = 0.3
+	defaultShortTermMaxItems           = 5000
+	defaultShortTermMaxTokens          = 200000
+	defaultShortTermDedupeSimilarity   = 0.85
+
+	// Long-term memory defaults.
+	defaultLongTermTTLHours             = 0 // no expiry
+	defaultLongTermCompressionRatio     = 0.2
+	defaultLongTermMergeThreshold       = 0.9
+	defaultLongTermAccessCountThreshold = 3
+	defaultLongTermMaxItems             = 10000
+	defaultLongTermMaxTokens            = 500000
+	defaultLongTermDedupeSimilarity     = 0.95
 )
 
 // MemoryHierarchy manages tiered memory with automatic compression and retention
@@ -53,48 +87,49 @@ func NewMemoryHierarchy() *MemoryHierarchy {
 		compressionJobs: make(map[string]*CompressionJob),
 	}
 
-	// Set default policies
+	// Set default policies. Key operational values (TTL, capacity) are
+	// overridable via AGENT_MEMORY_* environment variables.
 	mh.policies[MemoryTierWorking] = &RetentionPolicy{
 		ID:                 "default-working",
 		Name:               "Default Working Memory",
 		Tier:               MemoryTierWorking,
-		DefaultTTL:         24,  // 24 hours
-		CompressAfterHours: 4,   // Compress after 4 hours
-		CompressionRatio:   0.5, // 50% of original
-		MaxItems:           1000,
-		MaxTokens:          100000,
+		DefaultTTL:         env.Int("AGENT_MEMORY_WORKING_TTL_HOURS", defaultWorkingTTLHours),
+		CompressAfterHours: env.Int("AGENT_MEMORY_WORKING_COMPRESS_AFTER", defaultWorkingCompressAfter),
+		CompressionRatio:   defaultWorkingCompressionRatio,
+		MaxItems:           env.Int("AGENT_MEMORY_WORKING_MAX_ITEMS", defaultWorkingMaxItems),
+		MaxTokens:          env.Int("AGENT_MEMORY_WORKING_MAX_TOKENS", defaultWorkingMaxTokens),
 		DedupeEnabled:      true,
-		DedupeSimilarity:   0.9,
+		DedupeSimilarity:   defaultWorkingDedupeSimilarity,
 	}
 
 	mh.policies[MemoryTierShortTerm] = &RetentionPolicy{
 		ID:                 "default-short-term",
 		Name:               "Default Short-Term Memory",
 		Tier:               MemoryTierShortTerm,
-		DefaultTTL:         168, // 7 days
-		CompressAfterHours: 24,
-		CompressionRatio:   0.3,
-		MergeThreshold:     0.8,
-		PromotionThreshold: 0.7,
-		DemotionThreshold:  0.3,
-		MaxItems:           5000,
-		MaxTokens:          200000,
+		DefaultTTL:         env.Int("AGENT_MEMORY_SHORT_TERM_TTL_HOURS", defaultShortTermTTLHours),
+		CompressAfterHours: env.Int("AGENT_MEMORY_SHORT_TERM_COMPRESS_AFTER", defaultShortTermCompressAfter),
+		CompressionRatio:   defaultShortTermCompressionRatio,
+		MergeThreshold:     defaultShortTermMergeThreshold,
+		PromotionThreshold: defaultShortTermPromotionThreshold,
+		DemotionThreshold:  defaultShortTermDemotionThreshold,
+		MaxItems:           env.Int("AGENT_MEMORY_SHORT_TERM_MAX_ITEMS", defaultShortTermMaxItems),
+		MaxTokens:          env.Int("AGENT_MEMORY_SHORT_TERM_MAX_TOKENS", defaultShortTermMaxTokens),
 		DedupeEnabled:      true,
-		DedupeSimilarity:   0.85,
+		DedupeSimilarity:   defaultShortTermDedupeSimilarity,
 	}
 
 	mh.policies[MemoryTierLongTerm] = &RetentionPolicy{
 		ID:                   "default-long-term",
 		Name:                 "Default Long-Term Memory",
 		Tier:                 MemoryTierLongTerm,
-		DefaultTTL:           0, // No expiry
-		CompressionRatio:     0.2,
-		MergeThreshold:       0.9,
-		AccessCountThreshold: 3,
-		MaxItems:             10000,
-		MaxTokens:            500000,
+		DefaultTTL:           env.IntWithZero("AGENT_MEMORY_LONG_TERM_TTL_HOURS", defaultLongTermTTLHours),
+		CompressionRatio:     defaultLongTermCompressionRatio,
+		MergeThreshold:       defaultLongTermMergeThreshold,
+		AccessCountThreshold: defaultLongTermAccessCountThreshold,
+		MaxItems:             env.Int("AGENT_MEMORY_LONG_TERM_MAX_ITEMS", defaultLongTermMaxItems),
+		MaxTokens:            env.Int("AGENT_MEMORY_LONG_TERM_MAX_TOKENS", defaultLongTermMaxTokens),
 		DedupeEnabled:        true,
-		DedupeSimilarity:     0.95,
+		DedupeSimilarity:     defaultLongTermDedupeSimilarity,
 	}
 
 	return mh

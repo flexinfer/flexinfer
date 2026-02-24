@@ -21,8 +21,20 @@ import (
 	"github.com/crb2nu/loom/pkg/codebase/index"
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
 	"github.com/crb2nu/loom/pkg/codebase/schema"
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/validate"
+)
+
+// Embedding provider defaults. These are used as fallbacks when the
+// configured provider differs from the base config's default values.
+const (
+	defaultFlexInferURL   = "http://localhost:8080"
+	defaultFlexInferModel = "BAAI/bge-large-en-v1.5"
+	defaultOllamaURL      = "http://localhost:11434"
+	defaultOllamaModel    = "nomic-embed-text"
+	defaultMorphBaseURL   = "https://api.morphllm.com/v1"
+	defaultMorphModel     = "morph-embedding-v3"
 )
 
 type Service struct {
@@ -69,23 +81,23 @@ func NewServiceFromEnv() (*Service, error) {
 		case "flexinfer":
 			// FlexInfer TEI backend (OpenAI-compatible)
 			baseURL := cfg.EmbedBaseURL
-			if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
-				baseURL = firstNonEmptyEnv([]string{"FLEXINFER_URL"}, "http://localhost:8080") + "/v1"
+			if baseURL == "" || baseURL == defaultMorphBaseURL {
+				baseURL = env.String("FLEXINFER_URL", defaultFlexInferURL) + "/v1"
 			}
 			model := cfg.EmbedModel
-			if model == "" || model == "morph-embedding-v3" {
-				model = "BAAI/bge-large-en-v1.5"
+			if model == "" || model == defaultMorphModel {
+				model = defaultFlexInferModel
 			}
 			embedder = embed.NewFlexInferClient(hc, baseURL, cfg.EmbedAPIKey, model)
 		case "ollama":
 			// Ollama local embeddings
 			baseURL := cfg.EmbedBaseURL
-			if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
-				baseURL = "http://localhost:11434"
+			if baseURL == "" || baseURL == defaultMorphBaseURL {
+				baseURL = env.String("OLLAMA_BASE_URL", defaultOllamaURL)
 			}
 			model := cfg.EmbedModel
-			if model == "" || model == "morph-embedding-v3" {
-				model = "nomic-embed-text"
+			if model == "" || model == defaultMorphModel {
+				model = defaultOllamaModel
 			}
 			embedder = embed.NewOllamaClient(hc, baseURL, model)
 		case "dummy", "none":
