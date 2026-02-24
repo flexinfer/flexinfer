@@ -3,6 +3,7 @@ package hud
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -1500,6 +1501,296 @@ func TestMobileRevocation_AdminEndpoint_RequiresAdminToken(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- MBL-2: Token lifecycle hardening tests ---
+//
+// Verifies token expiry and revocation behavior:
+// - Revocation is immediate and covers all endpoint categories
+// - Double revocation is idempotent
+// - Malformed/empty tokens are rejected
+// - Token rotation (revoke old, accept new) works atomically
+// - Concurrent revoke + request is safe
+
+func TestMobileRevocation_ImmediateAcrossAllEndpoints(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// Pre-revocation: all endpoints accessible.
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/mobile/v1/ping"},
+		{"GET", "/api/mobile/v1/dashboard"},
+		{"GET", "/api/mobile/v1/sessions"},
+	}
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(ep.method, ep.path, nil)
+		req.Header.Set("Authorization", "Bearer mobile-secret")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("pre-revoke: %s %s should not be 401", ep.method, ep.path)
+		}
+	}
+
+	// Revoke.
+	app.mobileRevocationList.Revoke("mobile-secret")
+
+	// Post-revocation: all endpoints rejected.
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(ep.method, ep.path, nil)
+		req.Header.Set("Authorization", "Bearer mobile-secret")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("post-revoke: %s %s expected 401, got %d", ep.method, ep.path, w.Code)
+		}
+		var env mobileEnvelope
+		json.Unmarshal(w.Body.Bytes(), &env)
+		errObj, _ := env.Error.(map[string]any)
+		if errObj["code"] != "token_revoked" {
+			t.Errorf("post-revoke: %s %s expected error code 'token_revoked', got %v", ep.method, ep.path, errObj["code"])
+		}
+	}
+}
+
+func TestMobileRevocation_DoubleRevokeIdempotent(t *testing.T) {
+	rl := NewMobileTokenRevocationList()
+
+	rl.Revoke("token-a")
+	if !rl.IsRevoked("token-a") {
+		t.Fatal("first revoke should mark token as revoked")
+	}
+
+	// Second revoke should not panic or change behavior.
+	rl.Revoke("token-a")
+	if !rl.IsRevoked("token-a") {
+		t.Fatal("token should remain revoked after double revoke")
+	}
+
+	// Other tokens unaffected.
+	if rl.IsRevoked("token-b") {
+		t.Fatal("unrelated token should not be revoked")
+	}
+}
+
+func TestMobileRevocation_HashIsolation(t *testing.T) {
+	rl := NewMobileTokenRevocationList()
+
+	rl.Revoke("secret-abc")
+
+	// Similar tokens must not collide.
+	if rl.IsRevoked("secret-abd") {
+		t.Error("similar token should not be revoked (hash collision)")
+	}
+	if rl.IsRevoked("secret-ab") {
+		t.Error("prefix of revoked token should not be revoked")
+	}
+	if rl.IsRevoked("secret-abcd") {
+		t.Error("superstring of revoked token should not be revoked")
+	}
+	if rl.IsRevoked("") {
+		t.Error("empty token should not be revoked")
+	}
+}
+
+func TestMobileAuth_MalformedTokenRejected(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	cases := []struct {
+		name   string
+		header string
+		code   int
+	}{
+		{"missing header", "", http.StatusUnauthorized},
+		{"empty bearer", "Bearer ", http.StatusUnauthorized},
+		{"wrong scheme", "Basic mobile-secret", http.StatusUnauthorized},
+		{"no space", "Bearermobile-secret", http.StatusUnauthorized},
+		{"wrong token", "Bearer wrong-token", http.StatusUnauthorized},
+		{"extra whitespace", "Bearer  mobile-secret", http.StatusOK},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != tc.code {
+				t.Errorf("expected %d, got %d: %s", tc.code, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestMobileAuth_TokenNotConfigured(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "" // not configured
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when token not configured, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	json.Unmarshal(w.Body.Bytes(), &env)
+	errObj, _ := env.Error.(map[string]any)
+	if errObj["code"] != "not_configured" {
+		t.Errorf("expected error code 'not_configured', got %v", errObj["code"])
+	}
+}
+
+func TestMobileRevocation_TokenRotation(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "old-token"
+	app.config.MobileOperatorScopes = "mobile:read"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	// Old token works.
+	req := httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer old-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("old token should work before rotation, got %d", w.Code)
+	}
+
+	// Rotate: revoke old, switch to new.
+	app.mobileRevocationList.Revoke("old-token")
+	app.config.MobileOperatorToken = "new-token"
+
+	// Old token rejected (revoked).
+	req = httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer old-token")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("old token should be rejected after rotation, got %d", w.Code)
+	}
+
+	// New token accepted.
+	req = httptest.NewRequest("GET", "/api/mobile/v1/ping", nil)
+	req.Header.Set("Authorization", "Bearer new-token")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("new token should work after rotation, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_AdminRevokeEmptyToken(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "admin-secret"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/admin/revoke", strings.NewReader(`{"token":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "admin-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("revoking empty token should return 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_AdminRevokeMissingBody(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "admin-secret"
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/admin/revoke", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "admin-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("revoking with missing token field should return 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_ConcurrentSafety(t *testing.T) {
+	rl := NewMobileTokenRevocationList()
+	const goroutines = 50
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2)
+
+	// Concurrent revocations.
+	for i := 0; i < goroutines; i++ {
+		go func(n int) {
+			defer wg.Done()
+			rl.Revoke(fmt.Sprintf("token-%d", n))
+		}(i)
+	}
+
+	// Concurrent reads.
+	for i := 0; i < goroutines; i++ {
+		go func(n int) {
+			defer wg.Done()
+			rl.IsRevoked(fmt.Sprintf("token-%d", n))
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify all tokens were revoked.
+	for i := 0; i < goroutines; i++ {
+		if !rl.IsRevoked(fmt.Sprintf("token-%d", i)) {
+			t.Errorf("token-%d should be revoked after concurrent operations", i)
+		}
+	}
+}
+
+func TestMobileRevocation_AdminNoConfiguredToken(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.AdminToken = "" // not configured
+	app.mobileRevocationList = NewMobileTokenRevocationList()
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/admin/revoke", strings.NewReader(`{"token":"some-token"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "any-value")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 when admin token not configured, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileRevocation_RevokeTimestampRecorded(t *testing.T) {
+	rl := NewMobileTokenRevocationList()
+
+	before := time.Now().UTC()
+	rl.Revoke("test-token")
+	after := time.Now().UTC()
+
+	rl.mu.RLock()
+	h := hashToken("test-token")
+	revokedAt, ok := rl.revoked[h]
+	rl.mu.RUnlock()
+
+	if !ok {
+		t.Fatal("token should be in revocation list")
+	}
+	if revokedAt.Before(before) || revokedAt.After(after) {
+		t.Errorf("revocation timestamp %v not in expected range [%v, %v]", revokedAt, before, after)
 	}
 }
 
