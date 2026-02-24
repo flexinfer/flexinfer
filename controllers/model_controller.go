@@ -843,6 +843,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		if flashCfg.VerifyIntegrity {
 			flashVerify = "true"
 		}
+		// Derive FLASH_VARIANT from model's useFp16 config — when fp16 is enabled,
+		// flash-loader skips fp32 safetensors files that have fp16 counterparts.
+		flashVariant := ""
+		if model.Spec.ConfigString("useFp16", "") == "1" {
+			flashVariant = "fp16"
+		}
+
 		flashContainer := corev1.Container{
 			Name:            "flash-loader",
 			Image:           flashCfg.Image,
@@ -853,6 +860,8 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				{Name: "FLASH_CONCURRENCY", Value: strconv.Itoa(flashCfg.Concurrency)},
 				{Name: "FLASH_BUFFER_KB", Value: strconv.Itoa(flashCfg.BufferSizeKB)},
 				{Name: "FLASH_VERIFY", Value: flashVerify},
+				{Name: "FLASH_EXCLUDE", Value: flashCfg.ExcludePatterns},
+				{Name: "FLASH_VARIANT", Value: flashVariant},
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "model", MountPath: "/src", ReadOnly: true},
@@ -2332,6 +2341,7 @@ type flashLoaderRuntimeConfig struct {
 	TmpfsSizeLimit  *resource.Quantity
 	BufferSizeKB    int
 	VerifyIntegrity bool
+	ExcludePatterns string
 }
 
 const (
@@ -2438,6 +2448,7 @@ func (r *ModelReconciler) resolveFlashLoaderConfig(ctx context.Context, model *a
 		Concurrency:     envIntOrDefault("DEFAULT_FLASH_LOADER_CONCURRENCY", defaultFlashLoaderConcurrency),
 		BufferSizeKB:    envIntOrDefault("DEFAULT_FLASH_LOADER_BUFFER_KB", 4096),
 		VerifyIntegrity: envBoolOrDefault("DEFAULT_FLASH_LOADER_VERIFY", false),
+		ExcludePatterns: envStringOrDefault("DEFAULT_FLASH_LOADER_EXCLUDE", ""),
 	}
 	if tmpfs, ok := parseOptionalQuantity(os.Getenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT")); ok {
 		cfg.TmpfsSizeLimit = tmpfs
