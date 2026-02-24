@@ -459,6 +459,7 @@ def load_pipeline(model_id: str):
             "use_safetensors": True,
             "local_files_only": True,
             "safety_checker": None,
+            "low_cpu_mem_usage": True,
         }
         if vae is not None:
             pipeline_kwargs["vae"] = vae
@@ -671,6 +672,8 @@ async def generate_images(request: ImageGenerationRequest):
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return results
 
     # Run generation in a thread pool so health checks keep responding
@@ -761,6 +764,8 @@ async def edit_images(
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return results
 
     async with _generation_lock:

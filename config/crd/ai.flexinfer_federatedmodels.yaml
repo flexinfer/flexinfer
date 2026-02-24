@@ -179,6 +179,53 @@ spec:
                               used by the controller to set resource expectations.
                             type: string
                         type: object
+                      flashLoader:
+                        description: |-
+                          FlashLoader configures the flash-loader init container for multi-tier model loading.
+                          When enabled, model files are parallel-copied from the source volume (PVC or hostPath)
+                          to a tmpfs volume before the backend starts, reducing cold-start I/O latency.
+                        properties:
+                          bufferSizeKB:
+                            default: 4096
+                            description: |-
+                              BufferSizeKB sets the per-worker I/O buffer in KB.
+                              Larger buffers improve NVMe sequential throughput.
+                            format: int32
+                            maximum: 16384
+                            minimum: 32
+                            type: integer
+                          concurrency:
+                            default: 4
+                            description: Concurrency is the number of parallel copy
+                              goroutines.
+                            format: int32
+                            maximum: 32
+                            minimum: 1
+                            type: integer
+                          enabled:
+                            description: |-
+                              Enabled activates flash-loader. Default: auto (true when cache.strategy
+                              is Local or SharedPVC with gpu.shared set).
+                            type: boolean
+                          image:
+                            description: Image overrides the flash-loader init container
+                              image.
+                            type: string
+                          tmpfsSizeLimit:
+                            description: |-
+                              TmpfsSizeLimit caps the tmpfs destination volume.
+                              Defaults to cache.size if not specified.
+                            type: string
+                          verifyIntegrity:
+                            description: VerifyIntegrity enables post-copy size verification.
+                            type: boolean
+                        type: object
+                      hostPath:
+                        default: /var/lib/flexinfer/models
+                        description: |-
+                          HostPath is the base directory on the node for Local strategy model storage.
+                          A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+                        type: string
                       pvcName:
                         description: |-
                           PVCName is the PVC to use for SharedPVC strategy.
@@ -197,11 +244,13 @@ spec:
                           Strategy for caching models.
                           - Memory: Keep model weights in RAM (fast reload, uses RAM)
                           - SharedPVC: Store on shared PVC (slower reload, saves RAM)
+                          - Local: Use a hostPath directory (e.g., NVMe) for model storage
                           - None: No caching (downloads each time)
                           Default: Memory if gpu.shared is set, SharedPVC otherwise.
                         enum:
                         - Memory
                         - SharedPVC
+                        - Local
                         - None
                         type: string
                     type: object

@@ -2194,3 +2194,184 @@ func TestResolveCompilationCache_NVIDIANotAutoEnabled(t *testing.T) {
 		t.Fatal("expected compilation cache to not auto-enable for NVIDIA (no MIOpen)")
 	}
 }
+
+func TestResolveFlashLoaderConfig_V1Alpha2Override(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "false")
+	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:default")
+	t.Setenv("DEFAULT_FLASH_LOADER_CONCURRENCY", "4")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha1 scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	enabled := true
+	concurrency := int32(8)
+	bufferKB := int32(8192)
+	verifyIntegrity := true
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "v2-flash-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://meta-llama/Llama-3-8B",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "Local",
+				HostPath: "/mnt/nvme/models",
+				FlashLoader: &aiv1alpha2.FlashLoaderSpec{
+					Enabled:         &enabled,
+					Image:           "registry.example/flash-loader:v2",
+					Concurrency:     &concurrency,
+					TmpfsSizeLimit:  "20Gi",
+					BufferSizeKB:    &bufferKB,
+					VerifyIntegrity: &verifyIntegrity,
+				},
+			},
+		},
+	}
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(),
+		Scheme: s,
+	}
+
+	cfg := r.resolveFlashLoaderConfig(context.Background(), model)
+	if !cfg.Enabled {
+		t.Fatal("expected flash-loader to be enabled via v1alpha2 CacheSpec.FlashLoader")
+	}
+	if cfg.Image != "registry.example/flash-loader:v2" {
+		t.Fatalf("expected v1alpha2 image override, got %q", cfg.Image)
+	}
+	if cfg.Concurrency != 8 {
+		t.Fatalf("expected concurrency 8, got %d", cfg.Concurrency)
+	}
+	if cfg.TmpfsSizeLimit == nil || cfg.TmpfsSizeLimit.String() != "20Gi" {
+		t.Fatalf("expected tmpfs size limit 20Gi, got %v", cfg.TmpfsSizeLimit)
+	}
+	if cfg.BufferSizeKB != 8192 {
+		t.Fatalf("expected bufferSizeKB 8192, got %d", cfg.BufferSizeKB)
+	}
+	if !cfg.VerifyIntegrity {
+		t.Fatal("expected verifyIntegrity to be true")
+	}
+}
+
+func TestResolveFlashLoaderConfig_AutoEnableLocalShared(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "false")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha1 scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "auto-flash-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://some/model",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared: "7900xtx-llm",
+			},
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "Local",
+			},
+		},
+	}
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(),
+		Scheme: s,
+	}
+
+	cfg := r.resolveFlashLoaderConfig(context.Background(), model)
+	if !cfg.Enabled {
+		t.Fatal("expected flash-loader to be auto-enabled for shared + Local strategy")
+	}
+}
+
+func TestGetVolumeSource_Local(t *testing.T) {
+	r := &ModelReconciler{}
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-model", Namespace: "prod"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://meta-llama/Llama-3-8B",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "Local",
+				HostPath: "/mnt/nvme/flexinfer/models",
+			},
+		},
+	}
+
+	vs := r.getVolumeSource(model)
+	if vs.HostPath == nil {
+		t.Fatal("expected hostPath volume source for Local strategy")
+	}
+	want := "/mnt/nvme/flexinfer/models/prod/local-model"
+	if vs.HostPath.Path != want {
+		t.Fatalf("hostPath = %q, want %q", vs.HostPath.Path, want)
+	}
+	if vs.HostPath.Type == nil || *vs.HostPath.Type != corev1.HostPathDirectoryOrCreate {
+		t.Fatal("expected HostPathDirectoryOrCreate type")
+	}
+}
+
+func TestModelUsesPersistentVolume_Local(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://some/model",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "Local",
+			},
+		},
+	}
+	if !modelUsesPersistentVolume(model) {
+		t.Fatal("expected modelUsesPersistentVolume to return true for Local strategy")
+	}
+}
+
+func TestResolveLocalCachePath_Default(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://some/model",
+		},
+	}
+	got := resolveLocalCachePath(model)
+	want := "/var/lib/flexinfer/models/default/my-model"
+	if got != want {
+		t.Fatalf("resolveLocalCachePath() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveLocalCachePath_Custom(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "prod"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://some/model",
+			Cache: &aiv1alpha2.CacheSpec{
+				HostPath: "/mnt/nvme/models",
+			},
+		},
+	}
+	got := resolveLocalCachePath(model)
+	want := "/mnt/nvme/models/prod/my-model"
+	if got != want {
+		t.Fatalf("resolveLocalCachePath() = %q, want %q", got, want)
+	}
+}

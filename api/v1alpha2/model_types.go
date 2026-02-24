@@ -318,9 +318,10 @@ type CacheSpec struct {
 	// Strategy for caching models.
 	// - Memory: Keep model weights in RAM (fast reload, uses RAM)
 	// - SharedPVC: Store on shared PVC (slower reload, saves RAM)
+	// - Local: Use a hostPath directory (e.g., NVMe) for model storage
 	// - None: No caching (downloads each time)
 	// Default: Memory if gpu.shared is set, SharedPVC otherwise.
-	// +kubebuilder:validation:Enum=Memory;SharedPVC;None
+	// +kubebuilder:validation:Enum=Memory;SharedPVC;Local;None
 	// +optional
 	Strategy string `json:"strategy,omitempty"`
 
@@ -339,12 +340,24 @@ type CacheSpec struct {
 	// +optional
 	Size string `json:"size,omitempty"`
 
+	// HostPath is the base directory on the node for Local strategy model storage.
+	// A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+	// +kubebuilder:default="/var/lib/flexinfer/models"
+	// +optional
+	HostPath string `json:"hostPath,omitempty"`
+
 	// CompilationCache configures persistent GPU kernel compilation caching.
 	// When enabled, MIOpen/PyTorch/Triton compilation artifacts are stored on
 	// a hostPath volume that survives pod restarts, eliminating recompilation
 	// on GPU swaps. Only effective for AMD ROCm backends.
 	// +optional
 	CompilationCache *CompilationCacheSpec `json:"compilationCache,omitempty"`
+
+	// FlashLoader configures the flash-loader init container for multi-tier model loading.
+	// When enabled, model files are parallel-copied from the source volume (PVC or hostPath)
+	// to a tmpfs volume before the backend starts, reducing cold-start I/O latency.
+	// +optional
+	FlashLoader *FlashLoaderSpec `json:"flashLoader,omitempty"`
 }
 
 // CompilationCacheSpec configures host-persistent GPU compilation caching.
@@ -367,6 +380,45 @@ type CompilationCacheSpec struct {
 	// +kubebuilder:default="2Gi"
 	// +optional
 	SizeLimit string `json:"sizeLimit,omitempty"`
+}
+
+// FlashLoaderSpec configures the flash-loader init container for multi-tier model loading.
+// When enabled, model files are parallel-copied from the source volume (PVC or hostPath)
+// to a tmpfs volume before the backend starts, reducing cold-start I/O latency.
+// +kubebuilder:object:generate=true
+type FlashLoaderSpec struct {
+	// Enabled activates flash-loader. Default: auto (true when cache.strategy
+	// is Local or SharedPVC with gpu.shared set).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Concurrency is the number of parallel copy goroutines.
+	// +kubebuilder:default=4
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=32
+	// +optional
+	Concurrency *int32 `json:"concurrency,omitempty"`
+
+	// TmpfsSizeLimit caps the tmpfs destination volume.
+	// Defaults to cache.size if not specified.
+	// +optional
+	TmpfsSizeLimit string `json:"tmpfsSizeLimit,omitempty"`
+
+	// BufferSizeKB sets the per-worker I/O buffer in KB.
+	// Larger buffers improve NVMe sequential throughput.
+	// +kubebuilder:default=4096
+	// +kubebuilder:validation:Minimum=32
+	// +kubebuilder:validation:Maximum=16384
+	// +optional
+	BufferSizeKB *int32 `json:"bufferSizeKB,omitempty"`
+
+	// VerifyIntegrity enables post-copy size verification.
+	// +optional
+	VerifyIntegrity *bool `json:"verifyIntegrity,omitempty"`
+
+	// Image overrides the flash-loader init container image.
+	// +optional
+	Image string `json:"image,omitempty"`
 }
 
 // LiteLLMSpec configures LiteLLM proxy integration.

@@ -837,6 +837,10 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	var initContainers []corev1.Container
 	flashCfg := r.resolveFlashLoaderConfig(ctx, model)
 	if flashCfg.Enabled {
+		flashVerify := "false"
+		if flashCfg.VerifyIntegrity {
+			flashVerify = "true"
+		}
 		flashContainer := corev1.Container{
 			Name:            "flash-loader",
 			Image:           flashCfg.Image,
@@ -845,6 +849,8 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				{Name: "FLASH_SRC", Value: "/src"},
 				{Name: "FLASH_DST", Value: "/models"},
 				{Name: "FLASH_CONCURRENCY", Value: strconv.Itoa(flashCfg.Concurrency)},
+				{Name: "FLASH_BUFFER_KB", Value: strconv.Itoa(flashCfg.BufferSizeKB)},
+				{Name: "FLASH_VERIFY", Value: flashVerify},
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "model", MountPath: "/src", ReadOnly: true},
@@ -1294,6 +1300,14 @@ func (r *ModelReconciler) getVolumeSource(model *aiv1alpha2.Model) corev1.Volume
 				Medium: corev1.StorageMediumMemory,
 			},
 		}
+	case "Local":
+		// Use hostPath for NVMe-backed local model storage
+		return corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: resolveLocalCachePath(model),
+				Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+			},
+		}
 	case "None":
 		// No persistent volume, download each time
 		return corev1.VolumeSource{
@@ -1384,6 +1398,15 @@ func resolveCompilationCache(model *aiv1alpha2.Model) (hostPath string, enabled 
 	}
 
 	return "", false
+}
+
+// resolveLocalCachePath returns the hostPath directory for this model's local cache.
+func resolveLocalCachePath(model *aiv1alpha2.Model) string {
+	basePath := "/var/lib/flexinfer/models"
+	if model.Spec.Cache != nil && model.Spec.Cache.HostPath != "" {
+		basePath = model.Spec.Cache.HostPath
+	}
+	return filepath.Join(basePath, model.Namespace, model.Name)
 }
 
 func parsePVCSource(source string) (pvcName string, subPath string, ok bool) {
@@ -2301,10 +2324,12 @@ func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 }
 
 type flashLoaderRuntimeConfig struct {
-	Enabled        bool
-	Image          string
-	Concurrency    int
-	TmpfsSizeLimit *resource.Quantity
+	Enabled         bool
+	Image           string
+	Concurrency     int
+	TmpfsSizeLimit  *resource.Quantity
+	BufferSizeKB    int
+	VerifyIntegrity bool
 }
 
 const (
@@ -2374,7 +2399,8 @@ func modelUsesPersistentVolume(model *aiv1alpha2.Model) bool {
 	if _, _, ok := parsePVCSource(model.Spec.Source); ok {
 		return true
 	}
-	return cacheStrategy(model) == "SharedPVC"
+	s := cacheStrategy(model)
+	return s == "SharedPVC" || s == "Local"
 }
 
 func (r *ModelReconciler) matchingModelCache(ctx context.Context, model *aiv1alpha2.Model) *aiv1alpha1.ModelCache {
@@ -2401,16 +2427,21 @@ func (r *ModelReconciler) matchingModelCache(ctx context.Context, model *aiv1alp
 }
 
 // resolveFlashLoaderConfig decides if flash-loader should be injected and which runtime settings to use.
+// Resolution layers (lowest to highest priority): env vars → v1alpha1 ModelCache → v1alpha2 CacheSpec.FlashLoader.
 func (r *ModelReconciler) resolveFlashLoaderConfig(ctx context.Context, model *aiv1alpha2.Model) flashLoaderRuntimeConfig {
+	// Layer 1: Environment variable defaults
 	cfg := flashLoaderRuntimeConfig{
-		Enabled:     envBoolOrDefault("DEFAULT_FLASH_LOADER_ENABLED", false),
-		Image:       envStringOrDefault("DEFAULT_FLASH_LOADER_IMAGE", defaultFlashLoaderImage),
-		Concurrency: envIntOrDefault("DEFAULT_FLASH_LOADER_CONCURRENCY", defaultFlashLoaderConcurrency),
+		Enabled:         envBoolOrDefault("DEFAULT_FLASH_LOADER_ENABLED", false),
+		Image:           envStringOrDefault("DEFAULT_FLASH_LOADER_IMAGE", defaultFlashLoaderImage),
+		Concurrency:     envIntOrDefault("DEFAULT_FLASH_LOADER_CONCURRENCY", defaultFlashLoaderConcurrency),
+		BufferSizeKB:    envIntOrDefault("DEFAULT_FLASH_LOADER_BUFFER_KB", 4096),
+		VerifyIntegrity: envBoolOrDefault("DEFAULT_FLASH_LOADER_VERIFY", false),
 	}
 	if tmpfs, ok := parseOptionalQuantity(os.Getenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT")); ok {
 		cfg.TmpfsSizeLimit = tmpfs
 	}
 
+	// Layer 2: v1alpha1 ModelCache overrides
 	if mc := r.matchingModelCache(ctx, model); mc != nil && mc.Spec.FlashLoader != nil {
 		flash := mc.Spec.FlashLoader
 		cfg.Enabled = flash.Enabled
@@ -2427,8 +2458,42 @@ func (r *ModelReconciler) resolveFlashLoaderConfig(ctx context.Context, model *a
 		}
 	}
 
+	// Layer 3: v1alpha2 Model.Spec.Cache.FlashLoader (highest priority)
+	if model.Spec.Cache != nil && model.Spec.Cache.FlashLoader != nil {
+		fl := model.Spec.Cache.FlashLoader
+		if fl.Enabled != nil {
+			cfg.Enabled = *fl.Enabled
+		}
+		if fl.Image != "" {
+			cfg.Image = fl.Image
+		}
+		if fl.Concurrency != nil && *fl.Concurrency > 0 {
+			cfg.Concurrency = int(*fl.Concurrency)
+		}
+		if fl.TmpfsSizeLimit != "" {
+			if tmpfs, ok := parseOptionalQuantity(fl.TmpfsSizeLimit); ok {
+				cfg.TmpfsSizeLimit = tmpfs
+			}
+		}
+		if fl.BufferSizeKB != nil {
+			cfg.BufferSizeKB = int(*fl.BufferSizeKB)
+		}
+		if fl.VerifyIntegrity != nil {
+			cfg.VerifyIntegrity = *fl.VerifyIntegrity
+		}
+	}
+
+	// Auto-enable for shared GPU models on Local strategy
+	if model.Spec.Cache != nil && model.Spec.Cache.FlashLoader == nil &&
+		model.Spec.IsShared() && cacheStrategy(model) == "Local" {
+		cfg.Enabled = true
+	}
+
 	if cfg.Concurrency < 1 {
 		cfg.Concurrency = defaultFlashLoaderConcurrency
+	}
+	if cfg.BufferSizeKB < 32 {
+		cfg.BufferSizeKB = 4096
 	}
 	if !modelUsesPersistentVolume(model) {
 		cfg.Enabled = false
