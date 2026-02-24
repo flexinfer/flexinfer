@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var healthMonitor = ConnectionHealthMonitor()
     @State private var alertsViewModel = AlertsViewModel()
     @State private var selectedTab: AppTab = .dashboard
+    @State private var sseClient: SSEClient?
 
     enum AppTab {
         case dashboard
@@ -15,10 +16,24 @@ struct ContentView: View {
     }
 
     var body: some View {
-        if connectionVM.isAuthenticated {
-            authenticatedContent
-        } else {
-            LoginView(viewModel: connectionVM)
+        Group {
+            if connectionVM.isAuthenticated {
+                authenticatedContent
+            } else {
+                LoginView(viewModel: connectionVM)
+            }
+        }
+        .task {
+            if connectionVM.isAuthenticated {
+                setupSSE()
+            }
+        }
+        .onChange(of: connectionVM.isAuthenticated) { _, isAuth in
+            if isAuth {
+                setupSSE()
+            } else {
+                teardownSSE()
+            }
         }
     }
 
@@ -38,7 +53,7 @@ struct ContentView: View {
     private var iPhoneLayout: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
@@ -107,7 +122,7 @@ struct ContentView: View {
         } detail: {
             switch selectedTab {
             case .dashboard:
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
             case .sessions:
                 SessionsListView(apiClient: connectionVM.buildAPIClient())
             case .alerts:
@@ -128,5 +143,25 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    // MARK: - SSE Lifecycle
+
+    private func setupSSE() {
+        guard sseClient == nil else { return }
+        guard let apiClient = connectionVM.buildAPIClient(),
+              let request = try? apiClient.sseRequest()
+        else { return }
+        let client = SSEClient(request: request)
+        client.onStateChange = { [weak healthMonitor] state in
+            healthMonitor?.handleSSEStateChange(state)
+        }
+        sseClient = client
+        client.connect()
+    }
+
+    private func teardownSSE() {
+        sseClient?.disconnect()
+        sseClient = nil
     }
 }

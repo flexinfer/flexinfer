@@ -17,10 +17,10 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 
 | Milestone | Description | Status |
 |---|---|---|
-| M0 | Contract + security architecture freeze | **Complete** (2026-02-23) |
-| M1 | Backend mobile auth + API hardening | **Complete** (2026-02-23) |
-| M2 | iOS/iPad app scaffold + monitoring UI | **Complete** (2026-02-23) |
-| M3 | Session create/end controls | **Complete** (2026-02-23) |
+| M0 | Contract + security architecture freeze | In progress |
+| M1 | Backend mobile auth + API hardening | Not started |
+| M2 | iOS/iPad app scaffold + monitoring UI | In progress |
+| M3 | Session create/end controls | Not started |
 | M4 | Notifications + operational polish | Not started |
 | M5 | Beta rollout + telemetry tuning | Not started |
 
@@ -48,19 +48,15 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - `docs/MOBILE_COMPANION_SECURITY.md` (new).
 - Auth bootstrap decision record (ADR-style note in `.loom/40-decisions.md` or docs).
 
-### Completion Notes (2026-02-23)
-
-- All 8 endpoints implemented in `internal/hud/api_mobile.go` with auth, scope checks, and audit logging.
-- Concrete response schemas frozen in `docs/MOBILE_COMPANION_API.md` (derived from implementation).
-- Per-mutation threat analysis added to `docs/MOBILE_COMPANION_SECURITY.md` for `session-create` and `session-end`.
-- Security review signoff recorded with verified/deferred control inventory.
+Current state:
+- Draft documents created and linked from docs hub.
 - Auth bootstrap decision recorded in `.loom/40-decisions.md` with default + fallback + threat controls.
 
-### Exit Criteria (all met)
+### Exit Criteria
 
-- [x] Endpoint list and request/response schemas frozen for M1-M3.
-- [x] Auth bootstrap mode selected and documented with rationale/tradeoffs.
-- [x] Security review signoff recorded.
+- Endpoint list and request/response schemas frozen for M1-M3.
+- Auth bootstrap mode selected and documented with rationale/tradeoffs.
+- Security review signoff recorded.
 
 ## M1: Backend Mobile Auth + API Hardening
 
@@ -111,21 +107,11 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - Add refresh-token rotation/replay tests.
 - Add revoke/logout invalidation tests.
 
-### Completion Notes (2026-02-23)
+### Exit Criteria
 
-- Rate limiting: `MobileRateLimiter` with per-actor minute-window counters (mutation: 10/min, read: 60/min).
-- Token revocation: `MobileTokenRevocationList` with SHA-256 hashing + admin revoke endpoint.
-- Device ID tracking: `X-Device-ID` header extraction in `logMobileAudit()`.
-- TLS support: `--tls-cert` / `--tls-key` flags with `tls.NewListener` wrapping.
-- Bind address: `--bind` flag (default: `127.0.0.1`) for gateway mode.
-- 12 new tests covering rate limiting, revocation, device ID, and admin endpoint.
-- Full OAuth 2.1 token lifecycle deferred to M2 (requires iOS app to consume it).
-
-### Exit Criteria (all met)
-
-- [x] Auth required for all mobile-reachable protected endpoints.
-- [x] Session create/end API paths fully covered by tests.
-- [x] Mobile token revocation/logout invalidation behavior proven in tests.
+- Auth required for all mobile-reachable protected endpoints.
+- Session create/end API paths fully covered by tests.
+- Mobile token revocation/logout invalidation behavior proven in tests.
 
 ## M2: iOS/iPad App Scaffold + Monitoring MVP
 
@@ -155,24 +141,10 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - ViewModel tests for connection-state transitions.
 - Network churn tests (disconnect/reconnect, constrained/expensive path behavior, SSE->poll fallback->SSE recovery).
 
-### Completion Notes (2026-02-23)
-
-- Swift Package at `apps/loom-companion-ios/` with `LoomCompanionKit` library + `LoomCompanion` app target.
-- iOS 17+ / macOS 14+ targets; zero third-party dependencies.
-- 8 DTO models matching frozen v1 API contract (`APIEnvelope`, `SessionInfo`, `DashboardData`, `HealthSummary`, `TimelineEntry`, `AnyCodable`, `ConnectionProfile`, `APIError`).
-- Networking layer: `APIClient` (URLSession REST with envelope unwrapping), `SSEClient` (AsyncStream with 1s/30s/2x reconnect), `TokenStore` (Keychain), `Endpoint` enum.
-- `ConnectionHealthMonitor` with 7-state machine and 30s polling fallback.
-- 4 ViewModels: `DashboardViewModel`, `SessionsViewModel`, `SessionDetailViewModel`, `ConnectionViewModel`.
-- SwiftUI views: LoginView, DashboardView (HealthStatusCard, FleetSummaryCard, TimelineListView), SessionsListView, SessionDetailView, ConnectionDiagnosticsView, LANPermissionView.
-- iPhone TabView + iPad NavigationSplitView adaptive layout.
-- 49 tests across 10 suites: DTO decoding (12), SSE parser (6), APIClient/Endpoint (6), ConnectionHealth (10), ViewModels (15).
-- Full OAuth 2.1 token lifecycle integration deferred to M2+ (iOS app uses static bearer token for v1 MVP).
-
 ### Exit Criteria
 
-- [x] Monitoring-only app scaffold compiles and tests pass (`swift build && swift test`).
-- [ ] End-to-end validation against local/staging loom instance.
-- [ ] SSE disconnect-to-recovered state p95 target met in test harness/telemetry baseline.
+- Monitoring-only app usable end-to-end against local/staging loom instance.
+- SSE disconnect-to-recovered state p95 target met in test harness/telemetry baseline.
 
 ## M3: Session Controls (Create/End)
 
@@ -188,24 +160,9 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 - Integration tests for create/end happy path and auth failures.
 - UI tests for form validation and confirmation flows.
 
-### Completion Notes (2026-02-23)
+### Exit Criteria
 
-- Backend fix: Mobile mutation handlers (`handleMobileSessionCreate`, `handleMobileSessionEnd`) now call the bridge directly and wrap responses in `writeMobileJSON` envelope, matching the v1 contract. Previously delegated to agent handlers which used raw `writeJSON`.
-- `SessionCreateResponse` and `SessionEndResponse` DTOs added matching backend response shapes.
-- `SessionsViewModel.createSession()` method calls endpoint and reloads list on success.
-- `SessionDetailViewModel.endSession()` method with optimistic status update (`session.status = .ended`).
-- `CreateSessionView` form sheet: agent ID (with presets), namespace, description, auto-recall toggle, validation, error display.
-- `SessionDetailView` end session: toolbar button (active sessions only), confirmation dialog with summarize option, error alert.
-- `SessionsListView` toolbar "+" button presenting create sheet, reloads on dismiss.
-- `SessionInfo.status` changed from `let` to `var` for optimistic UI updates.
-- 7 new tests: create session success/error, end session success/error, detail load, endpoint body serialization (2).
-- Total: 56 tests across 11 suites, all passing.
-
-### Exit Criteria (all met)
-
-- [x] Operator can create sessions from phone/tablet via New Session flow.
-- [x] Operator can end sessions from phone/tablet via End Session confirmation.
-- [x] Backend mutation responses wrapped in mobile envelope (contract compliance).
+- Operator can reliably create/end sessions from phone/tablet.
 
 ## M4: Notifications + Operational Polish
 

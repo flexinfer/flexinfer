@@ -5,11 +5,18 @@ struct DashboardView: View {
     @State private var viewModel: DashboardViewModel
     let healthMonitor: ConnectionHealthMonitor
     let alertsViewModel: AlertsViewModel
+    let sseClient: SSEClient?
     @State private var showingAlerts = false
 
-    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel()) {
+    /// Stable identity for the SSEClient so `.task(id:)` re-fires when it changes.
+    private var sseClientId: ObjectIdentifier? {
+        sseClient.map { ObjectIdentifier($0) }
+    }
+
+    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), sseClient: SSEClient? = nil) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAPIClient()
         self.alertsViewModel = alertsViewModel
+        self.sseClient = sseClient
         _viewModel = State(initialValue: DashboardViewModel(apiClient: client, alertsViewModel: alertsViewModel))
         self.healthMonitor = healthMonitor
     }
@@ -51,8 +58,17 @@ struct DashboardView: View {
         .refreshable {
             await viewModel.load()
         }
-        .task {
+        .task(id: sseClientId) {
+            // Wire polling fallback so degraded SSE still refreshes data.
+            healthMonitor.onPollRefresh = { [weak viewModel] in
+                await viewModel?.load()
+            }
+
             await viewModel.load()
+
+            if let sseClient {
+                viewModel.startListening(sseClient: sseClient)
+            }
         }
     }
 

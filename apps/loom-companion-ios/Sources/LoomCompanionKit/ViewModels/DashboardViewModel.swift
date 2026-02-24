@@ -37,6 +37,7 @@ public final class DashboardViewModel {
 
     /// Start listening to SSE events for real-time updates.
     public func startListening(sseClient: SSEClient) {
+        sseTask?.cancel()
         sseTask = Task { [weak self] in
             for await event in sseClient.events {
                 await self?.handleSSEEvent(event)

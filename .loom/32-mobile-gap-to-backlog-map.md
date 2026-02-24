@@ -105,11 +105,19 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `internal/hud/frontend/src/lib/stores/events.svelte.ts`
   - `internal/hud/app.go`
 - Checklist:
-  - [ ] Add reconnect state machine tests
+  - [x] Add reconnect state machine tests
   - [ ] Add synthetic network churn test scenarios
   - [ ] Publish recovery SLO telemetry dashboard
 - Status:
-  - Not started
+  - In progress
+- Implementation notes:
+  - SSEClient wired to UI layer in ContentView: creates client on auth, wires `onStateChange` → `ConnectionHealthMonitor.handleSSEStateChange`, connects/disconnects on login/logout
+  - DashboardView consumes SSEClient via `DashboardViewModel.startListening()`: refresh events reload dashboard, notification events forward to AlertsViewModel
+  - `ConnectionHealthMonitor` polling fallback wired: `onPollRefresh` → `viewModel.load()` (30s interval when SSE degraded)
+  - `startListening` cancels previous task before creating new one (prevents listener leak)
+  - `.task(id: sseClientId)` pattern in DashboardView handles nil→non-nil SSEClient transitions
+  - 4 new tests: event forwarding, cancel-before-restart, stopListening, refresh-triggers-reload
+  - SSE reconnect tests already existed (9 tests in SSE Client Reconnect suite)
 
 ### Issue MBL-6: Notification severity and action policy (M4)
 

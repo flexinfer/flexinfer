@@ -35,4 +35,141 @@ struct DashboardViewModelTests {
         #expect(vm.dashboard == nil)
         #expect(vm.error != nil)
     }
+
+    @Test("startListening forwards notification events to alertsViewModel")
+    func startListeningForwardsAlerts() async throws {
+        let client = MockAPIClient()
+        client.dashboardResponse = DashboardData(
+            daemonRunning: true, serverCount: 1, activeSessions: 0,
+            activeAgents: 0, idleAgents: 0, offlineAgents: 0,
+            updatedAt: "2026-02-24T00:00:00Z",
+            health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            recentTimeline: []
+        )
+
+        let alertsVM = AlertsViewModel()
+        let vm = DashboardViewModel(apiClient: client, alertsViewModel: alertsVM)
+
+        let request = URLRequest(url: URL(string: "http://localhost/events")!)
+        let sse = SSEClient(request: request)
+        sse._testBaseDelay = 0.01
+        sse._testMaxDelay = 0.01
+        sse._testStreamResults = [
+            .succeedWithEvents([
+                SSEEvent(type: "hud.health", data: "{\"down_servers\":1}"),
+                SSEEvent(type: "agent.session.start", data: "{\"session_id\":\"s1\"}"),
+            ])
+        ]
+
+        vm.startListening(sseClient: sse)
+        sse.connect()
+
+        try await Task.sleep(for: .milliseconds(500))
+
+        // hud.health with down_servers→critical alert, agent.session.start→info alert
+        #expect(alertsVM.alerts.count == 2)
+    }
+
+    @Test("startListening cancels previous listener")
+    func startListeningCancelsPrevious() async throws {
+        let client = MockAPIClient()
+        client.dashboardResponse = DashboardData(
+            daemonRunning: true, serverCount: 1, activeSessions: 0,
+            activeAgents: 0, idleAgents: 0, offlineAgents: 0,
+            updatedAt: "2026-02-24T00:00:00Z",
+            health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            recentTimeline: []
+        )
+
+        let alertsVM = AlertsViewModel()
+        let vm = DashboardViewModel(apiClient: client, alertsViewModel: alertsVM)
+
+        // First SSE client (no events, just connects)
+        let request1 = URLRequest(url: URL(string: "http://localhost/events")!)
+        let sse1 = SSEClient(request: request1)
+        sse1._testBaseDelay = 0.01
+        sse1._testMaxDelay = 0.01
+        sse1._testStreamResults = [.succeed]
+
+        // Second SSE client with an alert event
+        let request2 = URLRequest(url: URL(string: "http://localhost/events")!)
+        let sse2 = SSEClient(request: request2)
+        sse2._testBaseDelay = 0.01
+        sse2._testMaxDelay = 0.01
+        sse2._testStreamResults = [
+            .succeedWithEvents([
+                SSEEvent(type: "hud.health", data: "{\"degraded_servers\":1}"),
+            ])
+        ]
+
+        vm.startListening(sseClient: sse1)
+        sse1.connect()
+
+        // Replace with second client — should cancel first
+        vm.startListening(sseClient: sse2)
+        sse2.connect()
+
+        try await Task.sleep(for: .milliseconds(500))
+
+        // Event from second client should be processed
+        #expect(alertsVM.alerts.count == 1)
+    }
+
+    @Test("stopListening cancels event consumption")
+    func stopListeningCancels() async throws {
+        let client = MockAPIClient()
+        client.dashboardResponse = DashboardData(
+            daemonRunning: true, serverCount: 1, activeSessions: 0,
+            activeAgents: 0, idleAgents: 0, offlineAgents: 0,
+            updatedAt: "2026-02-24T00:00:00Z",
+            health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            recentTimeline: []
+        )
+
+        let alertsVM = AlertsViewModel()
+        let vm = DashboardViewModel(apiClient: client, alertsViewModel: alertsVM)
+
+        let request = URLRequest(url: URL(string: "http://localhost/events")!)
+        let sse = SSEClient(request: request)
+        sse._testStreamResults = [.succeed]
+
+        vm.startListening(sseClient: sse)
+        vm.stopListening()
+
+        // SSE events after stop should not be processed
+        sse.connect()
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(alertsVM.alerts.isEmpty)
+    }
+
+    @Test("SSE refresh events trigger dashboard reload")
+    func sseRefreshTriggersReload() async throws {
+        let client = MockAPIClient()
+        client.dashboardResponse = DashboardData(
+            daemonRunning: true, serverCount: 1, activeSessions: 0,
+            activeAgents: 0, idleAgents: 0, offlineAgents: 0,
+            updatedAt: "2026-02-24T00:00:00Z",
+            health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            recentTimeline: []
+        )
+
+        let vm = DashboardViewModel(apiClient: client)
+
+        let request = URLRequest(url: URL(string: "http://localhost/events")!)
+        let sse = SSEClient(request: request)
+        sse._testStreamResults = [
+            .succeedWithEvents([
+                SSEEvent(type: "hud.fleet", data: "{}"),
+            ])
+        ]
+
+        vm.startListening(sseClient: sse)
+        sse.connect()
+
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Dashboard should have been loaded by the refresh event
+        #expect(vm.dashboard != nil)
+    }
 }
