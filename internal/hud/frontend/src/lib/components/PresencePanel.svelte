@@ -43,7 +43,12 @@
   <!-- Tab bar -->
   <div class="tab-bar">
     <button class="tab-btn" class:active={activeTab === 'agents'} onclick={() => setActiveTab('agents')}>
-      Agents <span class="tab-count">{agents.length}</span>
+      Agents
+      <span class="status-chips">
+        <span class="status-chip chip-active" title="Active">{presenceStore.activeCount}</span>
+        <span class="status-chip chip-idle" title="Idle">{presenceStore.idleCount}</span>
+        <span class="status-chip chip-offline" title="Offline">{presenceStore.offlineCount}</span>
+      </span>
     </button>
     <button class="tab-btn" class:active={activeTab === 'claims'} onclick={() => setActiveTab('claims')}>
       Claims <span class="tab-count">{claims.length}</span>
@@ -163,6 +168,35 @@
     background: var(--bg-primary);
     padding: 1px 5px;
     border-radius: var(--radius-md);
+    color: var(--fg-muted);
+  }
+
+  .status-chips {
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 2px;
+  }
+
+  .status-chip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: var(--radius-md);
+    line-height: 1.3;
+  }
+
+  .chip-active {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--success);
+  }
+
+  .chip-idle {
+    background: rgba(231, 179, 18, 0.12);
+    color: var(--warning);
+  }
+
+  .chip-offline {
+    background: var(--bg-primary);
     color: var(--fg-muted);
   }
 

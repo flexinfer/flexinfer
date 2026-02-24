@@ -112,6 +112,16 @@ class MemoryStore {
       tokens: (raw?.token_count as number) ?? (raw?.tokens as number) ?? 0,
     });
 
+    // Map compression data if present.
+    const rawComp = data.compression as Record<string, unknown> | undefined;
+    const compression = rawComp ? {
+      ratio: (rawComp.ratio as number) ?? 0,
+      compressed_items: (rawComp.compressed_items as number) ?? 0,
+      tokens_saved: (rawComp.tokens_saved as number) ?? 0,
+      added_24h: (rawComp.added_24h as number) ?? 0,
+      compressed_24h: (rawComp.compressed_24h as number) ?? 0,
+    } : this.stats.compression;
+
     const prevTotal = this.stats.total_items;
     this.stats = {
       ...this.stats,
@@ -120,6 +130,7 @@ class MemoryStore {
       long_term_memory: mapTier(data.long_term_memory as Record<string, unknown>),
       total_items: (data.total_items as number) ?? this.stats.total_items,
       total_tokens: (data.total_tokens as number) ?? this.stats.total_tokens,
+      compression,
     };
     this.lastUpdated = new Date();
     this.error = null;

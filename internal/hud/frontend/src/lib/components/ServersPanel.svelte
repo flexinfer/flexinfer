@@ -157,11 +157,20 @@
   const columns = [
     { key: 'name', label: 'Server', sortable: true, width: '140px' },
     { key: 'status', label: 'Status', sortable: true, width: '80px' },
+    { key: 'consec_fails', label: 'Fails', sortable: true, width: '50px' },
     { key: 'latency', label: 'Latency', sortable: true, width: '80px' },
     { key: 'tool_count', label: 'Tools', sortable: true, width: '60px' },
-    { key: 'target', label: 'Target', width: '180px' },
+    { key: 'target', label: 'Target', width: '160px' },
     { key: 'sparkline', label: 'Sparkline', width: '130px' },
   ];
+
+  function percentile(data, p) {
+    if (!data?.length) return 0;
+    const sorted = [...data].filter(v => v > 0).sort((a, b) => a - b);
+    if (!sorted.length) return 0;
+    const idx = Math.ceil(p / 100 * sorted.length) - 1;
+    return sorted[Math.max(0, idx)];
+  }
 
   function selectServer(server) {
     selectedServer = selectedServer?.name === server.name ? null : server;
@@ -251,10 +260,16 @@
         onRowClick={selectServer}
       >
         {#snippet row({ row: server })}
-          <td class="text-mono server-name" title={sanitizeText(server.name)}>{sanitizeText(server.name)}</td>
+          <td class="server-name-cell">
+            <span class="text-mono server-name" title={sanitizeText(server.name)}>{sanitizeText(server.name)}</span>
+            {#if server.categories?.length > 0}
+              <span class="server-cats">{#each server.categories as cat}<Badge text={cat} variant="info" />{/each}</span>
+            {/if}
+          </td>
           <td>
             <StatusDot status={server.status ?? 'unknown'} />
           </td>
+          <td class="text-mono" class:fail-warn={server.consec_fails > 0}>{server.consec_fails > 0 ? server.consec_fails : ''}</td>
           <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
           <td class="text-mono">{server.tool_count ?? 0}</td>
           <td class="text-mono text-muted target-cell" title={sanitizeText(server.target ?? '---')}>
@@ -405,6 +420,16 @@
           height={60}
           color={selectedServer.status === 'healthy' ? 'var(--success)' : 'var(--warning)'}
         />
+        <div class="percentile-row">
+          <span class="percentile-chip">p50: {formatLatency(percentile(selectedServer.latencyHistory, 50))}</span>
+          <span class="percentile-chip">p95: {formatLatency(percentile(selectedServer.latencyHistory, 95))}</span>
+          <span class="percentile-chip">p99: {formatLatency(percentile(selectedServer.latencyHistory, 99))}</span>
+        </div>
+      </div>
+    {/if}
+    {#if selectedServer.consec_fails > 0}
+      <div class="detail-error">
+        <span class="error-label">CONSECUTIVE FAILURES:</span> {selectedServer.consec_fails}
       </div>
     {/if}
     {#if selectedServer.error_message}
@@ -608,5 +633,38 @@
 
   .error-label {
     font-weight: 700;
+  }
+
+  .server-name-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+  }
+
+  .server-cats {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+
+  .fail-warn {
+    color: var(--warning);
+    font-weight: 600;
+  }
+
+  .percentile-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .percentile-chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-secondary);
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
   }
 </style>

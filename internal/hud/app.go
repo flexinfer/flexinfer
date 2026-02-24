@@ -103,7 +103,8 @@ type App struct {
 	sseHub *SSEHub
 
 	// Coordinator — optional LLM-powered agent context intelligence.
-	coordinator *coordinator.Coordinator
+	coordinator        *coordinator.Coordinator
+	coordinatorMetrics *coordinator.Metrics
 
 	// Timeline event log — ring buffer for unified activity timeline.
 	eventLog *EventLog
@@ -245,13 +246,23 @@ func Run(cfg Config) error {
 		tierJSON := func(t bridge.MemoryTierStats) map[string]any {
 			return map[string]any{"items": t.Items, "tokens": t.Tokens}
 		}
-		data, err := json.Marshal(map[string]any{
+		payload := map[string]any{
 			"working_memory":    tierJSON(stats.WorkingMemory),
 			"short_term_memory": tierJSON(stats.ShortTermMemory),
 			"long_term_memory":  tierJSON(stats.LongTermMemory),
 			"total_items":       stats.TotalItems,
 			"total_tokens":      stats.TotalTokens,
-		})
+		}
+		if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
+			payload["compression"] = map[string]any{
+				"ratio":            stats.CompressionRatio,
+				"compressed_items": stats.ItemsCompressedLast24h,
+				"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
+				"added_24h":        stats.ItemsAddedLast24h,
+				"compressed_24h":   stats.ItemsCompressedLast24h,
+			}
+		}
+		data, err := json.Marshal(payload)
 		if err != nil {
 			return
 		}
@@ -299,14 +310,21 @@ func Run(cfg Config) error {
 			coordCfg.DefaultModel = cfg.CoordinatorModel
 		}
 
-		c := coordinator.NewCoordinator(coordCfg, agent, app.sseHub, logger)
-		if c != nil {
-			if err := c.Start(); err != nil {
-				logger.Warn("coordinator: failed to start, continuing without it", "error", err)
-			} else {
-				app.coordinator = c
-				defer c.Stop()
-				logger.Info("coordinator started", "url", cfg.FlexInferURL, "model", coordCfg.DefaultModel)
+		if err := coordCfg.Validate(); err != nil {
+			logger.Error("coordinator config invalid", "error", err)
+		} else {
+			c := coordinator.NewCoordinator(coordCfg, agent, app.sseHub, logger)
+			if c != nil {
+				m := coordinator.NewMetrics()
+				c.SetMetrics(m)
+				if err := c.Start(); err != nil {
+					logger.Warn("coordinator: failed to start, continuing without it", "error", err)
+				} else {
+					app.coordinator = c
+					app.coordinatorMetrics = m
+					defer c.Stop()
+					logger.Info("coordinator started", "url", cfg.FlexInferURL, "model", coordCfg.DefaultModel)
+				}
 			}
 		}
 	}
@@ -631,6 +649,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/coordinator/summarize/{session_id}", a.withCORS(a.handleCoordinatorSummarize))
 	mux.HandleFunc("POST /api/coordinator/compress", a.withCORS(a.handleCoordinatorCompress))
 	mux.HandleFunc("POST /api/coordinator/plan", a.withCORS(a.handleCoordinatorPlan))
+	if a.coordinatorMetrics != nil {
+		mux.Handle("GET /api/coordinator/metrics", a.coordinatorMetrics.Handler())
+	}
 
 	// Lightweight health check — no bridge calls, no CORS overhead, sub-1ms response.
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -994,13 +1015,23 @@ func (a *App) handleMemoryStats(w http.ResponseWriter, _ *http.Request) {
 		return map[string]any{"items": t.Items, "tokens": t.Tokens}
 	}
 
-	a.writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"working_memory":    tierJSON(stats.WorkingMemory),
 		"short_term_memory": tierJSON(stats.ShortTermMemory),
 		"long_term_memory":  tierJSON(stats.LongTermMemory),
 		"total_items":       stats.TotalItems,
 		"total_tokens":      stats.TotalTokens,
-	})
+	}
+	if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
+		resp["compression"] = map[string]any{
+			"ratio":            stats.CompressionRatio,
+			"compressed_items": stats.ItemsCompressedLast24h,
+			"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
+			"added_24h":        stats.ItemsAddedLast24h,
+			"compressed_24h":   stats.ItemsCompressedLast24h,
+		}
+	}
+	a.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleMemoryPromote promotes a memory item via the monitor (auto-refreshes stats).
@@ -1384,14 +1415,18 @@ func (a *App) handleSessionEntries(w http.ResponseWriter, r *http.Request) {
 	flat := make([]map[string]any, len(entries))
 	for i, e := range entries {
 		flat[i] = map[string]any{
-			"id":         e.Entry.ID,
-			"entry_type": e.Entry.EntryType,
-			"agent_id":   e.Entry.AgentID,
-			"namespace":  e.Entry.Namespace,
-			"title":      e.Entry.Title,
-			"content":    e.Entry.Content,
-			"timestamp":  e.Entry.Timestamp,
-			"score":      e.Score,
+			"id":          e.Entry.ID,
+			"entry_type":  e.Entry.EntryType,
+			"agent_id":    e.Entry.AgentID,
+			"namespace":   e.Entry.Namespace,
+			"title":       e.Entry.Title,
+			"content":     e.Entry.Content,
+			"timestamp":   e.Entry.Timestamp,
+			"score":       e.Score,
+			"file_path":   e.Entry.FilePath,
+			"line_start":  e.Entry.LineStart,
+			"line_end":    e.Entry.LineEnd,
+			"token_count": e.Entry.TokenCount,
 		}
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"entries": flat})

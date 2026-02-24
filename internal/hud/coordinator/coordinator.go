@@ -56,6 +56,9 @@ type Coordinator struct {
 	// Concurrency control.
 	sem chan struct{} // Semaphore limiting concurrent LLM calls.
 
+	// Metrics — optional, nil when metrics are not initialized.
+	metrics *Metrics
+
 	// State.
 	mu              sync.RWMutex
 	healthy         bool
@@ -123,6 +126,14 @@ func NewCoordinator(cfg Config, agent *bridge.AgentBridge, sse SSEBroadcaster, l
 	}
 
 	return c
+}
+
+// SetMetrics attaches Prometheus metrics to the coordinator and its subsystems.
+func (c *Coordinator) SetMetrics(m *Metrics) {
+	c.metrics = m
+	if c.summarizer != nil {
+		c.summarizer.metrics = m
+	}
 }
 
 // Start performs an initial health check and begins the background poll loop.
@@ -348,8 +359,10 @@ func (c *Coordinator) adjustInterval(pollOK bool) time.Duration {
 
 // poll executes one sweep cycle. Returns true if the cycle was healthy.
 func (c *Coordinator) poll() bool {
+	pollStart := time.Now()
+
 	c.mu.Lock()
-	c.lastPoll = time.Now()
+	c.lastPoll = pollStart
 	c.mu.Unlock()
 
 	// ── Health check ───────────────────────────────────────────────
@@ -370,6 +383,8 @@ func (c *Coordinator) poll() bool {
 					"circuit_state":     c.client.breaker.State().String(),
 				})
 			}
+			c.recordHealthMetrics(false)
+			c.recordPollMetrics(pollStart)
 			return false
 		}
 		c.mu.Lock()
@@ -388,6 +403,8 @@ func (c *Coordinator) poll() bool {
 		c.healthy = false
 		c.mu.Unlock()
 		c.logger.Debug("coordinator poll skipped: circuit open")
+		c.recordHealthMetrics(false)
+		c.recordPollMetrics(pollStart)
 		return false
 	}
 
@@ -400,8 +417,9 @@ func (c *Coordinator) poll() bool {
 			count, err := c.summarizer.SweepEndedSessions(ctx, c.config.MaxSweepSessions)
 			cancel()
 			c.releaseSem()
+			c.recordSubsystem("summarizer", err)
 			if err != nil {
-				c.logger.Debug("sweep ended sessions error", "error", err)
+				c.logger.Warn("sweep ended sessions error", "error", err)
 			} else if count > 0 {
 				c.logger.Info("swept ended sessions", "summarized", count)
 			}
@@ -414,8 +432,9 @@ func (c *Coordinator) poll() bool {
 			result, err := c.triager.TriageRecent(ctx)
 			cancel()
 			c.releaseSem()
+			c.recordSubsystem("triager", err)
 			if err != nil {
-				c.logger.Debug("triage recent error", "error", err)
+				c.logger.Warn("triage recent error", "error", err)
 			} else if result != nil && result.Count > 0 {
 				c.broadcastEvent("coordinator.triage.complete", map[string]any{
 					"count":    result.Count,
@@ -432,8 +451,9 @@ func (c *Coordinator) poll() bool {
 			result, err := c.extractor.ExtractRecent(ctx)
 			cancel()
 			c.releaseSem()
+			c.recordSubsystem("extractor", err)
 			if err != nil {
-				c.logger.Debug("extract recent error", "error", err)
+				c.logger.Warn("extract recent error", "error", err)
 			} else if result != nil && (result.EntitiesAdded > 0 || result.RelationsAdded > 0) {
 				c.broadcastEvent("coordinator.extract.complete", map[string]any{
 					"entities_added":  result.EntitiesAdded,
@@ -449,8 +469,9 @@ func (c *Coordinator) poll() bool {
 			result, err := c.compressor.RunCompactionCycle(ctx)
 			cancel()
 			c.releaseSem()
+			c.recordSubsystem("compressor", err)
 			if err != nil {
-				c.logger.Debug("compaction cycle error", "error", err)
+				c.logger.Warn("compaction cycle error", "error", err)
 			} else if result != nil && result.CompressedCount > 0 {
 				c.broadcastEvent("coordinator.compress.complete", map[string]any{
 					"tier":             result.Tier,
@@ -461,7 +482,35 @@ func (c *Coordinator) poll() bool {
 		}
 	}
 
+	c.recordHealthMetrics(true)
+	c.recordPollMetrics(pollStart)
 	return true
+}
+
+// recordSubsystem records a subsystem run in metrics if available.
+func (c *Coordinator) recordSubsystem(name string, err error) {
+	if c.metrics != nil {
+		c.metrics.RecordSubsystemRun(name, err)
+	}
+}
+
+// recordHealthMetrics updates health and circuit metrics if available.
+func (c *Coordinator) recordHealthMetrics(healthy bool) {
+	if c.metrics == nil {
+		return
+	}
+	c.mu.RLock()
+	failures := c.consecutiveFail
+	c.mu.RUnlock()
+	c.metrics.UpdateHealth(healthy, failures)
+	c.metrics.UpdateCircuit(c.client.breaker.State())
+}
+
+// recordPollMetrics records the poll cycle duration if metrics are available.
+func (c *Coordinator) recordPollMetrics(start time.Time) {
+	if c.metrics != nil {
+		c.metrics.RecordPollCycle(time.Since(start))
+	}
 }
 
 // selectModel checks if the preferred model is available; falls back if not.

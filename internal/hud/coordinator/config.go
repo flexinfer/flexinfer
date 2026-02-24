@@ -8,6 +8,7 @@
 package coordinator
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -134,6 +135,46 @@ func ConfigFromEnv() Config {
 // Enabled reports whether the coordinator should be started.
 func (c Config) Enabled() bool {
 	return c.FlexInferURL != ""
+}
+
+// Validate checks the config for obviously invalid values that would
+// cause panics or broken behavior at runtime. Returns nil if valid.
+func (c Config) Validate() error {
+	var errs []string
+	if c.MaxConcurrentLLM < 1 {
+		errs = append(errs, "MaxConcurrentLLM must be >= 1")
+	}
+	if c.CircuitBreakerThreshold < 1 {
+		errs = append(errs, "CircuitBreakerThreshold must be >= 1")
+	}
+	if c.CompressorRatio <= 0 || c.CompressorRatio > 1.0 {
+		errs = append(errs, "CompressorRatio must be in (0.0, 1.0]")
+	}
+	if c.SubsystemTimeout <= 0 {
+		errs = append(errs, "SubsystemTimeout must be > 0")
+	}
+	if c.PollInterval > 0 && c.SubsystemTimeout > c.PollInterval {
+		errs = append(errs, "SubsystemTimeout must be <= PollInterval")
+	}
+	if c.SummarizerMaxTokens < 1 {
+		errs = append(errs, "SummarizerMaxTokens must be >= 1")
+	}
+	if c.TriagerBatchSize < 1 {
+		errs = append(errs, "TriagerBatchSize must be >= 1")
+	}
+	if c.ExtractorBatchSize < 1 {
+		errs = append(errs, "ExtractorBatchSize must be >= 1")
+	}
+	if c.MaxSweepSessions < 1 {
+		errs = append(errs, "MaxSweepSessions must be >= 1")
+	}
+	if c.MaxCompressItems < 1 {
+		errs = append(errs, "MaxCompressItems must be >= 1")
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("coordinator config: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // envBool reads a boolean environment variable, returning def if unset.

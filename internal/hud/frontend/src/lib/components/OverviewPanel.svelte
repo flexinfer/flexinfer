@@ -7,6 +7,7 @@
   import { memoryStore } from '../stores/memory.svelte.ts';
   import { streamStore } from '../stores/stream.svelte.ts';
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
+  import { graphStore } from '../stores/graph.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Gauge from '../widgets/Gauge.svelte';
 
@@ -47,6 +48,22 @@
   let shortItems = $derived(memoryStore.stats.short_term_memory?.items ?? 0);
   let longItems = $derived(memoryStore.stats.long_term_memory?.items ?? 0);
   let totalTokens = $derived(memoryStore.stats.total_tokens ?? 0);
+  let compressionRatio = $derived(memoryStore.stats.compression?.ratio ?? 0);
+
+  // --- Daemon status ---
+  let daemonRunning = $derived(fleetStore.status?.running ?? false);
+  let processCount = $derived(fleetStore.status?.processes?.length ?? 0);
+
+  // --- Graph stats ---
+  let graphEntities = $derived(graphStore.stats?.total_entities ?? 0);
+  let graphTopTypes = $derived.by(() => {
+    const types = graphStore.stats?.entity_types ?? {};
+    return Object.entries(types)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, count]) => `${name}:${count}`)
+      .join(' · ') || 'none';
+  });
 
   let streamCount = $derived(streamStore.entries.length);
   let lastStreamAge = $derived.by(() => {
@@ -154,7 +171,7 @@
       <div class="kpi-value-row">
         <div class="kpi-value">{kpis.tokens_today?.toLocaleString?.() ?? kpis.tokens_today}</div>
         {#if tokenHistory.length >= 2}
-          <SparkLine data={tokenHistory} width={40} height={16} color="var(--accent)" />
+          <SparkLine data={tokenHistory} width={60} height={24} color="var(--accent)" />
         {/if}
       </div>
       <div class="kpi-label">Tokens Today</div>
@@ -211,7 +228,7 @@
         <div class="tile-metric-row">
           <div class="tile-metric">{healthyCount}<span class="tile-unit">/{serverCount} ok</span></div>
           {#if healthHistory.length >= 2}
-            <SparkLine data={healthHistory} width={40} height={16} color="var(--success)" />
+            <SparkLine data={healthHistory} width={60} height={24} color="var(--success)" />
           {/if}
         </div>
         <div class="tile-detail" class:tile-alert={downCount > 0}>
@@ -248,10 +265,10 @@
             <span class="tier-l">{longItems}</span>
           </div>
           {#if memoryHistory.length >= 2}
-            <SparkLine data={memoryHistory} width={40} height={16} color="var(--tier-short)" />
+            <SparkLine data={memoryHistory} width={60} height={24} color="var(--tier-short)" />
           {/if}
         </div>
-        <div class="tile-detail">{totalTokens.toLocaleString()} tokens</div>
+        <div class="tile-detail">{totalTokens.toLocaleString()} tokens{#if compressionRatio > 0} · {Math.round(compressionRatio * 100)}% compressed{/if}</div>
       </div>
       {#if agoText(memoryStore.lastUpdated)}<div class="tile-footer">{agoText(memoryStore.lastUpdated)}</div>{/if}
     </button>
@@ -299,6 +316,31 @@
         {/if}
       </div>
       {#if agoText(workflowStore.lastUpdated)}<div class="tile-footer">{agoText(workflowStore.lastUpdated)}</div>{/if}
+    </button>
+
+    <!-- Daemon tile -->
+    <button class="tile" class:tile-alert-bg={!daemonRunning} onclick={() => navigate('servers')}>
+      <div class="tile-header">
+        <span class="tile-icon">{'\u2699'}</span>
+        <span class="tile-title">Daemon</span>
+      </div>
+      <div class="tile-body">
+        <div class="tile-metric">{daemonRunning ? 'Running' : 'Down'}</div>
+        <div class="tile-detail">{processCount} processes · {fleetStore.status?.servers ?? 0} servers</div>
+      </div>
+    </button>
+
+    <!-- Graph tile -->
+    <button class="tile" onclick={() => navigate('graph')}>
+      <div class="tile-header">
+        <span class="tile-icon">{'\u25C8'}</span>
+        <span class="tile-title">Graph</span>
+      </div>
+      <div class="tile-body">
+        <div class="tile-metric">{graphEntities} <span class="tile-unit">entities</span></div>
+        <div class="tile-detail">{graphTopTypes}</div>
+      </div>
+      {#if agoText(graphStore.lastUpdated)}<div class="tile-footer">{agoText(graphStore.lastUpdated)}</div>{/if}
     </button>
   </div>
 </div>
@@ -492,6 +534,15 @@
     background: var(--success);
     border-radius: 2px;
     transition: width 0.3s ease;
+  }
+
+  .tile-alert-bg {
+    border-color: rgba(231, 68, 68, 0.3);
+    background: rgba(231, 68, 68, 0.06);
+  }
+
+  .tile-alert-bg .tile-metric {
+    color: var(--error, #e74444);
   }
 
   @media (max-width: 600px) {
