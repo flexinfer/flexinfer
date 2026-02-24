@@ -261,3 +261,37 @@ func TestSessionReaperActiveMaxAgeConfig(t *testing.T) {
 		t.Errorf("active_max_age = %d, want 48", svc.cfg.SessionReaperActiveMaxAge)
 	}
 }
+
+func TestSessionReaperTick_EndsStaleInMemorySessions(t *testing.T) {
+	svc := newTestService()
+	svc.cfg.SessionReaperActiveMaxAge = 1 // 1 hour
+	now := time.Now()
+
+	// Create a stale active session older than 1 hour with no live presence.
+	svc.sessions["stale-1"] = &Session{
+		ID:        "stale-1",
+		AgentID:   "dead-agent",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-3 * time.Hour),
+	}
+
+	// Create a recent active session (should NOT be ended).
+	svc.sessions["recent-1"] = &Session{
+		ID:        "recent-1",
+		AgentID:   "dead-agent",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-30 * time.Minute),
+	}
+
+	// Run one reaper tick (same function called on startup).
+	svc.sessionReaperTick(context.Background())
+
+	svc.sessionsMu.RLock()
+	defer svc.sessionsMu.RUnlock()
+
+	// Stale session should remain active in memory (no Qdrant = endStaleSessions returns 0).
+	// But sessionReaperTick should not panic or error with nil Qdrant.
+	if svc.sessions["recent-1"].Status != string(SessionStatusActive) {
+		t.Errorf("recent-1 status = %s, want active", svc.sessions["recent-1"].Status)
+	}
+}

@@ -909,11 +909,18 @@ func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilt
 
 // runSessionReaper periodically prunes old ended/summarized sessions
 // and reaps stale active sessions whose agents are no longer present.
+// It runs an immediate sweep on startup (the MCP server is frequently
+// restarted by the daemon idle reaper, so waiting for the first ticker
+// would mean the reaper never fires if the idle timeout < reaper interval).
 func (s *Service) runSessionReaper(ctx context.Context) {
 	interval := time.Duration(s.cfg.SessionReaperInterval) * time.Second
 	if interval <= 0 {
 		interval = 30 * time.Minute
 	}
+
+	// Immediate sweep on startup.
+	s.sessionReaperTick(ctx)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -922,25 +929,31 @@ func (s *Service) runSessionReaper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Prune old ended/summarized sessions.
-			statusFilter := "ended,summarized"
-			pruned, err := s.pruneSessions(ctx, s.cfg.SessionReaperMaxAge, statusFilter, false)
-			if err != nil {
-				s.logger.Warn("session reaper failed", "error", err)
-			} else if pruned > 0 {
-				s.logger.Info("session reaper completed", "pruned", pruned, "filter", statusFilter)
-			}
-
-			// End stale active sessions (no heartbeat, older than threshold).
-			activeMaxAge := s.cfg.SessionReaperActiveMaxAge
-			if activeMaxAge <= 0 {
-				activeMaxAge = 24
-			}
-			ended := s.endStaleSessions(ctx, activeMaxAge)
-			if ended > 0 {
-				s.logger.Info("ended stale active sessions", "count", ended, "max_age_hours", activeMaxAge)
-			}
+			s.sessionReaperTick(ctx)
 		}
+	}
+}
+
+// sessionReaperTick performs one reaper cycle: prune ended/summarized sessions
+// and end stale active sessions.
+func (s *Service) sessionReaperTick(ctx context.Context) {
+	// Prune old ended/summarized sessions.
+	statusFilter := "ended,summarized"
+	pruned, err := s.pruneSessions(ctx, s.cfg.SessionReaperMaxAge, statusFilter, false)
+	if err != nil {
+		s.logger.Warn("session reaper failed", "error", err)
+	} else if pruned > 0 {
+		s.logger.Info("session reaper completed", "pruned", pruned, "filter", statusFilter)
+	}
+
+	// End stale active sessions (no heartbeat, older than threshold).
+	activeMaxAge := s.cfg.SessionReaperActiveMaxAge
+	if activeMaxAge <= 0 {
+		activeMaxAge = 24
+	}
+	ended := s.endStaleSessions(ctx, activeMaxAge)
+	if ended > 0 {
+		s.logger.Info("ended stale active sessions", "count", ended, "max_age_hours", activeMaxAge)
 	}
 }
 
