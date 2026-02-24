@@ -2118,3 +2118,202 @@ func TestFetchServerResources_LockOrdering(t *testing.T) {
 		t.Fatal("callLock was NOT held when pool.Get dialed - lock ordering violation")
 	}
 }
+
+// TestHandleCall_StageBoundaryAuditRegression verifies that every pipeline stage
+// that emits an audit entry populates the PipelineStage field with the correct
+// constant. Parse failures produce no audit entry (pre-audit), so they are only
+// verified to not emit. This is the primary regression guard for DEBT-016.
+func TestHandleCall_StageBoundaryAuditRegression(t *testing.T) {
+	t.Run("parse_no_audit", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		msg := &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      "stage-parse",
+			Method:  "loom/call",
+			Params:  json.RawMessage(`{`),
+		}
+
+		resp, err := d.handleCall(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.Error == nil || resp.Error.Code != mcp.InvalidParams {
+			t.Fatalf("expected InvalidParams, got %+v", resp.Error)
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 0 {
+			t.Fatalf("parse failure should emit 0 audit entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("authorize_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		d.rbac = NewRBACEnforcer(RBACConfig{
+			Enabled:       true,
+			DefaultPolicy: "deny",
+		}, d.logger)
+
+		msg := newCallMessage(t, map[string]any{
+			"server":   "github",
+			"tool":     "delete_repo",
+			"agent_id": "agent-stage-auth",
+		})
+
+		resp, _ := d.handleCall(context.Background(), msg)
+		if resp.Error == nil {
+			t.Fatal("expected RBAC denial")
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stageAuth {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stageAuth)
+		}
+		if entries[0].Status != "denied" {
+			t.Fatalf("status = %q, want denied", entries[0].Status)
+		}
+	})
+
+	t.Run("policy_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		d.policy = NewGatewayPolicyEnforcer(GatewayPolicyConfig{
+			Enabled: true,
+			Request: []GatewayRequestPolicyRule{
+				{
+					ID:                 "deny-test",
+					Server:             "github",
+					Tool:               "delete_*",
+					ForbiddenArguments: []string{"force"},
+					ReasonCode:         "STAGE_TEST",
+				},
+			},
+		}, d.logger)
+
+		msg := newCallMessage(t, map[string]any{
+			"server":    "github",
+			"tool":      "delete_repo",
+			"arguments": json.RawMessage(`{"force":true}`),
+			"agent_id":  "agent-stage-policy",
+		})
+
+		resp, _ := d.handleCall(context.Background(), msg)
+		if resp.Error == nil {
+			t.Fatal("expected policy denial")
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stagePolicy {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stagePolicy)
+		}
+		if entries[0].Status != "denied" {
+			t.Fatalf("status = %q, want denied", entries[0].Status)
+		}
+	})
+
+	t.Run("cache_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		d.respCache = NewResponseCache(CacheConfig{Enabled: true})
+
+		args := json.RawMessage(`{"query":"up"}`)
+		key := d.respCache.Key("prometheus", "query", args)
+		d.respCache.Set(key, json.RawMessage(`{"cached":true}`), "prometheus", "query")
+
+		msg := newCallMessage(t, map[string]any{
+			"server":    "prometheus",
+			"tool":      "query",
+			"arguments": json.RawMessage(`{"query":"up"}`),
+			"agent_id":  "agent-stage-cache",
+		})
+
+		resp, _ := d.handleCall(context.Background(), msg)
+		if resp.Error != nil {
+			t.Fatalf("unexpected error: %v", resp.Error)
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stageCache {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stageCache)
+		}
+		if !entries[0].Cached {
+			t.Fatal("expected cached=true in audit entry")
+		}
+	})
+
+	t.Run("route_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		d.router = router.New(router.Config{HubEnabled: false})
+
+		msg := newCallMessage(t, map[string]any{
+			"server":   "unknown_server",
+			"tool":     "query",
+			"agent_id": "agent-stage-route",
+		})
+
+		resp, _ := d.handleCall(context.Background(), msg)
+		if resp.Error == nil {
+			t.Fatal("expected route failure")
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stageRoute {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stageRoute)
+		}
+		if entries[0].Status != "error" {
+			t.Fatalf("status = %q, want error", entries[0].Status)
+		}
+	})
+
+	t.Run("execute_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		d.procMgr = process.NewManager(nil, "codex")
+		d.hubPool = pool.New(pool.Config{
+			MaxIdle:     1,
+			MaxOpen:     1,
+			IdleTimeout: time.Second,
+			DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+				return &fakeTransport{sendErr: fmt.Errorf("stage-test send failure")}, nil
+			},
+		})
+		defer func() { _ = d.hubPool.Close() }()
+
+		msg := newCallMessage(t, map[string]any{
+			"server":   "hub_server",
+			"tool":     "query",
+			"agent_id": "agent-stage-exec",
+		})
+
+		resp, _ := d.handleCall(context.Background(), msg)
+		if resp.Error == nil {
+			t.Fatal("expected transport failure")
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stageExecute {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stageExecute)
+		}
+		if entries[0].Status != "error" {
+			t.Fatalf("status = %q, want error", entries[0].Status)
+		}
+	})
+}

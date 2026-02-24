@@ -23,6 +23,17 @@ const (
 	defaultDaemonToolRPCTimeout    = 60 * time.Second
 )
 
+// Pipeline stage constants for audit traceability.
+const (
+	stageParse   = "parse"
+	stageAuth    = "authorize"
+	stagePolicy  = "policy"
+	stageCache   = "cache"
+	stageRoute   = "route"
+	stageBuild   = "build"
+	stageExecute = "execute"
+)
+
 // callPipeline executes the daemon tool-call flow in ordered stages.
 type callPipeline struct {
 	daemon *Daemon
@@ -35,6 +46,7 @@ type callPipeline struct {
 	method     string
 	cacheKey   string
 	auditStart time.Time
+	stage      string
 
 	conn      *pool.Conn
 	target    router.Target
@@ -52,6 +64,7 @@ func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipe
 }
 
 func (p *callPipeline) parseAndResolve() *mcp.Message {
+	p.stage = stageParse
 	if err := json.Unmarshal(p.msg.Params, &p.params); err != nil {
 		return p.invalidParamsError(err.Error())
 	}
@@ -102,6 +115,7 @@ func (p *callPipeline) parseAndResolve() *mcp.Message {
 }
 
 func (p *callPipeline) authorize() *mcp.Message {
+	p.stage = stageAuth
 	if p.daemon.rbac == nil {
 		return nil
 	}
@@ -110,11 +124,12 @@ func (p *callPipeline) authorize() *mcp.Message {
 	if decision.Allowed {
 		return nil
 	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage)
 	return p.rbacDeniedError(decision)
 }
 
 func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
+	p.stage = stagePolicy
 	if p.daemon.policy == nil {
 		return nil
 	}
@@ -134,11 +149,13 @@ func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 		decision.Reason,
 		false,
 		&decision,
+		p.stage,
 	)
 	return p.policyDeniedError(decision)
 }
 
 func (p *callPipeline) tryCachedResponse() *mcp.Message {
+	p.stage = stageCache
 	if p.daemon.respCache == nil || !p.daemon.respCache.IsCacheable(p.serverName, p.toolName) {
 		return nil
 	}
@@ -152,7 +169,7 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 	if cached, ok := p.daemon.respCache.Get(p.cacheKey); ok {
 		p.daemon.metrics.RecordResponseCacheHit(p.serverName, p.toolName)
 		p.daemon.logger.Debug("response cache hit", "server", p.serverName, "tool", p.toolName)
-		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil)
+		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage)
 		resp, _ := mcp.NewResponse(p.msg.ID, json.RawMessage(cached))
 		return resp
 	}
@@ -162,6 +179,7 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 }
 
 func (p *callPipeline) routeAndConnect() *mcp.Message {
+	p.stage = stageRoute
 	decision, err := p.daemon.router.Route(p.ctx, p.serverName)
 	if err != nil {
 		return p.internalErrorWithAudit("", err.Error())
@@ -242,6 +260,7 @@ func (p *callPipeline) releaseConnection() {
 }
 
 func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
+	p.stage = stageBuild
 	var forwardParams json.RawMessage
 	if len(p.params.Params) > 0 {
 		forwardParams = p.params.Params
@@ -267,6 +286,7 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 }
 
 func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
+	p.stage = stageExecute
 	start := time.Now()
 	callTimeout := daemonRPCTimeoutForMethod(p.method)
 
@@ -414,11 +434,11 @@ func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
 		status = "error"
 		errMsg = resp.Error.Message
 	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false, nil)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false, nil, p.stage)
 }
 
 func (p *callPipeline) emitErrorAudit(target, errMsg string) {
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil, p.stage)
 }
 
 func daemonRPCTimeoutForMethod(method string) time.Duration {

@@ -61,7 +61,7 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 }
 
 // emitAudit writes a structured audit entry and cost record if enabled.
-func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision) {
+func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision, pipelineStage string) {
 	durationMs := time.Since(start).Milliseconds()
 
 	policyRuleID := ""
@@ -83,6 +83,7 @@ func (d *Daemon) emitAudit(params callParams, server, tool, target string, start
 			Error:            errMsg,
 			Target:           target,
 			Cached:           cached,
+			PipelineStage:    pipelineStage,
 			PolicyRuleID:     policyRuleID,
 			PolicyReasonCode: policyReasonCode,
 		})

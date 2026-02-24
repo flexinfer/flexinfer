@@ -40,6 +40,7 @@ type AuditEntry struct {
 	Error            string    `json:"error,omitempty"`
 	Target           string    `json:"target,omitempty"` // "local" or "hub"
 	Cached           bool      `json:"cached,omitempty"`
+	PipelineStage    string    `json:"pipeline_stage,omitempty"`
 	PolicyRuleID     string    `json:"policy_rule_id,omitempty"`
 	PolicyReasonCode string    `json:"policy_reason_code,omitempty"`
 }
