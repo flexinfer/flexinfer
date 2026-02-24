@@ -86,11 +86,20 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `docs/USER_GUIDE.md`
   - `docs/MOBILE_COMPANION_API.md`
 - Checklist:
-  - [ ] Add permission preflight flow
-  - [ ] Add profile diagnostics state model
-  - [ ] Add operator-facing remediation messaging
+  - [x] Add permission preflight flow
+  - [x] Add profile diagnostics state model
+  - [x] Add operator-facing remediation messaging
 - Status:
-  - Not started
+  - Complete
+- Implementation notes:
+  - `ConnectionHealth` enum: 7 states (unknown/healthy/degradedStream/authFailure/permissionDenied/unreachable/rateLimited)
+  - `ConnectionRemediation.forHealth(_:mode:)`: mode-aware remediation with LAN-specific steps (local network permission, same network, firewall)
+  - `ConnectionDiagnosticsView`: health icon + color + remediation steps + polling status + `LANPermissionView` inline for unreachable+LAN
+  - `LANPermissionView`: dedicated banner with "Open Settings" deep link to iOS Settings
+  - `ConnectionViewModel.pair()`: LAN-mode network errors set `showLANPermissionHint` and show targeted "Local Network permission" message
+  - `LoginView`: displays `LANPermissionView` inline when `showLANPermissionHint` is true after pair failure
+  - User docs: Mobile Companion section in `docs/USER_GUIDE.md` with pairing, LAN permission, SSE, scopes, and troubleshooting
+  - Tests: 21 ConnectionRemediation tests + 3 new LAN permission hint tests (136 total Swift tests)
 
 ### Issue MBL-5: SSE resilience + fallback SLOs (M2/M5)
 

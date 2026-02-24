@@ -234,6 +234,60 @@ Gemini CLI has several unique behaviors that Loom manages automatically:
 - **Duplicate Skills Error:** A known quirk/bug in Gemini CLI causes it to error if the same skill name is discovered in both the workspace and user directories, even if the content is identical.
 - **Loom Solution:** To avoid duplication errors, the `gemini` profile in Loom sets `SkillsDirectToHome: true`. This ensures skills are only generated into the user directory (`~/.gemini/skills/`) and are automatically cleaned from the repository's `.gemini/skills/` directory during sync operations.
 
+## Mobile Companion (iOS/iPadOS)
+
+The Loom Companion app provides fleet monitoring, session management, and real-time alerts from an iPhone or iPad.
+
+### Connection Modes
+
+| Mode | Transport | When to Use |
+|------|-----------|-------------|
+| **LAN** | HTTP to local IP | Device is on the same network as the Loom HUD server |
+| **Gateway** | HTTPS through proxy | Remote access through a TLS-terminating gateway |
+
+### Pairing
+
+1. Start the HUD server: `loom hud --serve`
+2. Open Loom Companion on your device.
+3. Select **LAN** or **Gateway** mode.
+4. Enter the server URL (e.g., `http://192.168.1.50:3333` for LAN).
+5. Enter the mobile operator bearer token (set via `HUD_MOBILE_OPERATOR_TOKEN` on the server).
+6. Tap **Connect**. The app probes `/api/mobile/v1/ping` to verify the connection.
+
+### iOS Local Network Permission (LAN Mode)
+
+When using LAN mode, iOS requires **Local Network** permission for the app to reach devices on your local network.
+
+- The permission dialog appears on the first connection attempt.
+- If denied, the app cannot reach the server and shows a "Local Network Access Required" banner.
+- To fix: Go to **Settings > Privacy & Security > Local Network** and enable Loom Companion.
+- The app distinguishes this error from other connection failures and provides targeted guidance.
+
+### Real-Time Updates
+
+The app uses Server-Sent Events (SSE) for real-time dashboard and alert updates. If the SSE connection degrades (e.g., network switch), the app automatically falls back to 30-second polling and recovers SSE when the connection stabilizes.
+
+### Mobile API Scopes
+
+The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPERATOR_SCOPES`):
+
+| Scope | Grants |
+|-------|--------|
+| `mobile:read` | Dashboard, sessions, session detail, session events, audit, alerts policy |
+| `mobile:session:create` | Create new agent sessions |
+| `mobile:session:end` | End active agent sessions |
+| `mobile:push` | Register/unregister push notification tokens |
+
+### Troubleshooting Mobile Connection
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| "Cannot reach server" in LAN mode | Local Network permission denied | Settings > Privacy & Security > Local Network |
+| "Cannot reach server" in LAN mode | Wrong IP or port | Verify server URL matches `loom hud --serve` output |
+| "[unauthorized]" error | Token mismatch | Verify `HUD_MOBILE_OPERATOR_TOKEN` matches |
+| "[forbidden]" error | Missing scope | Add required scope to `HUD_MOBILE_OPERATOR_SCOPES` |
+| Dashboard not updating | SSE disconnected | Check Connection tab; polling fallback is active |
+
 ## Troubleshooting
 
 - Daemon offline: `loom status`, then `loom restart`

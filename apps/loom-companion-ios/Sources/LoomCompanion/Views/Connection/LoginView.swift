@@ -83,6 +83,11 @@ struct LoginView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
 
+                    // LAN permission guidance after network failure
+                    if viewModel.showLANPermissionHint {
+                        LANPermissionView()
+                    }
+
                     // Connect button
                     Button {
                         Task { await viewModel.pair() }

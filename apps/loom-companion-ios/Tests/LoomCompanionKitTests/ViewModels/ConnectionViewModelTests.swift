@@ -67,6 +67,43 @@ struct ConnectionViewModelTests {
         #expect(vm.pairingError != "Gateway mode requires HTTPS")
     }
 
+    @Test("LAN mode network error shows permission hint")
+    func lanNetworkErrorShowsPermissionHint() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "http://192.0.2.1:1" // TEST-NET, unreachable
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .lan
+        await vm.pair()
+        #expect(vm.showLANPermissionHint == true)
+        #expect(vm.pairingError?.contains("Local Network") == true)
+    }
+
+    @Test("Gateway mode network error does not show LAN permission hint")
+    func gatewayNetworkErrorNoPermissionHint() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "https://192.0.2.1:1" // TEST-NET, unreachable
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .gateway
+        await vm.pair()
+        #expect(vm.showLANPermissionHint == false)
+    }
+
+    @Test("LAN permission hint resets on new pair attempt")
+    func lanPermissionHintResetsOnRetry() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "http://192.0.2.1:1"
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .lan
+        await vm.pair()
+        #expect(vm.showLANPermissionHint == true)
+
+        // Switch to gateway and retry — hint should clear
+        vm.connectionMode = .gateway
+        vm.baseURLInput = "https://192.0.2.1:1"
+        await vm.pair()
+        #expect(vm.showLANPermissionHint == false)
+    }
+
     @Test("Logout clears state")
     func logout() {
         let vm = ConnectionViewModel(tokenStore: TokenStore())

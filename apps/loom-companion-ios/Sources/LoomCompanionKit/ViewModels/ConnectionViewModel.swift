@@ -6,6 +6,7 @@ public final class ConnectionViewModel {
     public var isAuthenticated = false
     public var isPairing = false
     public var pairingError: String?
+    public var showLANPermissionHint = false
 
     // Form fields
     public var baseURLInput: String = ""
@@ -50,6 +51,7 @@ public final class ConnectionViewModel {
 
         isPairing = true
         pairingError = nil
+        showLANPermissionHint = false
         defer { isPairing = false }
 
         let client = APIClient(baseURL: url, token: tokenInput)
@@ -61,6 +63,9 @@ public final class ConnectionViewModel {
             switch error {
             case let .apiError(code, message, _):
                 pairingError = "[\(code.rawValue)] \(message)"
+            case .networkError where connectionMode == .lan:
+                pairingError = "Cannot reach server. If this is a local address, check that Local Network permission is enabled in Settings > Privacy & Security > Local Network."
+                showLANPermissionHint = true
             case let .networkError(msg):
                 pairingError = "Cannot reach server: \(msg)"
             default:
