@@ -37,6 +37,7 @@ type Compressor struct {
 	client *FlexInferClient
 	agent  *bridge.AgentBridge
 	config Config
+	model  string // Resolved model from selectModel().
 	logger *slog.Logger
 }
 
@@ -55,7 +56,11 @@ func (c *Compressor) CompressItem(ctx context.Context, item bridge.MemoryItem) (
 	userMsg := fmt.Sprintf("Title: %s\nTier: %s\nImportance: %s\n\nContent:\n%s",
 		item.Title, item.Tier, item.Importance, item.Content)
 
-	raw, err := c.client.CompleteSimple(ctx, c.config.DefaultModel, promptMemoryCompress, userMsg, 300)
+	model := c.model
+	if model == "" {
+		model = c.config.DefaultModel
+	}
+	raw, err := c.client.CompleteSimple(ctx, model, promptMemoryCompress, userMsg, 300)
 	if err != nil {
 		return nil, fmt.Errorf("compress item %s: %w", item.ID, err)
 	}
@@ -84,7 +89,11 @@ func (c *Compressor) SuggestMerges(ctx context.Context, items []bridge.MemoryIte
 		userMsg += fmt.Sprintf("ID: %s\nTitle: %s\nContent: %s\n\n", item.ID, item.Title, content)
 	}
 
-	raw, err := c.client.CompleteSimple(ctx, c.config.DefaultModel, promptMergeSuggestions, userMsg, 500)
+	mergeModel := c.model
+	if mergeModel == "" {
+		mergeModel = c.config.DefaultModel
+	}
+	raw, err := c.client.CompleteSimple(ctx, mergeModel, promptMergeSuggestions, userMsg, 500)
 	if err != nil {
 		return nil, fmt.Errorf("suggest merges: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
@@ -26,16 +27,23 @@ type Summarizer struct {
 	client *FlexInferClient
 	agent  *bridge.AgentBridge
 	config Config
+	model  string // Resolved model from selectModel().
 	logger *slog.Logger
+
+	// summarized tracks session IDs that have already been summarized
+	// in this process lifetime, preventing re-processing on each sweep.
+	summarizedMu sync.Mutex
+	summarized   map[string]struct{}
 }
 
 // NewSummarizer creates a Summarizer.
 func NewSummarizer(client *FlexInferClient, agent *bridge.AgentBridge, cfg Config, logger *slog.Logger) *Summarizer {
 	return &Summarizer{
-		client: client,
-		agent:  agent,
-		config: cfg,
-		logger: logger.With("subsystem", "summarizer"),
+		client:     client,
+		agent:      agent,
+		config:     cfg,
+		logger:     logger.With("subsystem", "summarizer"),
+		summarized: make(map[string]struct{}),
 	}
 }
 
@@ -59,7 +67,10 @@ func (s *Summarizer) summarizeFromEntries(ctx context.Context, sessionID string,
 	// Format entries into a user message.
 	userMsg := formatEntries(entries)
 
-	model := s.config.DefaultModel
+	model := s.model
+	if model == "" {
+		model = s.config.DefaultModel
+	}
 	raw, err := s.client.CompleteSimple(ctx, model, promptSessionSummarize, userMsg, s.config.SummarizerMaxTokens)
 	if err != nil {
 		// Fallback: extractive summary.
@@ -100,12 +111,29 @@ func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (i
 			continue
 		}
 
+		// Skip sessions already summarized in this process lifetime.
+		s.summarizedMu.Lock()
+		_, alreadySummarized := s.summarized[sess.ID]
+		s.summarizedMu.Unlock()
+		if alreadySummarized {
+			continue
+		}
+
 		// Fetch session entries once and reuse for both summary detection and
 		// summarization input to avoid duplicate context-search calls.
 		entries, err := s.agent.SessionEntries(sess.ID, 100)
 		if err != nil {
 			continue
 		}
+
+		// Skip empty sessions entirely — nothing useful to summarize and
+		// storing an "empty session" summary creates a loop (the semantic
+		// search in SessionEntries can't find it, so hasSummaryEntry stays
+		// false forever).
+		if len(entries) == 0 {
+			continue
+		}
+
 		if hasSummaryEntry(entries) {
 			continue
 		}
@@ -235,6 +263,11 @@ func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult
 	); err != nil {
 		s.logger.Warn("failed to store session summary memory", "session_id", sessionID, "error", err)
 	}
+
+	// Mark session as summarized so the sweep loop skips it on future cycles.
+	s.summarizedMu.Lock()
+	s.summarized[sessionID] = struct{}{}
+	s.summarizedMu.Unlock()
 }
 
 func summaryContent(result *SessionSummaryResult) string {

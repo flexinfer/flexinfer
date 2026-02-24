@@ -50,7 +50,7 @@ func TestExtractFromEntries_ParsesLLMResponse(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	ext := &Extractor{
 		client: client,

@@ -35,6 +35,7 @@ type Extractor struct {
 	client *FlexInferClient
 	agent  *bridge.AgentBridge
 	config Config
+	model  string // Resolved model from selectModel().
 	logger *slog.Logger
 }
 
@@ -56,7 +57,11 @@ func (e *Extractor) ExtractFromEntries(ctx context.Context, entries []bridge.Con
 
 	userMsg := formatEntries(entries)
 
-	raw, err := e.client.CompleteSimple(ctx, e.config.DefaultModel, promptEntityExtraction, userMsg, 500)
+	model := e.model
+	if model == "" {
+		model = e.config.DefaultModel
+	}
+	raw, err := e.client.CompleteSimple(ctx, model, promptEntityExtraction, userMsg, 500)
 	if err != nil {
 		return nil, nil, fmt.Errorf("entity extraction: %w", err)
 	}

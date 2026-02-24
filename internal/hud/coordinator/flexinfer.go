@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -72,12 +73,16 @@ type FlexInferClient struct {
 }
 
 // NewFlexInferClient creates a FlexInferClient targeting the given base URL.
-func NewFlexInferClient(baseURL, apiKey string, breaker *CircuitBreaker, logger *slog.Logger) *FlexInferClient {
+// The timeout parameter sets the HTTP client timeout; pass 0 for the default (30s).
+func NewFlexInferClient(baseURL, apiKey string, timeout time.Duration, breaker *CircuitBreaker, logger *slog.Logger) *FlexInferClient {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	return &FlexInferClient{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 30 * time.Second, // Match context timeout; prevents orphaned connections.
+			Timeout: timeout,
 		},
 		breaker: breaker,
 		logger:  logger.With("component", "flexinfer-client"),
@@ -102,6 +107,13 @@ func (c *FlexInferClient) Complete(ctx context.Context, req ChatCompletionReques
 // CompleteSimple is a convenience wrapper for the common case: system prompt +
 // user message → string response.
 func (c *FlexInferClient) CompleteSimple(ctx context.Context, model, systemPrompt, userMessage string, maxTokens int) (string, error) {
+	// Qwen3 models include reasoning/thinking tokens by default, which
+	// doubles output size and latency for structured JSON tasks. Prepend
+	// /no_think to suppress chain-of-thought for coordinator prompts.
+	if strings.Contains(strings.ToLower(model), "qwen3") {
+		userMessage = "/no_think\n" + userMessage
+	}
+
 	req := ChatCompletionRequest{
 		Model: model,
 		Messages: []ChatMessage{

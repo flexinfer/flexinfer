@@ -80,7 +80,7 @@ func NewCoordinator(cfg Config, agent *bridge.AgentBridge, sse SSEBroadcaster, l
 	logger = logger.With("component", "coordinator")
 
 	breaker := NewCircuitBreaker(cfg.CircuitBreakerThreshold, cfg.CircuitBreakerReset)
-	client := NewFlexInferClient(cfg.FlexInferURL, cfg.FlexInferKey, breaker, logger)
+	client := NewFlexInferClient(cfg.FlexInferURL, cfg.FlexInferKey, cfg.DefaultTimeout, breaker, logger)
 
 	c := &Coordinator{
 		config: cfg,
@@ -92,18 +92,31 @@ func NewCoordinator(cfg Config, agent *bridge.AgentBridge, sse SSEBroadcaster, l
 		stopCh: make(chan struct{}),
 	}
 
+	// Resolve the default model once so all subsystems use a consistent,
+	// fallback-aware model string. selectModel checks available models
+	// against the preferred and fallback configuration.
+	resolvedModel := c.selectModel(cfg.DefaultModel)
+
 	// Initialize subsystems based on feature toggles.
 	if cfg.EnableSummarizer {
-		c.summarizer = NewSummarizer(client, agent, cfg, logger)
+		s := NewSummarizer(client, agent, cfg, logger)
+		s.model = resolvedModel
+		c.summarizer = s
 	}
 	if cfg.EnableCompressor {
-		c.compressor = NewCompressor(client, agent, cfg, logger)
+		comp := NewCompressor(client, agent, cfg, logger)
+		comp.model = resolvedModel
+		c.compressor = comp
 	}
 	if cfg.EnableTriager {
-		c.triager = NewTriager(client, agent, cfg, logger)
+		t := NewTriager(client, agent, cfg, logger)
+		t.model = resolvedModel
+		c.triager = t
 	}
 	if cfg.EnableExtractor {
-		c.extractor = NewExtractor(client, agent, cfg, logger)
+		e := NewExtractor(client, agent, cfg, logger)
+		e.model = resolvedModel
+		c.extractor = e
 	}
 	if cfg.EnablePlanner {
 		c.planner = NewPlanner(client, agent, cfg, logger)

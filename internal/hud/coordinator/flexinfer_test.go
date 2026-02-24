@@ -68,7 +68,7 @@ func TestFlexInferClient_CompleteSimple(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	result, err := client.CompleteSimple(context.Background(), "qwen3-8b", "system", "user msg", 100)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestFlexInferClient_CompleteSimple_ServerError(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	_, err := client.CompleteSimple(context.Background(), "qwen3-8b", "system", "user msg", 100)
 	if err == nil {
@@ -97,7 +97,7 @@ func TestFlexInferClient_Models(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	models, err := client.Models(context.Background())
 	if err != nil {
@@ -116,7 +116,7 @@ func TestFlexInferClient_HealthCheck(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	if err := client.HealthCheck(context.Background()); err != nil {
 		t.Fatalf("expected healthy, got: %v", err)
@@ -125,7 +125,7 @@ func TestFlexInferClient_HealthCheck(t *testing.T) {
 
 func TestFlexInferClient_HealthCheck_Unreachable(t *testing.T) {
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient("http://127.0.0.1:1", "", breaker, slog.Default())
+	client := NewFlexInferClient("http://127.0.0.1:1", "", 0, breaker, slog.Default())
 
 	err := client.HealthCheck(context.Background())
 	if err == nil {
@@ -147,7 +147,7 @@ func TestFlexInferClient_CircuitBreakerIntegration(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(3, time.Hour)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	// Trigger 3 failures to open the circuit.
 	for i := 0; i < 3; i++ {
@@ -185,7 +185,7 @@ func TestFlexInferClient_AuthHeader(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "test-key-123", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "test-key-123", 0, breaker, slog.Default())
 
 	_, _ = client.CompleteSimple(context.Background(), "test", "s", "u", 10)
 	if authHeader != "Bearer test-key-123" {

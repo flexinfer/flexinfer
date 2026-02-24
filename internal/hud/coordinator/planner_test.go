@@ -54,7 +54,7 @@ func TestPlanFromGoal_ParsesLLMResponse(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	planner := &Planner{
 		client: client,
@@ -96,7 +96,7 @@ func TestPlanFromGoal_EmptyName(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	planner := &Planner{
 		client: client,
@@ -126,7 +126,7 @@ func TestPlanFromGoal_NoSteps(t *testing.T) {
 	defer server.Close()
 
 	breaker := NewCircuitBreaker(5, time.Second)
-	client := NewFlexInferClient(server.URL, "", breaker, slog.Default())
+	client := NewFlexInferClient(server.URL, "", 0, breaker, slog.Default())
 
 	planner := &Planner{
 		client: client,

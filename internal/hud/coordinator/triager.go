@@ -31,6 +31,7 @@ type Triager struct {
 	client *FlexInferClient
 	agent  *bridge.AgentBridge
 	config Config
+	model  string // Resolved model from selectModel().
 	logger *slog.Logger
 }
 
@@ -52,7 +53,11 @@ func (t *Triager) TriageEntries(ctx context.Context, entries []bridge.ContextEnt
 
 	userMsg := formatEntries(entries) // Reuse from summarizer.
 
-	raw, err := t.client.CompleteSimple(ctx, t.config.DefaultModel, promptTriageEntries, userMsg, 400)
+	model := t.model
+	if model == "" {
+		model = t.config.DefaultModel
+	}
+	raw, err := t.client.CompleteSimple(ctx, model, promptTriageEntries, userMsg, 400)
 	if err != nil {
 		// Fallback: mark all as medium.
 		return t.fallbackTriage(entries), nil

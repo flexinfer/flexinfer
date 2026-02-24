@@ -200,7 +200,7 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 			go a.coordinator.OnSessionEnd(body.SessionID, body.AgentID)
 		}
 	} else {
-		a.logger.Info("session end: no active session found, skipping",
+		a.logger.Debug("session end: no active session found, skipping",
 			"agent_id", body.AgentID, "session_id", body.SessionID)
 	}
 
