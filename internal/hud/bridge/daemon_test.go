@@ -220,6 +220,112 @@ func TestDaemonClient_Health(t *testing.T) {
 	}
 }
 
+func TestDaemonClient_Health_WithDivergence(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
+		return &HealthResult{
+			Servers: map[string]ServerHealth{
+				"git": {
+					Local: HealthEntry{
+						Healthy:      true,
+						AvgLatencyMs: 12.5,
+					},
+					Monitor: &HealthEntry{
+						Healthy:     true,
+						ConsecFails: 0,
+					},
+					Target: "local",
+					Divergence: &HealthDivergence{
+						MonitorHealthy:  true,
+						RouterAvailable: false,
+						Reason:          "monitor_healthy_router_unavailable",
+					},
+				},
+			},
+			Divergence: []HealthDivergenceEntry{
+				{Server: "git", Reason: "monitor_healthy_router_unavailable"},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	health, err := client.Health()
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+
+	git, ok := health.Servers["git"]
+	if !ok {
+		t.Fatal("expected 'git' server in health results")
+	}
+	if git.Divergence == nil {
+		t.Fatal("expected divergence for 'git' server")
+	}
+	if git.Divergence.Reason != "monitor_healthy_router_unavailable" {
+		t.Errorf("expected reason 'monitor_healthy_router_unavailable', got %q", git.Divergence.Reason)
+	}
+	if !git.Divergence.MonitorHealthy {
+		t.Error("expected monitor_healthy to be true")
+	}
+	if git.Divergence.RouterAvailable {
+		t.Error("expected router_available to be false")
+	}
+	if git.Monitor == nil {
+		t.Fatal("expected monitor entry for 'git' server")
+	}
+	if !git.Monitor.Healthy {
+		t.Error("expected monitor to be healthy")
+	}
+
+	// Top-level divergence summary
+	if len(health.Divergence) != 1 {
+		t.Fatalf("expected 1 top-level divergence entry, got %d", len(health.Divergence))
+	}
+	if health.Divergence[0].Server != "git" {
+		t.Errorf("expected divergence server 'git', got %q", health.Divergence[0].Server)
+	}
+}
+
+func TestDaemonClient_Health_NoDivergence(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
+		return &HealthResult{
+			Servers: map[string]ServerHealth{
+				"git": {
+					Local:  HealthEntry{Healthy: true},
+					Target: "local",
+				},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	health, err := client.Health()
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+
+	git := health.Servers["git"]
+	if git.Divergence != nil {
+		t.Errorf("expected nil divergence, got %+v", git.Divergence)
+	}
+	if len(health.Divergence) != 0 {
+		t.Errorf("expected no top-level divergence, got %d", len(health.Divergence))
+	}
+}
+
 func TestDaemonClient_Servers(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 

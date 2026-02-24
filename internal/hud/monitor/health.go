@@ -91,6 +91,9 @@ type ServerHealthEntry struct {
 	// Sparkline history (last DefaultRingSize readings, oldest first)
 	LatencyHistory []float64 `json:"latency_history"`
 
+	// Divergence between health monitor and router (nil when they agree).
+	Divergence *bridge.HealthDivergence `json:"divergence,omitempty"`
+
 	// Derived stats
 	ToolCount int `json:"tool_count"`
 }
@@ -283,6 +286,7 @@ func (m *HealthMonitor) Refresh() error {
 			entry.ConsecFails = active.ConsecFails
 			entry.AvgLatencyMs = active.AvgLatencyMs
 			entry.ErrorMessage = active.ErrorMessage
+			entry.Divergence = health.Divergence
 		}
 
 		// Set tool count from the parsed tool namespace.

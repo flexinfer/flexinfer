@@ -697,15 +697,17 @@ func (a *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleHealth returns server health from the health monitor.
-// JSON contract: {"servers": {"name": {"local": {...}, "hub": {...}, "target": "..."}}}
+// JSON contract: {"servers": {"name": {"local": {...}, "hub": {...}, "target": "...", "divergence": ...}}, "divergence": [...]}
 func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	servers := a.healthMonitor.Servers()
 
 	// Reshape into the existing HealthResult JSON contract.
-	result := make(map[string]bridge.ServerHealth, len(servers))
+	healthServers := make(map[string]bridge.ServerHealth, len(servers))
+	var divergences []bridge.HealthDivergenceEntry
 	for _, s := range servers {
 		sh := bridge.ServerHealth{
-			Target: s.Target,
+			Target:     s.Target,
+			Divergence: s.Divergence,
 		}
 		// Map the consolidated entry back to the local/hub shape.
 		if s.Target == "hub" {
@@ -723,9 +725,18 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 				ErrorMessage: s.ErrorMessage,
 			}
 		}
-		result[s.Name] = sh
+		if s.Divergence != nil {
+			divergences = append(divergences, bridge.HealthDivergenceEntry{
+				Server: s.Name,
+				Reason: s.Divergence.Reason,
+			})
+		}
+		healthServers[s.Name] = sh
 	}
-	a.writeJSON(w, http.StatusOK, &bridge.HealthResult{Servers: result})
+	a.writeJSON(w, http.StatusOK, &bridge.HealthResult{
+		Servers:    healthServers,
+		Divergence: divergences,
+	})
 }
 
 // handleServers returns MCP server info from the health monitor.

@@ -384,16 +384,32 @@ type HealthEntry struct {
 	ErrorMessage string  `json:"errorMessage,omitempty"`
 }
 
+// HealthDivergence represents a disagreement between the health monitor and the router.
+type HealthDivergence struct {
+	MonitorHealthy  bool   `json:"monitor_healthy"`
+	RouterAvailable bool   `json:"router_available"`
+	Reason          string `json:"reason"`
+}
+
+// HealthDivergenceEntry is a top-level divergence summary entry.
+type HealthDivergenceEntry struct {
+	Server string `json:"server"`
+	Reason string `json:"reason"`
+}
+
 // ServerHealth contains local and hub health plus the target.
 type ServerHealth struct {
-	Local  HealthEntry `json:"local"`
-	Hub    HealthEntry `json:"hub"`
-	Target string      `json:"target"`
+	Local      HealthEntry       `json:"local"`
+	Hub        HealthEntry       `json:"hub"`
+	Monitor    *HealthEntry      `json:"monitor,omitempty"`
+	Target     string            `json:"target"`
+	Divergence *HealthDivergence `json:"divergence,omitempty"`
 }
 
 // HealthResult holds the response from loom/health.
 type HealthResult struct {
-	Servers map[string]ServerHealth `json:"servers"`
+	Servers    map[string]ServerHealth `json:"servers"`
+	Divergence []HealthDivergenceEntry `json:"divergence,omitempty"`
 }
 
 // ServerInfo describes a registered MCP server.

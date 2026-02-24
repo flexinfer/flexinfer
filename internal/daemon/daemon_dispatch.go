@@ -264,12 +264,13 @@ func (d *Daemon) handleHealth(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 
 // HealthResponse is the JSON response for the /health endpoint.
 type HealthResponse struct {
-	Status    string                         `json:"status"`
-	Timestamp string                         `json:"timestamp"`
-	Uptime    string                         `json:"uptime,omitempty"`
-	Servers   map[string]*ServerHealthStatus `json:"servers,omitempty"`
-	Tunnels   map[string]*TunnelStatus       `json:"tunnels,omitempty"`
-	Summary   HealthSummary                  `json:"summary"`
+	Status     string                         `json:"status"`
+	Timestamp  string                         `json:"timestamp"`
+	Uptime     string                         `json:"uptime,omitempty"`
+	Servers    map[string]*ServerHealthStatus `json:"servers,omitempty"`
+	Tunnels    map[string]*TunnelStatus       `json:"tunnels,omitempty"`
+	Summary    HealthSummary                  `json:"summary"`
+	Divergence []healthDivergenceEntry        `json:"divergence,omitempty"`
 }
 
 // HealthSummary provides aggregate health statistics.
@@ -300,6 +301,20 @@ func (d *Daemon) HealthHandler() http.HandlerFunc {
 			resp.Tunnels = d.tunnelMgr.GetAllStatuses()
 		}
 
+		// Check for divergence between monitor and router.
+		if d.router != nil && resp.Servers != nil {
+			for name, status := range resp.Servers {
+				decision, _ := d.router.Route(r.Context(), name)
+				routerAvailable := decision != nil && decision.Target != router.TargetUnavailable
+				if div := computeHealthDivergence(status, routerAvailable); div != nil {
+					resp.Divergence = append(resp.Divergence, healthDivergenceEntry{
+						Server: name,
+						Reason: div.Reason,
+					})
+				}
+			}
+		}
+
 		// Calculate summary
 		if d.registry != nil {
 			resp.Summary.Total = len(d.registry.Servers)
@@ -314,7 +329,10 @@ func (d *Daemon) HealthHandler() http.HandlerFunc {
 		resp.Summary.Unknown = resp.Summary.Total - resp.Summary.Healthy - resp.Summary.Unhealthy
 
 		// Determine overall status
-		if resp.Summary.Unhealthy > 0 {
+		if len(resp.Divergence) > 0 {
+			resp.Status = "diverged"
+			w.WriteHeader(http.StatusOK)
+		} else if resp.Summary.Unhealthy > 0 {
 			resp.Status = "degraded"
 			w.WriteHeader(http.StatusOK) // Still return 200 for degraded
 		} else if resp.Summary.Healthy == 0 && resp.Summary.Total > 0 {
