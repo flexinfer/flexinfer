@@ -245,6 +245,103 @@ func TestBuildRejectsContextOutsideWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestBuildBuildahPodSpec_WithCachePVC(t *testing.T) {
+	k := testK8sBackend()
+	k.buildCachePVC = "devbox-buildah-cache"
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+
+	// Verify the buildah-storage volume uses PVC instead of EmptyDir
+	var found bool
+	for _, vol := range pod.Spec.Volumes {
+		if vol.Name == "buildah-storage" {
+			found = true
+			if vol.PersistentVolumeClaim == nil {
+				t.Fatal("expected PVC volume for buildah-storage when buildCachePVC is set")
+			}
+			if vol.PersistentVolumeClaim.ClaimName != "devbox-buildah-cache" {
+				t.Fatalf("unexpected PVC claim name: %s", vol.PersistentVolumeClaim.ClaimName)
+			}
+			if vol.EmptyDir != nil {
+				t.Fatal("should not have EmptyDir when using cache PVC")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("buildah-storage volume not found")
+	}
+
+	// Verify build command includes cache pruning prefix
+	cmd := strings.Join(pod.Spec.Containers[0].Command, " ")
+	if !strings.Contains(cmd, "buildah --storage-driver=vfs images") {
+		t.Fatalf("expected cache pruning prefix in build command, got: %s", cmd)
+	}
+}
+
+func TestBuildBuildahPodSpec_WithoutCachePVC(t *testing.T) {
+	k := testK8sBackend()
+	// buildCachePVC is empty string (default)
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+
+	// Verify the buildah-storage volume uses EmptyDir
+	for _, vol := range pod.Spec.Volumes {
+		if vol.Name == "buildah-storage" {
+			if vol.EmptyDir == nil {
+				t.Fatal("expected EmptyDir volume for buildah-storage when no cache PVC")
+			}
+			if vol.PersistentVolumeClaim != nil {
+				t.Fatal("should not have PVC when no cache PVC configured")
+			}
+			return
+		}
+	}
+	t.Fatal("buildah-storage volume not found")
+}
+
+func TestImagePullPolicy(t *testing.T) {
+	tests := []struct {
+		imageTag string
+		want     corev1.PullPolicy
+	}{
+		{"registry.harbor.lan/mcp/devbox/app:a3b9c1d", corev1.PullIfNotPresent},
+		{"registry.harbor.lan/mcp/devbox/app:v1.2.3", corev1.PullIfNotPresent},
+		{"registry.harbor.lan/mcp/devbox/app:latest", corev1.PullAlways},
+		{"registry.harbor.lan/mcp/devbox/app", corev1.PullAlways},
+		{"nginx:1.25", corev1.PullIfNotPresent},
+		{"nginx:latest", corev1.PullAlways},
+		{"nginx", corev1.PullAlways},
+	}
+	for _, tt := range tests {
+		got := imagePullPolicy(tt.imageTag)
+		if got != tt.want {
+			t.Errorf("imagePullPolicy(%q) = %v, want %v", tt.imageTag, got, tt.want)
+		}
+	}
+}
+
+func TestBuildPodSpec_ImagePullPolicy_HashTag(t *testing.T) {
+	k := testK8sBackend()
+	pod := k.buildPodSpec(StartOpts{
+		Name: "demo",
+	}, "registry.harbor.lan/devbox:a3b9c1d")
+
+	got := pod.Spec.Containers[0].ImagePullPolicy
+	if got != corev1.PullIfNotPresent {
+		t.Fatalf("expected IfNotPresent for hash-tagged image, got %v", got)
+	}
+}
+
+func TestBuildPodSpec_ImagePullPolicy_Latest(t *testing.T) {
+	k := testK8sBackend()
+	pod := k.buildPodSpec(StartOpts{
+		Name: "demo",
+	}, "registry.harbor.lan/devbox:latest")
+
+	got := pod.Spec.Containers[0].ImagePullPolicy
+	if got != corev1.PullAlways {
+		t.Fatalf("expected Always for :latest image, got %v", got)
+	}
+}
+
 func TestBuild_MonorepoContextCompletesWithFakeK8s(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	contextDir := filepath.Join(workspaceRoot, "services", "loom-core")

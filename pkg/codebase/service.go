@@ -22,6 +22,7 @@ import (
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
 	"github.com/crb2nu/loom/pkg/codebase/schema"
 	"github.com/crb2nu/loom/pkg/httpclient"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 type Service struct {
@@ -147,41 +148,15 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 	}
 
 	langs := s.indexers.SupportedLanguages()
-	if raw, ok := args["languages"].([]any); ok && len(raw) > 0 {
-		var out []string
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-		if len(out) > 0 {
-			langs = out
-		}
+	if normalized := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages")); len(normalized) > 0 {
+		langs = normalized
 	}
 
-	var exclude []string
-	if raw, ok := args["exclude"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				exclude = append(exclude, s)
-			}
-		}
-	}
+	exclude := validate.StringSliceFromArgs(args, "exclude")
 
-	fullRefresh := true
-	if v, ok := args["full_refresh"].(bool); ok {
-		fullRefresh = v
-	}
-
-	gitMetadata := s.cfg.GitMetadataDefault
-	if v, ok := args["git_metadata"].(bool); ok {
-		gitMetadata = v
-	}
-
-	embeddings := !s.cfg.DisableEmbeddingsDefault
-	if v, ok := args["embeddings"].(bool); ok {
-		embeddings = v
-	}
+	fullRefresh := validate.BoolFromArgs(args, "full_refresh", true)
+	gitMetadata := validate.BoolFromArgs(args, "git_metadata", s.cfg.GitMetadataDefault)
+	embeddings := validate.BoolFromArgs(args, "embeddings", !s.cfg.DisableEmbeddingsDefault)
 
 	jobID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
@@ -220,22 +195,8 @@ func (s *Service) HandleStats(ctx context.Context, args map[string]any) (*mcp.Ca
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
-	var chunkTypes []string
-	if raw, ok := args["chunk_types"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				chunkTypes = append(chunkTypes, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
+	chunkTypes := normalizeStringSlice(validate.StringSliceFromArgs(args, "chunk_types"))
 
 	total, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", nil, nil))
 	if err != nil {
@@ -283,15 +244,14 @@ func (s *Service) HandleDeleteRepo(ctx context.Context, args map[string]any) (*m
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required")
 	}
-	confirm, _ := args["confirm"].(bool)
-	if !confirm {
+	if !validate.BoolFromArgs(args, "confirm", false) {
 		return mcp.JSONResult(map[string]any{
 			"ok":      false,
 			"error":   "confirm=true is required",
 			"repo_id": repoID,
 		})
 	}
-	dryRun, _ := args["dry_run"].(bool)
+	dryRun := validate.BoolFromArgs(args, "dry_run", false)
 	if dryRun {
 		count, err := s.qdrant.Count(ctx, qdrant.Filter(repoID, "", nil, nil))
 		if err != nil {
@@ -367,18 +327,12 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 		return nil, fmt.Errorf("query is required")
 	}
 
-	limit := 10
-	if v, ok := args["limit"].(float64); ok && int(v) > 0 {
-		limit = int(v)
-	}
-	if v, ok := args["limit"].(int); ok && v > 0 {
-		limit = v
+	limit := validate.IntFromArgs(args, "limit", 10)
+	if limit <= 0 {
+		limit = 10
 	}
 
-	includeContent := false
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
-	}
+	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
 	rerank := "none"
 	if v, ok := args["rerank"].(string); ok && strings.TrimSpace(v) != "" {
@@ -398,22 +352,8 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 		lexicalWeight = 1
 	}
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
-	var chunkTypes []string
-	if raw, ok := args["chunk_types"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				chunkTypes = append(chunkTypes, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
+	chunkTypes := normalizeStringSlice(validate.StringSliceFromArgs(args, "chunk_types"))
 
 	vec, err := s.embed.EmbedQuery(ctx, query)
 	if err != nil {
@@ -486,31 +426,14 @@ func (s *Service) HandleGetDefinition(ctx context.Context, args map[string]any) 
 
 	filePath, _ := args["file_path"].(string)
 
-	limit := s.cfg.ScrollLimit
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
+	if limit <= 0 {
+		limit = s.cfg.ScrollLimit
 	}
 
-	includeContent := false
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
-	}
+	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
 
 	ch, err := s.qdrant.FindChunkByName(ctx, repoID, symbol, filePath, languages, limit)
 	if err != nil {
@@ -554,43 +477,17 @@ func (s *Service) HandleGetReferences(ctx context.Context, args map[string]any) 
 
 	filePath, _ := args["file_path"].(string)
 
-	limit := s.cfg.ScrollLimit
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
+	if limit <= 0 {
+		limit = s.cfg.ScrollLimit
 	}
 
-	includeDefinitions := true
-	if v, ok := args["include_definitions"].(bool); ok {
-		includeDefinitions = v
-	}
-	includeCallers := true
-	if v, ok := args["include_callers"].(bool); ok {
-		includeCallers = v
-	}
-	includeModules := false
-	if v, ok := args["include_modules"].(bool); ok {
-		includeModules = v
-	}
-	includeContent := false
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
-	}
+	includeDefinitions := validate.BoolFromArgs(args, "include_definitions", true)
+	includeCallers := validate.BoolFromArgs(args, "include_callers", true)
+	includeModules := validate.BoolFromArgs(args, "include_modules", false)
+	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
 
 	var (
 		definitions []schema.Chunk
@@ -650,42 +547,20 @@ func (s *Service) HandleGetContext(ctx context.Context, args map[string]any) (*m
 		return nil, fmt.Errorf("file_path is required")
 	}
 
-	line := 0
-	switch v := args["line_number"].(type) {
-	case float64:
-		line = int(v)
-	case int:
-		line = v
-	}
+	line := validate.IntFromArgs(args, "line_number", 0)
 	if line <= 0 {
 		return nil, fmt.Errorf("line_number must be > 0")
 	}
 
-	includeCallers := true
-	if v, ok := args["include_callers"].(bool); ok {
-		includeCallers = v
-	}
-	includeCallees := true
-	if v, ok := args["include_callees"].(bool); ok {
-		includeCallees = v
+	includeCallers := validate.BoolFromArgs(args, "include_callers", true)
+	includeCallees := validate.BoolFromArgs(args, "include_callees", true)
+
+	relatedLimit := validate.IntFromArgs(args, "related_limit", 5)
+	if relatedLimit <= 0 {
+		relatedLimit = 5
 	}
 
-	relatedLimit := 5
-	switch v := args["related_limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			relatedLimit = int(v)
-		}
-	case int:
-		if v > 0 {
-			relatedLimit = v
-		}
-	}
-
-	includeContent := false
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
-	}
+	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
 	ctxInfo, err := s.qdrant.GetFileContext(ctx, repoID, filePath, line, relatedLimit)
 	if err != nil {
@@ -746,16 +621,9 @@ func (s *Service) HandleFindCallers(ctx context.Context, args map[string]any) (*
 
 	filePath, _ := args["file_path"].(string)
 
-	limit := s.cfg.ScrollLimit
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
+	if limit <= 0 {
+		limit = s.cfg.ScrollLimit
 	}
 
 	var callers []schema.CallerInfo
@@ -793,16 +661,9 @@ func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*
 
 	filePath, _ := args["file_path"].(string)
 
-	limit := s.cfg.ScrollLimit
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
+	if limit <= 0 {
+		limit = s.cfg.ScrollLimit
 	}
 
 	ch, err := s.qdrant.FindChunkByName(ctx, repoID, symbol, filePath, nil, limit)
@@ -850,65 +711,29 @@ func (s *Service) HandleTextSearch(ctx context.Context, args map[string]any) (*m
 		return nil, fmt.Errorf("query is required")
 	}
 
-	limit := 10
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", 10)
+	if limit <= 0 {
+		limit = 10
 	}
 	if limit > 200 {
 		limit = 200
 	}
 
-	maxScan := 2000
-	switch v := args["max_scan"].(type) {
-	case float64:
-		if int(v) > 0 {
-			maxScan = int(v)
-		}
-	case int:
-		if v > 0 {
-			maxScan = v
-		}
+	maxScan := validate.IntFromArgs(args, "max_scan", 2000)
+	if maxScan <= 0 {
+		maxScan = 2000
 	}
 	if maxScan > 50_000 {
 		maxScan = 50_000
 	}
 
-	caseSensitive := false
-	if v, ok := args["case_sensitive"].(bool); ok {
-		caseSensitive = v
-	}
-
-	includeContent := false
-	if v, ok := args["include_content"].(bool); ok {
-		includeContent = v
-	}
+	caseSensitive := validate.BoolFromArgs(args, "case_sensitive", false)
+	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
 	filePath, _ := args["file_path"].(string)
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
-
-	var chunkTypes []string
-	if raw, ok := args["chunk_types"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				chunkTypes = append(chunkTypes, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
+	chunkTypes := normalizeStringSlice(validate.StringSliceFromArgs(args, "chunk_types"))
 
 	filter := qdrant.Filter(repoID, filePath, languages, chunkTypes)
 	chunks, err := s.qdrant.ScrollChunks(ctx, filter, maxScan)
@@ -1129,66 +954,35 @@ func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mc
 		return nil, fmt.Errorf("direction must be one of: out, in, both")
 	}
 
-	depth := 2
-	switch v := args["depth"].(type) {
-	case float64:
-		if int(v) >= 0 {
-			depth = int(v)
-		}
-	case int:
-		if v >= 0 {
-			depth = v
-		}
+	depth := validate.IntFromArgs(args, "depth", 2)
+	if depth < 0 {
+		depth = 2
 	}
 	if depth > 10 {
 		depth = 10
 	}
 
-	limit := s.cfg.ScrollLimit
-	switch v := args["limit"].(type) {
-	case float64:
-		if int(v) > 0 {
-			limit = int(v)
-		}
-	case int:
-		if v > 0 {
-			limit = v
-		}
+	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
+	if limit <= 0 {
+		limit = s.cfg.ScrollLimit
 	}
 
-	maxNodes := 200
-	switch v := args["max_nodes"].(type) {
-	case float64:
-		if int(v) > 0 {
-			maxNodes = int(v)
-		}
-	case int:
-		if v > 0 {
-			maxNodes = v
-		}
+	maxNodes := validate.IntFromArgs(args, "max_nodes", 200)
+	if maxNodes <= 0 {
+		maxNodes = 200
 	}
 	if maxNodes > 2000 {
 		maxNodes = 2000
 	}
 
-	includeExternal := true
-	if v, ok := args["include_external"].(bool); ok {
-		includeExternal = v
-	}
+	includeExternal := validate.BoolFromArgs(args, "include_external", true)
 
 	render, err := normalizeRenderFormat(args["render"])
 	if err != nil {
 		return nil, err
 	}
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
 
 	nodes := map[string]*graphNode{}
 	addNode := func(sym string, external bool) {
@@ -1413,54 +1207,30 @@ func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	maxFiles := 512
-	switch v := args["max_files"].(type) {
-	case float64:
-		if int(v) > 0 {
-			maxFiles = int(v)
-		}
-	case int:
-		if v > 0 {
-			maxFiles = v
-		}
+	maxFiles := validate.IntFromArgs(args, "max_files", 512)
+	if maxFiles <= 0 {
+		maxFiles = 512
 	}
 	if maxFiles > 10_000 {
 		maxFiles = 10_000
 	}
 
-	maxEdges := 4000
-	switch v := args["max_edges"].(type) {
-	case float64:
-		if int(v) > 0 {
-			maxEdges = int(v)
-		}
-	case int:
-		if v > 0 {
-			maxEdges = v
-		}
+	maxEdges := validate.IntFromArgs(args, "max_edges", 4000)
+	if maxEdges <= 0 {
+		maxEdges = 4000
 	}
 	if maxEdges > 100_000 {
 		maxEdges = 100_000
 	}
 
-	includeExternal := true
-	if v, ok := args["include_external"].(bool); ok {
-		includeExternal = v
-	}
+	includeExternal := validate.BoolFromArgs(args, "include_external", true)
 
 	render, err := normalizeRenderFormat(args["render"])
 	if err != nil {
 		return nil, err
 	}
 
-	var languages []string
-	if raw, ok := args["languages"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				languages = append(languages, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-	}
+	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
 
 	modules, err := s.qdrant.ListModules(ctx, repoID, maxFiles)
 	if err != nil {
@@ -2111,6 +1881,21 @@ func deriveRepoID(root string) (string, error) {
 	}
 
 	return schema.ShortSHA256Hex(gitRoot), nil
+}
+
+// normalizeStringSlice trims whitespace and lowercases each element,
+// dropping any that are empty after trimming.
+func normalizeStringSlice(ss []string) []string {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, strings.ToLower(s))
+		}
+	}
+	return out
 }
 
 func lexicalTokens(q string) []string {

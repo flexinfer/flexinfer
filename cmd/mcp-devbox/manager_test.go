@@ -9,8 +9,54 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/devbox/detect"
+	"github.com/crb2nu/loom/internal/devbox/state"
 )
+
+// stateEntry is an alias for convenience in tests.
+type stateEntry = state.Entry
+
+func newTestStore(cacheDir string) (*state.Store, error) {
+	return state.NewStore(cacheDir)
+}
+
+// fakeStatus holds per-container status for the fake backend.
+type fakeStatus struct {
+	running bool
+	status  string
+}
+
+// fakeBackend implements backend.Backend for testing.
+type fakeBackend struct {
+	statuses map[string]*fakeStatus
+}
+
+func (f *fakeBackend) Build(_ context.Context, _ backend.BuildOpts) (*backend.BuildResult, error) {
+	return &backend.BuildResult{}, nil
+}
+func (f *fakeBackend) Start(_ context.Context, opts backend.StartOpts) (*backend.StartResult, error) {
+	return &backend.StartResult{ContainerID: opts.Name}, nil
+}
+func (f *fakeBackend) Exec(_ context.Context, _ backend.ExecOpts) (*backend.ExecResult, error) {
+	return &backend.ExecResult{}, nil
+}
+func (f *fakeBackend) Stop(_ context.Context, _ string) error { return nil }
+func (f *fakeBackend) Status(_ context.Context, id string) (*backend.StatusResult, error) {
+	if s, ok := f.statuses[id]; ok {
+		return &backend.StatusResult{Running: s.running, Status: s.status}, nil
+	}
+	return &backend.StatusResult{Running: false, Status: "not_found"}, nil
+}
+func (f *fakeBackend) Health(_ context.Context) error           { return nil }
+func (f *fakeBackend) Pause(_ context.Context, _ string) error  { return backend.ErrNotSupported }
+func (f *fakeBackend) Resume(_ context.Context, _ string) error { return backend.ErrNotSupported }
+func (f *fakeBackend) ReadFile(_ context.Context, _, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (f *fakeBackend) WriteFile(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
 
 func TestCheckBackendHealth_Timeout(t *testing.T) {
 	orig := backendHealthTimeout
@@ -184,6 +230,93 @@ func TestBuildMounts_DockerOutsideWorkspaceMountsProjectDir(t *testing.T) {
 
 	if mounts[0].Host != projectDir || mounts[0].Container != "/workspace" {
 		t.Fatalf("expected direct project mount for outside-workspace project, got %#v", mounts[0])
+	}
+}
+
+func TestIsK8sBackend(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		backendType string
+		want        bool
+	}{
+		{"k8s", true},
+		{"kubernetes", true},
+		{"docker", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		m := &manager{cfg: managerConfig{backendType: tt.backendType}}
+		if got := m.isK8sBackend(); got != tt.want {
+			t.Errorf("isK8sBackend(%q) = %v, want %v", tt.backendType, got, tt.want)
+		}
+	}
+}
+
+func TestReconcileState(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+
+	store, err := newTestStore(cacheDir)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+
+	fb := &fakeBackend{statuses: map[string]*fakeStatus{
+		"devbox-alive":  {running: true, status: "running"},
+		"devbox-dead":   {running: false, status: "not_found"},
+		"devbox-failed": {running: false, status: "failed"},
+	}}
+
+	now := time.Now()
+	_ = store.Set("alive", &stateEntry{
+		Status:    "running",
+		LastUsed:  now,
+		CreatedAt: now,
+	})
+	_ = store.Set("dead", &stateEntry{
+		Status:    "running",
+		LastUsed:  now,
+		CreatedAt: now,
+	})
+	_ = store.Set("failed", &stateEntry{
+		Status:    "paused",
+		LastUsed:  now,
+		CreatedAt: now,
+	})
+	_ = store.Set("already-stopped", &stateEntry{
+		Status:    "stopped",
+		LastUsed:  now,
+		CreatedAt: now,
+	})
+
+	m := &manager{
+		cfg:     managerConfig{backendType: "k8s"},
+		backend: fb,
+		store:   store,
+		logger:  logger,
+	}
+
+	m.reconcileState(context.Background())
+
+	// "alive" should stay running
+	if e := store.Get("alive"); e == nil || e.Status != "running" {
+		t.Errorf("alive entry should stay running, got: %v", e)
+	}
+
+	// "dead" should be marked stopped
+	if e := store.Get("dead"); e == nil || e.Status != "stopped" {
+		t.Errorf("dead entry should be stopped, got: %v", e)
+	}
+
+	// "failed" should be marked stopped
+	if e := store.Get("failed"); e == nil || e.Status != "stopped" {
+		t.Errorf("failed entry should be stopped, got: %v", e)
+	}
+
+	// "already-stopped" should remain stopped (not touched)
+	if e := store.Get("already-stopped"); e == nil || e.Status != "stopped" {
+		t.Errorf("already-stopped entry should remain stopped, got: %v", e)
 	}
 }
 

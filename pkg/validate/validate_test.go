@@ -824,6 +824,97 @@ func TestArgs_GetPagination(t *testing.T) {
 // Pattern constants are valid regex
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Standalone helpers (StringSliceFromArgs, BoolFromArgs, IntFromArgs)
+// ---------------------------------------------------------------------------
+
+func TestStringSliceFromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args map[string]any
+		key  string
+		want []string
+	}{
+		{"present", map[string]any{"tags": []any{"a", "b"}}, "tags", []string{"a", "b"}},
+		{"missing key", map[string]any{}, "tags", nil},
+		{"nil map", nil, "tags", nil},
+		{"wrong type", map[string]any{"tags": "not-a-slice"}, "tags", nil},
+		{"empty slice", map[string]any{"tags": []any{}}, "tags", nil},
+		{"mixed types skips non-string", map[string]any{"tags": []any{"a", 42, "b"}}, "tags", []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StringSliceFromArgs(tt.args, tt.key)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBoolFromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		args       map[string]any
+		key        string
+		defaultVal bool
+		want       bool
+	}{
+		{"present true", map[string]any{"flag": true}, "flag", false, true},
+		{"present false", map[string]any{"flag": false}, "flag", true, false},
+		{"missing uses default true", map[string]any{}, "flag", true, true},
+		{"missing uses default false", map[string]any{}, "flag", false, false},
+		{"nil map", nil, "flag", true, true},
+		{"wrong type", map[string]any{"flag": "yes"}, "flag", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := BoolFromArgs(tt.args, tt.key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIntFromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		args       map[string]any
+		key        string
+		defaultVal int
+		want       int
+	}{
+		{"float64", map[string]any{"limit": float64(42)}, "limit", 10, 42},
+		{"int", map[string]any{"limit": int(7)}, "limit", 10, 7},
+		{"int64", map[string]any{"limit": int64(99)}, "limit", 10, 99},
+		{"json.Number", map[string]any{"limit": json.Number("25")}, "limit", 10, 25},
+		{"zero value", map[string]any{"limit": float64(0)}, "limit", 10, 0},
+		{"missing uses default", map[string]any{}, "limit", 10, 10},
+		{"nil map", nil, "limit", 5, 5},
+		{"wrong type", map[string]any{"limit": "ten"}, "limit", 10, 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := IntFromArgs(tt.args, tt.key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPatternConstants(t *testing.T) {
 	t.Parallel()
 	patterns := map[string]string{

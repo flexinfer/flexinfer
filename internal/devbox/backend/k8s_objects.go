@@ -1,0 +1,148 @@
+package backend
+
+import (
+	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// buildPodSpec creates a Pod spec for a devbox sandbox.
+func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
+	env := make([]corev1.EnvVar, 0, len(opts.Env))
+	for key, val := range opts.Env {
+		env = append(env, corev1.EnvVar{Name: key, Value: val})
+	}
+
+	// Set only limits (not requests) so sandbox pods schedule as Burstable/BestEffort.
+	// Dev sandbox pods are short-lived; low requests prevent scheduling failures
+	// on clusters with high CPU reservation.
+	resources := corev1.ResourceRequirements{}
+	if opts.MemoryMB > 0 {
+		resources.Limits = corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", opts.MemoryMB)),
+		}
+	}
+	if opts.CPUs > 0 {
+		if resources.Limits == nil {
+			resources.Limits = corev1.ResourceList{}
+		}
+		resources.Limits[corev1.ResourceCPU] = resource.MustParse(fmt.Sprintf("%dm", int(opts.CPUs*1000)))
+	}
+
+	// Volumes: NFS workspace via PVC (shared across all sandbox pods)
+	volumes := []corev1.Volume{
+		{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: k.workspacePVC,
+				},
+			},
+		},
+	}
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "workspace", MountPath: "/workspace"},
+	}
+
+	// Add host-path mounts if requested (for additional bind mounts)
+	for i, m := range opts.Mounts {
+		volName := fmt.Sprintf("mount-%d", i)
+		hostPathType := corev1.HostPathDirectoryOrCreate
+		volumes = append(volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: m.Host,
+					Type: &hostPathType,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volName,
+			MountPath: m.Container,
+			ReadOnly:  m.ReadOnly,
+		})
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": "mcp-devbox",
+		"devbox/project":               opts.Name,
+	}
+	if opts.AgentID != "" {
+		labels["devbox/agent-id"] = opts.AgentID
+	}
+
+	gracePeriod := int64(3)
+
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.Name,
+			Namespace: k.namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy:                 corev1.RestartPolicyNever,
+			TerminationGracePeriodSeconds: &gracePeriod,
+			ServiceAccountName:            "mcp-devbox",
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: k.imagePullSecret},
+			},
+			NodeSelector: map[string]string{
+				"kubernetes.io/arch": "amd64",
+			},
+			Containers: []corev1.Container{
+				{
+					Name:            "devbox",
+					Image:           imageTag,
+					Command:         []string{"sleep", "infinity"},
+					Env:             env,
+					Resources:       resources,
+					WorkingDir:      workDir(opts.WorkDir),
+					VolumeMounts:    volumeMounts,
+					ImagePullPolicy: imagePullPolicy(imageTag),
+				},
+			},
+			Volumes: volumes,
+		},
+	}
+}
+
+// imagePullPolicy returns IfNotPresent for hash-tagged images (immutable)
+// and Always for untagged or :latest images.
+func imagePullPolicy(imageTag string) corev1.PullPolicy {
+	// Extract the tag portion after the last colon
+	idx := strings.LastIndex(imageTag, ":")
+	if idx < 0 {
+		return corev1.PullAlways // no tag → always pull
+	}
+	tag := imageTag[idx+1:]
+	if tag == "" || tag == "latest" {
+		return corev1.PullAlways
+	}
+	return corev1.PullIfNotPresent
+}
+
+// registryTag prepends the registry to a local image tag.
+func (k *K8sBackend) registryTag(tag string) string {
+	if strings.Contains(tag, "/") {
+		prefix := strings.Split(tag, "/")[0]
+		if strings.Contains(prefix, ".") || strings.Contains(prefix, ":") || prefix == "localhost" {
+			return tag // already has a registry prefix
+		}
+	}
+	return k.registry + "/" + tag
+}
+
+func boolPtr(b bool) *bool                               { return &b }
+func resourcePtr(q resource.Quantity) *resource.Quantity { return &q }
+
+// workDir returns the working directory, defaulting to "/workspace".
+func workDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return "/workspace"
+}

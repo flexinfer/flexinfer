@@ -35,6 +35,7 @@ type managerConfig struct {
 	k8sWorkspacePVC    string
 	k8sImagePullSecret string
 	builderImage       string
+	buildCachePVC      string
 }
 
 type manager struct {
@@ -145,6 +146,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			ImagePullSecret: cfg.k8sImagePullSecret,
 			WorkspaceRoot:   cfg.workspaceRoot,
 			BuilderImage:    cfg.builderImage,
+			BuildCachePVC:   cfg.buildCachePVC,
 		})
 		if err != nil {
 			return nil, err
@@ -236,8 +238,13 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 		m.logger.Warn("resume failed, rebuilding", "project", projectName)
 	}
 
-	// Stale or missing: rebuild if hash changed
-	if entry == nil || entry.FingerprintHash != fp.Hash {
+	// Stopped container with matching hash — try to restart without rebuild.
+	// For K8s backend, Start() reuses existing running pods or creates new ones.
+	if entry != nil && entry.FingerprintHash == fp.Hash && entry.Status == "stopped" {
+		m.logger.Info("restarting stopped sandbox (hash match)", "project", projectName)
+		// Skip build, go straight to Start below
+	} else if entry == nil || entry.FingerprintHash != fp.Hash {
+		// Stale or missing: rebuild if hash changed
 		m.logger.Info("building sandbox image", "project", projectName, "hash", fp.Hash[:7])
 
 		dockerfileContent, err := dockerfile.Generate(fp)
@@ -390,9 +397,17 @@ func (m *manager) reapLoop(ctx context.Context) {
 	}
 }
 
+// isK8sBackend returns true if the backend is Kubernetes-based.
+func (m *manager) isK8sBackend() bool {
+	return m.cfg.backendType == "k8s" || m.cfg.backendType == "kubernetes"
+}
+
 // reapIdle pauses containers that have been idle beyond the timeout.
 // Paused containers can be resumed instantly (~5ms) vs cold start (~2-5s).
 // Falls back to stop if pause is not supported by the backend.
+//
+// K8s-aware: sleeping K8s pods use ~0 CPU. On first idle timeout, just log
+// "keeping warm". Hard-reap (stop) only after 2× idle timeout.
 func (m *manager) reapIdle(ctx context.Context) {
 	idle := m.store.IdleEntries(m.cfg.idleTimeout)
 	for name, entry := range idle {
@@ -401,21 +416,39 @@ func (m *manager) reapIdle(ctx context.Context) {
 			continue
 		}
 
-		m.logger.Info("pausing idle sandbox", "project", name,
-			"idle_since", entry.LastUsed.Format(time.RFC3339))
-
 		containerName := m.containerName(name)
 
-		// Try pause first (instant resume); fall back to stop
-		if err := m.backend.Pause(ctx, containerName); err != nil {
-			// Pause not supported — fall back to stop
+		// K8s-aware: keep pods warm on first idle, hard-reap at 2× timeout.
+		if m.isK8sBackend() {
+			idleDuration := time.Since(entry.LastUsed)
+			if idleDuration < 2*m.cfg.idleTimeout {
+				m.logger.Debug("keeping K8s pod warm", "project", name,
+					"idle_since", entry.LastUsed.Format(time.RFC3339))
+				continue
+			}
+			// Exceeded 2× timeout — hard-reap.
+			m.logger.Info("hard-reaping idle K8s pod", "project", name,
+				"idle_since", entry.LastUsed.Format(time.RFC3339))
 			if err := m.backend.Stop(ctx, containerName); err != nil {
 				m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
 				continue
 			}
 			entry.Status = "stopped"
 		} else {
-			entry.Status = "paused"
+			m.logger.Info("pausing idle sandbox", "project", name,
+				"idle_since", entry.LastUsed.Format(time.RFC3339))
+
+			// Try pause first (instant resume); fall back to stop
+			if err := m.backend.Pause(ctx, containerName); err != nil {
+				// Pause not supported — fall back to stop
+				if err := m.backend.Stop(ctx, containerName); err != nil {
+					m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
+					continue
+				}
+				entry.Status = "stopped"
+			} else {
+				entry.Status = "paused"
+			}
 		}
 
 		if m.metrics != nil {
@@ -423,6 +456,31 @@ func (m *manager) reapIdle(ctx context.Context) {
 		}
 		if err := m.store.Set(name, entry); err != nil {
 			m.logger.Warn("failed to update state", "project", name, "error", err)
+		}
+	}
+}
+
+// reconcileState checks actual pod/container status on startup and corrects
+// stale entries (e.g., pods evicted during daemon downtime, node reboots).
+func (m *manager) reconcileState(ctx context.Context) {
+	entries := m.store.List()
+	for name, entry := range entries {
+		if entry.Status != "running" && entry.Status != "paused" {
+			continue
+		}
+		containerName := m.containerName(name)
+		status, err := m.backend.Status(ctx, containerName)
+		if err != nil {
+			m.logger.Warn("reconcile: failed to check status", "project", name, "error", err)
+			entry.Status = "stopped"
+			_ = m.store.Set(name, entry)
+			continue
+		}
+		if !status.Running {
+			m.logger.Info("reconcile: marking stale entry as stopped",
+				"project", name, "actual_status", status.Status)
+			entry.Status = "stopped"
+			_ = m.store.Set(name, entry)
 		}
 	}
 }

@@ -59,8 +59,9 @@ func TestGenerate_GoProject_DefaultVersion(t *testing.T) {
 
 	dockerfile := string(out)
 
-	if !strings.Contains(dockerfile, "golang:1.25") {
-		t.Errorf("Go Dockerfile should default to golang:1.25, got:\n%s", dockerfile)
+	// With pre-built base images, FROM may be the Harbor base image instead of golang:X.
+	if !strings.Contains(dockerfile, "golang:1.25") && !strings.Contains(dockerfile, "go:1.25") {
+		t.Errorf("Go Dockerfile should default to version 1.25, got:\n%s", dockerfile)
 	}
 }
 

@@ -1,12 +1,18 @@
 package dockerfile
 
-import "github.com/crb2nu/loom/internal/devbox/detect"
+import (
+	"github.com/crb2nu/loom/internal/devbox/baseimage"
+	"github.com/crb2nu/loom/internal/devbox/detect"
+)
 
 // templateData holds parameters for Go templates.
 type templateData struct {
 	Hash       string
 	SystemDeps []string
 	Env        map[string]string
+
+	// BaseImage overrides the FROM line when a pre-built base is available.
+	BaseImage string
 
 	// Go-specific
 	GoVersion string
@@ -57,6 +63,7 @@ func buildGoData(spec detect.LanguageSpec, fp *detect.EnvFingerprint) templateDa
 
 	return templateData{
 		Hash:          fp.Hash,
+		BaseImage:     baseimage.Lookup("go", version),
 		GoVersion:     version,
 		SystemDeps:    fp.SystemDeps,
 		Tools:         tools,
@@ -74,6 +81,7 @@ func buildPythonData(spec detect.LanguageSpec, fp *detect.EnvFingerprint) templa
 
 	return templateData{
 		Hash:          fp.Hash,
+		BaseImage:     baseimage.Lookup("python", version),
 		PythonVersion: version,
 		SystemDeps:    fp.SystemDeps,
 		DepManager:    spec.DepManager,
@@ -91,6 +99,7 @@ func buildNodeData(spec detect.LanguageSpec, fp *detect.EnvFingerprint) template
 
 	return templateData{
 		Hash:          fp.Hash,
+		BaseImage:     baseimage.Lookup("node", version),
 		NodeVersion:   version,
 		SystemDeps:    fp.SystemDeps,
 		DepManager:    spec.DepManager,

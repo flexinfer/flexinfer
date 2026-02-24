@@ -272,6 +272,47 @@ func (a *Args) Validate() error {
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// Standalone helpers (operate on raw map[string]any without Args wrapper)
+// ---------------------------------------------------------------------------
+
+// StringSliceFromArgs extracts a string slice from a map[string]any field.
+// JSON arrays arrive as []any; each element is converted to string.
+// Non-string elements are silently skipped. Returns nil if the field is
+// absent or not a []any.
+func StringSliceFromArgs(args map[string]any, key string) []string {
+	raw, ok := args[key].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// BoolFromArgs extracts a bool from a map[string]any field.
+// Returns defaultVal if the field is absent or not a bool.
+func BoolFromArgs(args map[string]any, key string, defaultVal bool) bool {
+	if v, ok := args[key].(bool); ok {
+		return v
+	}
+	return defaultVal
+}
+
+// IntFromArgs extracts an int from a map[string]any field, handling the
+// float64 values that arrive from JSON unmarshalling. Returns defaultVal
+// if the field is absent or not convertible to int.
+func IntFromArgs(args map[string]any, key string, defaultVal int) int {
+	if v, ok := asInt(args[key]); ok {
+		return v
+	}
+	return defaultVal
+}
+
 // Common validation patterns
 var (
 	// UUIDPattern matches UUID format

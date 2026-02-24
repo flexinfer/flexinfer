@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -49,14 +50,22 @@ func run(ctx context.Context) error {
 		cacheDir = home + "/.cache/loom/devbox"
 	}
 
+	backendType := env.String("DEVBOX_BACKEND", "docker")
+
+	// K8s backend defaults to 2h idle timeout (sleeping pods are nearly free).
+	defaultIdleTimeout := 30 * 60 * time.Second // 30m for Docker
+	if backendType == "k8s" || backendType == "kubernetes" {
+		defaultIdleTimeout = 2 * time.Hour
+	}
+
 	mgr, err := newManager(ctx, logger, managerConfig{
 		workspaceRoot:      workspaceRoot,
 		cacheDir:           cacheDir,
-		backendType:        env.String("DEVBOX_BACKEND", "docker"),
+		backendType:        backendType,
 		registry:           env.String("DEVBOX_REGISTRY", "registry.harbor.lan"),
 		imagePrefix:        env.String("DEVBOX_IMAGE_PREFIX", "mcp/devbox"),
 		maxTailLines:       env.Int("DEVBOX_MAX_TAIL_LINES", 20),
-		idleTimeout:        env.Duration("DEVBOX_IDLE_TIMEOUT", 30*60*1e9), // 30m
+		idleTimeout:        env.Duration("DEVBOX_IDLE_TIMEOUT", defaultIdleTimeout),
 		defaultCPU:         env.Float("DEVBOX_DEFAULT_CPU", 0.5),
 		defaultMemMB:       env.Int("DEVBOX_DEFAULT_MEMORY_MB", 512),
 		kubeconfig:         env.String("DEVBOX_KUBECONFIG", ""),
@@ -65,6 +74,7 @@ func run(ctx context.Context) error {
 		k8sWorkspacePVC:    env.String("DEVBOX_K8S_WORKSPACE_PVC", "devbox-workspace-nfs"),
 		k8sImagePullSecret: env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
 		builderImage:       builderImage(),
+		buildCachePVC:      env.String("DEVBOX_K8S_BUILD_CACHE_PVC", ""),
 	})
 	if err != nil {
 		return fmt.Errorf("init manager: %w", err)
@@ -87,6 +97,9 @@ func run(ctx context.Context) error {
 		"devbox_metrics, devbox_summary")
 
 	registerTools(server, mgr, tracer)
+
+	// Reconcile stale state entries (pods evicted, node reboots)
+	mgr.reconcileState(ctx)
 
 	// Start idle reaper
 	go mgr.reapLoop(ctx)
