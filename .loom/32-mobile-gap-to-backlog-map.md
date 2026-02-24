@@ -129,7 +129,7 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `internal/hud/app.go`
 - Checklist:
   - [x] Add reconnect state machine tests
-  - [ ] Add synthetic network churn test scenarios
+  - [x] Add synthetic network churn test scenarios
   - [ ] Publish recovery SLO telemetry dashboard
 - Status:
   - In progress
@@ -141,6 +141,7 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `.task(id: sseClientId)` pattern in DashboardView handles nil→non-nil SSEClient transitions
   - 4 new tests: event forwarding, cancel-before-restart, stopListening, refresh-triggers-reload
   - SSE reconnect tests already existed (9 tests in SSE Client Reconnect suite)
+  - **Synthetic network churn** (8 tests in `SSENetworkChurnTests.swift`): rapid fail/succeed cycling (5 cycles), event preservation across churn, health monitor transitions under churn, polling fallback activation/deactivation, disconnect during reconnecting, backoff reset across churn cycles, full SSE→poll→SSE recovery path, rapid drop no-poll-stacking
 
 ### Issue MBL-6: Notification severity and action policy (M4)
 
