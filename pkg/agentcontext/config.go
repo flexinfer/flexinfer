@@ -93,9 +93,10 @@ type Config struct {
 	TaskReconcilerStaleTimeout       int // hours, default 4
 
 	// Session reaper
-	SessionReaperEnabled  bool // default: true
-	SessionReaperInterval int  // seconds, default: 1800 (30 minutes)
-	SessionReaperMaxAge   int  // hours, default: 168 (7 days)
+	SessionReaperEnabled      bool // default: true
+	SessionReaperInterval     int  // seconds, default: 1800 (30 minutes)
+	SessionReaperMaxAge       int  // hours, default: 168 (7 days)
+	SessionReaperActiveMaxAge int  // hours, default: 24 — reap "active" sessions older than this
 
 	// Worktree reconciler
 	WorktreeReconcilerEnabled       bool
@@ -203,9 +204,10 @@ func LoadConfigFromEnv() (Config, error) {
 		TaskReconcilerStaleTimeout:       intEnv("AGENT_CONTEXT_TASK_STALE_TIMEOUT_HOURS", 4),
 
 		// Session reaper
-		SessionReaperEnabled:  boolEnv("AGENT_CONTEXT_SESSION_REAPER_ENABLED", true),
-		SessionReaperInterval: intEnv("AGENT_CONTEXT_SESSION_REAPER_INTERVAL", 1800),
-		SessionReaperMaxAge:   intEnv("AGENT_CONTEXT_SESSION_REAPER_MAX_AGE_HOURS", 168),
+		SessionReaperEnabled:      boolEnv("AGENT_CONTEXT_SESSION_REAPER_ENABLED", true),
+		SessionReaperInterval:     intEnv("AGENT_CONTEXT_SESSION_REAPER_INTERVAL", 1800),
+		SessionReaperMaxAge:       intEnv("AGENT_CONTEXT_SESSION_REAPER_MAX_AGE_HOURS", 168),
+		SessionReaperActiveMaxAge: intEnv("AGENT_CONTEXT_SESSION_REAPER_ACTIVE_MAX_AGE_HOURS", 24),
 
 		// Worktree reconciler
 		WorktreeReconcilerEnabled:       boolEnv("AGENT_CONTEXT_WORKTREE_RECONCILER_ENABLED", true),

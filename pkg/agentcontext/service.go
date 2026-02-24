@@ -480,6 +480,11 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 		return mcp.JSONResult(result)
 	}
 
+	// End any prior active sessions for this agent to prevent accumulation.
+	// Sessions can become orphaned when the Stop hook doesn't fire (crash,
+	// context exhaustion, transport disconnect).
+	s.endActiveSessionsForAgent(ctx, agentID)
+
 	// Create new session
 	sessionID := GenerateID(agentID, "", time.Now().String(), time.Now())
 	session := &Session{
@@ -643,6 +648,49 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 	}
 
 	return mcp.JSONResult(result)
+}
+
+// endActiveSessionsForAgent ends all active sessions belonging to the given agent.
+// Called when agent presence expires so sessions don't linger indefinitely.
+func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string) {
+	now := time.Now()
+
+	// End in-memory sessions.
+	s.sessionsMu.Lock()
+	for _, sess := range s.sessions {
+		if sess.AgentID == agentID && sess.Status == string(SessionStatusActive) {
+			sess.Status = string(SessionStatusEnded)
+			sess.EndedAt = &now
+		}
+	}
+	s.sessionsMu.Unlock()
+
+	// End persisted sessions in Qdrant.
+	if s.sessionsQdrant == nil {
+		return
+	}
+	filter := FilterMust(
+		Match("agent_id", agentID),
+		Match("status", "active"),
+	)
+	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 500, false)
+	if err != nil || len(points) == 0 {
+		return
+	}
+	for _, p := range points {
+		sess, err := PayloadToSession(p.Payload)
+		if err != nil || sess == nil {
+			continue
+		}
+		sess.Status = string(SessionStatusEnded)
+		sess.EndedAt = &now
+		if err := s.persistSession(ctx, sess); err != nil {
+			s.logger.Warn("failed to end stale session for expired agent",
+				"session_id", sess.ID, "agent_id", agentID, "error", err)
+		}
+	}
+	s.logger.Info("ended active sessions for expired agent",
+		"agent_id", agentID, "count", len(points))
 }
 
 // markSessionTasksStale marks pending/in_progress tasks for a session as blocked
@@ -859,7 +907,8 @@ func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilt
 	return len(toDelete), nil
 }
 
-// runSessionReaper periodically prunes old ended/summarized sessions.
+// runSessionReaper periodically prunes old ended/summarized sessions
+// and reaps stale active sessions whose agents are no longer present.
 func (s *Service) runSessionReaper(ctx context.Context) {
 	interval := time.Duration(s.cfg.SessionReaperInterval) * time.Second
 	if interval <= 0 {
@@ -873,17 +922,93 @@ func (s *Service) runSessionReaper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Prune old ended/summarized sessions.
 			statusFilter := "ended,summarized"
 			pruned, err := s.pruneSessions(ctx, s.cfg.SessionReaperMaxAge, statusFilter, false)
 			if err != nil {
 				s.logger.Warn("session reaper failed", "error", err)
-				continue
+			} else if pruned > 0 {
+				s.logger.Info("session reaper completed", "pruned", pruned, "filter", statusFilter)
 			}
-			if pruned > 0 {
-				s.logger.Info("session reaper completed", "pruned", pruned)
+
+			// End stale active sessions (no heartbeat, older than threshold).
+			activeMaxAge := s.cfg.SessionReaperActiveMaxAge
+			if activeMaxAge <= 0 {
+				activeMaxAge = 24
+			}
+			ended := s.endStaleSessions(ctx, activeMaxAge)
+			if ended > 0 {
+				s.logger.Info("ended stale active sessions", "count", ended, "max_age_hours", activeMaxAge)
 			}
 		}
 	}
+}
+
+// endStaleSessions finds active sessions older than maxAgeHours whose agents
+// have no current presence, and marks them ended. Returns the count ended.
+func (s *Service) endStaleSessions(ctx context.Context, maxAgeHours int) int {
+	if s.sessionsQdrant == nil {
+		return 0
+	}
+
+	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour)
+
+	filter := FilterMust(Match("status", "active"))
+	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 1000, false)
+	if err != nil {
+		s.logger.Warn("endStaleSessions scroll failed", "error", err)
+		return 0
+	}
+
+	// Snapshot of agents with live presence.
+	liveAgents := s.liveAgentIDs()
+
+	now := time.Now()
+	var ended int
+	for _, p := range points {
+		sess, err := PayloadToSession(p.Payload)
+		if err != nil || sess == nil {
+			continue
+		}
+		// Skip sessions from agents that still have live presence.
+		if liveAgents[sess.AgentID] {
+			continue
+		}
+		// Skip sessions younger than the cutoff.
+		if sess.StartedAt.After(cutoff) {
+			continue
+		}
+		// End the stale session.
+		sess.Status = string(SessionStatusEnded)
+		sess.EndedAt = &now
+		if err := s.persistSession(ctx, sess); err != nil {
+			s.logger.Warn("failed to persist stale session end", "session_id", sess.ID, "error", err)
+			continue
+		}
+		s.sessionsMu.Lock()
+		if existing, ok := s.sessions[sess.ID]; ok {
+			existing.Status = string(SessionStatusEnded)
+			existing.EndedAt = &now
+		}
+		s.sessionsMu.Unlock()
+		ended++
+	}
+	return ended
+}
+
+// liveAgentIDs returns the set of agent IDs with non-expired presence.
+func (s *Service) liveAgentIDs() map[string]bool {
+	s.presenceMu.RLock()
+	defer s.presenceMu.RUnlock()
+	result := make(map[string]bool, len(s.presenceMap))
+	now := time.Now()
+	for agentID, p := range s.presenceMap {
+		ttl := time.Duration(p.HeartbeatTTL) * time.Second
+		if now.Sub(p.LastHeartbeat) < 3*ttl {
+			result[agentID] = true
+		}
+	}
+	return result
 }
 
 // Context Storage Handlers

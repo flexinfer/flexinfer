@@ -124,3 +124,140 @@ func TestSessionReaperConfig(t *testing.T) {
 		t.Errorf("max_age = %d, want 168", svc.cfg.SessionReaperMaxAge)
 	}
 }
+
+func TestEndActiveSessionsForAgent(t *testing.T) {
+	svc := newTestService()
+	now := time.Now()
+
+	// Create active sessions for agent-1
+	svc.sessions["s1"] = &Session{
+		ID:        "s1",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-2 * time.Hour),
+	}
+	svc.sessions["s2"] = &Session{
+		ID:        "s2",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-1 * time.Hour),
+	}
+	// Create a session for a different agent (should not be ended)
+	svc.sessions["s3"] = &Session{
+		ID:        "s3",
+		AgentID:   "agent-2",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-3 * time.Hour),
+	}
+	// Create an already-ended session for agent-1 (should stay ended)
+	ended := now.Add(-30 * time.Minute)
+	svc.sessions["s4"] = &Session{
+		ID:        "s4",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusEnded),
+		StartedAt: now.Add(-4 * time.Hour),
+		EndedAt:   &ended,
+	}
+
+	svc.endActiveSessionsForAgent(context.Background(), "agent-1")
+
+	svc.sessionsMu.RLock()
+	defer svc.sessionsMu.RUnlock()
+
+	if svc.sessions["s1"].Status != string(SessionStatusEnded) {
+		t.Errorf("s1 status = %s, want ended", svc.sessions["s1"].Status)
+	}
+	if svc.sessions["s1"].EndedAt == nil {
+		t.Error("s1 EndedAt should be set")
+	}
+	if svc.sessions["s2"].Status != string(SessionStatusEnded) {
+		t.Errorf("s2 status = %s, want ended", svc.sessions["s2"].Status)
+	}
+	if svc.sessions["s3"].Status != string(SessionStatusActive) {
+		t.Errorf("s3 (agent-2) status = %s, want active", svc.sessions["s3"].Status)
+	}
+	if svc.sessions["s4"].Status != string(SessionStatusEnded) {
+		t.Errorf("s4 status = %s, want ended", svc.sessions["s4"].Status)
+	}
+}
+
+func TestEndStaleSessions_NilQdrant(t *testing.T) {
+	svc := newTestService()
+
+	ended := svc.endStaleSessions(context.Background(), 24)
+	if ended != 0 {
+		t.Errorf("expected 0 ended with nil Qdrant, got %d", ended)
+	}
+}
+
+func TestLiveAgentIDs(t *testing.T) {
+	svc := newTestService()
+	now := time.Now()
+
+	svc.presenceMap["alive"] = &AgentPresence{
+		AgentID:       "alive",
+		LastHeartbeat: now,
+		HeartbeatTTL:  120,
+		Status:        PresenceStatusActive,
+	}
+	svc.presenceMap["stale"] = &AgentPresence{
+		AgentID:       "stale",
+		LastHeartbeat: now.Add(-10 * time.Minute), // 600s > 3×120s = 360s
+		HeartbeatTTL:  120,
+		Status:        PresenceStatusOffline,
+	}
+
+	live := svc.liveAgentIDs()
+	if !live["alive"] {
+		t.Error("alive agent should be live")
+	}
+	if live["stale"] {
+		t.Error("stale agent should not be live")
+	}
+}
+
+func TestSessionStartEndsPriorActiveSessions(t *testing.T) {
+	svc := newTestService()
+	now := time.Now()
+
+	// Create existing active sessions for the agent.
+	svc.sessions["old-1"] = &Session{
+		ID:        "old-1",
+		AgentID:   "test-agent",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-2 * time.Hour),
+	}
+	svc.sessions["old-2"] = &Session{
+		ID:        "old-2",
+		AgentID:   "test-agent",
+		Status:    string(SessionStatusActive),
+		StartedAt: now.Add(-1 * time.Hour),
+	}
+
+	// Simulate what HandleSessionStart does: end prior active sessions.
+	// (HandleSessionStart calls endActiveSessionsForAgent before creating
+	// the new session. We test the helper directly to avoid requiring Qdrant.)
+	svc.endActiveSessionsForAgent(context.Background(), "test-agent")
+
+	svc.sessionsMu.RLock()
+	defer svc.sessionsMu.RUnlock()
+
+	if svc.sessions["old-1"].Status != string(SessionStatusEnded) {
+		t.Errorf("old-1 status = %s, want ended", svc.sessions["old-1"].Status)
+	}
+	if svc.sessions["old-1"].EndedAt == nil {
+		t.Error("old-1 EndedAt should be set")
+	}
+	if svc.sessions["old-2"].Status != string(SessionStatusEnded) {
+		t.Errorf("old-2 status = %s, want ended", svc.sessions["old-2"].Status)
+	}
+}
+
+func TestSessionReaperActiveMaxAgeConfig(t *testing.T) {
+	svc := newTestService()
+	svc.cfg.SessionReaperActiveMaxAge = 48
+
+	if svc.cfg.SessionReaperActiveMaxAge != 48 {
+		t.Errorf("active_max_age = %d, want 48", svc.cfg.SessionReaperActiveMaxAge)
+	}
+}

@@ -381,6 +381,8 @@ func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 				s.logger.Warn("failed to delete expired presence from Qdrant", "agent_id", agentID, "error", err)
 			}
 		}
+		// End any active sessions for this agent so they don't linger forever.
+		s.endActiveSessionsForAgent(ctx, agentID)
 	}
 }
 
