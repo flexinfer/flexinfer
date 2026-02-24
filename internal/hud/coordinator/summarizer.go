@@ -73,15 +73,19 @@ func (s *Summarizer) summarizeFromEntries(ctx context.Context, sessionID string,
 	}
 	raw, err := s.client.CompleteSimple(ctx, model, promptSessionSummarize, userMsg, s.config.SummarizerMaxTokens)
 	if err != nil {
-		// Fallback: extractive summary.
-		return s.extractiveFallback(sessionID, entries), nil
+		// Fallback: extractive summary — still store so we don't retry.
+		fallback := s.extractiveFallback(sessionID, entries)
+		s.storeSummary(sessionID, fallback)
+		return fallback, nil
 	}
 
 	// Parse the JSON response.
 	result, err := parseSummaryResponse(raw)
 	if err != nil {
 		s.logger.Warn("failed to parse LLM summary, using extractive fallback", "error", err)
-		return s.extractiveFallback(sessionID, entries), nil
+		fallback := s.extractiveFallback(sessionID, entries)
+		s.storeSummary(sessionID, fallback)
+		return fallback, nil
 	}
 	result.SessionID = sessionID
 
@@ -243,7 +247,12 @@ func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult
 	title := "Session Summary: " + sessionID
 	content := summaryContent(result)
 
-	if err := s.agent.ContextAdd(sessionID, []map[string]any{
+	// Skip the context entry store if sessionID is empty — the MCP tool
+	// requires it and would error. Memory store and summarized-set update
+	// still proceed so the sweep loop doesn't retry.
+	if sessionID == "" {
+		s.logger.Debug("storeSummary: skipping context entry for empty session ID")
+	} else if err := s.agent.ContextAdd(sessionID, []map[string]any{
 		{
 			"entry_type": "summary",
 			"title":      title,
