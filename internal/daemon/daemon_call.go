@@ -18,6 +18,7 @@ type callParams struct {
 	AgentID   string          `json:"agent_id,omitempty"`   // Agent identity for RBAC
 	AgentType string          `json:"agent_type,omitempty"` // Agent type for RBAC
 	SessionID string          `json:"session_id,omitempty"` // Proxy session lease ID
+	Timeout   string          `json:"_timeout,omitempty"`   // RPC timeout hint (Go duration string)
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {

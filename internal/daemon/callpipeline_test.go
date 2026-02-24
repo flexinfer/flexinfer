@@ -2317,3 +2317,179 @@ func TestHandleCall_StageBoundaryAuditRegression(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveToolCallTimeout(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
+
+	tests := []struct {
+		name string
+		p    callParams
+		want time.Duration
+	}{
+		{
+			name: "explicit _timeout field",
+			p:    callParams{Method: "tools/call", Timeout: "5m"},
+			want: 5 * time.Minute,
+		},
+		{
+			name: "explicit _timeout capped at max",
+			p:    callParams{Method: "tools/call", Timeout: "30m"},
+			want: maxDaemonToolRPCTimeout,
+		},
+		{
+			name: "explicit _timeout invalid falls through to default",
+			p:    callParams{Method: "tools/call", Timeout: "garbage"},
+			want: defaultDaemonToolRPCTimeout,
+		},
+		{
+			name: "explicit _timeout zero falls through to default",
+			p:    callParams{Method: "tools/call", Timeout: "0s"},
+			want: defaultDaemonToolRPCTimeout,
+		},
+		{
+			name: "auto-derive timeout_seconds from arguments",
+			p: callParams{
+				Method:    "tools/call",
+				Arguments: json.RawMessage(`{"timeout_seconds": 600}`),
+			},
+			want: 600*time.Second + autoDeriveDaemonTimeoutBuffer,
+		},
+		{
+			name: "auto-derive timeoutSeconds from arguments",
+			p: callParams{
+				Method:    "tools/call",
+				Arguments: json.RawMessage(`{"timeoutSeconds": 300}`),
+			},
+			want: 300*time.Second + autoDeriveDaemonTimeoutBuffer,
+		},
+		{
+			name: "auto-derive Go duration string from arguments",
+			p: callParams{
+				Method:    "tools/call",
+				Arguments: json.RawMessage(`{"timeout": "10m"}`),
+			},
+			want: 10*time.Minute + autoDeriveDaemonTimeoutBuffer,
+		},
+		{
+			name: "auto-derive capped at max",
+			p: callParams{
+				Method:    "tools/call",
+				Arguments: json.RawMessage(`{"timeout_seconds": 3600}`),
+			},
+			want: maxDaemonToolRPCTimeout,
+		},
+		{
+			name: "no hint returns default",
+			p:    callParams{Method: "tools/call"},
+			want: defaultDaemonToolRPCTimeout,
+		},
+		{
+			name: "explicit _timeout beats auto-derived",
+			p: callParams{
+				Method:    "tools/call",
+				Timeout:   "3m",
+				Arguments: json.RawMessage(`{"timeout_seconds": 600}`),
+			},
+			want: 3 * time.Minute,
+		},
+		{
+			name: "non-tool method uses standard timeout",
+			p:    callParams{Method: "loom/status"},
+			want: defaultDaemonControlRPCTimeout,
+		},
+		{
+			name: "empty method defaults to tools/call path",
+			p:    callParams{},
+			want: defaultDaemonToolRPCTimeout,
+		},
+		{
+			name: "auto-derive from nested params with arguments",
+			p: callParams{
+				Method: "tools/call",
+				Params: json.RawMessage(`{"name":"poll_pipeline","arguments":{"timeout_seconds":120}}`),
+			},
+			want: 120*time.Second + autoDeriveDaemonTimeoutBuffer,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveToolCallTimeout(tc.p)
+			if got != tc.want {
+				t.Fatalf("resolveToolCallTimeout() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeriveTimeoutFromArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		args json.RawMessage
+		want time.Duration
+	}{
+		{
+			name: "empty args",
+			args: nil,
+			want: 0,
+		},
+		{
+			name: "negative value",
+			args: json.RawMessage(`{"timeout_seconds": -10}`),
+			want: 0,
+		},
+		{
+			name: "zero value",
+			args: json.RawMessage(`{"timeout_seconds": 0}`),
+			want: 0,
+		},
+		{
+			name: "invalid json",
+			args: json.RawMessage(`{bad`),
+			want: 0,
+		},
+		{
+			name: "timeout as numeric seconds",
+			args: json.RawMessage(`{"timeout": 120}`),
+			want: 120 * time.Second,
+		},
+		{
+			name: "nested arguments",
+			args: json.RawMessage(`{"arguments":{"timeoutSeconds":180}}`),
+			want: 180 * time.Second,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveTimeoutFromArguments(tc.args)
+			if got != tc.want {
+				t.Fatalf("deriveTimeoutFromArguments() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClampTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		d        time.Duration
+		min, max time.Duration
+		want     time.Duration
+	}{
+		{"below min", 10 * time.Second, 30 * time.Second, 5 * time.Minute, 30 * time.Second},
+		{"above max", 20 * time.Minute, 30 * time.Second, 15 * time.Minute, 15 * time.Minute},
+		{"in range", 5 * time.Minute, 30 * time.Second, 15 * time.Minute, 5 * time.Minute},
+		{"equal to min", 30 * time.Second, 30 * time.Second, 15 * time.Minute, 30 * time.Second},
+		{"equal to max", 15 * time.Minute, 30 * time.Second, 15 * time.Minute, 15 * time.Minute},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clampTimeout(tc.d, tc.min, tc.max)
+			if got != tc.want {
+				t.Fatalf("clampTimeout(%v, %v, %v) = %v, want %v", tc.d, tc.min, tc.max, got, tc.want)
+			}
+		})
+	}
+}

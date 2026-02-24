@@ -61,6 +61,8 @@ const (
 	defaultProxyControlRPCTimeout = 30 * time.Second
 	defaultProxyToolRPCTimeout    = 60 * time.Second
 	defaultProxyInitRPCTimeout    = 10 * time.Second
+	maxProxyToolRPCTimeout        = 15 * time.Minute
+	autoProxyTimeoutBuffer        = 60 * time.Second
 )
 
 // proxyAutostartCooldown is the minimum interval between daemon autostart
@@ -473,6 +475,9 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	}
 	paramsJSON, _ := json.Marshal(toolCallParams)
 
+	// Derive tool-level timeout from arguments for long-running tools.
+	toolTimeout := proxyDeriveTimeoutFromArguments(params.Arguments)
+
 	callPayload := map[string]any{
 		"server":    serverName,
 		"tool":      toolName,
@@ -481,12 +486,15 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 		"arguments": params.Arguments,
 		"agent_id":  resolvedAgentID,
 	}
+	if toolTimeout > 0 {
+		callPayload["_timeout"] = toolTimeout.String()
+	}
 	if proxySessionID != "" && !proxySessionDisabled {
 		callPayload["session_id"] = proxySessionID
 	}
 	callReq, _ := mcp.NewRequest(msg.ID, "loom/call", callPayload)
 
-	resp, err := proxyDaemonRoundTrip(ctx, daemon, callReq, "tools/call")
+	resp, err := proxyDaemonRoundTripWithTimeout(ctx, daemon, callReq, "tools/call", toolTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -949,6 +957,90 @@ func proxyDaemonRoundTrip(ctx context.Context, daemon mcp.Transport, req *mcp.Me
 		return nil, err
 	}
 	return proxyRPCRecv(ctx, daemon, operation)
+}
+
+// proxyDaemonRoundTripWithTimeout is like proxyDaemonRoundTrip but uses an
+// extended timeout when the tool declares a long execution window. The RPC
+// timeout is max(default, toolTimeout+buffer) capped at maxProxyToolRPCTimeout.
+func proxyDaemonRoundTripWithTimeout(ctx context.Context, daemon mcp.Transport, req *mcp.Message, operation string, toolTimeout time.Duration) (*mcp.Message, error) {
+	if toolTimeout <= 0 {
+		return proxyDaemonRoundTrip(ctx, daemon, req, operation)
+	}
+
+	base := proxyRPCTimeoutForOperation(operation)
+	extended := toolTimeout + autoProxyTimeoutBuffer
+	timeout := extended
+	if timeout < base {
+		timeout = base
+	}
+	if timeout > maxProxyToolRPCTimeout {
+		timeout = maxProxyToolRPCTimeout
+	}
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, timeout)
+	err := daemon.Send(sendCtx, req)
+	sendCancel()
+	if err != nil {
+		return nil, proxyRPCPhaseError(operation, "send", timeout, err)
+	}
+
+	recvCtx, recvCancel := context.WithTimeout(ctx, timeout)
+	resp, recvErr := daemon.Recv(recvCtx)
+	recvCancel()
+	if recvErr != nil {
+		return nil, proxyRPCPhaseError(operation, "recv", timeout, recvErr)
+	}
+	return resp, nil
+}
+
+// proxyDeriveTimeoutFromArguments inspects well-known argument fields to infer
+// a tool-level timeout from the tool call arguments. Returns 0 if no hint found.
+func proxyDeriveTimeoutFromArguments(args json.RawMessage) time.Duration {
+	if len(args) == 0 {
+		return 0
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(args, &m); err != nil {
+		return 0
+	}
+
+	// timeout_seconds (float64 → seconds): mcp-gitlab, mcp-agent-context
+	if v, ok := m["timeout_seconds"]; ok {
+		if d := proxyParseSecondsDuration(v); d > 0 {
+			return d
+		}
+	}
+
+	// timeoutSeconds (float64 → seconds): mcp-k8s-ops, mcp-docker
+	if v, ok := m["timeoutSeconds"]; ok {
+		if d := proxyParseSecondsDuration(v); d > 0 {
+			return d
+		}
+	}
+
+	// timeout (Go duration string or numeric seconds): mcp-devbox
+	if v, ok := m["timeout"]; ok {
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			if d, err := time.ParseDuration(s); err == nil && d > 0 {
+				return d
+			}
+		}
+		if d := proxyParseSecondsDuration(v); d > 0 {
+			return d
+		}
+	}
+
+	return 0
+}
+
+func proxyParseSecondsDuration(raw json.RawMessage) time.Duration {
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil && f > 0 {
+		return time.Duration(f * float64(time.Second))
+	}
+	return 0
 }
 
 func proxyRPCSend(ctx context.Context, transport mcp.Transport, msg *mcp.Message, operation string) error {
