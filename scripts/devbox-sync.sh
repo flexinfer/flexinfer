@@ -15,6 +15,8 @@ NFS_HOST="cblevins@192.168.50.151"
 NFS_PATH="/srv/nfs/devbox-workspace"
 WORKSPACE="${HOME}/workspace"
 
+RSYNC_OPTS=(-rlpgoDz --omit-dir-times)
+
 RSYNC_EXCLUDES=(
   --exclude='.git'
   --exclude='node_modules'
@@ -26,11 +28,14 @@ RSYNC_EXCLUDES=(
   --exclude='.mypy_cache'
   --exclude='.loom'
   --exclude='.zed'
+  --exclude='.build/'
+  --exclude='*.pyc'
+  --exclude='.DS_Store'
 )
 
 sync_full() {
   echo "Syncing full workspace to ${NFS_HOST}:${NFS_PATH}..."
-  rsync -az --delete "${RSYNC_EXCLUDES[@]}" "${WORKSPACE}/" "${NFS_HOST}:${NFS_PATH}/"
+  rsync "${RSYNC_OPTS[@]}" --delete "${RSYNC_EXCLUDES[@]}" "${WORKSPACE}/" "${NFS_HOST}:${NFS_PATH}/"
   echo "Done."
 }
 
@@ -51,7 +56,7 @@ sync_project() {
   fi
 
   echo "Syncing ${project} to ${dst}..."
-  rsync -az "${RSYNC_EXCLUDES[@]}" "${src}" "${dst}"
+  rsync "${RSYNC_OPTS[@]}" "${RSYNC_EXCLUDES[@]}" "${src}" "${dst}"
   echo "Done."
 }
 
@@ -70,7 +75,7 @@ watch_mode() {
     --exclude='vendor/' \
     "${WORKSPACE}" | while read -r _; do
     echo "[$(date +%H:%M:%S)] Change detected, syncing..."
-    rsync -az "${RSYNC_EXCLUDES[@]}" "${WORKSPACE}/" "${NFS_HOST}:${NFS_PATH}/" 2>/dev/null
+    rsync "${RSYNC_OPTS[@]}" --delete "${RSYNC_EXCLUDES[@]}" "${WORKSPACE}/" "${NFS_HOST}:${NFS_PATH}/" 2>/dev/null
     echo "[$(date +%H:%M:%S)] Sync complete."
   done
 }

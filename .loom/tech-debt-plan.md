@@ -75,11 +75,11 @@
 
 | Debt ID | Backlog ID | Owner | Wave | Status |
 |---|---|---|---|---|
-| DEBT-016 | TD-PIPELINE-01 | daemon runtime | Wave 1 | active (roadmap #20) |
+| DEBT-016 | TD-PIPELINE-01 | daemon runtime | Wave 1 | **done** (roadmap #20) |
 | DEBT-014 | TD-CLI-01 | CLI | Wave 1 | pending |
-| DEBT-017 | TD-DEVBOX-01 | devbox | Wave 1 | pending (roadmap #23) |
+| DEBT-017 | TD-DEVBOX-01 | devbox | Wave 1 | **done** (roadmap #23) |
 | DEBT-019 | TD-CONFIG-01 | cross-cutting | Wave 1 | pending |
-| DEBT-020 | TD-VALIDATE-01 | pkg/validate | Wave 1 | pending |
+| DEBT-020 | TD-VALIDATE-01 | pkg/validate | Wave 1 | **done** |
 | DEBT-015 | TD-AGENT-01 | CLI + HUD | Wave 2 | pending (roadmap #21) |
 | DEBT-018 | TD-COVERAGE-01 | cross-cutting | Wave 2 | pending (roadmap #2) |
 | DEBT-022 | TD-QDRANT-01 | agentcontext | Wave 2 | pending |
