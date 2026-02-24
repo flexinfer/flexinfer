@@ -18,10 +18,10 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 | Milestone | Description | Status |
 |---|---|---|
 | M0 | Contract + security architecture freeze | In progress |
-| M1 | Backend mobile auth + API hardening | Not started |
+| M1 | Backend mobile auth + API hardening | Complete |
 | M2 | iOS/iPad app scaffold + monitoring UI | In progress |
-| M3 | Session create/end controls | Not started |
-| M4 | Notifications + operational polish | Not started |
+| M3 | Session create/end controls | Complete |
+| M4 | Notifications + operational polish | Complete |
 | M5 | Beta rollout + telemetry tuning | Not started |
 
 ## M0: Contract and Threat Model

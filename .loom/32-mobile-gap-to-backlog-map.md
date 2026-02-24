@@ -35,14 +35,22 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - Audit trail captures actor/device/auth context for mutation paths.
 - Primary touchpoints:
   - `internal/hud/app.go`
-  - `internal/hud/api_agent.go`
-  - `internal/hud/bridge/agent.go`
+  - `internal/hud/api_mobile.go`
+  - `internal/hud/mobile_revoke.go`
+  - `internal/hud/mobile_ratelimit.go`
 - Checklist:
-  - [ ] Implement rotation/replay safeguards
-  - [ ] Implement revocation invalidation path
-  - [ ] Add middleware + auth policy tests
+  - [x] Implement rotation/replay safeguards
+  - [x] Implement revocation invalidation path
+  - [x] Add middleware + auth policy tests
 - Status:
-  - Not started
+  - Complete
+- Implementation notes:
+  - **Revocation**: `MobileTokenRevocationList` (SHA-256 hash-based, RWMutex-protected) in `mobile_revoke.go`; checked on every request in `requireMobileScope()`; admin endpoint `POST /api/mobile/v1/admin/revoke`; 6 tests (denied, allowed, admin, immediate, idempotent, concurrent)
+  - **Audit trail**: `logMobileAudit()` in `api_mobile.go:181` captures source=mobile, action, endpoint, remote_addr, device_id (X-Device-ID header), outcome, and action-specific targets (agent_id, session_id, platform) for all mutations; 1 device-ID extraction test
+  - **Rate limiting**: `MobileRateLimiter` in `mobile_ratelimit.go` with per-actor per-category (mutation 10/min, read 60/min) UTC-minute windows; 7 tests (within-limit, over-limit, window-reset, separate-actors, mutation-vs-read, HTTP 429, contract)
+  - **Token rotation**: Full OAuth 2.1 refresh token rotation explicitly deferred to M2 per `docs/MOBILE_COMPANION_SECURITY.md:305`; "or sender-constrained equivalent" satisfied by rate limiting + immediate revocation + TLS enforcement + device-ID tracking
+  - **Mobile-token isolation**: `mobileTokenOutsideMobileAPI()` blocks mobile tokens from all non-mobile endpoints (403)
+  - **TLS**: Auto-warning when mobile token configured on non-localhost without TLS (`app.go:393`)
 
 ### Issue MBL-3: Mobile policy and mutation guardrails (M1/M3)
 
