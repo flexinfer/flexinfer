@@ -616,11 +616,12 @@ def warmup_inference():
     sys.stdout.flush()
     try:
         gen = torch.Generator(device="cpu").manual_seed(42)
-        kw = {"prompt": "warmup", "num_inference_steps": 1,
+        kw = {"prompt": "warmup", "num_inference_steps": 2,
               "generator": gen, "height": 64, "width": 64}
         if PIPELINE_MODE == "inpainting":
             kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
             kw["mask_image"] = Image.new("L", (64, 64), 255)
+            kw["strength"] = 0.5
         elif PIPELINE_MODE == "instruct":
             kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
         with torch.no_grad():
