@@ -85,6 +85,70 @@ func TestDiffusersBackendEnv(t *testing.T) {
 	}
 }
 
+func TestDiffusersStartupProbe(t *testing.T) {
+	b := &DiffusersBackend{}
+	probe := b.StartupProbe()
+	if probe == nil {
+		t.Fatal("StartupProbe() returned nil")
+	}
+	if probe.PeriodSeconds != 2 {
+		t.Errorf("PeriodSeconds = %d, want 2", probe.PeriodSeconds)
+	}
+	if probe.InitialDelaySeconds > 5 {
+		t.Errorf("InitialDelaySeconds = %d, want <= 5", probe.InitialDelaySeconds)
+	}
+	if probe.ProbeHandler.HTTPGet == nil {
+		t.Fatal("expected HTTPGet probe handler")
+	}
+	if probe.ProbeHandler.HTTPGet.Path != "/health" {
+		t.Errorf("HTTPGet.Path = %q, want /health", probe.ProbeHandler.HTTPGet.Path)
+	}
+	// FailureThreshold should cover the startup timeout (180s / 2s = 90)
+	if probe.FailureThreshold < 30 {
+		t.Errorf("FailureThreshold = %d, want >= 30", probe.FailureThreshold)
+	}
+}
+
+func TestDiffusersReadinessNoLargeDelay(t *testing.T) {
+	b := &DiffusersBackend{}
+	probe := b.ReadinessProbe()
+	if probe == nil {
+		t.Fatal("ReadinessProbe() returned nil")
+	}
+	// With a startup probe handling cold start, readiness doesn't need a large initial delay.
+	if probe.InitialDelaySeconds > 5 {
+		t.Errorf("InitialDelaySeconds = %d, want <= 5 (startup probe handles cold start)", probe.InitialDelaySeconds)
+	}
+}
+
+func TestDiffusersSkipWarmupEnv(t *testing.T) {
+	b := &DiffusersBackend{}
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	// With skipWarmup set
+	spec := &ModelSpec{Model: "test", Config: map[string]interface{}{"skipWarmup": "1"}}
+	envs := b.Env(spec)
+	if v, ok := findEnv(envs, "SKIP_WARMUP"); !ok {
+		t.Error("expected SKIP_WARMUP env var when skipWarmup config is set")
+	} else if v != "1" {
+		t.Errorf("SKIP_WARMUP = %q, want 1", v)
+	}
+
+	// Without skipWarmup
+	spec2 := &ModelSpec{Model: "test", Config: map[string]interface{}{}}
+	envs2 := b.Env(spec2)
+	if _, ok := findEnv(envs2, "SKIP_WARMUP"); ok {
+		t.Error("expected SKIP_WARMUP to be absent when skipWarmup is not configured")
+	}
+}
+
 func TestDiffusersBackendImage(t *testing.T) {
 	b := &DiffusersBackend{}
 

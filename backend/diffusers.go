@@ -123,6 +123,11 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "DEFAULT_IMAGE_GUIDANCE_SCALE", Value: imgScale})
 	}
 
+	// Warmup inference control: skip the startup warmup pass if requested.
+	if skip := spec.ConfigString("skipWarmup", ""); skip != "" {
+		env = append(env, corev1.EnvVar{Name: "SKIP_WARMUP", Value: skip})
+	}
+
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
@@ -144,7 +149,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 }
 
 func (b *DiffusersBackend) ReadinessProbe() *corev1.Probe {
-	return HTTPReadinessProbe("/health", 8000, 30, 10, 5)
+	// InitialDelay=0: startup probe handles cold start; readiness only runs after startup succeeds.
+	return HTTPReadinessProbe("/health", 8000, 0, 5, 3)
+}
+
+func (b *DiffusersBackend) StartupProbe() *corev1.Probe {
+	return HTTPStartupProbe("/health", 8000, b.StartupTimeout())
 }
 
 func (b *DiffusersBackend) StartupTimeout() time.Duration {

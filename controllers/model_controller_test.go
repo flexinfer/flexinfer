@@ -2375,3 +2375,127 @@ func TestResolveLocalCachePath_Custom(t *testing.T) {
 		t.Fatalf("resolveLocalCachePath() = %q, want %q", got, want)
 	}
 }
+
+func TestEnsureDeploymentStartupProbe(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	b, ok := backend.Get("diffusers")
+	if !ok {
+		t.Fatal("diffusers backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-diffusers",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stabilityai/sdxl-turbo",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorAMD, "gfx1100", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch created deployment: %v", err)
+	}
+
+	containers := created.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		t.Fatal("expected at least 1 container")
+	}
+	c := containers[0]
+
+	// Diffusers backend must have a StartupProbe
+	if c.StartupProbe == nil {
+		t.Fatal("StartupProbe is nil, want non-nil for diffusers backend")
+	}
+	if c.StartupProbe.PeriodSeconds > 5 {
+		t.Errorf("StartupProbe.PeriodSeconds = %d, want <= 5", c.StartupProbe.PeriodSeconds)
+	}
+
+	// ReadinessProbe should have a small InitialDelaySeconds (startup probe handles cold start)
+	if c.ReadinessProbe == nil {
+		t.Fatal("ReadinessProbe is nil")
+	}
+	if c.ReadinessProbe.InitialDelaySeconds > 5 {
+		t.Errorf("ReadinessProbe.InitialDelaySeconds = %d, want <= 5", c.ReadinessProbe.InitialDelaySeconds)
+	}
+}
+
+func TestHandleSharedGPURequeue(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://test/model",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared: "test-group",
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		WithRuntimeObjects(model).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	ctx := context.Background()
+	obj := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(model), obj); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+
+	result, err := r.handleSharedGPU(ctx, obj)
+	if err != nil {
+		t.Fatalf("handleSharedGPU() error: %v", err)
+	}
+
+	// Requeue interval should be <= 3s (tightened from 10s)
+	if result.RequeueAfter > 3*time.Second {
+		t.Errorf("RequeueAfter = %v, want <= 3s", result.RequeueAfter)
+	}
+}

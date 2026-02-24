@@ -704,6 +704,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	args := b.Args(spec)
 	env := b.Env(spec)
 	probe := b.ReadinessProbe()
+	startupProbe := b.StartupProbe()
 
 	// Append KV-cache tuning args if the backend supports it.
 	if model.Spec.KVCache != nil {
@@ -792,6 +793,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		},
 		Resources:      resources,
 		ReadinessProbe: probe,
+		StartupProbe:   startupProbe,
 	}
 
 	// Add volume mounts if backend needs volume
@@ -1987,7 +1989,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 
 	activeModel := chooseSharedGroupLeader(groupModels, time.Now())
 	if activeModel == nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
 	// Update this model's shared group status
@@ -2025,14 +2027,14 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 
 	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
 	if err := r.Status().Update(ctx, model); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 }
 
 // updateStatusFromDeployment updates the Model status based on the deployment state.

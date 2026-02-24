@@ -405,6 +405,47 @@ func TestRegisterAliasConflictDoesNotPartiallyRegister(t *testing.T) {
 	}
 }
 
+func TestBackendStartupProbes(t *testing.T) {
+	// Backends that return a non-nil StartupProbe must have reasonable settings:
+	// - PeriodSeconds <= 5 (aggressive polling during cold start)
+	// - FailureThreshold covers at least their StartupTimeout
+	backends := []string{"diffusers", "vllm-omni"}
+
+	for _, name := range backends {
+		b, ok := Get(name)
+		if !ok {
+			t.Errorf("Backend %q not found", name)
+			continue
+		}
+		probe := b.StartupProbe()
+		if probe == nil {
+			t.Errorf("Backend %q StartupProbe() = nil, want non-nil", name)
+			continue
+		}
+		if probe.PeriodSeconds > 5 {
+			t.Errorf("Backend %q StartupProbe PeriodSeconds = %d, want <= 5", name, probe.PeriodSeconds)
+		}
+		// FailureThreshold * PeriodSeconds should cover the startup timeout
+		coverageSeconds := int64(probe.FailureThreshold) * int64(probe.PeriodSeconds)
+		timeoutSeconds := int64(b.StartupTimeout().Seconds())
+		if coverageSeconds < timeoutSeconds {
+			t.Errorf("Backend %q StartupProbe coverage %ds < StartupTimeout %ds",
+				name, coverageSeconds, timeoutSeconds)
+		}
+	}
+
+	// Backends that return nil are fine (they rely on readiness only)
+	for _, name := range []string{"ollama", "llamacpp"} {
+		b, ok := Get(name)
+		if !ok {
+			continue
+		}
+		if probe := b.StartupProbe(); probe != nil {
+			t.Errorf("Backend %q StartupProbe() should be nil (uses default), got non-nil", name)
+		}
+	}
+}
+
 func TestMustRegisterCapturesErrorWithoutPanic(t *testing.T) {
 	mu.Lock()
 	previousErr := registrationErr

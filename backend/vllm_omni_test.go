@@ -31,6 +31,31 @@ func TestVLLMOmniBackendEnv_DeviceIsolation(t *testing.T) {
 	}
 }
 
+func TestVLLMOmniStartupProbe(t *testing.T) {
+	b := &VLLMOmniBackend{}
+	probe := b.StartupProbe()
+	if probe == nil {
+		t.Fatal("StartupProbe() returned nil")
+	}
+	if probe.PeriodSeconds != 2 {
+		t.Errorf("PeriodSeconds = %d, want 2", probe.PeriodSeconds)
+	}
+	if probe.InitialDelaySeconds > 5 {
+		t.Errorf("InitialDelaySeconds = %d, want <= 5", probe.InitialDelaySeconds)
+	}
+}
+
+func TestVLLMOmniReadinessNoLargeDelay(t *testing.T) {
+	b := &VLLMOmniBackend{}
+	probe := b.ReadinessProbe()
+	if probe == nil {
+		t.Fatal("ReadinessProbe() returned nil")
+	}
+	if probe.InitialDelaySeconds > 5 {
+		t.Errorf("InitialDelaySeconds = %d, want <= 5", probe.InitialDelaySeconds)
+	}
+}
+
 func TestVLLMOmniBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	b := &VLLMOmniBackend{}
 

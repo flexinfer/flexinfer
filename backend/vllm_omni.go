@@ -80,7 +80,12 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 }
 
 func (b *VLLMOmniBackend) ReadinessProbe() *corev1.Probe {
-	return HTTPReadinessProbe("/health", 8000, 30, 10, 5)
+	// InitialDelay=0: startup probe handles cold start; readiness only runs after startup succeeds.
+	return HTTPReadinessProbe("/health", 8000, 0, 5, 3)
+}
+
+func (b *VLLMOmniBackend) StartupProbe() *corev1.Probe {
+	return HTTPStartupProbe("/health", 8000, b.StartupTimeout())
 }
 
 func (b *VLLMOmniBackend) StartupTimeout() time.Duration {

@@ -160,6 +160,12 @@ type Backend interface {
 	// Returns nil to disable liveness probing.
 	LivenessProbe() *corev1.Probe
 
+	// StartupProbe returns the startup probe configuration.
+	// Startup probes replace the readiness probe during cold start, allowing
+	// aggressive polling (e.g., every 2s) without a large InitialDelaySeconds.
+	// Returns nil to disable startup probing.
+	StartupProbe() *corev1.Probe
+
 	// StartupTimeout returns the maximum time to wait for the backend to start.
 	// This is used for cold start timeout defaults.
 	StartupTimeout() time.Duration
@@ -247,6 +253,11 @@ func (b *BaseBackend) Command() []string {
 
 // LivenessProbe returns nil (no liveness probe by default).
 func (b *BaseBackend) LivenessProbe() *corev1.Probe {
+	return nil
+}
+
+// StartupProbe returns nil (no startup probe by default).
+func (b *BaseBackend) StartupProbe() *corev1.Probe {
 	return nil
 }
 
@@ -387,5 +398,28 @@ func TCPReadinessProbe(port int32, initialDelay, period, timeout int32) *corev1.
 		PeriodSeconds:       period,
 		TimeoutSeconds:      timeout,
 		FailureThreshold:    90, // Allow 15 minutes (90 * 10s) for large models
+	}
+}
+
+// HTTPStartupProbe creates an HTTP startup probe that polls aggressively during
+// cold start. Once the startup probe succeeds, K8s switches to the readiness
+// probe. This eliminates the need for large InitialDelaySeconds on readiness.
+func HTTPStartupProbe(path string, port int32, startupTimeout time.Duration) *corev1.Probe {
+	period := int32(2)
+	failureThreshold := int32(startupTimeout.Seconds()) / period
+	if failureThreshold < 30 {
+		failureThreshold = 30
+	}
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: path,
+				Port: intstr.FromInt32(port),
+			},
+		},
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       period,
+		TimeoutSeconds:      3,
+		FailureThreshold:    failureThreshold,
 	}
 }

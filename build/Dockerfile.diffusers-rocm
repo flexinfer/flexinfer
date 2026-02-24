@@ -461,6 +461,11 @@ def load_pipeline(model_id: str):
             "safety_checker": None,
             "low_cpu_mem_usage": True,
         }
+        # When using fp16, request the fp16 variant of safetensors directly.
+        # This avoids loading fp32 weights and casting, saving load time.
+        # Safe: diffusers 0.25+ falls back to the default variant if fp16 files don't exist.
+        if use_fp16:
+            pipeline_kwargs["variant"] = "fp16"
         if vae is not None:
             pipeline_kwargs["vae"] = vae
 
@@ -598,6 +603,36 @@ def load_pipeline(model_id: str):
     sys.stdout.flush()
     return pipeline
 
+def warmup_inference():
+    """Run tiny dummy inference to compile ROCm GPU kernels (MIOpen/Triton).
+    First inference pays a kernel compilation penalty; absorbing it at startup
+    means the first real request is fast. With a persistent compilation cache,
+    subsequent container starts skip recompilation entirely.
+    """
+    global pipeline
+    if pipeline is None or os.environ.get("SKIP_WARMUP", "0") == "1":
+        return
+    print("Running warmup inference (compiling GPU kernels)...")
+    sys.stdout.flush()
+    try:
+        gen = torch.Generator(device="cpu").manual_seed(42)
+        kw = {"prompt": "warmup", "num_inference_steps": 1,
+              "generator": gen, "height": 64, "width": 64}
+        if PIPELINE_MODE == "inpainting":
+            kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
+            kw["mask_image"] = Image.new("L", (64, 64), 255)
+        elif PIPELINE_MODE == "instruct":
+            kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
+        with torch.no_grad():
+            pipeline(**kw)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        print("Warmup complete")
+    except Exception as e:
+        print(f"Warmup failed (non-fatal): {e}")
+    sys.stdout.flush()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: check GPU and preload model if specified
@@ -605,6 +640,7 @@ async def lifespan(app: FastAPI):
     model_id = os.environ.get("MODEL_ID", os.environ.get("MODEL", ""))
     if model_id:
         load_pipeline(model_id)
+        warmup_inference()
     yield
     # Shutdown
     global pipeline

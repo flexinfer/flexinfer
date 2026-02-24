@@ -182,7 +182,7 @@ func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			// Update metrics before returning
 			r.updateMetrics(gpuGroup, members)
 			// Requeue to check again after cooldown
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.updateStatus(ctx, gpuGroup)
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, r.updateStatus(ctx, gpuGroup)
 		}
 
 		// Perform the swap
@@ -745,7 +745,7 @@ func (r *GPUGroupReconciler) waitForPodTermination(ctx context.Context, md *aiv1
 	pollCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	initialReplicas := int32(0)
