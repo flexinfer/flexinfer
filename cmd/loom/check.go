@@ -10,9 +10,29 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/secrets"
 )
+
+func newCheckCmd(socketPath string) *cobra.Command {
+	var checkJSON bool
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Check Loom configuration and dependencies",
+		Long: `Check Loom configuration, daemon connectivity, and MCP server health.
+
+Reports issues with the registry, missing binaries, and unreachable servers.`,
+		Example: `  loom check
+  loom check --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheck(socketPath, checkJSON)
+		},
+	}
+	cmd.Flags().BoolVar(&checkJSON, "json", false, "Output in JSON format")
+	return cmd
+}
 
 type checkResult struct {
 	Name     string `json:"name"`
