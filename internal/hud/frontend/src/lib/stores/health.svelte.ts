@@ -60,6 +60,7 @@ export interface MergedServer {
   target: string;
   error_message: string;
   tool_count: number;
+  consec_fails: number;
 }
 
 const SPARKLINE_BUFFER_SIZE = 60;
@@ -152,11 +153,12 @@ class HealthStore {
           // tool_count is only available via SSE hud.health snapshots from the monitor.
           // The REST /api/health endpoint doesn't include it, so default to 0 for fallback.
           tool_count: 0,
+          consec_fails: health?.local?.consecFails ?? 0,
         };
       });
 
       const keyFn = (s: MergedServer) => s.name;
-      const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}`;
+      const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}|${s.consec_fails}`;
       if (!arraysEqualByKey(this.servers, merged, keyFn, hashFn)) {
         this.servers = merged;
       }
@@ -236,10 +238,11 @@ class HealthStore {
         target: (entry.target as string) ?? '',
         error_message: (entry.error_message as string) ?? '',
         tool_count: (entry.tool_count as number) ?? 0,
+        consec_fails: (entry.consec_fails as number) ?? 0,
       };
     });
 
-    const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}`;
+    const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}|${s.consec_fails}`;
     if (!arraysEqualById(this.servers, merged, hashFn)) {
       this.servers = merged;
       this.lastUpdated = new Date();

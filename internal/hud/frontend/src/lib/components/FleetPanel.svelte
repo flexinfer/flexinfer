@@ -56,6 +56,7 @@
   let detailSession = $derived(
     detailSessionId ? (fleetStore.sessions ?? []).find(s => s.id === detailSessionId) : null
   );
+  let detailAgent = $derived(detailSession ? agentLookup.get(detailSession.agent_id) : null);
 
   let sessions = $derived(fleetStore.sessions ?? []);
   let tasks = $derived(taskStore.tasks ?? []);
@@ -69,6 +70,35 @@
   );
 
   let recentActivity = $derived(entries.slice(0, 10));
+
+  // Agent lookup for enriching session rows with presence metadata.
+  let agentLookup = $derived.by(() => {
+    const map = new Map();
+    for (const a of fleetStore.agents) {
+      map.set(a.agent_id, a);
+    }
+    return map;
+  });
+
+  // Task priority distribution for stat card.
+  let taskPriorityDist = $derived.by(() => {
+    const dist = { critical: 0, high: 0, medium: 0, low: 0 };
+    let blocked = 0;
+    for (const t of tasks) {
+      const p = t.priority ?? 'medium';
+      if (p in dist) dist[p]++;
+      if (t.status === 'blocked') blocked++;
+    }
+    return { ...dist, blocked };
+  });
+
+  // Graph entity type breakdown (top 3).
+  let graphTopTypes = $derived.by(() => {
+    const types = graphStats?.entity_types ?? {};
+    return Object.entries(types)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+  });
 
   // Infrastructure stats for Fleet overview
   let tunnelCount = $state(0);
@@ -162,6 +192,12 @@
         case 'memory_items':
           cmp = (a.memory_items ?? 0) - (b.memory_items ?? 0);
           break;
+        case 'agent_type':
+          cmp = (agentLookup.get(a.agent_id)?.agent_type ?? '').localeCompare(agentLookup.get(b.agent_id)?.agent_type ?? '');
+          break;
+        case 'branch':
+          cmp = (agentLookup.get(a.agent_id)?.branch ?? '').localeCompare(agentLookup.get(b.agent_id)?.branch ?? '');
+          break;
         default:
           break;
       }
@@ -173,7 +209,9 @@
   const fleetColumns = [
     { key: 'agent', label: 'Agent', sortable: true, width: '130px' },
     { key: 'status', label: 'Status', sortable: true, width: '70px' },
-    { key: 'namespace', label: 'Namespace', sortable: true, width: '200px' },
+    { key: 'agent_type', label: 'Type', sortable: true, width: '80px' },
+    { key: 'namespace', label: 'Namespace', sortable: true, width: '160px' },
+    { key: 'branch', label: 'Branch', sortable: true, width: '120px' },
     { key: 'task_count', label: 'Tasks', sortable: true, width: '60px' },
     { key: 'tokens_used', label: 'Tokens', sortable: true, width: '100px' },
     { key: 'memory_items', label: 'Memory', sortable: true, width: '70px' },
@@ -236,8 +274,15 @@
             <td>
               <StatusDot status={sessionStatus(session)} />
             </td>
+            <td class="text-mono text-muted text-xs">{agentLookup.get(session.agent_id)?.agent_type ?? '---'}</td>
             <td class="text-mono text-muted namespace-cell" title={sanitizeText(session.namespace ?? '---')}>
               {sanitizeText(session.namespace ?? '---')}
+            </td>
+            <td class="text-mono text-muted text-xs branch-cell">
+              {agentLookup.get(session.agent_id)?.branch ?? '---'}
+              {#if agentLookup.get(session.agent_id)?.pr_url}
+                <a href={agentLookup.get(session.agent_id).pr_url} target="_blank" rel="noopener" class="pr-link" title="View PR" onclick={(e) => e.stopPropagation()}>{'\u{1F517}'}</a>
+              {/if}
             </td>
             <td class="text-mono">{session.task_count ?? 0}</td>
             <td class="text-mono token-cell">
@@ -263,6 +308,13 @@
       <div class="stat-card" style="--accent-color: var(--warning)">
         {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
         <div class="metric-label">Tasks</div>
+        {#if tasks.length > 0}
+          <div class="metric-sub">
+            {#if taskPriorityDist.critical > 0}<span class="priority-crit">{taskPriorityDist.critical}c</span>{/if}
+            {#if taskPriorityDist.high > 0}<span class="priority-high">{taskPriorityDist.high}h</span>{/if}
+            {#if taskPriorityDist.blocked > 0}<span class="priority-blocked">{taskPriorityDist.blocked} blocked</span>{/if}
+          </div>
+        {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--accent)">
         {#key totalTokens}<div class="metric-value data-updated">{formatNumber(totalTokens)}</div>{/key}
@@ -279,6 +331,9 @@
       <div class="stat-card" style="--accent-color: var(--tier-long)">
         {#key graphStats.total_entities}<div class="metric-value data-updated">{formatNumber(graphStats.total_entities ?? 0)}</div>{/key}
         <div class="metric-label">Graph Entities</div>
+        {#if graphTopTypes.length > 0}
+          <div class="metric-sub">{graphTopTypes.map(([t, c]) => `${t}:${c}`).join(' · ')}</div>
+        {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--fg-muted)">
         {#key tunnelCount + cacheHitRate}<div class="metric-value data-updated">{tunnelCount}<span class="metric-unit">t</span> · {(cacheHitRate * 100).toFixed(0)}%</div>{/key}
@@ -389,6 +444,30 @@
             <span class="stat-chip-value">{relativeTime(detailSession.started_at)}</span>
             <span class="stat-chip-label">started</span>
           </div>
+          {#if detailAgent?.agent_type}
+            <div class="stat-chip">
+              <span class="stat-chip-value">{detailAgent.agent_type}</span>
+              <span class="stat-chip-label">type</span>
+            </div>
+          {/if}
+          {#if detailAgent?.branch}
+            <div class="stat-chip">
+              <span class="stat-chip-value">{detailAgent.branch}</span>
+              <span class="stat-chip-label">branch</span>
+            </div>
+          {/if}
+          {#if detailAgent?.current_task}
+            <div class="stat-chip">
+              <span class="stat-chip-value">{detailAgent.current_task}</span>
+              <span class="stat-chip-label">current task</span>
+            </div>
+          {/if}
+          {#if detailAgent?.pr_url}
+            <div class="stat-chip">
+              <a href={detailAgent.pr_url} target="_blank" rel="noopener" class="stat-chip-value pr-link">PR</a>
+              <span class="stat-chip-label">pull request</span>
+            </div>
+          {/if}
         </div>
         {#if detailSession.description}
           <div class="detail-description text-sm text-secondary">{sanitizeText(detailSession.description)}</div>
@@ -416,6 +495,12 @@
               <Badge text={sanitizeText(entry.entry_type ?? 'note')} variant={entryVariant(entry.entry_type)} />
             </div>
             <div class="timeline-title">{sanitizeText(entry.title ?? '---')}</div>
+            {#if entry.file_path}
+              <div class="timeline-file text-mono text-xs">
+                {entry.file_path}{#if entry.line_start}:{entry.line_start}{#if entry.line_end && entry.line_end !== entry.line_start}-{entry.line_end}{/if}{/if}
+                {#if entry.token_count}<span class="text-muted"> ({entry.token_count} tok)</span>{/if}
+              </div>
+            {/if}
             {#if entryContent}
               <div class="timeline-body text-sm text-muted">
                 {entryContent.slice(0, 200)}{entryContent.length > 200 ? '...' : ''}
@@ -667,6 +752,49 @@
     font-size: 11px;
     font-weight: 400;
     color: var(--fg-muted);
+  }
+
+  .metric-sub {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .priority-crit { color: var(--error); margin-right: 4px; }
+  .priority-high { color: var(--warning); margin-right: 4px; }
+  .priority-blocked { color: var(--error); opacity: 0.8; }
+
+  .branch-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 120px;
+  }
+
+  .pr-link {
+    font-size: 10px;
+    text-decoration: none;
+    margin-left: 3px;
+    color: var(--accent);
+  }
+
+  .pr-link:hover { opacity: 0.8; }
+
+  .timeline-file {
+    color: var(--fg-secondary);
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-top: 2px;
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Loading bar (for drawer entries) */

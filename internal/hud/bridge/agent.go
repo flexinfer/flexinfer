@@ -115,6 +115,11 @@ type MemoryStatsResult struct {
 	LongTermMemory  MemoryTierStats `json:"long_term_memory"`
 	TotalItems      int             `json:"total_items"`
 	TotalTokens     int             `json:"total_tokens"`
+
+	// Compression stats from the memory hierarchy.
+	CompressionRatio       float64 `json:"compression_ratio"`
+	ItemsAddedLast24h      int     `json:"items_added_last_24h"`
+	ItemsCompressedLast24h int     `json:"items_compressed_last_24h"`
 }
 
 // MemoryItem describes a single memory item.

@@ -34,6 +34,14 @@ type Summarizer struct {
 	// in this process lifetime, preventing re-processing on each sweep.
 	summarizedMu sync.Mutex
 	summarized   map[string]struct{}
+
+	// retryCount tracks failed storeSummary attempts per session to
+	// prevent infinite retries on persistent failures (max 3 attempts).
+	retryCountMu sync.Mutex
+	retryCount   map[string]int
+
+	// metrics is set by the coordinator after construction.
+	metrics *Metrics
 }
 
 // NewSummarizer creates a Summarizer.
@@ -44,6 +52,7 @@ func NewSummarizer(client *FlexInferClient, agent *bridge.AgentBridge, cfg Confi
 		config:     cfg,
 		logger:     logger.With("subsystem", "summarizer"),
 		summarized: make(map[string]struct{}),
+		retryCount: make(map[string]int),
 	}
 }
 
@@ -139,11 +148,16 @@ func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (i
 		}
 
 		if hasSummaryEntry(entries) {
+			// Cache so future poll cycles skip the SessionEntries call.
+			s.summarizedMu.Lock()
+			s.summarized[sess.ID] = struct{}{}
+			s.summarizedMu.Unlock()
 			continue
 		}
 
+		s.logger.Info("summarizing ended session", "session_id", sess.ID, "entry_count", len(entries))
 		if _, err := s.summarizeFromEntries(ctx, sess.ID, entries); err != nil {
-			s.logger.Debug("sweep summarize failed", "session_id", sess.ID, "error", err)
+			s.logger.Warn("sweep summarize failed", "session_id", sess.ID, "error", err)
 			continue
 		}
 		count++
@@ -158,6 +172,9 @@ func (s *Summarizer) SweepEndedSessions(ctx context.Context, maxSessions int) (i
 
 // extractiveFallback produces a simple summary from entry titles.
 func (s *Summarizer) extractiveFallback(sessionID string, entries []bridge.ContextEntryInfo) *SessionSummaryResult {
+	if s.metrics != nil {
+		s.metrics.FallbackSummaries.Inc()
+	}
 	var titles []string
 	for _, e := range entries {
 		if e.Entry.Title != "" {
@@ -247,11 +264,12 @@ func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult
 	title := "Session Summary: " + sessionID
 	content := summaryContent(result)
 
+	contextStored := false
 	// Skip the context entry store if sessionID is empty — the MCP tool
-	// requires it and would error. Memory store and summarized-set update
-	// still proceed so the sweep loop doesn't retry.
+	// requires it and would error.
 	if sessionID == "" {
 		s.logger.Debug("storeSummary: skipping context entry for empty session ID")
+		contextStored = true // Treat empty-ID as success for marking purposes.
 	} else if err := s.agent.ContextAdd(sessionID, []map[string]any{
 		{
 			"entry_type": "summary",
@@ -261,8 +279,11 @@ func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult
 		},
 	}); err != nil {
 		s.logger.Warn("failed to store session summary context entry", "session_id", sessionID, "error", err)
+	} else {
+		contextStored = true
 	}
 
+	// MemoryAdd is best-effort — don't gate summarized status on it.
 	if err := s.agent.MemoryAdd(
 		title,
 		content,
@@ -273,10 +294,32 @@ func (s *Summarizer) storeSummary(sessionID string, result *SessionSummaryResult
 		s.logger.Warn("failed to store session summary memory", "session_id", sessionID, "error", err)
 	}
 
-	// Mark session as summarized so the sweep loop skips it on future cycles.
-	s.summarizedMu.Lock()
-	s.summarized[sessionID] = struct{}{}
-	s.summarizedMu.Unlock()
+	if contextStored {
+		s.summarizedMu.Lock()
+		s.summarized[sessionID] = struct{}{}
+		s.summarizedMu.Unlock()
+	} else {
+		// Track retry count — give up after 3 attempts to prevent infinite retries.
+		s.retryCountMu.Lock()
+		s.retryCount[sessionID]++
+		count := s.retryCount[sessionID]
+		s.retryCountMu.Unlock()
+
+		if count >= 3 {
+			s.summarizedMu.Lock()
+			s.summarized[sessionID] = struct{}{}
+			s.summarizedMu.Unlock()
+			s.logger.Warn("giving up on session summary after 3 attempts", "session_id", sessionID)
+		}
+	}
+
+	// Update metrics if available.
+	if s.metrics != nil {
+		s.summarizedMu.Lock()
+		n := len(s.summarized)
+		s.summarizedMu.Unlock()
+		s.metrics.SummarizedSessions.Set(float64(n))
+	}
 }
 
 func summaryContent(result *SessionSummaryResult) string {

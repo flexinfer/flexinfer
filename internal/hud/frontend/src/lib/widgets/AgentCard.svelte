@@ -69,7 +69,7 @@
   </div>
   <div class="card-subheader">
     <span class="agent-type">{agent.agent_type || 'unknown'}{#if agent.active_files?.length} · {agent.active_files.length} files{/if}</span>
-    <span class="heartbeat-time">{relativeTime(agent.last_heartbeat)}</span>
+    <span class="heartbeat-time">{relativeTime(agent.last_heartbeat)}{#if agent.registered_at} · reg {relativeTime(agent.registered_at)}{/if}</span>
   </div>
 
   <!-- Sparkline: heartbeat frequency -->
@@ -82,6 +82,12 @@
 
   <!-- Details -->
   <div class="card-details">
+    {#if agent.description}
+      <div class="detail-row">
+        <span class="detail-icon">{'\u2139'}</span>
+        <span class="detail-text truncate" title={agent.description}>{agent.description}</span>
+      </div>
+    {/if}
     {#if agent.current_task}
       <div class="detail-row">
         <span class="detail-icon">{'\u2611'}</span>
@@ -109,6 +115,16 @@
             <span class="overlap-more">+{sharedFileAgents.length - 3}</span>
           {/if}
         </span>
+      </div>
+    {/if}
+    {#if agent.active_files?.length > 0}
+      <div class="file-list">
+        {#each agent.active_files.slice(0, 3) as filePath}
+          <span class="file-item text-mono" title={filePath}>{filePath.split('/').slice(-2).join('/')}</span>
+        {/each}
+        {#if agent.active_files.length > 3}
+          <span class="file-more text-muted">+{agent.active_files.length - 3} more</span>
+        {/if}
       </div>
     {/if}
   </div>
@@ -172,4 +188,8 @@
   .btn-nudge:hover { background: rgba(231, 179, 18, 0.2); }
   .btn-dispatch { background: rgba(129, 240, 254, 0.1); color: var(--accent); border: 1px solid rgba(129, 240, 254, 0.25); border-radius: var(--radius-sm); cursor: pointer; }
   .btn-dispatch:hover { background: rgba(129, 240, 254, 0.2); }
+
+  .file-list { display: flex; flex-direction: column; gap: 1px; padding-top: 4px; border-top: 1px solid var(--border); margin-top: 4px; }
+  .file-item { font-size: 10px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-more { font-size: 10px; font-family: var(--font-mono); }
 </style>

@@ -10,6 +10,7 @@
     { key: 'branch', label: 'Branch' },
     { key: 'agent_id', label: 'Agent', width: '100px' },
     { key: 'status', label: 'Status', width: '90px' },
+    { key: 'git_status', label: 'Git', width: '100px' },
     { key: 'purpose', label: 'Purpose' },
     { key: 'created_at', label: 'Created', width: '90px' },
   ];
@@ -41,6 +42,7 @@
         <td class="text-mono">{wt.branch}</td>
         <td class="text-mono">{wt.agent_id}</td>
         <td><Badge text={wt.status} variant={worktreeVariant(wt.status)} /></td>
+        <td class="text-mono text-muted text-xs" title={wt.git_status}>{wt.git_status || 'clean'}</td>
         <td class="truncate text-muted" title={wt.purpose}>{wt.purpose || '---'}</td>
         <td class="text-mono text-muted">{formatTime(wt.created_at)}</td>
       {/snippet}

@@ -54,12 +54,29 @@
   let claimBulkActions = $derived([
     { label: 'Release Selected', variant: 'danger', onclick: bulkReleaseClaims },
   ]);
+
+  let typeCounts = $derived.by(() => {
+    const counts = { edit: 0, review: 0, reserve: 0 };
+    for (const c of claims) {
+      const t = c.claim_type ?? 'edit';
+      if (t in counts) counts[t]++;
+      else counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return counts;
+  });
 </script>
 
 <div class="card">
   <div class="card-header">
     <span class="card-title">File Claims</span>
     <span class="count-badge">{claims.length}</span>
+    {#if claims.length > 0}
+      <div class="type-breakdown">
+        {#if typeCounts.edit > 0}<Badge text="edit {typeCounts.edit}" variant="warning" />{/if}
+        {#if typeCounts.review > 0}<Badge text="review {typeCounts.review}" variant="info" />{/if}
+        {#if typeCounts.reserve > 0}<Badge text="reserve {typeCounts.reserve}" variant="accent" />{/if}
+      </div>
+    {/if}
   </div>
 
   {#if fileConflicts.length > 0}
@@ -107,6 +124,12 @@
 </div>
 
 <style>
+  .type-breakdown {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+
   .count-badge {
     font-family: var(--font-mono);
     font-size: 11px;
