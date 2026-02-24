@@ -19,11 +19,17 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - `docs/MOBILE_COMPANION_SECURITY.md`
   - `.loom/40-decisions.md`
 - Checklist:
-  - [ ] Compare bootstrap options against LAN/gateway deployment modes
-  - [ ] Document decision + rationale
-  - [ ] Update API and UX contract docs
+  - [x] Compare bootstrap options against LAN/gateway deployment modes
+  - [x] Document decision + rationale
+  - [x] Update API and UX contract docs
 - Status:
-  - In progress
+  - Complete
+- Implementation notes:
+  - Decision recorded in `.loom/40-decisions.md` (2026-02-19): native OAuth+PKCE default, device-code pairing fallback (explicit profile selection, no silent downgrade)
+  - Dual-mode (LAN+Gateway) decision also recorded with rationale and consequences
+  - `docs/MOBILE_COMPANION_API.md:51-56`: references default/fallback, UX contract for profile setup
+  - `docs/MOBILE_COMPANION_SECURITY.md:83-87`: security model references PKCE default + device-code fallback
+  - Threat model documented: embedded-webview mitigation, replay risk (short-lived tokens + rotation), brute-force controls
 
 ### Issue MBL-2: Token lifecycle hardening (M1)
 
