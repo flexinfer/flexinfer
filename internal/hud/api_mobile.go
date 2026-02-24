@@ -21,6 +21,7 @@ const (
 	mobileScopeRead          = "mobile:read"
 	mobileScopeSessionCreate = "mobile:session:create"
 	mobileScopeSessionEnd    = "mobile:session:end"
+	mobileScopePush          = "mobile:push"
 )
 
 // mobileEnvelope is the standard response shape for /api/mobile/v1 endpoints.
@@ -535,6 +536,81 @@ func (a *App) handleMobileAlertsPolicy(w http.ResponseWriter, r *http.Request) {
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"policy":  mobileAlertPolicyMatrix(),
 		"version": "v1",
+	})
+}
+
+// --- Push token registration (MBL-7) ---
+
+func (a *App) handleMobilePushRegister(w http.ResponseWriter, r *http.Request) {
+	if !a.config.MobilePushEnabled {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", "push notifications are not enabled")
+		return
+	}
+	if !a.requireMobileScope(w, r, mobileScopePush) {
+		return
+	}
+
+	var body struct {
+		Token    string `json:"token"`
+		Platform string `json:"platform"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+		return
+	}
+	token := strings.TrimSpace(body.Token)
+	platform := strings.TrimSpace(body.Platform)
+
+	if token == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "token is required")
+		return
+	}
+	if platform != "apns" && platform != "fcm" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "platform must be 'apns' or 'fcm'")
+		return
+	}
+
+	deviceID := extractDeviceID(r)
+	regID := a.deviceTokenStore.Register(token, deviceID, platform)
+
+	a.logMobileAudit(r, "push_register", map[string]string{
+		"platform": platform,
+	}, "success", nil)
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"registered":      true,
+		"registration_id": regID,
+	})
+}
+
+func (a *App) handleMobilePushUnregister(w http.ResponseWriter, r *http.Request) {
+	if !a.config.MobilePushEnabled {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", "push notifications are not enabled")
+		return
+	}
+	if !a.requireMobileScope(w, r, mobileScopePush) {
+		return
+	}
+
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+		return
+	}
+	token := strings.TrimSpace(body.Token)
+	if token == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "token is required")
+		return
+	}
+
+	removed := a.deviceTokenStore.Invalidate(token)
+
+	a.logMobileAudit(r, "push_unregister", nil, "success", nil)
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"removed": removed,
 	})
 }
 

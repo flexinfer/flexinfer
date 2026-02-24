@@ -70,6 +70,9 @@ type Config struct {
 	MobileRateLimitMutation int // Max mutation requests per actor per minute (0 = disabled).
 	MobileRateLimitRead     int // Max read requests per actor per minute (0 = disabled).
 
+	// Mobile push notifications (behind feature flag).
+	MobilePushEnabled bool // Enable push notification endpoints (default: false).
+
 	// TLS for gateway mode.
 	TLSCert     string // Path to PEM certificate file.
 	TLSKey      string // Path to PEM private key file.
@@ -111,6 +114,7 @@ type App struct {
 	// Mobile API hardening.
 	mobileRateLimiter    *MobileRateLimiter
 	mobileRevocationList *MobileTokenRevocationList
+	deviceTokenStore     *DeviceTokenStore // Push notification device tokens (MBL-7).
 }
 
 // Run creates and starts the HUD application. This is the main entry point
@@ -144,6 +148,7 @@ func Run(cfg Config) error {
 		logger:               logger,
 		nudgeQueue:           NewNudgeQueue(),
 		mobileRevocationList: NewMobileTokenRevocationList(),
+		deviceTokenStore:     NewDeviceTokenStore(),
 		mobileRateLimiter: NewMobileRateLimiter(MobileRateLimitConfig{
 			MutationPerMinute: cfg.MobileRateLimitMutation,
 			ReadPerMinute:     cfg.MobileRateLimitRead,
@@ -590,6 +595,8 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/v1/sessions/{session_id}/end", a.withCORS(a.handleMobileSessionEnd))
 	mux.HandleFunc("GET /api/mobile/v1/audit", a.withCORS(a.handleMobileAudit))
 	mux.HandleFunc("GET /api/mobile/v1/alerts/policy", a.withCORS(a.handleMobileAlertsPolicy))
+	mux.HandleFunc("POST /api/mobile/v1/push/register", a.withCORS(a.handleMobilePushRegister))
+	mux.HandleFunc("POST /api/mobile/v1/push/unregister", a.withCORS(a.handleMobilePushUnregister))
 	mux.HandleFunc("POST /api/mobile/v1/admin/revoke", a.withCORS(a.handleMobileAdminRevoke))
 
 	// API routes — topology graph.

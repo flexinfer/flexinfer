@@ -2288,3 +2288,283 @@ func TestMobileAlertsPolicy_NoMutationActions(t *testing.T) {
 		}
 	}
 }
+
+// --- M4: Push reliability tests (MBL-7) ---
+
+func TestClassifyPushResponse_RetryMatrix(t *testing.T) {
+	tests := []struct {
+		status int
+		expect PushRetryAction
+	}{
+		{200, PushNoRetry},
+		{201, PushNoRetry},
+		{400, PushNoRetry},
+		{401, PushNoRetry},
+		{403, PushNoRetry},
+		{404, PushInvalidateToken},
+		{405, PushNoRetry},
+		{410, PushInvalidateToken},
+		{429, PushRetryAfter},
+		{500, PushRetryWithBackoff},
+		{502, PushRetryWithBackoff},
+		{503, PushRetryWithBackoff},
+	}
+	for _, tt := range tests {
+		d := ClassifyPushResponse(tt.status, 0)
+		if d.Action != tt.expect {
+			t.Errorf("status %d: expected action %d, got %d (%s)",
+				tt.status, tt.expect, d.Action, d.Reason)
+		}
+	}
+}
+
+func TestClassifyPushResponse_429RetryAfter(t *testing.T) {
+	d := ClassifyPushResponse(429, 60*time.Second)
+	if d.Action != PushRetryAfter {
+		t.Fatalf("expected PushRetryAfter, got %d", d.Action)
+	}
+	if d.RetryAfter != 60*time.Second {
+		t.Errorf("expected 60s retry-after, got %v", d.RetryAfter)
+	}
+
+	// Without hint, defaults to 30s.
+	d2 := ClassifyPushResponse(429, 0)
+	if d2.RetryAfter != 30*time.Second {
+		t.Errorf("expected 30s default, got %v", d2.RetryAfter)
+	}
+}
+
+func TestPushBackoff_ExponentialDelay(t *testing.T) {
+	cfg := PushBackoffConfig{BaseDelay: 1 * time.Second, MaxDelay: 30 * time.Second, MaxRetries: 5}
+
+	if d := cfg.BackoffDelay(0); d != 1*time.Second {
+		t.Errorf("attempt 0: expected 1s, got %v", d)
+	}
+	if d := cfg.BackoffDelay(1); d != 2*time.Second {
+		t.Errorf("attempt 1: expected 2s, got %v", d)
+	}
+	if d := cfg.BackoffDelay(2); d != 4*time.Second {
+		t.Errorf("attempt 2: expected 4s, got %v", d)
+	}
+	if d := cfg.BackoffDelay(5); d != 30*time.Second {
+		t.Errorf("attempt 5: expected 30s cap, got %v", d)
+	}
+	if d := cfg.BackoffDelay(10); d != 30*time.Second {
+		t.Errorf("attempt 10: expected 30s cap, got %v", d)
+	}
+}
+
+func TestPushPayload_ValidateAndTruncate_FitsWithin(t *testing.T) {
+	p := PushPayload{Title: "Alert", Body: "Server down", Category: "health"}
+	data, truncated, err := p.ValidateAndTruncate(MaxAPNsPayloadBytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if truncated {
+		t.Error("expected no truncation for small payload")
+	}
+	if len(data) > MaxAPNsPayloadBytes {
+		t.Errorf("payload exceeds limit: %d > %d", len(data), MaxAPNsPayloadBytes)
+	}
+}
+
+func TestPushPayload_ValidateAndTruncate_OversizedBody(t *testing.T) {
+	longBody := strings.Repeat("A", 5000)
+	p := PushPayload{Title: "Alert", Body: longBody}
+	data, truncated, err := p.ValidateAndTruncate(MaxAPNsPayloadBytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !truncated {
+		t.Error("expected truncation for oversized payload")
+	}
+	if len(data) > MaxAPNsPayloadBytes {
+		t.Errorf("truncated payload exceeds limit: %d > %d", len(data), MaxAPNsPayloadBytes)
+	}
+	if !strings.Contains(string(data), "...") {
+		t.Error("truncated body should contain ellipsis")
+	}
+}
+
+func TestDeviceTokenStore_RegisterAndList(t *testing.T) {
+	store := NewDeviceTokenStore()
+
+	regID := store.Register("tok-1", "dev-1", "apns")
+	if regID == "" {
+		t.Error("expected non-empty registration ID")
+	}
+	if store.Count() != 1 {
+		t.Errorf("expected 1 token, got %d", store.Count())
+	}
+
+	// Re-register same token updates last_used.
+	store.Register("tok-1", "dev-1", "apns")
+	if store.Count() != 1 {
+		t.Errorf("expected 1 token after re-register, got %d", store.Count())
+	}
+
+	// Register second token.
+	store.Register("tok-2", "dev-2", "fcm")
+	if store.Count() != 2 {
+		t.Errorf("expected 2 tokens, got %d", store.Count())
+	}
+
+	tokens := store.List()
+	if len(tokens) != 2 {
+		t.Errorf("expected 2 tokens in list, got %d", len(tokens))
+	}
+}
+
+func TestDeviceTokenStore_Invalidate(t *testing.T) {
+	store := NewDeviceTokenStore()
+	store.Register("tok-1", "dev-1", "apns")
+	store.Register("tok-2", "dev-1", "apns")
+
+	removed := store.Invalidate("tok-1")
+	if !removed {
+		t.Error("expected token to be removed")
+	}
+	if store.Count() != 1 {
+		t.Errorf("expected 1 token after invalidation, got %d", store.Count())
+	}
+
+	// Invalidating non-existent token.
+	removed = store.Invalidate("tok-nonexistent")
+	if removed {
+		t.Error("expected false for non-existent token")
+	}
+}
+
+func TestDeviceTokenStore_InvalidateByDeviceID(t *testing.T) {
+	store := NewDeviceTokenStore()
+	store.Register("tok-1", "dev-1", "apns")
+	store.Register("tok-2", "dev-1", "apns")
+	store.Register("tok-3", "dev-2", "fcm")
+
+	removed := store.InvalidateByDeviceID("dev-1")
+	if removed != 2 {
+		t.Errorf("expected 2 removed, got %d", removed)
+	}
+	if store.Count() != 1 {
+		t.Errorf("expected 1 token remaining, got %d", store.Count())
+	}
+}
+
+func TestDeviceTokenStore_CleanupStale(t *testing.T) {
+	store := NewDeviceTokenStore()
+	baseTime := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return baseTime }
+
+	store.Register("tok-old", "dev-1", "apns")
+
+	store.now = func() time.Time { return baseTime.Add(48 * time.Hour) }
+	store.Register("tok-new", "dev-2", "apns")
+
+	// Cleanup tokens not used since 24h ago.
+	cutoff := baseTime.Add(24 * time.Hour)
+	removed := store.CleanupStale(cutoff)
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+	if store.Count() != 1 {
+		t.Errorf("expected 1 remaining, got %d", store.Count())
+	}
+}
+
+func TestMobilePushRegister_FeatureFlagDisabled(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:push"
+	app.config.MobilePushEnabled = false
+
+	body := `{"token":"device-token-123","platform":"apns"}`
+	req := httptest.NewRequest("POST", "/api/mobile/v1/push/register", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 when push disabled, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobilePushRegister_Success(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:push"
+	app.config.MobilePushEnabled = true
+	app.deviceTokenStore = NewDeviceTokenStore()
+
+	body := `{"token":"device-token-123","platform":"apns"}`
+	req := httptest.NewRequest("POST", "/api/mobile/v1/push/register", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+
+	data, _ := env.Data.(map[string]any)
+	if reg, _ := data["registered"].(bool); !reg {
+		t.Error("expected registered=true")
+	}
+	if regID, _ := data["registration_id"].(string); regID == "" {
+		t.Error("expected non-empty registration_id")
+	}
+}
+
+func TestMobilePushRegister_InvalidPlatform(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:push"
+	app.config.MobilePushEnabled = true
+	app.deviceTokenStore = NewDeviceTokenStore()
+
+	body := `{"token":"tok","platform":"webpush"}`
+	req := httptest.NewRequest("POST", "/api/mobile/v1/push/register", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid platform, got %d", w.Code)
+	}
+}
+
+func TestMobilePushUnregister_Success(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:push"
+	app.config.MobilePushEnabled = true
+	app.deviceTokenStore = NewDeviceTokenStore()
+
+	// First register a token.
+	app.deviceTokenStore.Register("tok-to-remove", "dev-1", "apns")
+
+	body := `{"token":"tok-to-remove"}`
+	req := httptest.NewRequest("POST", "/api/mobile/v1/push/unregister", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if app.deviceTokenStore.Count() != 0 {
+		t.Error("expected token store to be empty after unregister")
+	}
+}

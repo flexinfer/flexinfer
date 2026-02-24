@@ -138,15 +138,24 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
   - Payload guardrails prevent oversize notification failures.
   - Invalid token cleanup lifecycle is operationalized.
 - Primary touchpoints:
-  - `apps/loom-companion-ios/` (planned)
-  - push provider service code (planned)
-  - operational runbook docs (planned)
+  - `internal/hud/mobile_push.go`
+  - `internal/hud/api_mobile.go`
+  - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PushRegistration.swift`
 - Checklist:
-  - [ ] Define retry matrix by status class
-  - [ ] Add payload-size validation and truncation
-  - [ ] Add token invalidation cleanup path
+  - [x] Define retry matrix by status class
+  - [x] Add payload-size validation and truncation
+  - [x] Add token invalidation cleanup path
 - Status:
-  - Not started
+  - Complete
+- Implementation notes:
+  - Backend: `ClassifyPushResponse()` maps HTTP status codes to retry actions (NoRetry/RetryWithBackoff/RetryAfter/InvalidateToken)
+  - Backend: `PushBackoffConfig` with exponential backoff (2^n * 1s, capped 5m, max 5 retries)
+  - Backend: `PushPayload.ValidateAndTruncate()` enforces 4KB APNs/FCM limits with UTF-8-safe truncation
+  - Backend: `DeviceTokenStore` with Register/Invalidate/InvalidateByDeviceID/CleanupStale lifecycle
+  - Backend: `POST /api/mobile/v1/push/register` and `POST /api/mobile/v1/push/unregister` behind `MobilePushEnabled` feature flag
+  - iOS: `PushRegistration.swift` DTOs (PushRegistrationRequest/Response, PushUnregisterRequest/Response, PushPlatform enum)
+  - Go tests: 13 new tests covering retry matrix, backoff, payload validation, token store CRUD, push endpoints
+  - Swift tests: 129 total (up from 115), 14 new PushRegistration DTO tests
 
 ### Issue MBL-8: Scope discipline enforcement (Cross-cutting)
 

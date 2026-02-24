@@ -74,6 +74,8 @@ This section freezes the v1 endpoint allowlist for the `mobile_operator` role.
 | `/api/mobile/v1/alerts/policy` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions` | `POST` | allow | `mobile:session:create` |
 | `/api/mobile/v1/sessions/{session_id}/end` | `POST` | allow | `mobile:session:end` |
+| `/api/mobile/v1/push/register` | `POST` | allow (feature-flagged) | `mobile:push` |
+| `/api/mobile/v1/push/unregister` | `POST` | allow (feature-flagged) | `mobile:push` |
 | `/api/mobile/v1/agents/{agent_id}/session/end` | `POST` | deny in v1 | N/A |
 | `/api/agent/*` direct mutation routes | `POST` | deny for mobile tokens | N/A |
 
@@ -438,6 +440,103 @@ Source: `internal/hud/api_mobile.go` (handleMobileAlertsPolicy, mobileAlertPolic
 
 ---
 
+### POST `/api/mobile/v1/push/register`
+
+Register a device push token for APNs or FCM notifications. Scope: `mobile:push`. Gated by `--mobile-push-enabled` feature flag (returns `404` when disabled).
+
+**Request body:**
+
+```json
+{
+  "token": "device-push-token-hex-string",
+  "platform": "apns"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `token` | string | yes | Device push token from APNs or FCM |
+| `platform` | string | yes | `"apns"` or `"fcm"` |
+
+**Response `data`:**
+
+```json
+{
+  "registered": true,
+  "registration_id": "reg_a1b2c3d4"
+}
+```
+
+**Error cases:**
+- `400 bad_request` — missing/empty token, missing/invalid platform (must be `apns` or `fcm`)
+- `401 unauthorized` — invalid bearer token
+- `403 forbidden` — missing `mobile:push` scope
+- `404 not_found` — push notifications not enabled (feature flag off)
+
+**Behavior:** Re-registering the same token updates the `last_used` timestamp and device ID association. Tokens are stored in-memory for v1; persistent storage is planned for M5.
+
+Source: `internal/hud/api_mobile.go` (handleMobilePushRegister)
+
+---
+
+### POST `/api/mobile/v1/push/unregister`
+
+Remove a device push token. Scope: `mobile:push`. Gated by `--mobile-push-enabled` feature flag.
+
+**Request body:**
+
+```json
+{
+  "token": "device-push-token-hex-string"
+}
+```
+
+**Response `data`:**
+
+```json
+{
+  "removed": true
+}
+```
+
+The `removed` field is `true` if the token existed and was removed, `false` if the token was not found.
+
+**Error cases:**
+- `400 bad_request` — missing/empty token
+- `401 unauthorized` — invalid bearer token
+- `403 forbidden` — missing `mobile:push` scope
+- `404 not_found` — push notifications not enabled (feature flag off)
+
+Source: `internal/hud/api_mobile.go` (handleMobilePushUnregister)
+
+---
+
+### Push Retry and Payload Policy (MBL-7)
+
+The push notification infrastructure enforces the following contracts:
+
+**Retry classification by HTTP status:**
+
+| Status | Action | Reason |
+|---|---|---|
+| 2xx | No retry | Success |
+| 400 | No retry | Bad request (fix payload) |
+| 401/403 | No retry | Auth/provisioning error |
+| 404 | Invalidate token | Device not registered |
+| 410 | Invalidate token | Token expired/unregistered |
+| 429 | Retry after delay | Rate limited (honor Retry-After or 30s default) |
+| 5xx | Retry with backoff | Server error |
+
+**Backoff policy:** Exponential (2^n * 1s base, capped at 5m, max 5 retries).
+
+**Payload guardrails:** APNs and FCM payloads are validated against 4096-byte limits. Oversized payloads are truncated at the body field with UTF-8-safe `"..."` suffix. Truncation never breaks multi-byte characters.
+
+**Token lifecycle:** Invalid tokens (404/410 from APNs) are automatically removed from the device token store. Stale tokens (not used within a configurable window) can be cleaned up via `CleanupStale`.
+
+Source: `internal/hud/mobile_push.go` (ClassifyPushResponse, PushBackoffConfig, PushPayload.ValidateAndTruncate, DeviceTokenStore)
+
+---
+
 ### POST `/api/mobile/v1/admin/revoke`
 
 Revoke a mobile operator token at runtime. Protected by admin token (`X-Admin-Token` header), not by mobile bearer auth.
@@ -505,6 +604,9 @@ Mobile endpoints delegate to existing internal surfaces:
 | `GET /events/stream` | `handleSSE` |
 | `GET /dashboard` | `FleetMonitor.Snapshot()` + `HealthMonitor.Summary()` + `EventLog.All()` |
 | `GET /ping` | Direct response |
+| `GET /alerts/policy` | `mobileAlertPolicyMatrix()` |
+| `POST /push/register` | `DeviceTokenStore.Register()` |
+| `POST /push/unregister` | `DeviceTokenStore.Invalidate()` |
 
 The mobile API layer normalizes these into stable DTOs with the `mobileEnvelope` wrapper.
 
