@@ -2132,6 +2132,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read"},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read"},
 		{"GET", "/api/mobile/v1/audit", "", "mobile:read"},
+		{"GET", "/api/mobile/v1/alerts/policy", "", "mobile:read"},
 		// Mutation endpoints require specific scopes.
 		{"POST", "/api/mobile/v1/sessions", `{"agent_id":"a","namespace":"n"}`, "mobile:session:create"},
 		{"POST", "/api/mobile/v1/sessions/test-sess/end", `{}`, "mobile:session:end"},
@@ -2179,6 +2180,111 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 						wrongScope, c.method, c.path, w.Code, w.Body.String())
 				}
 			})
+		}
+	}
+}
+
+// --- M4: Notification policy tests (MBL-6) ---
+
+func TestMobileAlertsPolicy_ResponseShape(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/alerts/policy", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env mobileEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !env.OK {
+		t.Fatalf("expected ok=true")
+	}
+
+	dataMap, ok := env.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Data to be a map")
+	}
+
+	version, _ := dataMap["version"].(string)
+	if version != "v1" {
+		t.Errorf("expected version=v1, got %q", version)
+	}
+
+	policies, ok := dataMap["policy"].([]any)
+	if !ok {
+		t.Fatalf("expected policy to be an array")
+	}
+	if len(policies) == 0 {
+		t.Fatal("expected non-empty policy array")
+	}
+
+	// Verify structure of first entry.
+	first, ok := policies[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected policy entry to be a map")
+	}
+	for _, field := range []string{"event_type", "severity", "interruption_level", "title", "allowed_actions"} {
+		if _, exists := first[field]; !exists {
+			t.Errorf("missing field %q in policy entry", field)
+		}
+	}
+}
+
+func TestMobileAlertsPolicy_MatrixCompleteness(t *testing.T) {
+	matrix := mobileAlertPolicyMatrix()
+	if len(matrix) != 10 {
+		t.Errorf("expected 10 policy entries, got %d", len(matrix))
+	}
+
+	validSeverities := map[string]bool{"info": true, "warning": true, "critical": true}
+	validLevels := map[string]bool{"passive": true, "active": true, "time_sensitive": true, "critical": true}
+	validActions := map[string]bool{"view_session": true, "view_dashboard": true, "acknowledge": true}
+
+	for _, entry := range matrix {
+		if entry.EventType == "" {
+			t.Error("empty event_type in policy entry")
+		}
+		if !validSeverities[entry.Severity] {
+			t.Errorf("invalid severity %q for %s", entry.Severity, entry.EventType)
+		}
+		if !validLevels[entry.InterruptionLevel] {
+			t.Errorf("invalid interruption_level %q for %s", entry.InterruptionLevel, entry.EventType)
+		}
+		if len(entry.AllowedActions) == 0 {
+			t.Errorf("no allowed_actions for %s", entry.EventType)
+		}
+		for _, action := range entry.AllowedActions {
+			if !validActions[action] {
+				t.Errorf("invalid action %q for %s", action, entry.EventType)
+			}
+		}
+	}
+}
+
+func TestMobileAlertsPolicy_InfoEventsArePassive(t *testing.T) {
+	for _, entry := range mobileAlertPolicyMatrix() {
+		if entry.Severity == "info" && entry.InterruptionLevel != "passive" {
+			t.Errorf("info-severity event %q should be passive, got %q",
+				entry.EventType, entry.InterruptionLevel)
+		}
+	}
+}
+
+func TestMobileAlertsPolicy_NoMutationActions(t *testing.T) {
+	safeActions := map[string]bool{"view_session": true, "view_dashboard": true, "acknowledge": true}
+	for _, entry := range mobileAlertPolicyMatrix() {
+		for _, action := range entry.AllowedActions {
+			if !safeActions[action] {
+				t.Errorf("event %q has unsafe action %q", entry.EventType, action)
+			}
 		}
 	}
 }

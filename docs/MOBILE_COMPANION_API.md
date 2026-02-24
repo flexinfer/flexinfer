@@ -2,7 +2,7 @@
 
 This document defines the API contract for the Loom Companion iPhone/iPad app.
 
-Status: **v1 contract freeze** (2026-02-23). All 8 endpoints implemented in `internal/hud/api_mobile.go`.
+Status: **v1 contract freeze** (2026-02-23). All 9 endpoints implemented in `internal/hud/api_mobile.go`. Alerts policy endpoint added 2026-02-24 (MBL-6, M4).
 
 ## Tracking
 
@@ -71,6 +71,7 @@ This section freezes the v1 endpoint allowlist for the `mobile_operator` role.
 | `/api/mobile/v1/sessions/{session_id}` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions/{session_id}/events` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/events/stream` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/alerts/policy` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions` | `POST` | allow | `mobile:session:create` |
 | `/api/mobile/v1/sessions/{session_id}/end` | `POST` | allow | `mobile:session:end` |
 | `/api/mobile/v1/agents/{agent_id}/session/end` | `POST` | deny in v1 | N/A |
@@ -384,6 +385,56 @@ Event allowlist in v1:
 - `agent.heartbeat`
 
 Source: `internal/hud/api_mobile.go:290-295`
+
+---
+
+### GET `/api/mobile/v1/alerts/policy`
+
+Canonical event-to-severity-interruption-action matrix. Scope: `mobile:read`.
+
+Mobile clients use this to synchronize notification behavior with the server-defined policy. The matrix defines how each SSE event type maps to severity, iOS interruption level, and allowed quick-actions.
+
+**Response `data`:**
+
+```json
+{
+  "version": "v1",
+  "policy": [
+    {
+      "event_type": "hud.health",
+      "severity": "critical",
+      "interruption_level": "time_sensitive",
+      "title": "Server Down",
+      "allowed_actions": ["view_dashboard", "acknowledge"],
+      "conditional": true
+    }
+  ]
+}
+```
+
+**Policy entry schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `event_type` | string | SSE event type this rule applies to |
+| `severity` | string | `info`, `warning`, or `critical` |
+| `interruption_level` | string | `passive`, `active`, `time_sensitive`, or `critical` |
+| `title` | string | Display title for the alert |
+| `allowed_actions` | array | Safe actions: `view_session`, `view_dashboard`, `acknowledge` |
+| `conditional` | bool | Whether severity depends on event payload (e.g., health events) |
+
+**Interruption level semantics (maps to iOS `UNNotificationInterruptionLevel`):**
+
+| Level | Behavior | Use case |
+|---|---|---|
+| `passive` | Silent; added to list without sound/banner | Info-level events (session start/end, approvals) |
+| `active` | Default notification (sound + banner) | Warnings requiring attention (reaped, degraded) |
+| `time_sensitive` | Breaks through Focus/DND | Critical operational events (server down) |
+| `critical` | Reserved; not used in v1 | Emergency alerts (future) |
+
+**Action constraints:** All actions are read-only navigation operations. No mutation actions are permitted from alert quick-actions to maintain v1 scope discipline.
+
+Source: `internal/hud/api_mobile.go` (handleMobileAlertsPolicy, mobileAlertPolicyMatrix)
 
 ---
 

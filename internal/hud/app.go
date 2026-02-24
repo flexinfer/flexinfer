@@ -589,6 +589,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessionCreate))
 	mux.HandleFunc("POST /api/mobile/v1/sessions/{session_id}/end", a.withCORS(a.handleMobileSessionEnd))
 	mux.HandleFunc("GET /api/mobile/v1/audit", a.withCORS(a.handleMobileAudit))
+	mux.HandleFunc("GET /api/mobile/v1/alerts/policy", a.withCORS(a.handleMobileAlertsPolicy))
 	mux.HandleFunc("POST /api/mobile/v1/admin/revoke", a.withCORS(a.handleMobileAdminRevoke))
 
 	// API routes — topology graph.

@@ -499,6 +499,45 @@ func (a *App) handleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"revoked": true})
 }
 
+// --- Notification policy (MBL-6) ---
+
+// mobileAlertPolicyEntry describes a single event type's notification policy.
+type mobileAlertPolicyEntry struct {
+	EventType         string   `json:"event_type"`
+	Severity          string   `json:"severity"`
+	InterruptionLevel string   `json:"interruption_level"`
+	Title             string   `json:"title"`
+	AllowedActions    []string `json:"allowed_actions"`
+	Conditional       bool     `json:"conditional"`
+}
+
+// mobileAlertPolicyMatrix returns the canonical event-to-severity-interruption-action
+// matrix. Health events are listed twice (conditional on payload).
+func mobileAlertPolicyMatrix() []mobileAlertPolicyEntry {
+	return []mobileAlertPolicyEntry{
+		{EventType: "hud.health", Severity: "critical", InterruptionLevel: "time_sensitive", Title: "Server Down", AllowedActions: []string{"view_dashboard", "acknowledge"}, Conditional: true},
+		{EventType: "hud.health", Severity: "warning", InterruptionLevel: "active", Title: "Server Degraded", AllowedActions: []string{"view_dashboard", "acknowledge"}, Conditional: true},
+		{EventType: "agent.session.reaped", Severity: "warning", InterruptionLevel: "active", Title: "Session Reaped", AllowedActions: []string{"view_session", "acknowledge"}},
+		{EventType: "hud.workflow.reject", Severity: "warning", InterruptionLevel: "active", Title: "Workflow Rejected", AllowedActions: []string{"acknowledge"}},
+		{EventType: "agent.session.start", Severity: "info", InterruptionLevel: "passive", Title: "Session Started", AllowedActions: []string{"view_session", "acknowledge"}},
+		{EventType: "agent.session.end", Severity: "info", InterruptionLevel: "passive", Title: "Session Ended", AllowedActions: []string{"view_session", "acknowledge"}},
+		{EventType: "agent.nudge.created", Severity: "info", InterruptionLevel: "passive", Title: "Agent Nudge Queued", AllowedActions: []string{"acknowledge"}},
+		{EventType: "hud.workflow.approve", Severity: "info", InterruptionLevel: "passive", Title: "Workflow Approved", AllowedActions: []string{"acknowledge"}},
+		{EventType: "hud.handoff.created", Severity: "info", InterruptionLevel: "passive", Title: "Handoff Created", AllowedActions: []string{"acknowledge"}},
+		{EventType: "coordinator.plan.complete", Severity: "info", InterruptionLevel: "passive", Title: "Plan Complete", AllowedActions: []string{"acknowledge"}},
+	}
+}
+
+func (a *App) handleMobileAlertsPolicy(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"policy":  mobileAlertPolicyMatrix(),
+		"version": "v1",
+	})
+}
+
 func eventHasField(raw json.RawMessage, field, value string) bool {
 	if len(raw) == 0 || field == "" {
 		return false

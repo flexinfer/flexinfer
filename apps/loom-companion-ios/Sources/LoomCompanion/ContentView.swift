@@ -50,7 +50,16 @@ struct ContentView: View {
             .tag(AppTab.sessions)
 
             NavigationStack {
-                AlertsListView(viewModel: alertsViewModel)
+                AlertsListView(viewModel: alertsViewModel) { action, _ in
+                    switch action {
+                    case .viewSession:
+                        selectedTab = .sessions
+                    case .viewDashboard:
+                        selectedTab = .dashboard
+                    case .acknowledge:
+                        break
+                    }
+                }
             }
             .tabItem { Label("Alerts", systemImage: "bell") }
             .tag(AppTab.alerts)
@@ -102,7 +111,16 @@ struct ContentView: View {
             case .sessions:
                 SessionsListView(apiClient: connectionVM.buildAPIClient())
             case .alerts:
-                AlertsListView(viewModel: alertsViewModel)
+                AlertsListView(viewModel: alertsViewModel) { action, _ in
+                    switch action {
+                    case .viewSession:
+                        selectedTab = .sessions
+                    case .viewDashboard:
+                        selectedTab = .dashboard
+                    case .acknowledge:
+                        break
+                    }
+                }
             case .connection:
                 ConnectionDiagnosticsView(
                     connectionVM: connectionVM,

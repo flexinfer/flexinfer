@@ -1,7 +1,7 @@
 import Foundation
 
 /// Severity level for in-app alert notifications.
-public enum AlertSeverity: String, Sendable, Comparable {
+public enum AlertSeverity: String, Sendable, Comparable, Codable {
     case info
     case warning
     case critical
@@ -12,45 +12,102 @@ public enum AlertSeverity: String, Sendable, Comparable {
     }
 }
 
+/// Maps to iOS UNNotificationInterruptionLevel for future APNs integration.
+/// Controls how prominently an alert interrupts the user.
+public enum InterruptionLevel: String, Sendable, Codable, Comparable {
+    /// Silently added to notification list; no sound/banner.
+    case passive
+    /// Default notification behavior (sound + banner).
+    case active
+    /// Breaks through Focus/DND for time-critical operational events.
+    case timeSensitive = "time_sensitive"
+    /// Reserved for emergencies requiring immediate attention (not used in v1).
+    case critical
+
+    public static func < (lhs: InterruptionLevel, rhs: InterruptionLevel) -> Bool {
+        let order: [InterruptionLevel] = [.passive, .active, .timeSensitive, .critical]
+        return order.firstIndex(of: lhs)! < order.firstIndex(of: rhs)!
+    }
+}
+
+/// Safe navigation actions available from an alert. Restricted to read-only
+/// operations to maintain v1 scope discipline.
+public enum AlertAction: String, Sendable, Codable {
+    /// Navigate to the related session detail screen.
+    case viewSession = "view_session"
+    /// Navigate to the dashboard screen.
+    case viewDashboard = "view_dashboard"
+    /// Mark as acknowledged (no navigation).
+    case acknowledge
+}
+
 /// A single in-app alert derived from an SSE event.
 public struct AlertItem: Identifiable, Sendable {
     public let id: UUID
     public let timestamp: Date
     public let severity: AlertSeverity
+    public let interruptionLevel: InterruptionLevel
     public let title: String
     public let message: String
     public let eventType: String
     public let relatedSessionId: String?
+    public let allowedActions: [AlertAction]
     public var isRead: Bool
 
     public init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
         severity: AlertSeverity,
+        interruptionLevel: InterruptionLevel = .active,
         title: String,
         message: String,
         eventType: String,
         relatedSessionId: String? = nil,
+        allowedActions: [AlertAction] = [.acknowledge],
         isRead: Bool = false
     ) {
         self.id = id
         self.timestamp = timestamp
         self.severity = severity
+        self.interruptionLevel = interruptionLevel
         self.title = title
         self.message = message
         self.eventType = eventType
         self.relatedSessionId = relatedSessionId
+        self.allowedActions = allowedActions
         self.isRead = isRead
+    }
+
+    /// The primary quick-action for this alert (first non-acknowledge action, or acknowledge).
+    public var primaryAction: AlertAction {
+        allowedActions.first { $0 != .acknowledge } ?? .acknowledge
     }
 }
 
 /// Policy entry describing how an SSE event type maps to an alert.
 public struct NotificationPolicyEntry: Sendable {
     public let severity: AlertSeverity
+    public let interruptionLevel: InterruptionLevel
     public let titleTemplate: String
+    public let allowedActions: [AlertAction]
 }
 
-/// Maps SSE event types to notification severity and title templates.
+/// Maps SSE event types to notification severity, interruption level, and allowed actions.
+///
+/// Event-to-interruption-level matrix (MBL-6):
+///
+/// | Event Type               | Severity | Interruption   | Actions                        |
+/// |--------------------------|----------|----------------|--------------------------------|
+/// | hud.health (down)        | critical | timeSensitive  | viewDashboard, acknowledge     |
+/// | hud.health (degraded)    | warning  | active         | viewDashboard, acknowledge     |
+/// | agent.session.reaped     | warning  | active         | viewSession, acknowledge       |
+/// | hud.workflow.reject      | warning  | active         | acknowledge                    |
+/// | agent.session.start      | info     | passive        | viewSession, acknowledge       |
+/// | agent.session.end        | info     | passive        | viewSession, acknowledge       |
+/// | agent.nudge.created      | info     | passive        | acknowledge                    |
+/// | hud.workflow.approve     | info     | passive        | acknowledge                    |
+/// | hud.handoff.created      | info     | passive        | acknowledge                    |
+/// | coordinator.plan.complete| info     | passive        | acknowledge                    |
 public enum NotificationPolicy {
     /// Classify an SSE event into an AlertItem, or nil if the event is not alert-worthy.
     public static func classify(event: SSEEvent) -> AlertItem? {
@@ -62,10 +119,12 @@ public enum NotificationPolicy {
 
         return AlertItem(
             severity: entry.severity,
+            interruptionLevel: entry.interruptionLevel,
             title: entry.titleTemplate,
             message: message,
             eventType: event.type,
-            relatedSessionId: sessionId
+            relatedSessionId: sessionId,
+            allowedActions: entry.allowedActions
         )
     }
 
@@ -75,21 +134,21 @@ public enum NotificationPolicy {
         case "hud.health":
             return classifyHealthEvent(data: event.data)
         case "agent.session.reaped":
-            return NotificationPolicyEntry(severity: .warning, titleTemplate: "Session Reaped")
+            return NotificationPolicyEntry(severity: .warning, interruptionLevel: .active, titleTemplate: "Session Reaped", allowedActions: [.viewSession, .acknowledge])
         case "agent.nudge.created":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Agent Nudge Queued")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Agent Nudge Queued", allowedActions: [.acknowledge])
         case "hud.workflow.approve":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Workflow Approved")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Workflow Approved", allowedActions: [.acknowledge])
         case "hud.workflow.reject":
-            return NotificationPolicyEntry(severity: .warning, titleTemplate: "Workflow Rejected")
+            return NotificationPolicyEntry(severity: .warning, interruptionLevel: .active, titleTemplate: "Workflow Rejected", allowedActions: [.acknowledge])
         case "agent.session.start":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Session Started")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Session Started", allowedActions: [.viewSession, .acknowledge])
         case "agent.session.end":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Session Ended")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Session Ended", allowedActions: [.viewSession, .acknowledge])
         case "hud.handoff.created":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Handoff Created")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Handoff Created", allowedActions: [.acknowledge])
         case "coordinator.plan.complete":
-            return NotificationPolicyEntry(severity: .info, titleTemplate: "Plan Complete")
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Plan Complete", allowedActions: [.acknowledge])
         default:
             return nil
         }
@@ -108,10 +167,10 @@ public enum NotificationPolicy {
         let degraded = payload["degraded_servers"] as? Int ?? 0
 
         if down > 0 {
-            return NotificationPolicyEntry(severity: .critical, titleTemplate: "Server Down")
+            return NotificationPolicyEntry(severity: .critical, interruptionLevel: .timeSensitive, titleTemplate: "Server Down", allowedActions: [.viewDashboard, .acknowledge])
         }
         if degraded > 0 {
-            return NotificationPolicyEntry(severity: .warning, titleTemplate: "Server Degraded")
+            return NotificationPolicyEntry(severity: .warning, interruptionLevel: .active, titleTemplate: "Server Degraded", allowedActions: [.viewDashboard, .acknowledge])
         }
         return nil
     }

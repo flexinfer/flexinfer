@@ -3,6 +3,7 @@ import LoomCompanionKit
 
 struct AlertsListView: View {
     @Bindable var viewModel: AlertsViewModel
+    var onNavigate: ((AlertAction, AlertItem) -> Void)?
 
     var body: some View {
         Group {
@@ -16,8 +17,13 @@ struct AlertsListView: View {
                 List {
                     ForEach(viewModel.alerts) { alert in
                         AlertRowView(alert: alert)
+                            .contentShape(Rectangle())
                             .onTapGesture {
                                 viewModel.markRead(alert.id)
+                                let action = alert.primaryAction
+                                if action != .acknowledge {
+                                    onNavigate?(action, alert)
+                                }
                             }
                     }
                 }

@@ -112,13 +112,22 @@ Map mobile companion research and spec gaps to concrete implementation backlog i
 - Primary touchpoints:
   - `docs/MOBILE_COMPANION_API.md`
   - `docs/MOBILE_COMPANION_SECURITY.md`
-  - `apps/loom-companion-ios/` (planned)
+  - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertItem.swift`
+  - `internal/hud/api_mobile.go`
 - Checklist:
-  - [ ] Define severity classes and urgency mapping
-  - [ ] Define allowed quick-action set per event type
-  - [ ] Validate policy against operator workflows
+  - [x] Define severity classes and urgency mapping
+  - [x] Define allowed quick-action set per event type
+  - [x] Validate policy against operator workflows
 - Status:
-  - Not started
+  - Complete
+- Implementation notes:
+  - Backend: `GET /api/mobile/v1/alerts/policy` returns canonical matrix (10 entries)
+  - iOS: `InterruptionLevel` enum (passive/active/timeSensitive/critical) with `AlertAction` (viewSession/viewDashboard/acknowledge)
+  - iOS: Alert taps navigate to session or dashboard via `onNavigate` callback
+  - All info-severity events use `passive` interruption (no sound/banner)
+  - All actions are read-only; no mutation actions from alert quick-actions
+  - Go tests: 4 new tests (response shape, completeness, passive enforcement, no-mutation)
+  - Swift tests: 115 total (up from 56), covering interruption levels, action constraints, primary action logic
 
 ### Issue MBL-7: Push reliability and throttling controls (M4/M5)
 

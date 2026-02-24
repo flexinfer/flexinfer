@@ -29,9 +29,16 @@ struct AlertRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
-                Text(alert.timestamp, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                HStack {
+                    Text(alert.timestamp, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+
+                    if alert.primaryAction != .acknowledge {
+                        Spacer()
+                        actionLabel
+                    }
+                }
             }
         }
         .padding(.vertical, 4)
@@ -53,6 +60,22 @@ struct AlertRowView: View {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(.blue)
                 .font(.title3)
+        }
+    }
+
+    @ViewBuilder
+    private var actionLabel: some View {
+        switch alert.primaryAction {
+        case .viewSession:
+            Label("Session", systemImage: "arrow.right.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .viewDashboard:
+            Label("Dashboard", systemImage: "arrow.right.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .acknowledge:
+            EmptyView()
         }
     }
 }
