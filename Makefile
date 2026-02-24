@@ -250,3 +250,9 @@ push-diffusers-rocm: ## Push Diffusers ROCm image to Harbor
 .PHONY: verify-images
 verify-images: ## Verify all backend images exist in Harbor registry
 	@./scripts/verify-images.sh
+
+##@ Benchmarks
+
+.PHONY: bench-swap
+bench-swap: ## Run GPU swap benchmark for shared image generation group
+	@./scripts/bench-image-swap.sh $(BENCH_PHASE)
