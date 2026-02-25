@@ -3,11 +3,11 @@
 # Model: huihui-ai/Qwen3-30B-A3B-abliterated
 # GGUF:  mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF (imatrix quant)
 # Arch:  Mixture-of-Experts — 30.5B total params, 3.3B active per token
-# VRAM:  ~18.7GB weights at Q4_K_M + KV cache (tight on 24GB, use q8_0 KV quant)
-# Alt:   Q3_K_M = 14.8GB weights (more context headroom)
+# VRAM:  ~18.7GB weights at Q4_K_M + KV cache (tight on 24GB, use q4_0 KV quant)
 #
-# llama.cpp ROCm backend provides wide quantization support (Q2-Q8, IQ*)
-# and flash attention via rocWMMA on gfx1100.
+# On-demand model in 5930k-models group. Scaled to zero by default;
+# activates via qwen3-30b / qwen3-moe alias when explicitly requested.
+# Group leader is now qwen3-14b-claude-distill (priority 160).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -21,14 +21,12 @@ spec:
     kubernetes.io/hostname: cblevins-5930k
   cache:
     strategy: SharedPVC
-    # local-path bypasses Longhorn overhead for mmap. The 18.7GB GGUF loads
-    # in ~3min from local NVMe vs 15-20min through Longhorn's block layer.
     storageClass: local-path
     size: 25Gi
   gpu:
     vendor: amd
-    shared: amd-gpu-pool
-    priority: 120
+    shared: 5930k-models
+    priority: 110
     vramEstimateMB: 20000
   config:
     ggufFile: Qwen3-30B-A3B-abliterated.i1-Q4_K_M.gguf
@@ -36,8 +34,8 @@ spec:
     flashAttention: true
     parallel: 2
     batchSize: 2048
-    cacheTypeK: q8_0
-    cacheTypeV: q8_0
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
     jinja: true
   resources:
     requests:
@@ -46,12 +44,14 @@ spec:
       memory: 32Gi
   serverless:
     enabled: true
-    # Loading 18.7GB GGUF via mmap through Longhorn takes 10-12min.
-    # idleTimeout must exceed load time to prevent controller reaping mid-load.
-    idleTimeout: 20m
-    coldStartTimeout: 15m
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+    minReplicas: 0
   litellm:
+    enabled: true
     servedModelName: qwen3-30b-abliterated
     aliases:
       - qwen3-30b
       - qwen3-moe
+  serviceLabels:
+    - qwen3-30b

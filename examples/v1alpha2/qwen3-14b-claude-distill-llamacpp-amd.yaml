@@ -1,0 +1,62 @@
+# Qwen3-14B Claude 4.5 Opus Reasoning Distill via llama.cpp on AMD gfx1100
+#
+# Model: TeichAI/Qwen3-14B-Claude-4.5-Opus-High-Reasoning-Distill-GGUF
+# GGUF:  Q4_K_M (~9 GB) — best quality/size for 24 GB VRAM
+# Arch:  Dense 14B — distilled from Claude 4.5 Opus reasoning traces
+# VRAM:  ~12 GB weights + KV cache at q4_0
+#
+# Group leader for 5930k-models: higher priority than qwen3-30b (110),
+# qwen3-8b-fast (140), and glm47-flash (130).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-14b-claude-distill
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://TeichAI/Qwen3-14B-Claude-4.5-Opus-High-Reasoning-Distill-GGUF
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  cache:
+    strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 15Gi
+  gpu:
+    vendor: amd
+    shared: 5930k-models
+    priority: 160
+    vramEstimateMB: 12000
+  config:
+    ggufFile: Qwen3-14B-Claude-4.5-Opus-High-Reasoning-Distill-Q4_K_M.gguf
+    contextSize: 32768
+    flashAttention: true
+    parallel: 2
+    batchSize: 2048
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+  resources:
+    requests:
+      memory: 8Gi
+    limits:
+      memory: 20Gi
+  serverless:
+    enabled: true
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+    minReplicas: 1
+  litellm:
+    enabled: true
+    servedModelName: qwen3-14b-claude-distill
+    copilotAlias: copilot
+    aliases:
+      - qwen3-14b
+      - claude-distill
+      - fast-chat
+      - fast-text
+      - gpt-3.5-turbo
+  serviceLabels:
+    - fast-chat
+    - reasoning
