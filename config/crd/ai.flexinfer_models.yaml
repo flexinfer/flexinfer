@@ -230,6 +230,13 @@ spec:
                       with higher priority models preempting lower priority ones.
                       If not set, model gets exclusive GPU access.
                     type: string
+                  swapCooldown:
+                    description: |-
+                      SwapCooldown overrides the default anti-thrashing cooldown for this
+                      model's shared group. After a swap, the controller blocks further
+                      demand-based swaps for this duration. Defaults to 5m if unset.
+                      Set lower for small models that load quickly, higher for large ones.
+                    type: string
                   vendor:
                     default: auto
                     description: |-

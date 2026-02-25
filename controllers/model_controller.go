@@ -1879,10 +1879,20 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 
 	// Anti-thrashing: if a swap happened recently, keep the currently
 	// active model regardless of demand or priority.
+	// Use the maximum SwapCooldown from any model in the group, falling
+	// back to the default (5m) if none specify it.
+	cooldown := sharedSwapCooldown
+	for _, m := range groupModels {
+		if m.Spec.GPU != nil && m.Spec.GPU.SwapCooldown != nil {
+			if d := m.Spec.GPU.SwapCooldown.Duration; d > cooldown {
+				cooldown = d
+			}
+		}
+	}
 	recentSwap := false
 	for _, m := range groupModels {
 		if m.Status.SharedGroup != nil && m.Status.SharedGroup.PreemptedAt != nil {
-			if now.Sub(m.Status.SharedGroup.PreemptedAt.Time) < sharedSwapCooldown {
+			if now.Sub(m.Status.SharedGroup.PreemptedAt.Time) < cooldown {
 				recentSwap = true
 				break
 			}

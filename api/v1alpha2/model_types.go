@@ -288,6 +288,13 @@ type GPUSpec struct {
 	// Used for scheduling decisions in shared groups.
 	// +optional
 	VRAMEstimateMB *int64 `json:"vramEstimateMB,omitempty"`
+
+	// SwapCooldown overrides the default anti-thrashing cooldown for this
+	// model's shared group. After a swap, the controller blocks further
+	// demand-based swaps for this duration. Defaults to 5m if unset.
+	// Set lower for small models that load quickly, higher for large ones.
+	// +optional
+	SwapCooldown *metav1.Duration `json:"swapCooldown,omitempty"`
 }
 
 // ServerlessSpec configures scale-to-zero behavior.
