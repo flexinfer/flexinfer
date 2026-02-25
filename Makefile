@@ -7,7 +7,8 @@
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-dist-check hud-clean
+		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-dist-check hud-clean \
+		mobile-iphone-preflight mobile-hud
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -102,6 +103,10 @@ help:
 	@echo "  make hud-install   - Build + install to ~/.local/bin"
 	@echo "  make hud-frontend  - Build only the Svelte frontend"
 	@echo "  make hud-clean     - Remove frontend node_modules and dist"
+	@echo ""
+	@echo "Mobile Companion (iPhone):"
+	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
+	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
 	@echo ""
 	@echo "Schemas:"
 	@echo "  make schemas-list    - List vendored upstream platform schemas"
@@ -701,6 +706,24 @@ hud-clean:
 	@echo "Cleaning HUD frontend..."
 	rm -rf $(HUD_FRONTEND)/node_modules $(HUD_FRONTEND)/dist
 	@echo "✓ HUD cleaned"
+
+# Verify local prerequisites for running the iOS app on a physical iPhone.
+mobile-iphone-preflight:
+	@./scripts/mobile/iphone_preflight.sh
+
+# Launch HUD for LAN iPhone testing (requires mobile auth token).
+mobile-hud: loom
+	@if [ -z "$$HUD_MOBILE_OPERATOR_TOKEN" ]; then \
+		echo "ERROR: HUD_MOBILE_OPERATOR_TOKEN is required."; \
+		echo "Set one with: export HUD_MOBILE_OPERATOR_TOKEN=\"$$(openssl rand -hex 32)\""; \
+		exit 1; \
+	fi
+	@SCOPES=$${HUD_MOBILE_OPERATOR_SCOPES:-mobile:read,mobile:session:create,mobile:session:end,mobile:push}; \
+	echo "Launching HUD for mobile testing on http://0.0.0.0:3333"; \
+	echo "Scopes: $$SCOPES"; \
+	./bin/loom hud --bind 0.0.0.0 --port 3333 \
+		--mobile-operator-token "$$HUD_MOBILE_OPERATOR_TOKEN" \
+		--mobile-operator-scopes "$$SCOPES"
 
 # =============================================================================
 # DOCKER TARGETS

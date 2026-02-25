@@ -237,6 +237,7 @@ Gemini CLI has several unique behaviors that Loom manages automatically:
 ## Mobile Companion (iOS/iPadOS)
 
 The Loom Companion app provides fleet monitoring, session management, and real-time alerts from an iPhone or iPad.
+For a full physical-device workflow, see `docs/MOBILE_COMPANION_IPHONE_TESTING.md`.
 
 ### Connection Modes
 
@@ -247,11 +248,19 @@ The Loom Companion app provides fleet monitoring, session management, and real-t
 
 ### Pairing
 
-1. Start the HUD server: `loom hud --serve`
+1. Start the HUD server with mobile auth enabled:
+   ```bash
+   export HUD_MOBILE_OPERATOR_TOKEN="$(openssl rand -hex 32)"
+   export HUD_MOBILE_OPERATOR_SCOPES="mobile:read,mobile:session:create,mobile:session:end,mobile:push"
+   loom hud --bind 0.0.0.0 --port 3333 \
+     --mobile-operator-token "$HUD_MOBILE_OPERATOR_TOKEN" \
+     --mobile-operator-scopes "$HUD_MOBILE_OPERATOR_SCOPES"
+   ```
+   Or use `make mobile-hud` after exporting the token/scopes.
 2. Open Loom Companion on your device.
 3. Select **LAN** or **Gateway** mode.
 4. Enter the server URL (e.g., `http://192.168.1.50:3333` for LAN).
-5. Enter the mobile operator bearer token (set via `HUD_MOBILE_OPERATOR_TOKEN` on the server).
+5. Enter the mobile operator bearer token (same value used by `HUD_MOBILE_OPERATOR_TOKEN` on the server).
 6. Tap **Connect**. The app probes `/api/mobile/v1/ping` to verify the connection.
 
 ### iOS Local Network Permission (LAN Mode)
@@ -283,10 +292,11 @@ The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPER
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | "Cannot reach server" in LAN mode | Local Network permission denied | Settings > Privacy & Security > Local Network |
-| "Cannot reach server" in LAN mode | Wrong IP or port | Verify server URL matches `loom hud --serve` output |
+| "Cannot reach server" in LAN mode | Wrong IP or port | Verify server URL matches your `loom hud --bind ... --port ...` settings |
 | "[unauthorized]" error | Token mismatch | Verify `HUD_MOBILE_OPERATOR_TOKEN` matches |
 | "[forbidden]" error | Missing scope | Add required scope to `HUD_MOBILE_OPERATOR_SCOPES` |
 | Dashboard not updating | SSE disconnected | Check Connection tab; polling fallback is active |
+| `unknown flag: --serve` | Using an outdated command | Use `loom hud --bind ... --port ...` (there is no `--serve` flag) |
 
 ## Troubleshooting
 
