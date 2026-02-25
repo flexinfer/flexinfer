@@ -2065,6 +2065,12 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		}
 	}
 
+	// Sync active service labels on Services for the entire group.
+	// The active model's Service gets ai.flexinfer/active-services set;
+	// all other group members have it removed.  This lets the proxy
+	// route group-wide names (serviceLabels) only to the active model.
+	r.syncActiveServiceLabels(ctx, activeModel, groupModels)
+
 	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
@@ -2074,6 +2080,44 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 
 	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+}
+
+// syncActiveServiceLabels sets the ai.flexinfer/active-services annotation on the
+// active model's Service and removes it from all other group members.
+func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) {
+	log := log.FromContext(ctx)
+	const annoKey = "ai.flexinfer/active-services"
+
+	for _, m := range groupModels {
+		svc := &corev1.Service{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: m.Namespace, Name: m.Name}, svc); err != nil {
+			continue // service may not exist yet
+		}
+		if svc.Annotations == nil {
+			svc.Annotations = make(map[string]string)
+		}
+
+		var desired string
+		if m.Name == activeModel.Name && len(m.Spec.ServiceLabels) > 0 {
+			desired = strings.Join(m.Spec.ServiceLabels, ",")
+		}
+
+		current := svc.Annotations[annoKey]
+		if current == desired {
+			continue
+		}
+
+		if desired != "" {
+			svc.Annotations[annoKey] = desired
+			log.Info("Setting active service labels", "model", m.Name, "labels", desired)
+		} else {
+			delete(svc.Annotations, annoKey)
+			log.Info("Removing active service labels", "model", m.Name)
+		}
+		if err := r.Update(ctx, svc); err != nil {
+			log.Error(err, "Failed to update active service labels", "model", m.Name)
+		}
+	}
 }
 
 // updateStatusFromDeployment updates the Model status based on the deployment state.
