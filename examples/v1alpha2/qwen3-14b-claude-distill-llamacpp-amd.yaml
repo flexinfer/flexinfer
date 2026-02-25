@@ -29,7 +29,7 @@ spec:
     priority: 160
     vramEstimateMB: 12000
   config:
-    ggufFile: Qwen3-14B-Claude-4.5-Opus-High-Reasoning-Distill-Q4_K_M.gguf
+    ggufFile: Qwen3-14B-Claude-4.5-Opus-Distill.q4_k_m.gguf
     contextSize: 32768
     flashAttention: true
     parallel: 2
