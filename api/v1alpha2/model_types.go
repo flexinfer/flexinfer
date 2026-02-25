@@ -57,6 +57,8 @@ const (
 	ConditionModelReady = "Ready"
 	// ConditionModelSchedulable indicates whether the model can be scheduled
 	ConditionModelSchedulable = "Schedulable"
+	// ConditionConfigValid indicates whether the model's config is conflict-free
+	ConditionConfigValid = "ConfigValid"
 )
 
 // Condition reasons for Model status
@@ -79,6 +81,10 @@ const (
 	ReasonBackendReady = "BackendReady"
 	// ReasonPreempted - model was preempted by higher priority model
 	ReasonPreempted = "Preempted"
+	// ReasonAliasConflict - litellm alias or copilotAlias conflicts with another model
+	ReasonAliasConflict = "AliasConflict"
+	// ReasonConfigValid - model config has no conflicts
+	ReasonConfigValid = "ConfigValid"
 )
 
 // KVCachePressurePolicy defines how to react to KV-cache pressure.

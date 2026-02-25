@@ -292,6 +292,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed)
 	}
 
+	// Check for litellm alias conflicts across all models in the namespace.
+	// This is a warning condition, not a blocker — the model still reconciles.
+	r.checkAliasConflicts(ctx, model)
+
 	desiredReplicas := r.desiredReplicas(model, b)
 	requeueAfter := 30 * time.Second
 
@@ -2612,6 +2616,76 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+// checkAliasConflicts detects litellm.aliases and copilotAlias conflicts
+// across all Models in the namespace. Sets the ConfigValid condition accordingly.
+// litellm.aliases are global (proxy resolves across ALL models), so duplicates
+// cause non-deterministic routing. serviceLabels are exempt — they are group-aware.
+func (r *ModelReconciler) checkAliasConflicts(ctx context.Context, model *aiv1alpha2.Model) {
+	if model.Spec.LiteLLM == nil {
+		setModelCondition(model, aiv1alpha2.ConditionConfigValid, true, aiv1alpha2.ReasonConfigValid, "No litellm config to validate")
+		return
+	}
+
+	var allModels aiv1alpha2.ModelList
+	if err := r.List(ctx, &allModels, client.InNamespace(model.Namespace)); err != nil {
+		return // skip check on list failure
+	}
+
+	// Build alias → owner map from all other models.
+	type claim struct {
+		alias string
+		owner string
+	}
+	var conflicts []claim
+
+	aliasOwners := make(map[string]string) // alias → model name
+	for i := range allModels.Items {
+		m := &allModels.Items[i]
+		if m.Name == model.Name || m.Spec.LiteLLM == nil {
+			continue
+		}
+		if served := m.Spec.LiteLLM.ServedModelName; served != "" {
+			aliasOwners[served] = m.Name
+		}
+		for _, alias := range m.Spec.LiteLLM.Aliases {
+			aliasOwners[alias] = m.Name
+		}
+		if cop := m.Spec.LiteLLM.CopilotAlias; cop != "" {
+			aliasOwners["copilotAlias:"+cop] = m.Name
+		}
+	}
+
+	// Check this model's aliases against the map.
+	if served := model.Spec.LiteLLM.ServedModelName; served != "" {
+		if owner, ok := aliasOwners[served]; ok {
+			conflicts = append(conflicts, claim{alias: served, owner: owner})
+		}
+	}
+	for _, alias := range model.Spec.LiteLLM.Aliases {
+		if owner, ok := aliasOwners[alias]; ok {
+			conflicts = append(conflicts, claim{alias: alias, owner: owner})
+		}
+	}
+	if cop := model.Spec.LiteLLM.CopilotAlias; cop != "" {
+		if owner, ok := aliasOwners["copilotAlias:"+cop]; ok {
+			conflicts = append(conflicts, claim{alias: "copilotAlias:" + cop, owner: owner})
+		}
+	}
+
+	if len(conflicts) > 0 {
+		msgs := make([]string, 0, len(conflicts))
+		for _, c := range conflicts {
+			msgs = append(msgs, fmt.Sprintf("%q conflicts with %s", c.alias, c.owner))
+		}
+		msg := "litellm alias conflicts (use serviceLabels for group-wide routing): " + strings.Join(msgs, "; ")
+		setModelCondition(model, aiv1alpha2.ConditionConfigValid, false, aiv1alpha2.ReasonAliasConflict, msg)
+		r.Recorder.Event(model, corev1.EventTypeWarning, aiv1alpha2.ReasonAliasConflict, msg)
+		return
+	}
+
+	setModelCondition(model, aiv1alpha2.ConditionConfigValid, true, aiv1alpha2.ReasonConfigValid, "No alias conflicts detected")
 }
 
 func setModelCondition(model *aiv1alpha2.Model, conditionType string, status bool, reason, message string) {
