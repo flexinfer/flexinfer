@@ -26,6 +26,7 @@ If you need to know what is shipped vs still in progress:
 - Configure remote transport (Streamable HTTP): `docs/STREAMABLE_HTTP.md`
 - Mobile companion API contract (draft): `docs/MOBILE_COMPANION_API.md`
 - Mobile companion security model (draft): `docs/MOBILE_COMPANION_SECURITY.md`
+- Mobile companion iPhone test runbook: `docs/MOBILE_COMPANION_IPHONE_TESTING.md`
 - Follow docs ownership and update cadence: `docs/DOCS_MAINTENANCE.md`
 - Publish docs to flexinfer.ai: `docs/FLEXINFER_SITE_INTEGRATION.md`
 
