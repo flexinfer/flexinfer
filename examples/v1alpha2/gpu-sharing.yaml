@@ -1,7 +1,35 @@
 # GPU Sharing Example
 # Multiple models share a single GPU using time-slicing.
 # Higher priority models preempt lower priority ones.
+#
+# ── Routing: serviceLabels vs litellm.aliases ──
+#
+# These two fields serve DIFFERENT purposes for shared GPU groups:
+#
+# serviceLabels (GROUP-AWARE):
+#   The controller sets AnnotationActiveServiceLabels only on the active
+#   group member's Service. Non-active models have their labels removed.
+#   Use serviceLabels for group-wide traffic names like "fast-chat" or
+#   "gpt-3.5-turbo" — requests route to whichever model is currently
+#   active in the group.
+#
+# litellm.aliases (GLOBAL):
+#   The proxy scans ALL Model CRs and builds a global alias→name map.
+#   Overlapping aliases across models cause non-deterministic routing.
+#   Use aliases only for model-specific names like "codellama-7b" that
+#   should always resolve to one specific model.
+#
+# copilotAlias:
+#   Should only be set on the group leader (minReplicas: 1 model).
+#   Setting it on multiple models in a group causes conflicts.
+#
+# Example: a group with a default model and an on-demand fallback.
+#   - Both models share serviceLabels: ["fast-chat", "gpt-3.5-turbo"]
+#   - Each model has unique litellm.aliases for direct access
+#   - Only the group leader sets copilotAlias
+#
 ---
+# Group leader — always warm, owns group-wide routing via serviceLabels.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -11,11 +39,22 @@ spec:
   source: ollama://codellama:7b
   gpu:
     shared: my-workstation    # Group name for sharing
-    priority: 200             # Higher = more important
+    priority: 200             # Higher = more important, becomes group leader
     vramEstimateMB: 5000
   serverless:
-    idleTimeout: 2m           # Quick scale-down when idle
+    idleTimeout: 2m
+    minReplicas: 1            # Stays warm as the default model
+  serviceLabels:
+    - code                    # Group-wide: routes to active model
+    - fast-code               # Group-wide: routes to active model
+  litellm:
+    enabled: true
+    servedModelName: codellama
+    copilotAlias: copilot     # Only set on the group leader
+    aliases:
+      - codellama-7b          # Model-specific: always resolves here
 ---
+# Lower priority — scales to zero, activatable by model-specific alias.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -29,3 +68,14 @@ spec:
     vramEstimateMB: 2000
   serverless:
     idleTimeout: 2m
+    minReplicas: 0            # Scales to zero when not needed
+  serviceLabels:
+    - code                    # Same group-wide labels (only published when active)
+    - fast-code
+  litellm:
+    enabled: true
+    servedModelName: phi3-mini
+    aliases:
+      - phi3                  # Model-specific: always resolves here
+      # Do NOT add "code" or "fast-code" here — those are group-wide,
+      # use serviceLabels instead.
