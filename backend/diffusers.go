@@ -127,6 +127,14 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if skip := spec.ConfigString("skipWarmup", ""); skip != "" {
 		env = append(env, corev1.EnvVar{Name: "SKIP_WARMUP", Value: skip})
 	}
+	// Warmup resolution: compile GPU kernels at the target resolution so MIOpen/Triton
+	// produce the right kernel instantiations. Default 512x512 in the container.
+	if warmupW := spec.ConfigString("warmupWidth", ""); warmupW != "" {
+		env = append(env, corev1.EnvVar{Name: "WARMUP_WIDTH", Value: warmupW})
+	}
+	if warmupH := spec.ConfigString("warmupHeight", ""); warmupH != "" {
+		env = append(env, corev1.EnvVar{Name: "WARMUP_HEIGHT", Value: warmupH})
+	}
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {

@@ -2446,6 +2446,152 @@ func TestEnsureDeploymentStartupProbe(t *testing.T) {
 	}
 }
 
+func TestPersistentFlashTmpfsForSharedModel(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
+	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:rocm")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	b, ok := backend.Get("diffusers")
+	if !ok {
+		t.Fatal("diffusers backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sdxl-turbo",
+			Namespace: "prod",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stabilityai/sdxl-turbo",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+				Shared: "7900xtx-image",
+			},
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "SharedPVC",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorAMD, "gfx1100", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch deployment: %v", err)
+	}
+
+	var flashVol *corev1.Volume
+	for i := range created.Spec.Template.Spec.Volumes {
+		if created.Spec.Template.Spec.Volumes[i].Name == "flash-tmpfs" {
+			flashVol = &created.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	if flashVol == nil {
+		t.Fatal("flash-tmpfs volume not found")
+	}
+	if flashVol.HostPath == nil {
+		t.Fatal("expected hostPath volume for shared model, got non-hostPath")
+	}
+	wantPath := "/dev/shm/flexinfer/prod/sdxl-turbo"
+	if flashVol.HostPath.Path != wantPath {
+		t.Fatalf("hostPath = %q, want %q", flashVol.HostPath.Path, wantPath)
+	}
+	if flashVol.HostPath.Type == nil || *flashVol.HostPath.Type != corev1.HostPathDirectoryOrCreate {
+		t.Fatal("expected HostPathDirectoryOrCreate type")
+	}
+	if flashVol.EmptyDir != nil {
+		t.Fatal("shared model flash-tmpfs should not have emptyDir")
+	}
+}
+
+func TestEphemeralFlashTmpfsForNonSharedModel(t *testing.T) {
+	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
+	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:rocm")
+	t.Setenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT", "8Gi")
+
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	b, ok := backend.Get("diffusers")
+	if !ok {
+		t.Fatal("diffusers backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "solo-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stabilityai/sdxl-turbo",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+			},
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "SharedPVC",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorAMD, "gfx1100", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch deployment: %v", err)
+	}
+
+	var flashVol *corev1.Volume
+	for i := range created.Spec.Template.Spec.Volumes {
+		if created.Spec.Template.Spec.Volumes[i].Name == "flash-tmpfs" {
+			flashVol = &created.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	if flashVol == nil {
+		t.Fatal("flash-tmpfs volume not found")
+	}
+	if flashVol.EmptyDir == nil {
+		t.Fatal("expected emptyDir volume for non-shared model")
+	}
+	if flashVol.EmptyDir.Medium != corev1.StorageMediumMemory {
+		t.Fatalf("emptyDir medium = %q, want Memory", flashVol.EmptyDir.Medium)
+	}
+	wantSize := resource.MustParse("8Gi")
+	if flashVol.EmptyDir.SizeLimit == nil || !flashVol.EmptyDir.SizeLimit.Equal(wantSize) {
+		t.Fatalf("emptyDir sizeLimit = %v, want 8Gi", flashVol.EmptyDir.SizeLimit)
+	}
+	if flashVol.HostPath != nil {
+		t.Fatal("non-shared model flash-tmpfs should not have hostPath")
+	}
+}
+
 func TestHandleSharedGPURequeue(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {

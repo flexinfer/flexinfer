@@ -615,15 +615,17 @@ def warmup_inference():
     print("Running warmup inference (compiling GPU kernels)...")
     sys.stdout.flush()
     try:
+        warmup_w = int(os.environ.get("WARMUP_WIDTH", "512"))
+        warmup_h = int(os.environ.get("WARMUP_HEIGHT", "512"))
         gen = torch.Generator(device="cpu").manual_seed(42)
         kw = {"prompt": "warmup", "num_inference_steps": 2,
-              "generator": gen, "height": 64, "width": 64}
+              "generator": gen, "height": warmup_h, "width": warmup_w}
         if PIPELINE_MODE == "inpainting":
-            kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
-            kw["mask_image"] = Image.new("L", (64, 64), 255)
+            kw["image"] = Image.new("RGB", (warmup_w, warmup_h), (128, 128, 128))
+            kw["mask_image"] = Image.new("L", (warmup_w, warmup_h), 255)
             kw["strength"] = 0.5
         elif PIPELINE_MODE == "instruct":
-            kw["image"] = Image.new("RGB", (64, 64), (128, 128, 128))
+            kw["image"] = Image.new("RGB", (warmup_w, warmup_h), (128, 128, 128))
         with torch.no_grad():
             pipeline(**kw)
         if torch.cuda.is_available():

@@ -877,20 +877,36 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			}
 		}
 
-		// Add the tmpfs volume
-		flashTmpfs := &corev1.EmptyDirVolumeSource{
-			Medium: corev1.StorageMediumMemory,
+		// Persistent flash-tmpfs for shared models: use hostPath on /dev/shm
+		// so model weights survive pod restarts. Flash-loader's shouldCopy()
+		// skips files with matching sizes, making subsequent swaps near-instant.
+		if model.Spec.IsShared() {
+			flashDir := filepath.Join("/dev/shm/flexinfer", model.Namespace, model.Name)
+			volumes = append(volumes, corev1.Volume{
+				Name: "flash-tmpfs",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: flashDir,
+						Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+					},
+				},
+			})
+		} else {
+			// Non-shared: ephemeral emptyDir (existing behavior)
+			flashTmpfs := &corev1.EmptyDirVolumeSource{
+				Medium: corev1.StorageMediumMemory,
+			}
+			if flashCfg.TmpfsSizeLimit != nil {
+				sizeLimit := flashCfg.TmpfsSizeLimit.DeepCopy()
+				flashTmpfs.SizeLimit = &sizeLimit
+			}
+			volumes = append(volumes, corev1.Volume{
+				Name: "flash-tmpfs",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: flashTmpfs,
+				},
+			})
 		}
-		if flashCfg.TmpfsSizeLimit != nil {
-			sizeLimit := flashCfg.TmpfsSizeLimit.DeepCopy()
-			flashTmpfs.SizeLimit = &sizeLimit
-		}
-		volumes = append(volumes, corev1.Volume{
-			Name: "flash-tmpfs",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: flashTmpfs,
-			},
-		})
 	}
 
 	// Compilation cache: persistent hostPath for MIOpen/PyTorch/Triton caches.
