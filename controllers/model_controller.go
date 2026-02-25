@@ -2082,8 +2082,11 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 }
 
-// syncActiveServiceLabels sets the ai.flexinfer/active-services annotation on the
-// active model's Service and removes it from all other group members.
+// syncActiveServiceLabels sets the ai.flexinfer/active-services annotation on
+// every Service in a shared-GPU group.  The active model gets its serviceLabels
+// written into the annotation; all other group members get an empty string.
+// An empty annotation (key present, value "") tells the proxy "this service is
+// managed but currently inactive — do not fall back to static service-labels".
 func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) {
 	log := log.FromContext(ctx)
 	const annoKey = "ai.flexinfer/active-services"
@@ -2101,18 +2104,19 @@ func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeMod
 		if m.Name == activeModel.Name && len(m.Spec.ServiceLabels) > 0 {
 			desired = strings.Join(m.Spec.ServiceLabels, ",")
 		}
+		// desired is "" for non-active members — annotation is still SET so
+		// the proxy knows not to fall back to static service-labels.
 
-		current := svc.Annotations[annoKey]
-		if current == desired {
+		current, exists := svc.Annotations[annoKey]
+		if exists && current == desired {
 			continue
 		}
 
+		svc.Annotations[annoKey] = desired
 		if desired != "" {
-			svc.Annotations[annoKey] = desired
 			log.Info("Setting active service labels", "model", m.Name, "labels", desired)
 		} else {
-			delete(svc.Annotations, annoKey)
-			log.Info("Removing active service labels", "model", m.Name)
+			log.Info("Clearing active service labels (inactive member)", "model", m.Name)
 		}
 		if err := r.Update(ctx, svc); err != nil {
 			log.Error(err, "Failed to update active service labels", "model", m.Name)

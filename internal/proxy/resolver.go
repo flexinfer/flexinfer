@@ -160,14 +160,17 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	}
 
 	// First pass: collect all label claims to detect conflicts
-	// Prefer AnnotationActiveServiceLabels when present (GPUGroup active model),
-	// otherwise fall back to AnnotationServiceLabels (static claim).
+	// If AnnotationActiveServiceLabels is present (even empty), it takes precedence:
+	//   - non-empty: use those labels (active group leader)
+	//   - empty: service is in a managed group but inactive — no labels
+	// Only fall back to AnnotationServiceLabels when active annotation is absent
+	// (service is not part of a managed shared-GPU group).
 	labelClaims := make(map[string][]string) // label -> []serviceName
 	for _, svc := range services.Items {
 		labels := ""
 		if svc.Annotations != nil {
-			if active, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok && active != "" {
-				labels = active
+			if active, ok := svc.Annotations[AnnotationActiveServiceLabels]; ok {
+				labels = active // may be empty — means "no active labels"
 			} else if static, ok := svc.Annotations[AnnotationServiceLabels]; ok && static != "" {
 				labels = static
 			}
