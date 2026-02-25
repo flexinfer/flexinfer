@@ -7,8 +7,8 @@
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-install hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-hud
+		hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
+		mobile-iphone-preflight mobile-hud mobile-app-open mobile-app-run-sim mobile-dev
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -19,6 +19,15 @@ GOIMPORTS := $(GOPATH)/bin/goimports
 GOSEC := $(GOPATH)/bin/gosec
 GOVULNCHECK := $(GOPATH)/bin/govulncheck
 BASELINE_DIR ?= .loom/baselines
+LOOM_BUILD_P ?= 1
+CGO_ENABLED ?= 0
+MOBILE_IOS_PROJECT ?= apps/loom-companion-ios/LoomCompanion.xcodeproj
+MOBILE_IOS_SCHEME ?= LoomCompanion
+MOBILE_IOS_APP_NAME ?= LoomCompanion
+MOBILE_IOS_BUNDLE_ID ?= ai.flexinfer.loom.companion
+MOBILE_IOS_SIMULATOR ?= iPhone 17
+MOBILE_IOS_CONFIGURATION ?= Debug
+MOBILE_IOS_DERIVED_DATA ?= /tmp/loom-mobile-deriveddata
 
 # Docker settings
 REGISTRY ?= registry.harbor.lan
@@ -101,12 +110,16 @@ help:
 	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + Go API)"
 	@echo "  make hud-build     - Build frontend (pnpm build) + Go binary"
 	@echo "  make hud-install   - Build + install to ~/.local/bin"
+	@echo "  make hud-install-service - Install HUD as launchd service (auto-start, Redis)"
 	@echo "  make hud-frontend  - Build only the Svelte frontend"
 	@echo "  make hud-clean     - Remove frontend node_modules and dist"
 	@echo ""
 	@echo "Mobile Companion (iPhone):"
 	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
+	@echo "  make mobile-app-open         - Open iOS app project in Xcode"
+	@echo "  make mobile-app-run-sim      - Build/install/launch app in iOS Simulator"
+	@echo "  make mobile-dev              - Generate token, restart HUD, open app, print URL+token"
 	@echo ""
 	@echo "Schemas:"
 	@echo "  make schemas-list    - List vendored upstream platform schemas"
@@ -137,7 +150,7 @@ loom:
 			go clean -cache; \
 		fi; \
 	fi
-	go build $(LDFLAGS) -o bin/loom ./cmd/loom
+	CGO_ENABLED=$(CGO_ENABLED) go build -p $(LOOM_BUILD_P) $(LDFLAGS) -o bin/loom ./cmd/loom
 
 servers: $(MCP_SERVERS)
 
@@ -643,6 +656,10 @@ hud-install: hud-build
 	@echo "✓ Installed to $(INSTALL_DIR)/loom"
 	@echo "  Restart HUD: loom hud --port 3333 --overlay"
 
+# Install HUD as a launchd service (auto-start on login, Redis cache).
+hud-install-service: build
+	@./bin/loom hud install
+
 # Full cycle: build frontend, rebuild+install loom binary, restart running HUD.
 # This is the one-command target for HUD development iteration.
 hud-reload: hud-install
@@ -711,8 +728,64 @@ hud-clean:
 mobile-iphone-preflight:
 	@./scripts/mobile/iphone_preflight.sh
 
+# Open the iOS app project in Xcode.
+mobile-app-open:
+	@open "$(MOBILE_IOS_PROJECT)"
+
+# Build, install, and launch Loom Companion in iOS Simulator.
+# Optional overrides:
+#   MOBILE_IOS_SIMULATOR="iPhone 17 Pro"
+#   MOBILE_IOS_CONFIGURATION=Debug
+mobile-app-run-sim:
+	@echo "Booting simulator: $(MOBILE_IOS_SIMULATOR)"
+	@xcrun simctl boot "$(MOBILE_IOS_SIMULATOR)" >/dev/null 2>&1 || true
+	@echo "Building $(MOBILE_IOS_SCHEME) for simulator..."
+	@xcodebuild -project "$(MOBILE_IOS_PROJECT)" \
+		-scheme "$(MOBILE_IOS_SCHEME)" \
+		-destination "platform=iOS Simulator,name=$(MOBILE_IOS_SIMULATOR)" \
+		-configuration "$(MOBILE_IOS_CONFIGURATION)" \
+		-derivedDataPath "$(MOBILE_IOS_DERIVED_DATA)" \
+		build >/tmp/loom-mobile-app-build.log && tail -n 10 /tmp/loom-mobile-app-build.log
+	@APP_PATH="$(MOBILE_IOS_DERIVED_DATA)/Build/Products/$(MOBILE_IOS_CONFIGURATION)-iphonesimulator/$(MOBILE_IOS_APP_NAME).app"; \
+	if [ ! -d "$$APP_PATH" ]; then \
+		echo "ERROR: app bundle not found at $$APP_PATH"; \
+		exit 1; \
+	fi; \
+	echo "Installing $$APP_PATH"; \
+	xcrun simctl install booted "$$APP_PATH"; \
+	echo "Launching $(MOBILE_IOS_BUNDLE_ID)"; \
+	xcrun simctl launch booted "$(MOBILE_IOS_BUNDLE_ID)"
+
+# One-command local mobile dev bootstrap:
+# - ensures bin/loom exists
+# - generates a fresh mobile operator token
+# - restarts HUD with that token
+# - opens the iOS app project in Xcode
+# - prints copy/paste URL + token values
+mobile-dev:
+	@./scripts/mobile/dev_bootstrap.sh
+
 # Launch HUD for LAN iPhone testing (requires mobile auth token).
-mobile-hud: loom
+mobile-hud:
+	@if [ ! -x "./bin/loom" ]; then \
+		echo "bin/loom not found; building with LOOM_BUILD_P=$(LOOM_BUILD_P) CGO_ENABLED=$(CGO_ENABLED)"; \
+		if ! $(MAKE) loom LOOM_BUILD_P=$(LOOM_BUILD_P) CGO_ENABLED=$(CGO_ENABLED); then \
+			echo "ERROR: failed to build bin/loom (likely memory pressure)."; \
+			echo "Try closing Simulator/Xcode and rerun: LOOM_BUILD_P=1 CGO_ENABLED=0 make loom"; \
+			exit 1; \
+		fi; \
+	fi
+	@if [ "$${MOBILE_HUD_REBUILD:-0}" = "1" ]; then \
+		echo "MOBILE_HUD_REBUILD=1; rebuilding loom with LOOM_BUILD_P=$(LOOM_BUILD_P) CGO_ENABLED=$(CGO_ENABLED)"; \
+		if ! $(MAKE) loom LOOM_BUILD_P=$(LOOM_BUILD_P) CGO_ENABLED=$(CGO_ENABLED); then \
+			if [ -x "./bin/loom" ]; then \
+				echo "WARN: rebuild failed (likely memory pressure); using existing ./bin/loom"; \
+			else \
+				echo "ERROR: rebuild failed and no existing ./bin/loom is available."; \
+				exit 1; \
+			fi; \
+		fi; \
+	fi
 	@if [ -z "$$HUD_MOBILE_OPERATOR_TOKEN" ]; then \
 		echo "ERROR: HUD_MOBILE_OPERATOR_TOKEN is required."; \
 		echo "Set one with: export HUD_MOBILE_OPERATOR_TOKEN=\"$$(openssl rand -hex 32)\""; \

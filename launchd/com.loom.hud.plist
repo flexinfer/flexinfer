@@ -3,13 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.loom.daemon</string>
+    <string>com.loom.hud</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/cblevins/.local/bin/loomd</string>
-        <string>--registry</string>
-        <string>/Users/cblevins/.config/loom/registry.yaml</string>
+        <string>/Users/cblevins/.local/bin/loom</string>
+        <string>hud</string>
+        <string>--port</string>
+        <string>3333</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -22,10 +23,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/cblevins/.config/loom/logs/daemon.log</string>
+    <string>/Users/cblevins/.config/loom/logs/hud.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/cblevins/.config/loom/logs/daemon.err</string>
+    <string>/Users/cblevins/.config/loom/logs/hud.err</string>
 
     <key>WorkingDirectory</key>
     <string>/Users/cblevins</string>

@@ -86,11 +86,12 @@ type Config struct {
 // background monitors, and an in-memory cache used to reduce repeated calls
 // to the daemon.
 type App struct {
-	config Config
-	client *bridge.DaemonClient
-	agent  *bridge.AgentBridge
-	cache  loomcache.Store
-	logger *slog.Logger
+	config       Config
+	client       *bridge.DaemonClient
+	agent        *bridge.AgentBridge
+	cache        loomcache.Store
+	cacheBackend string // "memory" or "redis" — exposed in /api/health.
+	logger       *slog.Logger
 
 	// Background monitors — poll the bridge and maintain cached snapshots.
 	fleetMonitor    *monitor.FleetMonitor
@@ -146,6 +147,7 @@ func Run(cfg Config) error {
 		client:               client,
 		agent:                agent,
 		cache:                appCache,
+		cacheBackend:         cacheCfg.Backend,
 		logger:               logger,
 		nudgeQueue:           NewNudgeQueue(),
 		mobileRevocationList: NewMobileTokenRevocationList(),
@@ -762,9 +764,14 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		}
 		healthServers[s.Name] = sh
 	}
-	a.writeJSON(w, http.StatusOK, &bridge.HealthResult{
-		Servers:    healthServers,
-		Divergence: divergences,
+	a.writeJSON(w, http.StatusOK, struct {
+		Servers      map[string]bridge.ServerHealth `json:"servers"`
+		Divergence   []bridge.HealthDivergenceEntry `json:"divergence,omitempty"`
+		CacheBackend string                         `json:"cache_backend"`
+	}{
+		Servers:      healthServers,
+		Divergence:   divergences,
+		CacheBackend: a.cacheBackend,
 	})
 }
 
