@@ -168,10 +168,22 @@ func installService() error {
 	fmt.Printf("Installed launchd service: %s\n", plistDest)
 	fmt.Println("Daemon will start automatically on login")
 	fmt.Println("Start now with: loom start")
+
+	// Also install the HUD service (non-fatal).
+	fmt.Println()
+	if err := installHudService(); err != nil {
+		fmt.Printf("Warning: HUD service install failed: %v\n", err)
+	}
+
 	return nil
 }
 
 func uninstallService() error {
+	// Uninstall HUD service first (non-fatal).
+	if err := uninstallHudService(); err != nil {
+		fmt.Printf("Warning: HUD service uninstall failed: %v\n", err)
+	}
+
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 
@@ -283,6 +295,10 @@ func statusDaemon(socketPath string) error {
 			}
 		}
 	}
+
+	// Append HUD status.
+	fmt.Println()
+	_ = statusHudService()
 
 	return nil
 }

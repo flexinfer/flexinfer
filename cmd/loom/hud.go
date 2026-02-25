@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"github.com/crb2nu/loom/internal/hud"
+	"github.com/crb2nu/loom/pkg/env"
 )
 
 // envInt reads an integer from an environment variable, falling back to a default.
@@ -43,6 +45,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var tlsCert string
 	var tlsKey string
 	var bindAddress string
+	var cacheBackend string
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
@@ -78,6 +81,22 @@ Use --install-shader to install the loom-vibrancy.glsl shader to
 Use --metrics-addr to connect to the daemon's SSE event stream for
 real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load optional env file (secrets for launchd, etc.).
+			envFile := os.Getenv("LOOM_HUD_ENV_FILE")
+			if envFile == "" {
+				if home, err := os.UserHomeDir(); err == nil {
+					envFile = filepath.Join(home, ".config", "loom", "hud.env")
+				}
+			}
+			if envFile != "" {
+				_ = env.LoadFile(envFile)
+			}
+
+			// Apply --cache-backend flag to env (read later by cache.LoadConfigFromEnv).
+			if cacheBackend != "" {
+				os.Setenv("CACHE_BACKEND", cacheBackend)
+			}
+
 			// Standalone utility commands (no daemon connection needed).
 			if ghosttyConfig {
 				fmt.Print(hud.GenerateGhosttyConfig())
@@ -151,8 +170,20 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().BoolVar(&ghosttyConfig, "ghostty-config", false, "Print Ghostty config snippet to stdout and exit")
 	cmd.Flags().BoolVar(&installShader, "install-shader", false, "Install loom-vibrancy.glsl shader to ~/.config/loom/ and exit")
 
+	// Cache backend override (normally set via CACHE_BACKEND env var or launchd plist).
+	cmd.Flags().StringVar(&cacheBackend, "cache-backend", "", "Cache backend: memory or redis [$CACHE_BACKEND]")
+
 	// TUI mode.
 	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
+
+	// Service management subcommands.
+	cmd.AddCommand(
+		newHudInstallCmd(),
+		newHudUninstallCmd(),
+		newHudStartCmd(),
+		newHudStopCmd(),
+		newHudStatusCmd(),
+	)
 
 	return cmd
 }
