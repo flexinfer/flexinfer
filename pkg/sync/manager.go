@@ -149,11 +149,12 @@ func (m *Manager) registerProfiles() {
 			"auth.json", "sessions", "backups", "extensions",
 			"antigravity", "argv.json", "logs", "CachedData",
 		},
-		SecretFiles:       []string{"auth.json"},
-		GeneratorTarget:   "antigravity", // Uses mcp.json format (VSCode fork)
-		GeneratedFile:     "mcp.json",
-		SyncGeneratedOnly: true,
-		DefaultLoomMode:   true,
+		SecretFiles:         []string{"auth.json"},
+		GeneratorTarget:     "antigravity", // Uses mcp.json format (VSCode fork)
+		GeneratedFile:       "mcp.json",
+		ExtraGeneratedFiles: []string{"settings.json"}, // Stub for sync architecture consistency
+		SyncGeneratedOnly:   true,
+		DefaultLoomMode:     true,
 	}
 
 	m.Profiles["vscode"] = &Profile{

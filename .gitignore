@@ -32,6 +32,9 @@ vendor/
 *.tmp
 *.bak
 
+# Agent worktrees (managed by agent_worktree_allocate)
+.worktrees/
+
 # Local AI tool configs (generated/synced)
 .claude/
 .claude/mcp.json

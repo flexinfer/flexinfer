@@ -522,6 +522,13 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string) error
 		config = claudeHooksConfig(reg)
 	case "gemini":
 		config = geminiHooksConfigFromRegistry(reg)
+	case "antigravity":
+		// Antigravity has no native hook support, but benefits from a
+		// settings.json stub for consistency with the sync architecture.
+		// The --agent-hint flag in mcp.json handles session tracking.
+		config = map[string]any{
+			"hooks": map[string]any{},
+		}
 	case "opencode":
 		// OpenCode uses JS/TS plugins for hooks, not a JSON settings file.
 		return generateOpenCodeHooksPlugin(outputDir)
@@ -639,6 +646,11 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 			"command": dirtyWorktreeSessionStartNudgeCommand(policy),
 		})
 	}
+	// Suggest worktree allocation when on main/master to avoid dirty-worktree issues.
+	sessionStartHooks = append(sessionStartHooks, map[string]any{
+		"type":    "command",
+		"command": mainBranchWorktreeNudgeCommand(),
+	})
 
 	hooks := map[string]any{
 		"SessionStart": []map[string]any{
@@ -1009,6 +1021,14 @@ func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
 	}
 
 	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then printf '%%s\n' %q; fi; fi; exit 0`, string(payload))
+}
+
+// mainBranchWorktreeNudgeCommand returns a shell command that emits a systemMessage
+// suggesting worktree allocation when the agent is on main or master. This is a
+// non-blocking suggestion — quick single-file fixes on main are still fine.
+func mainBranchWorktreeNudgeCommand() string {
+	payload := `{"systemMessage":"You are on main. For feature work or multi-file changes, consider using agent_worktree_allocate() to create an isolated branch and worktree before making changes."}`
+	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then BRANCH="$(git branch --show-current 2>/dev/null)"; if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then printf '%%s\n' %q; fi; fi; exit 0`, payload)
 }
 
 // geminiHooksConfig returns a Gemini CLI settings.json with lifecycle hooks
