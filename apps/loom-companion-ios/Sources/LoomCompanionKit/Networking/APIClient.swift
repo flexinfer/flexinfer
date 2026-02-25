@@ -46,21 +46,40 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
             throw LoomAPIError.networkError(underlying: "Non-HTTP response")
         }
 
+        return try decodeResponse(data, statusCode: httpResponse.statusCode)
+    }
+
+    /// Decode and validate the standard mobile API envelope contract.
+    ///
+    /// Contract expectations:
+    /// - Body is an `APIEnvelope<T>`
+    /// - `ok == false` carries structured `error`
+    /// - `ok == true` includes non-nil `data`
+    /// - 2xx with invalid/missing envelope data is a decoding contract error
+    func decodeResponse<T: Decodable>(_ data: Data, statusCode: Int) throws -> T {
         let envelope: APIEnvelope<T>
         do {
             envelope = try JSONDecoder().decode(APIEnvelope<T>.self, from: data)
         } catch {
-            // If we can't decode the envelope at all, map HTTP status to error
-            throw mapHTTPError(status: httpResponse.statusCode, data: data)
+            // If we can't decode a successful payload, surface a contract error.
+            if (200 ..< 300).contains(statusCode) {
+                throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode))")
+            }
+            // For non-2xx responses, map HTTP status to structured API errors.
+            throw mapHTTPError(status: statusCode, data: data)
         }
 
-        guard envelope.ok, let result = envelope.data else {
+        if !envelope.ok {
             let errorCode = APIErrorCode(rawValue: envelope.error?.code ?? "") ?? .unknown
             throw LoomAPIError.apiError(
                 code: errorCode,
                 message: envelope.error?.message ?? "Unknown error",
                 requestId: envelope.meta.requestId
             )
+        }
+
+        guard let result = envelope.data else {
+            throw LoomAPIError.decodingError(underlying: "Missing data payload in successful API response (HTTP \(statusCode))")
         }
 
         return result
@@ -89,9 +108,13 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
 
         // Fallback to HTTP status
         switch status {
+        case 400: return .apiError(code: .badRequest, message: "Bad request", requestId: "")
         case 401: return .apiError(code: .unauthorized, message: "Unauthorized", requestId: "")
         case 403: return .apiError(code: .forbidden, message: "Forbidden", requestId: "")
+        case 404: return .apiError(code: .notFound, message: "Not found", requestId: "")
         case 429: return .apiError(code: .rateLimited, message: "Rate limited", requestId: "")
+        case 500, 502, 503, 504:
+            return .apiError(code: .upstreamError, message: "Upstream service error (HTTP \(status))", requestId: "")
         default: return .networkError(underlying: "HTTP \(status)")
         }
     }

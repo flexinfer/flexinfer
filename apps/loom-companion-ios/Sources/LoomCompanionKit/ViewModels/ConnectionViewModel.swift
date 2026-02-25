@@ -37,11 +37,11 @@ public final class ConnectionViewModel {
             return
         }
 
-        // Validate URL format
-        guard let url = URL(string: baseURLInput) else {
-            pairingError = "Invalid URL format"
+        guard let normalized = Self.normalizedBaseURL(baseURLInput, mode: connectionMode) else {
+            pairingError = "Invalid server URL"
             return
         }
+        let url = normalized
 
         // Gateway mode requires HTTPS
         if connectionMode == .gateway, url.scheme != "https" {
@@ -78,7 +78,9 @@ public final class ConnectionViewModel {
         }
 
         // Save credentials
-        let profile = ConnectionProfile(name: "default", baseURL: baseURLInput, mode: connectionMode)
+        let normalizedBaseURL = url.absoluteString
+        baseURLInput = normalizedBaseURL
+        let profile = ConnectionProfile(name: "default", baseURL: normalizedBaseURL, mode: connectionMode)
         do {
             try tokenStore.saveToken(tokenInput)
             try tokenStore.saveProfile(profile)
@@ -109,6 +111,38 @@ public final class ConnectionViewModel {
             return nil
         }
         return APIClient(baseURL: url, token: token)
+    }
+
+    static func normalizedBaseURL(_ input: String, mode: ConnectionMode) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let withScheme: String
+        if trimmed.contains("://") {
+            withScheme = trimmed
+        } else {
+            switch mode {
+            case .lan:
+                withScheme = "http://\(trimmed)"
+            case .gateway:
+                withScheme = "https://\(trimmed)"
+            }
+        }
+
+        guard var components = URLComponents(string: withScheme),
+              let host = components.host,
+              !host.isEmpty
+        else {
+            return nil
+        }
+
+        if mode == .lan, components.port == nil {
+            components.port = 3333
+        }
+
+        return components.url
     }
 }
 

@@ -13,6 +13,12 @@ struct StatusBadge: View {
         case .ended:
             status = "Ended"
             color = .secondary
+        case .summarized:
+            status = "Summarized"
+            color = .blue
+        case .unknown:
+            status = "Unknown"
+            color = .secondary
         }
     }
 

@@ -8,7 +8,7 @@
 		deploy deploy-status \
 		browserkit-check browserkit-setup \
 		hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-hud mobile-app-open mobile-app-run-sim mobile-dev
+		mobile-iphone-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -28,6 +28,7 @@ MOBILE_IOS_BUNDLE_ID ?= ai.flexinfer.loom.companion
 MOBILE_IOS_SIMULATOR ?= iPhone 17
 MOBILE_IOS_CONFIGURATION ?= Debug
 MOBILE_IOS_DERIVED_DATA ?= /tmp/loom-mobile-deriveddata
+MOBILE_IOS_PROJECT_YAML ?= apps/loom-companion-ios/project.yml
 
 # Docker settings
 REGISTRY ?= registry.harbor.lan
@@ -116,6 +117,7 @@ help:
 	@echo ""
 	@echo "Mobile Companion (iPhone):"
 	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
+	@echo "  make mobile-ios-project-sync - Regenerate Xcode project from project.yml"
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
 	@echo "  make mobile-app-open         - Open iOS app project in Xcode"
 	@echo "  make mobile-app-run-sim      - Build/install/launch app in iOS Simulator"
@@ -728,17 +730,32 @@ hud-clean:
 mobile-iphone-preflight:
 	@./scripts/mobile/iphone_preflight.sh
 
+# Keep the generated Xcode project aligned with project.yml and source layout.
+mobile-ios-project-sync:
+	@if ! command -v xcodegen >/dev/null 2>&1; then \
+		echo "ERROR: xcodegen is required to generate $(MOBILE_IOS_PROJECT)"; \
+		echo "Install with: brew install xcodegen"; \
+		exit 1; \
+	fi
+	@cd apps/loom-companion-ios && xcodegen generate --use-cache >/tmp/loom-mobile-xcodegen.log 2>&1 || { \
+		echo "ERROR: failed to generate iOS project from $(MOBILE_IOS_PROJECT_YAML)"; \
+		tail -n 40 /tmp/loom-mobile-xcodegen.log; \
+		exit 1; \
+	}
+
 # Open the iOS app project in Xcode.
-mobile-app-open:
+mobile-app-open: mobile-ios-project-sync
 	@open "$(MOBILE_IOS_PROJECT)"
 
 # Build, install, and launch Loom Companion in iOS Simulator.
 # Optional overrides:
 #   MOBILE_IOS_SIMULATOR="iPhone 17 Pro"
 #   MOBILE_IOS_CONFIGURATION=Debug
-mobile-app-run-sim:
+mobile-app-run-sim: mobile-ios-project-sync
 	@echo "Booting simulator: $(MOBILE_IOS_SIMULATOR)"
+	@open -a Simulator >/dev/null 2>&1 || true
 	@xcrun simctl boot "$(MOBILE_IOS_SIMULATOR)" >/dev/null 2>&1 || true
+	@xcrun simctl bootstatus "$(MOBILE_IOS_SIMULATOR)" -b >/dev/null 2>&1 || true
 	@echo "Building $(MOBILE_IOS_SCHEME) for simulator..."
 	@xcodebuild -project "$(MOBILE_IOS_PROJECT)" \
 		-scheme "$(MOBILE_IOS_SCHEME)" \
@@ -751,10 +768,22 @@ mobile-app-run-sim:
 		echo "ERROR: app bundle not found at $$APP_PATH"; \
 		exit 1; \
 	fi; \
-	echo "Installing $$APP_PATH"; \
-	xcrun simctl install booted "$$APP_PATH"; \
-	echo "Launching $(MOBILE_IOS_BUNDLE_ID)"; \
-	xcrun simctl launch booted "$(MOBILE_IOS_BUNDLE_ID)"
+	SIM_UDID="$$(xcrun simctl list devices booted | rg -o -m1 '[0-9A-F-]{36}')"; \
+	if [ -z "$$SIM_UDID" ]; then \
+		echo "No booted simulator detected; retrying boot for $(MOBILE_IOS_SIMULATOR)..."; \
+		xcrun simctl boot "$(MOBILE_IOS_SIMULATOR)" >/dev/null 2>&1 || true; \
+		xcrun simctl bootstatus "$(MOBILE_IOS_SIMULATOR)" -b >/dev/null 2>&1 || true; \
+		SIM_UDID="$$(xcrun simctl list devices booted | rg -o -m1 '[0-9A-F-]{36}')"; \
+	fi; \
+	if [ -z "$$SIM_UDID" ]; then \
+		echo "ERROR: no booted iOS Simulator found."; \
+		echo "Open Simulator.app and ensure '$(MOBILE_IOS_SIMULATOR)' is booted, then rerun."; \
+		exit 1; \
+	fi; \
+	echo "Installing $$APP_PATH on $$SIM_UDID"; \
+	xcrun simctl install "$$SIM_UDID" "$$APP_PATH"; \
+	echo "Launching $(MOBILE_IOS_BUNDLE_ID) on $$SIM_UDID"; \
+	xcrun simctl launch "$$SIM_UDID" "$(MOBILE_IOS_BUNDLE_ID)"
 
 # One-command local mobile dev bootstrap:
 # - ensures bin/loom exists

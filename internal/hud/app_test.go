@@ -846,6 +846,102 @@ func TestHandler_MobileSessions_ReturnsEnvelope(t *testing.T) {
 	if env.Meta.RequestID == "" {
 		t.Fatal("expected request_id in meta")
 	}
+	if env.Data.Sessions == nil {
+		t.Fatal("expected sessions to be an empty array, not null")
+	}
+}
+
+func TestHandler_MobileReadParityEndpoints_ReturnEnvelope(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	endpoints := []struct {
+		name      string
+		path      string
+		dataKey   string
+		mustArray bool
+	}{
+		{"tasks", "/api/mobile/v1/tasks", "tasks", true},
+		{"workflows", "/api/mobile/v1/workflows", "workflows", true},
+		{"workflow_detail", "/api/mobile/v1/workflows/wf-1", "workflow", false},
+		{"presence", "/api/mobile/v1/presence", "agents", true},
+		{"memory_stats", "/api/mobile/v1/memory/stats", "stats", false},
+		{"memory_items", "/api/mobile/v1/memory/items?tier=working", "items", true},
+		{"stream", "/api/mobile/v1/stream", "entries", true},
+		{"topology", "/api/mobile/v1/topology", "nodes", true},
+		{"graph_stats", "/api/mobile/v1/graph/stats", "stats", false},
+		{"graph_entities", "/api/mobile/v1/graph/entities", "entities", true},
+		{"graph_path", "/api/mobile/v1/graph/path?source_id=ent-a&target_id=ent-b", "path", false},
+		{"reasoning_chains", "/api/mobile/v1/reasoning/chains", "chains", true},
+		{"reasoning_chain_detail", "/api/mobile/v1/reasoning/chains/chain-1", "chain", false},
+	}
+
+	for _, ep := range endpoints {
+		t.Run(ep.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", ep.path, nil)
+			req.Header.Set("Authorization", "Bearer mobile-secret")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var env struct {
+				OK   bool           `json:"ok"`
+				Data map[string]any `json:"data"`
+				Meta mobMeta        `json:"meta"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+				t.Fatalf("failed to decode envelope: %v", err)
+			}
+			if !env.OK {
+				t.Fatalf("expected ok=true")
+			}
+			if env.Meta.RequestID == "" {
+				t.Fatalf("expected request_id in meta")
+			}
+			value, ok := env.Data[ep.dataKey]
+			if !ok {
+				t.Fatalf("expected data.%s in response", ep.dataKey)
+			}
+			if ep.mustArray && value == nil {
+				t.Fatalf("expected data.%s to be an empty array, not null", ep.dataKey)
+			}
+		})
+	}
+}
+
+func TestHandler_MobileMemoryItems_InvalidTier(t *testing.T) {
+	app, mux := newTestApp(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/memory/items?tier=invalid-tier", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("failed to decode envelope: %v", err)
+	}
+	if env.OK {
+		t.Fatalf("expected ok=false")
+	}
+	if env.Error.Code != "bad_request" {
+		t.Fatalf("expected bad_request, got %q", env.Error.Code)
+	}
 }
 
 func TestHandler_MobileErrorReturnsEnvelope(t *testing.T) {
@@ -1007,6 +1103,19 @@ func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
 		{"GET", "/api/mobile/v1/sessions", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", ""},
+		{"GET", "/api/mobile/v1/tasks", ""},
+		{"GET", "/api/mobile/v1/workflows", ""},
+		{"GET", "/api/mobile/v1/workflows/test-workflow", ""},
+		{"GET", "/api/mobile/v1/presence", ""},
+		{"GET", "/api/mobile/v1/memory/stats", ""},
+		{"GET", "/api/mobile/v1/memory/items?tier=working", ""},
+		{"GET", "/api/mobile/v1/stream", ""},
+		{"GET", "/api/mobile/v1/topology", ""},
+		{"GET", "/api/mobile/v1/graph/stats", ""},
+		{"GET", "/api/mobile/v1/graph/entities", ""},
+		{"GET", "/api/mobile/v1/graph/path?source_id=ent-a&target_id=ent-b", ""},
+		{"GET", "/api/mobile/v1/reasoning/chains", ""},
+		{"GET", "/api/mobile/v1/reasoning/chains/chain-1", ""},
 		// Note: events/stream (SSE) is excluded from allow test because the handler
 		// blocks indefinitely. Scope denial is verified via TestMobileContract_AllScopesRequired.
 		{"GET", "/api/mobile/v1/audit", ""},
@@ -2156,6 +2265,19 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 		{"GET", "/api/mobile/v1/sessions", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/tasks", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/workflows", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/workflows/test-workflow", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/presence", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/memory/stats", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/memory/items?tier=working", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/stream", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/topology", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/graph/stats", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/graph/entities", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/graph/path?source_id=ent-a&target_id=ent-b", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/reasoning/chains", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/reasoning/chains/chain-1", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/events/stream", "", "mobile:read", true}, // SSE blocks; deny-only.
 		{"GET", "/api/mobile/v1/audit", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/alerts/policy", "", "mobile:read", false},
@@ -2171,7 +2293,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end", "mobile:push"}
 
 	// Verify endpoint count matches registered mobile routes (excluding admin/revoke which uses X-Admin-Token).
-	const expectedScopeGatedEndpoints = 12
+	const expectedScopeGatedEndpoints = 25
 	if len(contracts) != expectedScopeGatedEndpoints {
 		t.Fatalf("contract test covers %d endpoints, expected %d — update when adding mobile routes",
 			len(contracts), expectedScopeGatedEndpoints)

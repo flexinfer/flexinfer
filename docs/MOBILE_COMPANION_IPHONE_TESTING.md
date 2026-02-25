@@ -17,6 +17,16 @@ Use this runbook to build and run Loom Companion on a physical iPhone and valida
 
 ## Quick Start (LAN Mode)
 
+Single-command bootstrap (recommended):
+
+```bash
+make mobile-dev
+```
+
+This generates a fresh token, restarts HUD with mobile auth, opens the iOS app project in Xcode, and prints copy/paste-ready URL + token values.
+
+Manual step-by-step:
+
 1. Run preflight checks.
 
 ```bash
@@ -51,10 +61,10 @@ This serves HUD on `http://0.0.0.0:3333` with mobile routes enabled.
 ipconfig getifaddr en0 || ipconfig getifaddr en1
 ```
 
-6. Open the iOS app package in Xcode.
+6. Open the iOS app project in Xcode.
 
 ```bash
-open apps/loom-companion-ios/Package.swift
+make mobile-app-open
 ```
 
 7. In Xcode:
@@ -62,6 +72,12 @@ open apps/loom-companion-ios/Package.swift
 - Select your physical iPhone as the run destination.
 - Set your Team under Signing if prompted.
 - Tap Run.
+
+For simulator-only quick runs from CLI:
+
+```bash
+make mobile-app-run-sim
+```
 
 8. In the app:
 - Mode: `LAN`
@@ -99,6 +115,7 @@ Use this when testing over remote/gateway endpoints instead of LAN.
 
 - `unknown flag: --serve`: use `loom hud --bind ... --port ...` (there is no `--serve` flag).
 - `iOS ... is not installed`: install iOS platform in Xcode Components.
+- `missing bundleID for main bundle NSBundle ... Debug-iphonesimulator`: open/run `apps/loom-companion-ios/LoomCompanion.xcodeproj` (not `Package.swift`).
 - Pairing fails in LAN mode: verify Local Network permission in iOS settings.
 - `[unauthorized] invalid token`: ensure app token exactly matches HUD token.
 - `[forbidden]`: missing scope in `HUD_MOBILE_OPERATOR_SCOPES`.

@@ -7,6 +7,19 @@ public enum Endpoint: Sendable {
     case sessions
     case sessionDetail(id: String)
     case sessionEvents(id: String, limit: Int? = nil)
+    case tasks(status: MobileTaskStatus? = nil, agentId: String? = nil, sessionId: String? = nil, limit: Int? = nil, search: String? = nil)
+    case workflows(status: MobileWorkflowStatus? = nil, agentId: String? = nil, limit: Int? = nil)
+    case workflowDetail(id: String)
+    case presence(status: MobilePresenceStatus? = nil, agentId: String? = nil, limit: Int? = nil)
+    case memoryStats
+    case memoryItems(tier: MobileMemoryTier = .working, query: String? = nil, limit: Int? = nil)
+    case stream(types: [String]? = nil, agentId: String? = nil, sessionId: String? = nil, limit: Int? = nil)
+    case topology
+    case graphStats
+    case graphEntities(type: String? = nil, query: String? = nil, limit: Int? = nil)
+    case graphPath(sourceId: String, targetId: String, maxDepth: Int? = nil)
+    case reasoningChains(status: MobileReasoningStatus? = nil, limit: Int? = nil)
+    case reasoningChainDetail(id: String)
     case createSession(agentId: String, namespace: String? = nil, description: String? = nil, autoRecall: Bool? = nil)
     case endSession(id: String, summarize: Bool? = nil)
     case eventsStream
@@ -14,7 +27,11 @@ public enum Endpoint: Sendable {
 
     var method: String {
         switch self {
-        case .ping, .dashboard, .sessions, .sessionDetail, .sessionEvents, .eventsStream, .audit:
+        case .ping, .dashboard, .sessions, .sessionDetail, .sessionEvents,
+             .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
+             .memoryItems, .stream, .topology, .graphStats, .graphEntities,
+             .graphPath, .reasoningChains, .reasoningChainDetail,
+             .eventsStream, .audit:
             return "GET"
         case .createSession, .endSession:
             return "POST"
@@ -33,6 +50,32 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/sessions/\(id)"
         case let .sessionEvents(id, _):
             return "/api/mobile/v1/sessions/\(id)/events"
+        case .tasks:
+            return "/api/mobile/v1/tasks"
+        case .workflows:
+            return "/api/mobile/v1/workflows"
+        case let .workflowDetail(id):
+            return "/api/mobile/v1/workflows/\(id)"
+        case .presence:
+            return "/api/mobile/v1/presence"
+        case .memoryStats:
+            return "/api/mobile/v1/memory/stats"
+        case .memoryItems:
+            return "/api/mobile/v1/memory/items"
+        case .stream:
+            return "/api/mobile/v1/stream"
+        case .topology:
+            return "/api/mobile/v1/topology"
+        case .graphStats:
+            return "/api/mobile/v1/graph/stats"
+        case .graphEntities:
+            return "/api/mobile/v1/graph/entities"
+        case .graphPath:
+            return "/api/mobile/v1/graph/path"
+        case .reasoningChains:
+            return "/api/mobile/v1/reasoning/chains"
+        case let .reasoningChainDetail(id):
+            return "/api/mobile/v1/reasoning/chains/\(id)"
         case .createSession:
             return "/api/mobile/v1/sessions"
         case let .endSession(id, _):
@@ -59,6 +102,102 @@ public enum Endpoint: Sendable {
             if let limit {
                 components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
             }
+        case let .tasks(status, agentId, sessionId, limit, search):
+            var items: [URLQueryItem] = []
+            if let status {
+                items.append(URLQueryItem(name: "status", value: status.rawValue))
+            }
+            if let agentId {
+                items.append(URLQueryItem(name: "agent_id", value: agentId))
+            }
+            if let sessionId {
+                items.append(URLQueryItem(name: "session_id", value: sessionId))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if let search {
+                items.append(URLQueryItem(name: "search", value: search))
+            }
+            if !items.isEmpty { components.queryItems = items }
+        case let .workflows(status, agentId, limit):
+            var items: [URLQueryItem] = []
+            if let status {
+                items.append(URLQueryItem(name: "status", value: status.rawValue))
+            }
+            if let agentId {
+                items.append(URLQueryItem(name: "agent_id", value: agentId))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
+        case let .presence(status, agentId, limit):
+            var items: [URLQueryItem] = []
+            if let status {
+                items.append(URLQueryItem(name: "status", value: status.rawValue))
+            }
+            if let agentId {
+                items.append(URLQueryItem(name: "agent_id", value: agentId))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
+        case let .memoryItems(tier, query, limit):
+            var items: [URLQueryItem] = [URLQueryItem(name: "tier", value: tier.rawValue)]
+            if let query {
+                items.append(URLQueryItem(name: "query", value: query))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            components.queryItems = items
+        case let .stream(types, agentId, sessionId, limit):
+            var items: [URLQueryItem] = []
+            if let types, !types.isEmpty {
+                items.append(URLQueryItem(name: "types", value: types.joined(separator: ",")))
+            }
+            if let agentId {
+                items.append(URLQueryItem(name: "agent_id", value: agentId))
+            }
+            if let sessionId {
+                items.append(URLQueryItem(name: "session_id", value: sessionId))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
+        case let .graphEntities(type, query, limit):
+            var items: [URLQueryItem] = []
+            if let type {
+                items.append(URLQueryItem(name: "type", value: type))
+            }
+            if let query {
+                items.append(URLQueryItem(name: "q", value: query))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
+        case let .graphPath(sourceId, targetId, maxDepth):
+            var items: [URLQueryItem] = [
+                URLQueryItem(name: "source_id", value: sourceId),
+                URLQueryItem(name: "target_id", value: targetId),
+            ]
+            if let maxDepth {
+                items.append(URLQueryItem(name: "max_depth", value: String(maxDepth)))
+            }
+            components.queryItems = items
+        case let .reasoningChains(status, limit):
+            var items: [URLQueryItem] = []
+            if let status {
+                items.append(URLQueryItem(name: "status", value: status.rawValue))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
         case let .audit(source, limit):
             var items: [URLQueryItem] = []
             if let source { items.append(URLQueryItem(name: "source", value: source)) }

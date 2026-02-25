@@ -116,7 +116,11 @@ struct LoginView: View {
     private var modeDescription: String {
         switch viewModel.connectionMode {
         case .lan:
+            #if targetEnvironment(simulator)
+            return "Direct connection on your local network. In iOS Simulator, use http://127.0.0.1:3333 when HUD runs on this Mac."
+            #else
             return "Direct connection on your local network. Requires local network permission on iOS."
+            #endif
         case .gateway:
             return "Remote connection through a gateway. Requires HTTPS."
         }
@@ -125,7 +129,11 @@ struct LoginView: View {
     private var urlPlaceholder: String {
         switch viewModel.connectionMode {
         case .lan:
+            #if targetEnvironment(simulator)
+            return "http://127.0.0.1:3333"
+            #else
             return "http://192.168.1.50:3333"
+            #endif
         case .gateway:
             return "https://loom.example.com"
         }

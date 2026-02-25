@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 APP_DIR="${REPO_ROOT}/apps/loom-companion-ios"
+APP_PROJECT="${APP_DIR}/LoomCompanion.xcodeproj"
 
 failures=0
 
@@ -43,21 +44,40 @@ if [ ! -d "${APP_DIR}" ]; then
 fi
 
 if [ "${failures}" -eq 0 ]; then
-	if (cd "${APP_DIR}" && xcodebuild -list 2>/dev/null | grep -q "LoomCompanion"); then
-		pass "Xcode sees LoomCompanion scheme"
+	if [ -d "${APP_PROJECT}" ]; then
+		pass "Found app project at ${APP_PROJECT}"
 	else
-		fail "Xcode cannot find LoomCompanion scheme in ${APP_DIR}"
+		fail "Missing Xcode app project at ${APP_PROJECT}"
 	fi
 fi
 
 if [ "${failures}" -eq 0 ]; then
-	destinations="$(cd "${APP_DIR}" && xcodebuild -scheme LoomCompanion -showdestinations 2>&1 || true)"
+	if xcodebuild -project "${APP_PROJECT}" -list 2>/dev/null | grep -q "LoomCompanion"; then
+		pass "Xcode sees LoomCompanion scheme"
+	else
+		fail "Xcode cannot find LoomCompanion scheme in ${APP_PROJECT}"
+	fi
+fi
+
+if [ "${failures}" -eq 0 ]; then
+	destinations="$(xcodebuild -project "${APP_PROJECT}" -scheme LoomCompanion -showdestinations 2>&1 || true)"
 	if printf "%s\n" "${destinations}" | grep -Eq "error:iOS .* is not installed"; then
 		fail "iOS platform runtime is missing in Xcode (Xcode > Settings > Components > iOS)"
 	elif printf "%s\n" "${destinations}" | grep -q "platform:iOS"; then
 		pass "iOS destination support is available"
 	else
 		warn "Could not confirm iOS destinations; verify Xcode iOS components are installed"
+	fi
+fi
+
+if [ "${failures}" -eq 0 ]; then
+	build_settings="$(xcodebuild -project "${APP_PROJECT}" -scheme LoomCompanion -destination 'generic/platform=iOS Simulator' -showBuildSettings 2>/dev/null || true)"
+	if printf "%s\n" "${build_settings}" | grep -q "PRODUCT_TYPE = com.apple.product-type.application" &&
+		printf "%s\n" "${build_settings}" | grep -q "WRAPPER_EXTENSION = app" &&
+		printf "%s\n" "${build_settings}" | grep -q "PRODUCT_BUNDLE_IDENTIFIER = "; then
+		pass "LoomCompanion scheme is configured as an iOS app bundle with a bundle identifier"
+	else
+		fail "LoomCompanion scheme is not configured as an iOS app bundle (.app with PRODUCT_BUNDLE_IDENTIFIER)"
 	fi
 fi
 
@@ -94,4 +114,4 @@ echo "Next steps:"
 echo "  1) Start daemon: ./bin/loomd"
 echo "  2) Export token: export HUD_MOBILE_OPERATOR_TOKEN=\"\$(openssl rand -hex 32)\""
 echo "  3) Launch HUD: make mobile-hud"
-echo "  4) Open app in Xcode: open apps/loom-companion-ios/Package.swift"
+echo "  4) Open app in Xcode: open apps/loom-companion-ios/LoomCompanion.xcodeproj"
