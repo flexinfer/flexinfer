@@ -54,9 +54,6 @@ spec:
     aliases:
       - qwen3-14b
       - claude-distill
-      - fast-chat
-      - fast-text
-      - gpt-3.5-turbo
   serviceLabels:
     - fast-chat
     - reasoning
