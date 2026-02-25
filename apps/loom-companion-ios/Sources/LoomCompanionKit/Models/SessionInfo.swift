@@ -4,6 +4,23 @@ import Foundation
 public enum SessionStatus: String, Decodable, Sendable {
     case active
     case ended
+    case summarized
+    case unknown
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = (try? container.decode(String.self))?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        self = SessionStatus(rawValue: raw) ?? .unknown
+    }
+
+    public var isTerminal: Bool {
+        switch self {
+        case .ended, .summarized:
+            return true
+        case .active, .unknown:
+            return false
+        }
+    }
 }
 
 /// Matches `SessionInfo` from bridge/agent.go.

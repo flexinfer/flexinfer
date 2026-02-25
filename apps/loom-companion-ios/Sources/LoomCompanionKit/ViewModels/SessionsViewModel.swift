@@ -64,8 +64,17 @@ public final class SessionsViewModel {
     /// Sessions after applying current filters.
     public var filteredSessions: [SessionInfo] {
         sessions.filter { session in
-            if let statusFilter, session.status != statusFilter {
-                return false
+            if let statusFilter {
+                switch statusFilter {
+                case .ended:
+                    if !session.status.isTerminal {
+                        return false
+                    }
+                default:
+                    if session.status != statusFilter {
+                        return false
+                    }
+                }
             }
             if let agentFilter, !agentFilter.isEmpty, session.agentId != agentFilter {
                 return false

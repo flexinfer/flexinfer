@@ -11,6 +11,7 @@ struct ContentView: View {
     enum AppTab {
         case dashboard
         case sessions
+        case ops
         case alerts
         case connection
     }
@@ -65,6 +66,12 @@ struct ContentView: View {
             .tag(AppTab.sessions)
 
             NavigationStack {
+                OpsView(apiClient: connectionVM.buildAPIClient())
+            }
+            .tabItem { Label("Ops", systemImage: "square.grid.2x2") }
+            .tag(AppTab.ops)
+
+            NavigationStack {
                 AlertsListView(viewModel: alertsViewModel) { action, _ in
                     switch action {
                     case .viewSession:
@@ -93,11 +100,16 @@ struct ContentView: View {
 
     private var iPadLayout: some View {
         NavigationSplitView {
-            List(selection: $selectedTab) {
+            List {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
-                    .tag(AppTab.dashboard)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTab = .dashboard }
                 Label("Sessions", systemImage: "list.bullet.rectangle")
-                    .tag(AppTab.sessions)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTab = .sessions }
+                Label("Ops", systemImage: "square.grid.2x2")
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTab = .ops }
                 Label {
                     Text("Alerts")
                 } icon: {
@@ -114,9 +126,11 @@ struct ContentView: View {
                             }
                         }
                 }
-                .tag(AppTab.alerts)
+                .contentShape(Rectangle())
+                .onTapGesture { selectedTab = .alerts }
                 Label("Connection", systemImage: "network")
-                    .tag(AppTab.connection)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTab = .connection }
             }
             .navigationTitle("Loom")
         } detail: {
@@ -125,6 +139,8 @@ struct ContentView: View {
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
             case .sessions:
                 SessionsListView(apiClient: connectionVM.buildAPIClient())
+            case .ops:
+                OpsView(apiClient: connectionVM.buildAPIClient())
             case .alerts:
                 AlertsListView(viewModel: alertsViewModel) { action, _ in
                     switch action {

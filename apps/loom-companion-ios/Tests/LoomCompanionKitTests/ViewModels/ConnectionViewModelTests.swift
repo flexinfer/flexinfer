@@ -136,4 +136,28 @@ struct ConnectionViewModelTests {
         let other = LoomAPIError.apiError(code: .unauthorized, message: "bad", requestId: "r2")
         #expect(other.isRateLimited == false)
     }
+
+    @Test("LAN URL normalization adds default scheme and port")
+    func lanURLNormalizationDefaults() {
+        let url = ConnectionViewModel.normalizedBaseURL("192.168.50.176", mode: .lan)
+        #expect(url?.absoluteString == "http://192.168.50.176:3333")
+    }
+
+    @Test("LAN URL normalization preserves explicit port")
+    func lanURLNormalizationPreservesPort() {
+        let url = ConnectionViewModel.normalizedBaseURL("http://192.168.50.176:8080", mode: .lan)
+        #expect(url?.absoluteString == "http://192.168.50.176:8080")
+    }
+
+    @Test("Gateway URL normalization adds HTTPS scheme")
+    func gatewayURLNormalizationDefaults() {
+        let url = ConnectionViewModel.normalizedBaseURL("loom.example.com", mode: .gateway)
+        #expect(url?.absoluteString == "https://loom.example.com")
+    }
+
+    @Test("URL normalization rejects invalid host")
+    func urlNormalizationRejectsInvalidHost() {
+        let url = ConnectionViewModel.normalizedBaseURL("http:///not-a-host", mode: .lan)
+        #expect(url == nil)
+    }
 }

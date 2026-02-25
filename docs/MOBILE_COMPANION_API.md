@@ -2,7 +2,7 @@
 
 This document defines the API contract for the Loom Companion iPhone/iPad app.
 
-Status: **v1 contract freeze** (2026-02-23). All 9 endpoints implemented in `internal/hud/api_mobile.go`. Alerts policy endpoint added 2026-02-24 (MBL-6, M4).
+Status: **v1 additive contract freeze** (updated 2026-02-25). Initial M0/M1 endpoints plus read-only parity wave endpoints are implemented in `internal/hud/api_mobile.go`.
 
 ## Tracking
 
@@ -25,6 +25,7 @@ Status: **v1 contract freeze** (2026-02-23). All 9 endpoints implemented in `int
   - LAN mode (trusted/local network)
   - Gateway mode (remote/zero-trust)
 - Keep v1 scope focused on monitoring + session lifecycle control.
+- Preserve read-only posture for parity-wave features (tasks/workflows/presence/memory/stream/topology/graph/reasoning).
 
 ## Versioning
 
@@ -62,7 +63,7 @@ Notes:
 
 ## `mobile_operator` Authorization Matrix (Contract View)
 
-This section freezes the v1 endpoint allowlist for the `mobile_operator` role.
+This section freezes the v1 endpoint allowlist for the `mobile_operator` role. Wave 1 parity additions are read-only only.
 
 | Endpoint | Method | Access | Scope |
 |---|---|---|---|
@@ -70,6 +71,19 @@ This section freezes the v1 endpoint allowlist for the `mobile_operator` role.
 | `/api/mobile/v1/sessions` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions/{session_id}` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions/{session_id}/events` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/tasks` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/workflows` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/workflows/{workflow_id}` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/presence` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/memory/stats` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/memory/items` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/stream` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/topology` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/stats` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/entities` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/path` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/reasoning/chains` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/reasoning/chains/{chain_id}` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/events/stream` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/alerts/policy` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions` | `POST` | allow | `mobile:session:create` |
@@ -118,6 +132,32 @@ Errors:
 ## Endpoints (v1 Frozen)
 
 All endpoints return the standard envelope. The `data` field for each is defined below.
+
+### Wave 1 Read-Only Parity Additions (2026-02-25)
+
+The following additive endpoints are now part of `/api/mobile/v1`:
+
+| Endpoint | Purpose | Query Params | Response Shape |
+|---|---|---|---|
+| `GET /tasks` | Task list + status counts | `status`, `agent_id`, `session_id`, `limit`, `search` | `{tasks, counts}` |
+| `GET /workflows` | Workflow summaries | `status`, `agent_id`, `limit` | `{workflows, pending_approvals}` |
+| `GET /workflows/{workflow_id}` | Workflow detail + timeline events | none | `{workflow, events}` |
+| `GET /presence` | Presence + claim/worktree snapshot | `status`, `agent_id`, `limit` | `{agents, claims, worktrees, summary}` |
+| `GET /memory/stats` | Memory tier totals | none | `{stats}` |
+| `GET /memory/items` | Memory recall (read-only) | `tier`, `query`, `limit` | `{items, tier}` |
+| `GET /stream` | Context stream entries | `types`, `agent_id`, `session_id`, `limit` | `{entries}` |
+| `GET /topology` | Agent topology graph | none | `{nodes, edges, clusters, updated_at}` |
+| `GET /graph/stats` | Graph counts by type | none | `{stats}` |
+| `GET /graph/entities` | Entity search/list | `type`, `q`, `limit` | `{entities}` |
+| `GET /graph/path` | Path between two entities | `source_id`, `target_id`, `max_depth` | `{path}` |
+| `GET /reasoning/chains` | Reasoning chain summaries | `status`, `limit` | `{chains}` |
+| `GET /reasoning/chains/{chain_id}` | Reasoning chain detail | none | `{chain}` |
+
+Contract rules for these additions:
+- Additive-only fields (no breaking shape changes under `v1`).
+- Explicit array defaults (`[]` instead of `null`).
+- Status fields normalize unknown values to `"unknown"` where applicable.
+- All endpoints remain scope-gated by `mobile:read` and are denied outside `/api/mobile/v1/*`.
 
 ---
 

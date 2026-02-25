@@ -5,6 +5,7 @@ import Foundation
 final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var shouldFail = false
     var failError: LoomAPIError = .apiError(code: .unauthorized, message: "mock error", requestId: "mock")
+    var endpointFailures: [String: LoomAPIError] = [:]
 
     var dashboardResponse: DashboardData?
     var sessionsResponse: SessionsResponse?
@@ -12,8 +13,24 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var sessionEventsResponse: SessionEventsResponse?
     var createSessionResponse: SessionCreateResponse?
     var endSessionResponse: SessionEndResponse?
+    var tasksResponse: MobileTasksResponse?
+    var workflowsResponse: MobileWorkflowsResponse?
+    var workflowDetailResponse: MobileWorkflowDetailResponse?
+    var presenceResponse: MobilePresenceResponse?
+    var memoryStatsResponse: MobileMemoryStatsResponse?
+    var memoryItemsResponse: MobileMemoryItemsResponse?
+    var streamResponse: MobileStreamResponse?
+    var topologyResponse: MobileTopologyResponse?
+    var graphStatsResponse: MobileGraphStatsResponse?
+    var graphEntitiesResponse: MobileGraphEntitiesResponse?
+    var graphPathResponse: MobileGraphPathResponse?
+    var reasoningChainsResponse: MobileReasoningChainsResponse?
+    var reasoningChainDetailResponse: MobileReasoningChainDetailResponse?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
+        if let specificError = endpointFailures[endpoint.path] {
+            throw specificError
+        }
         if shouldFail {
             throw failError
         }
@@ -27,6 +44,32 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = sessionDetailResponse as? T { return r }
         case .sessionEvents:
             if let r = sessionEventsResponse as? T { return r }
+        case .tasks:
+            if let r = tasksResponse as? T { return r }
+        case .workflows:
+            if let r = workflowsResponse as? T { return r }
+        case .workflowDetail:
+            if let r = workflowDetailResponse as? T { return r }
+        case .presence:
+            if let r = presenceResponse as? T { return r }
+        case .memoryStats:
+            if let r = memoryStatsResponse as? T { return r }
+        case .memoryItems:
+            if let r = memoryItemsResponse as? T { return r }
+        case .stream:
+            if let r = streamResponse as? T { return r }
+        case .topology:
+            if let r = topologyResponse as? T { return r }
+        case .graphStats:
+            if let r = graphStatsResponse as? T { return r }
+        case .graphEntities:
+            if let r = graphEntitiesResponse as? T { return r }
+        case .graphPath:
+            if let r = graphPathResponse as? T { return r }
+        case .reasoningChains:
+            if let r = reasoningChainsResponse as? T { return r }
+        case .reasoningChainDetail:
+            if let r = reasoningChainDetailResponse as? T { return r }
         case .createSession:
             if let r = createSessionResponse as? T { return r }
         case .endSession:

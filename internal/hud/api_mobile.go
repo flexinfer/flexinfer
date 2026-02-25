@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,10 @@ import (
 )
 
 const maxDeviceIDLen = 128
+const (
+	mobileDefaultLimit = 50
+	mobileMaxLimit     = 200
+)
 
 const (
 	mobileScopeRead          = "mobile:read"
@@ -253,6 +258,9 @@ func (a *App) handleMobileSessions(w http.ResponseWriter, r *http.Request) {
 		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list sessions")
 		return
 	}
+	if sessions == nil {
+		sessions = []bridge.SessionInfo{}
+	}
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
@@ -316,6 +324,858 @@ func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) 
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID,
 		"events":     events,
+	})
+}
+
+type mobileTaskCounts struct {
+	Pending    int `json:"pending"`
+	InProgress int `json:"in_progress"`
+	Blocked    int `json:"blocked"`
+	Completed  int `json:"completed"`
+}
+
+type mobileTaskDTO struct {
+	ID        string   `json:"id"`
+	SessionID string   `json:"session_id"`
+	AgentID   string   `json:"agent_id"`
+	Namespace string   `json:"namespace"`
+	Title     string   `json:"title"`
+	Context   string   `json:"context,omitempty"`
+	Priority  string   `json:"priority"`
+	Status    string   `json:"status"`
+	Tags      []string `json:"tags"`
+	BlockedBy []string `json:"blocked_by"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+func (a *App) handleMobileTasks(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	sessionFilter := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	searchFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("search")))
+
+	var (
+		tasks []bridge.TaskInfo
+		err   error
+	)
+	if sessionFilter != "" {
+		tasks, err = a.agent.Tasks(sessionFilter)
+	} else {
+		tasks, err = a.agent.AllTasks()
+	}
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list tasks")
+		return
+	}
+	if tasks == nil {
+		tasks = []bridge.TaskInfo{}
+	}
+
+	filtered := make([]bridge.TaskInfo, 0, len(tasks))
+	counts := mobileTaskCounts{}
+	for _, t := range tasks {
+		taskStatus := normalizeMobileTaskStatus(t.Status)
+		if statusFilter != "" && taskStatus != statusFilter {
+			continue
+		}
+		if agentFilter != "" && !strings.EqualFold(strings.TrimSpace(t.AgentID), agentFilter) {
+			continue
+		}
+		if searchFilter != "" {
+			searchHaystack := strings.ToLower(strings.Join([]string{
+				t.ID,
+				t.SessionID,
+				t.AgentID,
+				t.Namespace,
+				t.Title,
+				t.Context,
+			}, " "))
+			if !strings.Contains(searchHaystack, searchFilter) {
+				continue
+			}
+		}
+		filtered = append(filtered, t)
+		switch taskStatus {
+		case "pending":
+			counts.Pending++
+		case "in_progress":
+			counts.InProgress++
+		case "blocked":
+			counts.Blocked++
+		case "completed":
+			counts.Completed++
+		}
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		ti := parseMobileTime(filtered[i].UpdatedAt)
+		tj := parseMobileTime(filtered[j].UpdatedAt)
+		if ti.Equal(tj) {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return ti.After(tj)
+	})
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	result := make([]mobileTaskDTO, len(filtered))
+	for i, t := range filtered {
+		result[i] = mapMobileTask(t)
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"tasks":  result,
+		"counts": counts,
+	})
+}
+
+type mobileWorkflowDTO struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name,omitempty"`
+	Status      string  `json:"status"`
+	CurrentStep string  `json:"current_step,omitempty"`
+	Progress    float64 `json:"progress"`
+	StartedAt   string  `json:"started_at"`
+	CompletedAt string  `json:"completed_at,omitempty"`
+	Error       string  `json:"error,omitempty"`
+}
+
+type mobileWorkflowEventDTO struct {
+	ID        string `json:"id"`
+	EventType string `json:"event_type"`
+	Timestamp string `json:"timestamp"`
+	StepID    string `json:"step_id,omitempty"`
+	StepName  string `json:"step_name,omitempty"`
+	Details   string `json:"details,omitempty"`
+}
+
+func (a *App) handleMobileWorkflows(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+
+	workflows := a.workflowMonitor.Workflows()
+	if workflows == nil {
+		workflows = []bridge.WorkflowInfo{}
+	}
+
+	filtered := make([]bridge.WorkflowInfo, 0, len(workflows))
+	pendingApprovals := 0
+	for _, wf := range workflows {
+		status := normalizeMobileWorkflowStatus(wf.Status)
+		if statusFilter != "" && status != statusFilter {
+			continue
+		}
+		if agentFilter != "" && !a.mobileWorkflowMatchesAgent(wf.ID, agentFilter) {
+			continue
+		}
+		if status == "waiting_approval" {
+			pendingApprovals++
+		}
+		filtered = append(filtered, wf)
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		ti := parseMobileTime(filtered[i].CreatedAt)
+		tj := parseMobileTime(filtered[j].CreatedAt)
+		if ti.Equal(tj) {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return ti.After(tj)
+	})
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	result := make([]mobileWorkflowDTO, len(filtered))
+	for i, wf := range filtered {
+		result[i] = mapMobileWorkflow(wf)
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"workflows":         result,
+		"pending_approvals": pendingApprovals,
+	})
+}
+
+func (a *App) handleMobileWorkflowDetail(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	workflowID := strings.TrimSpace(r.PathValue("workflow_id"))
+	if workflowID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "workflow_id is required")
+		return
+	}
+
+	detail, err := a.workflowMonitor.Detail(workflowID)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to load workflow detail")
+		return
+	}
+
+	stepNames := make(map[string]string, len(detail.Steps))
+	for _, step := range detail.Steps {
+		stepNames[step.ID] = step.Name
+	}
+	events := make([]mobileWorkflowEventDTO, 0, len(detail.Events))
+	for _, evt := range detail.Events {
+		entry := mobileWorkflowEventDTO{
+			ID:        evt.ID,
+			EventType: evt.EventType,
+			Timestamp: evt.Timestamp,
+			StepID:    evt.StepID,
+		}
+		if entry.StepID != "" {
+			entry.StepName = stepNames[entry.StepID]
+		}
+		if len(evt.Details) > 0 {
+			if msg, ok := evt.Details["message"].(string); ok {
+				entry.Details = strings.TrimSpace(msg)
+			}
+			if entry.Details == "" {
+				if raw, marshalErr := json.Marshal(evt.Details); marshalErr == nil {
+					entry.Details = string(raw)
+				}
+			}
+		}
+		events = append(events, entry)
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"workflow": map[string]any{
+			"id":           detail.ID,
+			"name":         detail.Name,
+			"status":       normalizeMobileWorkflowStatus(detail.Status),
+			"current_step": detail.CurrentStep,
+			"progress":     detail.Progress,
+			"started_at":   chooseFirstNonEmpty(detail.StartedAt, detail.CreatedAt),
+			"completed_at": detail.CompletedAt,
+			"error":        detail.Error,
+			"steps":        mapMobileWorkflowSteps(detail.Steps),
+		},
+		"events": events,
+	})
+}
+
+type mobilePresenceSummary struct {
+	ActiveAgents  int `json:"active_agents"`
+	IdleAgents    int `json:"idle_agents"`
+	OfflineAgents int `json:"offline_agents"`
+	TotalAgents   int `json:"total_agents"`
+	ClaimCount    int `json:"claim_count"`
+	WorktreeCount int `json:"worktree_count"`
+}
+
+func (a *App) handleMobilePresence(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	snap := a.fleetMonitor.Snapshot()
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+
+	agents := make([]bridge.PresenceInfo, 0, len(snap.Agents))
+	for _, agent := range snap.Agents {
+		status := normalizeMobilePresenceStatus(agent.Status)
+		if statusFilter != "" && status != statusFilter {
+			continue
+		}
+		if agentFilter != "" && !strings.EqualFold(agent.AgentID, agentFilter) {
+			continue
+		}
+		agent.Status = status
+		agents = append(agents, agent)
+	}
+	sort.SliceStable(agents, func(i, j int) bool {
+		ti := parseMobileTime(agents[i].LastHeartbeat)
+		tj := parseMobileTime(agents[j].LastHeartbeat)
+		if ti.Equal(tj) {
+			return agents[i].AgentID < agents[j].AgentID
+		}
+		return ti.After(tj)
+	})
+	if len(agents) > limit {
+		agents = agents[:limit]
+	}
+
+	claims := make([]bridge.FileClaimInfo, 0, len(snap.FileClaims))
+	for _, claim := range snap.FileClaims {
+		if agentFilter != "" && !strings.EqualFold(claim.AgentID, agentFilter) {
+			continue
+		}
+		claims = append(claims, claim)
+	}
+	sort.SliceStable(claims, func(i, j int) bool {
+		ti := parseMobileTime(claims[i].CreatedAt)
+		tj := parseMobileTime(claims[j].CreatedAt)
+		if ti.Equal(tj) {
+			return claims[i].ID < claims[j].ID
+		}
+		return ti.After(tj)
+	})
+	if len(claims) > limit {
+		claims = claims[:limit]
+	}
+
+	worktrees := make([]bridge.WorktreeInfo, 0, len(snap.Worktrees))
+	for _, wt := range snap.Worktrees {
+		if agentFilter != "" && !strings.EqualFold(wt.AgentID, agentFilter) {
+			continue
+		}
+		worktrees = append(worktrees, wt)
+	}
+	sort.SliceStable(worktrees, func(i, j int) bool {
+		ti := parseMobileTime(worktrees[i].CreatedAt)
+		tj := parseMobileTime(worktrees[j].CreatedAt)
+		if ti.Equal(tj) {
+			return worktrees[i].AssignmentID < worktrees[j].AssignmentID
+		}
+		return ti.After(tj)
+	})
+	if len(worktrees) > limit {
+		worktrees = worktrees[:limit]
+	}
+
+	summary := mobilePresenceSummary{
+		TotalAgents:   len(agents),
+		ClaimCount:    len(claims),
+		WorktreeCount: len(worktrees),
+	}
+	for _, agent := range agents {
+		switch agent.Status {
+		case "active":
+			summary.ActiveAgents++
+		case "idle":
+			summary.IdleAgents++
+		case "offline":
+			summary.OfflineAgents++
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"agents":    agents,
+		"claims":    claims,
+		"worktrees": worktrees,
+		"summary":   summary,
+	})
+}
+
+func (a *App) handleMobileMemoryStats(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	stats := a.memoryMonitor.Stats()
+	if stats == nil {
+		directStats, err := a.agent.MemoryStats()
+		if err != nil {
+			a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to load memory stats")
+			return
+		}
+		stats = directStats
+	}
+
+	resp := map[string]any{
+		"working_memory": map[string]any{
+			"items":  stats.WorkingMemory.Items,
+			"tokens": stats.WorkingMemory.Tokens,
+		},
+		"short_term_memory": map[string]any{
+			"items":  stats.ShortTermMemory.Items,
+			"tokens": stats.ShortTermMemory.Tokens,
+		},
+		"long_term_memory": map[string]any{
+			"items":  stats.LongTermMemory.Items,
+			"tokens": stats.LongTermMemory.Tokens,
+		},
+		"total_items":  stats.TotalItems,
+		"total_tokens": stats.TotalTokens,
+		"compression": map[string]any{
+			"ratio":            stats.CompressionRatio,
+			"added_24h":        stats.ItemsAddedLast24h,
+			"compressed_24h":   stats.ItemsCompressedLast24h,
+			"estimated_saved":  int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
+			"compressed_items": stats.ItemsCompressedLast24h,
+		},
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stats": resp})
+}
+
+type mobileMemoryItemDTO struct {
+	ID           string  `json:"id"`
+	Title        string  `json:"title"`
+	Content      string  `json:"content,omitempty"`
+	Tier         string  `json:"tier"`
+	Importance   string  `json:"importance"`
+	ImportanceSc float64 `json:"importance_score"`
+	Tokens       int     `json:"tokens"`
+	Status       string  `json:"status,omitempty"`
+	Category     string  `json:"category,omitempty"`
+	AccessedAt   string  `json:"accessed_at,omitempty"`
+	LastAccessed string  `json:"last_accessed,omitempty"`
+}
+
+func (a *App) handleMobileMemoryItems(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	tier, ok := normalizeMobileMemoryTier(strings.TrimSpace(r.URL.Query().Get("tier")))
+	if !ok {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "tier must be one of working, short_term, long_term")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+
+	items, err := a.agent.MemoryRecall(tier, query, limit)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list memory items")
+		return
+	}
+	if items == nil {
+		items = []bridge.MemoryItem{}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		ti := parseMobileTime(chooseFirstNonEmpty(items[i].LastAccessed, items[i].AccessedAt))
+		tj := parseMobileTime(chooseFirstNonEmpty(items[j].LastAccessed, items[j].AccessedAt))
+		if ti.Equal(tj) {
+			return items[i].ID < items[j].ID
+		}
+		return ti.After(tj)
+	})
+
+	result := make([]mobileMemoryItemDTO, len(items))
+	for i, item := range items {
+		result[i] = mobileMemoryItemDTO{
+			ID:           item.ID,
+			Title:        item.Title,
+			Content:      item.Content,
+			Tier:         normalizeMobileMemoryTierOutput(item.Tier),
+			Importance:   normalizeMobileImportance(item.Importance),
+			ImportanceSc: item.ImportanceScore,
+			Tokens:       item.Tokens,
+			Status:       strings.TrimSpace(item.Status),
+			Category:     strings.TrimSpace(item.Category),
+			AccessedAt:   item.AccessedAt,
+			LastAccessed: item.LastAccessed,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"items": result,
+		"tier":  tier,
+	})
+}
+
+type mobileStreamEntryDTO struct {
+	ID        string  `json:"id"`
+	EntryType string  `json:"entry_type"`
+	AgentID   string  `json:"agent_id"`
+	Agent     string  `json:"agent"`
+	Namespace string  `json:"namespace"`
+	Title     string  `json:"title"`
+	Content   string  `json:"content,omitempty"`
+	Timestamp string  `json:"timestamp"`
+	Score     float64 `json:"score,omitempty"`
+}
+
+func (a *App) handleMobileStream(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	typeFilter := parseMobileTypeFilter(r.URL.Query().Get("types"))
+	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	sessionFilter := strings.TrimSpace(r.URL.Query().Get("session_id"))
+
+	var (
+		entries []bridge.ContextEntryInfo
+		err     error
+	)
+	if sessionFilter != "" {
+		entries, err = a.agent.SessionEntries(sessionFilter, mobileMaxLimit)
+	} else {
+		entries, err = a.agent.ContextStream(time.Time{}, mobileMaxLimit)
+	}
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to load context stream")
+		return
+	}
+
+	result := make([]mobileStreamEntryDTO, 0, limit)
+	for _, entry := range entries {
+		kind := strings.TrimSpace(entry.Entry.EntryType)
+		if len(typeFilter) > 0 {
+			if _, ok := typeFilter[strings.ToLower(kind)]; !ok {
+				continue
+			}
+		}
+		if agentFilter != "" && !strings.EqualFold(entry.Entry.AgentID, agentFilter) {
+			continue
+		}
+		result = append(result, mobileStreamEntryDTO{
+			ID:        entry.Entry.ID,
+			EntryType: kind,
+			AgentID:   entry.Entry.AgentID,
+			Agent:     entry.Entry.AgentID,
+			Namespace: entry.Entry.Namespace,
+			Title:     entry.Entry.Title,
+			Content:   entry.Entry.Content,
+			Timestamp: entry.Entry.Timestamp,
+			Score:     entry.Score,
+		})
+		if len(result) >= limit {
+			break
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"entries": result})
+}
+
+type mobileTopologyNode struct {
+	AgentID     string `json:"agent_id"`
+	Status      string `json:"status"`
+	AgentType   string `json:"agent_type"`
+	CurrentTask string `json:"current_task,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	PRURL       string `json:"pr_url,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+}
+
+type mobileTopologyEdge struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	EdgeType string `json:"edge_type"`
+	Weight   int    `json:"weight"`
+	Label    string `json:"label,omitempty"`
+	Status   string `json:"status,omitempty"`
+}
+
+type mobileTopologyCluster struct {
+	Project  string   `json:"project"`
+	AgentIDs []string `json:"agent_ids"`
+}
+
+func (a *App) handleMobileTopology(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	graph := computeTopology(a.fleetMonitor.Snapshot(), a)
+
+	nodes := make([]mobileTopologyNode, len(graph.Nodes))
+	for i, node := range graph.Nodes {
+		nodes[i] = mobileTopologyNode{
+			AgentID:     node.AgentID,
+			Status:      normalizeMobilePresenceStatus(node.Status),
+			AgentType:   node.AgentType,
+			CurrentTask: node.CurrentTask,
+			Branch:      node.Branch,
+			PRURL:       node.PRUrl,
+			Namespace:   node.Namespace,
+		}
+	}
+	edges := make([]mobileTopologyEdge, len(graph.Edges))
+	for i, edge := range graph.Edges {
+		edges[i] = mobileTopologyEdge(edge)
+	}
+	clusters := make([]mobileTopologyCluster, len(graph.Clusters))
+	for i, cluster := range graph.Clusters {
+		agentIDs := cluster.AgentIDs
+		if agentIDs == nil {
+			agentIDs = []string{}
+		}
+		clusters[i] = mobileTopologyCluster{
+			Project:  cluster.Project,
+			AgentIDs: agentIDs,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"nodes":      nodes,
+		"edges":      edges,
+		"clusters":   clusters,
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (a *App) handleMobileGraphStats(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+	stats, err := a.agent.GraphStats()
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to load graph stats")
+		return
+	}
+	if stats.EntityTypes == nil {
+		stats.EntityTypes = map[string]int{}
+	}
+	if stats.RelationTypes == nil {
+		stats.RelationTypes = map[string]int{}
+	}
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"stats": map[string]any{
+			"total_entities":  stats.EntityCount,
+			"total_relations": stats.RelationCount,
+			"entity_types":    stats.EntityTypes,
+			"relation_types":  stats.RelationTypes,
+		},
+	})
+}
+
+type mobileGraphEntityDTO struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	EntityType  string         `json:"entity_type"`
+	Description string         `json:"description,omitempty"`
+	Namespace   string         `json:"namespace,omitempty"`
+	Properties  map[string]any `json:"properties"`
+}
+
+func (a *App) handleMobileGraphEntities(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	entityType := strings.TrimSpace(r.URL.Query().Get("type"))
+
+	entities, err := a.agent.EntityFind(query, entityType, limit)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list entities")
+		return
+	}
+	if entities == nil {
+		entities = []bridge.EntityInfo{}
+	}
+
+	sort.SliceStable(entities, func(i, j int) bool {
+		ni := strings.ToLower(strings.TrimSpace(entities[i].Name))
+		nj := strings.ToLower(strings.TrimSpace(entities[j].Name))
+		if ni == nj {
+			return entities[i].ID < entities[j].ID
+		}
+		return ni < nj
+	})
+
+	result := make([]mobileGraphEntityDTO, len(entities))
+	for i, entity := range entities {
+		entityKind := strings.TrimSpace(chooseFirstNonEmpty(entity.EntityType, entity.Type))
+		if entityKind == "" {
+			entityKind = "unknown"
+		}
+		props := entity.Properties
+		if props == nil {
+			props = map[string]any{}
+		}
+		result[i] = mobileGraphEntityDTO{
+			ID:          entity.ID,
+			Name:        entity.Name,
+			EntityType:  entityKind,
+			Description: entity.Description,
+			Namespace:   entity.Namespace,
+			Properties:  props,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"entities": result})
+}
+
+func (a *App) handleMobileGraphPath(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+	sourceID := strings.TrimSpace(r.URL.Query().Get("source_id"))
+	targetID := strings.TrimSpace(r.URL.Query().Get("target_id"))
+	if sourceID == "" || targetID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "source_id and target_id are required")
+		return
+	}
+
+	maxDepth := 5
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_depth")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			a.writeMobileError(w, http.StatusBadRequest, "bad_request", "max_depth must be a positive integer")
+			return
+		}
+		if parsed > 20 {
+			parsed = 20
+		}
+		maxDepth = parsed
+	}
+
+	path, err := a.agent.GraphFindPath(sourceID, targetID, maxDepth)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to compute graph path")
+		return
+	}
+	if path == nil {
+		path = []bridge.EntityInfo{}
+	}
+
+	nodes := make([]mobileGraphEntityDTO, len(path))
+	for i, entity := range path {
+		entityKind := strings.TrimSpace(chooseFirstNonEmpty(entity.EntityType, entity.Type))
+		if entityKind == "" {
+			entityKind = "unknown"
+		}
+		props := entity.Properties
+		if props == nil {
+			props = map[string]any{}
+		}
+		nodes[i] = mobileGraphEntityDTO{
+			ID:          entity.ID,
+			Name:        entity.Name,
+			EntityType:  entityKind,
+			Description: entity.Description,
+			Namespace:   entity.Namespace,
+			Properties:  props,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"path": map[string]any{
+			"nodes":  nodes,
+			"length": len(nodes),
+		},
+	})
+}
+
+type mobileReasoningStepDTO struct {
+	ID          string  `json:"id"`
+	Description string  `json:"description"`
+	Confidence  float64 `json:"confidence"`
+	Evidence    string  `json:"evidence,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+}
+
+type mobileReasoningChainDTO struct {
+	ID          string                   `json:"id"`
+	Title       string                   `json:"title"`
+	Status      string                   `json:"status"`
+	StepCount   int                      `json:"step_count"`
+	Confidence  float64                  `json:"confidence,omitempty"`
+	CreatedAt   string                   `json:"created_at"`
+	CompletedAt string                   `json:"completed_at,omitempty"`
+	Steps       []mobileReasoningStepDTO `json:"steps,omitempty"`
+}
+
+func (a *App) handleMobileReasoningChains(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+
+	chains, err := a.agent.ReasoningChainList()
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list reasoning chains")
+		return
+	}
+	if chains == nil {
+		chains = []bridge.ReasoningChainInfo{}
+	}
+
+	filtered := make([]bridge.ReasoningChainInfo, 0, len(chains))
+	for _, chain := range chains {
+		status := normalizeMobileReasoningStatus(chain.Status)
+		if statusFilter != "" && status != statusFilter {
+			continue
+		}
+		chain.Status = status
+		filtered = append(filtered, chain)
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		ti := parseMobileTime(filtered[i].CreatedAt)
+		tj := parseMobileTime(filtered[j].CreatedAt)
+		if ti.Equal(tj) {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return ti.After(tj)
+	})
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	result := make([]mobileReasoningChainDTO, len(filtered))
+	for i, chain := range filtered {
+		result[i] = mobileReasoningChainDTO{
+			ID:          chain.ID,
+			Title:       chain.Title,
+			Status:      chain.Status,
+			StepCount:   chain.StepCount,
+			Confidence:  chain.Confidence,
+			CreatedAt:   chain.CreatedAt,
+			CompletedAt: chain.CompletedAt,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"chains": result})
+}
+
+func (a *App) handleMobileReasoningChainDetail(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	chainID := strings.TrimSpace(r.PathValue("chain_id"))
+	if chainID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "chain_id is required")
+		return
+	}
+
+	detail, err := a.agent.ReasoningChainGet(chainID)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to load reasoning chain")
+		return
+	}
+
+	steps := make([]mobileReasoningStepDTO, len(detail.Steps))
+	for i, step := range detail.Steps {
+		steps[i] = mobileReasoningStepDTO{
+			ID:          step.ID,
+			Description: step.Description,
+			Confidence:  step.Confidence,
+			Evidence:    step.Evidence,
+			CreatedAt:   step.CreatedAt,
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"chain": mobileReasoningChainDTO{
+			ID:          detail.ID,
+			Title:       detail.Title,
+			Status:      normalizeMobileReasoningStatus(detail.Status),
+			StepCount:   detail.StepCount,
+			Confidence:  detail.Confidence,
+			CreatedAt:   detail.CreatedAt,
+			CompletedAt: detail.CompletedAt,
+			Steps:       steps,
+		},
 	})
 }
 
@@ -612,6 +1472,275 @@ func (a *App) handleMobilePushUnregister(w http.ResponseWriter, r *http.Request)
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"removed": removed,
 	})
+}
+
+func parseMobileLimit(r *http.Request, fallback, max int) int {
+	limit := fallback
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > max {
+		return max
+	}
+	if limit <= 0 {
+		return fallback
+	}
+	return limit
+}
+
+func parseMobileTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+		return ts
+	}
+	return time.Time{}
+}
+
+func chooseFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func normalizeMobileTaskStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending":
+		return "pending"
+	case "active", "in_progress":
+		return "in_progress"
+	case "blocked":
+		return "blocked"
+	case "completed", "done":
+		return "completed"
+	default:
+		return "unknown"
+	}
+}
+
+func normalizeMobilePriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "critical":
+		return "critical"
+	default:
+		return "medium"
+	}
+}
+
+func mapMobileTask(task bridge.TaskInfo) mobileTaskDTO {
+	tags := task.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	blockedBy := task.BlockedBy
+	if blockedBy == nil {
+		blockedBy = []string{}
+	}
+	return mobileTaskDTO{
+		ID:        task.ID,
+		SessionID: task.SessionID,
+		AgentID:   task.AgentID,
+		Namespace: task.Namespace,
+		Title:     task.Title,
+		Context:   task.Context,
+		Priority:  normalizeMobilePriority(task.Priority),
+		Status:    normalizeMobileTaskStatus(task.Status),
+		Tags:      tags,
+		BlockedBy: blockedBy,
+		CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt,
+	}
+}
+
+func normalizeMobileWorkflowStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "active":
+		return "running"
+	case "waiting_approval", "pending_approval":
+		return "waiting_approval"
+	case "completed", "succeeded", "success":
+		return "completed"
+	case "failed", "error":
+		return "failed"
+	case "cancelled", "canceled":
+		return "cancelled"
+	default:
+		return "unknown"
+	}
+}
+
+func mapMobileWorkflow(workflow bridge.WorkflowInfo) mobileWorkflowDTO {
+	return mobileWorkflowDTO{
+		ID:          workflow.ID,
+		Name:        workflow.Name,
+		Status:      normalizeMobileWorkflowStatus(workflow.Status),
+		CurrentStep: workflow.CurrentStep,
+		Progress:    workflow.Progress,
+		StartedAt:   workflow.CreatedAt,
+		Error:       workflow.Error,
+	}
+}
+
+func mapMobileWorkflowSteps(steps []bridge.WorkflowStep) []map[string]any {
+	result := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		result = append(result, map[string]any{
+			"id":     step.ID,
+			"name":   step.Name,
+			"status": normalizeMobileWorkflowStatus(step.Status),
+			"type":   step.Type,
+			"error":  step.Error,
+		})
+	}
+	return result
+}
+
+func (a *App) mobileWorkflowMatchesAgent(workflowID, agentID string) bool {
+	workflowID = strings.TrimSpace(workflowID)
+	agentID = strings.TrimSpace(agentID)
+	if workflowID == "" || agentID == "" {
+		return true
+	}
+	detail, err := a.workflowMonitor.Detail(workflowID)
+	if err != nil {
+		return false
+	}
+	lowerAgent := strings.ToLower(agentID)
+	if strings.Contains(strings.ToLower(detail.Name), lowerAgent) {
+		return true
+	}
+	for _, event := range detail.Events {
+		if strings.Contains(strings.ToLower(event.StepID), lowerAgent) {
+			return true
+		}
+		for _, value := range event.Details {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(toMobileText(value))), lowerAgent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeMobilePresenceStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		return "active"
+	case "idle":
+		return "idle"
+	case "offline":
+		return "offline"
+	default:
+		return "unknown"
+	}
+}
+
+func normalizeMobileMemoryTier(raw string) (string, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return "working", true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "working", "working_memory":
+		return "working", true
+	case "short", "short_term", "short_term_memory":
+		return "short_term", true
+	case "long", "long_term", "long_term_memory":
+		return "long_term", true
+	default:
+		return "", false
+	}
+}
+
+func normalizeMobileMemoryTierOutput(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "working", "working_memory":
+		return "working"
+	case "short", "short_term", "short_term_memory":
+		return "short_term"
+	case "long", "long_term", "long_term_memory":
+		return "long_term"
+	default:
+		return "working"
+	}
+}
+
+func normalizeMobileImportance(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "critical":
+		return "critical"
+	default:
+		return "medium"
+	}
+}
+
+func parseMobileTypeFilter(raw string) map[string]struct{} {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	result := map[string]struct{}{}
+	for _, token := range strings.Split(raw, ",") {
+		trimmed := strings.ToLower(strings.TrimSpace(token))
+		if trimmed == "" {
+			continue
+		}
+		result[trimmed] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeMobileReasoningStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active", "in_progress", "running":
+		return "active"
+	case "completed", "done":
+		return "completed"
+	case "abandoned", "failed", "cancelled", "canceled":
+		return "abandoned"
+	default:
+		return "unknown"
+	}
+}
+
+func toMobileText(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
 }
 
 func eventHasField(raw json.RawMessage, field, value string) bool {

@@ -1,8 +1,8 @@
-# Mobile Companion Security Model (v1 Freeze)
+# Mobile Companion Security Model (v1 Additive Freeze)
 
 This document defines the security model for Loom Companion iPhone/iPad access.
 
-Status: **v1 contract freeze** (2026-02-23). Auth, scope checks, and audit logging implemented in `internal/hud/api_mobile.go`.
+Status: **v1 additive contract freeze** (updated 2026-02-25). Auth, scope checks, and audit logging are implemented in `internal/hud/api_mobile.go`, including read-only parity-wave endpoints gated by `mobile:read`.
 
 ## Tracking
 
@@ -126,6 +126,19 @@ Policy conventions:
 | `GET /api/mobile/v1/sessions` | Session list | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/sessions/{session_id}` | Session detail | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/sessions/{session_id}/events` | Session event history | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/tasks` | Task list + status counts | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/workflows` | Workflow summaries | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/workflows/{workflow_id}` | Workflow detail | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/presence` | Presence + claims/worktrees | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/memory/stats` | Memory hierarchy stats | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/memory/items` | Memory recall (read-only) | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/stream` | Context stream snapshot | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/topology` | Agent topology graph | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/graph/stats` | Graph aggregate stats | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/graph/entities` | Graph entity list/search | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/graph/path` | Graph path lookup | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/reasoning/chains` | Reasoning chain summaries | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/reasoning/chains/{chain_id}` | Reasoning chain detail | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/events/stream` | Realtime SSE feed | allow | allow | `mobile:read` |
 | `POST /api/mobile/v1/sessions` | Start/create session | allow | allow | `mobile:session:create` |
 | `POST /api/mobile/v1/sessions/{session_id}/end` | End session | allow | allow | `mobile:session:end` |
@@ -138,6 +151,7 @@ Additional authorization rules:
 - Gateway mode requires TLS and cert validation; plaintext transport is not permitted.
 - If token `scope` is missing, default to deny for all protected endpoints.
 - All `allow` mutation paths must write audit fields: actor, device, mode, endpoint, target, outcome.
+- Parity-wave endpoints are read-only only in v1; graph/memory/workflow/task mutations remain denied outside dedicated mobile mutation routes.
 
 ## Transport Security
 
