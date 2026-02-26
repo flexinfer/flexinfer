@@ -231,7 +231,7 @@ build_flash_loader:
   stage: build
   <<: *go-cache
   script:
-    - go build -o bin/flash-loader cmd/flexinfer-flash-loader/main.go
+    - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:
     paths:
       - bin/flash-loader
