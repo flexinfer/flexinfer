@@ -34,12 +34,21 @@ variables:
 .go-cache: &go-cache
   image: registry.harbor.lan/library/golang:${GO_VERSION}
   cache:
-    key: ${CI_COMMIT_REF_SLUG}
-    paths:
-      - .go/pkg/mod/
+    - key:
+        files:
+          - go.sum
+        prefix: gomod
+      paths:
+        - .go/pkg/mod/
+      policy: pull-push
+    - key: gobuild-${CI_COMMIT_REF_SLUG}
+      paths:
+        - .go/cache/
+      policy: pull-push
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
 
 # --- Lint Stage ---
@@ -47,8 +56,9 @@ lint:
   stage: lint
   <<: *go-cache
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - |
       set -e
@@ -1158,8 +1168,9 @@ govulncheck:
   stage: security
   <<: *go-cache
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - go install golang.org/x/vuln/cmd/govulncheck@latest
   script:
@@ -1202,8 +1213,9 @@ sbom_generate:
   stage: security
   image: registry.harbor.lan/library/golang:${GO_VERSION}
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - |
       echo "Installing syft..."
@@ -1235,8 +1247,9 @@ go_licenses_check:
   stage: security
   <<: *go-cache
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - go mod download
     - go install github.com/google/go-licenses@v2.0.0-alpha.1
@@ -1270,8 +1283,9 @@ go_mod_outdated:
   stage: security
   <<: *go-cache
   before_script:
-    - mkdir -p .go
+    - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
+    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - go install github.com/psampaz/go-mod-outdated@latest
   script:
