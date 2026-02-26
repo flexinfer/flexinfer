@@ -25,6 +25,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -2644,4 +2645,194 @@ func TestHandleSharedGPURequeue(t *testing.T) {
 	if result.RequeueAfter > 3*time.Second {
 		t.Errorf("RequeueAfter = %v, want <= 3s", result.RequeueAfter)
 	}
+}
+
+func TestCleanupFlashTmpfs(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	t.Run("shared model with nodeSelector creates cleanup job", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-llm",
+				Namespace: "prod",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "llamacpp",
+				Source:  "HF://test/model",
+				GPU: &aiv1alpha2.GPUSpec{
+					Shared: "gpu-group-1",
+				},
+				NodeSelector: map[string]string{
+					"kubernetes.io/hostname": "gpu-node-01",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+		r := &ModelReconciler{Client: fakeClient, Scheme: s}
+		ctx := context.Background()
+
+		if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+			t.Fatalf("cleanupFlashTmpfs() error: %v", err)
+		}
+
+		// Verify the Job was created.
+		job := &batchv1.Job{}
+		if err := fakeClient.Get(ctx, client.ObjectKey{
+			Name:      "shared-llm-tmpfs-cleanup",
+			Namespace: "prod",
+		}, job); err != nil {
+			t.Fatalf("expected cleanup job to exist: %v", err)
+		}
+
+		// Verify Job spec.
+		if *job.Spec.BackoffLimit != 1 {
+			t.Errorf("BackoffLimit = %d, want 1", *job.Spec.BackoffLimit)
+		}
+		if *job.Spec.TTLSecondsAfterFinished != 120 {
+			t.Errorf("TTLSecondsAfterFinished = %d, want 120", *job.Spec.TTLSecondsAfterFinished)
+		}
+
+		podSpec := job.Spec.Template.Spec
+		if podSpec.RestartPolicy != corev1.RestartPolicyNever {
+			t.Errorf("RestartPolicy = %q, want Never", podSpec.RestartPolicy)
+		}
+		if podSpec.NodeSelector["kubernetes.io/hostname"] != "gpu-node-01" {
+			t.Errorf("NodeSelector = %v, want gpu-node-01", podSpec.NodeSelector)
+		}
+		if *podSpec.AutomountServiceAccountToken != false {
+			t.Error("AutomountServiceAccountToken should be false")
+		}
+
+		c := podSpec.Containers[0]
+		if c.Image != "busybox:1.37" {
+			t.Errorf("Image = %q, want busybox:1.37", c.Image)
+		}
+		wantCmd := []string{"rm", "-rf", "/dev/shm/flexinfer/prod/shared-llm"}
+		if len(c.Command) != len(wantCmd) {
+			t.Fatalf("Command = %v, want %v", c.Command, wantCmd)
+		}
+		for i := range wantCmd {
+			if c.Command[i] != wantCmd[i] {
+				t.Errorf("Command[%d] = %q, want %q", i, c.Command[i], wantCmd[i])
+			}
+		}
+
+		// No owner references (model is being deleted).
+		if len(job.OwnerReferences) != 0 {
+			t.Errorf("OwnerReferences = %v, want empty", job.OwnerReferences)
+		}
+	})
+
+	t.Run("non-shared model skips cleanup", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "solo-model",
+				Namespace: "default",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://test/model",
+				GPU: &aiv1alpha2.GPUSpec{
+					Vendor: "nvidia",
+				},
+				NodeSelector: map[string]string{
+					"kubernetes.io/hostname": "gpu-node-01",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+		r := &ModelReconciler{Client: fakeClient, Scheme: s}
+		ctx := context.Background()
+
+		if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+			t.Fatalf("cleanupFlashTmpfs() error: %v", err)
+		}
+
+		// No Job should be created.
+		jobList := &batchv1.JobList{}
+		if err := fakeClient.List(ctx, jobList); err != nil {
+			t.Fatalf("list jobs: %v", err)
+		}
+		if len(jobList.Items) != 0 {
+			t.Errorf("expected 0 jobs, got %d", len(jobList.Items))
+		}
+	})
+
+	t.Run("shared model without nodeSelector skips cleanup", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-no-selector",
+				Namespace: "default",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "llamacpp",
+				Source:  "HF://test/model",
+				GPU: &aiv1alpha2.GPUSpec{
+					Shared: "gpu-group-1",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+		r := &ModelReconciler{Client: fakeClient, Scheme: s}
+		ctx := context.Background()
+
+		if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+			t.Fatalf("cleanupFlashTmpfs() error: %v", err)
+		}
+
+		jobList := &batchv1.JobList{}
+		if err := fakeClient.List(ctx, jobList); err != nil {
+			t.Fatalf("list jobs: %v", err)
+		}
+		if len(jobList.Items) != 0 {
+			t.Errorf("expected 0 jobs, got %d", len(jobList.Items))
+		}
+	})
+
+	t.Run("already exists is idempotent", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-llm",
+				Namespace: "prod",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "llamacpp",
+				Source:  "HF://test/model",
+				GPU: &aiv1alpha2.GPUSpec{
+					Shared: "gpu-group-1",
+				},
+				NodeSelector: map[string]string{
+					"kubernetes.io/hostname": "gpu-node-01",
+				},
+			},
+		}
+
+		// Pre-create the cleanup Job so the second call hits AlreadyExists.
+		existingJob := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-llm-tmpfs-cleanup",
+				Namespace: "prod",
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(s).
+			WithRuntimeObjects(existingJob).
+			Build()
+		r := &ModelReconciler{Client: fakeClient, Scheme: s}
+		ctx := context.Background()
+
+		// Should return nil, not an error.
+		if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+			t.Fatalf("cleanupFlashTmpfs() with existing job should not error: %v", err)
+		}
+	})
 }

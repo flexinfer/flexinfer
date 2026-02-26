@@ -615,6 +615,70 @@ func (r *ModelReconciler) cleanupModel(ctx context.Context, model *aiv1alpha2.Mo
 		log.Info("Deleted service", "name", model.Name)
 	}
 
+	// Clean up persistent flash-tmpfs on the node for shared models.
+	if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+		log.Error(err, "Failed to create flash-tmpfs cleanup job (non-fatal)")
+	}
+
+	return nil
+}
+
+// cleanupFlashTmpfs creates a short-lived Job to remove the persistent
+// /dev/shm/flexinfer/{ns}/{model} directory on the target node.
+// Only applies to shared models that use hostPath-based flash-tmpfs.
+func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alpha2.Model) error {
+	if !model.Spec.IsShared() {
+		return nil
+	}
+	if len(model.Spec.NodeSelector) == 0 {
+		return nil
+	}
+
+	log := log.FromContext(ctx)
+	flashDir := filepath.Join("/dev/shm/flexinfer", model.Namespace, model.Name)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-tmpfs-cleanup",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            ptr.To(int32(1)),
+			TTLSecondsAfterFinished: ptr.To(int32(120)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy:                corev1.RestartPolicyNever,
+					NodeSelector:                 model.Spec.NodeSelector,
+					AutomountServiceAccountToken: ptr.To(false),
+					Containers: []corev1.Container{{
+						Name:    "cleanup",
+						Image:   "busybox:1.37",
+						Command: []string{"rm", "-rf", flashDir},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("16Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("32Mi"),
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	// No owner reference — model is being deleted, so the Job must
+	// outlive the model. TTLSecondsAfterFinished handles auto-cleanup.
+	if err := r.Create(ctx, job); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("create flash-tmpfs cleanup job: %w", err)
+	}
+	log.Info("Created flash-tmpfs cleanup job", "path", flashDir)
 	return nil
 }
 
