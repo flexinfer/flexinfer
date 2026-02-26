@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -38,6 +39,12 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-github-actions", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-github-actions")
 
 	token := env.StringWithFallbacks("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")
 
@@ -50,6 +57,9 @@ func run(ctx context.Context) error {
 
 	server := mcp.NewServer("mcp-github-actions", version)
 	server.SetInstructions("GitHub Actions MCP server. Manage workflows, runs, and jobs. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN.")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 
 	// list_workflows
 	server.AddTool(mcp.Tool{
@@ -73,7 +83,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, srv.handleListWorkflows)
+	}, wrap("list_workflows", srv.handleListWorkflows))
 
 	// get_workflow
 	server.AddTool(mcp.Tool{
@@ -97,7 +107,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "workflow_id"},
 		},
-	}, srv.handleGetWorkflow)
+	}, wrap("get_workflow", srv.handleGetWorkflow))
 
 	// list_workflow_runs
 	server.AddTool(mcp.Tool{
@@ -137,7 +147,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, srv.handleListWorkflowRuns)
+	}, wrap("list_workflow_runs", srv.handleListWorkflowRuns))
 
 	// get_workflow_run
 	server.AddTool(mcp.Tool{
@@ -161,7 +171,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
-	}, srv.handleGetWorkflowRun)
+	}, wrap("get_workflow_run", srv.handleGetWorkflowRun))
 
 	// trigger_workflow
 	server.AddTool(mcp.Tool{
@@ -193,7 +203,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "workflow_id", "ref"},
 		},
-	}, srv.handleTriggerWorkflow)
+	}, wrap("trigger_workflow", srv.handleTriggerWorkflow))
 
 	// cancel_workflow_run
 	server.AddTool(mcp.Tool{
@@ -217,7 +227,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
-	}, srv.handleCancelWorkflowRun)
+	}, wrap("cancel_workflow_run", srv.handleCancelWorkflowRun))
 
 	// rerun_workflow
 	server.AddTool(mcp.Tool{
@@ -245,7 +255,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
-	}, srv.handleRerunWorkflow)
+	}, wrap("rerun_workflow", srv.handleRerunWorkflow))
 
 	// list_workflow_jobs
 	server.AddTool(mcp.Tool{
@@ -273,7 +283,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
-	}, srv.handleListWorkflowJobs)
+	}, wrap("list_workflow_jobs", srv.handleListWorkflowJobs))
 
 	// get_job_logs
 	server.AddTool(mcp.Tool{
@@ -301,7 +311,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "job_id"},
 		},
-	}, srv.handleGetJobLogs)
+	}, wrap("get_job_logs", srv.handleGetJobLogs))
 
 	// list_artifacts
 	server.AddTool(mcp.Tool{
@@ -325,7 +335,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
-	}, srv.handleListArtifacts)
+	}, wrap("list_artifacts", srv.handleListArtifacts))
 
 	return server.Run(ctx)
 }

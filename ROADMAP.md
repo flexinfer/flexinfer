@@ -150,6 +150,8 @@ These address capabilities the market now expects from production MCP infrastruc
 
 - [ ] **OTel trace export from daemon** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12))
   - ✅ 2026-02-26 slice: added `pkg/mcpotel` tracing wrappers to `mcp-alertmanager`, `mcp-grafana`, and `mcp-loki` (tool spans + error status propagation).
+  - ✅ 2026-02-26 slice: expanded `pkg/mcpotel` tracing to `mcp-github`, `mcp-github-actions`, `mcp-jira`, and `mcp-slack`.
+  - ✅ 2026-02-26 slice: added `pkg/mcplog` `MCP_LOG_FORMAT` (`text`/`json`) plus automatic `trace_id`/`span_id` enrichment for context-aware logs.
   - Broaden `pkg/mcpotel` adoption across all high-traffic MCP servers.
   - Instrument tool call latency, server spawn/restart, proxy connection lifecycle in `loomd`.
   - Add OTLP gRPC export to configurable endpoint (Prometheus, Grafana, Jaeger).

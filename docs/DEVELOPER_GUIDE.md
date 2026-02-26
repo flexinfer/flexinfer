@@ -155,7 +155,15 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ./bin/loomd --debug
 ```
 
-Instrumented servers currently include `mcp-agent-context`, `mcp-alertmanager`, `mcp-git`, `mcp-gitlab`, `mcp-grafana`, `mcp-loki`, and `mcp-prometheus`, with ongoing expansion noted in `ROADMAP.md`.
+Instrumented servers currently include `mcp-agent-context`, `mcp-alertmanager`, `mcp-github`, `mcp-github-actions`, `mcp-git`, `mcp-gitlab`, `mcp-grafana`, `mcp-jira`, `mcp-loki`, `mcp-prometheus`, and `mcp-slack`, with ongoing expansion noted in `ROADMAP.md`.
+
+### Structured logging (`pkg/mcplog`)
+
+`mcplog` supports:
+- `MCP_LOG_FORMAT=text` (default)
+- `MCP_LOG_FORMAT=json`
+
+When logs are emitted with context (for example via `slog.ErrorContext` in traced handlers), `trace_id` and `span_id` fields are automatically attached when an active OTel span is present.
 
 ### Metrics
 

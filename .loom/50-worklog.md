@@ -1,5 +1,37 @@
 # Worklog
 
+## 2026-02-26 (session 21) — ROADMAP #12 slice (GitHub/Jira/Slack + structured logs)
+
+- What changed:
+  - Expanded `pkg/mcpotel` tool tracing to additional high-traffic MCP servers:
+    - `cmd/mcp-github/main.go`
+    - `cmd/mcp-github-actions/main.go`
+    - `cmd/mcp-jira/main.go`
+    - `cmd/mcp-slack/main.go`
+  - Each server now:
+    - initializes tracer in `run(ctx)` with noop fallback behavior unchanged
+    - defers tracer shutdown cleanly
+    - wraps all tool handlers with `mcpotel.TracedToolHandler(...)`
+  - Added structured logging upgrades in `pkg/mcplog`:
+    - new `MCP_LOG_FORMAT` env switch (`text` default, `json` optional)
+    - automatic `trace_id` and `span_id` fields on context-aware logs when span context exists
+    - set created logger as default (`slog.SetDefault`) so package-level context logs share formatting/enrichment
+    - new tests in `pkg/mcplog/logger_test.go` for format selection and trace/span enrichment
+  - Added correlated failure logging in `pkg/mcpotel/middleware.go` using `slog.ErrorContext` / `slog.WarnContext`.
+  - Updated `docs/DEVELOPER_GUIDE.md` and `ROADMAP.md` to record this delivery slice.
+- Why:
+  - Continue Issue #12 with an incremental, production-safe vertical slice that improves both trace coverage and trace-to-log correlation for dashboard workflows.
+- Sources:
+  - [S1] `cmd/mcp-github/main.go`
+  - [S2] `cmd/mcp-github-actions/main.go`
+  - [S3] `cmd/mcp-jira/main.go`
+  - [S4] `cmd/mcp-slack/main.go`
+  - [S5] `pkg/mcplog/logger.go`
+  - [S6] `pkg/mcplog/logger_test.go`
+  - [S7] `pkg/mcpotel/middleware.go`
+  - [S8] `docs/DEVELOPER_GUIDE.md`
+  - [S9] `ROADMAP.md`
+
 ## 2026-02-26 (session 20) — ROADMAP #12 vertical slice (observability servers)
 
 - What changed:

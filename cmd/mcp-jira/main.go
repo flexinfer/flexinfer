@@ -9,9 +9,12 @@ import (
 	"github.com/andygrunwald/go-jira"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -37,6 +40,12 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-jira", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-jira")
 
 	srv := &jiraServer{
 		jiraURL:  os.Getenv("JIRA_URL"),
@@ -49,7 +58,7 @@ func run(ctx context.Context) error {
 	server := mcp.NewServer("mcp-jira", version)
 	server.SetInstructions("Interact with Jira (get issues, search, transition, comment). Requires JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN.")
 
-	registerTools(server, srv)
+	registerTools(server, srv, tracer)
 
 	return server.Run(ctx)
 }
@@ -85,7 +94,11 @@ func (s *jiraServer) getClient() (*jira.Client, error) {
 	return s.client, nil
 }
 
-func registerTools(server *mcp.Server, srv *jiraServer) {
+func registerTools(server *mcp.Server, srv *jiraServer, tracer trace.Tracer) {
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
+
 	server.AddTool(mcp.Tool{
 		Name:        "jira_get_issue",
 		Description: "Get details of a Jira issue",
@@ -96,7 +109,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			},
 			Required: []string{"issue_key"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("jira_get_issue", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		key := v.Required("issue_key")
 		if err := v.Validate(); err != nil {
@@ -114,7 +127,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 		}
 
 		return mcp.JSONResult(issue)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "jira_search",
@@ -127,7 +140,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			},
 			Required: []string{"jql"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("jira_search", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		jql := v.Required("jql")
 		limit := validate.NormalizePerPage(v.Int("limit", 50), 50, 200)
@@ -162,7 +175,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 		}
 
 		return mcp.JSONResult(simplified)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "jira_add_comment",
@@ -175,7 +188,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			},
 			Required: []string{"issue_key", "body"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("jira_add_comment", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		key := v.Required("issue_key")
 		body := v.Required("body")
@@ -198,7 +211,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 		}
 
 		return mcp.JSONResult(added)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "jira_get_transitions",
@@ -210,7 +223,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			},
 			Required: []string{"issue_key"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("jira_get_transitions", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		key := v.Required("issue_key")
 		if err := v.Validate(); err != nil {
@@ -228,7 +241,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 		}
 
 		return mcp.JSONResult(transitions)
-	})
+	}))
 
 	server.AddTool(mcp.Tool{
 		Name:        "jira_transition_issue",
@@ -241,7 +254,7 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 			},
 			Required: []string{"issue_key", "transition_id"},
 		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	}, wrap("jira_transition_issue", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		v := validate.NewArgs(args)
 		key := v.Required("issue_key")
 		transID := v.Required("transition_id")
@@ -260,5 +273,5 @@ func registerTools(server *mcp.Server, srv *jiraServer) {
 		}
 
 		return mcp.TextResult(fmt.Sprintf("Transited issue %s", key)), nil
-	})
+	}))
 }
