@@ -16,6 +16,7 @@ import (
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -37,6 +38,22 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp,
+		shutdownTracer,
+		err := mcpotel.InitTracer(
+		ctx, "mcp-substack",
+
+		logger)
+	if err !=
+		nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-substack")
 
 	token := env.StringWithFallbacks("SUBSTACK_SESSION_TOKEN", "SUBSTACK_TOKEN", "SUBSTACK_COOKIE")
 	if token == "" {
@@ -80,7 +97,7 @@ func run(ctx context.Context) error {
 				"limit":  map[string]any{"type": "integer", "description": "Number of drafts to return (default: 25)"},
 			},
 		},
-	}, s.handleListDrafts)
+	}, mcpotel.TracedToolHandler(tracer, "substack_list_drafts", s.handleListDrafts))
 
 	server.AddTool(mcp.Tool{
 		Name:        "substack_create_draft",
@@ -96,7 +113,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"title", "body"},
 		},
-	}, s.handleCreateDraft)
+	}, mcpotel.TracedToolHandler(tracer, "substack_create_draft", s.handleCreateDraft))
 
 	server.AddTool(mcp.Tool{
 		Name:        "substack_update_draft",
@@ -113,7 +130,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"draft_id"},
 		},
-	}, s.handleUpdateDraft)
+	}, mcpotel.TracedToolHandler(tracer, "substack_update_draft", s.handleUpdateDraft))
 
 	server.AddTool(mcp.Tool{
 		Name:        "substack_publish",
@@ -127,7 +144,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"draft_id"},
 		},
-	}, s.handlePublish)
+	}, mcpotel.TracedToolHandler(tracer, "substack_publish", s.handlePublish))
 
 	server.AddTool(mcp.Tool{
 		Name:        "substack_list_posts",
@@ -139,7 +156,7 @@ func run(ctx context.Context) error {
 				"limit":  map[string]any{"type": "integer", "description": "Number of posts to return (default: 25)"},
 			},
 		},
-	}, s.handleListPosts)
+	}, mcpotel.TracedToolHandler(tracer, "substack_list_posts", s.handleListPosts))
 
 	server.AddTool(mcp.Tool{
 		Name:        "substack_get_post",
@@ -151,7 +168,7 @@ func run(ctx context.Context) error {
 				"id":   map[string]any{"type": "integer", "description": "Post ID"},
 			},
 		},
-	}, s.handleGetPost)
+	}, mcpotel.TracedToolHandler(tracer, "substack_get_post", s.handleGetPost))
 
 	return server.Run(ctx)
 }

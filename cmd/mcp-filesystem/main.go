@@ -12,6 +12,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -49,6 +50,22 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx,
+
+		"mcp-filesystem",
+		logger,
+	)
+	if err !=
+		nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-filesystem")
+
 	logger.Info("starting server", "name", "mcp-filesystem", "version", version, "root", allowedRoot)
 
 	server := mcp.NewServer("mcp-filesystem", version)
@@ -68,9 +85,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleListDirectory)
+	}, mcpotel.TracedToolHandler(
 
-	// read_file
+		// read_file
+		tracer, "list_directory", handleListDirectory))
+
 	server.AddTool(mcp.Tool{
 		Name:        "read_file",
 		Description: "Read contents of a file",
@@ -84,9 +103,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleReadFile)
+	}, mcpotel.TracedToolHandler(
 
-	// search_files (simple glob)
+		// search_files (simple glob)
+		tracer, "read_file", handleReadFile))
+
 	server.AddTool(mcp.Tool{
 		Name:        "search_files",
 		Description: "Search for files matching a glob pattern",
@@ -104,7 +125,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"root", "pattern"},
 		},
-	}, handleSearchFiles)
+	}, mcpotel.TracedToolHandler(tracer, "search_files", handleSearchFiles))
 
 	return server.Run(ctx)
 }

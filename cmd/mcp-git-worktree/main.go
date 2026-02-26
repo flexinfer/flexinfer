@@ -13,6 +13,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -37,6 +38,23 @@ func run(ctx context.Context) error {
 	}
 
 	logger := mcplog.NewDefault()
+	tp,
+		shutdownTracer,
+
+		err :=
+		mcpotel.InitTracer(ctx, "mcp-git-worktree",
+
+			logger)
+	if err != nil {
+		logger.
+			Warn("OTel tracer init failed", "error",
+				err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-git-worktree")
+
 	logger.Info("starting server", "name", "mcp-git-worktree", "version", version, "repo", defaultRepo)
 
 	server := mcp.NewServer("mcp-git-worktree", version)
@@ -55,7 +73,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleList)
+	}, mcpotel.TracedToolHandler(tracer, "git_worktree_list", handleList))
 
 	server.AddTool(mcp.Tool{
 		Name:        "git_worktree_add",
@@ -72,7 +90,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleAdd)
+	}, mcpotel.TracedToolHandler(tracer, "git_worktree_add", handleAdd))
 
 	server.AddTool(mcp.Tool{
 		Name:        "git_worktree_remove",
@@ -86,7 +104,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleRemove)
+	}, mcpotel.TracedToolHandler(tracer, "git_worktree_remove", handleRemove))
 
 	server.AddTool(mcp.Tool{
 		Name:        "git_worktree_prune",
@@ -98,7 +116,7 @@ func run(ctx context.Context) error {
 				"dry_run":   map[string]any{"type": "boolean", "description": "Show what would be pruned"},
 			},
 		},
-	}, handlePrune)
+	}, mcpotel.TracedToolHandler(tracer, "git_worktree_prune", handlePrune))
 
 	return server.Run(ctx)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -37,6 +38,23 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-notion",
+
+		logger,
+	)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+
+			err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp,
+		"mcp-notion")
+
 	logger.Info("starting server", "name", "mcp-notion", "version", version)
 
 	server := mcp.NewServer("mcp-notion", version)
@@ -63,9 +81,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleSearch)
+	}, mcpotel.TracedToolHandler(
 
-	// Pages
+		// Pages
+		tracer, "notion_search", handleSearch))
+
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_page",
 		Description: "Get a page by ID",
@@ -79,7 +99,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"page_id"},
 		},
-	}, handleGetPage)
+	}, mcpotel.TracedToolHandler(tracer, "notion_get_page", handleGetPage))
 
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_page_content",
@@ -98,9 +118,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"block_id"},
 		},
-	}, handleGetPageContent)
+	}, mcpotel.TracedToolHandler(
 
-	// Databases
+		// Databases
+		tracer, "notion_get_page_content", handleGetPageContent))
+
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_database",
 		Description: "Get a database schema by ID",
@@ -114,7 +136,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"database_id"},
 		},
-	}, handleGetDatabase)
+	}, mcpotel.TracedToolHandler(tracer, "notion_get_database", handleGetDatabase))
 
 	server.AddTool(mcp.Tool{
 		Name:        "notion_query_database",
@@ -142,9 +164,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"database_id"},
 		},
-	}, handleQueryDatabase)
+	}, mcpotel.TracedToolHandler(
 
-	// Blocks
+		// Blocks
+		tracer, "notion_query_database", handleQueryDatabase))
+
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_block",
 		Description: "Get a block by ID",
@@ -158,7 +182,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"block_id"},
 		},
-	}, handleGetBlock)
+	}, mcpotel.TracedToolHandler(tracer, "notion_get_block", handleGetBlock))
 
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_block_children",
@@ -177,9 +201,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"block_id"},
 		},
-	}, handleGetBlockChildren)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// Users
+		// Users
+		"notion_get_block_children", handleGetBlockChildren))
+
 	server.AddTool(mcp.Tool{
 		Name:        "notion_list_users",
 		Description: "List all users in the workspace",
@@ -187,7 +213,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListUsers)
+	}, mcpotel.TracedToolHandler(tracer, "notion_list_users", handleListUsers))
 
 	server.AddTool(mcp.Tool{
 		Name:        "notion_get_user",
@@ -202,7 +228,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"user_id"},
 		},
-	}, handleGetUser)
+	}, mcpotel.TracedToolHandler(tracer, "notion_get_user", handleGetUser))
 
 	server.AddTool(mcp.Tool{
 		Name:        "notion_me",
@@ -211,9 +237,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleMe)
+	}, mcpotel.TracedToolHandler(
 
-	// Comments
+		// Comments
+		tracer, "notion_me", handleMe))
+
 	server.AddTool(mcp.Tool{
 		Name:        "notion_list_comments",
 		Description: "List comments on a page or block",
@@ -231,7 +259,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"block_id"},
 		},
-	}, handleListComments)
+	}, mcpotel.TracedToolHandler(tracer, "notion_list_comments", handleListComments))
 
 	return server.Run(ctx)
 }

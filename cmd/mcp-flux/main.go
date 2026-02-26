@@ -23,6 +23,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 var version = "1.0.0"
@@ -101,6 +102,20 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-flux",
+
+		logger)
+	if err != nil {
+		logger.Warn(
+			"OTel tracer init failed",
+
+			"error",
+			err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-flux")
 
 	kubeconfig := os.Getenv("FLUX_KUBECONFIG")
 	if kubeconfig == "" {
@@ -153,9 +168,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleGetSources)
+	}, mcpotel.TracedToolHandler(
 
-	// get_kustomizations
+		// get_kustomizations
+		tracer, "flux_get_sources", f.handleGetSources))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_get_kustomizations",
 		Description: "List Flux Kustomizations",
@@ -172,9 +189,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleGetKustomizations)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// get_helmreleases
+		// get_helmreleases
+		"flux_get_kustomizations", f.handleGetKustomizations))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_get_helmreleases",
 		Description: "List Flux HelmReleases",
@@ -191,9 +210,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleGetHelmReleases)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// reconcile
+		// reconcile
+		"flux_get_helmreleases", f.handleGetHelmReleases))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_reconcile",
 		Description: "Trigger reconciliation of a Flux resource",
@@ -220,9 +241,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"kind", "name"},
 		},
-	}, f.handleReconcile)
+	}, mcpotel.TracedToolHandler(
 
-	// suspend
+		// suspend
+		tracer, "flux_reconcile", f.handleReconcile))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_suspend",
 		Description: "Suspend reconciliation of a Flux resource",
@@ -245,9 +268,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"kind", "name"},
 		},
-	}, f.handleSuspend)
+	}, mcpotel.TracedToolHandler(
 
-	// resume
+		// resume
+		tracer, "flux_suspend", f.handleSuspend))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_resume",
 		Description: "Resume reconciliation of a Flux resource",
@@ -270,9 +295,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"kind", "name"},
 		},
-	}, f.handleResume)
+	}, mcpotel.TracedToolHandler(
 
-	// logs
+		// logs
+		tracer, "flux_resume", f.handleResume))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_logs",
 		Description: "Get logs from Flux controllers",
@@ -302,9 +329,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleLogs)
+	}, mcpotel.TracedToolHandler(
 
-	// events
+		// events
+		tracer, "flux_logs", f.handleLogs))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_events",
 		Description: "Get Kubernetes events for Flux resources",
@@ -329,9 +358,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleEvents)
+	}, mcpotel.TracedToolHandler(
 
-	// probe
+		// probe
+		tracer, "flux_events", f.handleEvents))
+
 	server.AddTool(mcp.Tool{
 		Name:        "flux_probe",
 		Description: "Probe Flux/cluster capabilities (flux CLI, kubeconfig, CRDs, controllers) and return actionable guidance",
@@ -344,7 +375,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, f.handleProbe)
+	}, mcpotel.TracedToolHandler(tracer, "flux_probe", f.handleProbe))
 
 	return server.Run(ctx)
 }

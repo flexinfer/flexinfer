@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -42,17 +43,26 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-morph-embeddings", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-morph-embeddings")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-morph-embeddings", "version", version)
 
 	server := mcp.NewServer("mcp-morph-embeddings", version)
 	server.SetInstructions("Morph embeddings and Qdrant vector search")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "morph_embeddings_embed",
 		Description: "Generate embeddings using Morph's embedding API",
@@ -69,7 +79,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"input"},
 		},
-	}, handleEmbed)
+	}, wrap("morph_embeddings_embed", handleEmbed))
 
 	server.AddTool(mcp.Tool{
 		Name:        "morph_embeddings_upsert",
@@ -96,7 +106,7 @@ func registerTools(server *mcp.Server) {
 				"model":    map[string]any{"type": "string"},
 			},
 		},
-	}, handleUpsert)
+	}, wrap("morph_embeddings_upsert", handleUpsert))
 
 	server.AddTool(mcp.Tool{
 		Name:        "morph_embeddings_search",
@@ -115,7 +125,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"query"},
 		},
-	}, handleSearch)
+	}, wrap("morph_embeddings_search", handleSearch))
 }
 
 // Morph API

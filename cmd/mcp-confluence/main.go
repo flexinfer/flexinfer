@@ -19,6 +19,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -41,6 +42,25 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-confluence",
+
+		logger,
+	)
+	if err !=
+		nil {
+		logger.
+			Warn("OTel tracer init failed",
+
+				"error",
+				err)
+	}
+	defer func() {
+		_ =
+			shutdownTracer(ctx)
+	}()
+	tracer :=
+		mcpotel.
+			Tracer(tp, "mcp-confluence")
 
 	baseURL := os.Getenv("CONFLUENCE_URL")
 	if baseURL == "" {
@@ -89,9 +109,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"cql"},
 		},
-	}, cs.handleSearch)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_get_page
+		// confluence_get_page
+		tracer, "confluence_search", cs.handleSearch))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_get_page",
 		Description: "Get a Confluence page by ID",
@@ -109,9 +131,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"page_id"},
 		},
-	}, cs.handleGetPage)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_get_page_by_title
+		// confluence_get_page_by_title
+		tracer, "confluence_get_page", cs.handleGetPage))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_get_page_by_title",
 		Description: "Get a Confluence page by space key and title",
@@ -133,9 +157,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"space_key", "title"},
 		},
-	}, cs.handleGetPageByTitle)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// confluence_list_spaces
+		// confluence_list_spaces
+		"confluence_get_page_by_title", cs.handleGetPageByTitle))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_list_spaces",
 		Description: "List Confluence spaces",
@@ -156,9 +182,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, cs.handleListSpaces)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_get_space
+		// confluence_get_space
+		tracer, "confluence_list_spaces", cs.handleListSpaces))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_get_space",
 		Description: "Get details of a Confluence space",
@@ -176,9 +204,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"space_key"},
 		},
-	}, cs.handleGetSpace)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_list_pages
+		// confluence_list_pages
+		tracer, "confluence_get_space", cs.handleGetSpace))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_list_pages",
 		Description: "List pages in a Confluence space",
@@ -200,9 +230,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"space_key"},
 		},
-	}, cs.handleListPages)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_get_children
+		// confluence_get_children
+		tracer, "confluence_list_pages", cs.handleListPages))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_get_children",
 		Description: "Get child pages of a Confluence page",
@@ -220,9 +252,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"page_id"},
 		},
-	}, cs.handleGetChildren)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_get_ancestors
+		// confluence_get_ancestors
+		tracer, "confluence_get_children", cs.handleGetChildren))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_get_ancestors",
 		Description: "Get ancestor (parent) pages of a Confluence page",
@@ -236,9 +270,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"page_id"},
 		},
-	}, cs.handleGetAncestors)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// confluence_create_page
+		// confluence_create_page
+		"confluence_get_ancestors", cs.handleGetAncestors))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_create_page",
 		Description: "Create a new Confluence page",
@@ -264,9 +300,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"space_key", "title", "content"},
 		},
-	}, cs.handleCreatePage)
+	}, mcpotel.TracedToolHandler(
 
-	// confluence_update_page
+		// confluence_update_page
+		tracer, "confluence_create_page", cs.handleCreatePage))
+
 	server.AddTool(mcp.Tool{
 		Name:        "confluence_update_page",
 		Description: "Update an existing Confluence page",
@@ -292,7 +330,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"page_id", "content"},
 		},
-	}, cs.handleUpdatePage)
+	}, mcpotel.TracedToolHandler(tracer, "confluence_update_page", cs.handleUpdatePage))
 
 	return server.Run(ctx)
 }

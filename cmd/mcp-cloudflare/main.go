@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -38,6 +39,26 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp,
+		shutdownTracer,
+		err := mcpotel.InitTracer(
+		ctx, "mcp-cloudflare",
+
+		logger,
+	)
+	if err !=
+		nil {
+
+		logger.Warn("OTel tracer init failed",
+
+			"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.
+		Tracer(tp, "mcp-cloudflare")
+
 	logger.Info("starting server", "name", "mcp-cloudflare", "version", version)
 
 	server := mcp.NewServer("mcp-cloudflare", version)
@@ -48,7 +69,7 @@ func run(ctx context.Context) error {
 		Name:        "cf_verify_token",
 		Description: "Verify Cloudflare API token status and scopes",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleVerifyToken)
+	}, mcpotel.TracedToolHandler(tracer, "cf_verify_token", handleVerifyToken))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_list_zones",
@@ -60,7 +81,7 @@ func run(ctx context.Context) error {
 				"page":     map[string]any{"type": "integer", "description": "Page number (default 1)"},
 			},
 		},
-	}, handleListZones)
+	}, mcpotel.TracedToolHandler(tracer, "cf_list_zones", handleListZones))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_list_tunnels",
@@ -72,9 +93,11 @@ func run(ctx context.Context) error {
 				"page":     map[string]any{"type": "integer", "description": "Page number (default 1)"},
 			},
 		},
-	}, handleListTunnels)
+	}, mcpotel.TracedToolHandler(
 
-	// DNS Record tools
+		// DNS Record tools
+		tracer, "cf_list_tunnels", handleListTunnels))
+
 	server.AddTool(mcp.Tool{
 		Name:        "cf_list_dns_records",
 		Description: "List DNS records for a zone",
@@ -87,7 +110,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"zone_id"},
 		},
-	}, handleListDNSRecords)
+	}, mcpotel.TracedToolHandler(tracer, "cf_list_dns_records", handleListDNSRecords))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_create_dns_record",
@@ -104,7 +127,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"zone_id", "type", "name", "content"},
 		},
-	}, handleCreateDNSRecord)
+	}, mcpotel.TracedToolHandler(tracer, "cf_create_dns_record", handleCreateDNSRecord))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_update_dns_record",
@@ -122,7 +145,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"zone_id", "record_id", "type", "name", "content"},
 		},
-	}, handleUpdateDNSRecord)
+	}, mcpotel.TracedToolHandler(tracer, "cf_update_dns_record", handleUpdateDNSRecord))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_delete_dns_record",
@@ -135,7 +158,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"zone_id", "record_id"},
 		},
-	}, handleDeleteDNSRecord)
+	}, mcpotel.TracedToolHandler(tracer, "cf_delete_dns_record", handleDeleteDNSRecord))
 
 	server.AddTool(mcp.Tool{
 		Name:        "cf_purge_cache",
@@ -152,7 +175,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"zone_id"},
 		},
-	}, handlePurgeCache)
+	}, mcpotel.TracedToolHandler(tracer, "cf_purge_cache", handlePurgeCache))
 
 	return server.Run(ctx)
 }

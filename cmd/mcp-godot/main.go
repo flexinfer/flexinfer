@@ -19,6 +19,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -272,6 +273,15 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-godot", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-godot")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 
 	// Load config from environment
 	host := os.Getenv("GODOT_HOST")
@@ -307,12 +317,12 @@ func run(ctx context.Context) error {
 	server := mcp.NewServer("mcp-godot", version)
 	server.SetInstructions("Godot debugging server. Requires Godot plugin running on localhost:6550.")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	// godot_scene_tree
 	server.AddTool(mcp.Tool{
 		Name:        "godot_scene_tree",
@@ -326,7 +336,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleSceneTree)
+	}, wrap("godot_scene_tree", handleSceneTree))
 
 	// godot_inspect
 	server.AddTool(mcp.Tool{
@@ -342,7 +352,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"node_path"},
 		},
-	}, handleInspect)
+	}, wrap("godot_inspect", handleInspect))
 
 	// godot_call
 	server.AddTool(mcp.Tool{
@@ -366,7 +376,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"node_path", "method"},
 		},
-	}, handleCall)
+	}, wrap("godot_call", handleCall))
 
 	// godot_signal
 	server.AddTool(mcp.Tool{
@@ -390,7 +400,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"node_path", "signal"},
 		},
-	}, handleSignal)
+	}, wrap("godot_signal", handleSignal))
 
 	// godot_eval
 	server.AddTool(mcp.Tool{
@@ -406,7 +416,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"expression"},
 		},
-	}, handleEval)
+	}, wrap("godot_eval", handleEval))
 
 	// godot_set
 	server.AddTool(mcp.Tool{
@@ -429,7 +439,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"node_path", "property", "value"},
 		},
-	}, handleSet)
+	}, wrap("godot_set", handleSet))
 
 	// godot_screenshot
 	server.AddTool(mcp.Tool{
@@ -444,7 +454,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleScreenshot)
+	}, wrap("godot_screenshot", handleScreenshot))
 
 	// godot_logs
 	server.AddTool(mcp.Tool{
@@ -463,7 +473,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleLogs)
+	}, wrap("godot_logs", handleLogs))
 
 	// godot_logs_stream
 	server.AddTool(mcp.Tool{
@@ -482,7 +492,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleLogsStream)
+	}, wrap("godot_logs_stream", handleLogsStream))
 }
 
 func handleSceneTree(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

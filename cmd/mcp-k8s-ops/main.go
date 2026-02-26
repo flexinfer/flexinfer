@@ -15,6 +15,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -33,17 +34,26 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-k8s-ops", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-k8s-ops")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-k8s-ops", "version", version)
 
 	server := mcp.NewServer("mcp-k8s-ops", version)
 	server.SetInstructions("Kubernetes operations via kubectl")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_apply",
 		Description: "Apply a configuration file",
@@ -58,7 +68,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"file"},
 		},
-	}, handleApply)
+	}, wrap("k8s_apply", handleApply))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_getPods",
@@ -77,7 +87,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace"},
 		},
-	}, handleGetPods)
+	}, wrap("k8s_getPods", handleGetPods))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_logs",
@@ -98,7 +108,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "target"},
 		},
-	}, handleLogs)
+	}, wrap("k8s_logs", handleLogs))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_get",
@@ -121,7 +131,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"kind"},
 		},
-	}, handleGet)
+	}, wrap("k8s_get", handleGet))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_describe",
@@ -140,7 +150,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "kind", "name"},
 		},
-	}, handleDescribe)
+	}, wrap("k8s_describe", handleDescribe))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_exec",
@@ -160,7 +170,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "pod", "command"},
 		},
-	}, handleExec)
+	}, wrap("k8s_exec", handleExec))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_listNamespaces",
@@ -175,7 +185,7 @@ func registerTools(server *mcp.Server) {
 				"context": map[string]any{"type": "string"},
 			},
 		},
-	}, handleListNamespaces)
+	}, wrap("k8s_listNamespaces", handleListNamespaces))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_listContexts",
@@ -189,7 +199,7 @@ func registerTools(server *mcp.Server) {
 				},
 			},
 		},
-	}, handleListContexts)
+	}, wrap("k8s_listContexts", handleListContexts))
 }
 
 // Kubectl Helper

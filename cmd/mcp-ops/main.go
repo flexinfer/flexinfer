@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/poll"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -51,17 +52,26 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-ops", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-ops")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-ops", "version", version)
 
 	server := mcp.NewServer("mcp-ops", version)
 	server.SetInstructions("Operations MCP server for k3s and Harvester operations")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_get_nodes",
 		Description: "Get Kubernetes nodes with detailed information",
@@ -71,7 +81,7 @@ func registerTools(server *mcp.Server) {
 				"kubeconfig": map[string]any{"type": "string"},
 			},
 		},
-	}, handleGetNodes)
+	}, wrap("k8s_get_nodes", handleGetNodes))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_scale_deploy",
@@ -86,7 +96,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "name", "replicas"},
 		},
-	}, handleScaleDeploy)
+	}, wrap("k8s_scale_deploy", handleScaleDeploy))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k8s_delete_pods_by_phase",
@@ -101,7 +111,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "phases"},
 		},
-	}, handleDeletePodsByPhase)
+	}, wrap("k8s_delete_pods_by_phase", handleDeletePodsByPhase))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vip_label_node",
@@ -115,13 +125,13 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"node", "eligible"},
 		},
-	}, handleVipLabelNode)
+	}, wrap("vip_label_node", handleVipLabelNode))
 
 	server.AddTool(mcp.Tool{
 		Name:        "harvester_vms_list",
 		Description: "List Harvester virtual machines",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleHarvesterVMsList)
+	}, wrap("harvester_vms_list", handleHarvesterVMsList))
 
 	server.AddTool(mcp.Tool{
 		Name:        "harvester_vm_restart",
@@ -134,7 +144,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"namespace", "name"},
 		},
-	}, handleHarvesterVMRestart)
+	}, wrap("harvester_vm_restart", handleHarvesterVMRestart))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k3s_service_logs",
@@ -149,7 +159,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"host"},
 		},
-	}, handleK3sServiceLogs)
+	}, wrap("k3s_service_logs", handleK3sServiceLogs))
 
 	server.AddTool(mcp.Tool{
 		Name:        "k3s_repair_server",
@@ -162,7 +172,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"host"},
 		},
-	}, handleK3sRepairServer)
+	}, wrap("k3s_repair_server", handleK3sRepairServer))
 
 	server.AddTool(mcp.Tool{
 		Name:        "stabilize_cluster",
@@ -177,7 +187,7 @@ func registerTools(server *mcp.Server) {
 				"kubeconfig":            map[string]any{"type": "string"},
 			},
 		},
-	}, handleStabilizeCluster)
+	}, wrap("stabilize_cluster", handleStabilizeCluster))
 
 	server.AddTool(mcp.Tool{
 		Name:        "run_repo_script",
@@ -193,7 +203,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"script_path"},
 		},
-	}, handleRunRepoScript)
+	}, wrap("run_repo_script", handleRunRepoScript))
 }
 
 // Helpers

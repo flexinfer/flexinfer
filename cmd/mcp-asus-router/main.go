@@ -14,6 +14,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -34,23 +35,32 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-asus-router", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-asus-router")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-asus-router", "version", version, "host", hostAlias)
 
 	server := mcp.NewServer("mcp-asus-router", version)
 	server.SetInstructions("ASUS Router management via SSH")
 
 	// Register tools
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "router_status",
 		Description: "Uptime, WAN, and memory utilization snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleStatus)
+	}, wrap("router_status", handleStatus))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_logread",
@@ -61,7 +71,7 @@ func registerTools(server *mcp.Server) {
 				"lines": map[string]any{"type": "integer", "minimum": 10, "maximum": 2000},
 			},
 		},
-	}, handleLogread)
+	}, wrap("router_logread", handleLogread))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_kernelTail",
@@ -72,7 +82,7 @@ func registerTools(server *mcp.Server) {
 				"lines": map[string]any{"type": "integer", "minimum": 10, "maximum": 500},
 			},
 		},
-	}, handleKernelTail)
+	}, wrap("router_kernelTail", handleKernelTail))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_execCommand",
@@ -87,7 +97,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"command"},
 		},
-	}, handleExecCommand)
+	}, wrap("router_execCommand", handleExecCommand))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_reboot",
@@ -99,19 +109,19 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"confirm"},
 		},
-	}, handleReboot)
+	}, wrap("router_reboot", handleReboot))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_wanStatus",
 		Description: "WAN IP, gateway, DNS, and link snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleWanStatus)
+	}, wrap("router_wanStatus", handleWanStatus))
 
 	server.AddTool(mcp.Tool{
 		Name:        "router_wifiStatus",
 		Description: "Wi-Fi chanspec/bandwidth and assoc list.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleWifiStatus)
+	}, wrap("router_wifiStatus", handleWifiStatus))
 }
 
 // SSH Helper

@@ -12,6 +12,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -26,6 +27,25 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp,
+		shutdownTracer,
+
+		err :=
+		mcpotel.InitTracer(ctx,
+			"mcp-itchio",
+
+			logger)
+	if err != nil {
+		logger.
+			Warn("OTel tracer init failed", "error",
+				err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(
+		tp, "mcp-itchio")
+
 	logger.Info("starting server", "name", "mcp-itchio", "version", version)
 
 	server := mcp.NewServer("mcp-itchio", version)
@@ -56,7 +76,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"file", "project", "channel"},
 		},
-	}, handleUpload)
+	}, mcpotel.TracedToolHandler(tracer, "itchio_upload", handleUpload))
 
 	server.AddTool(mcp.Tool{
 		Name:        "itchio_status",
@@ -71,7 +91,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"project"},
 		},
-	}, handleStatus)
+	}, mcpotel.TracedToolHandler(tracer, "itchio_status", handleStatus))
 
 	server.AddTool(mcp.Tool{
 		Name:        "itchio_version_history",
@@ -90,7 +110,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"project", "channel"},
 		},
-	}, handleVersionHistory)
+	}, mcpotel.TracedToolHandler(tracer, "itchio_version_history", handleVersionHistory))
 
 	return server.Run(ctx)
 }

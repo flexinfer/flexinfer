@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -49,6 +50,21 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx,
+		"mcp-vault",
+		logger,
+	)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+			err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-vault")
+
 	logger.Info("starting server", "name", "mcp-vault", "version", version, "addr", vaultAddr)
 
 	server := mcp.NewServer("mcp-vault", version)
@@ -62,7 +78,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleHealth)
+	}, mcpotel.TracedToolHandler(tracer, "vault_health", handleHealth))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vault_status",
@@ -71,9 +87,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleStatus)
+	}, mcpotel.TracedToolHandler(
 
-	// Secret operations (KV v2)
+		// Secret operations (KV v2)
+		tracer, "vault_status", handleStatus))
+
 	server.AddTool(mcp.Tool{
 		Name:        "vault_read",
 		Description: "Read a secret from Vault KV v2 secrets engine",
@@ -95,7 +113,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleRead)
+	}, mcpotel.TracedToolHandler(tracer, "vault_read", handleRead))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vault_list",
@@ -113,7 +131,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleList)
+	}, mcpotel.TracedToolHandler(tracer, "vault_list", handleList))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vault_metadata",
@@ -132,9 +150,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, handleMetadata)
+	}, mcpotel.TracedToolHandler(
 
-	// Mounts
+		// Mounts
+		tracer, "vault_metadata", handleMetadata))
+
 	server.AddTool(mcp.Tool{
 		Name:        "vault_mounts",
 		Description: "List all secrets engine mounts",
@@ -142,7 +162,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleMounts)
+	}, mcpotel.TracedToolHandler(tracer, "vault_mounts", handleMounts))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vault_auth_methods",
@@ -151,9 +171,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleAuthMethods)
+	}, mcpotel.TracedToolHandler(
 
-	// Token info
+		// Token info
+		tracer, "vault_auth_methods", handleAuthMethods))
+
 	server.AddTool(mcp.Tool{
 		Name:        "vault_token_lookup",
 		Description: "Look up information about the current token",
@@ -161,9 +183,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleTokenLookup)
+	}, mcpotel.TracedToolHandler(
 
-	// Policies
+		// Policies
+		tracer, "vault_token_lookup", handleTokenLookup))
+
 	server.AddTool(mcp.Tool{
 		Name:        "vault_policies",
 		Description: "List all policies",
@@ -171,7 +195,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handlePolicies)
+	}, mcpotel.TracedToolHandler(tracer, "vault_policies", handlePolicies))
 
 	server.AddTool(mcp.Tool{
 		Name:        "vault_policy_read",
@@ -186,7 +210,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handlePolicyRead)
+	}, mcpotel.TracedToolHandler(tracer, "vault_policy_read", handlePolicyRead))
 
 	return server.Run(ctx)
 }
