@@ -1,6 +1,6 @@
 # Loom Core Implementation Status
 
-> Last Updated: February 17, 2026
+> Last Updated: February 26, 2026
 > Canonical status source for shipped vs in-progress work.
 
 ## Current State
@@ -12,7 +12,7 @@ Shipped and actively used:
 - `loom` CLI for config generation/sync, daemon lifecycle, HUD launch, and agent hooks.
 - `loomd` daemon for routing, server lifecycle management, health monitoring, and tunneling.
 - `loom proxy` single-entry MCP bridge for multi-platform client support.
-- 40+ Go MCP servers spanning Git, GitLab/GitHub, Kubernetes, observability, agent memory, and sandbox execution.
+- 59 Go MCP servers spanning Git, GitLab/GitHub, Kubernetes, observability, agent memory, and sandbox execution.
 - HUD command center (web, TUI, macOS overlay) for server/agent/sandbox visibility.
 
 ## Recently Shipped (Post `v0.9.7`)
@@ -23,6 +23,9 @@ Shipped and actively used:
 - `mcp-devbox` sandbox runtime with Docker and Kubernetes backends.
 - Agent orchestration enhancements (presence, worktrees, workflows).
 - Developer-safe local upgrade flow (`make dev-upgrade`, `make dev-reload`).
+- OTel tracing across all `cmd/mcp-*/main.go` servers (59/59) plus JSON log correlation (`trace_id`, `span_id`) via `pkg/mcplog`.
+- HUD launchd lifecycle management (`loom hud install|start|stop|status`) with `hud.env` loading and Redis-first cache defaults in launchd mode.
+- Worktree-first agent workflow nudges at session start and Antigravity `settings.json` sync parity.
 
 ## In Progress Now
 
@@ -32,7 +35,7 @@ These are active priorities and should be treated as implementation gaps until c
 2. Daemon call pipeline hardening after extraction into `internal/daemon/callpipeline.go`.
 3. Agent contract convergence across CLI, HUD API, and bridge layers.
 4. Refactor decomposition of large surfaces (`PresencePanel.svelte`, `internal/devbox/backend/k8s.go`).
-5. OTel expansion from selected servers to broader daemon/runtime paths.
+5. Daemon/runtime telemetry expansion (tool routing, server spawn/restart, proxy connection lifecycle) and OTLP export hardening.
 
 ## Next After Current Focus
 

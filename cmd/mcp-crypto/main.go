@@ -17,6 +17,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -31,6 +32,21 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-crypto",
+
+		logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error", err,
+		)
+	}
+	defer func() {
+		_ =
+			shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-crypto")
+
 	logger.Info("starting server", "name", "mcp-crypto", "version", version)
 
 	server := mcp.NewServer("mcp-crypto", version)
@@ -53,9 +69,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleRandomString)
+	}, mcpotel.TracedToolHandler(
 
-	// uuid_v4
+		// uuid_v4
+		tracer, "random_string", handleRandomString))
+
 	server.AddTool(mcp.Tool{
 		Name:        "uuid_v4",
 		Description: "Generate a UUID v4",
@@ -63,9 +81,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleUUID)
+	}, mcpotel.TracedToolHandler(
 
-	// hash_string
+		// hash_string
+		tracer, "uuid_v4", handleUUID))
+
 	server.AddTool(mcp.Tool{
 		Name:        "hash_string",
 		Description: "Hash a string using MD5 or SHA256",
@@ -84,9 +104,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, handleHashString)
+	}, mcpotel.TracedToolHandler(
 
-	// base64_encode
+		// base64_encode
+		tracer, "hash_string", handleHashString))
+
 	server.AddTool(mcp.Tool{
 		Name:        "base64_encode",
 		Description: "Encode text to Base64",
@@ -100,9 +122,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, handleBase64Encode)
+	}, mcpotel.TracedToolHandler(
 
-	// base64_decode
+		// base64_decode
+		tracer, "base64_encode", handleBase64Encode))
+
 	server.AddTool(mcp.Tool{
 		Name:        "base64_decode",
 		Description: "Decode Base64 text",
@@ -116,7 +140,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, handleBase64Decode)
+	}, mcpotel.TracedToolHandler(tracer, "base64_decode", handleBase64Decode))
 
 	return server.Run(ctx)
 }

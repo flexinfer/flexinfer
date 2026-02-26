@@ -20,6 +20,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -45,6 +46,21 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-morph-fast-apply",
+		logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+			"error",
+
+			err)
+	}
+	defer func() {
+		_ =
+			shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.
+		Tracer(tp, "mcp-morph-fast-apply")
+
 	logger.Info("starting server", "name", "mcp-morph-fast-apply", "version", version)
 
 	server := mcp.NewServer("mcp-morph-fast-apply", version)
@@ -72,9 +88,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path", "instruction", "update"},
 		},
-	}, handleEditFile)
+	}, mcpotel.TracedToolHandler(
 
-	// Also register as morph_edit_file for compatibility
+		// Also register as morph_edit_file for compatibility
+		tracer, "edit_file", handleEditFile))
+
 	server.AddTool(mcp.Tool{
 		Name:        "morph_edit_file",
 		Description: "Apply code edits to a file using Morph's fast apply model (alias)",
@@ -96,7 +114,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path", "instruction", "update"},
 		},
-	}, handleEditFile)
+	}, mcpotel.TracedToolHandler(tracer, "morph_edit_file", handleEditFile))
 
 	return server.Run(ctx)
 }

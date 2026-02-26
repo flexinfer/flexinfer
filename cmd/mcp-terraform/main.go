@@ -19,6 +19,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -52,6 +53,22 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-terraform",
+		logger,
+	)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+
+			err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.
+		Tracer(tp, "mcp-terraform")
+
 	logger.Info("starting server", "name", "mcp-terraform", "version", version, "host", tfcHost)
 
 	server := mcp.NewServer("mcp-terraform", version)
@@ -78,7 +95,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleListWorkspaces)
+	}, mcpotel.TracedToolHandler(tracer, "tf_list_workspaces", handleListWorkspaces))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_get_workspace",
@@ -93,9 +110,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleGetWorkspace)
+	}, mcpotel.TracedToolHandler(
 
-	// State
+		// State
+		tracer, "tf_get_workspace", handleGetWorkspace))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_current_state",
 		Description: "Get current state version for a workspace",
@@ -109,7 +128,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"workspace"},
 		},
-	}, handleCurrentState)
+	}, mcpotel.TracedToolHandler(tracer, "tf_current_state", handleCurrentState))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_state_resources",
@@ -128,7 +147,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"workspace"},
 		},
-	}, handleStateResources)
+	}, mcpotel.TracedToolHandler(tracer, "tf_state_resources", handleStateResources))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_state_outputs",
@@ -143,9 +162,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"workspace"},
 		},
-	}, handleStateOutputs)
+	}, mcpotel.TracedToolHandler(
 
-	// Runs
+		// Runs
+		tracer, "tf_state_outputs", handleStateOutputs))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_list_runs",
 		Description: "List runs for a workspace",
@@ -167,7 +188,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"workspace"},
 		},
-	}, handleListRuns)
+	}, mcpotel.TracedToolHandler(tracer, "tf_list_runs", handleListRuns))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_get_run",
@@ -182,7 +203,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"run_id"},
 		},
-	}, handleGetRun)
+	}, mcpotel.TracedToolHandler(tracer, "tf_get_run", handleGetRun))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_run_plan",
@@ -197,9 +218,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"run_id"},
 		},
-	}, handleRunPlan)
+	}, mcpotel.TracedToolHandler(
 
-	// Variables
+		// Variables
+		tracer, "tf_run_plan", handleRunPlan))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_list_variables",
 		Description: "List variables for a workspace",
@@ -213,9 +236,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"workspace"},
 		},
-	}, handleListVariables)
+	}, mcpotel.TracedToolHandler(
 
-	// Variable Sets
+		// Variable Sets
+		tracer, "tf_list_variables", handleListVariables))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_list_varsets",
 		Description: "List variable sets in the organization",
@@ -223,7 +248,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListVarsets)
+	}, mcpotel.TracedToolHandler(tracer, "tf_list_varsets", handleListVarsets))
 
 	server.AddTool(mcp.Tool{
 		Name:        "tf_get_varset",
@@ -238,9 +263,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"varset_id"},
 		},
-	}, handleGetVarset)
+	}, mcpotel.TracedToolHandler(
 
-	// Organizations
+		// Organizations
+		tracer, "tf_get_varset", handleGetVarset))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_get_organization",
 		Description: "Get organization details",
@@ -248,9 +275,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleGetOrganization)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// Policies
+		// Policies
+		"tf_get_organization", handleGetOrganization))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_list_policies",
 		Description: "List Sentinel policies in the organization",
@@ -263,9 +292,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleListPolicies)
+	}, mcpotel.TracedToolHandler(
 
-	// Registry Modules
+		// Registry Modules
+		tracer, "tf_list_policies", handleListPolicies))
+
 	server.AddTool(mcp.Tool{
 		Name:        "tf_list_modules",
 		Description: "List private registry modules",
@@ -278,7 +309,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleListModules)
+	}, mcpotel.TracedToolHandler(tracer, "tf_list_modules", handleListModules))
 
 	return server.Run(ctx)
 }

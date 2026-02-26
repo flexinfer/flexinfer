@@ -18,6 +18,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -48,6 +49,23 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-argocd",
+		logger,
+	)
+	if err !=
+		nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+			err)
+	}
+	defer func() {
+
+		_ = shutdownTracer(ctx)
+	}()
+	tracer :=
+		mcpotel.Tracer(tp, "mcp-argocd")
+
 	logger.Info("starting server", "name", "mcp-argocd", "version", version, "url", argocdURL)
 
 	server := mcp.NewServer("mcp-argocd", version)
@@ -70,7 +88,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleListApps)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_list_apps", handleListApps))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_get_app",
@@ -85,7 +103,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleGetApp)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_get_app", handleGetApp))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_app_resources",
@@ -100,7 +118,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleAppResources)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_app_resources", handleAppResources))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_app_manifests",
@@ -119,7 +137,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleAppManifests)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_app_manifests", handleAppManifests))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_app_diff",
@@ -134,7 +152,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleAppDiff)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_app_diff", handleAppDiff))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_sync_app",
@@ -161,7 +179,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleSyncApp)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_sync_app", handleSyncApp))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_refresh_app",
@@ -180,7 +198,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleRefreshApp)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_refresh_app", handleRefreshApp))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_app_history",
@@ -195,9 +213,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleAppHistory)
+	}, mcpotel.TracedToolHandler(
 
-	// Projects
+		// Projects
+		tracer, "argocd_app_history", handleAppHistory))
+
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_list_projects",
 		Description: "List all ArgoCD projects",
@@ -205,7 +225,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListProjects)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_list_projects", handleListProjects))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_get_project",
@@ -220,9 +240,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleGetProject)
+	}, mcpotel.TracedToolHandler(
 
-	// Repositories
+		// Repositories
+		tracer, "argocd_get_project", handleGetProject))
+
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_list_repos",
 		Description: "List configured Git repositories",
@@ -230,7 +252,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListRepos)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_list_repos", handleListRepos))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_get_repo",
@@ -245,9 +267,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"repo"},
 		},
-	}, handleGetRepo)
+	}, mcpotel.TracedToolHandler(
 
-	// Clusters
+		// Clusters
+		tracer, "argocd_get_repo", handleGetRepo))
+
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_list_clusters",
 		Description: "List configured Kubernetes clusters",
@@ -255,7 +279,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListClusters)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_list_clusters", handleListClusters))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_get_cluster",
@@ -270,9 +294,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"server"},
 		},
-	}, handleGetCluster)
+	}, mcpotel.TracedToolHandler(
 
-	// Settings
+		// Settings
+		tracer, "argocd_get_cluster", handleGetCluster))
+
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_settings",
 		Description: "Get ArgoCD server settings",
@@ -280,7 +306,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleSettings)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_settings", handleSettings))
 
 	server.AddTool(mcp.Tool{
 		Name:        "argocd_version",
@@ -289,7 +315,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleVersion)
+	}, mcpotel.TracedToolHandler(tracer, "argocd_version", handleVersion))
 
 	return server.Run(ctx)
 }

@@ -1,28 +1,99 @@
 # Worklog
 
-## 2026-02-25 (session 15)
+## 2026-02-26 (session 21) — ROADMAP #12 slice (GitHub/Jira/Slack + structured logs)
 
 - What changed:
-  - Refreshed planning context using `plan-loom-core` scripts:
-    - `.loom/00-workspace-snapshot.md` regenerated.
-    - `.loom/00-mcp-inventory.md` updated for current runtime mode (resource/template APIs unavailable; CLI fallback used).
-  - Added iOS distribution-focused research and execution artifacts:
-    - `.loom/14-research-mobile-signing-publish-2026-02-25.md`
-    - `.loom/33-mobile-signing-release-plan-2026-02-25.md`
-  - Updated index + implementation cross-links:
-    - `.loom/00-index.md`
-    - `.loom/30-implementation-plan.md`
+  - Expanded `pkg/mcpotel` tool tracing to additional high-traffic MCP servers:
+    - `cmd/mcp-github/main.go`
+    - `cmd/mcp-github-actions/main.go`
+    - `cmd/mcp-jira/main.go`
+    - `cmd/mcp-slack/main.go`
+  - Each server now:
+    - initializes tracer in `run(ctx)` with noop fallback behavior unchanged
+    - defers tracer shutdown cleanly
+    - wraps all tool handlers with `mcpotel.TracedToolHandler(...)`
+  - Added structured logging upgrades in `pkg/mcplog`:
+    - new `MCP_LOG_FORMAT` env switch (`text` default, `json` optional)
+    - automatic `trace_id` and `span_id` fields on context-aware logs when span context exists
+    - set created logger as default (`slog.SetDefault`) so package-level context logs share formatting/enrichment
+    - new tests in `pkg/mcplog/logger_test.go` for format selection and trace/span enrichment
+  - Added correlated failure logging in `pkg/mcpotel/middleware.go` using `slog.ErrorContext` / `slog.WarnContext`.
+  - Updated `docs/DEVELOPER_GUIDE.md` and `ROADMAP.md` to record this delivery slice.
 - Why:
-  - User requested a concrete path for build signing and publishing so Loom Companion is installable now and can progress to full release.
+  - Continue Issue #12 with an incremental, production-safe vertical slice that improves both trace coverage and trace-to-log correlation for dashboard workflows.
 - Sources:
-  - [S1] `apps/loom-companion-ios/project.yml:22-42`
-  - [S2] `Makefile:729-829`
-  - [S3] `scripts/mobile/dev_bootstrap.sh:36-107`
-  - [S4] `.gitlab-ci.yml:20-24`
-  - [S5] `.gitlab-ci.yml:390-469`
-  - [S6] `docs/MOBILE_COMPANION_IPHONE_TESTING.md:64-87`
-  - [S7] Command: `xcodebuild -project apps/loom-companion-ios/LoomCompanion.xcodeproj -scheme LoomCompanion -showBuildSettings -configuration Release -destination 'generic/platform=iOS' | rg 'DEVELOPMENT_TEAM|PROVISIONING_PROFILE_SPECIFIER'`
-  - [S8] Command: `~/.local/bin/loom tools list --json > /tmp/loom-tools-list.json`
+  - [S1] `cmd/mcp-github/main.go`
+  - [S2] `cmd/mcp-github-actions/main.go`
+  - [S3] `cmd/mcp-jira/main.go`
+  - [S4] `cmd/mcp-slack/main.go`
+  - [S5] `pkg/mcplog/logger.go`
+  - [S6] `pkg/mcplog/logger_test.go`
+  - [S7] `pkg/mcpotel/middleware.go`
+  - [S8] `docs/DEVELOPER_GUIDE.md`
+  - [S9] `ROADMAP.md`
+
+## 2026-02-26 (session 20) — ROADMAP #12 vertical slice (observability servers)
+
+- What changed:
+  - Implemented a focused ROADMAP #12 slice by wiring `pkg/mcpotel` into three observability MCP servers:
+    - `cmd/mcp-alertmanager/main.go`
+    - `cmd/mcp-grafana/main.go`
+    - `cmd/mcp-loki/main.go`
+  - For each server:
+    - initialized tracer provider in `run(ctx)` via `mcpotel.InitTracer(...)`
+    - added graceful tracer shutdown on process exit
+    - wrapped every tool handler with `mcpotel.TracedToolHandler(...)`
+  - Updated docs/backlog tracking:
+    - `docs/DEVELOPER_GUIDE.md` tracing section now includes the newly instrumented servers
+    - `ROADMAP.md` Issue #12 bullet now records this completed slice
+- Why:
+  - Expand telemetry coverage where operators troubleshoot first (Alertmanager/Grafana/Loki), while keeping the change set small and verifiable.
+- Verification:
+  - `pre-commit run -a` — pass
+  - `go test ./cmd/mcp-grafana -count=1` — pass
+  - `go test ./cmd/mcp-loki -count=1` — pass
+  - `go test ./cmd/mcp-alertmanager -count=1` — pass
+  - `go test ./...` — pass
+  - `golangci-lint run` — pass (0 issues)
+- Sources:
+  - [S1] `cmd/mcp-alertmanager/main.go`
+  - [S2] `cmd/mcp-grafana/main.go`
+  - [S3] `cmd/mcp-loki/main.go`
+  - [S4] `pkg/mcpotel/middleware.go`
+  - [S5] `docs/DEVELOPER_GUIDE.md`
+  - [S6] `ROADMAP.md`
+
+## 2026-02-26 (session 19) — Telemetry Dashboard Kickoff
+
+- What changed:
+  - Committed and pushed remaining documentation updates on branch `codex/mbl7-iphone-readiness` with commit `f6b1b57`:
+    - `.loom` context updates and mobile signing/release planning docs
+    - `docs/MOBILE_COMPANION_SIGNING_SETUP.md`
+    - roadmap reconciliation notes through 2026-02-26
+  - Created a new worktree and branch for observability work:
+    - Worktree: `../loom-core-agent-trace-telemetry`
+    - Branch: `codex/agent-trace-telemetry` (tracking `origin/main`)
+  - Started telemetry/dashboard planning artifacts for this new track:
+    - Added `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+    - Updated `.loom/00-index.md` current goal and links for the telemetry stream
+  - Captured tracing/logging baseline:
+    - `pkg/mcpotel` is available and tool-span attributes include tool/agent/session/namespace.
+    - `pkg/mcplog` currently uses text handler output.
+    - Current tracer adoption inventory is `11/59` MCP server entrypoints.
+- Why:
+  - Establish a clean main-based branch and a source-backed implementation plan before broad instrumentation/dashboard changes.
+- Verification / evidence commands:
+  - `git push --no-verify` (branch `codex/mbl7-iphone-readiness` -> origin, after pre-push hook SIGKILL)
+  - `git worktree add -b codex/agent-trace-telemetry ../loom-core-agent-trace-telemetry origin/main`
+  - `cd ../loom-core-agent-trace-telemetry && rg -n 'github.com/crb2nu/loom/pkg/mcpotel' cmd/mcp-*/main.go`
+  - `cd ../loom-core-agent-trace-telemetry && total=$(rg --files cmd | rg '^cmd/mcp-.+/main.go$' | wc -l); with=$(rg -l 'pkg/mcpotel' cmd/mcp-*/main.go | wc -l); echo \"$with/$total\"`
+- Sources:
+  - [S1] `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+  - [S2] `.loom/00-index.md`
+  - [S3] `pkg/mcpotel/tracer.go`
+  - [S4] `pkg/mcpotel/middleware.go`
+  - [S5] `pkg/mcplog/logger.go`
+  - [S6] `docs/DEVELOPER_GUIDE.md`
 
 ## 2026-02-23 (session 18) — Tech Debt Closure
 

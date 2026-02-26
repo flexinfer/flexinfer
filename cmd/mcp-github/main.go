@@ -21,6 +21,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/poll"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -42,6 +43,12 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-github", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-github")
 
 	token := env.StringWithFallbacks("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")
 
@@ -54,6 +61,9 @@ func run(ctx context.Context) error {
 
 	server := mcp.NewServer("mcp-github", version)
 	server.SetInstructions("Fast Go-native GitHub MCP server. Supports repos, issues, PRs, and more.")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 
 	// list_repos
 	server.AddTool(mcp.Tool{
@@ -80,7 +90,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, gh.handleListRepos)
+	}, wrap("list_repos", gh.handleListRepos))
 
 	// get_repo
 	server.AddTool(mcp.Tool{
@@ -100,7 +110,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, gh.handleGetRepo)
+	}, wrap("get_repo", gh.handleGetRepo))
 
 	// list_issues
 	server.AddTool(mcp.Tool{
@@ -136,7 +146,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, gh.handleListIssues)
+	}, wrap("list_issues", gh.handleListIssues))
 
 	// get_issue
 	server.AddTool(mcp.Tool{
@@ -160,7 +170,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "number"},
 		},
-	}, gh.handleGetIssue)
+	}, wrap("get_issue", gh.handleGetIssue))
 
 	// create_issue
 	server.AddTool(mcp.Tool{
@@ -198,7 +208,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "title"},
 		},
-	}, gh.handleCreateIssue)
+	}, wrap("create_issue", gh.handleCreateIssue))
 
 	// list_prs
 	server.AddTool(mcp.Tool{
@@ -230,7 +240,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, gh.handleListPRs)
+	}, wrap("list_prs", gh.handleListPRs))
 
 	// get_pr
 	server.AddTool(mcp.Tool{
@@ -254,7 +264,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "number"},
 		},
-	}, gh.handleGetPR)
+	}, wrap("get_pr", gh.handleGetPR))
 
 	// list_commits
 	server.AddTool(mcp.Tool{
@@ -286,7 +296,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo"},
 		},
-	}, gh.handleListCommits)
+	}, wrap("list_commits", gh.handleListCommits))
 
 	// search_repos
 	server.AddTool(mcp.Tool{
@@ -310,7 +320,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, gh.handleSearchRepos)
+	}, wrap("search_repos", gh.handleSearchRepos))
 
 	// search_code
 	server.AddTool(mcp.Tool{
@@ -334,7 +344,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, gh.handleSearchCode)
+	}, wrap("search_code", gh.handleSearchCode))
 
 	// get_file_contents
 	server.AddTool(mcp.Tool{
@@ -362,7 +372,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"owner", "repo", "path"},
 		},
-	}, gh.handleGetFileContents)
+	}, wrap("get_file_contents", gh.handleGetFileContents))
 
 	return server.Run(ctx)
 }

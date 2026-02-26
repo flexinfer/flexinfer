@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -53,6 +54,22 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp,
+		shutdownTracer,
+
+		err :=
+		mcpotel.InitTracer(ctx, "server-mgmt",
+
+			logger)
+
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+			"error", err)
+	}
+
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "server-mgmt")
+
 	logger.Info("starting server", "name", "mcp-server-mgmt", "version", version)
 
 	server := mcp.NewServer("server-mgmt", version)
@@ -63,7 +80,7 @@ func run(ctx context.Context) error {
 		Name:        "server_listHosts",
 		Description: "List configured SSH hosts",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleListHosts)
+	}, mcpotel.TracedToolHandler(tracer, "server_listHosts", handleListHosts))
 
 	server.AddTool(mcp.Tool{
 		Name:        "server_getHost",
@@ -73,7 +90,7 @@ func run(ctx context.Context) error {
 			Properties: map[string]any{"name": map[string]any{"type": "string"}},
 			Required:   []string{"name"},
 		},
-	}, handleGetHost)
+	}, mcpotel.TracedToolHandler(tracer, "server_getHost", handleGetHost))
 
 	server.AddTool(mcp.Tool{
 		Name:        "server_detectOS",
@@ -83,7 +100,7 @@ func run(ctx context.Context) error {
 			Properties: map[string]any{"host": map[string]any{"type": "string"}},
 			Required:   []string{"host"},
 		},
-	}, handleDetectOS)
+	}, mcpotel.TracedToolHandler(tracer, "server_detectOS", handleDetectOS))
 
 	server.AddTool(mcp.Tool{
 		Name:        "server_sshCommand",
@@ -96,7 +113,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"host", "command"},
 		},
-	}, handleSSHCommand)
+	}, mcpotel.TracedToolHandler(tracer, "server_sshCommand", handleSSHCommand))
 
 	server.AddTool(mcp.Tool{
 		Name:        "server_execSafe",
@@ -110,7 +127,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"host", "name"},
 		},
-	}, handleExecSafe)
+	}, mcpotel.TracedToolHandler(tracer, "server_execSafe", handleExecSafe))
 
 	return server.Run(ctx)
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -67,6 +68,20 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-gcp",
+		logger,
+	)
+	if err !=
+		nil {
+		logger.
+			Warn("OTel tracer init failed",
+
+				"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-gcp")
 
 	if err := initGCP(ctx); err != nil {
 		logger.Error("GCP init error", "error", err)
@@ -94,7 +109,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleStorageListBuckets)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_storage_list_buckets", handleStorageListBuckets))
 
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_storage_list_objects",
@@ -117,7 +132,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"bucket"},
 		},
-	}, handleStorageListObjects)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_storage_list_objects", handleStorageListObjects))
 
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_storage_get_object",
@@ -140,7 +155,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"bucket", "object"},
 		},
-	}, handleStorageGetObject)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_storage_get_object", handleStorageGetObject))
 
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_storage_object_metadata",
@@ -159,9 +174,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"bucket", "object"},
 		},
-	}, handleStorageObjectMetadata)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// Compute Engine
+		// Compute Engine
+		"gcp_storage_object_metadata", handleStorageObjectMetadata))
+
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_compute_list_instances",
 		Description: "List Compute Engine instances",
@@ -186,7 +203,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleComputeListInstances)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_compute_list_instances", handleComputeListInstances))
 
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_compute_get_instance",
@@ -209,9 +226,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"instance"},
 		},
-	}, handleComputeGetInstance)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// Cloud Functions
+		// Cloud Functions
+		"gcp_compute_get_instance", handleComputeGetInstance))
+
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_functions_list",
 		Description: "List Cloud Functions (2nd gen)",
@@ -232,7 +251,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleFunctionsList)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_functions_list", handleFunctionsList))
 
 	server.AddTool(mcp.Tool{
 		Name:        "gcp_functions_get",
@@ -255,7 +274,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"function"},
 		},
-	}, handleFunctionsGet)
+	}, mcpotel.TracedToolHandler(tracer, "gcp_functions_get", handleFunctionsGet))
 
 	return server.Run(ctx)
 }

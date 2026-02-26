@@ -24,6 +24,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/secrets"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -79,6 +80,26 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx,
+		"mcp-linkedin",
+
+		logger,
+	)
+	if err !=
+		nil {
+		logger.
+			Warn("OTel tracer init failed",
+
+				"error",
+				err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.
+		Tracer(tp,
+			"mcp-linkedin",
+		)
 
 	baseURL := strings.TrimSuffix(env.String("LINKEDIN_BASE_URL", defaultLinkedInBaseURL), "/")
 	mode, err := parseLinkedInMode(env.String("LINKEDIN_MODE", linkedinModeAuto))
@@ -190,7 +211,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, ls.handleAuthStatus)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_auth_status", ls.handleAuthStatus))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_session_health",
@@ -204,7 +225,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, ls.handleSessionHealth)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_session_health", ls.handleSessionHealth))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_session_recover",
@@ -222,7 +243,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, ls.handleSessionRecover)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_session_recover", ls.handleSessionRecover))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_get_profile",
@@ -236,7 +257,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, ls.handleGetProfile)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_get_profile", ls.handleGetProfile))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_list_conversations",
@@ -258,7 +279,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, ls.handleListConversations)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_list_conversations", ls.handleListConversations))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_get_conversation_messages",
@@ -285,7 +306,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"conversation_urn"},
 		},
-	}, ls.handleGetConversationMessages)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_get_conversation_messages", ls.handleGetConversationMessages))
 
 	server.AddTool(mcp.Tool{
 		Name:        "linkedin_send_message",
@@ -317,7 +338,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, ls.handleSendMessage)
+	}, mcpotel.TracedToolHandler(tracer, "linkedin_send_message", ls.handleSendMessage))
 
 	return server.Run(ctx)
 }

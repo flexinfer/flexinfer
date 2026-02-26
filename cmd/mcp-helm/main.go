@@ -15,6 +15,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -35,6 +36,24 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.
+		InitTracer(ctx,
+
+			"mcp-helm",
+			logger,
+		)
+	if err !=
+		nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+			err,
+		)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-helm")
 
 	kubeconfig := os.Getenv("HELM_KUBECONFIG")
 	if kubeconfig == "" {
@@ -93,9 +112,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, h.handleList)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_status
+		// helm_status
+		tracer, "helm_list", h.handleList))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_status",
 		Description: "Get status of a Helm release including history",
@@ -117,9 +138,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"release"},
 		},
-	}, h.handleStatus)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_values
+		// helm_values
+		tracer, "helm_status", h.handleStatus))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_values",
 		Description: "Get values for a Helm release",
@@ -145,9 +168,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"release"},
 		},
-	}, h.handleValues)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_history
+		// helm_history
+		tracer, "helm_values", h.handleValues))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_history",
 		Description: "Get release history",
@@ -169,9 +194,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"release"},
 		},
-	}, h.handleHistory)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_search
+		// helm_search
+		tracer, "helm_history", h.handleHistory))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_search",
 		Description: "Search for Helm charts in configured repositories",
@@ -193,9 +220,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"keyword"},
 		},
-	}, h.handleSearch)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_show
+		// helm_show
+		tracer, "helm_search", h.handleSearch))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_show",
 		Description: "Show information about a chart",
@@ -217,9 +246,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"chart"},
 		},
-	}, h.handleShow)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_template
+		// helm_template
+		tracer, "helm_show", h.handleShow))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_template",
 		Description: "Render chart templates locally",
@@ -249,9 +280,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"chart", "release"},
 		},
-	}, h.handleTemplate)
+	}, mcpotel.TracedToolHandler(
 
-	// helm_repo_list
+		// helm_repo_list
+		tracer, "helm_template", h.handleTemplate))
+
 	server.AddTool(mcp.Tool{
 		Name:        "helm_repo_list",
 		Description: "List configured Helm repositories",
@@ -259,7 +292,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, h.handleRepoList)
+	}, mcpotel.TracedToolHandler(tracer, "helm_repo_list", h.handleRepoList))
 
 	return server.Run(ctx)
 }

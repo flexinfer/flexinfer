@@ -16,6 +16,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -44,6 +45,23 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-youtube",
+
+		logger)
+	if err != nil {
+		logger.
+			Warn("OTel tracer init failed",
+
+				"error",
+				err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(
+		tp,
+		"mcp-youtube")
+
 	logger.Info("starting server", "name", "mcp-youtube", "version", version)
 
 	server := mcp.NewServer("mcp-youtube", version)
@@ -71,9 +89,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"url"},
 		},
-	}, handleGetTranscript)
+	}, mcpotel.TracedToolHandler(
 
-	// get_video_info - Get video metadata
+		// get_video_info - Get video metadata
+		tracer, "get_transcript", handleGetTranscript))
+
 	server.AddTool(mcp.Tool{
 		Name:        "get_video_info",
 		Description: "Get metadata about a YouTube video (title, duration, author, etc.)",
@@ -87,7 +107,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"url"},
 		},
-	}, handleGetVideoInfo)
+	}, mcpotel.TracedToolHandler(tracer, "get_video_info", handleGetVideoInfo))
 
 	return server.Run(ctx)
 }

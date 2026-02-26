@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -37,22 +38,31 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-qdrant", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-qdrant")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-qdrant", "version", version, "url", qdrantURL)
 
 	server := mcp.NewServer("mcp-qdrant", version)
 	server.SetInstructions("Qdrant vector database operations")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_list_collections",
 		Description: "List all collections",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleListCollections)
+	}, wrap("qdrant_list_collections", handleListCollections))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_create_collection",
@@ -66,7 +76,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection", "vector_size"},
 		},
-	}, handleCreateCollection)
+	}, wrap("qdrant_create_collection", handleCreateCollection))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_delete_collection",
@@ -78,7 +88,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection"},
 		},
-	}, handleDeleteCollection)
+	}, wrap("qdrant_delete_collection", handleDeleteCollection))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_get_collection",
@@ -90,7 +100,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection"},
 		},
-	}, handleGetCollection)
+	}, wrap("qdrant_get_collection", handleGetCollection))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_search",
@@ -107,7 +117,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection", "vector"},
 		},
-	}, handleSearch)
+	}, wrap("qdrant_search", handleSearch))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_scroll",
@@ -124,7 +134,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection"},
 		},
-	}, handleScroll)
+	}, wrap("qdrant_scroll", handleScroll))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_upsert",
@@ -149,7 +159,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection", "points"},
 		},
-	}, handleUpsert)
+	}, wrap("qdrant_upsert", handleUpsert))
 
 	server.AddTool(mcp.Tool{
 		Name:        "qdrant_delete",
@@ -164,7 +174,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"collection"},
 		},
-	}, handleDelete)
+	}, wrap("qdrant_delete", handleDelete))
 }
 
 // Qdrant Client

@@ -23,7 +23,8 @@ This does:
 2. Atomically install to `~/.local/bin/loom` and `~/.local/bin/loomd` (keeping `*.prev`)
 3. `loom sync all --regen --loom-mode --loom-binary ~/.local/bin/loom`
 4. Restart daemon only if it is idle (0 active connections)
-5. Smoke-test `loom proxy` initialization
+5. Restart HUD if installed/running on port `3333` (launchd-first fallback)
+6. Smoke-test `loom proxy` initialization
 
 Options:
 

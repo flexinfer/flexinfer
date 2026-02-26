@@ -3,6 +3,7 @@ package mcpotel
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -34,11 +35,13 @@ func TracedToolHandler(tracer trace.Tracer, toolName string, handler mcp.ToolHan
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+			slog.ErrorContext(ctx, "mcp tool handler failed", "tool", toolName, "error", err)
 			return result, err
 		}
 
 		if result != nil && result.IsError {
 			span.SetStatus(codes.Error, "tool returned error")
+			slog.WarnContext(ctx, "mcp tool returned error result", "tool", toolName)
 		}
 
 		return result, nil

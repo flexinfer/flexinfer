@@ -14,6 +14,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -61,6 +62,19 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-sequentialthinking",
+		logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error",
+			err)
+	}
+	defer func() {
+		_ =
+			shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-sequentialthinking")
 
 	// Initialize state
 	persistPath := os.Getenv("THINKING_PERSIST_PATH")
@@ -110,9 +124,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleStartThinking)
+	}, mcpotel.TracedToolHandler(
 
-	// add_thought - Add a thought to the chain
+		// add_thought - Add a thought to the chain
+		tracer, "start_thinking", handleStartThinking))
+
 	server.AddTool(mcp.Tool{
 		Name:        "add_thought",
 		Description: "Add a thought step to the current or specified chain",
@@ -138,9 +154,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"thought"},
 		},
-	}, handleAddThought)
+	}, mcpotel.TracedToolHandler(
 
-	// get_chain - Get a thought chain
+		// get_chain - Get a thought chain
+		tracer, "add_thought", handleAddThought))
+
 	server.AddTool(mcp.Tool{
 		Name:        "get_chain",
 		Description: "Get the current state of a thought chain",
@@ -153,9 +171,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGetChain)
+	}, mcpotel.TracedToolHandler(
 
-	// list_chains - List all chains
+		// list_chains - List all chains
+		tracer, "get_chain", handleGetChain))
+
 	server.AddTool(mcp.Tool{
 		Name:        "list_chains",
 		Description: "List all thought chains",
@@ -168,9 +188,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleListChains)
+	}, mcpotel.TracedToolHandler(
 
-	// set_active_chain - Set active chain
+		// set_active_chain - Set active chain
+		tracer, "list_chains", handleListChains))
+
 	server.AddTool(mcp.Tool{
 		Name:        "set_active_chain",
 		Description: "Set the active thought chain",
@@ -184,9 +206,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"chain_id"},
 		},
-	}, handleSetActiveChain)
+	}, mcpotel.TracedToolHandler(
 
-	// complete_chain - Complete a chain
+		// complete_chain - Complete a chain
+		tracer, "set_active_chain", handleSetActiveChain))
+
 	server.AddTool(mcp.Tool{
 		Name:        "complete_chain",
 		Description: "Mark a thought chain as completed with a conclusion",
@@ -203,9 +227,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleCompleteChain)
+	}, mcpotel.TracedToolHandler(
 
-	// branch_thought - Create a branch
+		// branch_thought - Create a branch
+		tracer, "complete_chain", handleCompleteChain))
+
 	server.AddTool(mcp.Tool{
 		Name:        "branch_thought",
 		Description: "Create a branching thought from an existing step",
@@ -231,9 +257,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"parent_step_id", "thought"},
 		},
-	}, handleBranchThought)
+	}, mcpotel.TracedToolHandler(
 
-	// delete_chain - Delete a chain
+		// delete_chain - Delete a chain
+		tracer, "branch_thought", handleBranchThought))
+
 	server.AddTool(mcp.Tool{
 		Name:        "delete_chain",
 		Description: "Delete a thought chain",
@@ -247,9 +275,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"chain_id"},
 		},
-	}, handleDeleteChain)
+	}, mcpotel.TracedToolHandler(
 
-	// summarize_chain - Get summary
+		// summarize_chain - Get summary
+		tracer, "delete_chain", handleDeleteChain))
+
 	server.AddTool(mcp.Tool{
 		Name:        "summarize_chain",
 		Description: "Get a summary of the thought chain's progression",
@@ -262,7 +292,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleSummarizeChain)
+	}, mcpotel.TracedToolHandler(tracer, "summarize_chain", handleSummarizeChain))
 
 	return server.Run(ctx)
 }

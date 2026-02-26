@@ -64,7 +64,7 @@ First-time local onboarding:
 make bootstrap-local
 ```
 
-This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, and restarts daemon only when idle (or always for `dev-reload`).
+This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, restarts daemon only when idle (or always for `dev-reload`), then restarts HUD when configured/running on port `3333`.
 
 ## Adding or Updating an MCP Server
 
@@ -81,6 +81,8 @@ This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs 
    - `./bin/loom sync all --regen --loom-mode`
 
 `sync --regen` prefers workspace-local registries discovered from repo ancestors before home-level defaults.
+
+Antigravity sync now maintains both `mcp.json` and `settings.json` (hooks stub), so keep both generated artifacts in sync when updating hook-generation behavior.
 
 For inventory-oriented tooling/tests in loom-mode, prefer paged proxy resources:
 
@@ -120,6 +122,16 @@ Run HUD locally:
 ./bin/loom hud --port 3333
 ```
 
+Manage HUD as a launchd service (macOS):
+
+```bash
+./bin/loom hud install
+./bin/loom hud start
+./bin/loom hud status
+```
+
+Launchd mode loads optional secrets/env overrides from `~/.config/loom/hud.env` and defaults cache backend to Redis via the launchd plist.
+
 Development mode (frontend hot reload):
 
 ```bash
@@ -155,7 +167,22 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ./bin/loomd --debug
 ```
 
-Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, and `mcp-prometheus`, with ongoing expansion noted in `ROADMAP.md`.
+Tracing wrappers now cover every `cmd/mcp-*/main.go` server entrypoint (`59/59` as of 2026-02-26).
+
+Quick verification:
+
+```bash
+rg --files cmd | rg 'cmd/mcp-.*/main\.go' | wc -l
+rg -l 'InitTracer\(|TracedToolHandler\(' cmd/mcp-*/main.go | wc -l
+```
+
+### Structured logging (`pkg/mcplog`)
+
+`mcplog` supports:
+- `MCP_LOG_FORMAT=text` (default)
+- `MCP_LOG_FORMAT=json`
+
+When logs are emitted with context (for example via `slog.ErrorContext` in traced handlers), `trace_id` and `span_id` are attached when an active OTel span is present.
 
 ### Metrics
 

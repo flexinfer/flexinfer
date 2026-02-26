@@ -33,6 +33,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -56,6 +57,17 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-browserkit",
+		logger,
+	)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer := mcpotel.Tracer(tp, "mcp-browserkit")
+
 	logger.Info("starting server", "name", "mcp-browserkit", "version", version)
 
 	server := mcp.NewServer("mcp-browserkit", version)
@@ -146,7 +158,7 @@ Prerequisites (run once on the host):
 			},
 			Required: []string{"url"},
 		},
-	}, handleScreenshot)
+	}, mcpotel.TracedToolHandler(tracer, "screenshot", handleScreenshot))
 
 	return server.Run(ctx)
 }

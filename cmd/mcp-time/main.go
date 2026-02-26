@@ -13,6 +13,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -27,6 +28,21 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-time",
+
+		logger)
+	if err !=
+		nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer :=
+		mcpotel.Tracer(tp, "mcp-time")
+
 	logger.Info("starting server", "name", "mcp-time", "version", version)
 
 	server := mcp.NewServer("mcp-time", version)
@@ -45,9 +61,11 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, handleGetCurrentTime)
+	}, mcpotel.TracedToolHandler(
 
-	// convert_timezone - Convert time between timezones
+		// convert_timezone - Convert time between timezones
+		tracer, "get_current_time", handleGetCurrentTime))
+
 	server.AddTool(mcp.Tool{
 		Name:        "convert_timezone",
 		Description: "Convert a time from one timezone to another",
@@ -69,9 +87,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"time", "to_timezone"},
 		},
-	}, handleConvertTimezone)
+	}, mcpotel.TracedToolHandler(tracer,
 
-	// add_duration - Add or subtract duration from a time
+		// add_duration - Add or subtract duration from a time
+		"convert_timezone", handleConvertTimezone))
+
 	server.AddTool(mcp.Tool{
 		Name:        "add_duration",
 		Description: "Add or subtract a duration from a time",
@@ -93,9 +113,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"duration"},
 		},
-	}, handleAddDuration)
+	}, mcpotel.TracedToolHandler(
 
-	// list_timezones - List common timezones
+		// list_timezones - List common timezones
+		tracer, "add_duration", handleAddDuration))
+
 	server.AddTool(mcp.Tool{
 		Name:        "list_timezones",
 		Description: "List common IANA timezone names",
@@ -103,9 +125,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleListTimezones)
+	}, mcpotel.TracedToolHandler(
 
-	// wait - Sleep for a duration
+		// wait - Sleep for a duration
+		tracer, "list_timezones", handleListTimezones))
+
 	server.AddTool(mcp.Tool{
 		Name:        "wait",
 		Description: "Wait (sleep) for a duration",
@@ -119,7 +143,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"duration"},
 		},
-	}, handleWait)
+	}, mcpotel.TracedToolHandler(tracer, "wait", handleWait))
 
 	return server.Run(ctx)
 }

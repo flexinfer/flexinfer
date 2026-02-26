@@ -48,6 +48,7 @@ make build
 - Force daemon restart upgrade: `make dev-reload`
 - Health check: `curl http://localhost:9876/health`
 - Launch HUD: `./bin/loom hud --port 3333`
+- HUD launchd lifecycle (macOS): `./bin/loom hud install`, `./bin/loom hud status`
 
 ## Notable Capabilities
 

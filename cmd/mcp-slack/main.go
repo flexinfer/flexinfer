@@ -20,6 +20,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -45,6 +46,12 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-slack", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-slack")
 
 	token := os.Getenv("SLACK_BOT_TOKEN")
 	if token == "" {
@@ -60,6 +67,9 @@ func run(ctx context.Context) error {
 
 	server := mcp.NewServer("mcp-slack", version)
 	server.SetInstructions("Slack MCP server. Search messages, list channels, post messages. Requires SLACK_BOT_TOKEN with appropriate scopes.")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 
 	// search_messages
 	server.AddTool(mcp.Tool{
@@ -87,7 +97,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, srv.handleSearchMessages)
+	}, wrap("search_messages", srv.handleSearchMessages))
 
 	// list_channels
 	server.AddTool(mcp.Tool{
@@ -110,7 +120,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, srv.handleListChannels)
+	}, wrap("list_channels", srv.handleListChannels))
 
 	// get_channel_history
 	server.AddTool(mcp.Tool{
@@ -138,7 +148,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"channel"},
 		},
-	}, srv.handleGetChannelHistory)
+	}, wrap("get_channel_history", srv.handleGetChannelHistory))
 
 	// post_message
 	server.AddTool(mcp.Tool{
@@ -170,7 +180,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"channel", "text"},
 		},
-	}, srv.handlePostMessage)
+	}, wrap("post_message", srv.handlePostMessage))
 
 	// list_users
 	server.AddTool(mcp.Tool{
@@ -189,7 +199,7 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, srv.handleListUsers)
+	}, wrap("list_users", srv.handleListUsers))
 
 	// get_user_info
 	server.AddTool(mcp.Tool{
@@ -205,7 +215,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"user"},
 		},
-	}, srv.handleGetUserInfo)
+	}, wrap("get_user_info", srv.handleGetUserInfo))
 
 	// get_channel_info
 	server.AddTool(mcp.Tool{
@@ -221,7 +231,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"channel"},
 		},
-	}, srv.handleGetChannelInfo)
+	}, wrap("get_channel_info", srv.handleGetChannelInfo))
 
 	// add_reaction
 	server.AddTool(mcp.Tool{
@@ -245,7 +255,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"channel", "timestamp", "name"},
 		},
-	}, srv.handleAddReaction)
+	}, wrap("add_reaction", srv.handleAddReaction))
 
 	// get_permalink
 	server.AddTool(mcp.Tool{
@@ -265,7 +275,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"channel", "message_ts"},
 		},
-	}, srv.handleGetPermalink)
+	}, wrap("get_permalink", srv.handleGetPermalink))
 
 	return server.Run(ctx)
 }

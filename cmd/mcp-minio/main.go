@@ -16,6 +16,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/portforward"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -46,12 +47,21 @@ func run(ctx context.Context) error {
 	defer cleanup()
 
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-minio", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-minio")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 	logger.Info("starting server", "name", "mcp-minio", "version", version, "endpoint", endpoint)
 
 	server := mcp.NewServer("mcp-minio", version)
 	server.SetInstructions("MinIO/S3 file management")
 
-	registerTools(server)
+	registerTools(server, wrap)
 
 	return server.Run(ctx)
 }
@@ -60,12 +70,12 @@ func cleanup() {
 	portForwarder.Cleanup()
 }
 
-func registerTools(server *mcp.Server) {
+func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
 	server.AddTool(mcp.Tool{
 		Name:        "minio_list_buckets",
 		Description: "List all buckets",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, handleListBuckets)
+	}, wrap("minio_list_buckets", handleListBuckets))
 
 	server.AddTool(mcp.Tool{
 		Name:        "minio_list_objects",
@@ -80,7 +90,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"bucket"},
 		},
-	}, handleListObjects)
+	}, wrap("minio_list_objects", handleListObjects))
 
 	server.AddTool(mcp.Tool{
 		Name:        "minio_get_object_text",
@@ -94,7 +104,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"bucket", "key"},
 		},
-	}, handleGetObjectText)
+	}, wrap("minio_get_object_text", handleGetObjectText))
 
 	server.AddTool(mcp.Tool{
 		Name:        "minio_stat_object",
@@ -107,7 +117,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"bucket", "key"},
 		},
-	}, handleStatObject)
+	}, wrap("minio_stat_object", handleStatObject))
 
 	server.AddTool(mcp.Tool{
 		Name:        "minio_presign_get",
@@ -121,7 +131,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"bucket", "key"},
 		},
-	}, handlePresignGet)
+	}, wrap("minio_presign_get", handlePresignGet))
 
 	server.AddTool(mcp.Tool{
 		Name:        "minio_presign_put",
@@ -136,7 +146,7 @@ func registerTools(server *mcp.Server) {
 			},
 			Required: []string{"bucket", "key"},
 		},
-	}, handlePresignPut)
+	}, wrap("minio_presign_put", handlePresignPut))
 }
 
 // MinIO Client

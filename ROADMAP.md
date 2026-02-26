@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: February 17, 2026
+> Last Updated: February 26, 2026
 
 ## Current Status
 
@@ -9,7 +9,7 @@ Loom Core is the production backend for Loom's local MCP runtime:
 - `loom` CLI for config generation/sync, daemon control, HUD launch, and agent hooks
 - `loomd` daemon for routing, process lifecycle, health monitoring, and tunnel management
 - `loom proxy` aggregating proxy for multi-platform agent support (Claude, Codex, Gemini, Zed, VS Code, Kilocode)
-- 40+ `mcp-*` server catalog in Go (Git, GitLab, GitHub, K8s, observability, memory, sandbox, and more)
+- 59 `mcp-*` server binaries in Go (Git, GitLab, GitHub, K8s, observability, memory, sandbox, and more)
 - HUD web dashboard with real-time agent observability, fleet monitoring, and workflow management
 - Agent context system with presence, file claims, worktree allocation, and workflow orchestration
 
@@ -82,6 +82,20 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added error handling guardrails with `pkg/mcperror`.
   - Added config schema validation and upstream spec tracking.
 
+- ✅ **Observability expansion (2026-02-26 slices)**
+  - Added `pkg/mcpotel` tracing wrappers across all `cmd/mcp-*/main.go` handlers (`59/59`).
+  - Added JSON log formatting in `pkg/mcplog` with `trace_id`/`span_id` correlation for context-aware logs.
+
+- ✅ **HUD launchd operations**
+  - Added `loom hud install|start|stop|status|uninstall`.
+  - Added `~/.config/loom/hud.env` loading for launchd-started HUD secrets.
+  - Added HUD status output (including cache backend) to `loom status`.
+  - Added `make hud-install-service` and HUD restart wiring in `make dev-upgrade`.
+
+- ✅ **Sync/worktree workflow polish**
+  - Added session-start nudge recommending worktree allocation on `main`/`master`.
+  - Added Antigravity `settings.json` hooks stub generation and sync parity.
+
 - ✅ **Developer lifecycle**
   - Added atomic install scripts and `make dev-upgrade` / `make dev-reload` workflow.
   - Added rollback-friendly `.prev` binary flow and safer restart behavior.
@@ -149,7 +163,10 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
 These address capabilities the market now expects from production MCP infrastructure.
 
 - [ ] **OTel trace export from daemon** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12))
-  - Broaden `pkg/mcpotel` adoption across all high-traffic MCP servers.
+  - ✅ 2026-02-26 slice: added `pkg/mcpotel` tracing wrappers to `mcp-alertmanager`, `mcp-grafana`, and `mcp-loki` (tool spans + error status propagation).
+  - ✅ 2026-02-26 slice: expanded `pkg/mcpotel` tracing to `mcp-github`, `mcp-github-actions`, `mcp-jira`, and `mcp-slack`.
+  - ✅ 2026-02-26 slice: completed `pkg/mcpotel` adoption across the remaining MCP binaries (`59/59` `cmd/mcp-*/main.go` handlers traced).
+  - ✅ 2026-02-26 slice: added `pkg/mcplog` `MCP_LOG_FORMAT` (`text`/`json`) plus automatic `trace_id`/`span_id` enrichment for context-aware logs.
   - Instrument tool call latency, server spawn/restart, proxy connection lifecycle in `loomd`.
   - Add OTLP gRPC export to configurable endpoint (Prometheus, Grafana, Jaeger).
   - Expose OTel-compatible metrics in HUD health views.

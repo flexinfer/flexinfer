@@ -19,6 +19,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -36,6 +37,18 @@ func main() {
 
 func run(ctx context.Context) error {
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-zep", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed",
+
+			"error", err)
+	}
+	defer func() {
+		_ = shutdownTracer(ctx)
+	}()
+	tracer :=
+		mcpotel.Tracer(tp, "mcp-zep")
+
 	logger.Info("starting server", "name", "mcp-zep", "version", version)
 
 	server := mcp.NewServer("mcp-zep", version)
@@ -49,9 +62,11 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleHealth)
+	}, mcpotel.TracedToolHandler(
 
-	// zep_add_messages - Add messages to session
+		// zep_add_messages - Add messages to session
+		tracer, "zep_health", handleHealth))
+
 	server.AddTool(mcp.Tool{
 		Name:        "zep_add_messages",
 		Description: "Append messages to a Zep session",
@@ -75,9 +90,11 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"session_id", "messages"},
 		},
-	}, handleAddMessages)
+	}, mcpotel.TracedToolHandler(
 
-	// zep_get_messages - Get messages from session
+		// zep_get_messages - Get messages from session
+		tracer, "zep_add_messages", handleAddMessages))
+
 	server.AddTool(mcp.Tool{
 		Name:        "zep_get_messages",
 		Description: "Return the last K messages for a Zep session",
@@ -95,7 +112,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"session_id"},
 		},
-	}, handleGetMessages)
+	}, mcpotel.TracedToolHandler(tracer, "zep_get_messages", handleGetMessages))
 
 	return server.Run(ctx)
 }
