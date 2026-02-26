@@ -1285,6 +1285,9 @@ go_mod_outdated:
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_CACHE_DIR: ".trivycache/"
+  retry:
+    max: 1
+    when: [runner_system_failure, script_failure]
   cache:
     paths:
       - .trivycache/
