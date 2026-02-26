@@ -53,7 +53,12 @@ curl http://localhost:9876/health
 
 # Launch HUD
 ./bin/loom hud --port 3333
+
+# HUD launchd/service health (macOS)
+./bin/loom hud status
 ```
+
+`make dev-upgrade` now also attempts to restart HUD when launchd service is installed or a HUD process is already bound to port `3333`.
 
 ## Config Generation and Sync
 
@@ -73,6 +78,8 @@ Common targets: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemi
 
 `sync --regen` resolves registries from the nearest workspace tree first (including ancestor `platform/gitops/mcp/context/registry.yaml`), then falls back to home defaults.
 
+Antigravity sync includes a generated `settings.json` hooks stub alongside `mcp.json` so profile sync behavior stays consistent with other platforms.
+
 ## Daemon Operations
 
 ### launchd commands (macOS)
@@ -84,6 +91,8 @@ Common targets: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemi
 ./bin/loom restart
 ./bin/loom stop
 ```
+
+`./bin/loom install` now installs both daemon and HUD launchd plists when available.
 
 ### Health and logs
 
@@ -103,6 +112,18 @@ Launch HUD:
 ```bash
 ./bin/loom hud --port 3333
 ```
+
+Install/manage HUD launchd service (auto-start on login):
+
+```bash
+./bin/loom hud install
+./bin/loom hud start
+./bin/loom hud status
+./bin/loom hud stop
+```
+
+`loom hud install` creates `~/.config/loom/hud.env` (if missing) for launchd-loaded HUD secrets such as FlexInfer, webhook, admin, and mobile operator tokens.
+The default launchd HUD profile enables Redis cache (`CACHE_BACKEND=redis`, `REDIS_URL=redis://localhost:6379`).
 
 Optional modes:
 

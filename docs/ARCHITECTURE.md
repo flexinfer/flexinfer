@@ -170,10 +170,8 @@ Some platforms have specific requirements for where files reside:
 
 ```mermaid
 flowchart LR
-  subgraph Servers[Selected instrumented servers]
-    Git[mcp-git]
-    GitLab[mcp-gitlab]
-    Prom[mcp-prometheus]
+  subgraph Servers[Instrumented MCP servers]
+    MCP[All cmd/mcp-*/main.go handlers]
     AgentContext[mcp-agent-context]
     Devbox[mcp-devbox]
   end
@@ -191,15 +189,16 @@ flowchart LR
     HUD[HUD panels]
   end
 
-  Git & GitLab & Prom & AgentContext & Devbox --> Logs --> Loki
-  Git & GitLab & Prom & AgentContext --> Traces --> Jaeger
+  MCP & AgentContext & Devbox --> Logs --> Loki
+  MCP & AgentContext --> Traces --> Jaeger
   AgentContext --> Stats --> Prometheus
   Devbox --> Stats --> HUD
 ```
 
 Notes:
 
-- Tracing currently ships on selected servers, not every `mcp-*` binary.
+- Tracing wrappers now ship across all `cmd/mcp-*/main.go` MCP binaries (59/59 as of 2026-02-26).
+- Daemon-level span expansion (routing/spawn/proxy lifecycle) remains tracked in `ROADMAP.md`.
 - `pkg/mcpotel` is noop unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ## Reliability and Safety Notes

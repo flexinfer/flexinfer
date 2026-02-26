@@ -31,7 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LOOM_SOCKET` env var support for `--socket` flag.
 - Error handling guardrail (`scripts/ci/check_error_handling.sh`) prevents `return nil, err` count from increasing in MCP handler files.
 - Migration tracker in `docs/ERROR_HANDLING.md` covering all 40 MCP servers.
-- OTel tracing for `mcp-memory`, `mcp-docker`, `mcp-k8s`, `mcp-devbox`, `mcp-codebase-memory` via `pkg/mcpotel`.
+- OTel tracing wrappers now cover all `cmd/mcp-*/main.go` servers (`59/59`) via `pkg/mcpotel`.
+- `loom hud install|start|stop|status|uninstall` launchd management commands, with `~/.config/loom/hud.env` bootstrap for HUD-specific secrets/env.
+- Sync/hook generation updates for worktree-first workflows:
+  - Session start hooks now include a non-blocking main-branch worktree nudge.
+  - Antigravity profile sync now includes `settings.json` (hooks stub) alongside `mcp.json`.
 - Test suites for MCP servers: `mcp-docker` (60% coverage), `mcp-cloudflare` (70%), `mcp-grafana` (73%), `mcp-helm` (22%), `mcp-redis` (22%).
 - TUI test foundation: pure function tests for panels, widgets, helpers, layout, and bubbletea Update routing.
 - MCP server test coverage Batch 1: `mcp-git`, `mcp-memory`, `mcp-sequentialthinking`.
@@ -42,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HUD web/TUI surfaces were refined (polish, interactions, and Ghostty palette alignment).
 - `loom agent` lifecycle commands now prefer HUD API but automatically fall back to daemon socket `tools/call` when HUD is unavailable.
 - `docs/STREAMABLE_HTTP.md` expanded with OAuth 2.1 auth type documentation.
+- `loom status` now appends HUD launchd/health status, including cache backend when available.
+- `make dev-upgrade` now attempts a HUD restart (launchd-first, process fallback) before proxy initialize smoke tests.
+- `pkg/mcplog` now supports `MCP_LOG_FORMAT=json` with automatic `trace_id` / `span_id` correlation fields when logs are emitted from traced contexts.
 
 ### Fixed
 - `mcp-alertmanager` now detects HTML error responses and returns a clear error message instead of an unmarshal panic.
