@@ -315,9 +315,11 @@ func New(cfg Config) (*Daemon, error) {
 	var hubPool *pool.Pool
 	if cfg.HubFallback && cfg.HubURL != "" {
 		hubClient = mcp.NewWebSocketClient(mcp.WebSocketConfig{
-			URL:            cfg.HubURL,
-			Profile:        cfg.Target,
-			ConnectTimeout: 10 * time.Second,
+			URL:                  cfg.HubURL,
+			Profile:              cfg.Target,
+			CFAccessClientID:     fileCfg.Hub.CFAccessClientID,
+			CFAccessClientSecret: fileCfg.Hub.CFAccessClientSecret,
+			ConnectTimeout:       10 * time.Second,
 		})
 		hubMaxIdle, hubMaxOpen, hubIdleTimeout := fileCfg.Resources.GetHubPoolConfig()
 		hubPool = pool.New(pool.Config{

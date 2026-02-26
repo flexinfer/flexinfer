@@ -402,7 +402,11 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 				token = os.Getenv("MCP_HUB_TOKEN")
 			}
 
-			hubClient = router.NewHubClient(d.cfg.HubURL, token)
+			hubClient = router.NewHubClientWithCFAccess(
+				d.cfg.HubURL, token,
+				d.fileCfg.Hub.CFAccessClientID,
+				d.fileCfg.Hub.CFAccessClientSecret,
+			)
 			hostNames, err := hubClient.DiscoverHosts(ctx)
 			if err != nil {
 				if isHubAuthError(err) {
