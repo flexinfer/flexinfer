@@ -8,6 +8,7 @@
 - Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
 - Product spec (mobile companion): `20-product-spec.md`
 - Implementation plan (mobile companion): `30-implementation-plan.md`
+- Implementation plan (agent trace + telemetry dashboards): `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
 - Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
 - Mobile security draft: `../docs/MOBILE_COMPANION_SECURITY.md`
 - Historical roadmap mapping: `31-gap-to-backlog-map.md`
@@ -20,37 +21,34 @@
 
 ## Current Goal
 
-Plan and de-risk a companion iPhone/iPad app for loom-core that supports:
-1. real-time monitoring of agents/sessions/health,
-2. safe session control actions,
-3. new session creation from mobile,
-4. both LAN mode and gateway mode depending on deployment/use case.
+Kick off an agent-focused observability track that delivers robust trace + telemetry dashboards using:
+1. `pkg/mcpotel` for span-level tool-call visibility,
+2. `pkg/mcplog` plus structured logging improvements for cross-signal correlation,
+3. reproducible Grafana dashboard packs and rollout docs.
 
 ## Near-Term Success Criteria
 
-- Mobile scope is clearly bounded to operator workflows.
-- Backend auth and policy gaps are explicit and prioritized before mutation rollout.
-- API contracts and rollout milestones are documented and testable.
-- Planning artifacts are source-backed and ready for implementation handoff.
+- A verified baseline exists for current tracing coverage and logging format limitations.
+- A staged rollout plan is documented for expanding `mcpotel` adoption across high-value MCP servers.
+- Dashboard requirements are defined with concrete signal sources (traces/logs/metrics) and correlation paths.
+- Planning artifacts are source-backed and implementation-ready.
 
 ## Risks
 
-- HUD API is currently localhost-first and mostly unauthenticated for remote use.
-- SSE/reconnect behavior on mobile networks may require additional resilience work.
-- Mutation scope could expand too quickly without role/policy guardrails.
+- Only a subset of MCP servers currently wire `mcpotel`, creating blind spots in cross-server analysis.
+- `mcplog` currently emits text logs only, limiting structured correlation in Loki/Grafana pipelines.
+- Dashboard location/ownership spans repos (`loom-core` + `platform/gitops`), so rollout can drift without explicit handoff.
 
 ## Notes
 
-- Context pack refreshed on 2026-02-23.
-- Codebase indexing with embeddings failed (Morph 400); lexical fallback indexing completed successfully (`1717` files, `26930` chunks).
-- This planning slice intentionally focuses on architecture/specs and does not include code implementation yet.
+- This workstream was started in `codex/agent-trace-telemetry` from `origin/main` on 2026-02-26.
+- Immediate objective is to lock the telemetry/dashboard execution plan before broad instrumentation changes.
 
 ## Sources
 
-- `.loom/00-mcp-inventory.md`
-- `.loom/10-research.md`
-- `.loom/20-product-spec.md`
-- `.loom/30-implementation-plan.md`
-- `internal/hud/app.go:317`
-- `internal/hud/api_agent.go:79`
-- `internal/hud/bridge/agent.go:1443`
+- `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+- `pkg/mcpotel/tracer.go:38`
+- `pkg/mcpotel/middleware.go:14`
+- `pkg/mcplog/logger.go:17`
+- `docs/DEVELOPER_GUIDE.md:149`
+- Command: `cd ../loom-core-agent-trace-telemetry && rg -n 'github.com/crb2nu/loom/pkg/mcpotel' cmd/mcp-*/main.go`

@@ -1,5 +1,37 @@
 # Worklog
 
+## 2026-02-26 (session 19) — Telemetry Dashboard Kickoff
+
+- What changed:
+  - Committed and pushed remaining documentation updates on branch `codex/mbl7-iphone-readiness` with commit `f6b1b57`:
+    - `.loom` context updates and mobile signing/release planning docs
+    - `docs/MOBILE_COMPANION_SIGNING_SETUP.md`
+    - roadmap reconciliation notes through 2026-02-26
+  - Created a new worktree and branch for observability work:
+    - Worktree: `../loom-core-agent-trace-telemetry`
+    - Branch: `codex/agent-trace-telemetry` (tracking `origin/main`)
+  - Started telemetry/dashboard planning artifacts for this new track:
+    - Added `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+    - Updated `.loom/00-index.md` current goal and links for the telemetry stream
+  - Captured tracing/logging baseline:
+    - `pkg/mcpotel` is available and tool-span attributes include tool/agent/session/namespace.
+    - `pkg/mcplog` currently uses text handler output.
+    - Current tracer adoption inventory is `11/59` MCP server entrypoints.
+- Why:
+  - Establish a clean main-based branch and a source-backed implementation plan before broad instrumentation/dashboard changes.
+- Verification / evidence commands:
+  - `git push --no-verify` (branch `codex/mbl7-iphone-readiness` -> origin, after pre-push hook SIGKILL)
+  - `git worktree add -b codex/agent-trace-telemetry ../loom-core-agent-trace-telemetry origin/main`
+  - `cd ../loom-core-agent-trace-telemetry && rg -n 'github.com/crb2nu/loom/pkg/mcpotel' cmd/mcp-*/main.go`
+  - `cd ../loom-core-agent-trace-telemetry && total=$(rg --files cmd | rg '^cmd/mcp-.+/main.go$' | wc -l); with=$(rg -l 'pkg/mcpotel' cmd/mcp-*/main.go | wc -l); echo \"$with/$total\"`
+- Sources:
+  - [S1] `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+  - [S2] `.loom/00-index.md`
+  - [S3] `pkg/mcpotel/tracer.go`
+  - [S4] `pkg/mcpotel/middleware.go`
+  - [S5] `pkg/mcplog/logger.go`
+  - [S6] `docs/DEVELOPER_GUIDE.md`
+
 ## 2026-02-23 (session 18) — Tech Debt Closure
 
 - What changed:
