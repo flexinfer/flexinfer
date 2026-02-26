@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/internal/cache"
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/prometheus/client_golang/prometheus"
@@ -254,6 +255,12 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 	}
 	gpuCount := podRequestedGPUCount(args.Pod)
 
+	// Read the backend annotation for architecture-aware filtering.
+	var podBackend string
+	if args.Pod.Annotations != nil {
+		podBackend = canonicalBackend(args.Pod.Annotations["flexinfer.ai/backend"])
+	}
+
 	filteredNodes := make([]string, 0)
 	failed := make(map[string]string)
 	for _, nodeName := range *args.NodeNames {
@@ -276,6 +283,18 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+
+			// Architecture-aware filtering: reject nodes where the backend
+			// does not support the node's GPU architecture (defense-in-depth).
+			if podBackend != "" {
+				if nodeArch := strings.TrimSpace(node.Labels["flexinfer.ai/gpu.arch"]); nodeArch != "" {
+					if support, found := backend.LookupGPUArchSupport(podBackend, nodeArch); found && support.Level == backend.SupportUnsupported {
+						failed[nodeName] = fmt.Sprintf("backend %s unsupported on GPU arch %s", podBackend, nodeArch)
+						continue
+					}
+				}
+			}
+
 			filteredNodes = append(filteredNodes, nodeName)
 		} else {
 			failed[nodeName] = "no flexinfer.ai/gpu.vendor label"

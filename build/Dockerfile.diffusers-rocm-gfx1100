@@ -1,0 +1,69 @@
+# Diffusers API Server for AMD GPUs (ROCm) - gfx1100 / RDNA3 variant
+# Architecture-specific image for RX 7900 XTX / RX 7900 XT (gfx1100/1101/1102)
+#
+# This is the gfx1100-optimized copy of Dockerfile.diffusers-rocm.
+# See that file for detailed comments on each setting.
+
+ARG ROCM_PYTORCH_TAG=rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Force offline mode
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
+
+# ROCm environment for gfx1100 (RDNA3)
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV PYTORCH_ROCM_ARCH=gfx1100
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# Disable xformers (SIGSEGV on ROCm)
+ENV XFORMERS_DISABLED=1
+
+# Synchronous GPU ops defaults
+ENV HIP_LAUNCH_BLOCKING=0
+ENV AMD_SERIALIZE_KERNEL=0
+ENV AMD_SERIALIZE_COPY=0
+
+# Fix VAE decode crashes on gfx1100 (ROCm issue #4729)
+ENV MIOPEN_FIND_MODE=2
+ENV TORCH_BLAS_PREFER_HIPBLASLT=0
+
+# Memory allocation for gfx1100 (24GB VRAM)
+ENV PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+RUN pip install --no-cache-dir --force-reinstall "numpy<2"
+
+COPY build/Dockerfile.diffusers-rocm /tmp/_ref
+RUN sed -n '/^COPY <<.*EOF.*\/app\/server\.py/,/^EOF/p' /tmp/_ref > /dev/null
+# Copy server.py from the shared source (identical across architectures)
+COPY <<'SERVEREOF' /app/extract-server.sh
+#!/bin/bash
+# Extract the embedded server.py from the reference Dockerfile
+sed -n "/^COPY <<'EOF' \/app\/server.py/,/^EOF/{/^COPY <<'EOF'/d;/^EOF/d;p}" /tmp/_ref > /app/server.py
+SERVEREOF
+RUN bash /app/extract-server.sh && rm /app/extract-server.sh /tmp/_ref
+
+RUN mkdir -p /models
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["python", "/app/server.py"]

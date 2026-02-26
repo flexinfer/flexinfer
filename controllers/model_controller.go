@@ -372,6 +372,20 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.Status().Update(ctx, model)
 	}
 
+	// Validate VRAM fit if the model declares an estimate.
+	if err := r.validateVRAMFit(model, b, gpuArch); err != nil {
+		log.Error(err, "VRAM fit validation failed")
+		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMInsufficient", err.Error())
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonVRAMInsufficient, err.Error())
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.Status().Update(ctx, model)
+	}
+
+	// Emit informational events for experimental opt-ins (vLLM V1 engine, flash attention).
+	if b.Name() == "vllm" || b.Name() == "vllm-omni" {
+		r.emitVLLMOptInEvents(model)
+	}
+
 	// Backend-specific validation: llama.cpp needs an actual GGUF file path.
 	if b.Name() == "llamacpp" {
 		if strings.HasPrefix(model.Spec.Source, "ollama://") {
@@ -494,26 +508,72 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 	return nil
 }
 
+// validateVRAMFit checks whether the model's declared VRAM estimate fits the GPU capacity.
+// Skips validation if no estimate is provided (backward compatible).
+func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Backend, gpuArch string) error {
+	if model.Spec.GPU == nil || model.Spec.GPU.VRAMEstimateMB == nil || *model.Spec.GPU.VRAMEstimateMB <= 0 {
+		return nil
+	}
+
+	support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch)
+	if !found || support.MaxVRAMMB <= 0 {
+		return nil
+	}
+
+	estimateMB := *model.Spec.GPU.VRAMEstimateMB
+	gpuCount := int64(1)
+	if model.Spec.GPU.Count != nil && *model.Spec.GPU.Count > 1 {
+		gpuCount = int64(*model.Spec.GPU.Count)
+	}
+	totalVRAMMB := int64(support.MaxVRAMMB) * gpuCount
+
+	// Block if estimate exceeds 95% of total VRAM
+	if estimateMB > totalVRAMMB*95/100 {
+		return fmt.Errorf("model VRAM estimate (%dMB) exceeds 95%% of available GPU VRAM (%dMB across %d GPU(s)) for %s on %s",
+			estimateMB, totalVRAMMB, gpuCount, b.Name(), gpuArch)
+	}
+
+	// Warn if estimate exceeds 80% of total VRAM
+	if estimateMB > totalVRAMMB*80/100 {
+		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMPressure",
+			fmt.Sprintf("model VRAM estimate (%dMB) exceeds 80%% of GPU VRAM (%dMB); performance may be degraded",
+				estimateMB, totalVRAMMB))
+	}
+
+	return nil
+}
+
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
-// Handles Maxwell (sm_5x) hard blocks, FP16 rejection, and AMD gfx906 experimental warnings.
+// Uses the GPU compatibility matrix for data-driven validation with fallback to architecture-specific checks.
 func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
-	// --- AMD gfx906 warnings (non-blocking) ---
-	if gpuVendor == backend.GPUVendorAMD && strings.HasPrefix(gpuArch, "gfx906") {
-		switch b.Name() {
-		case "diffusers":
-			r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
-				"diffusers on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
-		case "comfyui":
-			r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
-				"comfyui on gfx906 (Radeon VII) is experimental: ROCm image bakes gfx1100 env vars, runtime ROCmEnvVars overrides them")
+	// Check the GPU compatibility matrix first.
+	if support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch); found {
+		switch support.Level {
+		case backend.SupportUnsupported:
+			return fmt.Errorf("%s backend is not supported on %s GPUs. Use a compatible backend instead", b.Name(), gpuArch)
+		case backend.SupportExperimental:
+			// Only warn if the resolved image is generic (not arch-specific)
+			img := b.Image(gpuVendor, gpuArch)
+			isGenericImage := !strings.Contains(img, "gfx906") && !strings.Contains(img, "gfx110")
+			if isGenericImage {
+				r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
+					fmt.Sprintf("%s on %s is experimental: using generic image %s", b.Name(), gpuArch, img))
+			}
 		}
 	}
 
-	// --- Maxwell (sm_5x) hard blocks ---
-	if !isMaxwellGPUArch(gpuArch) {
-		return nil
+	// --- Maxwell-specific validation (sm_5x) ---
+	if err := r.validateMaxwellSpecifics(model, b, gpuVendor, gpuArch); err != nil {
+		return err
 	}
-	if gpuVendor != backend.GPUVendorNVIDIA {
+
+	return nil
+}
+
+// validateMaxwellSpecifics handles Maxwell GPU (sm_5x) specific validation:
+// FP16 rejection and backend-specific library requirements.
+func (r *ModelReconciler) validateMaxwellSpecifics(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
+	if !isMaxwellGPUArch(gpuArch) || gpuVendor != backend.GPUVendorNVIDIA {
 		return nil
 	}
 
@@ -523,13 +583,8 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 		return fmt.Errorf("FP16 models are not supported on Maxwell GPUs (no native FP16). Use q4f32_1, q0f32, or GGUF quantized models instead")
 	}
 
-	switch b.Name() {
-	case "vllm", "vllm-omni", "diffusers":
-		return fmt.Errorf("%s backend is not supported on Maxwell GPUs (compute capability 5.x). Use ollama, mlc-llm (pre-compiled), or llamacpp instead", b.Name())
-	case "mlc-llm":
+	if b.Name() == "mlc-llm" {
 		// MLC-LLM on Maxwell should use a pre-compiled model library and avoid JIT.
-		// Prefer requiring an explicit modelLibPath unless we can infer a conventional
-		// on-disk location under /models/<modelName>.
 		cfg := model.Spec.GetConfigMap()
 		if cfg != nil {
 			if v, ok := cfg["modelLibPath"]; ok {
@@ -546,13 +601,40 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 		}
 		modelPath = strings.TrimRight(modelPath, "/")
 		if strings.HasPrefix(modelPath, "/models/") && modelPath != "/models" {
-			// Backend will default to <modelPath>/maxwell-lib.so.
 			return nil
 		}
 
 		return fmt.Errorf("mlc-llm on Maxwell GPUs requires config.modelLibPath (pre-compiled library). See docs/user/backends-maxwell.md")
-	default:
-		return nil
+	}
+
+	return nil
+}
+
+// emitVLLMOptInEvents emits informational events when the user opts into
+// experimental vLLM features (V1 engine, flash attention, AITER).
+func (r *ModelReconciler) emitVLLMOptInEvents(model *aiv1alpha2.Model) {
+	cfg := model.Spec.GetConfigMap()
+	if cfg == nil {
+		return
+	}
+	if v, ok := cfg["vllmEngineVersion"]; ok {
+		if s, ok := v.(string); ok && s == "v1" {
+			r.Recorder.Event(model, corev1.EventTypeNormal, "V1EngineOptIn",
+				"vLLM V1 engine enabled via spec.config.vllmEngineVersion=v1 (experimental)")
+		}
+	}
+	if v, ok := cfg["enableFlashAttention"]; ok {
+		enabled := false
+		switch val := v.(type) {
+		case bool:
+			enabled = val
+		case string:
+			enabled = val == "true" || val == "1"
+		}
+		if enabled {
+			r.Recorder.Event(model, corev1.EventTypeNormal, "FlashAttentionOptIn",
+				"Triton flash attention enabled via spec.config.enableFlashAttention=true (experimental)")
+		}
 	}
 }
 

@@ -69,6 +69,8 @@ const (
 	ReasonAmbiguousGPUVendor = "AmbiguousGPUVendor"
 	// ReasonBackendUnsupported - backend does not support the detected GPU vendor
 	ReasonBackendUnsupported = "BackendUnsupported"
+	// ReasonVRAMInsufficient - model VRAM estimate exceeds GPU capacity
+	ReasonVRAMInsufficient = "VRAMInsufficient"
 	// ReasonSchedulable - model can be scheduled
 	ReasonSchedulable = "Schedulable"
 	// ReasonCacheNotReady - waiting for cache to be ready

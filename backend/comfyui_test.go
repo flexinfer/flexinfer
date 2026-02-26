@@ -2,7 +2,54 @@ package backend
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
+
+func TestComfyUIBackendEnv_GFX906MemoryTuning(t *testing.T) {
+	b := &ComfyUIBackend{}
+
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	spec := &ModelSpec{
+		Model:     "test-model",
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx906",
+		Config:    map[string]interface{}{},
+	}
+	envs := b.Env(spec)
+
+	if v, ok := findEnv(envs, "PYTORCH_HIP_ALLOC_CONF"); !ok {
+		t.Error("expected PYTORCH_HIP_ALLOC_CONF for gfx906")
+	} else if v != "garbage_collection_threshold:0.8,max_split_size_mb:256" {
+		t.Errorf("PYTORCH_HIP_ALLOC_CONF = %q, want tighter gfx906 config", v)
+	}
+
+	if v, ok := findEnv(envs, "ENABLE_ATTENTION_SLICING"); !ok {
+		t.Error("expected ENABLE_ATTENTION_SLICING for gfx906")
+	} else if v != "1" {
+		t.Errorf("ENABLE_ATTENTION_SLICING = %q, want 1", v)
+	}
+
+	// gfx1100 should NOT get gfx906-specific tuning
+	spec1100 := &ModelSpec{
+		Model:     "test-model",
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config:    map[string]interface{}{},
+	}
+	envs1100 := b.Env(spec1100)
+	if _, ok := findEnv(envs1100, "ENABLE_ATTENTION_SLICING"); ok {
+		t.Error("expected ENABLE_ATTENTION_SLICING to be absent for gfx1100")
+	}
+}
 
 func TestComfyUIBackendImage(t *testing.T) {
 	b := &ComfyUIBackend{}
@@ -16,10 +63,10 @@ func TestComfyUIBackendImage(t *testing.T) {
 		wantImage string
 	}{
 		{
-			name:      "AMD gfx1100 without env returns generic rocm",
+			name:      "AMD gfx1100 without env returns arch-specific image",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
-			wantImage: "registry.harbor.lan/library/comfyui:rocm6.2.3-v8",
+			wantImage: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100",
 		},
 		{
 			name:      "AMD gfx1100 with env override",
@@ -30,10 +77,10 @@ func TestComfyUIBackendImage(t *testing.T) {
 			wantImage: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100",
 		},
 		{
-			name:      "AMD gfx906 without env returns generic rocm",
+			name:      "AMD gfx906 without env returns arch-specific image",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
-			wantImage: "registry.harbor.lan/library/comfyui:rocm6.2.3-v8",
+			wantImage: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx906",
 		},
 		{
 			name:      "AMD gfx906 with env override",

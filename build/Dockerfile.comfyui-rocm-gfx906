@@ -1,0 +1,71 @@
+# ComfyUI Docker image for AMD GPUs (ROCm) - gfx906 / Vega20 variant
+# Architecture-specific image for Radeon VII (gfx906)
+#
+# Key differences from gfx1100:
+# - No HSA_OVERRIDE_GFX_VERSION (gfx906 natively supported)
+# - No TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL
+# - HSA_ENABLE_SDMA=0 for stability
+# - HSA_USE_SVM=0 for hipMemGetInfo workaround
+FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN git clone --depth 1 --branch v0.2.7 https://github.com/comfyanonymous/ComfyUI.git || \
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git
+
+WORKDIR /app/ComfyUI
+
+RUN grep -v "^torch" requirements.txt | grep -v "comfy.kitchen" | grep -v "comfy-kitchen" > requirements-no-torch.txt && \
+    pip install --no-cache-dir -r requirements-no-torch.txt && \
+    pip uninstall -y comfy-kitchen comfy_kitchen 2>/dev/null || true
+
+RUN mkdir -p /opt/conda/envs/py_3.10/lib/python3.10/site-packages/comfy_kitchen && \
+    echo 'ck = None' > /opt/conda/envs/py_3.10/lib/python3.10/site-packages/comfy_kitchen/__init__.py
+
+RUN pip install --no-cache-dir \
+    accelerate \
+    transformers \
+    safetensors \
+    diffusers \
+    opencv-python-headless \
+    'scipy<1.14' \
+    scikit-image \
+    trampoline && \
+    pip install --no-cache-dir --force-reinstall 'numpy<2'
+
+RUN pip install --no-cache-dir --no-deps torchsde && \
+    python -c "import torchsde; print('torchsde installed successfully')"
+
+RUN mkdir -p /app/ComfyUI/models/checkpoints \
+    /app/ComfyUI/models/loras \
+    /app/ComfyUI/models/vae \
+    /app/ComfyUI/models/controlnet \
+    /app/ComfyUI/models/clip \
+    /app/ComfyUI/models/embeddings \
+    /app/ComfyUI/output \
+    /app/ComfyUI/input \
+    /app/ComfyUI/custom_nodes
+
+# ROCm environment for gfx906 (Vega20 / Radeon VII)
+ENV PYTORCH_ROCM_ARCH=gfx906
+ENV HSA_ENABLE_SDMA=0
+ENV HSA_USE_SVM=0
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+EXPOSE 8188
+
+CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]

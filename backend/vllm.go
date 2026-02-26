@@ -108,41 +108,37 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
+		// Read opt-in config keys for experimental features.
+		// Defaults preserve the safe baseline (V0 engine, no flash attention, no AITER).
+		engineVersion := spec.ConfigString("vllmEngineVersion", "v0")
+		enableFA := spec.ConfigBool("enableFlashAttention", false)
+		enableAiter := spec.ConfigBool("enableAiter", false)
+
+		useV1 := "0"
+		if engineVersion == "v1" {
+			useV1 = "1"
+		}
+		useTritonFA := "0"
+		if enableFA {
+			useTritonFA = "1"
+		}
+
 		// vLLM-specific ROCm enhancements
 		if strings.HasPrefix(spec.GPUArch, "gfx110") {
-			// vLLM-specific ROCm tuning for gfx1100 (RX 7900 XTX)
-			// These settings prevent hangs/SIGSEGV crashes on consumer RDNA3 (gfx1100).
+			useAiter := "0"
+			if enableAiter {
+				useAiter = "1"
+			}
 			env = append(env,
-				corev1.EnvVar{
-					// Force V0 engine - V1 engine has compatibility issues with gfx1100
-					Name:  "VLLM_USE_V1",
-					Value: "0",
-				},
-				corev1.EnvVar{
-					// Disable Triton flash attention on gfx1100. In our builds/env, Triton
-					// attention paths have caused hangs; V0 engine + non-Triton attention
-					// is the stable baseline.
-					Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-					Value: "0",
-				},
-				corev1.EnvVar{
-					// Disable AITER (Asynchronous Iteration) which can cause crashes on gfx1100
-					Name:  "VLLM_ROCM_USE_AITER",
-					Value: "0",
-				},
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
+				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: useAiter},
 			)
 		} else if strings.HasPrefix(spec.GPUArch, "gfx906") {
-			// vLLM tuning for gfx906 (Radeon VII)
+			// gfx906: AITER is not applicable (GCN5 architecture)
 			env = append(env,
-				corev1.EnvVar{
-					Name:  "VLLM_USE_V1",
-					Value: "0",
-				},
-				corev1.EnvVar{
-					// Disable Triton flash attention on gfx906
-					Name:  "VLLM_USE_TRITON_FLASH_ATTN",
-					Value: "0",
-				},
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
 			)
 		}
 

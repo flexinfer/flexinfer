@@ -1068,23 +1068,20 @@ func TestValidateBackendGPUCompatibility_DiffusersOnGFX906(t *testing.T) {
 		},
 	}
 
-	// Should pass (no hard error) but emit a warning event
+	// Should pass with no error. With arch-specific images (PR 1.3),
+	// no ExperimentalGPUSupport warning is emitted because the image
+	// is gfx906-specific (not generic).
 	err := r.validateBackendGPUCompatibility(model, diffusersBackend, backend.GPUVendorAMD, "gfx906")
 	if err != nil {
-		t.Fatalf("expected diffusers on gfx906 to pass (warning only), got: %v", err)
+		t.Fatalf("expected diffusers on gfx906 to pass, got: %v", err)
 	}
 
-	// Drain events and check for warning
+	// No warning event expected — arch-specific image suppresses the warning.
 	select {
 	case event := <-rec.Events:
-		if !strings.Contains(event, "ExperimentalGPUSupport") {
-			t.Fatalf("expected ExperimentalGPUSupport event, got: %s", event)
-		}
-		if !strings.Contains(event, "diffusers on gfx906") {
-			t.Fatalf("expected gfx906 warning in event, got: %s", event)
-		}
+		t.Fatalf("expected no warning event for diffusers on gfx906 (arch-specific image), got: %s", event)
 	default:
-		t.Fatal("expected warning event for diffusers on gfx906, got none")
+		// OK — no event emitted
 	}
 }
 
@@ -1100,18 +1097,19 @@ func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906(t *testing.T) {
 		},
 	}
 
+	// Should pass with no error. With arch-specific images (PR 1.3),
+	// no warning is emitted because the image is gfx906-specific.
 	err := r.validateBackendGPUCompatibility(model, comfyBackend, backend.GPUVendorAMD, "gfx906")
 	if err != nil {
-		t.Fatalf("expected comfyui on gfx906 to pass (warning only), got: %v", err)
+		t.Fatalf("expected comfyui on gfx906 to pass, got: %v", err)
 	}
 
+	// No warning event expected — arch-specific image suppresses the warning.
 	select {
 	case event := <-rec.Events:
-		if !strings.Contains(event, "comfyui on gfx906") {
-			t.Fatalf("expected gfx906 comfyui warning, got: %s", event)
-		}
+		t.Fatalf("expected no warning event for comfyui on gfx906 (arch-specific image), got: %s", event)
 	default:
-		t.Fatal("expected warning event for comfyui on gfx906, got none")
+		// OK — no event emitted
 	}
 }
 

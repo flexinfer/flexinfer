@@ -25,21 +25,23 @@ func (b *DiffusersBackend) Name() string {
 func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
-		// Check for arch-specific overrides before generic AMD fallback
+		// Check for arch-specific overrides before built-in defaults
 		if strings.HasPrefix(gpuArch, "gfx110") {
 			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX1100"); img != "" {
 				return img
 			}
+			return "registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100"
 		}
 		if strings.HasPrefix(gpuArch, "gfx906") {
 			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX906"); img != "" {
 				return img
 			}
+			return "registry.harbor.lan/flexinfer/diffusers:rocm-gfx906"
 		}
 		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_AMD"); img != "" {
 			return img
 		}
-		// Use rocm-latest tag which is built with gfx1100/RDNA3 optimizations
+		// Fallback: use generic rocm-latest tag for other AMD GPUs
 		return "registry.harbor.lan/library/diffusers-api:rocm-latest"
 	default:
 		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE"); img != "" {
@@ -151,6 +153,20 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Name:  "USE_CPU_OFFLOAD",
 			Value: cpuOffload,
 		})
+
+		// gfx906 (16GB VRAM): tighter memory allocation and attention slicing
+		if strings.HasPrefix(spec.GPUArch, "gfx906") {
+			env = append(env,
+				corev1.EnvVar{
+					Name:  "PYTORCH_HIP_ALLOC_CONF",
+					Value: "garbage_collection_threshold:0.8,max_split_size_mb:256",
+				},
+				corev1.EnvVar{
+					Name:  "ENABLE_ATTENTION_SLICING",
+					Value: "1",
+				},
+			)
+		}
 	}
 
 	return env

@@ -98,6 +98,123 @@ func TestVLLMBackendEnv_GFX1100Settings(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendEnv_V1EngineOptIn(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"vllmEngineVersion": "v1",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "1" {
+		t.Errorf("expected VLLM_USE_V1=1 with v1 opt-in, got %q", v)
+	}
+	// Flash attention should still be off (not opted in)
+	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0 without FA opt-in, got %q", v)
+	}
+	// AITER should still be off
+	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_ROCM_USE_AITER=0 without AITER opt-in, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_FlashAttentionOptIn(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"enableFlashAttention": true,
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "1" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1 with FA opt-in, got %q", v)
+	}
+	// V1 should still be off
+	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_V1=0 without V1 opt-in, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"vllmEngineVersion":    "v1",
+			"enableFlashAttention": true,
+			"enableAiter":          true,
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["VLLM_USE_V1"]; v != "1" {
+		t.Errorf("expected VLLM_USE_V1=1, got %q", v)
+	}
+	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
+	}
+	if v := envMap["VLLM_ROCM_USE_AITER"]; v != "1" {
+		t.Errorf("expected VLLM_ROCM_USE_AITER=1, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_GFX906IgnoresAiter(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx906",
+		Config: map[string]interface{}{
+			"vllmEngineVersion":    "v1",
+			"enableFlashAttention": true,
+			"enableAiter":          true, // should be ignored on gfx906
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["VLLM_USE_V1"]; v != "1" {
+		t.Errorf("expected VLLM_USE_V1=1, got %q", v)
+	}
+	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
+	}
+	// AITER should not be present for gfx906
+	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Error("expected VLLM_ROCM_USE_AITER to be absent on gfx906")
+	}
+}
+
 func TestVLLMBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	b := &VLLMBackend{}
 

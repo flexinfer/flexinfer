@@ -1,0 +1,73 @@
+# Diffusers API Server for AMD GPUs (ROCm) - gfx906 / Vega20 variant
+# Architecture-specific image for Radeon VII (gfx906)
+#
+# Key differences from gfx1100:
+# - No HSA_OVERRIDE_GFX_VERSION (gfx906 natively supported by ROCm)
+# - No TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL (not applicable to GCN5)
+# - HSA_ENABLE_SDMA=0 for stability on Vega20
+# - HSA_USE_SVM=0 to work around hipMemGetInfo crash (ROCm/ROCm#2433)
+# - Tighter memory allocation for 16GB VRAM
+
+ARG ROCM_PYTORCH_TAG=rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Force offline mode
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
+
+# ROCm environment for gfx906 (Vega20 / Radeon VII)
+ENV PYTORCH_ROCM_ARCH=gfx906
+ENV HSA_ENABLE_SDMA=0
+ENV HSA_USE_SVM=0
+
+# Disable xformers (SIGSEGV on ROCm)
+ENV XFORMERS_DISABLED=1
+
+# Synchronous GPU ops defaults
+ENV HIP_LAUNCH_BLOCKING=0
+ENV AMD_SERIALIZE_KERNEL=0
+ENV AMD_SERIALIZE_COPY=0
+
+# Fix VAE decode crashes (also affects gfx906)
+ENV MIOPEN_FIND_MODE=2
+ENV TORCH_BLAS_PREFER_HIPBLASLT=0
+
+# Memory allocation for gfx906 (16GB VRAM — tighter than gfx1100)
+ENV PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:256
+
+# Enable attention slicing by default for 16GB VRAM
+ENV ENABLE_ATTENTION_SLICING=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+RUN pip install --no-cache-dir --force-reinstall "numpy<2"
+
+COPY build/Dockerfile.diffusers-rocm /tmp/_ref
+COPY <<'SERVEREOF' /app/extract-server.sh
+#!/bin/bash
+sed -n "/^COPY <<'EOF' \/app\/server.py/,/^EOF/{/^COPY <<'EOF'/d;/^EOF/d;p}" /tmp/_ref > /app/server.py
+SERVEREOF
+RUN bash /app/extract-server.sh && rm /app/extract-server.sh /tmp/_ref
+
+RUN mkdir -p /models
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["python", "/app/server.py"]

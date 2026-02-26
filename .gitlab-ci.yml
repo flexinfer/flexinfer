@@ -742,6 +742,130 @@ publish_diffusers_rocm:
     - when: manual
       allow_failure: true
 
+# Diffusers API ROCm - gfx1100 (RDNA3) architecture-specific image
+publish_diffusers_rocm_gfx1100:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Diffusers API ROCm image for gfx1100..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.diffusers-rocm-gfx1100" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx1100,${REGISTRY}/diffusers:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.diffusers-rocm-gfx1100]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# Diffusers API ROCm - gfx906 (Vega20 / Radeon VII) architecture-specific image
+publish_diffusers_rocm_gfx906:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Diffusers API ROCm image for gfx906..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.diffusers-rocm-gfx906" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx906,${REGISTRY}/diffusers:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.diffusers-rocm-gfx906]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# ComfyUI ROCm - gfx1100 (RDNA3) architecture-specific image
+publish_comfyui_rocm_gfx1100:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building ComfyUI ROCm image for gfx1100..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.comfyui-rocm-gfx1100" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/comfyui:rocm-gfx1100,${REGISTRY}/comfyui:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.comfyui-rocm-gfx1100]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# ComfyUI ROCm - gfx906 (Vega20 / Radeon VII) architecture-specific image
+publish_comfyui_rocm_gfx906:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building ComfyUI ROCm image for gfx906..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.comfyui-rocm-gfx906" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/comfyui:rocm-gfx906,${REGISTRY}/comfyui:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: [build/Dockerfile.comfyui-rocm-gfx906]
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # --- llama.cpp Backend Images ---
 # llama.cpp built from source with GGML_HIPBLAS for gfx1100 (RX 7900 series)
 publish_llamacpp_rocm_gfx1100:
@@ -949,6 +1073,64 @@ publish_vllm_rocm_gfx1100:
         --opt filename="Dockerfile.vllm-rocm-gfx1100" \
         --opt platform=linux/amd64 \
         --output "type=image,\"name=registry.harbor.lan/library/vllm-api:rocm-gfx1100,registry.harbor.lan/library/vllm-api:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# vLLM with flash attention ENABLED for gfx1100 (experimental)
+publish_vllm_rocm_gfx1100_fa:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 2h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building vLLM ROCm image for gfx1100 with flash attention (BUILD_FA=1)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-gfx1100-fa" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-fa,${REGISTRY}/vllm:rocm-gfx1100-fa-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# vLLM with flash attention ENABLED for gfx906 (experimental)
+publish_vllm_rocm_gfx906_fa:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 2h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building vLLM ROCm image for gfx906 with flash attention (BUILD_FA=1)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-gfx906-fa" \
+        --opt platform=linux/amd64 \
+        --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx906-fa,${REGISTRY}/vllm:rocm-gfx906-fa-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual

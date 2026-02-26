@@ -1,0 +1,122 @@
+# vLLM Docker image for AMD gfx906 (Radeon VII) with flash attention ENABLED
+# EXPERIMENTAL: Flash attention may improve throughput but can cause hangs on some hardware.
+# Users must explicitly set DEFAULT_VLLM_IMAGE_GFX906 to use this image.
+#
+# Build command:
+#   docker build -f build/Dockerfile.vllm-rocm-gfx906-fa -t vllm-rocm-gfx906-fa .
+
+ARG ROCM_VERSION=6.4.4
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
+
+ARG PYTHON_VERSION=3.12
+ARG PYTORCH_ROCM_ARCH=gfx906
+ARG VLLM_VERSION=0.7.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ROCm environment for gfx906
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCR_VISIBLE_DEVICES=0
+
+# Default to V0 engine — users opt into V1 via CRD config
+ENV VLLM_USE_V1=0
+# Default to Triton flash attention OFF — users opt in via CRD config
+ENV VLLM_USE_TRITON_FLASH_ATTN=0
+# Disable AITER by default (not applicable to gfx906)
+ENV VLLM_ROCM_USE_AITER=0
+# Enable experimental AOTriton
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    git \
+    curl \
+    cmake \
+    ninja-build \
+    build-essential \
+    wget \
+    sqlite3 \
+    libsqlite3-dev \
+    libfmt-dev \
+    libmsgpack-dev \
+    libsuitesparse-dev \
+    hipblas \
+    rocblas \
+    rocsparse \
+    hipsparse \
+    rocthrust \
+    rocprim \
+    hipcub \
+    rccl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Create virtual environment (PEP 668 compliance on Ubuntu 24.04)
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV VIRTUAL_ENV=/opt/venv
+
+# Install Python build dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel setuptools_scm
+
+# Install PyTorch for ROCm
+RUN pip install --no-cache-dir \
+    torch==2.5.1 \
+    --index-url https://download.pytorch.org/whl/rocm6.2
+
+# Clone vLLM with tags for version detection
+WORKDIR /build
+RUN git clone --branch v${VLLM_VERSION} https://github.com/vllm-project/vllm.git && \
+    cd vllm && \
+    git fetch --tags
+
+# Build vLLM with flash attention ENABLED for gfx906
+WORKDIR /build/vllm
+ENV MAX_JOBS=8
+ENV CMAKE_BUILD_PARALLEL_LEVEL=8
+ENV VLLM_TARGET_DEVICE=rocm
+# EXPERIMENTAL: Enable flash attention build
+ENV BUILD_FA=1
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VLLM_VERSION}
+
+# Install ROCm requirements
+RUN pip install --no-cache-dir -r requirements-rocm.txt
+
+# Build vLLM wheel using setup.py (like official Dockerfile)
+RUN python setup.py clean --all && \
+    python setup.py bdist_wheel --dist-dir=dist
+
+# Install the built wheel
+RUN pip install --no-cache-dir dist/*.whl
+
+# Install additional dependencies
+RUN pip install --no-cache-dir \
+    diffusers>=0.30.0 \
+    pillow \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+# Cleanup build files to reduce image size
+RUN rm -rf /build
+
+# Create model directory
+WORKDIR /workspace
+RUN mkdir -p /models
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]
