@@ -237,7 +237,7 @@ comfyui:
 oras:
   # Image used for downloading OCI artifacts in ModelCache jobs
   # Uses official ORAS image from GitHub Container Registry
-  image: ghcr.io/oras-project/oras:v1.2.2
+  image: ghcr.io/oras-project/oras:v1.3.0
 
 scheduler:
   enabled: true
@@ -254,12 +254,12 @@ scheduler:
   kubeScheduler:
     image:
       repository: registry.k8s.io/kube-scheduler
-      tag: "v1.28.0"
+      tag: "v1.35.1"
       pullPolicy: IfNotPresent
   kubeconfigInit:
     image:
       repository: busybox
-      tag: "1.36"
+      tag: "1.37"
       pullPolicy: IfNotPresent
   resources:
     limits:
