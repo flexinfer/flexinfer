@@ -2,7 +2,7 @@
 # GPTQ quantization runtime image for FlexInfer ModelCache quantization jobs.
 # Uses CUDA userspace + AutoGPTQ tooling.
 
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \

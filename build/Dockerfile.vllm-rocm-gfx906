@@ -8,7 +8,7 @@
 # Based on: https://github.com/vllm-project/vllm/pull/2768
 # "support Radeon VII (gfx906) without using flash-attention"
 
-ARG ROCM_VERSION=6.4.1
+ARG ROCM_VERSION=6.4.4
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
 
 ARG PYTHON_VERSION=3.12

@@ -1,5 +1,5 @@
 # Build the benchmarker binary
-FROM golang:1.25.5 as builder
+FROM golang:1.26.0 as builder
 
 WORKDIR /workspace
 COPY go.mod go.mod
@@ -14,7 +14,7 @@ COPY pkg/ pkg/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bench cmd/flexinfer-bench/main.go
 
 # Use Alpine for shell support (needed for sidecar termination wrapper)
-FROM alpine:3.20
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates procps
 WORKDIR /
 COPY --from=builder /workspace/bench /flexinfer-bench
