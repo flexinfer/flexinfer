@@ -256,3 +256,7 @@ verify-images: ## Verify all backend images exist in Harbor registry
 .PHONY: bench-swap
 bench-swap: ## Run GPU swap benchmark for shared image generation group
 	@./scripts/bench-image-swap.sh $(BENCH_PHASE)
+
+.PHONY: bench-model
+bench-model: ## Run LLM model benchmark (MODEL=name ENDPOINT=url)
+	@./scripts/bench-model.sh $(BENCH_PHASE)

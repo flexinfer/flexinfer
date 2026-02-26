@@ -34,9 +34,12 @@ spec:
     flashAttention: true
     parallel: 2
     batchSize: 2048
+    ubatchSize: 2048
     cacheTypeK: q4_0
     cacheTypeV: q4_0
     jinja: true
+    metrics: true
+    reasoningFormat: deepseek
   resources:
     requests:
       memory: 8Gi
