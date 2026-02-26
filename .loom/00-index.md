@@ -6,51 +6,45 @@
 - MCP inventory: `00-mcp-inventory.md`
 - Research (mobile companion): `10-research.md`
 - Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
+- Research addendum (mobile signing/distribution): `14-research-mobile-signing-publish-2026-02-25.md`
 - Product spec (mobile companion): `20-product-spec.md`
 - Implementation plan (mobile companion): `30-implementation-plan.md`
+- Implementation plan addendum (build/sign/publish): `33-mobile-signing-release-plan-2026-02-25.md`
 - Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
 - Mobile security draft: `../docs/MOBILE_COMPANION_SECURITY.md`
 - Historical roadmap mapping: `31-gap-to-backlog-map.md`
 - Mobile backlog mapping: `32-mobile-gap-to-backlog-map.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
-- Tech debt inventory: `tech-debt-inventory.md` (all items resolved)
-- Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
-- Tech debt priority: `tech-debt-priority.md`
 
 ## Current Goal
 
-Plan and de-risk a companion iPhone/iPad app for loom-core that supports:
-1. real-time monitoring of agents/sessions/health,
-2. safe session control actions,
-3. new session creation from mobile,
-4. both LAN mode and gateway mode depending on deployment/use case.
+Close the iOS release-operability gap so Loom Companion is:
+1. installable on your iPhone with deterministic signing steps,
+2. distributable to internal testers,
+3. ready for a full TestFlight -> production release pipeline.
 
 ## Near-Term Success Criteria
 
-- Mobile scope is clearly bounded to operator workflows.
-- Backend auth and policy gaps are explicit and prioritized before mutation rollout.
-- API contracts and rollout milestones are documented and testable.
-- Planning artifacts are source-backed and ready for implementation handoff.
+- Build/signing prerequisites are explicit and scriptable.
+- Archive/export/upload workflow is decomposed into executable increments.
+- CI requirements for macOS-based iOS release jobs are scoped without disrupting existing Go CI.
+- Planning artifacts are source-backed and implementation-ready.
 
 ## Risks
 
-- HUD API is currently localhost-first and mostly unauthenticated for remote use.
-- SSE/reconnect behavior on mobile networks may require additional resilience work.
-- Mutation scope could expand too quickly without role/policy guardrails.
+- iOS signing identity/provisioning can drift across developer machines.
+- CI currently has no iOS lane, so release-quality packaging is manual.
+- Publishing path choice (ad hoc vs TestFlight-first) can introduce process churn if not locked early.
 
 ## Notes
 
-- Context pack refreshed on 2026-02-23.
-- Codebase indexing with embeddings failed (Morph 400); lexical fallback indexing completed successfully (`1717` files, `26930` chunks).
-- This planning slice intentionally focuses on architecture/specs and does not include code implementation yet.
+- Context pack refreshed on 2026-02-25.
+- MCP resource/template introspection was unavailable in this runtime; CLI fallback inventory was used.
+- This planning slice focuses on iOS build/sign/publish operations readiness.
 
 ## Sources
 
 - `.loom/00-mcp-inventory.md`
-- `.loom/10-research.md`
-- `.loom/20-product-spec.md`
-- `.loom/30-implementation-plan.md`
-- `internal/hud/app.go:317`
-- `internal/hud/api_agent.go:79`
-- `internal/hud/bridge/agent.go:1443`
+- `.loom/14-research-mobile-signing-publish-2026-02-25.md`
+- `.loom/33-mobile-signing-release-plan-2026-02-25.md`

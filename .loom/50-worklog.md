@@ -1,5 +1,29 @@
 # Worklog
 
+## 2026-02-25 (session 15)
+
+- What changed:
+  - Refreshed planning context using `plan-loom-core` scripts:
+    - `.loom/00-workspace-snapshot.md` regenerated.
+    - `.loom/00-mcp-inventory.md` updated for current runtime mode (resource/template APIs unavailable; CLI fallback used).
+  - Added iOS distribution-focused research and execution artifacts:
+    - `.loom/14-research-mobile-signing-publish-2026-02-25.md`
+    - `.loom/33-mobile-signing-release-plan-2026-02-25.md`
+  - Updated index + implementation cross-links:
+    - `.loom/00-index.md`
+    - `.loom/30-implementation-plan.md`
+- Why:
+  - User requested a concrete path for build signing and publishing so Loom Companion is installable now and can progress to full release.
+- Sources:
+  - [S1] `apps/loom-companion-ios/project.yml:22-42`
+  - [S2] `Makefile:729-829`
+  - [S3] `scripts/mobile/dev_bootstrap.sh:36-107`
+  - [S4] `.gitlab-ci.yml:20-24`
+  - [S5] `.gitlab-ci.yml:390-469`
+  - [S6] `docs/MOBILE_COMPANION_IPHONE_TESTING.md:64-87`
+  - [S7] Command: `xcodebuild -project apps/loom-companion-ios/LoomCompanion.xcodeproj -scheme LoomCompanion -showBuildSettings -configuration Release -destination 'generic/platform=iOS' | rg 'DEVELOPMENT_TEAM|PROVISIONING_PROFILE_SPECIFIER'`
+  - [S8] Command: `~/.local/bin/loom tools list --json > /tmp/loom-tools-list.json`
+
 ## 2026-02-23 (session 18) — Tech Debt Closure
 
 - What changed:

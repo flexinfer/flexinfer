@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-23T17:15:20-05:00
+- Generated: 2026-02-25T13:55:51-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -8,15 +8,33 @@
 
 ## Git
 ```
-## main...origin/main
- M .loom/tech-debt-inventory.json
- M .loom/tech-debt-inventory.md
- M .loom/tech-debt-plan.md
- M .loom/tech-debt-priority.md
- M apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift
- M docs/MOBILE_COMPANION_SECURITY.md
+## codex/mbl7-iphone-readiness...origin/codex/mbl7-iphone-readiness
+ M .loom/00-index.md
+ M .loom/00-workspace-snapshot.md
+ M .loom/50-worklog.md
+ M cmd/loom/hud.go
+ M cmd/loom/hud_control.go
+ D internal/hud/frontend/dist/assets/GraphPanel-Buyvi19g.js
+ D internal/hud/frontend/dist/assets/LifecyclePanel-DwrobzNT.js
+ D internal/hud/frontend/dist/assets/TopologyPanel-DL5WSKNG.js
+ D internal/hud/frontend/dist/assets/index-BDiKDlLy.js
+ D internal/hud/frontend/dist/assets/index-FedlMwx6.css
+ M internal/hud/frontend/dist/index.html
+ M internal/hud/frontend/src/lib/components/FleetPanel.svelte
+ M scripts/mobile/dev_bootstrap.sh
 ?? apps/loom-companion-ios/.build/
+?? apps/loom-companion-ios/.swiftpm/
+?? apps/loom-companion-ios/LoomCompanion.xcodeproj/project.xcworkspace/
+?? apps/loom-companion-ios/LoomCompanion.xcodeproj/xcuserdata/
+?? cmd/loom/hud_control_test.go
 ?? docs/roadmap-reconciliation-2026-02-23.md
+?? docs/roadmap-reconciliation-2026-02-24.md
+?? docs/roadmap-reconciliation-2026-02-25.md
+?? internal/hud/frontend/dist/assets/GraphPanel-DRIJF9Ns.js
+?? internal/hud/frontend/dist/assets/LifecyclePanel-DAb5YM8b.js
+?? internal/hud/frontend/dist/assets/TopologyPanel-D-mldBd5.js
+?? internal/hud/frontend/dist/assets/index-D-zVhnBR.css
+?? internal/hud/frontend/dist/assets/index-OXNyOVmO.js
 ```
 
 ### Remotes
@@ -31,7 +49,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-5c6dd8f docs(mobile): add credential revocation incident runbook (MBL-11)
+20147cb feat(mobile): ship wave1 read-only parity APIs and iOS ops tab
 ```
 
 ## Top-Level Layout
@@ -91,6 +109,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `loom`
 - `loomd`
 - `Makefile`
+- `mcp-agent-context`
 - `mcp-alertmanager`
 - `mcp-argocd`
 - `mcp-asus-router`
@@ -204,6 +223,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `Makefile`
 - `README.md`
 - `ROADMAP.md`
+- `apps/loom-companion-ios/LoomCompanion.xcodeproj/project.pbxproj`
 - `apps/loom-companion-ios/Package.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/ContentView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/LoomCompanionApp.swift`
@@ -218,6 +238,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/FleetSummaryCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/HealthStatusCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/TimelineListView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Ops/OpsView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionDetailView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionEventsView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionMetadataView.swift`
@@ -235,6 +256,8 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionRemediation.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/DashboardData.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/HealthSummary.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/OpsModels.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PushRegistration.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionInfo.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/TimelineEntry.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/APIClient.swift`
@@ -245,6 +268,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/AlertsViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/DashboardViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/OpsViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionDetailViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionsViewModel.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures.swift`
@@ -259,17 +283,21 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/AlertItemTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/ConnectionRemediationTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/DashboardDataTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/PushRegistrationTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/SessionInfoTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/TimelineEntryTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/APIClientTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/ConnectionHealthTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/SSEClientReconnectTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/SSENetworkChurnTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Networking/SSEParserTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/AlertsViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/DashboardViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/OpsViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionDetailViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionsViewModelTests.swift`
+- `apps/loom-companion-ios/project.yml`
 - `assets/banner.png`
 - `assets/header.svg`
 - `assets/icon.png`
@@ -278,11 +306,20 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/loom/check.go`
 - `cmd/loom/cmd_agent.go`
 - `cmd/loom/cmd_agent_hook_status_test.go`
+- `cmd/loom/cmd_completion.go`
+- `cmd/loom/cmd_daemon.go`
 - `cmd/loom/cmd_doctor.go`
+- `cmd/loom/cmd_proxy.go`
+- `cmd/loom/cmd_secrets.go`
+- `cmd/loom/cmd_sync.go`
+- `cmd/loom/cmd_tools.go`
+- `cmd/loom/cmd_tunnel.go`
+- `cmd/loom/cmd_validate.go`
 - `cmd/loom/daemon.go`
 - `cmd/loom/daemon_control.go`
 - `cmd/loom/daemon_timeout_test.go`
 - `cmd/loom/hud.go`
+- `cmd/loom/hud_control.go`
 - `cmd/loom/main.go`
 - `cmd/loom/proxy.go`
 - `cmd/loom/proxy_autostart_test.go`
@@ -331,24 +368,6 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-cloudflare/main_test.go`
 - `cmd/mcp-codebase-memory/README.md`
 - `cmd/mcp-codebase-memory/ROADMAP.md`
-- `cmd/mcp-codebase-memory/main.go`
-- `cmd/mcp-codebase-memory/tools.go`
-- `cmd/mcp-confluence/main.go`
-- `cmd/mcp-crypto/main.go`
-- `cmd/mcp-crypto/main_test.go`
-- `cmd/mcp-devbox/async.go`
-- `cmd/mcp-devbox/events.go`
-- `cmd/mcp-devbox/handlers.go`
-- `cmd/mcp-devbox/main.go`
-- `cmd/mcp-devbox/manager.go`
-- `cmd/mcp-devbox/manager_test.go`
-- `cmd/mcp-devbox/metrics.go`
-- `cmd/mcp-devbox/tools.go`
-- `cmd/mcp-devbox/tools_test.go`
-- `cmd/mcp-docker/main.go`
-- `cmd/mcp-docker/main_test.go`
-- `cmd/mcp-elasticsearch/main.go`
-- `cmd/mcp-elasticsearch/main_test.go`
 - `…`
 
 ## AGENTS.md Files
