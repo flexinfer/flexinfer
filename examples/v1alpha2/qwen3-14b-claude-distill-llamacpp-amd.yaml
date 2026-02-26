@@ -32,7 +32,7 @@ spec:
     ggufFile: Qwen3-14B-Claude-4.5-Opus-Distill.q4_k_m.gguf
     contextSize: 32768
     flashAttention: true
-    parallel: 2
+    parallel: 3
     batchSize: 2048
     ubatchSize: 2048
     cacheTypeK: q4_0
