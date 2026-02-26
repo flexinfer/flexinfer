@@ -1,5 +1,36 @@
 # Worklog
 
+## 2026-02-26 (session 20) — ROADMAP #12 vertical slice (observability servers)
+
+- What changed:
+  - Implemented a focused ROADMAP #12 slice by wiring `pkg/mcpotel` into three observability MCP servers:
+    - `cmd/mcp-alertmanager/main.go`
+    - `cmd/mcp-grafana/main.go`
+    - `cmd/mcp-loki/main.go`
+  - For each server:
+    - initialized tracer provider in `run(ctx)` via `mcpotel.InitTracer(...)`
+    - added graceful tracer shutdown on process exit
+    - wrapped every tool handler with `mcpotel.TracedToolHandler(...)`
+  - Updated docs/backlog tracking:
+    - `docs/DEVELOPER_GUIDE.md` tracing section now includes the newly instrumented servers
+    - `ROADMAP.md` Issue #12 bullet now records this completed slice
+- Why:
+  - Expand telemetry coverage where operators troubleshoot first (Alertmanager/Grafana/Loki), while keeping the change set small and verifiable.
+- Verification:
+  - `pre-commit run -a` — pass
+  - `go test ./cmd/mcp-grafana -count=1` — pass
+  - `go test ./cmd/mcp-loki -count=1` — pass
+  - `go test ./cmd/mcp-alertmanager -count=1` — pass
+  - `go test ./...` — pass
+  - `golangci-lint run` — pass (0 issues)
+- Sources:
+  - [S1] `cmd/mcp-alertmanager/main.go`
+  - [S2] `cmd/mcp-grafana/main.go`
+  - [S3] `cmd/mcp-loki/main.go`
+  - [S4] `pkg/mcpotel/middleware.go`
+  - [S5] `docs/DEVELOPER_GUIDE.md`
+  - [S6] `ROADMAP.md`
+
 ## 2026-02-26 (session 19) — Telemetry Dashboard Kickoff
 
 - What changed:

@@ -155,7 +155,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ./bin/loomd --debug
 ```
 
-Instrumented servers currently include `mcp-agent-context`, `mcp-git`, `mcp-gitlab`, and `mcp-prometheus`, with ongoing expansion noted in `ROADMAP.md`.
+Instrumented servers currently include `mcp-agent-context`, `mcp-alertmanager`, `mcp-git`, `mcp-gitlab`, `mcp-grafana`, `mcp-loki`, and `mcp-prometheus`, with ongoing expansion noted in `ROADMAP.md`.
 
 ### Metrics
 

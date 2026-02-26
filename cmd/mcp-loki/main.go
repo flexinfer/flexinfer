@@ -21,6 +21,7 @@ import (
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcplog"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/portforward"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
@@ -48,10 +49,20 @@ func run(ctx context.Context) error {
 	defer cleanup()
 
 	logger := mcplog.NewDefault()
+	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-loki", logger)
+	if err != nil {
+		logger.Warn("OTel tracer init failed", "error", err)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
+	tracer := mcpotel.Tracer(tp, "mcp-loki")
+
 	logger.Info("starting server", "name", "mcp-loki", "version", version, "url", lokiURL)
 
 	server := mcp.NewServer("mcp-loki", version)
 	server.SetInstructions("Loki log query tools")
+	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
+		return mcpotel.TracedToolHandler(tracer, name, h)
+	}
 
 	// Tools
 	server.AddTool(mcp.Tool{
@@ -67,7 +78,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, handleQuery)
+	}, wrap("loki_query", handleQuery))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_query_range",
@@ -84,7 +95,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query", "start", "end"},
 		},
-	}, handleQueryRange)
+	}, wrap("loki_query_range", handleQueryRange))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_labels",
@@ -96,7 +107,7 @@ func run(ctx context.Context) error {
 				"end":   map[string]any{"type": "string"},
 			},
 		},
-	}, handleLabels)
+	}, wrap("loki_labels", handleLabels))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_label_values",
@@ -110,7 +121,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, handleLabelValues)
+	}, wrap("loki_label_values", handleLabelValues))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_series",
@@ -128,7 +139,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"match"},
 		},
-	}, handleSeries)
+	}, wrap("loki_series", handleSeries))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_stats",
@@ -142,7 +153,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query", "start"},
 		},
-	}, handleStats)
+	}, wrap("loki_stats", handleStats))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_index_stats",
@@ -156,7 +167,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, handleIndexStats)
+	}, wrap("loki_index_stats", handleIndexStats))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_detected_fields",
@@ -172,7 +183,7 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, handleDetectedFields)
+	}, wrap("loki_detected_fields", handleDetectedFields))
 
 	server.AddTool(mcp.Tool{
 		Name:        "loki_ready",
@@ -181,7 +192,7 @@ func run(ctx context.Context) error {
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, handleReady)
+	}, wrap("loki_ready", handleReady))
 
 	return server.Run(ctx)
 }
