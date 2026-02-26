@@ -924,6 +924,56 @@ func TestCallPipelineTransportFailure_LocalClearsIdleAndStopsServer(t *testing.T
 	}
 }
 
+func TestCallPipelineTransportFailure_HubClearsPool(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.hubPool = newTestPool(t)
+	defer func() { _ = d.hubPool.Close() }()
+
+	// Seed idle connections so hub recovery has something to clear.
+	d.hubPool.Put(&pool.Conn{
+		ServerName: "hub_srv",
+		Transport:  &fakeTransport{},
+		Healthy:    true,
+	})
+	d.hubPool.Put(&pool.Conn{
+		ServerName: "hub_srv",
+		Transport:  &fakeTransport{},
+		Healthy:    true,
+	})
+
+	stats := d.hubPool.Stats()
+	if stats.IdleConns != 2 {
+		t.Fatalf("idle conns before = %d, want 2", stats.IdleConns)
+	}
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "transport-hub-clear"},
+		serverName: "hub_srv",
+		method:     "tools/call",
+		target:     router.TargetHub,
+		targetStr:  router.TargetHub.String(),
+		conn: &pool.Conn{
+			ServerName: "hub_srv",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+	}
+
+	resp := p.transportFailure("recv", errors.New("connection reset"), time.Now())
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected transport error response")
+	}
+	if p.conn.Healthy {
+		t.Fatal("expected connection marked unhealthy on transport failure")
+	}
+
+	stats = d.hubPool.Stats()
+	if stats.IdleConns != 0 {
+		t.Fatalf("idle conns = %d, want 0 after hub ClearServer", stats.IdleConns)
+	}
+}
+
 func TestCallPipelineTransportFailure_EmitsAuditAndCost(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	auditPath := enableAuditAndCostForTest(t, d)
