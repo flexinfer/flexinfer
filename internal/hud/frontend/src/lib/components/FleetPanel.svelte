@@ -80,6 +80,18 @@
     return map;
   });
 
+  // Parse agent type from agent_id prefix (e.g. "claude-code-552019522-69105" → "claude").
+  function inferAgentType(agentId) {
+    if (!agentId) return '';
+    const id = agentId.toLowerCase();
+    if (id.startsWith('claude')) return 'claude';
+    if (id.startsWith('codex')) return 'codex';
+    if (id.startsWith('gemini')) return 'gemini';
+    if (id.startsWith('copilot')) return 'copilot';
+    if (id.startsWith('kilocode')) return 'kilocode';
+    return agentId.split('-')[0] || '';
+  }
+
   // Task priority distribution for stat card.
   let taskPriorityDist = $derived.by(() => {
     const dist = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -193,10 +205,7 @@
           cmp = (a.memory_items ?? 0) - (b.memory_items ?? 0);
           break;
         case 'agent_type':
-          cmp = (agentLookup.get(a.agent_id)?.agent_type ?? '').localeCompare(agentLookup.get(b.agent_id)?.agent_type ?? '');
-          break;
-        case 'branch':
-          cmp = (agentLookup.get(a.agent_id)?.branch ?? '').localeCompare(agentLookup.get(b.agent_id)?.branch ?? '');
+          cmp = inferAgentType(a.agent_id).localeCompare(inferAgentType(b.agent_id));
           break;
         default:
           break;
@@ -209,9 +218,9 @@
   const fleetColumns = [
     { key: 'agent', label: 'Agent', sortable: true, width: '130px' },
     { key: 'status', label: 'Status', sortable: true, width: '70px' },
-    { key: 'agent_type', label: 'Type', sortable: true, width: '80px' },
+    { key: 'agent_type', label: 'Type', sortable: true, width: '70px' },
     { key: 'namespace', label: 'Namespace', sortable: true, width: '160px' },
-    { key: 'branch', label: 'Branch', sortable: true, width: '120px' },
+    { key: 'description', label: 'Description', sortable: false, width: '180px' },
     { key: 'task_count', label: 'Tasks', sortable: true, width: '60px' },
     { key: 'tokens_used', label: 'Tokens', sortable: true, width: '100px' },
     { key: 'memory_items', label: 'Memory', sortable: true, width: '70px' },
@@ -274,15 +283,12 @@
             <td>
               <StatusDot status={sessionStatus(session)} />
             </td>
-            <td class="text-mono text-muted text-xs">{agentLookup.get(session.agent_id)?.agent_type ?? '---'}</td>
+            <td class="text-mono text-muted text-xs">{inferAgentType(session.agent_id)}</td>
             <td class="text-mono text-muted namespace-cell" title={sanitizeText(session.namespace ?? '---')}>
               {sanitizeText(session.namespace ?? '---')}
             </td>
-            <td class="text-mono text-muted text-xs branch-cell">
-              {agentLookup.get(session.agent_id)?.branch ?? '---'}
-              {#if agentLookup.get(session.agent_id)?.pr_url}
-                <a href={agentLookup.get(session.agent_id).pr_url} target="_blank" rel="noopener" class="pr-link" title="View PR" onclick={(e) => e.stopPropagation()}>{'\u{1F517}'}</a>
-              {/if}
+            <td class="text-muted text-xs description-cell" title={sanitizeText(session.description ?? '')}>
+              {sanitizeText(session.description ?? '')}
             </td>
             <td class="text-mono">{session.task_count ?? 0}</td>
             <td class="text-mono token-cell">
@@ -336,7 +342,15 @@
         {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--fg-muted)">
-        {#key tunnelCount + cacheHitRate}<div class="metric-value data-updated">{tunnelCount}<span class="metric-unit">t</span> · {(cacheHitRate * 100).toFixed(0)}%</div>{/key}
+        {#key tunnelCount + cacheHitRate}
+          <div class="metric-value data-updated">
+            {#if tunnelCount > 0 || cacheHitRate > 0}
+              {tunnelCount} <span class="metric-unit">tunnels</span> · {(cacheHitRate * 100).toFixed(0)}%
+            {:else}
+              <span class="metric-unit">no data</span>
+            {/if}
+          </div>
+        {/key}
         <div class="metric-label">Infrastructure</div>
       </div>
     </div>
@@ -444,16 +458,10 @@
             <span class="stat-chip-value">{relativeTime(detailSession.started_at)}</span>
             <span class="stat-chip-label">started</span>
           </div>
-          {#if detailAgent?.agent_type}
+          {#if inferAgentType(detailSession.agent_id)}
             <div class="stat-chip">
-              <span class="stat-chip-value">{detailAgent.agent_type}</span>
+              <span class="stat-chip-value">{inferAgentType(detailSession.agent_id)}</span>
               <span class="stat-chip-label">type</span>
-            </div>
-          {/if}
-          {#if detailAgent?.branch}
-            <div class="stat-chip">
-              <span class="stat-chip-value">{detailAgent.branch}</span>
-              <span class="stat-chip-label">branch</span>
             </div>
           {/if}
           {#if detailAgent?.current_task}
@@ -768,11 +776,11 @@
   .priority-high { color: var(--warning); margin-right: 4px; }
   .priority-blocked { color: var(--error); opacity: 0.8; }
 
-  .branch-cell {
+  .description-cell {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 120px;
+    max-width: 180px;
   }
 
   .pr-link {

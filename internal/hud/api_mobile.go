@@ -340,7 +340,7 @@ type mobileTaskDTO struct {
 	AgentID   string   `json:"agent_id"`
 	Namespace string   `json:"namespace"`
 	Title     string   `json:"title"`
-	Context   string   `json:"context,omitempty"`
+	Context   string   `json:"context"`
 	Priority  string   `json:"priority"`
 	Status    string   `json:"status"`
 	Tags      []string `json:"tags"`

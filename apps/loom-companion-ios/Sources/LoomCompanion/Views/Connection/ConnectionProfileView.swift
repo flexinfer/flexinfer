@@ -27,6 +27,12 @@ struct ConnectionProfileView: View {
                         Text(profile.mode.rawValue.uppercased())
                     }
                 }
+                if profile.mode == .gateway {
+                    GridRow {
+                        Text("CF Access").foregroundStyle(.secondary)
+                        Text(profile.hasCloudflareAccessServiceToken ? "Configured" : "Not configured")
+                    }
+                }
             }
             .font(.subheadline)
         }

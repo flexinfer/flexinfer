@@ -14,6 +14,7 @@ Use this runbook to build and run Loom Companion on a physical iPhone and valida
 - iOS platform components installed in Xcode (`Xcode > Settings > Components`).
 - iPhone connected to your Mac (USB recommended for first run), unlocked, and trusted.
 - This repo checked out locally.
+- For CI/distribution signing setup, see `docs/MOBILE_COMPANION_SIGNING_SETUP.md`.
 
 ## Quick Start (LAN Mode)
 
@@ -95,21 +96,48 @@ make mobile-app-run-sim
 
 ## Gateway Mode (Remote)
 
-Use this when testing over remote/gateway endpoints instead of LAN.
+Use this when testing over the shared gateway host (`mcp.flexinfer.ai`) instead of LAN.
 
-1. Start HUD with TLS certificate flags:
+Quick bootstrap (recommended):
 
 ```bash
-./bin/loom hud \
-  --bind 0.0.0.0 \
-  --port 3333 \
-  --tls-cert /path/to/cert.pem \
-  --tls-key /path/to/key.pem \
-  --mobile-operator-token "$HUD_MOBILE_OPERATOR_TOKEN" \
-  --mobile-operator-scopes "$HUD_MOBILE_OPERATOR_SCOPES"
+make mobile-gateway-dev
 ```
 
-2. In app, choose `Gateway` mode and use an `https://` URL.
+`make mobile-gateway-dev` now performs cluster bootstrap:
+- rotates `HUD_MOBILE_OPERATOR_TOKEN`,
+- patches `loom-hub/loom-secrets`,
+- rollout-restarts `deployment/mobile-hud`,
+- verifies `GET https://<gateway>/api/mobile/v1/ping`.
+
+Recommended local defaults (`~/.config/secrets/ai.env`):
+
+```bash
+MOBILE_GATEWAY_URL=https://mcp.flexinfer.ai
+# Optional when Cloudflare Access service tokens are required:
+# MOBILE_GATEWAY_CF_ACCESS_CLIENT_ID=...
+# MOBILE_GATEWAY_CF_ACCESS_CLIENT_SECRET=...
+```
+
+Preflight only:
+
+```bash
+make mobile-gateway-preflight
+```
+
+In app:
+1. Choose `Gateway` mode.
+2. Use the printed `Gateway URL` and `Bearer Token`.
+3. If the gateway is Cloudflare Access-protected, fill:
+   - `CF-Access-Client-Id`
+   - `CF-Access-Client-Secret`
+
+Notes:
+- Gateway mode requires HTTPS; the app rejects non-HTTPS URLs.
+- The ingress uses cert-manager TLS (`loom-gateway-tls`).
+- Gateway path split routes:
+  - `/ws`, `/hosts`, `/health`, `/ready` -> MCP gateway
+  - `/api/mobile/v1/*` -> `mobile-hud` service
 
 ## Common Failures
 
@@ -119,3 +147,4 @@ Use this when testing over remote/gateway endpoints instead of LAN.
 - Pairing fails in LAN mode: verify Local Network permission in iOS settings.
 - `[unauthorized] invalid token`: ensure app token exactly matches HUD token.
 - `[forbidden]`: missing scope in `HUD_MOBILE_OPERATOR_SCOPES`.
+- `mobile-hud` rollout fails with `unknown flag: --bind` or missing `/api/mobile/v1`: the deployed `registry.harbor.lan/mcp/loom-core` image is too old; publish/update the image tag, then redeploy.

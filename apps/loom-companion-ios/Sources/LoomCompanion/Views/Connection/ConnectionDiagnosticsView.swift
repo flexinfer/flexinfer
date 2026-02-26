@@ -125,6 +125,7 @@ struct ConnectionDiagnosticsView: View {
         case .degradedStream: return "wifi.exclamationmark"
         case .authFailure: return "lock.shield"
         case .permissionDenied: return "hand.raised.fill"
+        case .gatewayRouteMissing: return "arrow.triangle.branch"
         case .unreachable: return "wifi.slash"
         case .rateLimited: return "gauge.with.dots.needle.67percent"
         case .unknown: return "questionmark.circle"

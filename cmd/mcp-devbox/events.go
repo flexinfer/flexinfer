@@ -94,6 +94,9 @@ func (m *manager) handleSummary(_ context.Context, _ map[string]any) (*mcp.CallT
 		"stopped":         stopped,
 		"projects":        projects,
 		"backend":         m.cfg.backendType,
+		"total_execs":     m.totalExecs.Load(),
+		"total_builds":    m.totalBuilds.Load(),
+		"uptime_seconds":  int(time.Since(m.startedAt).Seconds()),
 	}
 
 	return mcp.JSONResult(summary)

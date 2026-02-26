@@ -86,14 +86,18 @@ struct OpsView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(Array(viewModel.tasks.prefix(8))) { task in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(task.title).font(.subheadline).fontWeight(.medium)
-                                Text("\(task.agentId) • \(task.status.rawValue)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            NavigationLink {
+                                OpsTaskDetailView(task: task)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(task.title).font(.subheadline).fontWeight(.medium)
+                                    Text("\(task.agentId) • \(task.status.rawValue)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 2)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 2)
                         }
                     }
                 }
@@ -282,6 +286,40 @@ struct OpsView: View {
             Text(value).fontWeight(.semibold)
             Text(label).foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct OpsTaskDetailView: View {
+    let task: MobileTask
+
+    var body: some View {
+        List {
+            Section("Task") {
+                Text(task.title)
+                Text("Status: \(task.status.rawValue)")
+                Text("Priority: \(task.priority)")
+                Text("Agent: \(task.agentId)")
+                Text("Session: \(task.sessionId)")
+                Text("Namespace: \(task.namespace)")
+            }
+
+            Section("Context") {
+                if task.context.isEmpty {
+                    Text("No context provided")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(task.context)
+                }
+            }
+
+            Section("Metadata") {
+                Text("Created: \(task.createdAt)")
+                Text("Updated: \(task.updatedAt)")
+                Text("Tags: \(task.tags.isEmpty ? "none" : task.tags.joined(separator: ", "))")
+                Text("Blocked by: \(task.blockedBy.isEmpty ? "none" : task.blockedBy.joined(separator: ", "))")
+            }
+        }
+        .navigationTitle("Task")
     }
 }
 

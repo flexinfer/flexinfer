@@ -6,9 +6,10 @@
 		docker-build docker-build-loom-core docker-build-custom-server \
 		docker-push docker-push-loom-core docker-push-custom-server \
 		deploy deploy-status \
-		browserkit-check browserkit-setup \
-		hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev
+	browserkit-check browserkit-setup \
+	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
+		mobile-iphone-preflight mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev mobile-gateway-dev \
+		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -117,11 +118,17 @@ help:
 	@echo ""
 	@echo "Mobile Companion (iPhone):"
 	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
+	@echo "  make mobile-gateway-preflight - Verify MCP + mobile API surfaces on gateway host"
 	@echo "  make mobile-ios-project-sync - Regenerate Xcode project from project.yml"
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
 	@echo "  make mobile-app-open         - Open iOS app project in Xcode"
 	@echo "  make mobile-app-run-sim      - Build/install/launch app in iOS Simulator"
 	@echo "  make mobile-dev              - Generate token, restart HUD, open app, print URL+token"
+	@echo "  make mobile-gateway-dev      - Rotate token, patch loom-hub secret, restart mobile-hud, verify gateway"
+	@echo "  make mobile-signing-check    - Check iOS signing variables and current Xcode signing state"
+	@echo "  make mobile-signing-prepare  - Import Apple cert/profile into a temporary keychain (streamslate-style)"
+	@echo "  make mobile-signing-cleanup  - Remove temporary signing keychain and restore search list"
+	@echo "  make mobile-app-archive-export - Archive + app-store export (requires signing env prepared)"
 	@echo ""
 	@echo "Schemas:"
 	@echo "  make schemas-list    - List vendored upstream platform schemas"
@@ -730,6 +737,9 @@ hud-clean:
 mobile-iphone-preflight:
 	@./scripts/mobile/iphone_preflight.sh
 
+mobile-gateway-preflight:
+	@./scripts/mobile/gateway_preflight.sh
+
 # Keep the generated Xcode project aligned with project.yml and source layout.
 mobile-ios-project-sync:
 	@if ! command -v xcodegen >/dev/null 2>&1; then \
@@ -793,6 +803,53 @@ mobile-app-run-sim: mobile-ios-project-sync
 # - prints copy/paste URL + token values
 mobile-dev:
 	@./scripts/mobile/dev_bootstrap.sh
+
+# One-command gateway bootstrap:
+# - validates gateway surfaces via mobile-gateway-preflight
+# - generates a fresh mobile operator token
+# - patches loom-hub/loom-secrets (token/scopes and CF token normalization when configured)
+# - rollout-restarts deployment/mobile-hud
+# - verifies remote /api/mobile/v1/ping and prints copy/paste-ready values
+mobile-gateway-dev:
+	@./scripts/mobile/gateway_preflight.sh
+	@./scripts/mobile/gateway_bootstrap.sh
+
+# Validate signing-related environment and show current Xcode signing state.
+mobile-signing-check: mobile-ios-project-sync
+	@echo "== Loom Companion Signing Check =="
+	@echo "Project: $(MOBILE_IOS_PROJECT)"
+	@echo ""
+	@for key in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID APPLE_PROVISIONING_PROFILE APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_BASE64; do \
+		val=$$(eval "printf '%s' \"\$${$$key:-}\""); \
+		if [ -n "$$val" ]; then \
+			echo "PASS: $$key is set"; \
+		else \
+			echo "WARN: $$key is not set"; \
+		fi; \
+	done
+	@echo ""
+	@echo "Resolved Xcode signing fields (Release, generic iOS):"
+	@xcodebuild -project "$(MOBILE_IOS_PROJECT)" \
+		-scheme "$(MOBILE_IOS_SCHEME)" \
+		-configuration Release \
+		-destination 'generic/platform=iOS' \
+		-showBuildSettings 2>/dev/null | \
+		rg 'PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_STYLE|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM|PROVISIONING_PROFILE_SPECIFIER' || true
+
+# Import Apple certificate/profile into temporary keychain and emit build.env.
+mobile-signing-prepare:
+	@chmod +x scripts/mobile/import-certificate.sh
+	@./scripts/mobile/import-certificate.sh
+
+# Cleanup temporary keychain created by mobile-signing-prepare.
+mobile-signing-cleanup:
+	@chmod +x scripts/mobile/cleanup-signing.sh
+	@./scripts/mobile/cleanup-signing.sh
+
+# Archive and export an app-store IPA using manual signing inputs.
+mobile-app-archive-export:
+	@chmod +x scripts/mobile/archive_export.sh
+	@./scripts/mobile/archive_export.sh
 
 # Launch HUD for LAN iPhone testing (requires mobile auth token).
 mobile-hud:

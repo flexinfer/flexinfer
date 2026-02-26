@@ -50,6 +50,14 @@ struct ConnectionRemediationTests {
         #expect(r.description == "The token lacks a required scope.")
     }
 
+    @Test("Gateway route missing has explicit remediation")
+    func gatewayRouteMissingSeverity() {
+        let r = ConnectionRemediation.forHealth(.gatewayRouteMissing(message: "route missing"))
+        #expect(r.severity == .error)
+        #expect(r.title == "Gateway Route Missing")
+        #expect(r.steps.joined(separator: " ").contains("/api/mobile/v1"))
+    }
+
     @Test("Unreachable has error severity")
     func unreachableSeverity() {
         let r = ConnectionRemediation.forHealth(.unreachable)
