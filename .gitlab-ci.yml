@@ -1229,6 +1229,8 @@ sbom_generate:
 
 # License compliance check using go-licenses
 # Ensures all dependencies use approved open-source licenses
+# Optimization: single go-licenses pass (report) + grep for forbidden types,
+# instead of running both 'report' and 'check' which each do a full dep walk.
 go_licenses_check:
   stage: security
   <<: *go-cache
@@ -1236,16 +1238,18 @@ go_licenses_check:
     - mkdir -p .go
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export PATH=$PATH:$GOPATH/bin
-    - go install github.com/google/go-licenses@latest
+    - go mod download
+    - go install github.com/google/go-licenses@v2.0.0-alpha.1
   script:
     - echo "Checking license compliance for all Go dependencies..."
     - go-licenses report ./... 2>licenses-errors.txt | tee licenses-report.csv || true
     - |
       echo ""
       echo "=== Checking for forbidden licenses ==="
-      # Fail if any dependency uses a restricted license (GPL, AGPL, SSPL)
-      if go-licenses check ./... 2>&1 | grep -i "forbidden\|restricted"; then
-        echo "FAIL: Found dependencies with forbidden licenses"
+      # Check the CSV report for restricted license types (GPL, AGPL, SSPL)
+      # Column 2 of go-licenses CSV output is the license type URL/name
+      if grep -iE '(GPL|AGPL|SSPL|EUPL|OSL|CPAL)' licenses-report.csv | grep -v -i 'LGPL'; then
+        echo "FAIL: Found dependencies with forbidden licenses (see above)"
         exit 1
       fi
       echo "PASS: All dependencies use approved licenses"
