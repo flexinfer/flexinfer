@@ -117,10 +117,11 @@ func runProbeAndMetrics(ctx context.Context, nodeAgent *agent.Agent, setupLog in
 	}
 }
 
-// devShmUtilizationPercent returns /dev/shm usage as a percentage (0-100).
+// devShmUtilizationPercent returns host /dev/shm usage as a percentage (0-100).
+// The DaemonSet mounts the host root at /host, so the host tmpfs is at /host/dev/shm.
 func devShmUtilizationPercent() (float64, error) {
 	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/dev/shm", &stat); err != nil {
+	if err := syscall.Statfs("/host/dev/shm", &stat); err != nil {
 		return 0, err
 	}
 	total := stat.Blocks * uint64(stat.Bsize)
