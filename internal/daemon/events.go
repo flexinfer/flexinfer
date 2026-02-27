@@ -33,6 +33,9 @@ const (
 	EventCacheEvict EventType = "cache.evict"
 	// EventAccessDenied is emitted when RBAC denies a tool call.
 	EventAccessDenied EventType = "access.denied"
+	// EventDecompHint is emitted when a tool response exceeds a token threshold,
+	// suggesting the agent consider the recursive-context workflow for analysis.
+	EventDecompHint EventType = "decomp.hint"
 )
 
 // Event is a daemon event that can be broadcast to subscribers.

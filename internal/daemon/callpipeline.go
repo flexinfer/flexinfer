@@ -323,6 +323,7 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	p.markLocalActivity()
 	p.cacheSuccessResponse(resp)
 	p.emitResponseAudit(resp)
+	p.emitDecompHintIfLarge(resp)
 	return resp
 }
 
@@ -448,6 +449,30 @@ func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
 
 func (p *callPipeline) emitErrorAudit(target, errMsg string) {
 	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil, p.stage)
+}
+
+// decompHintTokenThreshold is the estimated token count above which a
+// decomposition hint is emitted, suggesting the agent use the
+// recursive-context workflow for large responses.
+const decompHintTokenThreshold = 8000
+
+func (p *callPipeline) emitDecompHintIfLarge(resp *mcp.Message) {
+	if resp == nil || resp.Result == nil || p.daemon.eventBus == nil {
+		return
+	}
+	// Estimate tokens: ~4 bytes per token heuristic.
+	estimatedTokens := (len(resp.Result) + 3) / 4
+	if estimatedTokens < decompHintTokenThreshold {
+		return
+	}
+	p.daemon.eventBus.Publish(EventDecompHint, map[string]any{
+		"server":           p.serverName,
+		"tool":             p.toolName,
+		"response_bytes":   len(resp.Result),
+		"estimated_tokens": estimatedTokens,
+		"suggestion":       "Response exceeds 8K tokens. Consider using the recursive-context workflow for decomposed analysis.",
+		"workflow":         "recursive-context",
+	})
 }
 
 // resolveToolCallTimeout determines the RPC timeout for a tools/call.

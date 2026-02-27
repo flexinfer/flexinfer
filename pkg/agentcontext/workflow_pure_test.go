@@ -846,6 +846,42 @@ func TestWorkflowClone_Nil(t *testing.T) {
 	}
 }
 
+func TestWorkflowClone_MapReduceFields(t *testing.T) {
+	t.Parallel()
+	wf := &Workflow{
+		ID:      "wf-mr-clone",
+		Status:  WorkflowStatusRunning,
+		Input:   map[string]any{},
+		Context: map[string]any{},
+		StepStates: map[string]*WorkflowStep{
+			"mr": {
+				ID:          "mr",
+				StepType:    StepTypeMapReduce,
+				MapInputKey: "items",
+				MapStepTemplate: &WorkflowStep{
+					ID:       "tmpl",
+					ToolArgs: map[string]any{"q": "original"},
+				},
+				ReduceToolArgs: map[string]any{"mode": "sum"},
+			},
+		},
+	}
+
+	cp := wf.clone()
+
+	// Modify original MapStepTemplate, verify clone is independent
+	wf.StepStates["mr"].MapStepTemplate.ToolArgs["q"] = "modified"
+	if cp.StepStates["mr"].MapStepTemplate.ToolArgs["q"] == "modified" {
+		t.Error("clone MapStepTemplate.ToolArgs should be independent")
+	}
+
+	// Modify original ReduceToolArgs
+	wf.StepStates["mr"].ReduceToolArgs["mode"] = "avg"
+	if cp.StepStates["mr"].ReduceToolArgs["mode"] == "avg" {
+		t.Error("clone ReduceToolArgs should be independent")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Subflow channel-based completion
 // ---------------------------------------------------------------------------

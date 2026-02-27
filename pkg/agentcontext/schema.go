@@ -620,6 +620,16 @@ func (w *Workflow) clone() *Workflow {
 					}
 					stepCopy.ApprovalInfo = &ai
 				}
+				if v.MapStepTemplate != nil {
+					tmplCopy := *v.MapStepTemplate
+					if v.MapStepTemplate.ToolArgs != nil {
+						tmplCopy.ToolArgs = copyMap(v.MapStepTemplate.ToolArgs)
+					}
+					stepCopy.MapStepTemplate = &tmplCopy
+				}
+				if v.ReduceToolArgs != nil {
+					stepCopy.ReduceToolArgs = copyMap(v.ReduceToolArgs)
+				}
 				cp.StepStates[k] = &stepCopy
 			}
 		}
