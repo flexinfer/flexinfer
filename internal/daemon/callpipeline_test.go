@@ -946,6 +946,9 @@ func TestCallPipelineTransportFailure_HubClearsPool(t *testing.T) {
 		t.Fatalf("idle conns before = %d, want 2", stats.IdleConns)
 	}
 
+	// Set hubClient so transportFailure also clears the WebSocket client cache.
+	d.hubClient = mcp.NewWebSocketClient(mcp.WebSocketConfig{})
+
 	p := &callPipeline{
 		daemon:     d,
 		msg:        &mcp.Message{ID: "transport-hub-clear"},

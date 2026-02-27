@@ -358,6 +358,9 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 		p.daemon.logger.Warn("hub transport failure; clearing pool",
 			"server", p.serverName, "stage", stage, "error", err)
 		p.daemon.hubPool.ClearServer(p.serverName)
+		if p.daemon.hubClient != nil {
+			p.daemon.hubClient.CloseConnection(p.serverName)
+		}
 	}
 
 	return p.internalError(err)
