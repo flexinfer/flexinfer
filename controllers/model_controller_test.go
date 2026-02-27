@@ -208,8 +208,8 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 	highPri := int32(100)
 	lowPri := int32(80)
 
-	// Scenario: active model is Ready but idle, queued model has recent demand.
-	// Expected: swap to the demanded model.
+	// Scenario: active model is Ready but idle, queued model has recent demand
+	// but LOWER priority. Expected: keep active model (priority gate blocks swap).
 	activeIdle := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{Name: "active-idle"},
 		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &highPri}},
@@ -227,8 +227,8 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 	}
 
 	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{activeIdle, demandedQueued}, now)
-	if leader == nil || leader.Name != "demanded" {
-		t.Fatalf("expected demanded model to preempt idle active, got %v", leaderName(leader))
+	if leader == nil || leader.Name != "active-idle" {
+		t.Fatalf("expected high-priority idle model to stay (priority gate), got %v", leaderName(leader))
 	}
 
 	// Scenario: active model is Ready AND has recent traffic.
@@ -305,8 +305,78 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 		},
 	}
 	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{preemptedLongAgo, idleReady, newDemand}, now)
-	if leader == nil || leader.Name != "new-demand" {
-		t.Fatalf("expected demand swap after cooldown, got %v", leaderName(leader))
+	if leader == nil || leader.Name != "idle-ready" {
+		t.Fatalf("expected high-priority idle-ready to stay despite low-priority demand, got %v", leaderName(leader))
+	}
+}
+
+func TestChooseSharedGroupLeader_DemandPriorityGate(t *testing.T) {
+	now := time.Now()
+	shared := "test-shared"
+
+	pri100 := int32(100)
+	pri200 := int32(200)
+	pri80 := int32(80)
+
+	// Scenario: demand preempts idle when demanded priority is HIGHER.
+	idleReady := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "idle-ready"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &pri100}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-5 * time.Minute)},
+		},
+	}
+	highDemand := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "high-demand"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &pri200}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
+		},
+	}
+	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, highDemand}, now)
+	if leader == nil || leader.Name != "high-demand" {
+		t.Fatalf("expected higher-priority demand to preempt idle ready, got %v", leaderName(leader))
+	}
+
+	// Scenario: demand preempts idle when priority is EQUAL (demand tiebreaks).
+	equalDemand := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "equal-demand"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &pri100}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, equalDemand}, now)
+	if leader == nil || leader.Name != "equal-demand" {
+		t.Fatalf("expected equal-priority demand to preempt idle ready, got %v", leaderName(leader))
+	}
+
+	// Scenario: demand does NOT preempt idle when priority is LOWER.
+	lowDemand := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "low-demand"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &pri80}},
+		Status: aiv1alpha2.ModelStatus{
+			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, lowDemand}, now)
+	if leader == nil || leader.Name != "idle-ready" {
+		t.Fatalf("expected idle ready to stay when demand has lower priority, got %v", leaderName(leader))
+	}
+
+	// Scenario: demand preempts when readyLeader has nil LastActiveTime (counts as idle)
+	// and demanded has higher priority.
+	nilActiveReady := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "nil-active-ready"},
+		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &pri100}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+		},
+	}
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{nilActiveReady, highDemand}, now)
+	if leader == nil || leader.Name != "high-demand" {
+		t.Fatalf("expected higher-priority demand to preempt nil-active ready, got %v", leaderName(leader))
 	}
 }
 

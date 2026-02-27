@@ -2079,7 +2079,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	if demandedLeader != nil && readyLeader != nil {
 		readyIdle := readyLeader.Status.LastActiveTime == nil ||
 			now.Sub(readyLeader.Status.LastActiveTime.Time) > sharedDemandWindow
-		if readyIdle {
+		if readyIdle && demandedLeader.Spec.GetPriority() >= readyLeader.Spec.GetPriority() {
 			return demandedLeader
 		}
 	}
