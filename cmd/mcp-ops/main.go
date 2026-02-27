@@ -223,7 +223,11 @@ func runKubectlWithStderr(ctx context.Context, kubeconfig string, includeStderrO
 	if kubeconfig == "" {
 		kubeconfig = k3sKubeconfig
 	}
-	cmdArgs := append(args, "--kubeconfig", kubeconfig)
+	cmdArgs := make([]string, len(args))
+	copy(cmdArgs, args)
+	if kubeconfig != "" {
+		cmdArgs = append(cmdArgs, "--kubeconfig", kubeconfig)
+	}
 	cmd := execCommand(ctx, "kubectl", cmdArgs...)
 
 	var stdout bytes.Buffer

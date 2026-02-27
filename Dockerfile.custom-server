@@ -37,7 +37,7 @@ RUN mkdir -p /out/services/loom-core/bin && \
 # Runtime stage
 FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates kubectl
 
 RUN adduser -D -u 1000 mcp
 USER mcp

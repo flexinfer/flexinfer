@@ -212,17 +212,20 @@ func getKubeConfig() string {
 		return v
 	}
 
+	// Check well-known paths; return "" to let kubectl use in-cluster config.
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		k3s := filepath.Join(home, ".kube", "k3s.yaml")
 		if _, err := os.Stat(k3s); err == nil {
 			return k3s
 		}
-		return filepath.Join(home, ".kube", "config")
+		def := filepath.Join(home, ".kube", "config")
+		if _, err := os.Stat(def); err == nil {
+			return def
+		}
 	}
 
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, ".kube", "config")
+	return "" // in-cluster or kubectl default
 }
 
 func runKubectl(ctx context.Context, contextName string, args ...string) (string, error) {
@@ -235,7 +238,10 @@ func runKubectl(ctx context.Context, contextName string, args ...string) (string
 		}
 	}
 
-	baseArgs := []string{"--kubeconfig", getKubeConfig()}
+	var baseArgs []string
+	if kc := getKubeConfig(); kc != "" {
+		baseArgs = append(baseArgs, "--kubeconfig", kc)
+	}
 	if contextName != "" {
 		baseArgs = append(baseArgs, "--context", contextName)
 	} else if v := os.Getenv("KUBECONTEXT"); v != "" {
