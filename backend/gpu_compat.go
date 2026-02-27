@@ -39,38 +39,52 @@ type GPUArchSupport struct {
 var BackendGPUCompatibility = map[string]map[string]GPUArchSupport{
 	"vllm": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportFull, 16384},
 		"sm_5":   {SupportUnsupported, 0},
 	},
 	"vllm-omni": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportFull, 16384},
 		"sm_5":   {SupportUnsupported, 0},
 	},
 	"llamacpp": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportFull, 16384},
-		"sm_5":   {SupportFull, 4096},
+		"sm_5":   {SupportFull, 6144},
 	},
 	"diffusers": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportExperimental, 16384},
 		"sm_5":   {SupportUnsupported, 0},
 	},
 	"comfyui": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportExperimental, 16384},
 		"sm_5":   {SupportUnsupported, 0},
 	},
 	"ollama": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportFull, 16384},
-		"sm_5":   {SupportFull, 4096},
+		"sm_5":   {SupportFull, 6144},
 	},
 	"mlc-llm": {
 		"gfx110": {SupportFull, 24576},
+		"gfx90a": {SupportFull, 65536},
+		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportExperimental, 16384},
-		"sm_5":   {SupportFull, 4096},
+		"sm_5":   {SupportFull, 6144},
 	},
 }
 

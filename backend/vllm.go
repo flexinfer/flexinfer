@@ -134,6 +134,23 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
 				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: useAiter},
 			)
+		} else if strings.HasPrefix(spec.GPUArch, "gfx942") {
+			// MI300X (CDNA3): primary AITER target, full vLLM feature support.
+			useAiter := "0"
+			if enableAiter {
+				useAiter = "1"
+			}
+			env = append(env,
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
+				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: useAiter},
+			)
+		} else if strings.HasPrefix(spec.GPUArch, "gfx90a") {
+			// MI250 (CDNA2): AITER not applicable (CDNA2 architecture).
+			env = append(env,
+				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
+				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
+			)
 		} else if strings.HasPrefix(spec.GPUArch, "gfx906") {
 			// gfx906: AITER is not applicable (GCN5 architecture)
 			env = append(env,

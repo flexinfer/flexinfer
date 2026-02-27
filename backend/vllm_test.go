@@ -215,6 +215,127 @@ func TestVLLMBackendEnv_GFX906IgnoresAiter(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendEnv_GFX942Settings(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx942",
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	// V1 engine defaults to off
+	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
+	}
+	// Flash attention defaults to off
+	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
+	}
+	// AITER should be present (MI300X is primary target) but defaults to off
+	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_ROCM_USE_AITER=0, got %q", v)
+	}
+	// PYTORCH_ROCM_ARCH should be set
+	if v, ok := envMap["PYTORCH_ROCM_ARCH"]; !ok || v != "gfx942" {
+		t.Errorf("expected PYTORCH_ROCM_ARCH=gfx942, got %q", v)
+	}
+	// No HSA override for MI300X (natively supported)
+	if _, ok := envMap["HSA_OVERRIDE_GFX_VERSION"]; ok {
+		t.Error("expected HSA_OVERRIDE_GFX_VERSION to be absent on gfx942")
+	}
+}
+
+func TestVLLMBackendEnv_GFX90aSettings(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx90a",
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	// V1 engine defaults to off
+	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
+	}
+	// Flash attention defaults to off
+	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
+	}
+	// AITER should NOT be present for MI250 (CDNA2, not supported)
+	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Error("expected VLLM_ROCM_USE_AITER to be absent on gfx90a")
+	}
+	// PYTORCH_ROCM_ARCH should be set
+	if v, ok := envMap["PYTORCH_ROCM_ARCH"]; !ok || v != "gfx90a" {
+		t.Errorf("expected PYTORCH_ROCM_ARCH=gfx90a, got %q", v)
+	}
+	// No HSA override or SDMA disable for MI250
+	if _, ok := envMap["HSA_OVERRIDE_GFX_VERSION"]; ok {
+		t.Error("expected HSA_OVERRIDE_GFX_VERSION to be absent on gfx90a")
+	}
+	if _, ok := envMap["HSA_ENABLE_SDMA"]; ok {
+		t.Error("expected HSA_ENABLE_SDMA to be absent on gfx90a")
+	}
+}
+
+func TestVLLMBackendEnv_GFX942AiterOptIn(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx942",
+		Config: map[string]interface{}{
+			"enableAiter": true,
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	// AITER should be enabled on MI300X when opted in
+	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "1" {
+		t.Errorf("expected VLLM_ROCM_USE_AITER=1 with AITER opt-in on gfx942, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_GFX90aIgnoresAiter(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx90a",
+		Config: map[string]interface{}{
+			"enableAiter": true, // should be ignored on gfx90a
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	// AITER should NOT be present for MI250 even when opted in
+	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Error("expected VLLM_ROCM_USE_AITER to be absent on gfx90a even with opt-in")
+	}
+}
+
 func TestVLLMBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	b := &VLLMBackend{}
 

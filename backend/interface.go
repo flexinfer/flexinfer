@@ -292,6 +292,8 @@ func (b *BaseBackend) DefaultIdleTimeout() time.Duration {
 //
 // Architecture-specific behavior:
 //   - gfx110x (RDNA3, RX 7900 series): HSA override 11.0.0, AOTriton, PYTORCH_ROCM_ARCH
+//   - gfx90a (MI250, CDNA2): PYTORCH_ROCM_ARCH only (natively supported)
+//   - gfx942 (MI300X, CDNA3): PYTORCH_ROCM_ARCH only (natively supported)
 //   - gfx906 (Vega20, Radeon VII): disable SDMA for stability, PYTORCH_ROCM_ARCH
 //   - unknown/empty: only PYTORCH_ROCM_ARCH if arch is known, no HSA override
 func ROCmEnvVars(arch string) []corev1.EnvVar {
@@ -309,6 +311,16 @@ func ROCmEnvVars(arch string) []corev1.EnvVar {
 				Value: "1",
 			},
 			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx1100"},
+		)
+	case strings.HasPrefix(arch, "gfx90a"):
+		// MI250 (CDNA2): natively supported by ROCm, no HSA override needed.
+		env = append(env,
+			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx90a"},
+		)
+	case strings.HasPrefix(arch, "gfx942"):
+		// MI300X (CDNA3): natively supported by ROCm, no HSA override needed.
+		env = append(env,
+			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx942"},
 		)
 	case strings.HasPrefix(arch, "gfx906"):
 		// Vega20 (Radeon VII): natively supported by ROCm, no HSA override needed.

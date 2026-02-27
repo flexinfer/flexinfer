@@ -39,6 +39,22 @@ func TestROCmEnvVars(t *testing.T) {
 			dontWant: []string{"HSA_OVERRIDE_GFX_VERSION", "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"},
 		},
 		{
+			name: "gfx90a returns MI250 config",
+			arch: "gfx90a",
+			wantVars: map[string]string{
+				"PYTORCH_ROCM_ARCH": "gfx90a",
+			},
+			dontWant: []string{"HSA_OVERRIDE_GFX_VERSION", "HSA_ENABLE_SDMA", "HSA_USE_SVM"},
+		},
+		{
+			name: "gfx942 returns MI300X config",
+			arch: "gfx942",
+			wantVars: map[string]string{
+				"PYTORCH_ROCM_ARCH": "gfx942",
+			},
+			dontWant: []string{"HSA_OVERRIDE_GFX_VERSION", "HSA_ENABLE_SDMA", "HSA_USE_SVM"},
+		},
+		{
 			name: "unknown arch sets only PYTORCH_ROCM_ARCH",
 			arch: "gfx900",
 			wantVars: map[string]string{
