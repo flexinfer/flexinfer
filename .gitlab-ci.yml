@@ -1252,7 +1252,7 @@ go_licenses_check:
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - go mod download
-    - go install github.com/google/go-licenses@v2.0.0-alpha.1
+    - go install github.com/google/go-licenses@v1.6.0
   script:
     - echo "Checking license compliance for all Go dependencies..."
     - go-licenses report ./... 2>licenses-errors.txt | tee licenses-report.csv || true
