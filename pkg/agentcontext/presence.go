@@ -222,7 +222,7 @@ func (s *Service) HandlePresenceDeregister(ctx context.Context, args map[string]
 	}
 
 	// Delete from Qdrant (non-fatal)
-	if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+	if err := s.qdrant.Get(CollPresence).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
 		result["_warning"] = fmt.Sprintf("failed to delete presence from store: %v", err)
 	}
 
@@ -376,8 +376,8 @@ func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 		if s.cfg.GitAutoCleanupWorktrees {
 			s.orphanWorktreesForAgent(agentID)
 		}
-		if s.presenceQdrant != nil {
-			if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+		if s.qdrant.Get(CollPresence) != nil {
+			if err := s.qdrant.Get(CollPresence).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
 				s.logger.Warn("failed to delete expired presence from Qdrant", "agent_id", agentID, "error", err)
 			}
 		}
@@ -388,7 +388,7 @@ func (s *Service) cleanupExpiredPresence(ctx context.Context) {
 
 // persistPresence stores presence to Qdrant
 func (s *Service) persistPresence(ctx context.Context, p *AgentPresence) error {
-	if err := s.presenceQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollPresence).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return err
 	}
 
@@ -398,12 +398,12 @@ func (s *Service) persistPresence(ctx context.Context, p *AgentPresence) error {
 		Payload: presenceToPayload(p),
 	}
 
-	return s.presenceQdrant.Upsert(ctx, []Point{point}, true)
+	return s.qdrant.Get(CollPresence).Upsert(ctx, []Point{point}, true)
 }
 
 // loadPresenceFromQdrant loads presence registry from Qdrant on startup
 func (s *Service) loadPresenceFromQdrant(ctx context.Context) error {
-	points, err := s.presenceQdrant.ScrollPoints(ctx, nil, 500, false)
+	points, err := s.qdrant.Get(CollPresence).ScrollPoints(ctx, nil, 500, false)
 	if err != nil {
 		return err
 	}

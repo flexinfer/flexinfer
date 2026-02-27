@@ -42,7 +42,7 @@ func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any)
 
 	// Copy from existing session if specified
 	if fromSessionID != "" {
-		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(Match("session_id", fromSessionID)), 100)
+		entries, _ := s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(Match("session_id", fromSessionID)), 100)
 		for _, e := range entries {
 			// Filter by entry types if specified
 			if len(template.EntryTypesToInclude) > 0 {
@@ -63,7 +63,7 @@ func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any)
 
 	// Store template (use dummy vector since not searching by content)
 	dummyVector := make([]float64, sessionsVectorSize)
-	if err := s.templatesQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollTemplates).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 	}
 
@@ -73,7 +73,7 @@ func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any)
 		Payload: templateToPayload(template),
 	}
 
-	if err := s.templatesQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+	if err := s.qdrant.Get(CollTemplates).Upsert(ctx, []Point{point}, true); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("create template: %w", err)), nil
 	}
 
@@ -95,7 +95,7 @@ func (s *Service) HandleTemplateList(ctx context.Context, args map[string]any) (
 		filter = FilterMust(Match("namespace", namespace))
 	}
 
-	points, err := s.templatesQdrant.ScrollPoints(ctx, filter, limit, false)
+	points, err := s.qdrant.Get(CollTemplates).ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("list templates: %w", err)), nil
 	}

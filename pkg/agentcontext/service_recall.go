@@ -179,7 +179,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 				filter = FilterMust(conds...)
 			}
 
-			searchResults, _ := s.contextQdrant.Search(ctx, vector, filter, 30, true)
+			searchResults, _ := s.qdrant.Get(CollContext).Search(ctx, vector, filter, 30, true)
 
 			// Apply recency weighting
 			now := time.Now()
@@ -258,7 +258,7 @@ func (s *Service) getEntriesForSymbol(ctx context.Context, agentID, symbol strin
 		filter = FilterMust(Match("agent_id", agentID))
 	}
 
-	results, err := s.contextQdrant.Search(ctx, vector, filter, limit, true)
+	results, err := s.qdrant.Get(CollContext).Search(ctx, vector, filter, limit, true)
 	if err != nil {
 		return nil, err
 	}

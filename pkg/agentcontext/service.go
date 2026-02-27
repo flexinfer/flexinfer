@@ -40,25 +40,8 @@ type Service struct {
 	tracer  trace.Tracer
 	metrics *Metrics
 
-	contextQdrant     *QdrantClient
-	sessionsQdrant    *QdrantClient
-	tasksQdrant       *QdrantClient
-	annotationsQdrant *QdrantClient
-	handoffsQdrant    *QdrantClient
-	templatesQdrant   *QdrantClient
-	embed             embed.Embedder
-
-	// Persistence collections (Phase 1)
-	graphEntitiesQdrant  *QdrantClient
-	graphRelationsQdrant *QdrantClient
-	workflowsQdrant      *QdrantClient
-	workflowDefsQdrant   *QdrantClient
-	memoryQdrant         *QdrantClient
-
-	// Coordination collections
-	presenceQdrant   *QdrantClient
-	fileClaimsQdrant *QdrantClient
-	worktreeQdrant   *QdrantClient
+	qdrant *QdrantRegistry
+	embed  embed.Embedder
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*Session
@@ -183,29 +166,11 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	}
 
 	svc := &Service{
-		cfg:               cfg,
-		contextQdrant:     NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.ContextCollection, cfg.QdrantDistance),
-		sessionsQdrant:    NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.SessionsCollection, cfg.QdrantDistance),
-		tasksQdrant:       NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TasksCollection, cfg.QdrantDistance),
-		annotationsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.AnnotationsCollection, cfg.QdrantDistance),
-		handoffsQdrant:    NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.HandoffsCollection, cfg.QdrantDistance),
-		templatesQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.TemplatesCollection, cfg.QdrantDistance),
-		embed:             embedder,
-		sessions:          make(map[string]*Session),
+		cfg:    cfg,
+		qdrant: NewQdrantRegistry(hc, cfg),
+		embed:  embedder,
 
-		// Persistence collections (Phase 1)
-		graphEntitiesQdrant:  NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.GraphEntitiesCollection, cfg.QdrantDistance),
-		graphRelationsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.GraphRelationsCollection, cfg.QdrantDistance),
-		workflowsQdrant:      NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowsCollection, cfg.QdrantDistance),
-		workflowDefsQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorkflowDefsCollection, cfg.QdrantDistance),
-		memoryQdrant:         NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.MemoryCollection, cfg.QdrantDistance),
-
-		// Coordination collections
-		presenceQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.PresenceCollection, cfg.QdrantDistance),
-		fileClaimsQdrant: NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.FileClaimsCollection, cfg.QdrantDistance),
-		worktreeQdrant:   NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, cfg.WorktreeCollection, cfg.QdrantDistance),
-
-		// In-memory coordination state
+		sessions:      make(map[string]*Session),
 		presenceMap:   make(map[string]*AgentPresence),
 		fileClaims:    make(map[string]map[string]*FileClaim),
 		worktreeAssns: make(map[string]*WorktreeAssignment),
@@ -214,7 +179,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 
 	// Best-effort: if the context collection already exists, remember its vector size
 	// so we can avoid "unknown vector size" edge-cases on operations like share/summarize.
-	if exists, size, err := svc.contextQdrant.GetCollectionVectorSize(context.Background()); err == nil && exists && size > 0 {
+	if exists, size, err := svc.qdrant.Get(CollContext).GetCollectionVectorSize(context.Background()); err == nil && exists && size > 0 {
 		svc.vectorSize = size
 	}
 
@@ -224,8 +189,8 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	// Initialize knowledge graph with persistence
 	svc.knowledgeGraph = NewKnowledgeGraph()
 	svc.persistedKnowledgeGraph = svc.knowledgeGraph.SetPersistence(&GraphPersistenceConfig{
-		EntitiesQdrant:  svc.graphEntitiesQdrant,
-		RelationsQdrant: svc.graphRelationsQdrant,
+		EntitiesQdrant:  svc.qdrant.Get(CollGraphEntities),
+		RelationsQdrant: svc.qdrant.Get(CollGraphRelations),
 		EmbedModel:      cfg.EmbedModel,
 		VectorSize:      svc.vectorSize,
 	})
@@ -233,15 +198,15 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	// Initialize memory hierarchy with persistence
 	svc.memoryHierarchy = NewMemoryHierarchy()
 	svc.persistedMemoryHierarchy = svc.memoryHierarchy.SetPersistence(&MemoryPersistenceConfig{
-		MemoryQdrant: svc.memoryQdrant,
+		MemoryQdrant: svc.qdrant.Get(CollMemory),
 		EmbedModel:   cfg.EmbedModel,
 		VectorSize:   svc.vectorSize,
 	})
 
 	// Initialize workflow engine with persistence
 	svc.persistedWorkflowEngine = svc.workflowEngine.SetPersistence(&WorkflowPersistenceConfig{
-		WorkflowsQdrant:    svc.workflowsQdrant,
-		WorkflowDefsQdrant: svc.workflowDefsQdrant,
+		WorkflowsQdrant:    svc.qdrant.Get(CollWorkflows),
+		WorkflowDefsQdrant: svc.qdrant.Get(CollWorkflowDefs),
 	})
 
 	// Apply functional options and set defaults.
@@ -277,7 +242,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	if cfg.TaskReconcilerStaleTimeout > 0 {
 		reconcilerConfig.StaleTimeout = time.Duration(cfg.TaskReconcilerStaleTimeout) * time.Hour
 	}
-	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.tasksQdrant, svc, svc.logger)
+	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.qdrant.Get(CollTasks), svc, svc.logger)
 
 	// Initialize worktree reconciler
 	wtReconcilerConfig := DefaultWorktreeReconcilerConfig()
@@ -358,7 +323,7 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 
 // loadSessionsFromQdrant loads active sessions from Qdrant into memory
 func (s *Service) loadSessionsFromQdrant(ctx context.Context) error {
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, FilterMust(Match("status", string(SessionStatusActive))), 500, false)
+	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, FilterMust(Match("status", string(SessionStatusActive))), 500, false)
 	if err != nil {
 		return err
 	}
@@ -539,12 +504,12 @@ func (s *Service) enrichSessionStartResult(ctx context.Context, result map[strin
 
 	// Fetch pending handoffs for this agent
 	var pendingHandoffs []map[string]any
-	if s.handoffsQdrant != nil {
+	if s.qdrant.Get(CollHandoffs) != nil {
 		conds := []any{
 			Match("target_agent_id", agentID),
 			Match("status", string(HandoffStatusPending)),
 		}
-		points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
+		points, err := s.qdrant.Get(CollHandoffs).ScrollPoints(ctx, FilterMust(conds...), 50, false)
 		if err == nil {
 			for _, p := range points {
 				h, err := payloadToHandoff(p.Payload)
@@ -630,8 +595,8 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		s.presenceMu.Unlock()
 		cleanedUp["presence_deregistered"] = hadPresence
 
-		if hadPresence && s.presenceQdrant != nil {
-			if err := s.presenceQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+		if hadPresence && s.qdrant.Get(CollPresence) != nil {
+			if err := s.qdrant.Get(CollPresence).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
 				s.logger.Warn("failed to delete presence from Qdrant", "agent_id", agentID, "error", err)
 			}
 		}
@@ -666,14 +631,14 @@ func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string)
 	s.sessionsMu.Unlock()
 
 	// End persisted sessions in Qdrant.
-	if s.sessionsQdrant == nil {
+	if s.qdrant.Get(CollSessions) == nil {
 		return
 	}
 	filter := FilterMust(
 		Match("agent_id", agentID),
 		Match("status", "active"),
 	)
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 500, false)
+	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 500, false)
 	if err != nil || len(points) == 0 {
 		return
 	}
@@ -704,7 +669,7 @@ func (s *Service) markSessionTasksStale(ctx context.Context, sessionID string) i
 		),
 	)
 
-	points, err := s.tasksQdrant.ScrollPoints(ctx, filter, 500, false)
+	points, err := s.qdrant.Get(CollTasks).ScrollPoints(ctx, filter, 500, false)
 	if err != nil || len(points) == 0 {
 		return 0
 	}
@@ -721,7 +686,7 @@ func (s *Service) markSessionTasksStale(ctx context.Context, sessionID string) i
 			"resolution": "session ended — task incomplete",
 			"updated_at": now,
 		}
-		if err := s.tasksQdrant.SetPayload(ctx, []string{id}, payload, false); err != nil {
+		if err := s.qdrant.Get(CollTasks).SetPayload(ctx, []string{id}, payload, false); err != nil {
 			s.logger.Warn("failed to mark task stale on session end", "task_id", id, "error", err)
 			continue
 		}
@@ -757,7 +722,7 @@ func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*
 	if len(conds) > 0 {
 		filter = FilterMust(conds...)
 	}
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, limit, false)
+	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("list sessions: %w", err)), nil
 	}
@@ -803,8 +768,8 @@ func (s *Service) HandleSessionDelete(ctx context.Context, args map[string]any) 
 	s.sessionsMu.Unlock()
 
 	// Remove from Qdrant
-	if s.sessionsQdrant != nil {
-		if err := s.sessionsQdrant.Delete(ctx, []string{sessionID}); err != nil {
+	if s.qdrant.Get(CollSessions) != nil {
+		if err := s.qdrant.Get(CollSessions).Delete(ctx, []string{sessionID}); err != nil {
 			return mcp.ErrorResult(fmt.Errorf("delete session from Qdrant: %w", err)), nil
 		}
 	}
@@ -842,7 +807,7 @@ func (s *Service) HandleSessionPrune(ctx context.Context, args map[string]any) (
 // pruneSessions deletes sessions matching status and age criteria.
 // Returns the number of sessions pruned.
 func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilter string, dryRun bool) (int, error) {
-	if s.sessionsQdrant == nil {
+	if s.qdrant.Get(CollSessions) == nil {
 		return 0, nil
 	}
 
@@ -865,7 +830,7 @@ func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilt
 	}
 
 	filter := FilterMust(FilterShould(statusConds...))
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 1000, false)
+	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 1000, false)
 	if err != nil {
 		return 0, fmt.Errorf("scroll sessions: %w", err)
 	}
@@ -892,7 +857,7 @@ func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilt
 	}
 
 	// Delete from Qdrant
-	if err := s.sessionsQdrant.Delete(ctx, toDelete); err != nil {
+	if err := s.qdrant.Get(CollSessions).Delete(ctx, toDelete); err != nil {
 		return 0, fmt.Errorf("delete sessions: %w", err)
 	}
 
@@ -960,14 +925,14 @@ func (s *Service) sessionReaperTick(ctx context.Context) {
 // endStaleSessions finds active sessions older than maxAgeHours whose agents
 // have no current presence, and marks them ended. Returns the count ended.
 func (s *Service) endStaleSessions(ctx context.Context, maxAgeHours int) int {
-	if s.sessionsQdrant == nil {
+	if s.qdrant.Get(CollSessions) == nil {
 		return 0
 	}
 
 	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour)
 
 	filter := FilterMust(Match("status", "active"))
-	points, err := s.sessionsQdrant.ScrollPoints(ctx, filter, 1000, false)
+	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 1000, false)
 	if err != nil {
 		s.logger.Warn("endStaleSessions scroll failed", "error", err)
 		return 0
@@ -1124,7 +1089,7 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 
 	// Ensure collection exists
 	if s.vectorSize > 0 {
-		if err := s.contextQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+		if err := s.qdrant.Get(CollContext).EnsureCollection(ctx, s.vectorSize); err != nil {
 			return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 		}
 	}
@@ -1146,7 +1111,7 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 		})
 	}
 
-	if err := s.upsertPointsBatched(ctx, s.contextQdrant, points); err != nil {
+	if err := s.upsertPointsBatched(ctx, s.qdrant.Get(CollContext), points); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("upsert entries: %w", err)), nil
 	}
 
@@ -1188,7 +1153,7 @@ func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*m
 		return mcp.ErrorResult(err), nil
 	}
 
-	points, err := s.contextQdrant.GetPoints(ctx, ids, false)
+	points, err := s.qdrant.Get(CollContext).GetPoints(ctx, ids, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("get entries: %w", err)), nil
 	}
@@ -1225,7 +1190,7 @@ func (s *Service) HandleContextDelete(ctx context.Context, args map[string]any) 
 		return mcp.ErrorResult(fmt.Errorf("confirm=true required for deletion")), nil
 	}
 
-	if err := s.contextQdrant.Delete(ctx, ids); err != nil {
+	if err := s.qdrant.Get(CollContext).Delete(ctx, ids); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("delete entries: %w", err)), nil
 	}
 
@@ -1288,7 +1253,7 @@ func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) 
 	}
 
 	searchStart := time.Now()
-	results, err := s.contextQdrant.Search(ctx, vector, filter, limit, includeContent)
+	results, err := s.qdrant.Get(CollContext).Search(ctx, vector, filter, limit, includeContent)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("search: %w", err)), nil
 	}
@@ -1369,7 +1334,7 @@ func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (
 	// Update entries
 	updated := 0
 	for _, id := range entryIDs {
-		p, err := s.contextQdrant.GetPoint(ctx, id, false)
+		p, err := s.qdrant.Get(CollContext).GetPoint(ctx, id, false)
 		if err != nil || p.Payload == nil {
 			continue
 		}
@@ -1385,7 +1350,7 @@ func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (
 			"visibility":  string(entry.Visibility),
 			"shared_with": entry.SharedWith,
 		}
-		if err := s.contextQdrant.SetPayload(ctx, []string{id}, payload, true); err == nil {
+		if err := s.qdrant.Get(CollContext).SetPayload(ctx, []string{id}, payload, true); err == nil {
 			updated++
 		}
 	}
@@ -1439,7 +1404,7 @@ func (s *Service) HandleContextQueryShared(ctx context.Context, args map[string]
 		return mcp.ErrorResult(fmt.Errorf("embedding query: %w", err)), nil
 	}
 
-	results, err := s.contextQdrant.Search(ctx, vector, filter, limit, true)
+	results, err := s.qdrant.Get(CollContext).Search(ctx, vector, filter, limit, true)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("search: %w", err)), nil
 	}
@@ -1501,13 +1466,13 @@ func (s *Service) HandleContextStats(ctx context.Context, args map[string]any) (
 		filter = FilterMust(conds...)
 	}
 
-	count, err := s.contextQdrant.Count(ctx, filter)
+	count, err := s.qdrant.Get(CollContext).Count(ctx, filter)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("count: %w", err)), nil
 	}
 
 	// Get entries to calculate tokens (limited sample)
-	entries, _ := s.contextQdrant.Scroll(ctx, filter, 1000)
+	entries, _ := s.qdrant.Get(CollContext).Scroll(ctx, filter, 1000)
 	totalTokens := 0
 	byType := make(map[string]int)
 	for _, e := range entries {
@@ -1587,7 +1552,7 @@ func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string
 	if s.vectorSize <= 0 {
 		return mcp.ErrorResult(fmt.Errorf("unknown vector size")), nil
 	}
-	if err := s.contextQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+	if err := s.qdrant.Get(CollContext).EnsureCollection(ctx, s.vectorSize); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 	}
 
@@ -1597,7 +1562,7 @@ func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string
 		Payload: EntryToPayload(entry, s.cfg.EmbedModel),
 	}
 
-	if err := s.contextQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+	if err := s.qdrant.Get(CollContext).Upsert(ctx, []Point{point}, true); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("upsert: %w", err)), nil
 	}
 
@@ -1622,10 +1587,10 @@ func (s *Service) persistSession(ctx context.Context, session *Session) error {
 	}
 
 	// Ensure sessions collection with minimal vector size
-	if err := s.sessionsQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollSessions).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return err
 	}
-	return s.sessionsQdrant.Upsert(ctx, []Point{point}, true)
+	return s.qdrant.Get(CollSessions).Upsert(ctx, []Point{point}, true)
 }
 
 func (s *Service) recallContext(ctx context.Context, opts RecallOptions) ([]ContextEntry, error) {
@@ -1678,7 +1643,7 @@ func (s *Service) recallContext(ctx context.Context, opts RecallOptions) ([]Cont
 				filter = FilterMust(conds...)
 			}
 
-			searchResults, _ := s.contextQdrant.Search(ctx, vector, filter, 20, true)
+			searchResults, _ := s.qdrant.Get(CollContext).Search(ctx, vector, filter, 20, true)
 			for _, sr := range searchResults {
 				if remainingBudget >= sr.Entry.TokenCount && !seen[sr.Entry.ID] {
 					results = append(results, sr.Entry)
@@ -1714,7 +1679,7 @@ func (s *Service) getRecentByType(ctx context.Context, agentID, sessionID string
 		conds = append(conds, Match("session_id", sessionID))
 	}
 
-	entries, err := s.contextQdrant.Scroll(ctx, FilterMust(conds...), limit*2)
+	entries, err := s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(conds...), limit*2)
 	if err != nil {
 		return nil, err
 	}
@@ -1737,12 +1702,12 @@ func (s *Service) getEntriesForFile(ctx context.Context, agentID, filePath strin
 		conds = append(conds, Match("agent_id", agentID))
 	}
 
-	return s.contextQdrant.Scroll(ctx, FilterMust(conds...), limit)
+	return s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(conds...), limit)
 }
 
 func (s *Service) generateSummary(ctx context.Context, session *Session) error {
 	// Get all entries for the session
-	entries, err := s.contextQdrant.Scroll(ctx, FilterMust(
+	entries, err := s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(
 		Match("session_id", session.ID),
 	), 1000)
 	if err != nil {
@@ -1832,7 +1797,7 @@ func (s *Service) generateSummary(ctx context.Context, session *Session) error {
 	if s.vectorSize <= 0 {
 		return fmt.Errorf("unknown vector size")
 	}
-	if err := s.contextQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+	if err := s.qdrant.Get(CollContext).EnsureCollection(ctx, s.vectorSize); err != nil {
 		return err
 	}
 
@@ -1842,7 +1807,7 @@ func (s *Service) generateSummary(ctx context.Context, session *Session) error {
 		Payload: EntryToPayload(summaryEntry, s.cfg.EmbedModel),
 	}
 
-	if err := s.contextQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+	if err := s.qdrant.Get(CollContext).Upsert(ctx, []Point{point}, true); err != nil {
 		return err
 	}
 
@@ -1907,7 +1872,7 @@ func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, e
 	}
 	s.sessionsMu.RUnlock()
 
-	p, err := s.sessionsQdrant.GetPoint(ctx, sessionID, false)
+	p, err := s.qdrant.Get(CollSessions).GetPoint(ctx, sessionID, false)
 	if err != nil {
 		return nil, err
 	}

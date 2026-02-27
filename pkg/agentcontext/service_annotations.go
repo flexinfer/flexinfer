@@ -63,7 +63,7 @@ func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) 
 		return mcp.ErrorResult(fmt.Errorf("unknown vector size")), nil
 	}
 
-	if err := s.annotationsQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+	if err := s.qdrant.Get(CollAnnotations).EnsureCollection(ctx, s.vectorSize); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 	}
 
@@ -73,7 +73,7 @@ func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) 
 		Payload: annotationToPayload(annotation),
 	}
 
-	if err := s.annotationsQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+	if err := s.qdrant.Get(CollAnnotations).Upsert(ctx, []Point{point}, true); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("upsert annotation: %w", err)), nil
 	}
 
@@ -109,7 +109,7 @@ func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any)
 		filter = FilterMust(conds...)
 	}
 
-	points, err := s.annotationsQdrant.ScrollPoints(ctx, filter, limit, false)
+	points, err := s.qdrant.Get(CollAnnotations).ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("get annotations: %w", err)), nil
 	}
@@ -149,7 +149,7 @@ func (s *Service) getAnnotationsForFile(ctx context.Context, agentID, filePath s
 		conds = append(conds, Match("agent_id", agentID))
 	}
 
-	points, err := s.annotationsQdrant.ScrollPoints(ctx, FilterMust(conds...), limit, false)
+	points, err := s.qdrant.Get(CollAnnotations).ScrollPoints(ctx, FilterMust(conds...), limit, false)
 	if err != nil {
 		return nil, err
 	}

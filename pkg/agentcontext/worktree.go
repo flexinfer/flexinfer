@@ -475,10 +475,10 @@ func (s *Service) runGit(ctx context.Context, dir string, args ...string) (strin
 
 // persistWorktreeAssignment stores an assignment to Qdrant
 func (s *Service) persistWorktreeAssignment(ctx context.Context, a *WorktreeAssignment) error {
-	if s.worktreeQdrant == nil {
+	if s.qdrant.Get(CollWorktree) == nil {
 		return nil
 	}
-	if err := s.worktreeQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollWorktree).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return err
 	}
 
@@ -488,12 +488,12 @@ func (s *Service) persistWorktreeAssignment(ctx context.Context, a *WorktreeAssi
 		Payload: worktreeAssignmentToPayload(a),
 	}
 
-	return s.worktreeQdrant.Upsert(ctx, []Point{point}, true)
+	return s.qdrant.Get(CollWorktree).Upsert(ctx, []Point{point}, true)
 }
 
 // loadWorktreeAssignmentsFromQdrant loads worktree assignments on startup
 func (s *Service) loadWorktreeAssignmentsFromQdrant(ctx context.Context) error {
-	points, err := s.worktreeQdrant.ScrollPoints(ctx, nil, 500, false)
+	points, err := s.qdrant.Get(CollWorktree).ScrollPoints(ctx, nil, 500, false)
 	if err != nil {
 		return err
 	}

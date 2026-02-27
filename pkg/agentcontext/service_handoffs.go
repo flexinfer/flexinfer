@@ -56,7 +56,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 	switch handoffType {
 	case HandoffTypeFull:
 		// Get all entries for the session
-		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(Match("session_id", sessionID)), 500)
+		entries, _ := s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(Match("session_id", sessionID)), 500)
 		for _, e := range entries {
 			if totalTokens+e.TokenCount > tokenBudget {
 				break
@@ -69,7 +69,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 	case HandoffTypeSelective:
 		// Use provided entry IDs
 		for _, id := range entryIDs {
-			p, err := s.contextQdrant.GetPoint(ctx, id, false)
+			p, err := s.qdrant.Get(CollContext).GetPoint(ctx, id, false)
 			if err != nil {
 				continue
 			}
@@ -87,7 +87,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 
 	case HandoffTypeSummaryOnly:
 		// Get session summaries and decisions only
-		entries, _ := s.contextQdrant.Scroll(ctx, FilterMust(
+		entries, _ := s.qdrant.Get(CollContext).Scroll(ctx, FilterMust(
 			Match("session_id", sessionID),
 			FilterShould(
 				Match("entry_type", string(EntryTypeSummary)),
@@ -109,7 +109,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 
 	// Store handoff (use dummy vector since not searching by content)
 	dummyVector := make([]float64, sessionsVectorSize)
-	if err := s.handoffsQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollHandoffs).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 	}
 
@@ -119,7 +119,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 		Payload: handoffToPayload(handoff),
 	}
 
-	if err := s.handoffsQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+	if err := s.qdrant.Get(CollHandoffs).Upsert(ctx, []Point{point}, true); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("create handoff: %w", err)), nil
 	}
 
@@ -148,7 +148,7 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 	}
 
 	// Get handoff
-	p, err := s.handoffsQdrant.GetPoint(ctx, handoffID, false)
+	p, err := s.qdrant.Get(CollHandoffs).GetPoint(ctx, handoffID, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("handoff %s not found", handoffID)), nil
 	}
@@ -166,7 +166,7 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 	// Check expiration
 	if handoff.ExpiresAt != nil && time.Now().After(*handoff.ExpiresAt) {
 		handoff.Status = HandoffStatusExpired
-		s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{"status": string(HandoffStatusExpired)}, true)
+		s.qdrant.Get(CollHandoffs).SetPayload(ctx, []string{handoffID}, map[string]any{"status": string(HandoffStatusExpired)}, true)
 		return mcp.ErrorResult(fmt.Errorf("handoff has expired")), nil
 	}
 
@@ -188,7 +188,7 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 	if importEntries && len(handoff.EntryIDs) > 0 {
 		var importedEntries []ContextEntry
 		for _, id := range handoff.EntryIDs {
-			ep, err := s.contextQdrant.GetPoint(ctx, id, true)
+			ep, err := s.qdrant.Get(CollContext).GetPoint(ctx, id, true)
 			if err != nil {
 				continue
 			}
@@ -206,7 +206,7 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 	now := time.Now()
 	handoff.Status = HandoffStatusAccepted
 	handoff.AcceptedAt = &now
-	s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
+	s.qdrant.Get(CollHandoffs).SetPayload(ctx, []string{handoffID}, map[string]any{
 		"status":      string(HandoffStatusAccepted),
 		"accepted_at": now.Format(time.RFC3339Nano),
 	}, true)
@@ -230,7 +230,7 @@ func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (
 		conds = append(conds, Match("status", string(HandoffStatusPending)))
 	}
 
-	points, err := s.handoffsQdrant.ScrollPoints(ctx, FilterMust(conds...), 50, false)
+	points, err := s.qdrant.Get(CollHandoffs).ScrollPoints(ctx, FilterMust(conds...), 50, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("query inbox: %w", err)), nil
 	}
@@ -274,7 +274,7 @@ func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (
 		// Mark as viewed if pending
 		if h.Status == HandoffStatusPending {
 			viewedAt := now.Format(time.RFC3339Nano)
-			if err := s.handoffsQdrant.SetPayload(ctx, []string{h.ID}, map[string]any{
+			if err := s.qdrant.Get(CollHandoffs).SetPayload(ctx, []string{h.ID}, map[string]any{
 				"status":    string(HandoffStatusViewed),
 				"viewed_at": viewedAt,
 			}, true); err != nil {
@@ -302,7 +302,7 @@ func (s *Service) HandleHandoffReject(ctx context.Context, args map[string]any) 
 	}
 
 	// Get the handoff
-	p, err := s.handoffsQdrant.GetPoint(ctx, handoffID, false)
+	p, err := s.qdrant.Get(CollHandoffs).GetPoint(ctx, handoffID, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("handoff %s not found", handoffID)), nil
 	}
@@ -318,7 +318,7 @@ func (s *Service) HandleHandoffReject(ctx context.Context, args map[string]any) 
 	}
 
 	now := time.Now()
-	if err := s.handoffsQdrant.SetPayload(ctx, []string{handoffID}, map[string]any{
+	if err := s.qdrant.Get(CollHandoffs).SetPayload(ctx, []string{handoffID}, map[string]any{
 		"status":          string(HandoffStatusRejected),
 		"rejected_at":     now.Format(time.RFC3339Nano),
 		"rejected_reason": reason,

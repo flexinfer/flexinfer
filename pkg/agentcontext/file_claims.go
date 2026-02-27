@@ -116,7 +116,7 @@ func (s *Service) HandleFileClaimRelease(ctx context.Context, args map[string]an
 		s.fileClaimsMu.Unlock()
 
 		// Remove from Qdrant
-		if err := s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(
+		if err := s.qdrant.Get(CollFileClaims).DeleteByFilter(ctx, FilterMust(
 			Match("agent_id", agentID),
 			Match("file_path", filePath),
 		)); err != nil {
@@ -243,11 +243,11 @@ func (s *Service) releaseAllClaimsForAgent(agentID string) int {
 	s.fileClaimsMu.Unlock()
 
 	// Also clean up Qdrant (best-effort, non-blocking)
-	if released > 0 && s.fileClaimsQdrant != nil {
+	if released > 0 && s.qdrant.Get(CollFileClaims) != nil {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := s.fileClaimsQdrant.DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
+			if err := s.qdrant.Get(CollFileClaims).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
 				s.logger.Warn("failed to delete file claims from Qdrant", "agent_id", agentID, "error", err)
 			}
 		}()
@@ -257,7 +257,7 @@ func (s *Service) releaseAllClaimsForAgent(agentID string) int {
 
 // persistFileClaim stores a claim to Qdrant
 func (s *Service) persistFileClaim(ctx context.Context, claim *FileClaim) error {
-	if err := s.fileClaimsQdrant.EnsureCollection(ctx, sessionsVectorSize); err != nil {
+	if err := s.qdrant.Get(CollFileClaims).EnsureCollection(ctx, sessionsVectorSize); err != nil {
 		return err
 	}
 
@@ -267,12 +267,12 @@ func (s *Service) persistFileClaim(ctx context.Context, claim *FileClaim) error 
 		Payload: fileClaimToPayload(claim),
 	}
 
-	return s.fileClaimsQdrant.Upsert(ctx, []Point{point}, true)
+	return s.qdrant.Get(CollFileClaims).Upsert(ctx, []Point{point}, true)
 }
 
 // loadFileClaimsFromQdrant loads file claims from Qdrant on startup
 func (s *Service) loadFileClaimsFromQdrant(ctx context.Context) error {
-	points, err := s.fileClaimsQdrant.ScrollPoints(ctx, nil, 1000, false)
+	points, err := s.qdrant.Get(CollFileClaims).ScrollPoints(ctx, nil, 1000, false)
 	if err != nil {
 		return err
 	}

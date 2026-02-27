@@ -95,7 +95,7 @@ func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.
 		return mcp.ErrorResult(fmt.Errorf("unknown vector size")), nil
 	}
 
-	if err := s.tasksQdrant.EnsureCollection(ctx, s.vectorSize); err != nil {
+	if err := s.qdrant.Get(CollTasks).EnsureCollection(ctx, s.vectorSize); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
 	}
 
@@ -113,7 +113,7 @@ func (s *Service) HandleTaskAdd(ctx context.Context, args map[string]any) (*mcp.
 		})
 	}
 
-	if err := s.upsertPointsBatched(ctx, s.tasksQdrant, points); err != nil {
+	if err := s.upsertPointsBatched(ctx, s.qdrant.Get(CollTasks), points); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("upsert tasks: %w", err)), nil
 	}
 
@@ -142,7 +142,7 @@ func (s *Service) HandleTaskUpdate(ctx context.Context, args map[string]any) (*m
 	status := TaskStatus(statusStr)
 
 	// Get existing task
-	p, err := s.tasksQdrant.GetPoint(ctx, taskID, false)
+	p, err := s.qdrant.Get(CollTasks).GetPoint(ctx, taskID, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("task %s not found: %w", taskID, err)), nil
 	}
@@ -168,7 +168,7 @@ func (s *Service) HandleTaskUpdate(ctx context.Context, args map[string]any) (*m
 
 	// Update payload
 	payload := taskToPayload(*task)
-	if err := s.tasksQdrant.SetPayload(ctx, []string{taskID}, payload, true); err != nil {
+	if err := s.qdrant.Get(CollTasks).SetPayload(ctx, []string{taskID}, payload, true); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("update task: %w", err)), nil
 	}
 
@@ -212,7 +212,7 @@ func (s *Service) HandleTaskList(ctx context.Context, args map[string]any) (*mcp
 		filter = FilterMust(conds...)
 	}
 
-	points, err := s.tasksQdrant.ScrollPoints(ctx, filter, limit, false)
+	points, err := s.qdrant.Get(CollTasks).ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("list tasks: %w", err)), nil
 	}
@@ -267,7 +267,7 @@ func (s *Service) HandleTaskDelete(ctx context.Context, args map[string]any) (*m
 		return mcp.ErrorResult(fmt.Errorf("no valid task IDs provided")), nil
 	}
 
-	if err := s.tasksQdrant.Delete(ctx, taskIDs); err != nil {
+	if err := s.qdrant.Get(CollTasks).Delete(ctx, taskIDs); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("delete tasks: %w", err)), nil
 	}
 
@@ -291,7 +291,7 @@ func (s *Service) getActiveTasks(ctx context.Context, agentID, sessionID string,
 		conds = append(conds, Match("session_id", sessionID))
 	}
 
-	points, err := s.tasksQdrant.ScrollPoints(ctx, FilterMust(conds...), limit*2, false)
+	points, err := s.qdrant.Get(CollTasks).ScrollPoints(ctx, FilterMust(conds...), limit*2, false)
 	if err != nil {
 		return nil, err
 	}

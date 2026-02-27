@@ -294,8 +294,8 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 		delete(r.svc.worktreeAssns, a.ID)
 		r.svc.worktreeMu.Unlock()
 
-		if r.svc.worktreeQdrant != nil {
-			_ = r.svc.worktreeQdrant.Delete(ctx, []string{a.ID})
+		if r.svc.qdrant.Get(CollWorktree) != nil {
+			_ = r.svc.qdrant.Get(CollWorktree).Delete(ctx, []string{a.ID})
 		}
 
 		r.svc.metrics.WorktreeOrphansRemoved.Add(1)

@@ -145,7 +145,7 @@ func (s *Service) HandleCheckStale(ctx context.Context, args map[string]any) (ma
 	if len(entryIDs) > 0 {
 		// Check specific entries by ID
 		for _, id := range entryIDs {
-			p, err := s.contextQdrant.GetPoint(ctx, id, false)
+			p, err := s.qdrant.Get(CollContext).GetPoint(ctx, id, false)
 			if err != nil || p.Payload == nil {
 				continue
 			}
@@ -158,7 +158,7 @@ func (s *Service) HandleCheckStale(ctx context.Context, args map[string]any) (ma
 	} else if filePath != "" {
 		// Find entries by file path
 		filter := FilterMust(Match("file_path", filePath))
-		entries, err = s.contextQdrant.Scroll(ctx, filter, 100)
+		entries, err = s.qdrant.Get(CollContext).Scroll(ctx, filter, 100)
 		if err != nil {
 			return nil, fmt.Errorf("find entries: %w", err)
 		}
@@ -168,7 +168,7 @@ func (s *Service) HandleCheckStale(ctx context.Context, args map[string]any) (ma
 			Match("session_id", sessionID),
 			Match("entry_type", string(EntryTypeFileRead)),
 		)
-		entries, err = s.contextQdrant.Scroll(ctx, filter, 100)
+		entries, err = s.qdrant.Get(CollContext).Scroll(ctx, filter, 100)
 		if err != nil {
 			return nil, fmt.Errorf("find entries: %w", err)
 		}
@@ -239,7 +239,7 @@ func (s *Service) HandleRefreshStale(ctx context.Context, args map[string]any) (
 
 	for _, id := range entryIDs {
 		// Get the entry
-		p, err := s.contextQdrant.GetPoint(ctx, id, true)
+		p, err := s.qdrant.Get(CollContext).GetPoint(ctx, id, true)
 		if err != nil || p.Payload == nil {
 			failed++
 			errors = append(errors, fmt.Sprintf("%s: not found", id))
@@ -297,7 +297,7 @@ func (s *Service) HandleRefreshStale(ctx context.Context, args map[string]any) (
 			Payload: EntryToPayload(*entry, s.cfg.EmbedModel),
 		}
 
-		if err := s.contextQdrant.Upsert(ctx, []Point{point}, true); err != nil {
+		if err := s.qdrant.Get(CollContext).Upsert(ctx, []Point{point}, true); err != nil {
 			failed++
 			errors = append(errors, fmt.Sprintf("%s: upsert failed", id))
 			continue
@@ -429,7 +429,7 @@ func (s *Service) HandleAskSource(ctx context.Context, args map[string]any) (map
 								freshness = "refreshed"
 
 								// Re-fetch the updated entry
-								p, _ := s.contextQdrant.GetPoint(ctx, entry.ID, false)
+								p, _ := s.qdrant.Get(CollContext).GetPoint(ctx, entry.ID, false)
 								if p.Payload != nil {
 									if updated, _ := PayloadToEntry(p.Payload); updated != nil {
 										entry = *updated
