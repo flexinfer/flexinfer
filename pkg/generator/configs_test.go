@@ -610,7 +610,7 @@ func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	found := false
 	for _, h := range entries {
 		cmd, _ := h["command"].(string)
-		if strings.Contains(cmd, "git ls-files --others --exclude-standard") &&
+		if strings.Contains(cmd, "git diff --cached --quiet --no-ext-diff") &&
 			strings.Contains(cmd, "Dirty worktree detected") {
 			found = true
 			break
@@ -715,7 +715,7 @@ func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	found := false
 	for _, h := range entries {
 		cmd, _ := h["command"].(string)
-		if strings.Contains(cmd, "git ls-files --others --exclude-standard") &&
+		if strings.Contains(cmd, "git diff --cached --quiet --no-ext-diff") &&
 			strings.Contains(cmd, "Dirty worktree detected") {
 			found = true
 			break

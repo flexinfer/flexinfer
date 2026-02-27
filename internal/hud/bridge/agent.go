@@ -1604,6 +1604,8 @@ type SessionStartResult struct {
 	AlreadyExisted  bool   `json:"already_existed"`
 }
 
+const sessionStartActiveLookupTimeout = 1500 * time.Millisecond
+
 // StartSession creates a session, registers presence, and optionally recalls context.
 // It is idempotent: if the agent already has an active session in the same namespace,
 // it returns the existing session ID instead of creating a new one.
@@ -1612,7 +1614,8 @@ type SessionStartResult struct {
 // background goroutines so the caller is not blocked by non-critical MCP calls.
 func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, error) {
 	// Check for existing active session in the same namespace (cached, fast path).
-	if existing, err := a.GetActiveSession(p.AgentID); err == nil && existing != nil {
+	// Bound this lookup to avoid delaying startup if agent-context is slow.
+	if existing, err := a.getActiveSession(p.AgentID, sessionStartActiveLookupTimeout); err == nil && existing != nil {
 		if existing.Namespace == p.Namespace && existing.Status == "active" {
 			return &SessionStartResult{
 				SessionID:      existing.ID,
@@ -1777,6 +1780,14 @@ func (a *AgentBridge) PresenceRegister(agentID, sessionID, agentType, descriptio
 // Results are cached for 30 seconds to avoid repeated full session list
 // fetches from the MCP server. Returns nil if no active session exists.
 func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
+	return a.getActiveSession(agentID, 0)
+}
+
+func (a *AgentBridge) getActiveSession(agentID string, timeout time.Duration) (*SessionInfo, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, nil
+	}
+
 	cacheKey := "active_session:" + agentID
 	if cached, ok := a.cache.Get(cacheKey); ok {
 		// Cache hit — may be nil (*SessionInfo) for "no active session".
@@ -1794,7 +1805,13 @@ func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
 		"status":   "active",
 		"limit":    1,
 	}
-	if err := a.callAgentTool("agent_session_list", args, &listResult); err != nil {
+	var err error
+	if timeout > 0 {
+		err = a.callAgentToolTimeout("agent_session_list", args, &listResult, timeout)
+	} else {
+		err = a.callAgentTool("agent_session_list", args, &listResult)
+	}
+	if err != nil {
 		return nil, err
 	}
 

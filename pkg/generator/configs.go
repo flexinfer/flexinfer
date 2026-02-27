@@ -1020,7 +1020,9 @@ func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
 		payload = []byte(`{"systemMessage":"Dirty worktree detected. Continue on this branch and stage only task-scoped files."}`)
 	}
 
-	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then printf '%%s\n' %q; fi; fi; exit 0`, string(payload))
+	// Keep this check fast at session start by avoiding untracked-file scans,
+	// which can be expensive in large monorepos.
+	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then if ! git diff --quiet --no-ext-diff || ! git diff --cached --quiet --no-ext-diff; then printf '%%s\n' %q; fi; fi; exit 0`, string(payload))
 }
 
 // mainBranchWorktreeNudgeCommand returns a shell command that emits a systemMessage

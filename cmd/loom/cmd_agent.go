@@ -38,6 +38,8 @@ func hudBaseURL(port string) string {
 }
 
 const defaultHUDTimeout = 10 * time.Second
+const sessionStartHUDPingTimeout = 250 * time.Millisecond
+const sessionStartHUDPostTimeout = 4 * time.Second
 
 // hudRequest sends a request to the HUD API and returns the raw response body.
 func hudRequest(port, method, path string, body any, headers map[string]string, timeout time.Duration) (json.RawMessage, error) {
@@ -198,10 +200,10 @@ func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionS
 		"agent session-start",
 		func() (json.RawMessage, error) {
 			// Skip slow HUD POST when HUD is clearly not reachable.
-			if _, err := hudGetFast(port, "/api/ping", 1*time.Second); err != nil {
+			if _, err := hudGetFast(port, "/api/ping", sessionStartHUDPingTimeout); err != nil {
 				return nil, err
 			}
-			return hudPost(port, "/api/agent/session-start", p)
+			return hudPostFast(port, "/api/agent/session-start", p, sessionStartHUDPostTimeout)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
