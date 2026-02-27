@@ -110,6 +110,7 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil
 	}
 
+	m.totalExecs.Add(1)
 	execID := generateExecID()
 	execCtx, cancel := context.WithTimeout(context.Background(), timeout)
 
@@ -127,7 +128,9 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 	_ = m.store.TouchLastUsed(projectName)
 	m.incActiveExecs(projectName)
 
+	m.asyncWg.Add(1)
 	go func() {
+		defer m.asyncWg.Done()
 		defer m.decActiveExecs(projectName)
 		defer cancel()
 

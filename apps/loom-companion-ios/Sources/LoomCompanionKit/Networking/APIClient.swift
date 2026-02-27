@@ -11,11 +11,22 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
     private let baseURL: URL
     private let token: String
     private let deviceId: String
+    private let cloudflareAccessClientID: String?
+    private let cloudflareAccessClientSecret: String?
 
-    public init(baseURL: URL, token: String, deviceId: String = "", session: URLSession? = nil) {
+    public init(
+        baseURL: URL,
+        token: String,
+        deviceId: String = "",
+        cloudflareAccessClientID: String? = nil,
+        cloudflareAccessClientSecret: String? = nil,
+        session: URLSession? = nil
+    ) {
         self.baseURL = baseURL
         self.token = token
         self.deviceId = deviceId
+        self.cloudflareAccessClientID = cloudflareAccessClientID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.cloudflareAccessClientSecret = cloudflareAccessClientSecret?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let session {
             self.session = session
@@ -29,10 +40,7 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
 
     public func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         var urlRequest = try endpoint.urlRequest(baseURL: baseURL)
-        urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if !deviceId.isEmpty {
-            urlRequest.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
-        }
+        applyAuthHeaders(to: &urlRequest)
 
         let data: Data
         let response: URLResponse
@@ -88,13 +96,25 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
     /// Build an SSE request (used by SSEClient).
     public func sseRequest() throws -> URLRequest {
         var request = try Endpoint.eventsStream.urlRequest(baseURL: baseURL)
+        applyAuthHeaders(to: &request)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 0 // No timeout for SSE
+        return request
+    }
+
+    private func applyAuthHeaders(to request: inout URLRequest) {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if !deviceId.isEmpty {
             request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
         }
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 0 // No timeout for SSE
-        return request
+        if let id = cloudflareAccessClientID,
+           let secret = cloudflareAccessClientSecret,
+           !id.isEmpty,
+           !secret.isEmpty
+        {
+            request.setValue(id, forHTTPHeaderField: "CF-Access-Client-Id")
+            request.setValue(secret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        }
     }
 
     private func mapHTTPError(status: Int, data: Data) -> LoomAPIError {

@@ -12,6 +12,8 @@ public final class ConnectionViewModel {
     public var baseURLInput: String = ""
     public var tokenInput: String = ""
     public var connectionMode: ConnectionMode = .lan
+    public var cloudflareAccessClientIDInput: String = ""
+    public var cloudflareAccessClientSecretInput: String = ""
 
     @ObservationIgnored
     private let tokenStore: TokenStore
@@ -26,6 +28,8 @@ public final class ConnectionViewModel {
         if let profile = tokenStore.loadProfile(), tokenStore.hasToken {
             baseURLInput = profile.baseURL
             connectionMode = profile.mode
+            cloudflareAccessClientIDInput = profile.cloudflareAccessClientID ?? ""
+            cloudflareAccessClientSecretInput = profile.cloudflareAccessClientSecret ?? ""
             isAuthenticated = true
         }
     }
@@ -49,12 +53,26 @@ public final class ConnectionViewModel {
             return
         }
 
+        let cloudflareAccessClientID = normalizedOptional(cloudflareAccessClientIDInput)
+        let cloudflareAccessClientSecret = normalizedOptional(cloudflareAccessClientSecretInput)
+        if connectionMode == .gateway,
+           (cloudflareAccessClientID == nil) != (cloudflareAccessClientSecret == nil)
+        {
+            pairingError = "Provide both CF-Access-Client-Id and CF-Access-Client-Secret, or leave both empty"
+            return
+        }
+
         isPairing = true
         pairingError = nil
         showLANPermissionHint = false
         defer { isPairing = false }
 
-        let client = APIClient(baseURL: url, token: tokenInput)
+        let client = APIClient(
+            baseURL: url,
+            token: tokenInput,
+            cloudflareAccessClientID: connectionMode == .gateway ? cloudflareAccessClientID : nil,
+            cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil
+        )
 
         // Probe /ping to validate connection
         do {
@@ -62,7 +80,11 @@ public final class ConnectionViewModel {
         } catch let error as LoomAPIError {
             switch error {
             case let .apiError(code, message, _):
-                pairingError = "[\(code.rawValue)] \(message)"
+                if code == .notFound, connectionMode == .gateway {
+                    pairingError = "[not_found] mobile API route not configured on gateway (/api/mobile/v1 is not routed)"
+                } else {
+                    pairingError = "[\(code.rawValue)] \(message)"
+                }
             case .networkError where connectionMode == .lan:
                 pairingError = "Cannot reach server. If this is a local address, check that Local Network permission is enabled in Settings > Privacy & Security > Local Network."
                 showLANPermissionHint = true
@@ -80,7 +102,13 @@ public final class ConnectionViewModel {
         // Save credentials
         let normalizedBaseURL = url.absoluteString
         baseURLInput = normalizedBaseURL
-        let profile = ConnectionProfile(name: "default", baseURL: normalizedBaseURL, mode: connectionMode)
+        let profile = ConnectionProfile(
+            name: "default",
+            baseURL: normalizedBaseURL,
+            mode: connectionMode,
+            cloudflareAccessClientID: connectionMode == .gateway ? cloudflareAccessClientID : nil,
+            cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil
+        )
         do {
             try tokenStore.saveToken(tokenInput)
             try tokenStore.saveProfile(profile)
@@ -100,6 +128,8 @@ public final class ConnectionViewModel {
         apiClient = nil
         isAuthenticated = false
         tokenInput = ""
+        cloudflareAccessClientIDInput = ""
+        cloudflareAccessClientSecretInput = ""
     }
 
     /// Build an APIClient from stored credentials.
@@ -110,7 +140,12 @@ public final class ConnectionViewModel {
         else {
             return nil
         }
-        return APIClient(baseURL: url, token: token)
+        return APIClient(
+            baseURL: url,
+            token: token,
+            cloudflareAccessClientID: profile.cloudflareAccessClientID,
+            cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret
+        )
     }
 
     static func normalizedBaseURL(_ input: String, mode: ConnectionMode) -> URL? {
@@ -143,6 +178,11 @@ public final class ConnectionViewModel {
         }
 
         return components.url
+    }
+
+    private func normalizedOptional(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

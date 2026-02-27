@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -82,14 +83,69 @@ Use --metrics-addr to connect to the daemon's SSE event stream for
 real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load optional env file (secrets for launchd, etc.).
+			homeDir, _ := os.UserHomeDir()
 			envFile := os.Getenv("LOOM_HUD_ENV_FILE")
 			if envFile == "" {
-				if home, err := os.UserHomeDir(); err == nil {
-					envFile = filepath.Join(home, ".config", "loom", "hud.env")
+				if homeDir != "" {
+					envFile = filepath.Join(homeDir, ".config", "loom", "hud.env")
 				}
 			}
 			if envFile != "" {
 				_ = env.LoadFile(envFile)
+			}
+			// Re-apply environment-backed defaults after loading hud.env.
+			// Cobra flag defaults are evaluated before RunE executes, so values
+			// loaded from hud.env must be copied into flag vars explicitly.
+			applyEnvString := func(flagName, envKey string, target *string) {
+				if cmd.Flags().Changed(flagName) {
+					return
+				}
+				if v := os.Getenv(envKey); v != "" {
+					*target = v
+				}
+			}
+			applyEnvInt := func(flagName, envKey string, target *int) {
+				if cmd.Flags().Changed(flagName) {
+					return
+				}
+				if raw := os.Getenv(envKey); raw != "" {
+					if v, err := strconv.Atoi(raw); err == nil {
+						*target = v
+					}
+				}
+			}
+			applyEnvString("flexinfer-url", "FLEXINFER_URL", &flexinferURL)
+			applyEnvString("flexinfer-key", "FLEXINFER_API_KEY", &flexinferKey)
+			applyEnvString("coordinator-model", "COORDINATOR_MODEL", &coordinatorModel)
+			applyEnvString("webhook-url", "HUD_WEBHOOK_URL", &webhookURL)
+			applyEnvString("webhook-token", "HUD_WEBHOOK_TOKEN", &webhookToken)
+			applyEnvString("webhook-resolve", "HUD_WEBHOOK_RESOLVE", &webhookResolve)
+			applyEnvString("admin-token", "HUD_ADMIN_TOKEN", &adminToken)
+			applyEnvString("mobile-operator-token", "HUD_MOBILE_OPERATOR_TOKEN", &mobileOperatorToken)
+			applyEnvString("mobile-operator-scopes", "HUD_MOBILE_OPERATOR_SCOPES", &mobileOperatorScopes)
+			applyEnvString("tls-cert", "HUD_TLS_CERT", &tlsCert)
+			applyEnvString("tls-key", "HUD_TLS_KEY", &tlsKey)
+			applyEnvString("bind", "HUD_BIND_ADDRESS", &bindAddress)
+			applyEnvString("cache-backend", "CACHE_BACKEND", &cacheBackend)
+			applyEnvInt("mobile-rate-limit-mutation", "HUD_MOBILE_RATE_LIMIT_MUTATION", &mobileRateLimitMutation)
+			applyEnvInt("mobile-rate-limit-read", "HUD_MOBILE_RATE_LIMIT_READ", &mobileRateLimitRead)
+			// Launchd/mobile-dev compatibility: if no token is provided directly,
+			// fall back to the persisted token file used by make mobile-dev.
+			if !cmd.Flags().Changed("mobile-operator-token") && strings.TrimSpace(mobileOperatorToken) == "" {
+				tokenFile := os.Getenv("HUD_MOBILE_OPERATOR_TOKEN_FILE")
+				if tokenFile == "" && homeDir != "" {
+					tokenFile = filepath.Join(homeDir, ".config", "loom", "mobile-operator-token")
+				}
+				if tokenFile != "" {
+					if tokenRaw, err := os.ReadFile(tokenFile); err == nil {
+						if token := strings.TrimSpace(string(tokenRaw)); token != "" {
+							mobileOperatorToken = token
+						}
+					}
+				}
+			}
+			if !cmd.Flags().Changed("mobile-operator-scopes") && strings.TrimSpace(mobileOperatorScopes) == "" {
+				mobileOperatorScopes = "mobile:read,mobile:session:create,mobile:session:end,mobile:push"
 			}
 
 			// Apply --cache-backend flag to env (read later by cache.LoadConfigFromEnv).

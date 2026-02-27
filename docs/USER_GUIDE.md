@@ -265,7 +265,7 @@ For a full physical-device workflow, see `docs/MOBILE_COMPANION_IPHONE_TESTING.m
 | Mode | Transport | When to Use |
 |------|-----------|-------------|
 | **LAN** | HTTP to local IP | Device is on the same network as the Loom HUD server |
-| **Gateway** | HTTPS through proxy | Remote access through a TLS-terminating gateway |
+| **Gateway** | HTTPS through `mcp.flexinfer.ai` | Remote access via unified MCP+mobile gateway |
 
 ### Pairing
 
@@ -283,6 +283,14 @@ For a full physical-device workflow, see `docs/MOBILE_COMPANION_IPHONE_TESTING.m
 4. Enter the server URL (e.g., `http://192.168.1.50:3333` for LAN).
 5. Enter the mobile operator bearer token (same value used by `HUD_MOBILE_OPERATOR_TOKEN` on the server).
 6. Tap **Connect**. The app probes `/api/mobile/v1/ping` to verify the connection.
+
+Gateway bootstrap shortcut:
+
+```bash
+make mobile-gateway-dev
+```
+
+This rotates the mobile token, patches `loom-hub/loom-secrets`, restarts `deployment/mobile-hud`, and verifies `https://mcp.flexinfer.ai/api/mobile/v1/ping`.
 
 ### iOS Local Network Permission (LAN Mode)
 
@@ -317,6 +325,7 @@ The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPER
 | "[unauthorized]" error | Token mismatch | Verify `HUD_MOBILE_OPERATOR_TOKEN` matches |
 | "[forbidden]" error | Missing scope | Add required scope to `HUD_MOBILE_OPERATOR_SCOPES` |
 | Dashboard not updating | SSE disconnected | Check Connection tab; polling fallback is active |
+| `[not_found] mobile API route not configured on gateway` | Gateway path split missing | Ensure ingress routes `/api/mobile/v1` to `mobile-hud` |
 | `unknown flag: --serve` | Using an outdated command | Use `loom hud --bind ... --port ...` (there is no `--serve` flag) |
 
 ## Troubleshooting

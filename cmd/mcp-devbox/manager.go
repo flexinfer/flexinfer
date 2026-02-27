@@ -54,6 +54,14 @@ type manager struct {
 
 	// Active exec counter per project — reaper skips projects with active execs.
 	activeExecs sync.Map // map[string]*atomic.Int32
+
+	// Cumulative counters for HUD summary.
+	startedAt   time.Time
+	totalExecs  atomic.Int64
+	totalBuilds atomic.Int64
+
+	// asyncWg tracks running async goroutines for graceful shutdown.
+	asyncWg sync.WaitGroup
 }
 
 // backendHealthTimeout bounds startup probing so MCP init is never blocked by a hung runtime.
@@ -109,8 +117,14 @@ func sanitizeContainerName(name string) string {
 }
 
 // validateMountPath ensures a host path is under an allowed directory.
+// Resolves symlinks before validation so symlinked paths are correctly matched.
 func (m *manager) validateMountPath(hostPath string) error {
-	abs, err := filepath.Abs(hostPath)
+	resolved, err := filepath.EvalSymlinks(hostPath)
+	if err != nil {
+		// Path doesn't exist yet — fall back to Abs only.
+		resolved = hostPath
+	}
+	abs, err := filepath.Abs(resolved)
 	if err != nil {
 		return fmt.Errorf("invalid mount path %q: %w", hostPath, err)
 	}
@@ -486,7 +500,23 @@ func (m *manager) reconcileState(ctx context.Context) {
 }
 
 // shutdownAll stops all managed containers gracefully.
+// It cancels running async execs and waits for goroutines to finish
+// before stopping containers.
 func (m *manager) shutdownAll(ctx context.Context) {
+	// Cancel all running async execs so goroutines exit promptly.
+	if m.asyncExecs != nil {
+		m.asyncExecs.mu.RLock()
+		for _, ae := range m.asyncExecs.execs {
+			if ae.Status == "running" && ae.cancel != nil {
+				ae.cancel()
+			}
+		}
+		m.asyncExecs.mu.RUnlock()
+	}
+
+	// Wait for all async goroutines to complete.
+	m.asyncWg.Wait()
+
 	entries := m.store.List()
 	for name, entry := range entries {
 		if entry.Status == "running" {

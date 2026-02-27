@@ -67,6 +67,21 @@ public struct MobileTaskCounts: Decodable, Sendable {
         case blocked
         case completed
     }
+
+    public init(pending: Int, inProgress: Int, blocked: Int, completed: Int) {
+        self.pending = pending
+        self.inProgress = inProgress
+        self.blocked = blocked
+        self.completed = completed
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pending = try container.decodeIfPresent(Int.self, forKey: .pending) ?? 0
+        self.inProgress = try container.decodeIfPresent(Int.self, forKey: .inProgress) ?? 0
+        self.blocked = try container.decodeIfPresent(Int.self, forKey: .blocked) ?? 0
+        self.completed = try container.decodeIfPresent(Int.self, forKey: .completed) ?? 0
+    }
 }
 
 public struct MobileTask: Decodable, Identifiable, Sendable {
@@ -96,6 +111,50 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         case blockedBy = "blocked_by"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+    }
+
+    public init(
+        id: String,
+        sessionId: String,
+        agentId: String,
+        namespace: String,
+        title: String,
+        context: String,
+        priority: String,
+        status: MobileTaskStatus,
+        tags: [String],
+        blockedBy: [String],
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.agentId = agentId
+        self.namespace = namespace
+        self.title = title
+        self.context = context
+        self.priority = priority
+        self.status = status
+        self.tags = tags
+        self.blockedBy = blockedBy
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
+        self.agentId = try container.decodeIfPresent(String.self, forKey: .agentId) ?? ""
+        self.namespace = try container.decodeIfPresent(String.self, forKey: .namespace) ?? ""
+        self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        self.context = try container.decodeIfPresent(String.self, forKey: .context) ?? ""
+        self.priority = try container.decodeIfPresent(String.self, forKey: .priority) ?? "medium"
+        self.status = try container.decodeIfPresent(MobileTaskStatus.self, forKey: .status) ?? .unknown
+        self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.blockedBy = try container.decodeIfPresent([String].self, forKey: .blockedBy) ?? []
+        self.createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
     }
 }
 

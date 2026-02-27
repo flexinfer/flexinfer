@@ -1,5 +1,18 @@
 # Loom CI/CD Pipeline
 # Provides lint, test, build, and deploy stages with comprehensive testing
+#
+# iOS signing/distribution secret contract (mirrors streamslate pattern):
+#   APPLE_CERTIFICATE            - Base64 .p12 or File variable path
+#   APPLE_CERTIFICATE_PASSWORD   - .p12 password
+#   APPLE_TEAM_ID                - Apple Developer Team ID
+#   APPLE_PROVISIONING_PROFILE   - Base64 .mobileprovision or File variable path
+#   APPLE_API_ISSUER             - App Store Connect issuer ID (upload lanes)
+#   APPLE_API_KEY                - App Store Connect key ID (upload lanes)
+#   APPLE_API_KEY_BASE64         - Base64 .p8 key contents (upload lanes)
+#
+# Helper scripts:
+#   scripts/mobile/import-certificate.sh
+#   scripts/mobile/cleanup-signing.sh
 
 include:
   - project: platform/gitops
@@ -479,6 +492,32 @@ deploy:homebrew:
   rules:
     - if: $CI_COMMIT_TAG
   when: manual
+
+ios:archive-export:
+  stage: deploy
+  tags:
+    - macos
+  needs: []
+  script:
+    - chmod +x scripts/mobile/import-certificate.sh scripts/mobile/archive_export.sh scripts/mobile/cleanup-signing.sh
+    - ./scripts/mobile/import-certificate.sh
+    - set -a && source build.env && set +a
+    - ./scripts/mobile/archive_export.sh
+  after_script:
+    - ./scripts/mobile/cleanup-signing.sh || true
+  artifacts:
+    when: always
+    paths:
+      - build/mobile/LoomCompanion.xcarchive
+      - build/mobile/export/app-store/*.ipa
+      - build/mobile/ExportOptions.app-store.plist
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - when: never
 
 build:image:loom-core:
   stage: deploy

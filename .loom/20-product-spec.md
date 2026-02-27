@@ -123,6 +123,13 @@ Build a companion iOS/iPadOS app for loom-core operators to monitor agent fleets
 - iOS app must declare and explain required local network purpose text and, when applicable, required Bonjour service declarations.
 - Connection profile health UI must distinguish auth failure, local network permission denied, and transport-unreachable states.
 
+### R12: Release Operability (Install -> Internal Distribution -> Full Release)
+
+- The product must have a deterministic install path for a developer-owned iPhone using development signing.
+- The product must support artifact-based distribution (`.xcarchive`/`.ipa`) for internal testing workflows.
+- A TestFlight-first publish path must be documented and automatable before public release readiness.
+- CI/CD requirements for iOS packaging must be defined without regressing the existing Go pipeline.
+
 ## UX Flows
 
 ### Flow A: Quick status check
@@ -184,6 +191,7 @@ New backend work required:
 - Should iPad prioritize split-view operator console layout in v1 or v1.1?
 - Which mutation endpoints remain disabled on mobile at launch?
 - Should profile mode fail over automatically between LAN and gateway, or remain explicitly user-selected?
+- Should ad-hoc export remain a first-class lane, or should TestFlight be the single supported internal distribution path?
 
 ## Sources
 
@@ -203,6 +211,12 @@ New backend work required:
 - `AGENTS.md:43`
 - `ROADMAP.md:13`
 - `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
+- `.loom/14-research-mobile-signing-publish-2026-02-25.md`
+- `apps/loom-companion-ios/project.yml:22-42`
+- `Makefile:729-829`
+- `.gitlab-ci.yml:20-24`
+- `.gitlab-ci.yml:390-469`
+- `docs/MOBILE_COMPANION_IPHONE_TESTING.md:64-87`
 - `https://datatracker.ietf.org/doc/rfc8252/`
 - `https://datatracker.ietf.org/doc/html/rfc9700`
 - `https://datatracker.ietf.org/doc/html/rfc8628`

@@ -90,4 +90,11 @@ struct ConnectionHealthTests {
         monitor.handleAPIError(.apiError(code: .forbidden, message: "missing scope", requestId: "r4"))
         #expect(monitor.health == .permissionDenied(message: "missing scope"))
     }
+
+    @Test("Not found maps to gateway route missing state")
+    func notFoundGatewayRouteMissing() {
+        let monitor = ConnectionHealthMonitor()
+        monitor.handleAPIError(.apiError(code: .notFound, message: "Not found", requestId: "r5"))
+        #expect(monitor.health == .gatewayRouteMissing(message: "The gateway did not route /api/mobile/v1 to the mobile API backend."))
+    }
 }

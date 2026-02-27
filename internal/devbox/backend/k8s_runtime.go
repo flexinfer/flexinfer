@@ -47,12 +47,15 @@ func (k *K8sBackend) Start(ctx context.Context, opts StartOpts) (*StartResult, e
 	return &StartResult{ContainerID: created.Name}, nil
 }
 
-func (k *K8sBackend) Exec(ctx context.Context, opts ExecOpts) (*ExecResult, error) {
+func (k *K8sBackend) Exec(_ context.Context, opts ExecOpts) (*ExecResult, error) {
+	// Detach from the MCP request context so proxy timeouts don't kill
+	// long-running test suites or builds. Use the exec's own timeout.
+	timeout := 5 * time.Minute
 	if opts.TimeoutSec > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.TimeoutSec)*time.Second)
-		defer cancel()
+		timeout = time.Duration(opts.TimeoutSec) * time.Second
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	start := time.Now()
 

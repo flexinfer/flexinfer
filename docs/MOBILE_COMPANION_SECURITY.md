@@ -76,6 +76,9 @@ Boundary policy:
   - TLS,
   - strict role checks,
   - enhanced audit and anomaly visibility.
+- Unified host routing:
+  - `/ws`, `/hosts`, `/health`, `/ready` stay on MCP gateway.
+  - `/api/mobile/v1/*` is routed to the in-cluster `mobile-hud` backend.
 
 ## Authentication Requirements
 

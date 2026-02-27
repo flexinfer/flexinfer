@@ -55,6 +55,20 @@ struct ConnectionViewModelTests {
         #expect(vm.pairingError != "Gateway mode requires HTTPS")
     }
 
+    @Test("Gateway mode requires both Cloudflare Access fields when one is provided")
+    func gatewayRequiresCompleteCloudflareAccessPair() async {
+        let vm = ConnectionViewModel(tokenStore: TokenStore())
+        vm.baseURLInput = "https://mcp.flexinfer.ai"
+        vm.tokenInput = "test-token"
+        vm.connectionMode = .gateway
+        vm.cloudflareAccessClientIDInput = "only-id"
+        vm.cloudflareAccessClientSecretInput = ""
+
+        await vm.pair()
+
+        #expect(vm.pairingError == "Provide both CF-Access-Client-Id and CF-Access-Client-Secret, or leave both empty")
+    }
+
     @Test("LAN mode allows HTTP")
     func lanAllowsHTTP() async {
         let vm = ConnectionViewModel(tokenStore: TokenStore())

@@ -31,3 +31,7 @@ func NewProxy(r *Router, transport mcp.Transport, server string, target Target) 
 func NewHubClient(url, token string) *HubClient {
 	return kitrouter.NewHubClient(url, token)
 }
+
+func NewHubClientWithCFAccess(url, token, cfAccessClientID, cfAccessClientSecret string) *HubClient {
+	return kitrouter.NewHubClientWithCFAccess(url, token, cfAccessClientID, cfAccessClientSecret)
+}

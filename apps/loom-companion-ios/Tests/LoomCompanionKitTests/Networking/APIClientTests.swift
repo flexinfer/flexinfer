@@ -263,6 +263,36 @@ struct APIClientTests {
             Issue.record("Expected LoomAPIError, got \(error)")
         }
     }
+
+    @Test("SSE request includes Cloudflare Access headers when configured")
+    func sseRequestIncludesCloudflareAccessHeaders() throws {
+        let client = APIClient(
+            baseURL: URL(string: "https://mcp.flexinfer.ai")!,
+            token: "mobile-token",
+            cloudflareAccessClientID: "cf-id",
+            cloudflareAccessClientSecret: "cf-secret"
+        )
+        let request = try client.sseRequest()
+
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer mobile-token")
+        #expect(request.value(forHTTPHeaderField: "CF-Access-Client-Id") == "cf-id")
+        #expect(request.value(forHTTPHeaderField: "CF-Access-Client-Secret") == "cf-secret")
+    }
+
+    @Test("SSE request omits Cloudflare headers when partially configured")
+    func sseRequestOmitsPartialCloudflareAccessHeaders() throws {
+        let client = APIClient(
+            baseURL: URL(string: "https://mcp.flexinfer.ai")!,
+            token: "mobile-token",
+            cloudflareAccessClientID: "cf-id",
+            cloudflareAccessClientSecret: nil
+        )
+        let request = try client.sseRequest()
+
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer mobile-token")
+        #expect(request.value(forHTTPHeaderField: "CF-Access-Client-Id") == nil)
+        #expect(request.value(forHTTPHeaderField: "CF-Access-Client-Secret") == nil)
+    }
 }
 
 private struct TestPong: Decodable {

@@ -52,6 +52,13 @@ public struct ConnectionRemediation: Sendable, Equatable {
                 steps: permissionDeniedSteps(),
                 severity: .error
             )
+        case .gatewayRouteMissing(let message):
+            return ConnectionRemediation(
+                title: "Gateway Route Missing",
+                description: message.isEmpty ? "The gateway is reachable, but /api/mobile/v1 is not routed to the mobile backend." : message,
+                steps: gatewayRouteMissingSteps(),
+                severity: .error
+            )
         case .unreachable:
             return ConnectionRemediation(
                 title: "Server Unreachable",
@@ -106,6 +113,7 @@ public struct ConnectionRemediation: Sendable, Equatable {
         ]
         if mode == .gateway {
             steps.append("Ensure the gateway is not stripping or rewriting the Authorization header.")
+            steps.append("If Cloudflare Access is enabled, configure CF-Access-Client-Id and CF-Access-Client-Secret in Connection settings.")
         }
         return steps
     }
@@ -115,6 +123,14 @@ public struct ConnectionRemediation: Sendable, Equatable {
             "The token is valid but lacks a required scope for this operation.",
             "Check HUD_MOBILE_OPERATOR_SCOPES on the server configuration.",
             "Required scopes: mobile:read, mobile:session:create, mobile:session:end.",
+        ]
+    }
+
+    private static func gatewayRouteMissingSteps() -> [String] {
+        [
+            "The gateway host is up, but mobile API routing is missing.",
+            "Route /api/mobile/v1 to the mobile-hud service in ingress.",
+            "Re-run mobile gateway preflight and then retry connection.",
         ]
     }
 

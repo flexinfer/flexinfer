@@ -225,6 +225,17 @@ Current state:
 - Auth provider capabilities aligned with selected bootstrap mode (PKCE/device-code/hybrid).
 - iOS app signing/provisioning setup for internal beta.
 
+## Build/Signing/Publish Addendum (2026-02-25)
+
+Distribution operations are now tracked as a dedicated implementation slice:
+- `.loom/33-mobile-signing-release-plan-2026-02-25.md`
+
+Execution intent:
+1. Establish deterministic install-now signing flow for physical iPhone.
+2. Add archive/export targets for IPA generation.
+3. Add TestFlight upload workflow.
+4. Add macOS-runner CI jobs for iOS packaging/publish gates.
+
 ## Sources
 
 - `internal/hud/app.go:317`
@@ -245,6 +256,8 @@ Current state:
 - `AGENTS.md:45`
 - `ROADMAP.md:48`
 - `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
+- `.loom/14-research-mobile-signing-publish-2026-02-25.md`
+- `.loom/33-mobile-signing-release-plan-2026-02-25.md`
 - `https://datatracker.ietf.org/doc/rfc8252/`
 - `https://datatracker.ietf.org/doc/html/rfc9700`
 - `https://datatracker.ietf.org/doc/html/rfc8628`

@@ -40,6 +40,8 @@ struct ErrorBanner: View {
             return "Authentication failed: \(message)"
         case let .permissionDenied(message):
             return "Permission denied: \(message)"
+        case let .gatewayRouteMissing(message):
+            return "Gateway route missing: \(message)"
         case .unreachable:
             return "Server unreachable. Check your connection."
         case .rateLimited:
@@ -52,6 +54,7 @@ struct ErrorBanner: View {
         case .degradedStream: return "wifi.exclamationmark"
         case .authFailure: return "lock.shield"
         case .permissionDenied: return "hand.raised"
+        case .gatewayRouteMissing: return "arrow.triangle.branch"
         case .unreachable: return "wifi.slash"
         case .rateLimited: return "gauge.with.dots.needle.67percent"
         default: return "info.circle"
@@ -61,7 +64,7 @@ struct ErrorBanner: View {
     private var bannerColor: Color {
         switch health {
         case .degradedStream, .rateLimited: return .orange
-        case .authFailure, .permissionDenied: return .red
+        case .authFailure, .permissionDenied, .gatewayRouteMissing: return .red
         case .unreachable: return .red
         default: return .secondary
         }

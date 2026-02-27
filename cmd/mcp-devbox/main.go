@@ -80,6 +80,9 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("init manager: %w", err)
 	}
 
+	// Set startup time for uptime tracking.
+	mgr.startedAt = time.Now()
+
 	// Initialize metrics
 	mgr.metrics = newMetrics()
 

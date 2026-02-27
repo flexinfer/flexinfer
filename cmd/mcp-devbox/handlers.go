@@ -64,6 +64,7 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	m.incActiveExecs(projectName)
 	defer m.decActiveExecs(projectName)
 
+	m.totalExecs.Add(1)
 	m.logger.Info("exec", "project", projectName, "command", command)
 
 	start := time.Now()
@@ -135,6 +136,7 @@ func (m *manager) handleBuild(ctx context.Context, args map[string]any) (*mcp.Ca
 		})
 	}
 
+	m.totalBuilds.Add(1)
 	m.logger.Info("building sandbox image", "project", projectName, "hash", fp.Hash[:7])
 
 	dockerfileContent, err := dockerfile.Generate(fp)

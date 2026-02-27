@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,8 +28,9 @@ const hudEnvTemplate = `# Loom HUD environment — secrets and URLs for launchd.
 # HUD_WEBHOOK_TOKEN=
 # HUD_WEBHOOK_RESOLVE=
 # HUD_ADMIN_TOKEN=
-# HUD_MOBILE_OPERATOR_TOKEN=
-# HUD_MOBILE_OPERATOR_SCOPES=
+# HUD_BIND_ADDRESS=0.0.0.0      # set to 0.0.0.0 for iPhone LAN access
+# HUD_MOBILE_OPERATOR_TOKEN=  # optional: fallback is ~/.config/loom/mobile-operator-token
+# HUD_MOBILE_OPERATOR_SCOPES=mobile:read,mobile:session:create,mobile:session:end,mobile:push
 `
 
 func newHudInstallCmd() *cobra.Command {
@@ -85,6 +89,7 @@ func installHudService() error {
 	plistDest := filepath.Join(launchAgentsDir, hudLaunchdLabel+".plist")
 	logsDir := filepath.Join(home, ".config", "loom", "logs")
 	envFilePath := filepath.Join(home, ".config", "loom", "hud.env")
+	tokenFilePath := filepath.Join(home, ".config", "loom", "mobile-operator-token")
 
 	// Create directories.
 	if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
@@ -132,6 +137,12 @@ func installHudService() error {
 		}
 		fmt.Printf("Created env file: %s (edit to add secrets)\n", envFilePath)
 	}
+	token, err := ensureMobileOperatorTokenFile(tokenFilePath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Mobile token file: %s\n", tokenFilePath)
+	fmt.Printf("Mobile token: %s\n", token)
 
 	// Load the service.
 	cmd := exec.Command("launchctl", "load", plistDest) //nolint:noctx
@@ -143,6 +154,29 @@ func installHudService() error {
 	fmt.Println("HUD will start automatically on login")
 	fmt.Println("Start now with: loom hud start")
 	return nil
+}
+
+func ensureMobileOperatorTokenFile(path string) (string, error) {
+	if raw, err := os.ReadFile(path); err == nil {
+		if token := strings.TrimSpace(string(raw)); token != "" {
+			return token, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read mobile token file: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return "", fmt.Errorf("create token directory: %w", err)
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate mobile token: %w", err)
+	}
+	token := hex.EncodeToString(buf)
+	if err := os.WriteFile(path, []byte(token+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("write mobile token file: %w", err)
+	}
+	return token, nil
 }
 
 func uninstallHudService() error {

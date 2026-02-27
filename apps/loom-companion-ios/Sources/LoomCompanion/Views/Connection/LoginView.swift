@@ -69,6 +69,32 @@ struct LoginView: View {
                             #endif
                     }
 
+                    if viewModel.connectionMode == .gateway {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Cloudflare Access (Optional)")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            TextField("CF-Access-Client-Id", text: $viewModel.cloudflareAccessClientIDInput)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+
+                            SecureField("CF-Access-Client-Secret", text: $viewModel.cloudflareAccessClientSecretInput)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+
+                            Text("Use these if your gateway is protected by Cloudflare Access service tokens.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     // Error
                     if let error = viewModel.pairingError {
                         HStack {
@@ -122,7 +148,7 @@ struct LoginView: View {
             return "Direct connection on your local network. Requires local network permission on iOS."
             #endif
         case .gateway:
-            return "Remote connection through a gateway. Requires HTTPS."
+            return "Remote connection through a gateway. Requires HTTPS. Add Cloudflare Access service token fields if your gateway enforces Access."
         }
     }
 

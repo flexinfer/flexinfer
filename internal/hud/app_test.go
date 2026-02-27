@@ -913,6 +913,31 @@ func TestHandler_MobileReadParityEndpoints_ReturnEnvelope(t *testing.T) {
 	}
 }
 
+func TestMobileTaskDTO_ContextAlwaysPresent(t *testing.T) {
+	dto := mapMobileTask(bridge.TaskInfo{
+		ID:       "task-1",
+		Title:    "Test task",
+		Priority: "medium",
+		Status:   "pending",
+	})
+
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal task dto: %v", err)
+	}
+
+	body := string(raw)
+	if !strings.Contains(body, `"context":"`) {
+		t.Fatalf("expected context field to be present, got: %s", body)
+	}
+	if strings.Contains(body, `"tags":null`) {
+		t.Fatalf("expected tags to be [] when empty, got: %s", body)
+	}
+	if strings.Contains(body, `"blocked_by":null`) {
+		t.Fatalf("expected blocked_by to be [] when empty, got: %s", body)
+	}
+}
+
 func TestHandler_MobileMemoryItems_InvalidTier(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"

@@ -40,11 +40,14 @@ The same API contract is used in both modes.
 | Mode | Typical endpoint | Primary use case |
 |---|---|---|
 | LAN | `https://<lan-host>:<port>/api/mobile/v1` | Same network, low-latency ops |
-| Gateway | `https://<gateway-host>/api/mobile/v1` | Off-network remote operations |
+| Gateway | `https://mcp.flexinfer.ai/api/mobile/v1` | Off-network remote operations |
 
 Notes:
 - Client profile selects mode.
 - Gateway mode must not assume LAN trust.
+- Unified gateway path split on `mcp.flexinfer.ai`:
+  - MCP hub: `/ws`, `/hosts`, `/health`, `/ready`
+  - Mobile API: `/api/mobile/v1/*`
 
 ## Auth Model (Contract-Level)
 

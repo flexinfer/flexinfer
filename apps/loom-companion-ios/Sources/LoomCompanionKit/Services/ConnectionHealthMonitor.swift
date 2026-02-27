@@ -7,6 +7,7 @@ public enum ConnectionHealth: Sendable, Equatable {
     case degradedStream
     case authFailure(message: String)
     case permissionDenied(message: String)
+    case gatewayRouteMissing(message: String)
     case unreachable
     case rateLimited
 }
@@ -33,7 +34,7 @@ public final class ConnectionHealthMonitor {
     /// Handle a successful API response.
     public func handleSuccess() {
         switch health {
-        case .unknown, .unreachable, .rateLimited:
+        case .unknown, .unreachable, .rateLimited, .gatewayRouteMissing:
             health = .healthy
         case .authFailure, .permissionDenied:
             health = .healthy
@@ -52,6 +53,12 @@ public final class ConnectionHealthMonitor {
                 stopPolling()
             case .forbidden:
                 health = .permissionDenied(message: message)
+                stopPolling()
+            case .notFound:
+                let detail = message.isEmpty || message == "Not found"
+                    ? "The gateway did not route /api/mobile/v1 to the mobile API backend."
+                    : message
+                health = .gatewayRouteMissing(message: detail)
                 stopPolling()
             case .rateLimited:
                 health = .rateLimited
