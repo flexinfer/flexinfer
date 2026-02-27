@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +57,41 @@ func (f *fakeTransport) Recv(ctx context.Context) (*mcp.Message, error) {
 }
 
 func (f *fakeTransport) Close() error { return nil }
+
+// interleavingHubTransport simulates a shared hub transport where concurrent
+// send/recv pairs can cross wires. Recv always returns the most recently sent
+// request ID, which causes deterministic mismatches when requests overlap.
+type interleavingHubTransport struct {
+	mu        sync.Mutex
+	lastID    any
+	sendCount int
+}
+
+func (t *interleavingHubTransport) Send(_ context.Context, msg *mcp.Message) error {
+	t.mu.Lock()
+	t.lastID = msg.ID
+	t.sendCount++
+	sendCount := t.sendCount
+	t.mu.Unlock()
+
+	if sendCount == 1 {
+		time.Sleep(25 * time.Millisecond)
+	}
+	return nil
+}
+
+func (t *interleavingHubTransport) Recv(_ context.Context) (*mcp.Message, error) {
+	t.mu.Lock()
+	id := t.lastID
+	t.mu.Unlock()
+	return &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      id,
+		Result:  json.RawMessage(`{"ok":true}`),
+	}, nil
+}
+
+func (t *interleavingHubTransport) Close() error { return nil }
 
 func newCallPipelineTestDaemon() *Daemon {
 	return &Daemon{
@@ -572,6 +608,119 @@ func TestCallPipelineRouteAndConnect_HubSuccess(t *testing.T) {
 	}
 	if p.targetStr != router.TargetHub.String() {
 		t.Fatalf("targetStr = %q, want %q", p.targetStr, router.TargetHub.String())
+	}
+}
+
+func TestCallPipelineRouteAndConnect_HubLockOrdering(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: true})
+
+	poolGetCalled := false
+	lockHeldDuringDial := false
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			poolGetCalled = true
+			mu := d.callLock("hub_lock_test")
+			lockHeldDuringDial = !mu.TryLock()
+			if !lockHeldDuringDial {
+				mu.Unlock()
+			}
+			return &fakeTransport{}, nil
+		},
+	})
+	defer func() { _ = d.hubPool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "hub-lock-order"},
+		serverName: "hub_lock_test",
+	}
+	resp := p.routeAndConnect()
+	if resp != nil {
+		t.Fatalf("unexpected route error: %+v", resp.Error)
+	}
+	defer p.releaseConnection()
+
+	if !poolGetCalled {
+		t.Fatal("hub pool.Get was never called")
+	}
+	if !lockHeldDuringDial {
+		t.Fatal("callLock was not held before hub pool dial")
+	}
+}
+
+func TestCallPipelineRouteAndConnect_PreferHubConnectFailureRetriesLocal(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{
+		HubEnabled: true,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "agent_context",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.routingPreferences = map[string]RoutingPreference{
+		"agent_context": RoutingPreferHub,
+	}
+
+	hubDials := 0
+	localDials := 0
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			hubDials++
+			return nil, errors.New("hub connect failed")
+		},
+	})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			localDials++
+			return &fakeTransport{}, nil
+		},
+	})
+	defer func() {
+		_ = d.hubPool.Close()
+		_ = d.pool.Close()
+	}()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "hub-connect-fallback"},
+		serverName: "agent_context",
+	}
+	resp := p.routeAndConnect()
+	if resp != nil {
+		t.Fatalf("unexpected route error: %+v", resp.Error)
+	}
+	defer p.releaseConnection()
+
+	if hubDials != 1 {
+		t.Fatalf("hub dials = %d, want 1", hubDials)
+	}
+	if localDials != 1 {
+		t.Fatalf("local dials = %d, want 1", localDials)
+	}
+	if p.target != router.TargetLocal {
+		t.Fatalf("target = %v, want %v", p.target, router.TargetLocal)
+	}
+	if !p.localRetryUsed {
+		t.Fatal("expected local retry to be marked used")
+	}
+	if active, _ := d.preferHubBackoffActive("agent_context"); !active {
+		t.Fatal("expected prefer-hub backoff to be active after hub connect failure")
 	}
 }
 
@@ -1260,6 +1409,88 @@ func TestHandleCall_TransportFailureEmitsSingleAudit(t *testing.T) {
 	}
 }
 
+func TestHandleCall_PreferHubRecvFailureRetriesLocal(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{
+		HubEnabled: true,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "agent_context",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.routingPreferences = map[string]RoutingPreference{
+		"agent_context": RoutingPreferHub,
+	}
+
+	hubDials := 0
+	localDials := 0
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			hubDials++
+			return &fakeTransport{recvErr: errors.New("hub recv failed")}, nil
+		},
+	})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			localDials++
+			var reqID any
+			return &fakeTransport{
+				sendFn: func(_ context.Context, msg *mcp.Message) error {
+					reqID = msg.ID
+					return nil
+				},
+				recvFn: func(_ context.Context) (*mcp.Message, error) {
+					return &mcp.Message{
+						JSONRPC: mcp.JSONRPCVersion,
+						ID:      reqID,
+						Result:  json.RawMessage(`{"local":true}`),
+					}, nil
+				},
+			}, nil
+		},
+	})
+	defer func() {
+		_ = d.hubPool.Close()
+		_ = d.pool.Close()
+	}()
+
+	msg := newCallMessage(t, map[string]any{
+		"server": "agent_context",
+		"tool":   "query",
+	})
+	msg.ID = "prefer-hub-fallback"
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected successful local fallback, got %+v", resp)
+	}
+	if string(resp.Result) != `{"local":true}` {
+		t.Fatalf("result = %s, want local fallback result", string(resp.Result))
+	}
+	if hubDials != 1 {
+		t.Fatalf("hub dials = %d, want 1", hubDials)
+	}
+	if localDials != 1 {
+		t.Fatalf("local dials = %d, want 1", localDials)
+	}
+	if active, _ := d.preferHubBackoffActive("agent_context"); !active {
+		t.Fatal("expected prefer-hub backoff to be active after hub recv failure")
+	}
+}
+
 func TestHandleCall_RBACDenialEmitsAuditAndCost(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	auditPath := enableAuditAndCostForTest(t, d)
@@ -1794,6 +2025,64 @@ func TestCallPipelineExecute_ResponseIDMismatch(t *testing.T) {
 	}
 	if p.conn.Healthy {
 		t.Fatal("expected connection to be marked unhealthy after ID mismatch")
+	}
+}
+
+func TestHandleCall_HubConcurrencyNoIDMismatchWithLock(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: true})
+
+	shared := &interleavingHubTransport{}
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     2,
+		MaxOpen:     2,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			return shared, nil
+		},
+	})
+	defer func() { _ = d.hubPool.Close() }()
+
+	makeMsg := func(id string) *mcp.Message {
+		msg := newCallMessage(t, map[string]any{
+			"server": "hub_concurrency_test",
+			"tool":   "query",
+		})
+		msg.ID = id
+		return msg
+	}
+
+	type result struct {
+		resp *mcp.Message
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"req-1", "req-2"} {
+		wg.Add(1)
+		go func(callID string) {
+			defer wg.Done()
+			<-start
+			resp, err := d.handleCall(context.Background(), makeMsg(callID))
+			results <- result{resp: resp, err: err}
+		}(id)
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	for res := range results {
+		if res.err != nil {
+			t.Fatalf("unexpected call error: %v", res.err)
+		}
+		if res.resp == nil || res.resp.Error != nil {
+			t.Fatalf("expected success response, got %+v", res.resp)
+		}
+		if !strings.Contains(string(res.resp.Result), `"ok":true`) {
+			t.Fatalf("unexpected response result: %s", string(res.resp.Result))
+		}
 	}
 }
 

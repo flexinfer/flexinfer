@@ -55,6 +55,10 @@ type callPipeline struct {
 	targetStr string
 	callMu    *gosync.Mutex
 	lockHeld  bool
+
+	routingPreference      RoutingPreference
+	preferHubRetryEligible bool
+	localRetryUsed         bool
 }
 
 func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipeline {
@@ -187,60 +191,55 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 		return p.internalErrorWithAudit("", err.Error())
 	}
 
+	p.routingPreference = RoutingHealthBased
+	p.preferHubRetryEligible = false
+
 	if pref, ok := p.daemon.routingPreferences[p.serverName]; ok && pref != RoutingHealthBased {
+		p.routingPreference = pref
 		hasHub := p.daemon.hubPool != nil
-		newTarget, overridden := applyRoutingPreference(pref, decision.Target, hasHub)
+		allowPreferHub := true
+		if pref == RoutingPreferHub {
+			if active, until := p.daemon.preferHubBackoffActive(p.serverName); active {
+				allowPreferHub = false
+				p.daemon.logger.Debug("prefer-hub override suppressed by backoff",
+					"server", p.serverName,
+					"backoff_until", until)
+			}
+		}
+
+		originalTarget := decision.Target
+		newTarget, overridden := applyRoutingPreferenceWithOptions(pref, originalTarget, hasHub, allowPreferHub)
 		if overridden {
 			p.daemon.logger.Debug("routing preference override",
 				"server", p.serverName,
 				"preference", pref,
-				"original", decision.Target,
+				"original", originalTarget,
 				"overridden_to", newTarget)
-			decision.Target = newTarget
 		}
+		if pref == RoutingPreferHub && allowPreferHub && originalTarget == router.TargetLocal && newTarget == router.TargetHub {
+			p.preferHubRetryEligible = true
+		}
+		decision.Target = newTarget
 	}
 
 	p.daemon.logger.Debug("routing decision", "server", p.serverName, "target", decision.Target, "reason", decision.Reason)
 
-	switch decision.Target {
-	case router.TargetLocal:
-		p.target = router.TargetLocal
-		p.targetStr = p.target.String()
-		p.callMu = p.daemon.callLock(p.serverName)
-		lockStart := time.Now()
-		p.callMu.Lock()
-		p.lockHeld = true
-		lockWait := time.Since(lockStart)
-		if lockWait > 100*time.Millisecond {
-			p.daemon.metrics.CallLockWaitTotal.WithLabelValues(p.serverName).Inc()
-			p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
-		}
-		// Mark server active before dialing so idle reaper won't classify this call as idle.
-		if p.daemon.procMgr != nil {
-			p.daemon.procMgr.MarkActivity(p.serverName)
-		}
-		p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
-	case router.TargetHub:
-		p.target = router.TargetHub
-		p.targetStr = p.target.String()
-		if p.daemon.hubPool == nil {
-			return p.internalErrorWithAudit(p.targetStr, "hub fallback not configured")
-		}
-		p.conn, err = p.daemon.hubPool.Get(p.ctx, p.serverName)
-	case router.TargetUnavailable:
-		p.target = router.TargetUnavailable
-		p.targetStr = p.target.String()
-		errMsg := fmt.Sprintf("server unavailable: %s", decision.Reason)
-		return p.internalErrorWithAudit(p.targetStr, errMsg)
-	}
+	if err := p.connectTarget(decision.Target, decision.Reason); err != nil {
+		if p.preferHubRetryEligible && !p.localRetryUsed && decision.Target == router.TargetHub && p.daemon.pool != nil {
+			p.localRetryUsed = true
+			until := p.daemon.setPreferHubBackoff(p.serverName, preferHubBackoffDuration)
+			p.daemon.logger.Warn("prefer-hub override connect failed; retrying local",
+				"server", p.serverName,
+				"error", err,
+				"backoff_until", until)
 
-	if err != nil {
-		if p.lockHeld && p.callMu != nil {
-			p.callMu.Unlock()
-			p.lockHeld = false
+			hubErr := err
+			if localErr := p.connectTarget(router.TargetLocal, "prefer-hub fallback after hub connect failure"); localErr == nil {
+				return nil
+			} else {
+				err = fmt.Errorf("hub connect failed: %v; local retry failed: %w", hubErr, localErr)
+			}
 		}
-		p.daemon.router.RecordFailure(p.serverName, p.target, err)
-		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "connect")
 		return p.internalErrorWithAudit(p.targetStr, err.Error())
 	}
 
@@ -250,10 +249,17 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 func (p *callPipeline) releaseConnection() {
 	if p.conn != nil {
 		if p.target == router.TargetLocal {
-			p.daemon.pool.Put(p.conn)
+			if p.daemon.pool != nil {
+				p.daemon.pool.Put(p.conn)
+			}
 		} else {
-			p.daemon.hubPool.Put(p.conn)
+			if p.daemon.hubPool != nil {
+				p.daemon.hubPool.Put(p.conn)
+			} else if p.conn.Transport != nil {
+				_ = p.conn.Transport.Close()
+			}
 		}
+		p.conn = nil
 	}
 	if p.lockHeld && p.callMu != nil {
 		p.callMu.Unlock()
@@ -299,14 +305,22 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	sendErr := p.conn.Transport.Send(sendCtx, req)
 	sendCancel()
 	if sendErr != nil {
-		return p.transportFailure("send", daemonRPCPhaseError(p.method, "send", callTimeout, sendErr), start)
+		err := daemonRPCPhaseError(p.method, "send", callTimeout, sendErr)
+		if resp, retried := p.retryLocalAfterHubFailure("send", err, req, start); retried {
+			return resp
+		}
+		return p.transportFailure("send", err, start)
 	}
 
 	recvCtx, recvCancel := context.WithTimeout(p.ctx, callTimeout)
 	resp, recvErr := p.conn.Transport.Recv(recvCtx)
 	recvCancel()
 	if recvErr != nil {
-		return p.transportFailure("recv", daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr), start)
+		err := daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr)
+		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
+			return retryResp
+		}
+		return p.transportFailure("recv", err, start)
 	}
 
 	// Validate response ID matches request ID. A mismatch indicates transport
@@ -315,6 +329,9 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	// is recycled and the caller gets a clear error instead of wrong data.
 	if resp.ID != nil && req.ID != nil && fmt.Sprint(resp.ID) != fmt.Sprint(req.ID) {
 		err := fmt.Errorf("response ID mismatch: sent %v, got %v (possible transport corruption)", req.ID, resp.ID)
+		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
+			return retryResp
+		}
 		return p.transportFailure("recv", err, start)
 	}
 
@@ -327,8 +344,109 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	return resp
 }
 
+func (p *callPipeline) connectTarget(target router.Target, reason string) error {
+	p.target = target
+	p.targetStr = target.String()
+	p.conn = nil
+
+	if target == router.TargetUnavailable {
+		return fmt.Errorf("server unavailable: %s", reason)
+	}
+	if target != router.TargetLocal && target != router.TargetHub {
+		return fmt.Errorf("unsupported routing target: %s", target)
+	}
+
+	p.callMu = p.daemon.callLock(p.serverName)
+	lockStart := time.Now()
+	p.callMu.Lock()
+	p.lockHeld = true
+	lockWait := time.Since(lockStart)
+	if lockWait > 100*time.Millisecond {
+		p.daemon.metrics.CallLockWaitTotal.WithLabelValues(p.serverName).Inc()
+		p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
+	}
+
+	var err error
+	switch target {
+	case router.TargetLocal:
+		// Mark server active before dialing so idle reaper won't classify this call as idle.
+		if p.daemon.procMgr != nil {
+			p.daemon.procMgr.MarkActivity(p.serverName)
+		}
+		if p.daemon.pool == nil {
+			err = fmt.Errorf("local pool not configured")
+		} else {
+			p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
+		}
+	case router.TargetHub:
+		if p.daemon.hubPool == nil {
+			err = fmt.Errorf("hub fallback not configured")
+		} else {
+			p.conn, err = p.daemon.hubPool.Get(p.ctx, p.serverName)
+		}
+	}
+
+	if err != nil {
+		if p.lockHeld && p.callMu != nil {
+			p.callMu.Unlock()
+			p.lockHeld = false
+		}
+		p.daemon.router.RecordFailure(p.serverName, p.target, err)
+		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "connect")
+		return err
+	}
+
+	return nil
+}
+
+func (p *callPipeline) shouldRetryLocalAfterHubFailure() bool {
+	return p.preferHubRetryEligible &&
+		!p.localRetryUsed &&
+		p.target == router.TargetHub &&
+		p.daemon != nil &&
+		p.daemon.pool != nil
+}
+
+func (p *callPipeline) retryLocalAfterHubFailure(stage string, err error, req *mcp.Message, start time.Time) (*mcp.Message, bool) {
+	if !p.shouldRetryLocalAfterHubFailure() {
+		return nil, false
+	}
+
+	p.localRetryUsed = true
+	if p.conn != nil {
+		p.conn.Healthy = false
+	}
+	p.daemon.router.RecordFailure(p.serverName, p.target, err)
+	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, stage)
+	if p.daemon.hubPool != nil {
+		p.daemon.hubPool.ClearServer(p.serverName)
+	}
+	if p.daemon.hubClient != nil {
+		p.daemon.hubClient.CloseConnection(p.serverName)
+	}
+
+	until := p.daemon.setPreferHubBackoff(p.serverName, preferHubBackoffDuration)
+	p.daemon.logger.Warn("prefer-hub override transport failed; retrying local",
+		"server", p.serverName,
+		"stage", stage,
+		"error", err,
+		"backoff_until", until)
+
+	p.releaseConnection()
+
+	if connectErr := p.connectTarget(router.TargetLocal, "prefer-hub fallback after hub transport failure"); connectErr != nil {
+		combined := fmt.Errorf("hub %s failed: %v; local retry failed: %w", stage, err, connectErr)
+		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
+		return p.internalErrorWithAudit(p.targetStr, combined.Error()), true
+	}
+
+	return p.execute(req), true
+}
+
 func (p *callPipeline) transportFailure(stage string, err error, start time.Time) *mcp.Message {
-	p.conn.Healthy = false
+	if p.conn != nil {
+		p.conn.Healthy = false
+	}
 	p.daemon.router.RecordFailure(p.serverName, p.target, err)
 	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, stage)
 	p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))

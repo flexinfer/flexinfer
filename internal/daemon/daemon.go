@@ -112,6 +112,7 @@ type Daemon struct {
 	oauth               *OAuthServer                    // OAuth 2.1 authorization server
 	authMiddleware      func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	routingPreferences  map[string]RoutingPreference    // Per-server routing overrides
+	preferHubBackoff    gosync.Map                      // serverName -> time.Time (temporarily suppresses prefer-hub override)
 	refreshGroup        singleflight.Group              // Deduplicates concurrent tool cache refreshes
 	hubAuthDisabled     bool                            // Auth-gated hub discovery disabled hub fallback
 	hubAuthBackoffUntil time.Time                       // Backoff window for auth-gated hub discovery

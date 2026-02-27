@@ -143,7 +143,7 @@ help:
 	@echo "  make browserkit-check  - Verify Python deps + Playwright Chromium"
 	@echo "  make browserkit-setup  - Install Python deps + Playwright Chromium (downloads)"
 
-build: loomd loom servers
+build: loomd loom servers mcp-hub-wrapper
 
 loomd:
 	go build $(LDFLAGS) -o bin/loomd ./cmd/loomd
@@ -292,6 +292,9 @@ mcp-jobsearch:
 mcp-flexinfer:
 	go build $(LDFLAGS) -o bin/mcp-flexinfer ./cmd/mcp-flexinfer
 
+mcp-hub-wrapper:
+	go build $(LDFLAGS) -o bin/mcp-hub-wrapper ./cmd/mcp-hub-wrapper
+
 clean: hud-clean
 	rm -rf bin/
 	rm -f coverage.out coverage.html
@@ -326,10 +329,11 @@ test-short:
 install: install-all
 
 # Install only loom + loomd (fast iteration; least disruptive to agent/server processes).
-install-core: loom loomd
+install-core: loom loomd mcp-hub-wrapper
 	@chmod +x scripts/install_atomic.sh
 	@scripts/install_atomic.sh bin/loomd $(INSTALL_DIR)/loomd
 	@scripts/install_atomic.sh bin/loom  $(INSTALL_DIR)/loom
+	@scripts/install_atomic.sh bin/mcp-hub-wrapper $(INSTALL_DIR)/mcp-hub-wrapper
 
 # Install loom, loomd, and all MCP server binaries.
 install-all: build
@@ -337,6 +341,7 @@ install-all: build
 	@mkdir -p $(INSTALL_DIR)
 	@scripts/install_atomic.sh bin/loomd $(INSTALL_DIR)/loomd
 	@scripts/install_atomic.sh bin/loom  $(INSTALL_DIR)/loom
+	@scripts/install_atomic.sh bin/mcp-hub-wrapper $(INSTALL_DIR)/mcp-hub-wrapper
 	@for f in bin/mcp-*; do \
 		if [ -f "$$f" ]; then scripts/install_atomic.sh "$$f" "$(INSTALL_DIR)/$$(basename $$f)"; fi; \
 	done

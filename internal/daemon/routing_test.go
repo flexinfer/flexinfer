@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"testing"
+	"time"
 
 	"github.com/crb2nu/loom/internal/router"
 )
@@ -173,6 +174,16 @@ func TestApplyRoutingPreference_PreferHub(t *testing.T) {
 	}
 }
 
+func TestApplyRoutingPreference_PreferHubSuppressed(t *testing.T) {
+	target, overridden := applyRoutingPreferenceWithOptions(RoutingPreferHub, router.TargetLocal, true, false)
+	if overridden {
+		t.Error("expected no override when prefer-hub is suppressed")
+	}
+	if target != router.TargetLocal {
+		t.Errorf("target = %v, want TargetLocal", target)
+	}
+}
+
 func TestApplyRoutingPreference_PreferLocal(t *testing.T) {
 	// Overrides hub decision to local
 	target, overridden := applyRoutingPreference(RoutingPreferLocal, router.TargetHub, true)
@@ -206,5 +217,27 @@ func TestApplyRoutingPreference_HealthBased(t *testing.T) {
 	}
 	if target != router.TargetHub {
 		t.Errorf("target = %v, want TargetHub", target)
+	}
+}
+
+func TestPreferHubBackoffHelpers(t *testing.T) {
+	d := &Daemon{}
+	until := d.setPreferHubBackoff("agent_context", 20*time.Millisecond)
+	if until.IsZero() {
+		t.Fatal("expected non-zero backoff deadline")
+	}
+
+	active, gotUntil := d.preferHubBackoffActive("agent_context")
+	if !active {
+		t.Fatal("expected backoff to be active immediately after set")
+	}
+	if gotUntil.IsZero() {
+		t.Fatal("expected non-zero backoff deadline")
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	active, _ = d.preferHubBackoffActive("agent_context")
+	if active {
+		t.Fatal("expected backoff to expire")
 	}
 }

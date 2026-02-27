@@ -2,6 +2,7 @@ package generator
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -932,4 +933,142 @@ func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	if strings.Contains(content, `--agent-id "codex-$$"`) {
 		t.Error("found old global agent ID pattern codex-$$ without workspace hash")
 	}
+}
+
+func TestResolveHubWrapper_PreferenceOrder(t *testing.T) {
+	tmp := t.TempDir()
+	workspaceRoot := filepath.Join(tmp, "workspace")
+	registryRoot := filepath.Join(tmp, "registry-root")
+
+	envWrapper := writeTestWrapper(t, tmp, "env-wrapper.sh", true)
+	workspaceWrapper := writeTestWrapper(t, filepath.Join(workspaceRoot, "services", "loom-core", "bin"), "mcp-hub-wrapper", true)
+	installedWrapper := writeTestWrapper(t, filepath.Join(tmp, "home", ".local", "bin"), "mcp-hub-wrapper", true)
+	pathWrapper := writeTestWrapper(t, filepath.Join(tmp, "path"), "mcp-hub-wrapper", true)
+
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("PATH", filepath.Join(tmp, "path"))
+
+	t.Setenv(hubWrapperOverrideEnv, envWrapper)
+	got, err := resolveHubWrapper(workspaceRoot, registryRoot)
+	if err != nil {
+		t.Fatalf("resolveHubWrapper with env override: %v", err)
+	}
+	if got != envWrapper {
+		t.Fatalf("resolved wrapper = %q, want env override %q", got, envWrapper)
+	}
+
+	t.Setenv(hubWrapperOverrideEnv, "")
+	got, err = resolveHubWrapper(workspaceRoot, registryRoot)
+	if err != nil {
+		t.Fatalf("resolveHubWrapper with workspace wrapper: %v", err)
+	}
+	if got != workspaceWrapper {
+		t.Fatalf("resolved wrapper = %q, want workspace wrapper %q", got, workspaceWrapper)
+	}
+
+	if err := os.Remove(workspaceWrapper); err != nil {
+		t.Fatalf("remove workspace wrapper: %v", err)
+	}
+	got, err = resolveHubWrapper(workspaceRoot, registryRoot)
+	if err != nil {
+		t.Fatalf("resolveHubWrapper with installed wrapper: %v", err)
+	}
+	if got != installedWrapper {
+		t.Fatalf("resolved wrapper = %q, want installed wrapper %q", got, installedWrapper)
+	}
+
+	if err := os.Remove(installedWrapper); err != nil {
+		t.Fatalf("remove installed wrapper: %v", err)
+	}
+	got, err = resolveHubWrapper(workspaceRoot, registryRoot)
+	if err != nil {
+		t.Fatalf("resolveHubWrapper with PATH wrapper: %v", err)
+	}
+	if got != pathWrapper {
+		t.Fatalf("resolved wrapper = %q, want PATH wrapper %q", got, pathWrapper)
+	}
+}
+
+func TestBuildTargetMap_HubModeFailsWithoutHealthyWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("PATH", filepath.Join(tmp, "empty-path"))
+	t.Setenv(hubWrapperOverrideEnv, writeTestWrapper(t, tmp, "broken-wrapper.sh", false))
+
+	reg := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name: "agent_context",
+				Common: &registry.TargetSpec{
+					Command: "mcp-agent-context",
+				},
+			},
+		},
+	}
+
+	_, err := buildTargetMap(reg, "codex", true, "wss://example.test/ws", "codex", false, "", tmp, filepath.Join(tmp, "registry-root"), false)
+	if err == nil {
+		t.Fatal("expected hub mode generation to fail when no healthy wrapper is available")
+	}
+	if !strings.Contains(err.Error(), "resolve hub wrapper") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildTargetMap_HubModeUsesResolvedWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	goodWrapper := writeTestWrapper(t, tmp, "good-wrapper.sh", true)
+	t.Setenv(hubWrapperOverrideEnv, goodWrapper)
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("PATH", filepath.Join(tmp, "empty-path"))
+
+	reg := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name: "agent_context",
+				Common: &registry.TargetSpec{
+					Command: "mcp-agent-context",
+				},
+			},
+		},
+	}
+
+	targets, err := buildTargetMap(reg, "codex", true, "wss://example.test/ws", "codex", false, "", filepath.Join(tmp, "workspace"), filepath.Join(tmp, "registry-root"), false)
+	if err != nil {
+		t.Fatalf("buildTargetMap: %v", err)
+	}
+
+	spec := targets["agent_context"]
+	if spec == nil {
+		t.Fatal("expected agent_context target spec")
+	}
+	if spec.Command != goodWrapper {
+		t.Fatalf("hub wrapper command = %q, want %q", spec.Command, goodWrapper)
+	}
+	gotArgs := make([]string, 0, len(spec.Args))
+	for _, a := range spec.Args {
+		gotArgs = append(gotArgs, fmt.Sprintf("%v", a))
+	}
+	want := []string{"agent_context", "--profile", "codex", "--hub-url", "wss://example.test/ws"}
+	if strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("hub wrapper args = %v, want %v", gotArgs, want)
+	}
+}
+
+func writeTestWrapper(t *testing.T, dir string, name string, healthy bool) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	content := "#!/bin/sh\n"
+	if healthy {
+		content += "if [ \"$1\" = \"--help\" ]; then exit 0; fi\nexit 0\n"
+	} else {
+		content += "echo broken wrapper >&2\nexit 1\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		t.Fatalf("write wrapper %s: %v", path, err)
+	}
+	return path
 }

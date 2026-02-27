@@ -34,7 +34,7 @@ dir_in_list() {
 }
 
 echo "== Build =="
-make loom loomd >/dev/null
+make loom loomd mcp-hub-wrapper >/dev/null
 
 echo "== Install (atomic) =="
 chmod +x scripts/install_atomic.sh
@@ -63,6 +63,7 @@ fi
 for dir in "${INSTALL_TARGET_DIRS[@]}"; do
   scripts/install_atomic.sh "$ROOT/bin/loom"  "$dir/loom"
   scripts/install_atomic.sh "$ROOT/bin/loomd" "$dir/loomd"
+  scripts/install_atomic.sh "$ROOT/bin/mcp-hub-wrapper" "$dir/mcp-hub-wrapper"
 done
 
 RUN_LOOM="$PRIMARY_DIR/loom"

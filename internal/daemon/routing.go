@@ -4,9 +4,12 @@ package daemon
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/internal/router"
 )
+
+const preferHubBackoffDuration = 30 * time.Second
 
 // RoutingPreference controls how a specific server's traffic is routed.
 type RoutingPreference int
@@ -74,6 +77,10 @@ func ValidateRoutingPreferences(prefs map[string]string) error {
 // applyRoutingPreference overrides a route decision based on per-server config.
 // Returns the (possibly modified) target and whether the decision was overridden.
 func applyRoutingPreference(pref RoutingPreference, original router.Target, hasHub bool) (router.Target, bool) {
+	return applyRoutingPreferenceWithOptions(pref, original, hasHub, true)
+}
+
+func applyRoutingPreferenceWithOptions(pref RoutingPreference, original router.Target, hasHub bool, allowPreferHub bool) (router.Target, bool) {
 	switch pref {
 	case RoutingLocalOnly:
 		if original != router.TargetLocal {
@@ -87,6 +94,9 @@ func applyRoutingPreference(pref RoutingPreference, original router.Target, hasH
 			return router.TargetHub, true
 		}
 	case RoutingPreferHub:
+		if !allowPreferHub {
+			return original, false
+		}
 		if hasHub && original != router.TargetHub {
 			return router.TargetHub, true
 		}
@@ -99,4 +109,36 @@ func applyRoutingPreference(pref RoutingPreference, original router.Target, hasH
 		// No override
 	}
 	return original, false
+}
+
+func (d *Daemon) setPreferHubBackoff(serverName string, dur time.Duration) time.Time {
+	if strings.TrimSpace(serverName) == "" {
+		return time.Time{}
+	}
+	if dur <= 0 {
+		dur = preferHubBackoffDuration
+	}
+	until := time.Now().Add(dur)
+	d.preferHubBackoff.Store(serverName, until)
+	return until
+}
+
+func (d *Daemon) preferHubBackoffActive(serverName string) (bool, time.Time) {
+	if strings.TrimSpace(serverName) == "" {
+		return false, time.Time{}
+	}
+	v, ok := d.preferHubBackoff.Load(serverName)
+	if !ok {
+		return false, time.Time{}
+	}
+	until, ok := v.(time.Time)
+	if !ok {
+		d.preferHubBackoff.Delete(serverName)
+		return false, time.Time{}
+	}
+	if time.Now().Before(until) {
+		return true, until
+	}
+	d.preferHubBackoff.Delete(serverName)
+	return false, time.Time{}
 }

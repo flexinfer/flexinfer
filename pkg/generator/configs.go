@@ -1,14 +1,19 @@
 package generator
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/templatevars"
@@ -53,6 +58,19 @@ func preferWorkspaceLoomBinary(loomBinary string, workspaceRoot string) string {
 
 	return loomBinary
 }
+
+const (
+	defaultHubWrapperCommand      = "mcp-hub-wrapper"
+	hubWrapperOverrideEnv         = "LOOM_MCP_HUB_WRAPPER"
+	hubWrapperHealthCheckTimeout  = 3 * time.Second
+	hubWrapperLegacyRelativePath  = "scripts/mcp/hub_wrapper.sh"
+	hubWrapperWorkspaceBinaryPath = "services/loom-core/bin/mcp-hub-wrapper"
+)
+
+var (
+	hubWrapperLookPath      = exec.LookPath
+	hubWrapperCommandRunner = exec.CommandContext
+)
 
 // GenerateConfigs generates MCP client configurations.
 // registryPath is used to determine the repo root for resolving ${repo} tokens.
@@ -212,6 +230,15 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 
 	resolved := make(map[string]*registry.TargetSpec)
 	repoPath := workspaceRoot // Use provided workspace root instead of cwd
+	hubWrapper := ""
+
+	if hubMode {
+		var err error
+		hubWrapper, err = resolveHubWrapper(workspaceRoot, registryRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve hub wrapper: %w", err)
+		}
+	}
 
 	// Create expander lazily if secrets resolution is requested
 	var expander *templatevars.Expander
@@ -253,7 +280,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 
 		if hubMode && !server.IsLocalOnly() {
 			// Convert to hub mode
-			spec = convertToHubMode(spec, server.Name, hubURL, profile, workspaceRoot, registryRoot)
+			spec = convertToHubMode(spec, server.Name, hubURL, profile, hubWrapper)
 		}
 
 		if spec.Command != "" {
@@ -263,20 +290,10 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 	return resolved, nil
 }
 
-func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile string, workspaceRoot string, registryRoot string) *registry.TargetSpec {
-	// Use mcp-hub-wrapper
-	// We assume it's in the PATH or we resolve it. For now, just use "mcp-hub-wrapper"
-	// The Python script had complex resolution logic. We can simplify or assume it's installed.
-
-	wrapper := "mcp-hub-wrapper"
-	localWrapper := resolvePathLike("scripts/mcp/hub_wrapper.sh", workspaceRoot, registryRoot, "local")
-	if _, err := os.Stat(localWrapper); err == nil {
-		wrapper = localWrapper
-	}
-
+func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile string, wrapper string) *registry.TargetSpec {
 	return &registry.TargetSpec{
 		Description: spec.Description,
-		Command:     wrapper,
+		Command:     strings.TrimSpace(wrapper),
 		Args:        []any{serverName, "--profile", profile, "--hub-url", hubURL},
 		Env:         spec.Env,
 		Hint:        spec.Hint,
@@ -284,6 +301,100 @@ func convertToHubMode(spec *registry.TargetSpec, serverName, hubURL, profile str
 		AlwaysAllow: spec.AlwaysAllow,
 		Type:        spec.Type,
 	}
+}
+
+func resolveHubWrapper(workspaceRoot string, registryRoot string) (string, error) {
+	candidates := hubWrapperCandidates(workspaceRoot, registryRoot)
+	seen := make(map[string]struct{}, len(candidates))
+	failures := make([]string, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+
+		resolved, err := resolveWrapperExecutable(candidate)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s (%v)", candidate, err))
+			continue
+		}
+
+		if err := probeHubWrapper(resolved); err != nil {
+			failures = append(failures, fmt.Sprintf("%s (%v)", resolved, err))
+			continue
+		}
+		return resolved, nil
+	}
+
+	return "", fmt.Errorf("no healthy hub wrapper found (candidates tried: %s)", strings.Join(failures, "; "))
+}
+
+func hubWrapperCandidates(workspaceRoot string, registryRoot string) []string {
+	candidates := []string{}
+
+	if override := strings.TrimSpace(os.Getenv(hubWrapperOverrideEnv)); override != "" {
+		candidates = append(candidates, override)
+	}
+
+	if workspaceRoot != "" {
+		candidates = append(candidates, filepath.Join(workspaceRoot, hubWrapperWorkspaceBinaryPath))
+	}
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		candidates = append(candidates, filepath.Join(home, ".local", "bin", defaultHubWrapperCommand))
+	}
+
+	candidates = append(candidates, defaultHubWrapperCommand)
+
+	legacy := resolvePathLike(hubWrapperLegacyRelativePath, workspaceRoot, registryRoot, "local")
+	if legacy != "" {
+		candidates = append(candidates, legacy)
+	}
+
+	return candidates
+}
+
+func resolveWrapperExecutable(candidate string) (string, error) {
+	if strings.Contains(candidate, string(filepath.Separator)) || filepath.IsAbs(candidate) {
+		if !isExecutableFile(candidate) {
+			return "", fmt.Errorf("not executable")
+		}
+		return candidate, nil
+	}
+	resolved, err := hubWrapperLookPath(candidate)
+	if err != nil {
+		return "", err
+	}
+	if !isExecutableFile(resolved) {
+		return "", fmt.Errorf("resolved path is not executable: %s", resolved)
+	}
+	return resolved, nil
+}
+
+func probeHubWrapper(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), hubWrapperHealthCheckTimeout)
+	defer cancel()
+
+	cmd := hubWrapperCommandRunner(ctx, path, "--help")
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return nil
 }
 
 func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {

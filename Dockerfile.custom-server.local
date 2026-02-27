@@ -17,6 +17,7 @@ WORKDIR /src
 RUN mkdir -p /src/libs
 COPY libs/mcp-go /src/libs/mcp-go
 COPY libs/fi-mcp-kit /src/libs/fi-mcp-kit
+COPY libs/fi-accel/go/fiaccel /src/libs/fi-accel/go/fiaccel
 
 WORKDIR /src/services/loom-core
 
