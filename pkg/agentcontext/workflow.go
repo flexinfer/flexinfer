@@ -390,6 +390,9 @@ func (e *WorkflowEngine) executeWorkflow(ctx context.Context, wf *Workflow) {
 		}
 		e.mu.RUnlock()
 
+		// Propagate skips from gate steps to dependents
+		e.propagateSkips(wf)
+
 		// Find next executable steps
 		readySteps := e.findReadySteps(wf)
 		if len(readySteps) == 0 {
@@ -461,6 +464,39 @@ func (e *WorkflowEngine) findReadySteps(wf *Workflow) []string {
 		}
 	}
 	return ready
+}
+
+// propagateSkips transitively marks pending steps as skipped if any of their
+// dependencies were skipped (e.g., a gate that evaluated to false). This runs
+// in the main executeWorkflow loop before findReadySteps to prevent downstream
+// steps from executing past a failed gate.
+func (e *WorkflowEngine) propagateSkips(wf *Workflow) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	changed := true
+	for changed {
+		changed = false
+		for stepID, step := range wf.StepStates {
+			if step.Status != StepStatusPending {
+				continue
+			}
+			for _, depID := range step.DependsOn {
+				depStep := wf.StepStates[depID]
+				if depStep != nil && depStep.Status == StepStatusSkipped {
+					step.Status = StepStatusSkipped
+					step.Result = map[string]any{
+						"skipped": true,
+						"reason":  "upstream gate " + depID + " evaluated false",
+					}
+					wf.Context[stepID] = step.Result
+					wf.CompletedSteps++
+					changed = true
+					break
+				}
+			}
+		}
+	}
 }
 
 // allStepsComplete checks if all steps are done
@@ -597,6 +633,30 @@ func (e *WorkflowEngine) executeStep(ctx context.Context, wf *Workflow, stepID s
 		return
 	}
 
+	// Gate steps that evaluate to false are skipped, not completed.
+	// propagateSkips will transitively skip downstream dependents.
+	if step.StepType == StepTypeGate {
+		if passed, ok := result["passed"].(bool); ok && !passed {
+			step.Status = StepStatusSkipped
+			step.Result = result
+			wf.CompletedSteps++
+			if result != nil {
+				wf.Context[stepID] = result
+			}
+			e.mu.Unlock()
+
+			e.emitEvent(WorkflowEvent{
+				ID:         uuid.New().String()[:8],
+				WorkflowID: wf.ID,
+				StepID:     stepID,
+				EventType:  "step_skipped",
+				Timestamp:  completedAt,
+				Details:    map[string]any{"condition": step.Condition, "passed": false},
+			})
+			return
+		}
+	}
+
 	step.Status = StepStatusCompleted
 	step.Result = result
 	wf.CompletedSteps++
@@ -636,15 +696,14 @@ func (e *WorkflowEngine) executeToolStep(ctx context.Context, wf *Workflow, step
 	return e.toolExecutor(ctx, step.ServerName, step.ToolName, args)
 }
 
-// executeGateStep evaluates a conditional gate
+// executeGateStep evaluates a conditional gate. Returns {"passed": true/false}.
+// When the condition evaluates to false, executeStep marks the step as skipped,
+// and propagateSkips transitively skips all downstream dependents.
 func (e *WorkflowEngine) executeGateStep(wf *Workflow, step *WorkflowStep) (map[string]any, error) {
-	// Simple condition evaluation
-	// In a full implementation, this would use a proper expression evaluator
 	if step.Condition == "" {
 		return map[string]any{"passed": true}, nil
 	}
 
-	// For now, just check if a context variable is truthy
 	result := evaluateCondition(step.Condition, wf.Input, wf.Context)
 	return map[string]any{"passed": result}, nil
 }
@@ -821,21 +880,44 @@ func (e *WorkflowEngine) executeMapReduceStep(ctx context.Context, wf *Workflow,
 	return map[string]any{"map_results": mapResults, "count": len(mapResults)}, nil
 }
 
-// injectItemVariable clones args and replaces "${item}" references with the current item value.
+// injectItemVariable clones args, resolves step/input variables, and replaces
+// all "${item}" references (including in nested maps and slices) with the current item.
 func injectItemVariable(args map[string]any, item any, input, context map[string]any) map[string]any {
 	if args == nil {
 		return nil
 	}
 	resolved := resolveVariables(args, input, context)
-	result := make(map[string]any, len(resolved))
-	for k, v := range resolved {
-		if val, ok := v.(string); ok && val == "${item}" {
-			result[k] = item
-		} else {
-			result[k] = v
-		}
+	return injectItemInMap(resolved, item)
+}
+
+// injectItemInMap recursively replaces "${item}" in a map.
+func injectItemInMap(m map[string]any, item any) map[string]any {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = injectItemInValue(v, item)
 	}
 	return result
+}
+
+// injectItemInValue replaces "${item}" in a single value, recursing into maps and slices.
+func injectItemInValue(v any, item any) any {
+	switch val := v.(type) {
+	case string:
+		if val == "${item}" {
+			return item
+		}
+		return val
+	case map[string]any:
+		return injectItemInMap(val, item)
+	case []any:
+		result := make([]any, len(val))
+		for i, elem := range val {
+			result[i] = injectItemInValue(elem, item)
+		}
+		return result
+	default:
+		return v
+	}
 }
 
 // requestApproval marks a step as waiting for approval

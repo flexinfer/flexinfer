@@ -1444,3 +1444,203 @@ func TestCompareValues_String(t *testing.T) {
 		t.Error("abc != xyz should be true")
 	}
 }
+
+// --- Gate skip propagation tests ---
+
+func TestGateStep_FalseConditionSkipsDownstream(t *testing.T) {
+	executor := func(_ context.Context, _, _ string, _ map[string]any) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+	eng := NewWorkflowEngine(executor)
+
+	def := &WorkflowDefinition{
+		ID:   "gate-skip-def",
+		Name: "Gate skip test",
+		Steps: []WorkflowStep{
+			{ID: "init", Name: "Init", StepType: StepTypeTool, ServerName: "s", ToolName: "t"},
+			{ID: "gate", Name: "Gate", StepType: StepTypeGate, Condition: "init.missing_key > 0", DependsOn: []string{"init"}},
+			{ID: "after", Name: "After Gate", StepType: StepTypeTool, ServerName: "s", ToolName: "t", DependsOn: []string{"gate"}},
+		},
+	}
+	eng.RegisterDefinition(def)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	wf, err := eng.StartWorkflow(ctx, "gate-skip-def", "sess", "agent", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for completion
+	for {
+		eng.mu.RLock()
+		status := wf.Status
+		eng.mu.RUnlock()
+		if status == WorkflowStatusCompleted || status == WorkflowStatusFailed {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for workflow")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	eng.mu.RLock()
+	defer eng.mu.RUnlock()
+
+	// Gate should be skipped
+	if wf.StepStates["gate"].Status != StepStatusSkipped {
+		t.Errorf("gate status = %s, want skipped", wf.StepStates["gate"].Status)
+	}
+	// Downstream step should also be skipped (propagated)
+	if wf.StepStates["after"].Status != StepStatusSkipped {
+		t.Errorf("after status = %s, want skipped", wf.StepStates["after"].Status)
+	}
+	// Workflow should complete (all steps are either completed or skipped)
+	if wf.Status != WorkflowStatusCompleted {
+		t.Errorf("workflow status = %s, want completed", wf.Status)
+	}
+}
+
+func TestPropagateSkips_Transitive(t *testing.T) {
+	eng := NewWorkflowEngine(nil)
+
+	wf := &Workflow{
+		ID:     "skip-prop",
+		Status: WorkflowStatusRunning,
+		StepStates: map[string]*WorkflowStep{
+			"a": {ID: "a", Status: StepStatusSkipped},
+			"b": {ID: "b", Status: StepStatusPending, DependsOn: []string{"a"}},
+			"c": {ID: "c", Status: StepStatusPending, DependsOn: []string{"b"}},
+		},
+		Context: map[string]any{},
+	}
+
+	eng.propagateSkips(wf)
+
+	if wf.StepStates["b"].Status != StepStatusSkipped {
+		t.Errorf("b status = %s, want skipped", wf.StepStates["b"].Status)
+	}
+	if wf.StepStates["c"].Status != StepStatusSkipped {
+		t.Errorf("c status = %s, want skipped", wf.StepStates["c"].Status)
+	}
+	if wf.CompletedSteps != 2 {
+		t.Errorf("completed steps = %d, want 2", wf.CompletedSteps)
+	}
+}
+
+func TestPropagateSkips_NoEffectWhenNoneSkipped(t *testing.T) {
+	eng := NewWorkflowEngine(nil)
+
+	wf := &Workflow{
+		ID:     "no-skip",
+		Status: WorkflowStatusRunning,
+		StepStates: map[string]*WorkflowStep{
+			"a": {ID: "a", Status: StepStatusCompleted},
+			"b": {ID: "b", Status: StepStatusPending, DependsOn: []string{"a"}},
+		},
+		Context: map[string]any{},
+	}
+
+	eng.propagateSkips(wf)
+
+	if wf.StepStates["b"].Status != StepStatusPending {
+		t.Errorf("b status = %s, want pending", wf.StepStates["b"].Status)
+	}
+}
+
+// --- injectItemVariable nested replacement tests ---
+
+func TestInjectItemVariable_NestedMap(t *testing.T) {
+	args := map[string]any{
+		"top": "${item}",
+		"nested": map[string]any{
+			"query": "${item}",
+			"fixed": "unchanged",
+		},
+	}
+	result := injectItemVariable(args, "search-term", nil, nil)
+
+	if result["top"] != "search-term" {
+		t.Errorf("top = %v, want search-term", result["top"])
+	}
+	nested := result["nested"].(map[string]any)
+	if nested["query"] != "search-term" {
+		t.Errorf("nested.query = %v, want search-term", nested["query"])
+	}
+	if nested["fixed"] != "unchanged" {
+		t.Errorf("nested.fixed = %v, want unchanged", nested["fixed"])
+	}
+}
+
+func TestInjectItemVariable_Slice(t *testing.T) {
+	args := map[string]any{
+		"items": []any{"${item}", "static", "${item}"},
+	}
+	result := injectItemVariable(args, 42, nil, nil)
+
+	items := result["items"].([]any)
+	if items[0] != 42 {
+		t.Errorf("items[0] = %v, want 42", items[0])
+	}
+	if items[1] != "static" {
+		t.Errorf("items[1] = %v, want static", items[1])
+	}
+	if items[2] != 42 {
+		t.Errorf("items[2] = %v, want 42", items[2])
+	}
+}
+
+func TestInjectItemVariable_DeeplyNested(t *testing.T) {
+	args := map[string]any{
+		"level1": map[string]any{
+			"level2": map[string]any{
+				"level3": "${item}",
+			},
+		},
+	}
+	result := injectItemVariable(args, "deep-value", nil, nil)
+
+	l1 := result["level1"].(map[string]any)
+	l2 := l1["level2"].(map[string]any)
+	if l2["level3"] != "deep-value" {
+		t.Errorf("level3 = %v, want deep-value", l2["level3"])
+	}
+}
+
+// --- MapReduce with non-[]any input type ---
+
+func TestMapReduceStep_NonSliceInput(t *testing.T) {
+	executor := func(_ context.Context, _, _ string, _ map[string]any) (map[string]any, error) {
+		return map[string]any{}, nil
+	}
+	eng := NewWorkflowEngine(executor)
+
+	step := &WorkflowStep{
+		ID:          "mr",
+		StepType:    StepTypeMapReduce,
+		MapInputKey: "items",
+		MapStepTemplate: &WorkflowStep{
+			ServerName: "s",
+			ToolName:   "t",
+			ToolArgs:   map[string]any{"q": "${item}"},
+		},
+	}
+
+	wf := &Workflow{
+		ID:      "test",
+		Context: map[string]any{"items": "not-a-slice"},
+		Input:   map[string]any{},
+	}
+
+	_, err := eng.executeMapReduceStep(context.Background(), wf, step)
+	if err == nil {
+		t.Fatal("expected error for non-slice input")
+	}
+	if !strings.Contains(err.Error(), "got string") {
+		t.Errorf("error = %v, want mention of 'got string'", err)
+	}
+}
