@@ -603,37 +603,79 @@ def load_pipeline(model_id: str):
     sys.stdout.flush()
     return pipeline
 
+def _parse_warmup_resolutions():
+    """Parse warmup resolutions from env vars.
+
+    Priority:
+      1. WARMUP_RESOLUTIONS (comma-separated WxH, e.g. "512x512,1024x1024")
+      2. Legacy WARMUP_WIDTH / WARMUP_HEIGHT (single resolution)
+      3. Default 512x512
+    """
+    res_str = os.environ.get("WARMUP_RESOLUTIONS", "")
+    if res_str:
+        resolutions = []
+        for entry in res_str.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            try:
+                w, h = map(int, entry.split("x"))
+                resolutions.append((w, h))
+            except ValueError:
+                print(f"WARNING: skipping invalid warmup resolution '{entry}'")
+        if resolutions:
+            return resolutions
+
+    # Legacy fallback
+    w = int(os.environ.get("WARMUP_WIDTH", "512"))
+    h = int(os.environ.get("WARMUP_HEIGHT", "512"))
+    return [(w, h)]
+
+
 def warmup_inference():
-    """Run tiny dummy inference to compile ROCm GPU kernels (MIOpen/Triton).
-    First inference pays a kernel compilation penalty; absorbing it at startup
-    means the first real request is fast. With a persistent compilation cache,
-    subsequent container starts skip recompilation entirely.
+    """Run tiny dummy inference at each configured resolution to compile
+    ROCm GPU kernels (MIOpen/Triton). MIOpen kernels are resolution-specific,
+    so warming up at multiple resolutions eliminates the first-request
+    recompilation penalty. With a persistent compilation cache, subsequent
+    container starts skip recompilation entirely.
     """
     global pipeline
     if pipeline is None or os.environ.get("SKIP_WARMUP", "0") == "1":
         return
-    print("Running warmup inference (compiling GPU kernels)...")
+
+    resolutions = _parse_warmup_resolutions()
+    print(f"Running warmup inference at {len(resolutions)} resolution(s): "
+          f"{', '.join(f'{w}x{h}' for w, h in resolutions)}")
     sys.stdout.flush()
-    try:
-        warmup_w = int(os.environ.get("WARMUP_WIDTH", "512"))
-        warmup_h = int(os.environ.get("WARMUP_HEIGHT", "512"))
-        gen = torch.Generator(device="cpu").manual_seed(42)
-        kw = {"prompt": "warmup", "num_inference_steps": 2,
-              "generator": gen, "height": warmup_h, "width": warmup_w}
-        if PIPELINE_MODE == "inpainting":
-            kw["image"] = Image.new("RGB", (warmup_w, warmup_h), (128, 128, 128))
-            kw["mask_image"] = Image.new("L", (warmup_w, warmup_h), 255)
-            kw["strength"] = 0.5
-        elif PIPELINE_MODE == "instruct":
-            kw["image"] = Image.new("RGB", (warmup_w, warmup_h), (128, 128, 128))
-        with torch.no_grad():
-            pipeline(**kw)
+
+    for w, h in resolutions:
+        t0 = time.time()
+        try:
+            gen = torch.Generator(device="cpu").manual_seed(42)
+            kw = {"prompt": "warmup", "num_inference_steps": 2,
+                  "generator": gen, "height": h, "width": w}
+            if PIPELINE_MODE == "inpainting":
+                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+                kw["mask_image"] = Image.new("L", (w, h), 255)
+                kw["strength"] = 0.5
+            elif PIPELINE_MODE == "instruct":
+                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            with torch.no_grad():
+                pipeline(**kw)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elapsed = time.time() - t0
+            print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
+        except Exception as e:
+            elapsed = time.time() - t0
+            print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
+
+        # Free VRAM between resolutions to avoid OOM on the next size
         if torch.cuda.is_available():
-            torch.cuda.synchronize()
             torch.cuda.empty_cache()
-        print("Warmup complete")
-    except Exception as e:
-        print(f"Warmup failed (non-fatal): {e}")
+        sys.stdout.flush()
+
+    print("All warmup passes complete")
     sys.stdout.flush()
 
 @asynccontextmanager

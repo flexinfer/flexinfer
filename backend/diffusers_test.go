@@ -196,6 +196,110 @@ func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 	}
 }
 
+func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
+	b := &DiffusersBackend{}
+
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	tests := []struct {
+		name      string
+		config    map[string]interface{}
+		gpuVendor GPUVendor
+		gpuArch   string
+		wantEnv   map[string]string
+		absentEnv []string
+	}{
+		{
+			name:   "explicit warmupResolutions emits WARMUP_RESOLUTIONS",
+			config: map[string]interface{}{"warmupResolutions": "512x512,1024x1024"},
+			wantEnv: map[string]string{
+				"WARMUP_RESOLUTIONS": "512x512,1024x1024",
+			},
+			absentEnv: []string{"WARMUP_WIDTH", "WARMUP_HEIGHT"},
+		},
+		{
+			name:   "legacy warmupWidth/warmupHeight still works",
+			config: map[string]interface{}{"warmupWidth": "768", "warmupHeight": "768"},
+			wantEnv: map[string]string{
+				"WARMUP_WIDTH":  "768",
+				"WARMUP_HEIGHT": "768",
+			},
+			absentEnv: []string{"WARMUP_RESOLUTIONS"},
+		},
+		{
+			name:      "gfx1100 auto-default includes 1024x1024",
+			config:    map[string]interface{}{},
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			wantEnv: map[string]string{
+				"WARMUP_RESOLUTIONS": "512x512,1024x1024",
+			},
+			absentEnv: []string{"WARMUP_WIDTH", "WARMUP_HEIGHT"},
+		},
+		{
+			name:      "gfx906 auto-default omits 1024x1024",
+			config:    map[string]interface{}{},
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx906",
+			wantEnv: map[string]string{
+				"WARMUP_RESOLUTIONS": "512x512",
+			},
+			absentEnv: []string{"WARMUP_WIDTH", "WARMUP_HEIGHT"},
+		},
+		{
+			name:      "NVIDIA gets no auto-default warmup resolutions",
+			config:    map[string]interface{}{},
+			gpuVendor: GPUVendorNVIDIA,
+			gpuArch:   "sm_89",
+			absentEnv: []string{"WARMUP_RESOLUTIONS", "WARMUP_WIDTH", "WARMUP_HEIGHT"},
+		},
+		{
+			name:      "warmupResolutions takes precedence over warmupWidth",
+			config:    map[string]interface{}{"warmupResolutions": "768x768", "warmupWidth": "512"},
+			gpuVendor: GPUVendorAMD,
+			gpuArch:   "gfx1100",
+			wantEnv: map[string]string{
+				"WARMUP_RESOLUTIONS": "768x768",
+			},
+			absentEnv: []string{"WARMUP_WIDTH", "WARMUP_HEIGHT"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{
+				Model:     "test-model",
+				Config:    tt.config,
+				GPUVendor: tt.gpuVendor,
+				GPUArch:   tt.gpuArch,
+			}
+			envs := b.Env(spec)
+
+			for wantName, wantVal := range tt.wantEnv {
+				got, ok := findEnv(envs, wantName)
+				if !ok {
+					t.Errorf("expected env %s to be present", wantName)
+				} else if got != wantVal {
+					t.Errorf("env %s = %q, want %q", wantName, got, wantVal)
+				}
+			}
+
+			for _, absent := range tt.absentEnv {
+				if _, ok := findEnv(envs, absent); ok {
+					t.Errorf("expected env %s to be absent", absent)
+				}
+			}
+		})
+	}
+}
+
 func TestDiffusersBackendImage(t *testing.T) {
 	b := &DiffusersBackend{}
 

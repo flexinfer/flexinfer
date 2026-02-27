@@ -129,13 +129,29 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if skip := spec.ConfigString("skipWarmup", ""); skip != "" {
 		env = append(env, corev1.EnvVar{Name: "SKIP_WARMUP", Value: skip})
 	}
-	// Warmup resolution: compile GPU kernels at the target resolution so MIOpen/Triton
-	// produce the right kernel instantiations. Default 512x512 in the container.
-	if warmupW := spec.ConfigString("warmupWidth", ""); warmupW != "" {
+
+	// Multi-resolution warmup: pre-compile MIOpen/Triton kernels at each resolution
+	// so the first real request at any listed resolution is fast.
+	// Priority: warmupResolutions > warmupWidth/warmupHeight > GPU-arch auto-default.
+	if res := spec.ConfigString("warmupResolutions", ""); res != "" {
+		env = append(env, corev1.EnvVar{Name: "WARMUP_RESOLUTIONS", Value: res})
+	} else if warmupW := spec.ConfigString("warmupWidth", ""); warmupW != "" {
+		// Legacy single-resolution config: pass through for backward compat.
 		env = append(env, corev1.EnvVar{Name: "WARMUP_WIDTH", Value: warmupW})
-	}
-	if warmupH := spec.ConfigString("warmupHeight", ""); warmupH != "" {
-		env = append(env, corev1.EnvVar{Name: "WARMUP_HEIGHT", Value: warmupH})
+		if warmupH := spec.ConfigString("warmupHeight", ""); warmupH != "" {
+			env = append(env, corev1.EnvVar{Name: "WARMUP_HEIGHT", Value: warmupH})
+		}
+	} else if spec.GPUVendor == GPUVendorAMD {
+		// Auto-default: AMD GPUs use MIOpen which compiles resolution-specific kernels.
+		switch {
+		case strings.HasPrefix(spec.GPUArch, "gfx110"):
+			// gfx1100 (24GB VRAM): warm up both 512 and 1024
+			env = append(env, corev1.EnvVar{Name: "WARMUP_RESOLUTIONS", Value: "512x512,1024x1024"})
+		case strings.HasPrefix(spec.GPUArch, "gfx906"):
+			// gfx906 (16GB VRAM): 1024x1024 risks OOM, stick with 512
+			env = append(env, corev1.EnvVar{Name: "WARMUP_RESOLUTIONS", Value: "512x512"})
+		}
+		// Other AMD archs and NVIDIA: no auto-default (container default is 512x512)
 	}
 
 	// Add ROCm environment for AMD GPUs
