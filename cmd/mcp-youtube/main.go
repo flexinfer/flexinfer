@@ -4,9 +4,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -153,16 +156,16 @@ func handleGetTranscript(ctx context.Context, args map[string]any) (*mcp.CallToo
 		transcript, err = client.GetTranscript(video, "")
 	}
 	if err != nil {
-		// Library transcript API failed — try yt-dlp fallback
-		text, fbErr := transcriptViaYTDLP(ctx, videoID, language, includeTimestamps)
+		// Library transcript API failed — try caption track fallback
+		text, fbErr := transcriptViaCaptionTracks(ctx, video, language, includeTimestamps)
 		if fbErr != nil {
-			return mcp.ErrorResult(fmt.Errorf("failed to get transcript: %w (yt-dlp fallback: %v)", err, fbErr)), nil
+			return mcp.ErrorResult(fmt.Errorf("failed to get transcript: %w (caption fallback: %v)", err, fbErr)), nil
 		}
 		return mcp.JSONResult(map[string]any{
 			"video_id":   videoID,
 			"title":      video.Title,
 			"language":   language,
-			"source":     "yt-dlp",
+			"source":     "caption-tracks",
 			"transcript": text,
 		})
 	}
@@ -219,75 +222,86 @@ func handleGetVideoInfo(ctx context.Context, args map[string]any) (*mcp.CallTool
 	})
 }
 
-// transcriptViaYTDLP fetches a transcript using yt-dlp as a fallback when the
-// Go library's GetTranscript API fails (e.g., YouTube internal API changes).
-func transcriptViaYTDLP(ctx context.Context, videoID, language string, includeTimestamps bool) (string, error) {
-	if _, err := exec.LookPath("yt-dlp"); err != nil {
-		return "", fmt.Errorf("yt-dlp not found in PATH")
+// transcriptViaCaptionTracks fetches a transcript using the video's caption
+// track URLs directly. This is a pure Go fallback that works in hub mode
+// without requiring yt-dlp.
+func transcriptViaCaptionTracks(ctx context.Context, video *youtube.Video, language string, includeTimestamps bool) (string, error) {
+	if len(video.CaptionTracks) == 0 {
+		return "", fmt.Errorf("no caption tracks available")
 	}
 
-	url := "https://www.youtube.com/watch?v=" + videoID
-	args := []string{
-		"--skip-download",
-		"--write-subs",
-		"--write-auto-subs",
-		"--sub-format", "json3",
-		"--sub-langs", language,
-		"--dump-json",
-		url,
-	}
-
-	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("yt-dlp failed: %w", err)
-	}
-
-	// Parse the JSON output for subtitle URL
-	var info struct {
-		Subtitles    map[string][]subtitleEntry `json:"subtitles"`
-		AutoCaptions map[string][]subtitleEntry `json:"automatic_captions"`
-	}
-	if err := json.Unmarshal(out, &info); err != nil {
-		return "", fmt.Errorf("failed to parse yt-dlp output: %w", err)
-	}
-
-	// Prefer manual subtitles, fall back to auto-captions
-	subs := info.Subtitles[language]
-	if len(subs) == 0 {
-		subs = info.AutoCaptions[language]
-	}
-	if len(subs) == 0 {
-		// Try "en" fallback if requested language unavailable
-		subs = info.Subtitles["en"]
-		if len(subs) == 0 {
-			subs = info.AutoCaptions["en"]
-		}
-	}
-	if len(subs) == 0 {
-		return "", fmt.Errorf("no subtitles available for language %q", language)
-	}
-
-	// Find json3 format subtitle URL and fetch it
-	var subURL string
-	for _, s := range subs {
-		if s.Ext == "json3" {
-			subURL = s.URL
+	// Find matching caption track: prefer exact language match, then "en" fallback.
+	var track *youtube.CaptionTrack
+	for i := range video.CaptionTracks {
+		if video.CaptionTracks[i].LanguageCode == language {
+			track = &video.CaptionTracks[i]
 			break
 		}
 	}
-	if subURL == "" {
-		return "", fmt.Errorf("no json3 subtitle format available")
+	if track == nil && language != "en" {
+		for i := range video.CaptionTracks {
+			if video.CaptionTracks[i].LanguageCode == "en" {
+				track = &video.CaptionTracks[i]
+				break
+			}
+		}
+	}
+	if track == nil {
+		// Use first available track.
+		track = &video.CaptionTracks[0]
 	}
 
-	// Fetch subtitle content
-	subCmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "-o", "-", subURL)
-	subOut, err := subCmd.Output()
+	// Force json3 format in the caption track URL.
+	captionURL := setCaptionFormat(track.BaseURL, "json3")
+
+	body, err := fetchURL(ctx, captionURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch subtitle content: %w", err)
+		return "", err
 	}
 
-	// Parse json3 subtitle format
+	// Try json3 first, fall back to XML (timedtext srv3).
+	if text, err := parseJSON3Captions(body, includeTimestamps); err == nil && text != "" {
+		return text, nil
+	}
+
+	// Retry with XML format if json3 didn't work.
+	captionURL = setCaptionFormat(track.BaseURL, "srv3")
+	body, err = fetchURL(ctx, captionURL)
+	if err != nil {
+		return "", err
+	}
+	return parseXMLCaptions(body, includeTimestamps)
+}
+
+// setCaptionFormat sets or replaces the fmt parameter in a caption URL.
+func setCaptionFormat(rawURL, format string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	q.Set("fmt", format)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func fetchURL(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch captions: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("caption fetch returned %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func parseJSON3Captions(body []byte, includeTimestamps bool) (string, error) {
 	var subData struct {
 		Events []struct {
 			TStartMs int `json:"tStartMs"`
@@ -296,8 +310,8 @@ func transcriptViaYTDLP(ctx context.Context, videoID, language string, includeTi
 			} `json:"segs"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal(subOut, &subData); err != nil {
-		return "", fmt.Errorf("failed to parse subtitle json3: %w", err)
+	if err := json.Unmarshal(body, &subData); err != nil {
+		return "", err
 	}
 
 	var builder strings.Builder
@@ -318,12 +332,57 @@ func transcriptViaYTDLP(ctx context.Context, videoID, language string, includeTi
 			builder.WriteString(text + " ")
 		}
 	}
-
 	return strings.TrimSpace(builder.String()), nil
 }
 
-type subtitleEntry struct {
-	Ext  string `json:"ext"`
-	URL  string `json:"url"`
-	Name string `json:"name"`
+// timedText is the XML structure returned by YouTube's timedtext API (srv3 format).
+type timedText struct {
+	XMLName xml.Name      `xml:"timedtext"`
+	Body    timedTextBody `xml:"body"`
+}
+
+type timedTextBody struct {
+	Paragraphs []timedTextParagraph `xml:"p"`
+}
+
+type timedTextParagraph struct {
+	StartMs  int            `xml:"t,attr"`
+	Duration int            `xml:"d,attr"`
+	Segments []timedTextSeg `xml:"s"`
+}
+
+type timedTextSeg struct {
+	Text string `xml:",chardata"`
+}
+
+func parseXMLCaptions(body []byte, includeTimestamps bool) (string, error) {
+	var tt timedText
+	if err := xml.Unmarshal(body, &tt); err != nil {
+		return "", fmt.Errorf("parse caption xml: %w", err)
+	}
+
+	var builder strings.Builder
+	for _, p := range tt.Body.Paragraphs {
+		var text string
+		for _, seg := range p.Segments {
+			text += seg.Text
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		if includeTimestamps {
+			ms := p.StartMs
+			m, s := ms/60000, (ms%60000)/1000
+			builder.WriteString(fmt.Sprintf("[%d:%02d] %s\n", m, s, text))
+		} else {
+			builder.WriteString(text + " ")
+		}
+	}
+
+	result := strings.TrimSpace(builder.String())
+	if result == "" {
+		return "", fmt.Errorf("no transcript text in caption track")
+	}
+	return result, nil
 }
