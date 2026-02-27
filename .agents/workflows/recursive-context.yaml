@@ -1,0 +1,130 @@
+# Recursive Context Workflow
+#
+# RLM-native workflow using the map_reduce step type for automated parallel
+# fan-out over document/codebase partitions with aggregation.
+#
+# Flow: init → recall → peek → plan_decomposition (approval)
+#   → map_phase (map_reduce) → coverage_gate → synthesize (approval) → record → end
+#
+# The agent sets partition items in wf.Context["partitions"] during the
+# plan_decomposition approval gate. The engine handles parallel fan-out.
+#
+# Usage:
+#   agent_workflow_start(definition_id="recursive-context", input={
+#     namespace: "project/analysis",
+#     agent_id: "claude-code",
+#     query: "How does the workflow engine handle retries?",
+#     repo_path: "."
+#   })
+
+name: "recursive-context"
+description: "RLM recursive context analysis with map_reduce parallel fan-out"
+
+steps:
+  - id: init
+    name: "Initialize Session"
+    step_type: tool
+    tool_name: agent_session_start
+    server_name: agent-context
+    tool_args:
+      namespace: "${input.namespace}"
+      agent_id: "${input.agent_id}"
+      description: "Recursive context: ${input.query}"
+
+  - id: recall
+    name: "Recall Prior Context"
+    step_type: tool
+    tool_name: agent_context_recall_enhanced
+    server_name: agent-context
+    tool_args:
+      query: "${input.query}"
+      session_id: "${init.session_id}"
+      token_budget: 4000
+    depends_on: [init]
+
+  - id: peek
+    name: "Peek: Sample Structure"
+    step_type: tool
+    tool_name: codebase_stats
+    server_name: codebase-memory
+    tool_args:
+      repo_path: "${input.repo_path}"
+    depends_on: [recall]
+
+  - id: plan_decomposition
+    name: "Plan Decomposition"
+    step_type: approval
+    approval_message: "Review peek results. Set wf.Context['partitions'] to a list of search queries (one per area), then approve to fan out."
+    depends_on: [peek]
+
+  - id: map_phase
+    name: "Map: Process Partitions"
+    step_type: map_reduce
+    map_input_key: "partitions"
+    map_step_template:
+      id: "partition_search"
+      name: "Search Partition"
+      step_type: tool
+      tool_name: codebase_search
+      server_name: codebase-memory
+      tool_args:
+        repo_path: "${input.repo_path}"
+        query: "${item}"
+    reduce_tool_name: agent_context_summarize
+    reduce_server_name: agent-context
+    reduce_tool_args:
+      session_id: "${init.session_id}"
+    max_concurrency: 4
+    depends_on: [plan_decomposition]
+
+  - id: coverage_gate
+    name: "Coverage Gate"
+    step_type: gate
+    condition: "map_phase.count > 0"
+    depends_on: [map_phase]
+
+  - id: synthesize
+    name: "Synthesize Results"
+    step_type: approval
+    approval_message: "Map phase complete. Review aggregated results and synthesize final answer. Approve when ready to record."
+    depends_on: [coverage_gate]
+
+  - id: record
+    name: "Record Reasoning Chain"
+    step_type: tool
+    tool_name: agent_reasoning_chain_add
+    server_name: agent-context
+    tool_args:
+      query: "${input.query}"
+      conclusion: "${map_phase.summary}"
+    depends_on: [synthesize]
+
+  - id: end
+    name: "End Session"
+    step_type: tool
+    tool_name: agent_session_end
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      summarize: true
+    depends_on: [record]
+
+input_schema:
+  namespace:
+    type: string
+    required: true
+    description: "Session namespace (e.g., project/analysis)"
+  agent_id:
+    type: string
+    required: true
+    description: "Agent identifier (e.g., claude-code)"
+  query:
+    type: string
+    required: true
+    description: "The analysis question to answer"
+  repo_path:
+    type: string
+    required: false
+    description: "Repository path for codebase tools (default: .)"
+
+rollback_on_failure: false

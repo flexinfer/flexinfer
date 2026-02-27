@@ -433,11 +433,12 @@ const (
 type StepType string
 
 const (
-	StepTypeTool     StepType = "tool"     // Execute an MCP tool
-	StepTypeApproval StepType = "approval" // Wait for human approval
-	StepTypeGate     StepType = "gate"     // Conditional gate
-	StepTypeParallel StepType = "parallel" // Execute steps in parallel
-	StepTypeSubflow  StepType = "subflow"  // Execute a nested workflow
+	StepTypeTool      StepType = "tool"       // Execute an MCP tool
+	StepTypeApproval  StepType = "approval"   // Wait for human approval
+	StepTypeGate      StepType = "gate"       // Conditional gate
+	StepTypeParallel  StepType = "parallel"   // Execute steps in parallel
+	StepTypeSubflow   StepType = "subflow"    // Execute a nested workflow
+	StepTypeMapReduce StepType = "map_reduce" // Fan-out map + optional reduce
 )
 
 // WorkflowStep represents a single step in a workflow
@@ -467,6 +468,14 @@ type WorkflowStep struct {
 
 	// Subflow (for StepTypeSubflow)
 	SubflowID string `json:"subflow_id,omitempty"`
+
+	// MapReduce (for StepTypeMapReduce)
+	MapInputKey      string         `json:"map_input_key,omitempty"`      // Key in workflow context holding []any items
+	MapStepTemplate  *WorkflowStep  `json:"map_step_template,omitempty"`  // Template step instantiated per item
+	ReduceToolName   string         `json:"reduce_tool_name,omitempty"`   // Optional reduce tool
+	ReduceServerName string         `json:"reduce_server_name,omitempty"` // MCP server for reduce tool
+	ReduceToolArgs   map[string]any `json:"reduce_tool_args,omitempty"`   // Args for reduce tool
+	MaxConcurrency   int            `json:"max_concurrency,omitempty"`    // 0 = unlimited
 
 	// Retry settings
 	MaxRetries int `json:"max_retries,omitempty"`
@@ -538,6 +547,9 @@ type Workflow struct {
 	Status      WorkflowStatus           `json:"status"`
 	CurrentStep string                   `json:"current_step,omitempty"` // Current step ID
 	StepStates  map[string]*WorkflowStep `json:"step_states"`
+
+	// Completion signal for subflow waiters (closed when workflow completes)
+	done chan struct{} `json:"-"`
 
 	// Input/Output
 	Input  map[string]any `json:"input,omitempty"`

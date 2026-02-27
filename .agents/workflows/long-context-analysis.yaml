@@ -1,0 +1,124 @@
+# Long Context Analysis Workflow
+#
+# Implements the RLM (Recursive Language Model) reasoning loop using only
+# existing workflow step types (tool + approval). No engine extensions required.
+#
+# Strategies: peek → grep → partition+map (approval-gated) → synthesize → record
+#
+# Usage:
+#   agent_workflow_start(definition_id="long-context-analysis", input={
+#     namespace: "project/analysis",
+#     agent_id: "claude-code",
+#     query: "How does the authentication system work?",
+#     repo_path: "."
+#   })
+
+name: "long-context-analysis"
+description: "RLM-inspired recursive context analysis using peek, grep, partition, and synthesize strategies"
+
+steps:
+  - id: init
+    name: "Initialize Session"
+    step_type: tool
+    tool_name: agent_session_start
+    server_name: agent-context
+    tool_args:
+      namespace: "${input.namespace}"
+      agent_id: "${input.agent_id}"
+      description: "Long context analysis: ${input.query}"
+
+  - id: recall
+    name: "Recall Prior Context"
+    step_type: tool
+    tool_name: agent_context_recall_enhanced
+    server_name: agent-context
+    tool_args:
+      query: "${input.query}"
+      session_id: "${init.session_id}"
+      token_budget: 4000
+    depends_on: [init]
+
+  - id: peek
+    name: "Peek: Sample Structure"
+    step_type: tool
+    tool_name: codebase_stats
+    server_name: codebase-memory
+    tool_args:
+      repo_path: "${input.repo_path}"
+    depends_on: [recall]
+
+  - id: grep
+    name: "Grep: Keyword Narrowing"
+    step_type: tool
+    tool_name: codebase_search
+    server_name: codebase-memory
+    tool_args:
+      repo_path: "${input.repo_path}"
+      query: "${input.query}"
+    depends_on: [peek]
+
+  - id: plan_partitions
+    name: "Plan Partitions"
+    step_type: approval
+    approval_message: "Peek and grep complete. Review results and plan partitions for deeper analysis. Set partition items in workflow context, then approve."
+    depends_on: [grep]
+
+  - id: partition_analysis
+    name: "Partition Analysis"
+    step_type: approval
+    approval_message: "Process each partition identified in the plan. Use codebase_search + agent_context_add per partition. Approve when all partitions are analyzed."
+    depends_on: [plan_partitions]
+
+  - id: synthesize
+    name: "Synthesize Findings"
+    step_type: tool
+    tool_name: agent_context_summarize
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+    depends_on: [partition_analysis]
+
+  - id: record
+    name: "Record Reasoning Chain"
+    step_type: tool
+    tool_name: agent_reasoning_chain_add
+    server_name: agent-context
+    tool_args:
+      query: "${input.query}"
+      steps: "${input.reasoning_steps}"
+      conclusion: "${synthesize.summary}"
+    depends_on: [synthesize]
+
+  - id: end
+    name: "End Session"
+    step_type: tool
+    tool_name: agent_session_end
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      summarize: true
+    depends_on: [record]
+
+input_schema:
+  namespace:
+    type: string
+    required: true
+    description: "Session namespace (e.g., project/analysis)"
+  agent_id:
+    type: string
+    required: true
+    description: "Agent identifier (e.g., claude-code)"
+  query:
+    type: string
+    required: true
+    description: "The analysis question to answer"
+  repo_path:
+    type: string
+    required: false
+    description: "Repository path for codebase tools (default: .)"
+  reasoning_steps:
+    type: array
+    required: false
+    description: "Reasoning steps collected during analysis (populated by agent)"
+
+rollback_on_failure: false

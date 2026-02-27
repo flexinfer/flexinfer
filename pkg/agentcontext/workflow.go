@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -154,6 +156,7 @@ func (e *WorkflowEngine) StartWorkflow(ctx context.Context, definitionID, sessio
 		CreatedAt:    now,
 		StartedAt:    &now,
 		TotalSteps:   len(def.Steps),
+		done:         make(chan struct{}),
 	}
 
 	// Initialize step states
@@ -342,6 +345,15 @@ func (e *WorkflowEngine) CancelWorkflow(workflowID, reason string) error {
 	wf.Status = WorkflowStatusCancelled
 	wf.Error = reason
 	wf.CompletedAt = &now
+
+	// Signal subflow waiters
+	if wf.done != nil {
+		select {
+		case <-wf.done:
+		default:
+			close(wf.done)
+		}
+	}
 	e.mu.Unlock()
 
 	e.emitEvent(WorkflowEvent{
@@ -520,6 +532,8 @@ func (e *WorkflowEngine) executeStep(ctx context.Context, wf *Workflow, stepID s
 		result, err = e.executeParallelStep(ctx, wf, step)
 	case StepTypeSubflow:
 		result, err = e.executeSubflowStep(ctx, wf, step)
+	case StepTypeMapReduce:
+		result, err = e.executeMapReduceStep(ctx, wf, step)
 	case StepTypeApproval:
 		// Pure approval step - check if already approved
 		if step.ApprovalInfo != nil && step.ApprovalInfo.Status == ApprovalStatusApproved {
@@ -686,23 +700,142 @@ func (e *WorkflowEngine) executeSubflowStep(ctx context.Context, wf *Workflow, s
 		return nil, fmt.Errorf("failed to start subflow: %w", err)
 	}
 
-	// Wait for completion (poll)
-	for {
-		time.Sleep(100 * time.Millisecond)
+	// Wait for completion via done channel instead of polling
+	select {
+	case <-subWf.done:
+		// Subflow completed (or failed)
+	case <-ctx.Done():
+		return nil, fmt.Errorf("subflow cancelled: %w", ctx.Err())
+	}
 
-		e.mu.RLock()
-		status := subWf.Status
-		output := subWf.Output
-		subErr := subWf.Error
-		e.mu.RUnlock()
+	e.mu.RLock()
+	status := subWf.Status
+	output := subWf.Output
+	subErr := subWf.Error
+	e.mu.RUnlock()
 
-		switch status {
-		case WorkflowStatusCompleted:
-			return output, nil
-		case WorkflowStatusFailed, WorkflowStatusCancelled:
-			return nil, fmt.Errorf("subflow failed: %s", subErr)
+	switch status {
+	case WorkflowStatusCompleted:
+		return output, nil
+	case WorkflowStatusFailed, WorkflowStatusCancelled:
+		return nil, fmt.Errorf("subflow failed: %s", subErr)
+	default:
+		return nil, fmt.Errorf("subflow ended in unexpected status: %s", status)
+	}
+}
+
+// executeMapReduceStep fans out a template step over items and optionally reduces.
+func (e *WorkflowEngine) executeMapReduceStep(ctx context.Context, wf *Workflow, step *WorkflowStep) (map[string]any, error) {
+	if step.MapStepTemplate == nil {
+		return nil, fmt.Errorf("map_reduce step %s: map_step_template is required", step.ID)
+	}
+	if step.MapInputKey == "" {
+		return nil, fmt.Errorf("map_reduce step %s: map_input_key is required", step.ID)
+	}
+
+	// Read items from workflow context
+	e.mu.RLock()
+	rawItems, ok := wf.Context[step.MapInputKey]
+	e.mu.RUnlock()
+	if !ok {
+		return map[string]any{"map_results": []any{}, "count": 0}, nil
+	}
+
+	items, ok := rawItems.([]any)
+	if !ok {
+		return nil, fmt.Errorf("map_reduce step %s: %s must be []any, got %T", step.ID, step.MapInputKey, rawItems)
+	}
+
+	if len(items) == 0 {
+		return map[string]any{"map_results": []any{}, "count": 0}, nil
+	}
+
+	// Determine concurrency bound
+	concurrency := step.MaxConcurrency
+	if concurrency <= 0 {
+		concurrency = len(items)
+	}
+	sem := make(chan struct{}, concurrency)
+
+	// Fan-out: execute template per item
+	type indexedResult struct {
+		idx    int
+		result map[string]any
+		err    error
+	}
+	resultCh := make(chan indexedResult, len(items))
+
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Add(1)
+		go func(idx int, itm any) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Clone template and inject ${item} variable
+			tmpl := *step.MapStepTemplate
+			tmpl.ToolArgs = injectItemVariable(tmpl.ToolArgs, itm, wf.Input, wf.Context)
+
+			r, err := e.executeToolStep(ctx, wf, &tmpl)
+			resultCh <- indexedResult{idx: idx, result: r, err: err}
+		}(i, item)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	// Collect results in order
+	mapResults := make([]any, len(items))
+	var firstErr error
+	for ir := range resultCh {
+		if ir.err != nil && firstErr == nil {
+			firstErr = ir.err
+		}
+		if ir.result != nil {
+			mapResults[ir.idx] = ir.result
 		}
 	}
+
+	if firstErr != nil {
+		return nil, fmt.Errorf("map_reduce step %s: map phase error: %w", step.ID, firstErr)
+	}
+
+	// Optional reduce phase
+	if step.ReduceToolName != "" && e.toolExecutor != nil {
+		reduceArgs := resolveVariables(step.ReduceToolArgs, wf.Input, wf.Context)
+		if reduceArgs == nil {
+			reduceArgs = make(map[string]any)
+		}
+		reduceArgs["map_results"] = mapResults
+
+		reduceResult, err := e.toolExecutor(ctx, step.ReduceServerName, step.ReduceToolName, reduceArgs)
+		if err != nil {
+			return nil, fmt.Errorf("map_reduce step %s: reduce phase error: %w", step.ID, err)
+		}
+		return reduceResult, nil
+	}
+
+	return map[string]any{"map_results": mapResults, "count": len(mapResults)}, nil
+}
+
+// injectItemVariable clones args and replaces "${item}" references with the current item value.
+func injectItemVariable(args map[string]any, item any, input, context map[string]any) map[string]any {
+	if args == nil {
+		return nil
+	}
+	resolved := resolveVariables(args, input, context)
+	result := make(map[string]any, len(resolved))
+	for k, v := range resolved {
+		if val, ok := v.(string); ok && val == "${item}" {
+			result[k] = item
+		} else {
+			result[k] = v
+		}
+	}
+	return result
 }
 
 // requestApproval marks a step as waiting for approval
@@ -745,6 +878,16 @@ func (e *WorkflowEngine) completeWorkflow(wf *Workflow, err error) {
 			if step.Result != nil {
 				wf.Output[stepID] = step.Result
 			}
+		}
+	}
+
+	// Signal subflow waiters
+	if wf.done != nil {
+		select {
+		case <-wf.done:
+			// Already closed
+		default:
+			close(wf.done)
 		}
 	}
 	e.mu.Unlock()
@@ -988,18 +1131,177 @@ func indexOf(s string, c byte) int {
 }
 
 func evaluateCondition(cond string, input, context map[string]any) bool {
-	// Simple truthy check
-	val := resolveString("${"+cond+"}", input, context)
+	cond = strings.TrimSpace(cond)
+	if cond == "" {
+		return true
+	}
+
+	// Handle boolean operators: split on AND/OR (left-to-right, no precedence)
+	if parts := splitBoolOp(cond, " AND "); len(parts) > 1 {
+		for _, p := range parts {
+			if !evaluateCondition(p, input, context) {
+				return false
+			}
+		}
+		return true
+	}
+	if parts := splitBoolOp(cond, " OR "); len(parts) > 1 {
+		for _, p := range parts {
+			if evaluateCondition(p, input, context) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Handle EXISTS operator: "<ref> EXISTS"
+	if strings.HasSuffix(cond, " EXISTS") {
+		ref := strings.TrimSuffix(cond, " EXISTS")
+		ref = strings.TrimSpace(ref)
+		val := resolveRef(ref, input, context)
+		return val != nil
+	}
+
+	// Handle comparison operators: >=, <=, !=, >, <, ==
+	for _, op := range []string{">=", "<=", "!=", ">", "<", "=="} {
+		if idx := strings.Index(cond, " "+op+" "); idx >= 0 {
+			left := strings.TrimSpace(cond[:idx])
+			right := strings.TrimSpace(cond[idx+len(op)+2:])
+			lval := resolveRef(left, input, context)
+			rval := parseCondValue(right)
+			return compareValues(lval, rval, op)
+		}
+	}
+
+	// Fallback: simple truthy check on resolved reference
+	val := resolveRef(cond, input, context)
+	return isTruthy(val)
+}
+
+// resolveRef resolves a dotted reference like "step_id.field" or "input.key"
+// against the input and context maps. Returns nil if unresolved.
+func resolveRef(ref string, input, context map[string]any) any {
+	ref = strings.TrimSpace(ref)
+	val := resolveString("${"+ref+"}", input, context)
+	if s, ok := val.(string); ok && s == "${"+ref+"}" {
+		return nil // unresolved
+	}
+	return val
+}
+
+// parseCondValue parses a literal value from a condition expression.
+func parseCondValue(s string) any {
+	s = strings.TrimSpace(s)
+	if s == "true" {
+		return true
+	}
+	if s == "false" {
+		return false
+	}
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		return s[1 : len(s)-1]
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
+}
+
+// compareValues compares two values using the given operator.
+func compareValues(left, right any, op string) bool {
+	lf, lok := condToFloat64(left)
+	rf, rok := condToFloat64(right)
+
+	if lok && rok {
+		switch op {
+		case ">":
+			return lf > rf
+		case ">=":
+			return lf >= rf
+		case "<":
+			return lf < rf
+		case "<=":
+			return lf <= rf
+		case "==":
+			return lf == rf
+		case "!=":
+			return lf != rf
+		}
+	}
+
+	ls := fmt.Sprintf("%v", left)
+	rs := fmt.Sprintf("%v", right)
+	switch op {
+	case "==":
+		return ls == rs
+	case "!=":
+		return ls != rs
+	default:
+		return false
+	}
+}
+
+// condToFloat64 attempts to convert any to float64 for condition comparisons.
+func condToFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
+// isTruthy checks if a value is truthy.
+func isTruthy(val any) bool {
+	if val == nil {
+		return false
+	}
 	switch v := val.(type) {
 	case bool:
 		return v
 	case string:
 		return v != "" && v != "false" && v != "0"
-	case int, int64, float64:
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
 		return v != 0
 	default:
-		return val != nil
+		return true
 	}
+}
+
+// splitBoolOp splits a condition string on a boolean operator.
+func splitBoolOp(cond, op string) []string {
+	parts := strings.Split(cond, op)
+	if len(parts) <= 1 {
+		return parts
+	}
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func mapKeys(m map[string]any) []string {
