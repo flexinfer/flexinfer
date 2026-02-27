@@ -74,22 +74,30 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 			continue
 		}
 
+		// Pre-initialize all per-model metrics so Grafana shows 0 instead of "No data".
+		InitModelMetrics(modelName)
+
+		// List endpoints for this service to track endpoint count for all models.
+		var endpoints corev1.Endpoints
+		if err := p.client.Get(ctx, client.ObjectKey{Name: svc.Name, Namespace: p.namespace}, &endpoints); err != nil {
+			continue
+		}
+
+		// Count ready addresses for the endpoint_count gauge (all models).
+		var readyCount int
+		for _, subset := range endpoints.Subsets {
+			readyCount += len(subset.Addresses)
+		}
+		endpointCount.WithLabelValues(modelName).Set(float64(readyCount))
+
 		// Check if this model has routing annotation enabled
 		// Only models with explicit routing strategy will get direct pod routing
 		hasRoutingAnnotation := p.modelHasRoutingAnnotation(ctx, modelName)
 		if !hasRoutingAnnotation {
 			// Remove from router if previously added, so it falls back to Service DNS
 			p.router.RemoveModel(modelName)
-			// Clear endpoint cache and metrics for this model
-			if _, existed := p.endpointCache.LoadAndDelete(modelName); existed {
-				endpointCount.DeleteLabelValues(modelName)
-			}
-			continue
-		}
-
-		// List endpoints for this service
-		var endpoints corev1.Endpoints
-		if err := p.client.Get(ctx, client.ObjectKey{Name: svc.Name, Namespace: p.namespace}, &endpoints); err != nil {
+			// Clear endpoint routing cache for this model
+			p.endpointCache.Delete(modelName)
 			continue
 		}
 
@@ -111,7 +119,7 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 			}
 		}
 
-		// Track endpoint changes for metrics
+		// Track endpoint changes for routing-enabled models
 		p.trackEndpointChanges(modelName, podAddresses)
 
 		// Update router if we have endpoints

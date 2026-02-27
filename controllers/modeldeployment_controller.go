@@ -46,6 +46,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
 func canonicalBackend(backend string) string {
@@ -330,6 +331,14 @@ func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				modelDeployment.Status.TokensPerSecond = tps
 				log.Info("Updated TokensPerSecond from benchmark", "tps", tps)
 				r.Recorder.Event(modelDeployment, corev1.EventTypeNormal, "BenchmarkComplete", fmt.Sprintf("Benchmark completed: %.1f tokens/sec", parseTPSFloat(tps)))
+			}
+			// Export to Prometheus for Mission Control dashboard.
+			if tpsVal := parseTPSFloat(tps); tpsVal > 0 {
+				metrics.TokensPerSecond.WithLabelValues(
+					modelDeployment.Name,
+					canonicalBackend(modelDeployment.Spec.Backend),
+					"", // node is not relevant for benchmarked TPS
+				).Set(tpsVal)
 			}
 		}
 	}

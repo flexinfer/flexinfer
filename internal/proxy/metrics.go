@@ -179,6 +179,24 @@ var (
 
 var metricsOnce sync.Once
 
+// InitModelMetrics pre-initializes all per-model proxy metrics with zero values
+// so Grafana displays "0" instead of "No data" for idle panels.
+// Safe to call repeatedly for the same model.
+func InitModelMetrics(model string) {
+	// Counters: calling WithLabelValues creates the series at 0
+	requestsTotal.WithLabelValues(model, "success")
+	requestsTotal.WithLabelValues(model, "error")
+	scaleUpsTotal.WithLabelValues(model)
+	queuedRequestsTotal.WithLabelValues(model)
+	queueRejectedTotal.WithLabelValues(model)
+	activationRetriesTotal.WithLabelValues(model)
+
+	// Gauges: explicitly set to 0
+	activeConnections.WithLabelValues(model).Add(0)
+	queueDepth.WithLabelValues(model).Add(0)
+	endpointCount.WithLabelValues(model).Add(0)
+}
+
 // RegisterMetrics registers all proxy Prometheus metrics. Safe to call multiple times.
 func RegisterMetrics() {
 	metricsOnce.Do(func() {

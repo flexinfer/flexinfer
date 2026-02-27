@@ -2323,12 +2323,20 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
 
 		if prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
+			loadDuration := now.Sub(readyStartedAt).Seconds()
 			metrics.ModelColdStartDurationSeconds.WithLabelValues(
 				model.Name,
 				model.Namespace,
 				model.Spec.Backend,
 				cacheStrategy(model),
-			).Observe(now.Sub(readyStartedAt).Seconds())
+			).Observe(loadDuration)
+
+			// Set last-known load time for the Mission Control dashboard.
+			nodeName := ""
+			if model.Status.GPU != nil {
+				nodeName = model.Status.GPU.Node
+			}
+			metrics.ModelLoadSeconds.WithLabelValues(model.Name, nodeName).Set(loadDuration)
 		}
 
 		if model.Spec.IsShared() && model.Status.SharedGroup != nil && model.Status.SharedGroup.State == "Active" {

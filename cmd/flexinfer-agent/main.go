@@ -110,4 +110,24 @@ func runProbeAndMetrics(ctx context.Context, nodeAgent *agent.Agent, setupLog in
 	if len(gpuMetrics) == 0 {
 		setupLog.Info("No GPU detected on this node", "node", nodeName)
 	}
+
+	// Emit /dev/shm utilization for ModelCache dashboard.
+	if shmPercent, err := devShmUtilizationPercent(); err == nil {
+		metrics.DevShmUtilizationPercent.WithLabelValues(nodeName).Set(shmPercent)
+	}
+}
+
+// devShmUtilizationPercent returns /dev/shm usage as a percentage (0-100).
+func devShmUtilizationPercent() (float64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/dev/shm", &stat); err != nil {
+		return 0, err
+	}
+	total := stat.Blocks * uint64(stat.Bsize)
+	free := stat.Bfree * uint64(stat.Bsize)
+	if total == 0 {
+		return 0, nil
+	}
+	used := total - free
+	return float64(used) / float64(total) * 100, nil
 }
