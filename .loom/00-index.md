@@ -19,36 +19,46 @@
 - Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
 - Tech debt priority: `tech-debt-priority.md`
 
-## Current Goal
+## Current State (2026-02-27)
 
-Kick off an agent-focused observability track that delivers robust trace + telemetry dashboards using:
-1. `pkg/mcpotel` for span-level tool-call visibility,
-2. `pkg/mcplog` plus structured logging improvements for cross-signal correlation,
-3. reproducible Grafana dashboard packs and rollout docs.
+**Branch**: `main` at `7ac4131` (QdrantRegistry refactor)
 
-## Near-Term Success Criteria
+**Active dirty workstream**: Hub-failover resilience + mcp-hub-wrapper integration
+- `internal/daemon/callpipeline.go` — prefer-hub routing with automatic local fallback and backoff
+- `internal/daemon/routing.go` — backoff suppression methods for hub routing
+- `pkg/generator/configs.go` — hub wrapper binary resolution with multi-source candidate discovery
+- `Makefile` — adds `mcp-hub-wrapper` to build/install targets
+- Comprehensive test coverage for all new paths
+- Appears commit-ready
 
-- A verified baseline exists for current tracing coverage and logging format limitations.
-- A staged rollout plan is documented for expanding `mcpotel` adoption across high-value MCP servers.
-- Dashboard requirements are defined with concrete signal sources (traces/logs/metrics) and correlation paths.
-- Planning artifacts are source-backed and implementation-ready.
+**Recently shipped (last 5 commits on main)**:
+1. QdrantRegistry refactor for agent-context (#51)
+2. Workflow deep-copy fixes + decomp hints for HUD
+3. Call pipeline unit tests (DEBT-016)
+4. Workflow false-condition gating + recursive item injection
+5. Decomp hints for large responses + map_reduce clone
+
+## Active Workstreams
+
+| Track | Status | Key Docs |
+|-------|--------|----------|
+| Hub-failover resilience | In progress (dirty) | `callpipeline.go`, `routing.go` |
+| Call pipeline hardening (DEBT-016) | Stage 2 complete | ROADMAP.md, Issue #20 |
+| Agent trace/telemetry dashboards | Phase 1-2 complete (59/59 traced, JSON logs) | `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md` |
+| Mobile companion (iOS) | M2 in progress, M0-M4 backend done | `30-implementation-plan.md`, `20-product-spec.md` |
+| Test coverage push | 30.4%, target 40% | ROADMAP.md, Issue #2 |
+| Agent contract convergence | Stage 1 complete | ROADMAP.md, Issue #21 |
 
 ## Risks
 
-- Only a subset of MCP servers currently wire `mcpotel`, creating blind spots in cross-server analysis.
-- `mcplog` currently emits text logs only, limiting structured correlation in Loki/Grafana pipelines.
-- Dashboard location/ownership spans repos (`loom-core` + `platform/gitops`), so rollout can drift without explicit handoff.
-
-## Notes
-
-- This workstream was started in `codex/agent-trace-telemetry` from `origin/main` on 2026-02-26.
-- Immediate objective is to lock the telemetry/dashboard execution plan before broad instrumentation changes.
+- Hub-failover dirty changes need to land before further daemon work to avoid conflicts.
+- Codebase index was empty at session start (rebuilding now); semantic search unavailable until complete.
+- Telemetry dashboard Phase 3 (Grafana packs) spans repos (`loom-core` + `platform/gitops`).
 
 ## Sources
 
+- `git log --oneline -15` (2026-02-27)
+- `git diff --stat HEAD` (2026-02-27)
+- `ROADMAP.md` (2026-02-27)
 - `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
-- `pkg/mcpotel/tracer.go:38`
-- `pkg/mcpotel/middleware.go:14`
-- `pkg/mcplog/logger.go:17`
-- `docs/DEVELOPER_GUIDE.md:149`
-- Command: `cd ../loom-core-agent-trace-telemetry && rg -n 'github.com/crb2nu/loom/pkg/mcpotel' cmd/mcp-*/main.go`
+- Subagent exploration of dirty changes (2026-02-27)

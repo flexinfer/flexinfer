@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-25T13:55:51-05:00
+- Generated: 2026-02-27T18:27:31-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -8,33 +8,27 @@
 
 ## Git
 ```
-## codex/mbl7-iphone-readiness...origin/codex/mbl7-iphone-readiness
- M .loom/00-index.md
- M .loom/00-workspace-snapshot.md
- M .loom/50-worklog.md
- M cmd/loom/hud.go
- M cmd/loom/hud_control.go
- D internal/hud/frontend/dist/assets/GraphPanel-Buyvi19g.js
- D internal/hud/frontend/dist/assets/LifecyclePanel-DwrobzNT.js
- D internal/hud/frontend/dist/assets/TopologyPanel-DL5WSKNG.js
- D internal/hud/frontend/dist/assets/index-BDiKDlLy.js
- D internal/hud/frontend/dist/assets/index-FedlMwx6.css
- M internal/hud/frontend/dist/index.html
- M internal/hud/frontend/src/lib/components/FleetPanel.svelte
- M scripts/mobile/dev_bootstrap.sh
+## main...origin/main
+ M Dockerfile.custom-server.local
+ M Makefile
+ M internal/daemon/callpipeline.go
+ M internal/daemon/callpipeline_test.go
+ M internal/daemon/daemon.go
+ M internal/daemon/routing.go
+ M internal/daemon/routing_test.go
+ M pkg/generator/configs.go
+ M pkg/generator/configs_test.go
+ M scripts/dev/upgrade_local.sh
+?? .sandbox-policy.json
 ?? apps/loom-companion-ios/.build/
 ?? apps/loom-companion-ios/.swiftpm/
 ?? apps/loom-companion-ios/LoomCompanion.xcodeproj/project.xcworkspace/
 ?? apps/loom-companion-ios/LoomCompanion.xcodeproj/xcuserdata/
-?? cmd/loom/hud_control_test.go
-?? docs/roadmap-reconciliation-2026-02-23.md
-?? docs/roadmap-reconciliation-2026-02-24.md
-?? docs/roadmap-reconciliation-2026-02-25.md
-?? internal/hud/frontend/dist/assets/GraphPanel-DRIJF9Ns.js
-?? internal/hud/frontend/dist/assets/LifecyclePanel-DAb5YM8b.js
-?? internal/hud/frontend/dist/assets/TopologyPanel-D-mldBd5.js
-?? internal/hud/frontend/dist/assets/index-D-zVhnBR.css
-?? internal/hud/frontend/dist/assets/index-OXNyOVmO.js
+?? cmd/mcp-hub-wrapper/
+?? docs/roadmap-reconciliation-2026-02-27.md
+?? scripts/mobile/archive_export.sh
+?? scripts/mobile/cleanup-signing.sh
+?? scripts/mobile/import-certificate.sh
 ```
 
 ### Remotes
@@ -49,7 +43,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-20147cb feat(mobile): ship wave1 read-only parity APIs and iOS ops tab
+7ac4131 refactor(agentcontext): introduce QdrantRegistry, replace 14 individual client fields (#51)
 ```
 
 ## Top-Level Layout
@@ -69,6 +63,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.ruff_cache/`
 - `.vscode/`
 - `.vscode-mcp/`
+- `.worktrees/`
 - `.zed/`
 - `apps/`
 - `assets/`
@@ -92,6 +87,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.golangci.yml`
 - `.mcp.json`
 - `.pre-commit-config.yaml`
+- `.sandbox-policy.json`
 - `.secrets.baseline`
 - `AGENTS.md`
 - `CHANGELOG.md`
@@ -170,6 +166,8 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 ## Tracked / Indexed Files (sample)
 - `.agents/workflows/auto-edit.yaml`
 - `.agents/workflows/feature-dev.yaml`
+- `.agents/workflows/long-context-analysis.yaml`
+- `.agents/workflows/recursive-context.yaml`
 - `.codex/skills/browserkit-screenshots/SKILL.md`
 - `.codex/skills/flux-gitops-operator/SKILL.md`
 - `.codex/skills/mcp-registry-ops/SKILL.md`
@@ -191,11 +189,14 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.loom/12-research-market-trends-2026-02.md`
 - `.loom/13-research-agentic-workflows-openclaw.md`
 - `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
+- `.loom/14-research-mobile-signing-publish-2026-02-25.md`
 - `.loom/20-product-spec.md`
 - `.loom/30-implementation-plan.md`
 - `.loom/31-gap-to-backlog-map.md`
 - `.loom/32-mobile-gap-to-backlog-map.md`
 - `.loom/32-rfc-registry-env-consistency.md`
+- `.loom/33-mobile-signing-release-plan-2026-02-25.md`
+- `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
 - `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
@@ -283,6 +284,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/AlertItemTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/ConnectionRemediationTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/DashboardDataTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/OpsModelsTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/PushRegistrationTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/SessionInfoTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/TimelineEntryTests.swift`
@@ -320,6 +322,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/loom/daemon_timeout_test.go`
 - `cmd/loom/hud.go`
 - `cmd/loom/hud_control.go`
+- `cmd/loom/hud_control_test.go`
 - `cmd/loom/main.go`
 - `cmd/loom/proxy.go`
 - `cmd/loom/proxy_autostart_test.go`
@@ -361,13 +364,6 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `cmd/mcp-argocd/main.go`
 - `cmd/mcp-asus-router/main.go`
 - `cmd/mcp-aws/main.go`
-- `cmd/mcp-browserkit/main.go`
-- `cmd/mcp-browserkit/main_test.go`
-- `cmd/mcp-browserkit/screenshot_helper.py`
-- `cmd/mcp-cloudflare/main.go`
-- `cmd/mcp-cloudflare/main_test.go`
-- `cmd/mcp-codebase-memory/README.md`
-- `cmd/mcp-codebase-memory/ROADMAP.md`
 - `…`
 
 ## AGENTS.md Files
