@@ -2546,3 +2546,549 @@ func TestClampTimeout(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// emitDecompHintIfLarge — decomposition hint emission
+// ---------------------------------------------------------------------------
+
+func TestEmitDecompHintIfLarge_AboveThreshold(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	eb := NewEventBus(d.logger)
+	d.eventBus = eb
+
+	subID, ch := eb.Subscribe()
+	defer eb.Unsubscribe(subID)
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "decomp-test",
+	})
+	p.serverName = "llm"
+	p.toolName = "chat"
+
+	// Create a response exceeding decompHintTokenThreshold (8000 tokens * 4 bytes = 32000 bytes).
+	bigResult := make(json.RawMessage, 40000)
+	for i := range bigResult {
+		bigResult[i] = 'x'
+	}
+	resp := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "decomp-test",
+		Result:  bigResult,
+	}
+
+	p.emitDecompHintIfLarge(resp)
+
+	select {
+	case evt := <-ch:
+		if evt.Type != EventDecompHint {
+			t.Fatalf("event type = %q, want %q", evt.Type, EventDecompHint)
+		}
+		data, ok := evt.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("event data type = %T, want map[string]any", evt.Data)
+		}
+		if data["server"] != "llm" {
+			t.Errorf("server = %v, want llm", data["server"])
+		}
+		if data["tool"] != "chat" {
+			t.Errorf("tool = %v, want chat", data["tool"])
+		}
+		if data["response_bytes"] != len(bigResult) {
+			t.Errorf("response_bytes = %v, want %d", data["response_bytes"], len(bigResult))
+		}
+		estTokens, _ := data["estimated_tokens"].(int)
+		if estTokens < decompHintTokenThreshold {
+			t.Errorf("estimated_tokens = %d, want >= %d", estTokens, decompHintTokenThreshold)
+		}
+		if data["workflow"] != "recursive-context" {
+			t.Errorf("workflow = %v, want recursive-context", data["workflow"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for decomp.hint event")
+	}
+}
+
+func TestEmitDecompHintIfLarge_BelowThreshold(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	eb := NewEventBus(d.logger)
+	d.eventBus = eb
+
+	subID, ch := eb.Subscribe()
+	defer eb.Unsubscribe(subID)
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "decomp-small",
+	})
+	p.serverName = "git"
+	p.toolName = "status"
+
+	// Small response: 100 bytes ~ 25 tokens, well below threshold.
+	resp := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "decomp-small",
+		Result:  json.RawMessage(`{"status":"ok"}`),
+	}
+
+	p.emitDecompHintIfLarge(resp)
+
+	select {
+	case evt := <-ch:
+		t.Fatalf("unexpected event emitted: %+v", evt)
+	case <-time.After(50 * time.Millisecond):
+		// Expected: no event.
+	}
+}
+
+func TestEmitDecompHintIfLarge_NilGuards(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	// No eventBus set — should not panic.
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "nil-guard",
+	})
+
+	// nil response.
+	p.emitDecompHintIfLarge(nil)
+
+	// Response with nil result.
+	p.emitDecompHintIfLarge(&mcp.Message{JSONRPC: mcp.JSONRPCVersion})
+
+	// Response with result but no event bus.
+	p.emitDecompHintIfLarge(&mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		Result:  json.RawMessage(strings.Repeat("x", 40000)),
+	})
+	// No panic = pass.
+}
+
+// ---------------------------------------------------------------------------
+// Nil guard pass-through: authorize, enforceRequestPolicy, tryCachedResponse
+// ---------------------------------------------------------------------------
+
+func TestCallPipelineAuthorize_NilRBACPassesThrough(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.rbac = nil // Explicitly nil.
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "auth-nil",
+	})
+	p.params = callParams{Server: "git", Tool: "status"}
+	p.auditStart = time.Now()
+
+	if resp := p.authorize(); resp != nil {
+		t.Fatalf("expected nil response when RBAC is nil, got %+v", resp)
+	}
+}
+
+func TestCallPipelineEnforceRequestPolicy_NilPolicyPassesThrough(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.policy = nil // Explicitly nil.
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "policy-nil",
+	})
+	p.params = callParams{Server: "git", Tool: "status"}
+	p.auditStart = time.Now()
+
+	if resp := p.enforceRequestPolicy(); resp != nil {
+		t.Fatalf("expected nil response when policy is nil, got %+v", resp)
+	}
+}
+
+func TestCallPipelineTryCachedResponse_NilCachePassesThrough(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.respCache = nil // Explicitly nil.
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "cache-nil",
+	})
+	p.params = callParams{Server: "git", Tool: "status"}
+
+	if resp := p.tryCachedResponse(); resp != nil {
+		t.Fatalf("expected nil response when cache is nil, got %+v", resp)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Error envelope exhaustive: all constructors produce consistent structure
+// ---------------------------------------------------------------------------
+
+func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	msgID := "exhaust-test"
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      msgID,
+	})
+
+	assertEnvelope := func(t *testing.T, resp *mcp.Message, wantCode int) {
+		t.Helper()
+		if resp.JSONRPC != mcp.JSONRPCVersion {
+			t.Errorf("JSONRPC = %q, want %q", resp.JSONRPC, mcp.JSONRPCVersion)
+		}
+		if resp.ID != msgID {
+			t.Errorf("ID = %v, want %v", resp.ID, msgID)
+		}
+		if resp.Error == nil {
+			t.Fatal("Error is nil")
+		}
+		if resp.Error.Code != wantCode {
+			t.Errorf("Error.Code = %d, want %d", resp.Error.Code, wantCode)
+		}
+		if resp.Error.Message == "" {
+			t.Error("Error.Message is empty")
+		}
+	}
+
+	t.Run("invalidParamsError", func(t *testing.T) {
+		resp := p.invalidParamsError("bad")
+		assertEnvelope(t, resp, mcp.InvalidParams)
+		if resp.Error.Data != nil {
+			t.Errorf("expected nil Data, got %v", resp.Error.Data)
+		}
+	})
+
+	t.Run("internalError", func(t *testing.T) {
+		resp := p.internalError(errors.New("boom"))
+		assertEnvelope(t, resp, mcp.InternalError)
+		if resp.Error.Data != nil {
+			t.Errorf("expected nil Data, got %v", resp.Error.Data)
+		}
+	})
+
+	t.Run("rbacDeniedError", func(t *testing.T) {
+		resp := p.rbacDeniedError(AccessDecision{
+			AgentID: "agent-1",
+			Role:    "viewer",
+			Server:  "git",
+			Tool:    "push",
+			Reason:  "not allowed",
+		})
+		assertEnvelope(t, resp, mcp.InvalidRequest)
+		if resp.Error.Data != nil {
+			t.Errorf("expected nil Data for RBAC error, got %v", resp.Error.Data)
+		}
+		if !strings.Contains(resp.Error.Message, "agent-1") {
+			t.Errorf("message should contain agent_id, got %q", resp.Error.Message)
+		}
+		if !strings.Contains(resp.Error.Message, "viewer") {
+			t.Errorf("message should contain role, got %q", resp.Error.Message)
+		}
+		if !strings.Contains(resp.Error.Message, "git__push") {
+			t.Errorf("message should contain server__tool, got %q", resp.Error.Message)
+		}
+	})
+
+	t.Run("policyDeniedError", func(t *testing.T) {
+		resp := p.policyDeniedError(GatewayPolicyDecision{
+			RuleID:     "rule-42",
+			ReasonCode: "RATE_LIMIT",
+			Reason:     "exceeded quota",
+			Stage:      "request",
+			Action:     "deny",
+		})
+		assertEnvelope(t, resp, mcp.InvalidRequest)
+		data, ok := resp.Error.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("Data type = %T, want map[string]any", resp.Error.Data)
+		}
+		// All four fields must be present.
+		for _, key := range []string{"policy_rule_id", "policy_reason_code", "policy_stage", "policy_action"} {
+			if _, exists := data[key]; !exists {
+				t.Errorf("Data missing key %q", key)
+			}
+		}
+	})
+
+	t.Run("internalErrorWithAudit", func(t *testing.T) {
+		auditPath := enableAuditAndCostForTest(t, d)
+		p.serverName = "git"
+		p.toolName = "status"
+		p.auditStart = time.Now()
+
+		resp := p.internalErrorWithAudit("local", "dial failed")
+		assertEnvelope(t, resp, mcp.InternalError)
+
+		// Verify audit entry was written.
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) == 0 {
+			t.Fatal("expected audit entry for internalErrorWithAudit")
+		}
+		last := entries[len(entries)-1]
+		if last.Status != "error" {
+			t.Errorf("audit status = %q, want error", last.Status)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// buildForwardRequest: raw Params path
+// ---------------------------------------------------------------------------
+
+func TestCallPipelineBuildForwardRequest_FromRawParams(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "build-raw",
+	})
+	p.toolName = "search"
+	p.method = "tools/call"
+	p.params = callParams{
+		Params: json.RawMessage(`{"name":"search","arguments":{"query":"hello"}}`),
+	}
+
+	req, errResp := p.buildForwardRequest()
+	if errResp != nil {
+		t.Fatalf("unexpected error response: %+v", errResp)
+	}
+	if req == nil {
+		t.Fatal("expected non-nil request")
+	}
+
+	// When Params is set, it should be forwarded verbatim.
+	var params map[string]any
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if params["name"] != "search" {
+		t.Errorf("forwarded name = %v, want search", params["name"])
+	}
+}
+
+func TestCallPipelineBuildForwardRequest_EmptyArguments(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "build-empty",
+	})
+	p.toolName = "ping"
+	p.method = "tools/call"
+	p.params = callParams{} // No Arguments, no Params.
+
+	req, errResp := p.buildForwardRequest()
+	if errResp != nil {
+		t.Fatalf("unexpected error response: %+v", errResp)
+	}
+	if req == nil {
+		t.Fatal("expected non-nil request")
+	}
+
+	// Should produce {"name":"ping","arguments":{}}
+	var params map[string]any
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if params["name"] != "ping" {
+		t.Errorf("forwarded name = %v, want ping", params["name"])
+	}
+	args, ok := params["arguments"].(map[string]any)
+	if !ok || len(args) != 0 {
+		t.Errorf("expected empty arguments map, got %v", params["arguments"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// releaseConnection edge cases
+// ---------------------------------------------------------------------------
+
+func TestCallPipelineReleaseConnection_NoConnNoLock(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "release-nil",
+	})
+	// Neither conn nor lock are set.
+	p.releaseConnection() // Should not panic.
+}
+
+func TestCallPipelineReleaseConnection_LockHeldNoConn(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "release-lock-only",
+	})
+	p.callMu = d.callLock("test-server")
+	p.callMu.Lock()
+	p.lockHeld = true
+
+	p.releaseConnection()
+
+	if p.lockHeld {
+		t.Error("expected lockHeld to be false after release")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isRPCTimeout edge cases
+// ---------------------------------------------------------------------------
+
+func TestIsRPCTimeout_Comprehensive(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"deadline exceeded", context.DeadlineExceeded, true},
+		{"os deadline exceeded", os.ErrDeadlineExceeded, true},
+		{"plain error", errors.New("connection refused"), false},
+		{"i/o timeout in message", errors.New("read tcp: i/o timeout"), true},
+		{"wrapped deadline", fmt.Errorf("call: %w", context.DeadlineExceeded), true},
+		{"context canceled", context.Canceled, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isRPCTimeout(tc.err)
+			if got != tc.want {
+				t.Fatalf("isRPCTimeout(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseAndResolve: server resolved via router
+// ---------------------------------------------------------------------------
+
+func TestCallPipelineParseAndResolve_ServerResolvedViaSmartRoute(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	// Register a tool in the router's registry and build tool index.
+	reg := &kitregistry.Registry{
+		Servers: []*kitregistry.Server{
+			{
+				Name: "time",
+				Common: &kitregistry.TargetSpec{
+					Tools: []kitregistry.ToolSchema{
+						{Name: "current_time"},
+					},
+				},
+			},
+		},
+	}
+	d.router = router.New(router.Config{Registry: reg})
+	d.router.BuildToolIndex()
+
+	msg := newCallMessage(t, map[string]any{
+		"tool":      "current_time",
+		"arguments": map[string]any{},
+	})
+
+	p := newCallPipeline(d, context.Background(), msg)
+	resp := p.parseAndResolve()
+	if resp != nil {
+		t.Fatalf("expected nil (success), got error: %s", resp.Error.Message)
+	}
+	if p.serverName != "time" {
+		t.Errorf("serverName = %q, want time", p.serverName)
+	}
+	if p.toolName != "current_time" {
+		t.Errorf("toolName = %q, want current_time", p.toolName)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// emitResponseAudit: both success and error paths
+// ---------------------------------------------------------------------------
+
+func TestEmitResponseAudit_SuccessAndError(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "audit-test",
+	})
+	p.serverName = "git"
+	p.toolName = "status"
+	p.targetStr = "local"
+	p.stage = stageExecute
+	p.auditStart = time.Now()
+
+	// Emit success audit.
+	p.emitResponseAudit(&mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "audit-test"})
+
+	// Emit error audit.
+	p.emitResponseAudit(&mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "audit-test",
+		Error:   &mcp.Error{Code: mcp.InternalError, Message: "something broke"},
+	})
+
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) < 2 {
+		t.Fatalf("expected at least 2 audit entries, got %d", len(entries))
+	}
+	if entries[0].Status != "success" {
+		t.Errorf("first entry status = %q, want success", entries[0].Status)
+	}
+	if entries[1].Status != "error" {
+		t.Errorf("second entry status = %q, want error", entries[1].Status)
+	}
+	if entries[1].Error != "something broke" {
+		t.Errorf("second entry error = %q, want 'something broke'", entries[1].Error)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// cacheSuccessResponse: guards and successful caching
+// ---------------------------------------------------------------------------
+
+func TestCacheSuccessResponse_Guards(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "cache-guard",
+	})
+
+	// No cache key → should be a no-op.
+	p.cacheKey = ""
+	p.cacheSuccessResponse(&mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		Result:  json.RawMessage(`"ok"`),
+	})
+
+	// Nil response → no-op.
+	p.cacheKey = "some-key"
+	p.cacheSuccessResponse(nil)
+
+	// Error response → no-op.
+	p.cacheSuccessResponse(&mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		Error:   &mcp.Error{Code: -1, Message: "err"},
+	})
+
+	// Nil result → no-op.
+	p.cacheSuccessResponse(&mcp.Message{JSONRPC: mcp.JSONRPCVersion})
+
+	// No panics = pass.
+}
+
+// ---------------------------------------------------------------------------
+// resolveToolCallTimeout: negative _timeout
+// ---------------------------------------------------------------------------
+
+func TestResolveToolCallTimeout_NegativeExplicit(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
+
+	// Negative duration strings are parsed by time.ParseDuration but d > 0 fails.
+	got := resolveToolCallTimeout(callParams{Method: "tools/call", Timeout: "-5m"})
+	if got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("expected default timeout for negative _timeout, got %v", got)
+	}
+}
+
+func TestResolveToolCallTimeout_WhitespaceOnly(t *testing.T) {
+	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
+
+	got := resolveToolCallTimeout(callParams{Method: "tools/call", Timeout: "   "})
+	if got != defaultDaemonToolRPCTimeout {
+		t.Fatalf("expected default timeout for whitespace _timeout, got %v", got)
+	}
+}
