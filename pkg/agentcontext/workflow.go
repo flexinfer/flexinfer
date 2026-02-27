@@ -1370,20 +1370,30 @@ func isTruthy(val any) bool {
 	}
 }
 
-// splitBoolOp splits a condition string on a boolean operator.
+// splitBoolOp splits a condition string on a boolean operator while respecting
+// single-quoted string boundaries. This prevents splitting on operators that
+// appear inside string literals (e.g., "name == 'CONNECT AND PLAY' AND ok").
 func splitBoolOp(cond, op string) []string {
-	parts := strings.Split(cond, op)
-	if len(parts) <= 1 {
-		return parts
-	}
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
+	var parts []string
+	inQuote := false
+	start := 0
+	for i := 0; i < len(cond); i++ {
+		if cond[i] == '\'' {
+			inQuote = !inQuote
+			continue
+		}
+		if !inQuote && i+len(op) <= len(cond) && cond[i:i+len(op)] == op {
+			if part := strings.TrimSpace(cond[start:i]); part != "" {
+				parts = append(parts, part)
+			}
+			start = i + len(op)
+			i += len(op) - 1
 		}
 	}
-	return result
+	if last := strings.TrimSpace(cond[start:]); last != "" {
+		parts = append(parts, last)
+	}
+	return parts
 }
 
 func mapKeys(m map[string]any) []string {

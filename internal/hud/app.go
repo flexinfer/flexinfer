@@ -369,6 +369,43 @@ func Run(cfg Config) error {
 		ec.On("process.stop", func(e bridge.SSEEvent) {
 			app.fleetMonitor.Refresh()
 		})
+		ec.On("decomp.hint", func(e bridge.SSEEvent) {
+			// Log to activity timeline.
+			app.eventLog.Append(TimelineEntry{
+				Timestamp: e.Timestamp,
+				EventType: "decomp.hint",
+				Data:      e.Data,
+			})
+
+			// Parse event data for nudge content.
+			var hint struct {
+				Server     string `json:"server"`
+				Tool       string `json:"tool"`
+				Suggestion string `json:"suggestion"`
+				Workflow   string `json:"workflow"`
+			}
+			if err := json.Unmarshal(e.Data, &hint); err != nil {
+				logger.Warn("decomp.hint: failed to parse event data", "err", err)
+				return
+			}
+
+			content := fmt.Sprintf("Tool %q returned a large response. %s", hint.Tool, hint.Suggestion)
+
+			// Enqueue advisory nudge for all active agents.
+			snap := app.fleetMonitor.Snapshot()
+			for _, a := range snap.Agents {
+				if a.Status != "active" {
+					continue
+				}
+				app.nudgeQueue.Add(a.AgentID, NudgeEntry{
+					ID:        NewNudgeID(a.AgentID),
+					Type:      "context_inject",
+					Lane:      "advice",
+					Content:   content,
+					FromAgent: "hud",
+				})
+			}
+		})
 		// Only broadcast to SSE hub when browser clients may be connected.
 		// In TUI mode no browser connects, so skip the fan-out overhead.
 		if !cfg.TUI {

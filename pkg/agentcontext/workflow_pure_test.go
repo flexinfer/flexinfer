@@ -1644,3 +1644,95 @@ func TestMapReduceStep_NonSliceInput(t *testing.T) {
 		t.Errorf("error = %v, want mention of 'got string'", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// deepCopyMap
+// ---------------------------------------------------------------------------
+
+func TestDeepCopyMap_NestedMaps(t *testing.T) {
+	t.Parallel()
+	orig := map[string]any{
+		"top": "value",
+		"nested": map[string]any{
+			"key": "inner",
+		},
+	}
+	cp := deepCopyMap(orig)
+
+	// Mutate the nested map in the copy.
+	cp["nested"].(map[string]any)["key"] = "mutated"
+
+	// Original must be unaffected.
+	if orig["nested"].(map[string]any)["key"] != "inner" {
+		t.Fatal("deepCopyMap shared nested map reference")
+	}
+}
+
+func TestDeepCopyMap_Slices(t *testing.T) {
+	t.Parallel()
+	orig := map[string]any{
+		"items": []any{"a", map[string]any{"b": 1}},
+	}
+	cp := deepCopyMap(orig)
+
+	// Mutate nested map inside the slice copy.
+	cp["items"].([]any)[1].(map[string]any)["b"] = 99
+
+	if orig["items"].([]any)[1].(map[string]any)["b"] != 1 {
+		t.Fatal("deepCopyMap shared slice element reference")
+	}
+}
+
+func TestDeepCopyMap_Nil(t *testing.T) {
+	t.Parallel()
+	if deepCopyMap(nil) != nil {
+		t.Fatal("deepCopyMap(nil) should return nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// splitBoolOp (quote-aware)
+// ---------------------------------------------------------------------------
+
+func TestSplitBoolOp_QuotedAND(t *testing.T) {
+	t.Parallel()
+	cond := "step.name == 'CONNECT AND PLAY' AND gate.passed"
+	parts := splitBoolOp(cond, " AND ")
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d: %v", len(parts), parts)
+	}
+	if parts[0] != "step.name == 'CONNECT AND PLAY'" {
+		t.Errorf("parts[0] = %q", parts[0])
+	}
+	if parts[1] != "gate.passed" {
+		t.Errorf("parts[1] = %q", parts[1])
+	}
+}
+
+func TestSplitBoolOp_QuotedOR(t *testing.T) {
+	t.Parallel()
+	cond := "x == 'A OR B' OR y == 'C'"
+	parts := splitBoolOp(cond, " OR ")
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d: %v", len(parts), parts)
+	}
+	if parts[0] != "x == 'A OR B'" {
+		t.Errorf("parts[0] = %q", parts[0])
+	}
+	if parts[1] != "y == 'C'" {
+		t.Errorf("parts[1] = %q", parts[1])
+	}
+}
+
+func TestSplitBoolOp_NoQuotes(t *testing.T) {
+	t.Parallel()
+	// Verify existing behavior is preserved.
+	cond := "a == true AND b == false AND c != 0"
+	parts := splitBoolOp(cond, " AND ")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 parts, got %d: %v", len(parts), parts)
+	}
+	if parts[0] != "a == true" || parts[1] != "b == false" || parts[2] != "c != 0" {
+		t.Errorf("unexpected parts: %v", parts)
+	}
+}

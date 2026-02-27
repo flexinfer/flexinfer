@@ -607,10 +607,10 @@ func (w *Workflow) clone() *Workflow {
 					stepCopy.CompletedAt = &t
 				}
 				if v.ToolArgs != nil {
-					stepCopy.ToolArgs = copyMap(v.ToolArgs)
+					stepCopy.ToolArgs = deepCopyMap(v.ToolArgs)
 				}
 				if v.Result != nil {
-					stepCopy.Result = copyMap(v.Result)
+					stepCopy.Result = deepCopyMap(v.Result)
 				}
 				if v.ApprovalInfo != nil {
 					ai := *v.ApprovalInfo
@@ -623,40 +623,56 @@ func (w *Workflow) clone() *Workflow {
 				if v.MapStepTemplate != nil {
 					tmplCopy := *v.MapStepTemplate
 					if v.MapStepTemplate.ToolArgs != nil {
-						tmplCopy.ToolArgs = copyMap(v.MapStepTemplate.ToolArgs)
+						tmplCopy.ToolArgs = deepCopyMap(v.MapStepTemplate.ToolArgs)
 					}
 					stepCopy.MapStepTemplate = &tmplCopy
 				}
 				if v.ReduceToolArgs != nil {
-					stepCopy.ReduceToolArgs = copyMap(v.ReduceToolArgs)
+					stepCopy.ReduceToolArgs = deepCopyMap(v.ReduceToolArgs)
 				}
 				cp.StepStates[k] = &stepCopy
 			}
 		}
 	}
 	if w.Input != nil {
-		cp.Input = copyMap(w.Input)
+		cp.Input = deepCopyMap(w.Input)
 	}
 	if w.Output != nil {
-		cp.Output = copyMap(w.Output)
+		cp.Output = deepCopyMap(w.Output)
 	}
 	if w.Context != nil {
-		cp.Context = copyMap(w.Context)
+		cp.Context = deepCopyMap(w.Context)
 	}
 
 	return &cp
 }
 
-// copyMap creates a shallow copy of a map[string]any.
-func copyMap(m map[string]any) map[string]any {
+// deepCopyMap creates a deep copy of a map[string]any, recursing into nested
+// maps and slices so that the clone shares no mutable state with the original.
+func deepCopyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
 	cp := make(map[string]any, len(m))
 	for k, v := range m {
-		cp[k] = v
+		cp[k] = deepCopyValue(v)
 	}
 	return cp
+}
+
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCopyMap(val)
+	case []any:
+		s := make([]any, len(val))
+		for i, elem := range val {
+			s[i] = deepCopyValue(elem)
+		}
+		return s
+	default:
+		return v
+	}
 }
 
 // WorkflowEvent represents an event in workflow execution
