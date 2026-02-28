@@ -8,7 +8,7 @@
 		deploy deploy-status \
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev mobile-gateway-dev \
+		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev mobile-gateway-dev \
 		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -118,6 +118,7 @@ help:
 	@echo ""
 	@echo "Mobile Companion (iPhone):"
 	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
+	@echo "  make mobile-gateway-sync-token - Sync local mobile token/scopes from loom-hub/loom-secrets"
 	@echo "  make mobile-gateway-preflight - Verify MCP + mobile API surfaces on gateway host"
 	@echo "  make mobile-ios-project-sync - Regenerate Xcode project from project.yml"
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
@@ -273,6 +274,17 @@ mcp-browserkit:
 
 mcp-devbox:
 	go build $(LDFLAGS) -o bin/mcp-devbox ./cmd/mcp-devbox
+
+base-images:
+	./scripts/build-base-images.sh --push
+
+install-devbox-sync:
+	@mkdir -p $(HOME)/.config/loom/logs
+	cp launchd/com.loom.devbox-sync.plist $(HOME)/Library/LaunchAgents/com.loom.devbox-sync.plist
+	launchctl unload $(HOME)/Library/LaunchAgents/com.loom.devbox-sync.plist 2>/dev/null || true
+	launchctl load $(HOME)/Library/LaunchAgents/com.loom.devbox-sync.plist
+	@echo "Devbox sync agent installed and started."
+	@echo "  Logs: $(HOME)/.config/loom/logs/devbox-sync.log"
 
 mcp-itchio:
 	go build $(LDFLAGS) -o bin/mcp-itchio ./cmd/mcp-itchio
@@ -742,7 +754,10 @@ hud-clean:
 mobile-iphone-preflight:
 	@./scripts/mobile/iphone_preflight.sh
 
-mobile-gateway-preflight:
+mobile-gateway-sync-token:
+	@./scripts/mobile/gateway_sync_token.sh
+
+mobile-gateway-preflight: mobile-gateway-sync-token
 	@./scripts/mobile/gateway_preflight.sh
 
 # Keep the generated Xcode project aligned with project.yml and source layout.

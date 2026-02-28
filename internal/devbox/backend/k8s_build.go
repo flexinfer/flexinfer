@@ -43,12 +43,6 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 
 	podName := "buildah-build-" + buildName
 
-	// Serialize builds when using a shared cache PVC (RWO).
-	if k.buildCachePVC != "" {
-		k.buildMu.Lock()
-		defer k.buildMu.Unlock()
-	}
-
 	var lastErr error
 	for attempt := range buildMaxRetries {
 		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, contextRel)
@@ -102,16 +96,17 @@ func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmNa
 // Root is required because chroot isolation needs to remount / (MS_REC|MS_SLAVE).
 // The Dockerfile is injected via a ConfigMap (dockerfileCM) so it doesn't
 // need to exist on the NFS workspace volume.
+//
+// Each build pod uses its own EmptyDir for storage, enabling parallel builds
+// across projects. Registry-based layer caching (--cache-from) replaces the
+// old shared PVC + mutex approach.
 func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, contextRel string) *corev1.Pod {
 	gracePeriod := int64(0)
 	runAsUser := int64(0)
 	runAsGroup := int64(0)
 
-	// Cache pruning prefix: if cache PVC is used, prune when >15GB keeping last 5 images.
-	var cachePrunePrefix string
-	if k.buildCachePVC != "" {
-		cachePrunePrefix = "buildah --storage-driver=vfs images -q 2>/dev/null | tail -n +6 | xargs -r buildah --storage-driver=vfs rmi 2>/dev/null; "
-	}
+	// Cache tag: same destination with :cache suffix for layer caching.
+	cacheTag := destination + "-cache"
 
 	buildAndPush := strings.Join([]string{
 		// Configure registries for short-name resolution (non-interactive builds)
@@ -119,16 +114,22 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 		"&&",
 		`printf 'unqualified-search-registries = ["docker.io"]\nshort-name-mode = "permissive"\n' > /etc/containers/registries.conf`,
 		"&&",
-		cachePrunePrefix + "buildah build-using-dockerfile",
+		"buildah build-using-dockerfile",
 		"--storage-driver=vfs",
 		"--isolation=chroot",
 		"--tls-verify=false",
 		"--layers",
+		"--cache-from=" + cacheTag,
 		"-f /buildah-dockerfile/Dockerfile",
 		"-t " + destination,
 		"/workspace/" + contextRel,
 		"&&",
 		"buildah push --storage-driver=vfs --tls-verify=false " + destination,
+		"&&",
+		// Push a cache tag so future builds can use --cache-from
+		"buildah tag --storage-driver=vfs " + destination + " " + cacheTag,
+		"&&",
+		"buildah push --storage-driver=vfs --tls-verify=false " + cacheTag,
 	}, " ")
 
 	volumeMounts := []corev1.VolumeMount{
@@ -136,28 +137,6 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 		{Name: "dockerfile", MountPath: "/buildah-dockerfile", ReadOnly: true},
 		{Name: "buildah-storage", MountPath: "/var/lib/containers/storage"},
 		{Name: "auth", MountPath: "/run/containers/0/auth.json", SubPath: "config.json", ReadOnly: true},
-	}
-
-	// Buildah storage: use persistent PVC if configured, otherwise EmptyDir.
-	var storageVolume corev1.Volume
-	if k.buildCachePVC != "" {
-		storageVolume = corev1.Volume{
-			Name: "buildah-storage",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: k.buildCachePVC,
-				},
-			},
-		}
-	} else {
-		storageVolume = corev1.Volume{
-			Name: "buildah-storage",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					SizeLimit: resourcePtr(resource.MustParse("10Gi")),
-				},
-			},
-		}
 	}
 
 	return &corev1.Pod{
@@ -197,12 +176,12 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("500m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
+							corev1.ResourceCPU:    resource.MustParse("1"),
+							corev1.ResourceMemory: resource.MustParse("1Gi"),
 						},
 						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("2"),
-							corev1.ResourceMemory: resource.MustParse("2Gi"),
+							corev1.ResourceCPU:    resource.MustParse("3"),
+							corev1.ResourceMemory: resource.MustParse("3Gi"),
 						},
 					},
 					VolumeMounts: volumeMounts,
@@ -227,7 +206,14 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 						},
 					},
 				},
-				storageVolume,
+				{
+					Name: "buildah-storage",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							SizeLimit: resourcePtr(resource.MustParse("10Gi")),
+						},
+					},
+				},
 				{
 					Name: "auth",
 					VolumeSource: corev1.VolumeSource{

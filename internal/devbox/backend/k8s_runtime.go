@@ -72,6 +72,14 @@ func (k *K8sBackend) Exec(_ context.Context, opts ExecOpts) (*ExecResult, error)
 		shellCmd = fmt.Sprintf("cd %q && %s", opts.WorkDir, shellCmd)
 	}
 
+	// NFS cache flush: force the kernel to re-validate file attributes so
+	// `make` sees correct mtimes after local edits synced via rsync.
+	// This is lightweight (~1ms) and prepended to every exec.
+	if k.nfsFlush && opts.WorkDir != "" {
+		flushCmd := fmt.Sprintf("stat -f %q >/dev/null 2>&1; ", opts.WorkDir)
+		shellCmd = flushCmd + shellCmd
+	}
+
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(opts.ContainerID).

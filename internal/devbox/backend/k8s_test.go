@@ -245,24 +245,20 @@ func TestBuildRejectsContextOutsideWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestBuildBuildahPodSpec_WithCachePVC(t *testing.T) {
+func TestBuildBuildahPodSpec_EmptyDirAndRegistryCache(t *testing.T) {
 	k := testK8sBackend()
-	k.buildCachePVC = "devbox-buildah-cache"
 	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
 
-	// Verify the buildah-storage volume uses PVC instead of EmptyDir
+	// Verify the buildah-storage volume always uses EmptyDir
 	var found bool
 	for _, vol := range pod.Spec.Volumes {
 		if vol.Name == "buildah-storage" {
 			found = true
-			if vol.PersistentVolumeClaim == nil {
-				t.Fatal("expected PVC volume for buildah-storage when buildCachePVC is set")
+			if vol.EmptyDir == nil {
+				t.Fatal("expected EmptyDir volume for buildah-storage")
 			}
-			if vol.PersistentVolumeClaim.ClaimName != "devbox-buildah-cache" {
-				t.Fatalf("unexpected PVC claim name: %s", vol.PersistentVolumeClaim.ClaimName)
-			}
-			if vol.EmptyDir != nil {
-				t.Fatal("should not have EmptyDir when using cache PVC")
+			if vol.PersistentVolumeClaim != nil {
+				t.Fatal("should not have PVC — builds use EmptyDir + registry cache")
 			}
 		}
 	}
@@ -270,31 +266,27 @@ func TestBuildBuildahPodSpec_WithCachePVC(t *testing.T) {
 		t.Fatal("buildah-storage volume not found")
 	}
 
-	// Verify build command includes cache pruning prefix
-	cmd := strings.Join(pod.Spec.Containers[0].Command, " ")
-	if !strings.Contains(cmd, "buildah --storage-driver=vfs images") {
-		t.Fatalf("expected cache pruning prefix in build command, got: %s", cmd)
+	// Verify build command includes --cache-from for registry-based layer cache
+	buildCmd := pod.Spec.Containers[0].Command[2] // sh -c "<cmd>"
+	if !strings.Contains(buildCmd, "--cache-from=") {
+		t.Fatalf("expected --cache-from in build command, got: %s", buildCmd)
 	}
-}
 
-func TestBuildBuildahPodSpec_WithoutCachePVC(t *testing.T) {
-	k := testK8sBackend()
-	// buildCachePVC is empty string (default)
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
-
-	// Verify the buildah-storage volume uses EmptyDir
-	for _, vol := range pod.Spec.Volumes {
-		if vol.Name == "buildah-storage" {
-			if vol.EmptyDir == nil {
-				t.Fatal("expected EmptyDir volume for buildah-storage when no cache PVC")
-			}
-			if vol.PersistentVolumeClaim != nil {
-				t.Fatal("should not have PVC when no cache PVC configured")
-			}
-			return
-		}
+	// Verify build command pushes cache tag
+	if !strings.Contains(buildCmd, "buildah tag") {
+		t.Fatalf("expected cache tag push in build command, got: %s", buildCmd)
 	}
-	t.Fatal("buildah-storage volume not found")
+
+	// Verify bumped resources: 1 CPU request, 3 CPU limit
+	container := pod.Spec.Containers[0]
+	cpuReq := container.Resources.Requests["cpu"]
+	if cpuReq.String() != "1" {
+		t.Errorf("expected 1 CPU request, got %s", cpuReq.String())
+	}
+	cpuLim := container.Resources.Limits["cpu"]
+	if cpuLim.String() != "3" {
+		t.Errorf("expected 3 CPU limit, got %s", cpuLim.String())
+	}
 }
 
 func TestImagePullPolicy(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -18,6 +17,8 @@ const defaultBuilderImage = "quay.io/buildah/stable:v1.38.0"
 
 // K8sBackend implements Backend using a Kubernetes cluster.
 // Builds are performed in-cluster via Buildah pods — no local Docker daemon required.
+// Each build pod gets its own EmptyDir storage and uses registry-based layer caching
+// via --cache-from, allowing parallel builds across projects.
 type K8sBackend struct {
 	clientset       kubernetes.Interface
 	restConfig      *rest.Config
@@ -27,8 +28,7 @@ type K8sBackend struct {
 	imagePullSecret string // image pull secret name for private registry
 	workspaceRoot   string // host path to workspace (NFS export source)
 	builderImage    string // Buildah builder image
-	buildCachePVC   string // PVC name for persistent Buildah layer cache (empty = EmptyDir)
-	buildMu         sync.Mutex
+	nfsFlush        bool   // prepend NFS cache flush to exec commands
 }
 
 // K8sBackendConfig holds configuration for the K8s backend.
@@ -41,7 +41,7 @@ type K8sBackendConfig struct {
 	ImagePullSecret string // image pull secret name (default: "harbor-creds")
 	WorkspaceRoot   string // host path to workspace (for NFS-relative path computation)
 	BuilderImage    string // Buildah builder image (default: quay.io/buildah/stable:v1.38.0)
-	BuildCachePVC   string // PVC name for persistent Buildah cache (empty = EmptyDir fallback)
+	NFSFlush        bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
 }
 
 // NewK8sBackend creates a new Kubernetes backend.
@@ -85,7 +85,7 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		imagePullSecret: cfg.ImagePullSecret,
 		workspaceRoot:   cfg.WorkspaceRoot,
 		builderImage:    cfg.BuilderImage,
-		buildCachePVC:   cfg.BuildCachePVC,
+		nfsFlush:        cfg.NFSFlush,
 	}, nil
 }
 

@@ -102,7 +102,8 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 		return mcp.ErrorResult(err), nil
 	}
 
-	mu := m.projectLock(projectName)
+	key := storeKey(projectName, agentID)
+	mu := m.projectLock(key)
 	mu.Lock()
 	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
@@ -125,13 +126,13 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 	m.asyncExecs.add(ae)
 
 	// Touch before exec so reaper won't kill the container
-	_ = m.store.TouchLastUsed(projectName)
-	m.incActiveExecs(projectName)
+	_ = m.store.TouchLastUsed(key)
+	m.incActiveExecs(key)
 
 	m.asyncWg.Add(1)
 	go func() {
 		defer m.asyncWg.Done()
-		defer m.decActiveExecs(projectName)
+		defer m.decActiveExecs(key)
 		defer cancel()
 
 		result, err := m.backend.Exec(execCtx, backend.ExecOpts{
@@ -142,7 +143,7 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 			MaxLines:    100, // async gets more output
 		})
 
-		_ = m.store.TouchLastUsed(projectName)
+		_ = m.store.TouchLastUsed(key)
 
 		m.asyncExecs.mu.Lock()
 		defer m.asyncExecs.mu.Unlock()

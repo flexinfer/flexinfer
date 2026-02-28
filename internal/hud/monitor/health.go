@@ -107,6 +107,15 @@ type HealthSummary struct {
 	IdleServers     int `json:"idle_servers"`
 }
 
+type healthClass string
+
+const (
+	healthClassHealthy  healthClass = "healthy"
+	healthClassDegraded healthClass = "degraded"
+	healthClassDown     healthClass = "down"
+	healthClassIdle     healthClass = "idle"
+)
+
 // HealthMonitor tracks server health and maintains sparkline latency
 // history for each server. It merges data from the Health() and Servers()
 // bridge calls.
@@ -302,13 +311,17 @@ func (m *HealthMonitor) Refresh() error {
 		entry.LatencyHistory = ring.Values()
 
 		// Classify for summary.
-		if !entry.Running {
+		//
+		// In hub/gateway mode, Running only reflects local process state.
+		// A server can be healthy via hub target while local process is stopped.
+		switch classifyHealthEntry(entry) {
+		case healthClassIdle:
 			summary.IdleServers++
-		} else if entry.Target == "unavailable" || (!entry.Healthy && entry.ConsecFails > 3) {
+		case healthClassDown:
 			summary.DownServers++
-		} else if !entry.Healthy || entry.ConsecFails > 0 {
+		case healthClassDegraded:
 			summary.DegradedServers++
-		} else {
+		default:
 			summary.HealthyServers++
 		}
 
@@ -359,6 +372,25 @@ func (m *HealthMonitor) Refresh() error {
 	}
 
 	return nil
+}
+
+func classifyHealthEntry(entry ServerHealthEntry) healthClass {
+	// Stopped local process with no usable health target is truly idle.
+	if !entry.Running && entry.Target == "unavailable" {
+		return healthClassIdle
+	}
+
+	// Unavailable target or sustained failures indicate down.
+	if entry.Target == "unavailable" || (!entry.Healthy && entry.ConsecFails > 3) {
+		return healthClassDown
+	}
+
+	// Any remaining unhealthy/failing condition is degraded.
+	if !entry.Healthy || entry.ConsecFails > 0 {
+		return healthClassDegraded
+	}
+
+	return healthClassHealthy
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.

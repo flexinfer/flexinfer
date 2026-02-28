@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -58,6 +59,20 @@ func run(ctx context.Context) error {
 		defaultIdleTimeout = 2 * time.Hour
 	}
 
+	// NFS cache flush: default true for K8s backend
+	nfsFlush := env.Bool("DEVBOX_NFS_FLUSH", backendType == "k8s" || backendType == "kubernetes")
+
+	// Parse warm projects from comma-separated env var
+	var warmProjects []string
+	if wp := env.String("DEVBOX_WARM_PROJECTS", ""); wp != "" {
+		for _, p := range strings.Split(wp, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				warmProjects = append(warmProjects, p)
+			}
+		}
+	}
+
 	mgr, err := newManager(ctx, logger, managerConfig{
 		workspaceRoot:      workspaceRoot,
 		cacheDir:           cacheDir,
@@ -74,7 +89,8 @@ func run(ctx context.Context) error {
 		k8sWorkspacePVC:    env.String("DEVBOX_K8S_WORKSPACE_PVC", "devbox-workspace-nfs"),
 		k8sImagePullSecret: env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
 		builderImage:       builderImage(),
-		buildCachePVC:      env.String("DEVBOX_K8S_BUILD_CACHE_PVC", ""),
+		nfsFlush:           nfsFlush,
+		warmProjects:       warmProjects,
 	})
 	if err != nil {
 		return fmt.Errorf("init manager: %w", err)
@@ -106,6 +122,12 @@ func run(ctx context.Context) error {
 
 	// Start idle reaper
 	go mgr.reapLoop(ctx)
+
+	// Start warm pool if configured
+	if len(mgr.cfg.warmProjects) > 0 {
+		logger.Info("warm pool enabled", "projects", mgr.cfg.warmProjects)
+		go mgr.warmPool(ctx)
+	}
 
 	// Cleanup on shutdown
 	defer mgr.shutdownAll(context.Background())

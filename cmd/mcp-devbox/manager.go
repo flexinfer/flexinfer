@@ -35,7 +35,12 @@ type managerConfig struct {
 	k8sWorkspacePVC    string
 	k8sImagePullSecret string
 	builderImage       string
-	buildCachePVC      string
+
+	// NFS cache flush before each exec (default true for K8s backend)
+	nfsFlush bool
+
+	// Warm pool: pre-provision pods for these projects on startup
+	warmProjects []string
 }
 
 type manager struct {
@@ -160,7 +165,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			ImagePullSecret: cfg.k8sImagePullSecret,
 			WorkspaceRoot:   cfg.workspaceRoot,
 			BuilderImage:    cfg.builderImage,
-			BuildCachePVC:   cfg.buildCachePVC,
+			NFSFlush:        cfg.nfsFlush,
 		})
 		if err != nil {
 			return nil, err
@@ -213,13 +218,33 @@ func (m *manager) imageTag(projectName, hash string) string {
 	return fmt.Sprintf("%s/%s:%s", m.cfg.imagePrefix, sanitizeContainerName(projectName), hash[:7])
 }
 
-// containerName returns the Docker container name for a project.
-func (m *manager) containerName(projectName string) string {
-	return "devbox-" + sanitizeContainerName(projectName)
+// containerName returns the Docker container/pod name for a project.
+// When agentID is provided, the pod name includes a truncated agent suffix
+// for per-agent isolation: devbox-<project>-<agent>.
+func (m *manager) containerName(projectName, agentID string) string {
+	base := "devbox-" + sanitizeContainerName(projectName)
+	if agentID != "" {
+		id := sanitizeContainerName(agentID)
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		return base + "-" + id
+	}
+	return base
+}
+
+// storeKey returns the state store key for a project+agent combination.
+// When agentID is set, returns "project/agentID" for per-agent state isolation.
+func storeKey(projectName, agentID string) string {
+	if agentID != "" {
+		return projectName + "/" + agentID
+	}
+	return projectName
 }
 
 // ensureRunning ensures a sandbox is built and running for a project.
-// Returns the container ID.
+// Returns the container ID. When agentID is provided, each agent gets
+// its own isolated pod for the project.
 func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, agentID string) (string, error) {
 	// Fingerprint the project
 	fp, err := detect.Fingerprint(projectDir)
@@ -227,9 +252,10 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 		return "", fmt.Errorf("fingerprint: %w", err)
 	}
 
-	entry := m.store.Get(projectName)
+	key := storeKey(projectName, agentID)
+	entry := m.store.Get(key)
 	tag := m.imageTag(projectName, fp.Hash)
-	containerID := m.containerName(projectName)
+	containerID := m.containerName(projectName, agentID)
 
 	// Fast path: container exists with matching hash
 	if entry != nil && entry.FingerprintHash == fp.Hash && entry.Status == "running" {
@@ -244,18 +270,18 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 		if err := m.backend.Resume(ctx, containerID); err == nil {
 			entry.Status = "running"
 			entry.LastUsed = time.Now()
-			_ = m.store.Set(projectName, entry)
-			m.logger.Info("resumed paused sandbox", "project", projectName)
+			_ = m.store.Set(key, entry)
+			m.logger.Info("resumed paused sandbox", "project", projectName, "agent", agentID)
 			return containerID, nil
 		}
 		// Resume failed — fall through to rebuild
-		m.logger.Warn("resume failed, rebuilding", "project", projectName)
+		m.logger.Warn("resume failed, rebuilding", "project", projectName, "agent", agentID)
 	}
 
 	// Stopped container with matching hash — try to restart without rebuild.
 	// For K8s backend, Start() reuses existing running pods or creates new ones.
 	if entry != nil && entry.FingerprintHash == fp.Hash && entry.Status == "stopped" {
-		m.logger.Info("restarting stopped sandbox (hash match)", "project", projectName)
+		m.logger.Info("restarting stopped sandbox (hash match)", "project", projectName, "agent", agentID)
 		// Skip build, go straight to Start below
 	} else if entry == nil || entry.FingerprintHash != fp.Hash {
 		// Stale or missing: rebuild if hash changed
@@ -310,7 +336,7 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 	}
 
 	workDir := m.projectWorkDir(projectDir)
-	m.logger.Info("starting sandbox", "project", projectName, "image", tag, "workdir", workDir)
+	m.logger.Info("starting sandbox", "project", projectName, "agent", agentID, "image", tag, "workdir", workDir)
 	result, err := m.backend.Start(ctx, backend.StartOpts{
 		Name:     containerID,
 		ImageTag: tag,
@@ -328,7 +354,7 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 
 	// Persist state
 	now := time.Now()
-	if err := m.store.Set(projectName, &state.Entry{
+	if err := m.store.Set(key, &state.Entry{
 		ProjectDir:      projectDir,
 		ContainerID:     result.ContainerID,
 		ImageTag:        tag,
@@ -341,7 +367,7 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 		m.logger.Warn("failed to persist state", "error", err)
 	}
 
-	return m.containerName(projectName), nil
+	return containerID, nil
 }
 
 // projectWorkDir returns the working directory inside the container for a project.
@@ -416,6 +442,63 @@ func (m *manager) isK8sBackend() bool {
 	return m.cfg.backendType == "k8s" || m.cfg.backendType == "kubernetes"
 }
 
+// isWarmProject returns true if the project is in the warm pool list.
+func (m *manager) isWarmProject(projectName string) bool {
+	for _, p := range m.cfg.warmProjects {
+		if p == projectName {
+			return true
+		}
+	}
+	return false
+}
+
+// warmPool pre-provisions pods for configured warm projects.
+// Runs on startup and re-warms every 30 minutes.
+func (m *manager) warmPool(ctx context.Context) {
+	m.warmOnce(ctx)
+
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.warmOnce(ctx)
+		}
+	}
+}
+
+func (m *manager) warmOnce(ctx context.Context) {
+	for _, project := range m.cfg.warmProjects {
+		projectDir, projectName, err := m.resolveProject(project)
+		if err != nil {
+			m.logger.Warn("warm pool: project not found", "project", project, "error", err)
+			continue
+		}
+
+		key := storeKey(projectName, "")
+		mu := m.projectLock(key)
+		mu.Lock()
+		_, err = m.ensureRunning(ctx, projectDir, projectName, "")
+		mu.Unlock()
+		if err != nil {
+			m.logger.Warn("warm pool: failed to warm project", "project", projectName, "error", err)
+		} else {
+			m.logger.Info("warm pool: project ready", "project", projectName)
+		}
+	}
+}
+
+// parseStoreKey splits a compound store key ("project/agent") into its parts.
+func parseStoreKey(key string) (projectName, agentID string) {
+	if idx := strings.Index(key, "/"); idx >= 0 {
+		return key[:idx], key[idx+1:]
+	}
+	return key, ""
+}
+
 // reapIdle pauses containers that have been idle beyond the timeout.
 // Paused containers can be resumed instantly (~5ms) vs cold start (~2-5s).
 // Falls back to stop if pause is not supported by the backend.
@@ -424,39 +507,46 @@ func (m *manager) isK8sBackend() bool {
 // "keeping warm". Hard-reap (stop) only after 2× idle timeout.
 func (m *manager) reapIdle(ctx context.Context) {
 	idle := m.store.IdleEntries(m.cfg.idleTimeout)
-	for name, entry := range idle {
-		// Skip projects with active exec calls
-		if m.hasActiveExecs(name) {
+	for key, entry := range idle {
+		// Skip entries with active exec calls
+		if m.hasActiveExecs(key) {
 			continue
 		}
 
-		containerName := m.containerName(name)
+		projectName, agentID := parseStoreKey(key)
+
+		// Skip warm-pool projects — the warm pool goroutine will just recreate them.
+		if agentID == "" && m.isWarmProject(projectName) {
+			continue
+		}
+
+		containerName := m.containerName(projectName, agentID)
 
 		// K8s-aware: keep pods warm on first idle, hard-reap at 2× timeout.
 		if m.isK8sBackend() {
 			idleDuration := time.Since(entry.LastUsed)
 			if idleDuration < 2*m.cfg.idleTimeout {
-				m.logger.Debug("keeping K8s pod warm", "project", name,
+				m.logger.Debug("keeping K8s pod warm", "key", key,
 					"idle_since", entry.LastUsed.Format(time.RFC3339))
 				continue
 			}
 			// Exceeded 2× timeout — hard-reap.
-			m.logger.Info("hard-reaping idle K8s pod", "project", name,
+			m.logger.Info("hard-reaping idle K8s pod", "key", key,
 				"idle_since", entry.LastUsed.Format(time.RFC3339))
 			if err := m.backend.Stop(ctx, containerName); err != nil {
-				m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
+				m.logger.Warn("failed to stop idle sandbox", "key", key, "error", err)
 				continue
 			}
 			entry.Status = "stopped"
 		} else {
-			m.logger.Info("pausing idle sandbox", "project", name,
+			m.logger.Info("pausing idle sandbox", "key", key,
 				"idle_since", entry.LastUsed.Format(time.RFC3339))
 
 			// Try pause first (instant resume); fall back to stop
 			if err := m.backend.Pause(ctx, containerName); err != nil {
 				// Pause not supported — fall back to stop
 				if err := m.backend.Stop(ctx, containerName); err != nil {
-					m.logger.Warn("failed to stop idle sandbox", "project", name, "error", err)
+					m.logger.Warn("failed to stop idle sandbox", "key", key, "error", err)
 					continue
 				}
 				entry.Status = "stopped"
@@ -466,10 +556,10 @@ func (m *manager) reapIdle(ctx context.Context) {
 		}
 
 		if m.metrics != nil {
-			m.metrics.idleReaps.WithLabelValues(name).Inc()
+			m.metrics.idleReaps.WithLabelValues(projectName).Inc()
 		}
-		if err := m.store.Set(name, entry); err != nil {
-			m.logger.Warn("failed to update state", "project", name, "error", err)
+		if err := m.store.Set(key, entry); err != nil {
+			m.logger.Warn("failed to update state", "key", key, "error", err)
 		}
 	}
 }
@@ -478,23 +568,24 @@ func (m *manager) reapIdle(ctx context.Context) {
 // stale entries (e.g., pods evicted during daemon downtime, node reboots).
 func (m *manager) reconcileState(ctx context.Context) {
 	entries := m.store.List()
-	for name, entry := range entries {
+	for key, entry := range entries {
 		if entry.Status != "running" && entry.Status != "paused" {
 			continue
 		}
-		containerName := m.containerName(name)
+		projectName, agentID := parseStoreKey(key)
+		containerName := m.containerName(projectName, agentID)
 		status, err := m.backend.Status(ctx, containerName)
 		if err != nil {
-			m.logger.Warn("reconcile: failed to check status", "project", name, "error", err)
+			m.logger.Warn("reconcile: failed to check status", "key", key, "error", err)
 			entry.Status = "stopped"
-			_ = m.store.Set(name, entry)
+			_ = m.store.Set(key, entry)
 			continue
 		}
 		if !status.Running {
 			m.logger.Info("reconcile: marking stale entry as stopped",
-				"project", name, "actual_status", status.Status)
+				"key", key, "actual_status", status.Status)
 			entry.Status = "stopped"
-			_ = m.store.Set(name, entry)
+			_ = m.store.Set(key, entry)
 		}
 	}
 }
@@ -518,15 +609,16 @@ func (m *manager) shutdownAll(ctx context.Context) {
 	m.asyncWg.Wait()
 
 	entries := m.store.List()
-	for name, entry := range entries {
+	for key, entry := range entries {
 		if entry.Status == "running" {
-			containerName := m.containerName(name)
-			m.logger.Info("shutting down sandbox", "project", name)
+			projectName, agentID := parseStoreKey(key)
+			containerName := m.containerName(projectName, agentID)
+			m.logger.Info("shutting down sandbox", "key", key)
 			if err := m.backend.Stop(ctx, containerName); err != nil {
-				m.logger.Warn("failed to stop sandbox on shutdown", "project", name, "error", err)
+				m.logger.Warn("failed to stop sandbox on shutdown", "key", key, "error", err)
 			}
 			entry.Status = "stopped"
-			_ = m.store.Set(name, entry)
+			_ = m.store.Set(key, entry)
 		}
 	}
 }

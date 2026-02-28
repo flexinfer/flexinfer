@@ -37,8 +37,9 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 		return mcp.ErrorResult(err), nil
 	}
 
-	// Per-project lock prevents concurrent ensureRunning TOCTOU races
-	mu := m.projectLock(projectName)
+	// Per-project+agent lock prevents concurrent ensureRunning TOCTOU races
+	key := storeKey(projectName, agentID)
+	mu := m.projectLock(key)
 	mu.Lock()
 	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
@@ -60,12 +61,12 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	}
 
 	// Touch last used BEFORE exec so reaper doesn't kill during long-running commands
-	_ = m.store.TouchLastUsed(projectName)
-	m.incActiveExecs(projectName)
-	defer m.decActiveExecs(projectName)
+	_ = m.store.TouchLastUsed(key)
+	m.incActiveExecs(key)
+	defer m.decActiveExecs(key)
 
 	m.totalExecs.Add(1)
-	m.logger.Info("exec", "project", projectName, "command", command)
+	m.logger.Info("exec", "project", projectName, "agent", agentID, "command", command)
 
 	start := time.Now()
 	result, err := m.backend.Exec(ctx, backend.ExecOpts{
@@ -85,7 +86,7 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	}
 
 	// Update last used after exec too
-	_ = m.store.TouchLastUsed(projectName)
+	_ = m.store.TouchLastUsed(key)
 
 	// Record metrics
 	if m.metrics != nil {
@@ -203,21 +204,26 @@ func (m *manager) handleStatus(ctx context.Context, args map[string]any) (*mcp.C
 	entries := m.store.List()
 	sandboxes := make([]map[string]any, 0)
 
-	for name, entry := range entries {
-		if project != "" && name != project {
+	for key, entry := range entries {
+		projectName, agentID := parseStoreKey(key)
+		if project != "" && projectName != project {
 			continue
 		}
 
 		info := map[string]any{
-			"project":   name,
+			"project":   projectName,
 			"status":    entry.Status,
 			"image":     entry.ImageTag,
 			"backend":   entry.Backend,
 			"last_used": entry.LastUsed.Format(time.RFC3339),
 		}
+		if agentID != "" {
+			info["agent_id"] = agentID
+		}
 
 		if entry.Status == "running" {
-			status, err := m.backend.Status(ctx, m.containerName(name))
+			containerName := m.containerName(projectName, agentID)
+			status, err := m.backend.Status(ctx, containerName)
 			if err == nil {
 				info["running"] = status.Running
 				if status.Running {
@@ -239,6 +245,7 @@ func (m *manager) handleStatus(ctx context.Context, args map[string]any) (*mcp.C
 func (m *manager) handleStop(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
+	agentID := v.String("agent_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -248,15 +255,16 @@ func (m *manager) handleStop(ctx context.Context, args map[string]any) (*mcp.Cal
 		return mcp.ErrorResult(err), nil
 	}
 
-	containerID := m.containerName(projectName)
+	key := storeKey(projectName, agentID)
+	containerID := m.containerName(projectName, agentID)
 	if err := m.backend.Stop(ctx, containerID); err != nil {
 		return mcp.ErrorResult(fmt.Errorf("stop failed: %w", err)), nil
 	}
 
-	entry := m.store.Get(projectName)
+	entry := m.store.Get(key)
 	if entry != nil {
 		entry.Status = "stopped"
-		_ = m.store.Set(projectName, entry)
+		_ = m.store.Set(key, entry)
 	}
 
 	return mcp.JSONResult(map[string]any{"stopped": true, "project": projectName})
@@ -300,7 +308,8 @@ func (m *manager) handleReadFile(ctx context.Context, args map[string]any) (*mcp
 		return mcp.ErrorResult(err), nil
 	}
 
-	mu := m.projectLock(projectName)
+	key := storeKey(projectName, agentID)
+	mu := m.projectLock(key)
 	mu.Lock()
 	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
@@ -308,7 +317,7 @@ func (m *manager) handleReadFile(ctx context.Context, args map[string]any) (*mcp
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil
 	}
 
-	_ = m.store.TouchLastUsed(projectName)
+	_ = m.store.TouchLastUsed(key)
 
 	// Resolve path relative to project workdir
 	filePath := path
@@ -355,7 +364,8 @@ func (m *manager) handleWriteFile(ctx context.Context, args map[string]any) (*mc
 		return mcp.ErrorResult(err), nil
 	}
 
-	mu := m.projectLock(projectName)
+	key := storeKey(projectName, agentID)
+	mu := m.projectLock(key)
 	mu.Lock()
 	containerID, err := m.ensureRunning(ctx, projectDir, projectName, agentID)
 	mu.Unlock()
@@ -363,7 +373,7 @@ func (m *manager) handleWriteFile(ctx context.Context, args map[string]any) (*mc
 		return mcp.ErrorResult(fmt.Errorf("ensure sandbox: %w", err)), nil
 	}
 
-	_ = m.store.TouchLastUsed(projectName)
+	_ = m.store.TouchLastUsed(key)
 
 	filePath := path
 	if !filepath.IsAbs(path) {

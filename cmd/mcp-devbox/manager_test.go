@@ -108,17 +108,64 @@ func TestContainerName(t *testing.T) {
 
 	tests := []struct {
 		project string
+		agentID string
 		want    string
 	}{
-		{"loom-core", "devbox-loom-core"},
-		{"my_app", "devbox-my_app"},
-		{"hello world", "devbox-hello-world"},
+		{"loom-core", "", "devbox-loom-core"},
+		{"my_app", "", "devbox-my_app"},
+		{"hello world", "", "devbox-hello-world"},
+		{"loom-core", "claude-code", "devbox-loom-core-claude-code"},
+		{"loom-core", "codex", "devbox-loom-core-codex"},
+		{"flexdeck", "very-long-agent-name-here", "devbox-flexdeck-very-long-ag"},
 	}
 
 	for _, tt := range tests {
-		got := m.containerName(tt.project)
+		got := m.containerName(tt.project, tt.agentID)
 		if got != tt.want {
-			t.Errorf("containerName(%q) = %q, want %q", tt.project, got, tt.want)
+			t.Errorf("containerName(%q, %q) = %q, want %q", tt.project, tt.agentID, got, tt.want)
+		}
+	}
+}
+
+func TestStoreKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		project string
+		agentID string
+		want    string
+	}{
+		{"loom-core", "", "loom-core"},
+		{"loom-core", "claude-code", "loom-core/claude-code"},
+		{"flexdeck", "codex", "flexdeck/codex"},
+	}
+
+	for _, tt := range tests {
+		got := storeKey(tt.project, tt.agentID)
+		if got != tt.want {
+			t.Errorf("storeKey(%q, %q) = %q, want %q", tt.project, tt.agentID, got, tt.want)
+		}
+	}
+}
+
+func TestParseStoreKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key     string
+		project string
+		agentID string
+	}{
+		{"loom-core", "loom-core", ""},
+		{"loom-core/claude-code", "loom-core", "claude-code"},
+		{"flexdeck/codex", "flexdeck", "codex"},
+	}
+
+	for _, tt := range tests {
+		project, agentID := parseStoreKey(tt.key)
+		if project != tt.project || agentID != tt.agentID {
+			t.Errorf("parseStoreKey(%q) = (%q, %q), want (%q, %q)",
+				tt.key, project, agentID, tt.project, tt.agentID)
 		}
 	}
 }
