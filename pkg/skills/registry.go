@@ -156,11 +156,19 @@ func (s *Skill) GetType(target string) string {
 	}
 }
 
+// escapeSentinel is a placeholder used during template resolution to protect
+// escaped variable references (\${...}) from substitution. It is replaced
+// back to a literal "${" after all variables have been resolved.
+const escapeSentinel = "\x00LOOM_ESC_DOLLAR_BRACE\x00"
+
 // ResolveInstructions replaces template variables in instructions.
 // Supported variables:
-// - ${SKILL_PATH}: Path to skill directory (Codex: $CODEX_HOME/skills/<name>, Claude: direct paths)
-// - ${CODEX_HOME}: Codex home directory (~/.codex)
-// - ${HOME}: User home directory
+//   - ${SKILL_PATH}: Path to skill directory (Codex: $CODEX_HOME/skills/<name>, Claude: direct paths)
+//   - ${CODEX_HOME}: Codex home directory (~/.codex)
+//   - ${HOME}: User home directory
+//
+// To emit a literal ${VARIABLE} in the generated output, escape it as
+// \${VARIABLE} in the registry YAML.
 func (s *Skill) ResolveInstructions(target, codexHome, skillSourceDir string) string {
 	if s.Common == nil {
 		return ""
@@ -172,6 +180,9 @@ func (s *Skill) ResolveInstructions(target, codexHome, skillSourceDir string) st
 			instructions = strings.TrimRight(instructions, "\n") + "\n\n" + strings.TrimLeft(spec.InstructionsAppend, "\n")
 		}
 	}
+
+	// Protect escaped references (\${...}) from substitution.
+	instructions = strings.ReplaceAll(instructions, "\\${", escapeSentinel)
 
 	switch target {
 	case "codex":
@@ -189,6 +200,9 @@ func (s *Skill) ResolveInstructions(target, codexHome, skillSourceDir string) st
 		// For Gemini, use actual paths (similar to Claude)
 		instructions = strings.ReplaceAll(instructions, "${SKILL_PATH}", skillSourceDir)
 	}
+
+	// Restore escaped references to literal ${...}.
+	instructions = strings.ReplaceAll(instructions, escapeSentinel, "${")
 
 	return instructions
 }

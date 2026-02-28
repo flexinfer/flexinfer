@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -240,6 +241,64 @@ func TestSkill_ResolveInstructions_WithTargetAppend(t *testing.T) {
 
 	if got != want {
 		t.Errorf("unexpected appended instructions:\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+func TestSkill_ResolveInstructions_EscapedVariablesPreserved(t *testing.T) {
+	s := &Skill{
+		Name: "doc-skill",
+		Common: &SkillSpec{
+			Instructions: `Use \${SKILL_PATH} to reference the skill directory.
+Actual path: ${SKILL_PATH}/scripts/run.sh
+Literal codex home: \${CODEX_HOME}`,
+		},
+	}
+
+	got := s.ResolveInstructions("claude", "/home/.codex", "/workspace/skills/doc-skill")
+
+	// Escaped references should become literal ${...} in output.
+	if !strings.Contains(got, "Use ${SKILL_PATH} to reference") {
+		t.Errorf("escaped \\${SKILL_PATH} should become literal ${SKILL_PATH}, got:\n%s", got)
+	}
+	// Unescaped references should be substituted normally.
+	if !strings.Contains(got, "Actual path: /workspace/skills/doc-skill/scripts/run.sh") {
+		t.Errorf("unescaped ${SKILL_PATH} should be resolved, got:\n%s", got)
+	}
+	// Escaped ${CODEX_HOME} should become literal.
+	if !strings.Contains(got, "Literal codex home: ${CODEX_HOME}") {
+		t.Errorf("escaped \\${CODEX_HOME} should become literal, got:\n%s", got)
+	}
+}
+
+func TestSkill_ResolveInstructions_EscapedCodex(t *testing.T) {
+	s := &Skill{
+		Name: "doc-skill",
+		Common: &SkillSpec{
+			Instructions: `Real: ${CODEX_HOME}/config  Literal: \${CODEX_HOME}/config`,
+		},
+	}
+
+	got := s.ResolveInstructions("codex", "/home/.codex", "/src/skills/doc-skill")
+
+	if !strings.Contains(got, "Real: $CODEX_HOME/config") {
+		t.Errorf("unescaped ${CODEX_HOME} should resolve for codex, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Literal: ${CODEX_HOME}/config") {
+		t.Errorf("escaped \\${CODEX_HOME} should become literal, got:\n%s", got)
+	}
+}
+
+func TestSkill_ResolveInstructions_NoEscapesUnchanged(t *testing.T) {
+	s := &Skill{
+		Name: "plain",
+		Common: &SkillSpec{
+			Instructions: "No template variables here at all.",
+		},
+	}
+
+	got := s.ResolveInstructions("claude", "", "")
+	if got != "No template variables here at all." {
+		t.Errorf("expected unchanged, got:\n%s", got)
 	}
 }
 
