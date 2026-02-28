@@ -1856,19 +1856,9 @@ func (r *ModelDeploymentReconciler) buildVLLMEnv(m *aiv1alpha1.ModelDeployment, 
 		gpuArch := strings.ToLower(r.getGPUArchitecture(m))
 		env = append(env, backend.ROCmEnvVars(gpuArch)...)
 
-		// vLLM-specific ROCm tuning
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "0"},
-				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "0"},
-			)
-		} else if strings.HasPrefix(gpuArch, "gfx906") {
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "0"},
-			)
-		}
+		// vLLM-specific env vars (VLLM_USE_V1, VLLM_USE_TRITON_FLASH_ATTN,
+		// VLLM_ROCM_USE_AITER) are handled by the backend's Env() method via
+		// explicit config opt-ins. Dockerfile ENV provides safe defaults.
 
 		// Keep HIP and ROCR visibility in sync for reliable ROCm device isolation.
 		// This helps on hosts where KFD can still enumerate multiple GPUs.

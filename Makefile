@@ -196,6 +196,7 @@ VLLM_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100
 VLLM_GFX1100_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-fa
 VLLM_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906
 VLLM_GFX906_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906-fa
+LLAMACPP_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:rocm-gfx1100
 LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 DIFFUSERS_ROCM_IMAGE ?= $(HARBOR_REGISTRY)/library/diffusers-api:rocm-$(shell git rev-parse --short HEAD)
@@ -228,7 +229,7 @@ push-vllm-gfx1100: ## Push vLLM gfx1100 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_IMAGE)
 
 .PHONY: build-vllm-gfx1100-fa
-build-vllm-gfx1100-fa: ## Build vLLM gfx1100 flash attention image (experimental)
+build-vllm-gfx1100-fa: ## Build vLLM gfx1100 flash attention image (prebuilt Navi base, vLLM 0.14.0)
 	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx1100-fa -t $(VLLM_GFX1100_FA_IMAGE) .
 
 .PHONY: push-vllm-gfx1100-fa
@@ -244,12 +245,20 @@ push-vllm-gfx906: ## Push vLLM gfx906 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_IMAGE)
 
 .PHONY: build-vllm-gfx906-fa
-build-vllm-gfx906-fa: ## Build vLLM gfx906 flash attention image (experimental)
+build-vllm-gfx906-fa: ## Build vLLM gfx906 flash attention image (DEPRECATED — see Dockerfile header)
 	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906-fa -t $(VLLM_GFX906_FA_IMAGE) .
 
 .PHONY: push-vllm-gfx906-fa
 push-vllm-gfx906-fa: ## Push vLLM gfx906 FA image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_FA_IMAGE)
+
+.PHONY: build-llamacpp-gfx1100
+build-llamacpp-gfx1100: ## Build llama.cpp gfx1100 image (ROCm, RX 7900 series)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.llamacpp-rocm-gfx1100 -t $(LLAMACPP_GFX1100_IMAGE) .
+
+.PHONY: push-llamacpp-gfx1100
+push-llamacpp-gfx1100: ## Push llama.cpp gfx1100 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_GFX1100_IMAGE)
 
 .PHONY: build-llamacpp-maxwell
 build-llamacpp-maxwell: ## Build llama.cpp Maxwell image (CUDA 11.8, sm_52)

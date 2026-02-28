@@ -61,40 +61,63 @@ func TestVLLMBackendImage_GFX1100(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendEnv_GFX1100Settings(t *testing.T) {
+func TestVLLMBackendEnv_NoInjectionWithDefaults(t *testing.T) {
 	b := &VLLMBackend{}
 
+	// No config set — default behavior should not inject any vLLM-specific env vars.
+	// This ensures 0.14.0+ images (where VLLM_USE_V1 is removed) work without errors.
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
 	}
 
 	env := b.Env(spec)
-
-	// Check that gfx1100-specific environment variables are set
 	envMap := make(map[string]string)
 	for _, e := range env {
 		envMap[e.Name] = e.Value
 	}
 
-	// V1 engine should be disabled for gfx1100
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
+	// No vLLM-specific env vars should be injected when config is empty
+	for _, key := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN", "VLLM_ROCM_USE_AITER"} {
+		if _, ok := envMap[key]; ok {
+			t.Errorf("expected %s to be absent with empty defaults, got %q", key, envMap[key])
+		}
 	}
 
-	// Triton flash attention should be disabled for gfx1100
-	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
-	}
-
-	// AITER should be disabled for gfx1100
-	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=0, got %q", v)
-	}
-
-	// HSA override should be set for RDNA3
+	// ROCm env vars should still be present
 	if v, ok := envMap["HSA_OVERRIDE_GFX_VERSION"]; !ok || v != "11.0.0" {
 		t.Errorf("expected HSA_OVERRIDE_GFX_VERSION=11.0.0, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_V0ExplicitOptIn(t *testing.T) {
+	b := &VLLMBackend{}
+
+	// Explicitly setting vllmEngineVersion=v0 should inject VLLM_USE_V1=0
+	// (for legacy 0.7.3 images that need explicit control)
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"vllmEngineVersion": "v0",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
+		t.Errorf("expected VLLM_USE_V1=0 with explicit v0 opt-in, got %q (present=%v)", v, ok)
+	}
+	// FA and AITER should not be injected (not opted in)
+	if _, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; ok {
+		t.Error("expected VLLM_USE_TRITON_FLASH_ATTN to be absent without FA opt-in")
+	}
+	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Error("expected VLLM_ROCM_USE_AITER to be absent without AITER opt-in")
 	}
 }
 
@@ -118,13 +141,13 @@ func TestVLLMBackendEnv_V1EngineOptIn(t *testing.T) {
 	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "1" {
 		t.Errorf("expected VLLM_USE_V1=1 with v1 opt-in, got %q", v)
 	}
-	// Flash attention should still be off (not opted in)
-	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0 without FA opt-in, got %q", v)
+	// Flash attention should not be injected (not opted in)
+	if _, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; ok {
+		t.Error("expected VLLM_USE_TRITON_FLASH_ATTN to be absent without FA opt-in")
 	}
-	// AITER should still be off
-	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=0 without AITER opt-in, got %q", v)
+	// AITER should not be injected (not opted in)
+	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Error("expected VLLM_ROCM_USE_AITER to be absent without AITER opt-in")
 	}
 }
 
@@ -148,9 +171,9 @@ func TestVLLMBackendEnv_FlashAttentionOptIn(t *testing.T) {
 	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1 with FA opt-in, got %q", v)
 	}
-	// V1 should still be off
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_V1=0 without V1 opt-in, got %q", v)
+	// V1 should not be injected (not opted in)
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("expected VLLM_USE_V1 to be absent without engine version opt-in")
 	}
 }
 
@@ -229,17 +252,11 @@ func TestVLLMBackendEnv_GFX942Settings(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	// V1 engine defaults to off
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
-	}
-	// Flash attention defaults to off
-	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
-	}
-	// AITER should be present (MI300X is primary target) but defaults to off
-	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=0, got %q", v)
+	// No vLLM env vars injected with empty defaults
+	for _, key := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN", "VLLM_ROCM_USE_AITER"} {
+		if _, ok := envMap[key]; ok {
+			t.Errorf("expected %s to be absent with empty defaults on gfx942, got %q", key, envMap[key])
+		}
 	}
 	// PYTORCH_ROCM_ARCH should be set
 	if v, ok := envMap["PYTORCH_ROCM_ARCH"]; !ok || v != "gfx942" {
@@ -265,13 +282,11 @@ func TestVLLMBackendEnv_GFX90aSettings(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	// V1 engine defaults to off
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_V1=0, got %q", v)
-	}
-	// Flash attention defaults to off
-	if v, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=0, got %q", v)
+	// No vLLM env vars injected with empty defaults
+	for _, key := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN"} {
+		if _, ok := envMap[key]; ok {
+			t.Errorf("expected %s to be absent with empty defaults on gfx90a, got %q", key, envMap[key])
+		}
 	}
 	// AITER should NOT be present for MI250 (CDNA2, not supported)
 	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {

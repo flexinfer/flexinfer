@@ -108,56 +108,33 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
-		// Read opt-in config keys for experimental features.
-		// Defaults preserve the safe baseline (V0 engine, no flash attention, no AITER).
-		engineVersion := spec.ConfigString("vllmEngineVersion", "v0")
+		// Only inject vLLM-specific env vars when explicitly configured.
+		// - Legacy 0.7.3 images: Dockerfile bakes VLLM_USE_V1=0 as safe default
+		// - 0.14.0+ images: VLLM_USE_V1 env var removed, V1 is the only engine
+		// When empty (default), don't inject — let Dockerfile ENV win.
+		engineVersion := spec.ConfigString("vllmEngineVersion", "")
 		enableFA := spec.ConfigBool("enableFlashAttention", false)
 		enableAiter := spec.ConfigBool("enableAiter", false)
 
-		useV1 := "0"
+		// Collect vLLM env vars that are explicitly opted into
+		var vllmEnv []corev1.EnvVar
 		if engineVersion == "v1" {
-			useV1 = "1"
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "1"})
+		} else if engineVersion == "v0" {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"})
 		}
-		useTritonFA := "0"
 		if enableFA {
-			useTritonFA = "1"
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
 
-		// vLLM-specific ROCm enhancements
-		if strings.HasPrefix(spec.GPUArch, "gfx110") {
-			useAiter := "0"
-			if enableAiter {
-				useAiter = "1"
-			}
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
-				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: useAiter},
-			)
-		} else if strings.HasPrefix(spec.GPUArch, "gfx942") {
-			// MI300X (CDNA3): primary AITER target, full vLLM feature support.
-			useAiter := "0"
-			if enableAiter {
-				useAiter = "1"
-			}
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
-				corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: useAiter},
-			)
-		} else if strings.HasPrefix(spec.GPUArch, "gfx90a") {
-			// MI250 (CDNA2): AITER not applicable (CDNA2 architecture).
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
-			)
-		} else if strings.HasPrefix(spec.GPUArch, "gfx906") {
-			// gfx906: AITER is not applicable (GCN5 architecture)
-			env = append(env,
-				corev1.EnvVar{Name: "VLLM_USE_V1", Value: useV1},
-				corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: useTritonFA},
-			)
+		// AITER: only applicable to gfx110x (RDNA3) and gfx942 (MI300X/CDNA3)
+		supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
+			strings.HasPrefix(spec.GPUArch, "gfx942")
+		if enableAiter && supportsAiter {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 		}
+
+		env = append(env, vllmEnv...)
 
 		env = append(env, DeviceIsolationEnvVars(spec)...)
 	}
