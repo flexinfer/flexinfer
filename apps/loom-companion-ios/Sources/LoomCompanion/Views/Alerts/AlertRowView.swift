@@ -70,6 +70,10 @@ struct AlertRowView: View {
             Label("Session", systemImage: "arrow.right.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .viewWorkflow:
+            Label("Workflow", systemImage: "arrow.right.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         case .viewDashboard:
             Label("Dashboard", systemImage: "arrow.right.circle")
                 .font(.caption)

@@ -35,6 +35,8 @@ public enum InterruptionLevel: String, Sendable, Codable, Comparable {
 public enum AlertAction: String, Sendable, Codable {
     /// Navigate to the related session detail screen.
     case viewSession = "view_session"
+    /// Navigate to the related workflow detail screen.
+    case viewWorkflow = "view_workflow"
     /// Navigate to the dashboard screen.
     case viewDashboard = "view_dashboard"
     /// Mark as acknowledged (no navigation).
@@ -51,6 +53,7 @@ public struct AlertItem: Identifiable, Sendable {
     public let message: String
     public let eventType: String
     public let relatedSessionId: String?
+    public let relatedWorkflowId: String?
     public let allowedActions: [AlertAction]
     public var isRead: Bool
 
@@ -63,6 +66,7 @@ public struct AlertItem: Identifiable, Sendable {
         message: String,
         eventType: String,
         relatedSessionId: String? = nil,
+        relatedWorkflowId: String? = nil,
         allowedActions: [AlertAction] = [.acknowledge],
         isRead: Bool = false
     ) {
@@ -74,6 +78,7 @@ public struct AlertItem: Identifiable, Sendable {
         self.message = message
         self.eventType = eventType
         self.relatedSessionId = relatedSessionId
+        self.relatedWorkflowId = relatedWorkflowId
         self.allowedActions = allowedActions
         self.isRead = isRead
     }
@@ -101,11 +106,11 @@ public struct NotificationPolicyEntry: Sendable {
 /// | hud.health (down)        | critical | timeSensitive  | viewDashboard, acknowledge     |
 /// | hud.health (degraded)    | warning  | active         | viewDashboard, acknowledge     |
 /// | agent.session.reaped     | warning  | active         | viewSession, acknowledge       |
-/// | hud.workflow.reject      | warning  | active         | acknowledge                    |
+/// | hud.workflow.reject      | warning  | active         | viewWorkflow, acknowledge      |
 /// | agent.session.start      | info     | passive        | viewSession, acknowledge       |
 /// | agent.session.end        | info     | passive        | viewSession, acknowledge       |
 /// | agent.nudge.created      | info     | passive        | acknowledge                    |
-/// | hud.workflow.approve     | info     | passive        | acknowledge                    |
+/// | hud.workflow.approve     | info     | passive        | viewWorkflow, acknowledge      |
 /// | hud.handoff.created      | info     | passive        | acknowledge                    |
 /// | coordinator.plan.complete| info     | passive        | acknowledge                    |
 public enum NotificationPolicy {
@@ -116,6 +121,7 @@ public enum NotificationPolicy {
 
         let message = buildMessage(event: event)
         let sessionId = extractSessionId(from: event.data)
+        let workflowId = extractWorkflowId(from: event.data)
 
         return AlertItem(
             severity: entry.severity,
@@ -124,6 +130,7 @@ public enum NotificationPolicy {
             message: message,
             eventType: event.type,
             relatedSessionId: sessionId,
+            relatedWorkflowId: workflowId,
             allowedActions: entry.allowedActions
         )
     }
@@ -138,9 +145,9 @@ public enum NotificationPolicy {
         case "agent.nudge.created":
             return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Agent Nudge Queued", allowedActions: [.acknowledge])
         case "hud.workflow.approve":
-            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Workflow Approved", allowedActions: [.acknowledge])
+            return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Workflow Approved", allowedActions: [.viewWorkflow, .acknowledge])
         case "hud.workflow.reject":
-            return NotificationPolicyEntry(severity: .warning, interruptionLevel: .active, titleTemplate: "Workflow Rejected", allowedActions: [.acknowledge])
+            return NotificationPolicyEntry(severity: .warning, interruptionLevel: .active, titleTemplate: "Workflow Rejected", allowedActions: [.viewWorkflow, .acknowledge])
         case "agent.session.start":
             return NotificationPolicyEntry(severity: .info, interruptionLevel: .passive, titleTemplate: "Session Started", allowedActions: [.viewSession, .acknowledge])
         case "agent.session.end":
@@ -182,6 +189,15 @@ public enum NotificationPolicy {
             return nil
         }
         return payload["session_id"] as? String
+    }
+
+    private static func extractWorkflowId(from data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+        else {
+            return nil
+        }
+        return payload["workflow_id"] as? String
     }
 
     private static func buildMessage(event: SSEEvent) -> String {

@@ -5,6 +5,7 @@ public enum Endpoint: Sendable {
     case ping
     case dashboard
     case controlPlane
+    case alertsPolicy
     case sessions
     case sessionDetail(id: String)
     case sessionEvents(id: String, limit: Int? = nil)
@@ -23,18 +24,20 @@ public enum Endpoint: Sendable {
     case reasoningChainDetail(id: String)
     case createSession(agentId: String, namespace: String? = nil, description: String? = nil, autoRecall: Bool? = nil)
     case endSession(id: String, summarize: Bool? = nil)
+    case pushRegister(token: String, platform: PushPlatform)
+    case pushUnregister(token: String)
     case eventsStream
     case audit(source: String? = nil, limit: Int? = nil)
 
     var method: String {
         switch self {
-        case .ping, .dashboard, .controlPlane, .sessions, .sessionDetail, .sessionEvents,
+        case .ping, .dashboard, .controlPlane, .alertsPolicy, .sessions, .sessionDetail, .sessionEvents,
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
              .eventsStream, .audit:
             return "GET"
-        case .createSession, .endSession:
+        case .createSession, .endSession, .pushRegister, .pushUnregister:
             return "POST"
         }
     }
@@ -47,6 +50,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/dashboard"
         case .controlPlane:
             return "/api/mobile/v1/control-plane"
+        case .alertsPolicy:
+            return "/api/mobile/v1/alerts/policy"
         case .sessions:
             return "/api/mobile/v1/sessions"
         case let .sessionDetail(id):
@@ -83,6 +88,10 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/sessions"
         case let .endSession(id, _):
             return "/api/mobile/v1/sessions/\(id)/end"
+        case .pushRegister:
+            return "/api/mobile/v1/push/register"
+        case .pushUnregister:
+            return "/api/mobile/v1/push/unregister"
         case .eventsStream:
             return "/api/mobile/v1/events/stream"
         case .audit:
@@ -231,6 +240,17 @@ public enum Endpoint: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             var body: [String: Any] = [:]
             if let summarize { body["summarize"] = summarize }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        case let .pushRegister(token, platform):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = [
+                "token": token,
+                "platform": platform.rawValue,
+            ]
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        case let .pushUnregister(token):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = ["token": token]
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         default:

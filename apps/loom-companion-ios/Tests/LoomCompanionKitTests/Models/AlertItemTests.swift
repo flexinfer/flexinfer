@@ -89,7 +89,7 @@ struct AlertItemTests {
 
     // MARK: - Workflow events
 
-    @Test("Workflow approved → info, passive, acknowledge only")
+    @Test("Workflow approved → info, passive, viewWorkflow action")
     func workflowApproved() {
         let event = SSEEvent(type: "hud.workflow.approve", data: """
             {"workflow_id": "wf-1"}
@@ -98,10 +98,12 @@ struct AlertItemTests {
         #expect(alert?.severity == .info)
         #expect(alert?.interruptionLevel == .passive)
         #expect(alert?.title == "Workflow Approved")
-        #expect(alert?.primaryAction == .acknowledge)
+        #expect(alert?.relatedWorkflowId == "wf-1")
+        #expect(alert?.allowedActions == [.viewWorkflow, .acknowledge])
+        #expect(alert?.primaryAction == .viewWorkflow)
     }
 
-    @Test("Workflow rejected → warning, active, acknowledge only")
+    @Test("Workflow rejected → warning, active, viewWorkflow action")
     func workflowRejected() {
         let event = SSEEvent(type: "hud.workflow.reject", data: """
             {"workflow_id": "wf-2"}
@@ -110,7 +112,9 @@ struct AlertItemTests {
         #expect(alert?.severity == .warning)
         #expect(alert?.interruptionLevel == .active)
         #expect(alert?.title == "Workflow Rejected")
-        #expect(alert?.allowedActions == [.acknowledge])
+        #expect(alert?.relatedWorkflowId == "wf-2")
+        #expect(alert?.allowedActions == [.viewWorkflow, .acknowledge])
+        #expect(alert?.primaryAction == .viewWorkflow)
     }
 
     // MARK: - Other events
@@ -216,7 +220,7 @@ struct AlertItemTests {
             if let alert = NotificationPolicy.classify(event: event) {
                 for action in alert.allowedActions {
                     #expect(
-                        action == .viewSession || action == .viewDashboard || action == .acknowledge,
+                        action == .viewSession || action == .viewWorkflow || action == .viewDashboard || action == .acknowledge,
                         "Event \(eventType) has unexpected action \(action)"
                     )
                 }

@@ -10,6 +10,7 @@ struct APIClientTests {
         #expect(Endpoint.ping.path == "/api/mobile/v1/ping")
         #expect(Endpoint.dashboard.path == "/api/mobile/v1/dashboard")
         #expect(Endpoint.controlPlane.path == "/api/mobile/v1/control-plane")
+        #expect(Endpoint.alertsPolicy.path == "/api/mobile/v1/alerts/policy")
         #expect(Endpoint.sessions.path == "/api/mobile/v1/sessions")
         #expect(Endpoint.sessionDetail(id: "s1").path == "/api/mobile/v1/sessions/s1")
         #expect(Endpoint.sessionEvents(id: "s1").path == "/api/mobile/v1/sessions/s1/events")
@@ -28,6 +29,8 @@ struct APIClientTests {
         #expect(Endpoint.reasoningChainDetail(id: "chain-1").path == "/api/mobile/v1/reasoning/chains/chain-1")
         #expect(Endpoint.createSession(agentId: "a1").path == "/api/mobile/v1/sessions")
         #expect(Endpoint.endSession(id: "s1").path == "/api/mobile/v1/sessions/s1/end")
+        #expect(Endpoint.pushRegister(token: "tok", platform: .apns).path == "/api/mobile/v1/push/register")
+        #expect(Endpoint.pushUnregister(token: "tok").path == "/api/mobile/v1/push/unregister")
         #expect(Endpoint.eventsStream.path == "/api/mobile/v1/events/stream")
     }
 
@@ -36,12 +39,15 @@ struct APIClientTests {
         #expect(Endpoint.ping.method == "GET")
         #expect(Endpoint.dashboard.method == "GET")
         #expect(Endpoint.controlPlane.method == "GET")
+        #expect(Endpoint.alertsPolicy.method == "GET")
         #expect(Endpoint.sessions.method == "GET")
         #expect(Endpoint.tasks().method == "GET")
         #expect(Endpoint.workflows().method == "GET")
         #expect(Endpoint.graphPath(sourceId: "a", targetId: "b").method == "GET")
         #expect(Endpoint.createSession(agentId: "a1").method == "POST")
         #expect(Endpoint.endSession(id: "s1").method == "POST")
+        #expect(Endpoint.pushRegister(token: "tok", platform: .apns).method == "POST")
+        #expect(Endpoint.pushUnregister(token: "tok").method == "POST")
     }
 
     @Test("Mutation endpoints are flagged correctly")
@@ -49,9 +55,12 @@ struct APIClientTests {
         #expect(Endpoint.ping.isMutation == false)
         #expect(Endpoint.dashboard.isMutation == false)
         #expect(Endpoint.controlPlane.isMutation == false)
+        #expect(Endpoint.alertsPolicy.isMutation == false)
         #expect(Endpoint.stream().isMutation == false)
         #expect(Endpoint.createSession(agentId: "a1").isMutation == true)
         #expect(Endpoint.endSession(id: "s1").isMutation == true)
+        #expect(Endpoint.pushRegister(token: "tok", platform: .apns).isMutation == true)
+        #expect(Endpoint.pushUnregister(token: "tok").isMutation == true)
     }
 
     @Test("Session events endpoint includes limit query param")
@@ -110,6 +119,29 @@ struct APIClientTests {
         let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
         #expect(json["summarize"] as? Bool == true)
         #expect(request.url?.path.hasSuffix("/sessions/s1/end") == true)
+    }
+
+    @Test("Push register includes expected body")
+    func pushRegisterBody() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.pushRegister(token: "abc123", platform: .apns).urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(request.url?.path.hasSuffix("/push/register") == true)
+        #expect(json["token"] as? String == "abc123")
+        #expect(json["platform"] as? String == "apns")
+    }
+
+    @Test("Push unregister includes expected body")
+    func pushUnregisterBody() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.pushUnregister(token: "abc123").urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(request.url?.path.hasSuffix("/push/unregister") == true)
+        #expect(json["token"] as? String == "abc123")
     }
 
     @Test("Create session auto_recall field")

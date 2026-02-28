@@ -4,11 +4,18 @@ import LoomCompanionKit
 struct ConnectionDiagnosticsView: View {
     @Bindable var connectionVM: ConnectionViewModel
     let healthMonitor: ConnectionHealthMonitor
+    @State private var pushViewModel: PushNotificationsViewModel
 
     private var profile: ConnectionProfile? { TokenStore().loadProfile() }
 
     private var remediation: ConnectionRemediation {
         ConnectionRemediation.forHealth(healthMonitor.health, mode: profile?.mode)
+    }
+
+    init(connectionVM: ConnectionViewModel, healthMonitor: ConnectionHealthMonitor) {
+        self.connectionVM = connectionVM
+        self.healthMonitor = healthMonitor
+        _pushViewModel = State(initialValue: PushNotificationsViewModel(apiClient: connectionVM.buildAPIClient()))
     }
 
     var body: some View {
@@ -86,6 +93,104 @@ struct ConnectionDiagnosticsView: View {
                     LANPermissionView()
                 }
 
+                // Push notifications and policy diagnostics.
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Push Notifications")
+                        .font(.headline)
+
+                    TextField("Push token", text: $pushViewModel.pushToken)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+
+                    Picker("Platform", selection: $pushViewModel.platform) {
+                        Text("APNs").tag(PushPlatform.apns)
+                        Text("FCM").tag(PushPlatform.fcm)
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { await pushViewModel.registerPushToken() }
+                        } label: {
+                            if pushViewModel.isRegistering {
+                                ProgressView()
+                            } else {
+                                Text("Register")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(pushViewModel.pushToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pushViewModel.isRegistering)
+
+                        Button {
+                            Task { await pushViewModel.unregisterPushToken() }
+                        } label: {
+                            if pushViewModel.isUnregistering {
+                                ProgressView()
+                            } else {
+                                Text("Unregister")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(pushViewModel.pushToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pushViewModel.isUnregistering)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { await pushViewModel.loadPolicy() }
+                        } label: {
+                            if pushViewModel.isLoadingPolicy {
+                                ProgressView()
+                            } else {
+                                Label("Refresh Policy", systemImage: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(pushViewModel.isLoadingPolicy)
+
+                        if !pushViewModel.policyVersion.isEmpty {
+                            Text("Policy \(pushViewModel.policyVersion)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let statusMessage = pushViewModel.statusMessage, !statusMessage.isEmpty {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let errorMessage = pushViewModel.errorMessage, !errorMessage.isEmpty {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    if !pushViewModel.policyEntries.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Alert Policy Snapshot")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            ForEach(Array(pushViewModel.policyEntries.prefix(6))) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.title)
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                    Text("\(entry.eventType) • \(entry.severity) • \(entry.interruptionLevel)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding()
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
                 // Actions
                 VStack(spacing: 12) {
                     Button {
@@ -117,6 +222,9 @@ struct ConnectionDiagnosticsView: View {
             .padding()
         }
         .navigationTitle("Connection")
+        .task {
+            await pushViewModel.loadPolicy()
+        }
     }
 
     private var healthIcon: String {

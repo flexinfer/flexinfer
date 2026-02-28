@@ -23,6 +23,7 @@
 		5B3AC9E61710949784CC61BB /* DashboardData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5336E3C4F0A0451AD7F4F7E /* DashboardData.swift */; };
 		5F1C81A230F9A17DEFF44944 /* LoomCompanionKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0965F79DE443186E70D59245 /* LoomCompanionKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		64D8DEEE394682735D328772 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACB13956A25A11A5A18DDD3 /* SessionsViewModel.swift */; };
+		6AE2B81B2649BD1EAC446ACC /* AlertPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C261814FE4487CE9DFEF06B6 /* AlertPolicy.swift */; };
 		6C411FC10E264DAC0556C8EA /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531717108CA193976CD1D2E3 /* APIError.swift */; };
 		6F5327200BDA5F943F30A463 /* APIEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 525058B8CC6610D4C955F604 /* APIEnvelope.swift */; };
 		74510299F5362A73CF34E2BA /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 258C0342CB3518FF6D16003A /* LoginView.swift */; };
@@ -53,6 +54,7 @@
 		E943F11E27034571454731BE /* FleetSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */; };
 		ECA31FBD29E65D5EA29F81DA /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688362B0681E39784FE702D9 /* SessionDetailView.swift */; };
 		EF6C45BC301083177F0FDFBE /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8128EBBB2219D0A2C14482ED /* DashboardView.swift */; };
+		F91AF5E5C440230EB88D369A /* PushNotificationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */; };
 		FA64F07EF16BF9A5CBA8759C /* DeviceInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D43F146F42E91DCCAA523D /* DeviceInfo.swift */; };
 		FEEC34A014B3BE76C909FA4C /* ConnectionHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30696986D90C9AC7E69B8AA2 /* ConnectionHealthMonitor.swift */; };
 /* End PBXBuildFile section */
@@ -122,6 +124,7 @@
 		A5336E3C4F0A0451AD7F4F7E /* DashboardData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardData.swift; sourceTree = "<group>"; };
 		B6EDEF8D15BD0F4CB7DD8F70 /* AlertRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRowView.swift; sourceTree = "<group>"; };
 		B7D43F146F42E91DCCAA523D /* DeviceInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceInfo.swift; sourceTree = "<group>"; };
+		C261814FE4487CE9DFEF06B6 /* AlertPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertPolicy.swift; sourceTree = "<group>"; };
 		CA9EC181191293F54C2F8271 /* SessionFilterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionFilterView.swift; sourceTree = "<group>"; };
 		CB31D459E6D1D793F46A1B31 /* ConnectionProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionProfileView.swift; sourceTree = "<group>"; };
 		CFBB16BC786E0CA1239A1927 /* HealthStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthStatusCard.swift; sourceTree = "<group>"; };
@@ -129,6 +132,7 @@
 		D8E876D98B58CECC44EB5E5E /* TimelineEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEntry.swift; sourceTree = "<group>"; };
 		DE5346286B85D5DBFA4FDEE2 /* SessionDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailViewModel.swift; sourceTree = "<group>"; };
 		E6EE71E2DE22C9A8E98B4698 /* LoomCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LoomCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationsViewModel.swift; sourceTree = "<group>"; };
 		FF1F234E71EBAD74BAF8F8FB /* ConnectionRemediation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRemediation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -255,6 +259,7 @@
 			isa = PBXGroup;
 			children = (
 				7E3E4C9EB758F76ADC8C6A4A /* AlertItem.swift */,
+				C261814FE4487CE9DFEF06B6 /* AlertPolicy.swift */,
 				8128F09702F53DB3BFF5F227 /* AnyCodable.swift */,
 				525058B8CC6610D4C955F604 /* APIEnvelope.swift */,
 				531717108CA193976CD1D2E3 /* APIError.swift */,
@@ -277,6 +282,7 @@
 				52AE107FC4C72CDDC7C2546E /* ConnectionViewModel.swift */,
 				318FE4DE0832DCDFC1FDA031 /* DashboardViewModel.swift */,
 				85BA181AB53B3242E5EC8440 /* OpsViewModel.swift */,
+				F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */,
 				DE5346286B85D5DBFA4FDEE2 /* SessionDetailViewModel.swift */,
 				9ACB13956A25A11A5A18DDD3 /* SessionsViewModel.swift */,
 			);
@@ -446,6 +452,7 @@
 				6F5327200BDA5F943F30A463 /* APIEnvelope.swift in Sources */,
 				6C411FC10E264DAC0556C8EA /* APIError.swift in Sources */,
 				115BDC290AD53FC3423B9CC3 /* AlertItem.swift in Sources */,
+				6AE2B81B2649BD1EAC446ACC /* AlertPolicy.swift in Sources */,
 				DBBAA50C4F34C1B27900C576 /* AlertsViewModel.swift in Sources */,
 				9A9C76AD6340ADB9630542B4 /* AnyCodable.swift in Sources */,
 				FEEC34A014B3BE76C909FA4C /* ConnectionHealthMonitor.swift in Sources */,
@@ -458,6 +465,7 @@
 				0154632F64A9B778BD328148 /* HealthSummary.swift in Sources */,
 				1AA9EDC4D2634F3BCD526910 /* OpsModels.swift in Sources */,
 				CB856B9785D64315472048AE /* OpsViewModel.swift in Sources */,
+				F91AF5E5C440230EB88D369A /* PushNotificationsViewModel.swift in Sources */,
 				CEA20399E44A121B9F0A26F1 /* PushRegistration.swift in Sources */,
 				CA3E87BA5DCD0F9C63673CCD /* SSEClient.swift in Sources */,
 				DCF74D2FF639DB17590A1117 /* SessionDetailViewModel.swift in Sources */,

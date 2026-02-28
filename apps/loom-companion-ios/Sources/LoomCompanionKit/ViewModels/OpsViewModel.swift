@@ -6,6 +6,9 @@ public final class OpsViewModel {
     public var isLoading = false
     public var error: LoomAPIError?
     public var warningMessage: String?
+    public var mutationStatusMessage: String?
+    public var mutationErrorMessage: String?
+    public var isMutatingSession = false
 
     public var tasks: [MobileTask] = []
     public var taskCounts = MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0)
@@ -197,6 +200,68 @@ public final class OpsViewModel {
 
     public func loadReasoningChainDetail(id: String) async throws -> MobileReasoningChainDetailResponse {
         try await apiClient.request(.reasoningChainDetail(id: id))
+    }
+
+    /// Start a session using the mobile mutation endpoint.
+    public func createSession(agentID: String, namespace: String?, description: String?, autoRecall: Bool) async {
+        let trimmedAgentID = agentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAgentID.isEmpty else {
+            mutationErrorMessage = "Agent ID is required"
+            return
+        }
+
+        isMutatingSession = true
+        mutationErrorMessage = nil
+        defer { isMutatingSession = false }
+
+        do {
+            let response: SessionCreateResponse = try await apiClient.request(
+                .createSession(
+                    agentId: trimmedAgentID,
+                    namespace: normalizedOptional(namespace),
+                    description: normalizedOptional(description),
+                    autoRecall: autoRecall
+                )
+            )
+            mutationStatusMessage = response.alreadyExisted
+                ? "Session already exists: \(response.sessionId)"
+                : "Session started: \(response.sessionId)"
+        } catch {
+            mutationErrorMessage = toLoomError(error).description
+        }
+    }
+
+    /// End a session using the mobile mutation endpoint.
+    public func endSession(sessionID: String, summarize: Bool) async {
+        let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionID.isEmpty else {
+            mutationErrorMessage = "Session ID is required"
+            return
+        }
+
+        isMutatingSession = true
+        mutationErrorMessage = nil
+        defer { isMutatingSession = false }
+
+        do {
+            let response: SessionEndResponse = try await apiClient.request(.endSession(id: trimmedSessionID, summarize: summarize))
+            mutationStatusMessage = response.ended
+                ? "Session ended: \(response.sessionId)"
+                : "No active session ended for \(response.sessionId)"
+        } catch {
+            mutationErrorMessage = toLoomError(error).description
+        }
+    }
+
+    public func clearMutationMessages() {
+        mutationStatusMessage = nil
+        mutationErrorMessage = nil
+    }
+
+    private func normalizedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func toLoomError(_ error: Error) -> LoomAPIError {

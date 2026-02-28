@@ -7,6 +7,9 @@ struct ContentView: View {
     @State private var alertsViewModel = AlertsViewModel()
     @State private var selectedTab: AppTab = .dashboard
     @State private var sseClient: SSEClient?
+    @State private var pendingSessionDeepLinkID: String?
+    @State private var pendingWorkflowDeepLinkID: String?
+    @State private var pendingEndSessionPrefillID: String?
 
     enum AppTab {
         case dashboard
@@ -59,23 +62,36 @@ struct ContentView: View {
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
 
-            NavigationStack {
-                SessionsListView(apiClient: connectionVM.buildAPIClient())
-            }
+            SessionsListView(
+                apiClient: connectionVM.buildAPIClient(),
+                deepLinkSessionID: $pendingSessionDeepLinkID,
+                onPrefillEndSession: { sessionID in
+                    pendingEndSessionPrefillID = sessionID
+                    selectedTab = .ops
+                }
+            )
             .tabItem { Label("Sessions", systemImage: "list.bullet.rectangle") }
             .tag(AppTab.sessions)
 
             NavigationStack {
-                OpsView(apiClient: connectionVM.buildAPIClient())
+                OpsView(
+                    apiClient: connectionVM.buildAPIClient(),
+                    deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
+                    prefillEndSessionID: $pendingEndSessionPrefillID
+                )
             }
             .tabItem { Label("Ops", systemImage: "square.grid.2x2") }
             .tag(AppTab.ops)
 
             NavigationStack {
-                AlertsListView(viewModel: alertsViewModel) { action, _ in
+                AlertsListView(viewModel: alertsViewModel) { action, alert in
                     switch action {
                     case .viewSession:
+                        pendingSessionDeepLinkID = alert.relatedSessionId
                         selectedTab = .sessions
+                    case .viewWorkflow:
+                        pendingWorkflowDeepLinkID = alert.relatedWorkflowId
+                        selectedTab = .ops
                     case .viewDashboard:
                         selectedTab = .dashboard
                     case .acknowledge:
@@ -138,14 +154,29 @@ struct ContentView: View {
             case .dashboard:
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
             case .sessions:
-                SessionsListView(apiClient: connectionVM.buildAPIClient())
+                SessionsListView(
+                    apiClient: connectionVM.buildAPIClient(),
+                    deepLinkSessionID: $pendingSessionDeepLinkID,
+                    onPrefillEndSession: { sessionID in
+                        pendingEndSessionPrefillID = sessionID
+                        selectedTab = .ops
+                    }
+                )
             case .ops:
-                OpsView(apiClient: connectionVM.buildAPIClient())
+                OpsView(
+                    apiClient: connectionVM.buildAPIClient(),
+                    deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
+                    prefillEndSessionID: $pendingEndSessionPrefillID
+                )
             case .alerts:
-                AlertsListView(viewModel: alertsViewModel) { action, _ in
+                AlertsListView(viewModel: alertsViewModel) { action, alert in
                     switch action {
                     case .viewSession:
+                        pendingSessionDeepLinkID = alert.relatedSessionId
                         selectedTab = .sessions
+                    case .viewWorkflow:
+                        pendingWorkflowDeepLinkID = alert.relatedWorkflowId
+                        selectedTab = .ops
                     case .viewDashboard:
                         selectedTab = .dashboard
                     case .acknowledge:

@@ -4,6 +4,20 @@ import LoomCompanionKit
 struct OpsView: View {
     @State private var viewModel: OpsViewModel
     @State private var selectedSegment: OpsSegment = .work
+    @Binding private var deepLinkWorkflowID: String?
+    @Binding private var prefillEndSessionID: String?
+    @State private var deepLinkedWorkflow: MobileWorkflow?
+    @State private var pendingDeepLinkWorkflowID: String?
+    @State private var toastMessage: String?
+    @State private var showToast = false
+    @State private var createAgentID = ""
+    @State private var createNamespace = ""
+    @State private var createDescription = ""
+    @State private var createAutoRecall = true
+    @State private var endSessionID = ""
+    @State private var endWithSummary = false
+    @State private var showCreateConfirmation = false
+    @State private var showEndConfirmation = false
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -13,8 +27,14 @@ struct OpsView: View {
         var id: String { rawValue }
     }
 
-    init(apiClient: APIClient?) {
+    init(
+        apiClient: APIClient?,
+        deepLinkWorkflowID: Binding<String?> = .constant(nil),
+        prefillEndSessionID: Binding<String?> = .constant(nil)
+    ) {
         let client = apiClient ?? APIClient(baseURL: URL(string: "http://localhost")!, token: "mock-token")
+        _deepLinkWorkflowID = deepLinkWorkflowID
+        _prefillEndSessionID = prefillEndSessionID
         _viewModel = State(initialValue: OpsViewModel(apiClient: client))
     }
 
@@ -40,6 +60,18 @@ struct OpsView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                if let statusMessage = viewModel.mutationStatusMessage {
+                    Text(statusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let mutationErrorMessage = viewModel.mutationErrorMessage {
+                    Text(mutationErrorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if viewModel.isLoading {
                     ProgressView("Loading Ops data...")
@@ -60,9 +92,67 @@ struct OpsView: View {
         .navigationTitle("Ops")
         .task {
             await viewModel.load()
+            resolveDeepLinkWorkflow()
         }
         .refreshable {
             await viewModel.load()
+            resolveDeepLinkWorkflow()
+        }
+        .onChange(of: deepLinkWorkflowID) { _, newValue in
+            pendingDeepLinkWorkflowID = newValue
+            resolveDeepLinkWorkflow()
+        }
+        .onChange(of: viewModel.workflows.map(\.id)) { _, _ in
+            resolveDeepLinkWorkflow()
+        }
+        .onChange(of: prefillEndSessionID) { _, newValue in
+            guard let newValue else { return }
+            prefillEndSession(with: newValue)
+            prefillEndSessionID = nil
+        }
+        .sheet(item: $deepLinkedWorkflow) { workflow in
+            NavigationStack {
+                OpsWorkflowDetailView(
+                    workflow: workflow,
+                    loadDetail: viewModel.loadWorkflowDetail(id:)
+                )
+            }
+        }
+        .confirmationDialog("Start Session?", isPresented: $showCreateConfirmation, titleVisibility: .visible) {
+            Button("Start Session") {
+                Task {
+                    await viewModel.createSession(
+                        agentID: createAgentID,
+                        namespace: createNamespace,
+                        description: createDescription,
+                        autoRecall: createAutoRecall
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This creates a new agent-context session from mobile.")
+        }
+        .confirmationDialog("End Session?", isPresented: $showEndConfirmation, titleVisibility: .visible) {
+            Button("End Session", role: .destructive) {
+                Task { await viewModel.endSession(sessionID: endSessionID, summarize: endWithSummary) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(endWithSummary ? "This will end the session and request a summary." : "This will end the session without summary.")
+        }
+        .overlay(alignment: .top) {
+            if showToast, let toastMessage {
+                Text(toastMessage)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.85))
+                    .clipShape(Capsule())
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -97,6 +187,14 @@ struct OpsView: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 2)
+                            }
+                            .contextMenu {
+                                Button {
+                                    prefillEndSession(with: task.sessionId)
+                                } label: {
+                                    Label("Prefill End Session", systemImage: "arrowshape.turn.up.left")
+                                }
+                                .disabled(task.sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
                         }
                     }
@@ -134,7 +232,75 @@ struct OpsView: View {
                 }
             }
 
-            Text("Read-only in Wave 1. Mutation actions are intentionally disabled.")
+            GroupBox("Session Actions") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Scoped mobile mutations: session create/end only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("Start Session")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    TextField("Agent ID", text: $createAgentID)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                    TextField("Namespace (optional)", text: $createNamespace)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                    TextField("Description (optional)", text: $createDescription)
+                        .textFieldStyle(.roundedBorder)
+                    Toggle("Auto recall", isOn: $createAutoRecall)
+
+                    Button {
+                        viewModel.clearMutationMessages()
+                        showCreateConfirmation = true
+                    } label: {
+                        if viewModel.isMutatingSession {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Start Session")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
+
+                    Divider()
+
+                    Text("End Session")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    TextField("Session ID", text: $endSessionID)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                    Toggle("Include summary", isOn: $endWithSummary)
+
+                    Button(role: .destructive) {
+                        viewModel.clearMutationMessages()
+                        showEndConfirmation = true
+                    } label: {
+                        if viewModel.isMutatingSession {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("End Session")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(endSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text("Mutations require proper mobile scopes (`mobile:session:create`, `mobile:session:end`).")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -323,6 +489,52 @@ struct OpsView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value).fontWeight(.semibold)
             Text(label).foregroundStyle(.secondary)
+        }
+    }
+
+    private func resolveDeepLinkWorkflow() {
+        let requested = pendingDeepLinkWorkflowID ?? deepLinkWorkflowID
+        guard let workflowID = requested?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !workflowID.isEmpty
+        else {
+            return
+        }
+
+        if let workflow = viewModel.workflows.first(where: { $0.id == workflowID }) {
+            selectedSegment = .work
+            deepLinkedWorkflow = workflow
+            pendingDeepLinkWorkflowID = nil
+            deepLinkWorkflowID = nil
+            return
+        }
+
+        guard !viewModel.isLoading else { return }
+
+        pendingDeepLinkWorkflowID = nil
+        deepLinkWorkflowID = nil
+        showToastMessage("Workflow \(workflowID) is not in the current list")
+    }
+
+    private func prefillEndSession(with sessionID: String) {
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        selectedSegment = .work
+        endSessionID = trimmed
+        showToastMessage("End Session prefilled: \(trimmed)")
+    }
+
+    private func showToastMessage(_ message: String) {
+        toastMessage = message
+        withAnimation {
+            showToast = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            await MainActor.run {
+                withAnimation {
+                    showToast = false
+                }
+            }
         }
     }
 }

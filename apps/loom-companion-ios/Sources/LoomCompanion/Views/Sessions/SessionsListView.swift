@@ -4,69 +4,146 @@ import LoomCompanionKit
 struct SessionsListView: View {
     @State private var viewModel: SessionsViewModel
     @State private var showingCreateSheet = false
+    @State private var navigationPath: [String] = []
+    @State private var pendingDeepLinkSessionID: String?
+    @State private var toastMessage: String?
+    @State private var showToast = false
+    @Binding private var deepLinkSessionID: String?
+    private let onPrefillEndSession: ((String) -> Void)?
     private let apiClient: any LoomAPIClientProtocol
 
-    init(apiClient: APIClient?) {
+    init(
+        apiClient: APIClient?,
+        deepLinkSessionID: Binding<String?> = .constant(nil),
+        onPrefillEndSession: ((String) -> Void)? = nil
+    ) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpClient()
         self.apiClient = client
+        _deepLinkSessionID = deepLinkSessionID
+        self.onPrefillEndSession = onPrefillEndSession
         _viewModel = State(initialValue: SessionsViewModel(apiClient: client))
     }
 
     var body: some View {
-        List {
-            SessionFilterView(
-                statusFilter: $viewModel.statusFilter,
-                agentFilter: $viewModel.agentFilter,
-                availableAgents: viewModel.availableAgents
-            )
+        NavigationStack(path: $navigationPath) {
+            List {
+                SessionFilterView(
+                    statusFilter: $viewModel.statusFilter,
+                    agentFilter: $viewModel.agentFilter,
+                    availableAgents: viewModel.availableAgents
+                )
 
-            ForEach(viewModel.filteredSessions) { session in
-                NavigationLink(value: session.id) {
-                    SessionRowView(session: session)
-                }
-            }
-        }
-        .navigationTitle("Sessions")
-        .navigationDestination(for: String.self) { sessionId in
-            SessionDetailView(sessionId: sessionId, apiClient: apiClient)
-        }
-        .searchable(text: $viewModel.searchText, prompt: "Search sessions")
-        .refreshable {
-            await viewModel.load()
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingCreateSheet = true
-                } label: {
-                    Label("New Session", systemImage: "plus")
-                }
-            }
-        }
-        .sheet(isPresented: $showingCreateSheet) {
-            Task { await viewModel.load() }
-        } content: {
-            CreateSessionView(viewModel: viewModel)
-        }
-        .overlay {
-            if viewModel.isLoading && viewModel.sessions.isEmpty {
-                ProgressView("Loading sessions...")
-            } else if let error = viewModel.error, viewModel.sessions.isEmpty {
-                ContentUnavailableView {
-                    Label("Error", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(error.description)
-                } actions: {
-                    Button("Retry") {
-                        Task { await viewModel.load() }
+                ForEach(viewModel.filteredSessions) { session in
+                    NavigationLink(value: session.id) {
+                        SessionRowView(session: session)
+                    }
+                    .contextMenu {
+                        Button {
+                            onPrefillEndSession?(session.id)
+                        } label: {
+                            Label("Prefill End in Ops", systemImage: "arrowshape.turn.up.left")
+                        }
                     }
                 }
-            } else if viewModel.filteredSessions.isEmpty && !viewModel.sessions.isEmpty {
-                ContentUnavailableView.search(text: viewModel.searchText)
+            }
+            .navigationTitle("Sessions")
+            .navigationDestination(for: String.self) { sessionId in
+                SessionDetailView(sessionId: sessionId, apiClient: apiClient)
+            }
+            .searchable(text: $viewModel.searchText, prompt: "Search sessions")
+            .refreshable {
+                await viewModel.load()
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingCreateSheet = true
+                    } label: {
+                        Label("New Session", systemImage: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingCreateSheet) {
+                Task { await viewModel.load() }
+            } content: {
+                CreateSessionView(viewModel: viewModel)
+            }
+            .overlay {
+                if viewModel.isLoading && viewModel.sessions.isEmpty {
+                    ProgressView("Loading sessions...")
+                } else if let error = viewModel.error, viewModel.sessions.isEmpty {
+                    ContentUnavailableView {
+                        Label("Error", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(error.description)
+                    } actions: {
+                        Button("Retry") {
+                            Task { await viewModel.load() }
+                        }
+                    }
+                } else if viewModel.filteredSessions.isEmpty && !viewModel.sessions.isEmpty {
+                    ContentUnavailableView.search(text: viewModel.searchText)
+                }
+            }
+            .task {
+                await viewModel.load()
+                pendingDeepLinkSessionID = deepLinkSessionID
+                resolveSessionDeepLink()
+            }
+            .onChange(of: deepLinkSessionID) { _, newValue in
+                pendingDeepLinkSessionID = newValue
+                resolveSessionDeepLink()
+            }
+            .onChange(of: viewModel.sessions.map(\.id)) { _, _ in
+                resolveSessionDeepLink()
+            }
+            .overlay(alignment: .top) {
+                if showToast, let toastMessage {
+                    Text(toastMessage)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.black.opacity(0.85))
+                        .clipShape(Capsule())
+                        .padding(.top, 8)
+                        .transition(.opacity)
+                }
             }
         }
-        .task {
-            await viewModel.load()
+    }
+
+    private func resolveSessionDeepLink() {
+        guard let requested = pendingDeepLinkSessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !requested.isEmpty
+        else { return }
+
+        if viewModel.sessions.contains(where: { $0.id == requested }) {
+            navigationPath.append(requested)
+            pendingDeepLinkSessionID = nil
+            deepLinkSessionID = nil
+            return
+        }
+
+        guard !viewModel.isLoading else { return }
+
+        pendingDeepLinkSessionID = nil
+        deepLinkSessionID = nil
+        showToastMessage("Session \(requested) is not in the current list")
+    }
+
+    private func showToastMessage(_ message: String) {
+        toastMessage = message
+        withAnimation {
+            showToast = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            await MainActor.run {
+                withAnimation {
+                    showToast = false
+                }
+            }
         }
     }
 }

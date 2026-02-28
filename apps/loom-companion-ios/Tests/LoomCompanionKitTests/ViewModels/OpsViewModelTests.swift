@@ -239,4 +239,50 @@ struct OpsViewModelTests {
         #expect(vm.graphPath == nil)
         #expect(vm.graphEntities.count == 2)
     }
+
+    @Test("Create session mutation success returns status message")
+    func createSessionMutationSuccess() async {
+        let client = MockAPIClient()
+        client.createSessionResponse = SessionCreateResponse(sessionId: "sess-new", recalledContext: nil, alreadyExisted: false)
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.createSession(agentID: "codex-gpt5", namespace: "loom-core/mobile", description: "test", autoRecall: true)
+
+        #expect(vm.mutationErrorMessage == nil)
+        #expect(vm.mutationStatusMessage == "Session started: sess-new")
+        #expect(vm.isMutatingSession == false)
+    }
+
+    @Test("End session mutation success returns status message")
+    func endSessionMutationSuccess() async {
+        let client = MockAPIClient()
+        client.endSessionResponse = SessionEndResponse(ended: true, sessionId: "sess-1")
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.endSession(sessionID: "sess-1", summarize: false)
+
+        #expect(vm.mutationErrorMessage == nil)
+        #expect(vm.mutationStatusMessage == "Session ended: sess-1")
+        #expect(vm.isMutatingSession == false)
+    }
+
+    @Test("Create session mutation requires agent ID")
+    func createSessionMutationValidation() async {
+        let client = MockAPIClient()
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.createSession(agentID: "   ", namespace: nil, description: nil, autoRecall: false)
+
+        #expect(vm.mutationErrorMessage == "Agent ID is required")
+    }
+
+    @Test("End session mutation requires session ID")
+    func endSessionMutationValidation() async {
+        let client = MockAPIClient()
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.endSession(sessionID: "  ", summarize: true)
+
+        #expect(vm.mutationErrorMessage == "Session ID is required")
+    }
 }
