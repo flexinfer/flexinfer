@@ -349,12 +349,12 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	rp.ServeHTTP(w, r)
 }
 
-// getBackendModelName returns the actual model identifier used by the backend (e.g., HuggingFace model ID).
-// This allows the proxy to rewrite model names in requests before forwarding.
+// getBackendModelName returns the actual model identifier used by the backend.
+// Prefers servedModelName from config (used by vLLM --served-model-name), then
+// falls back to the HF source model ID (e.g., "Qwen/Qwen2.5-7B-Instruct").
 func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) string {
 	md := &aiv1alpha1.ModelDeployment{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
-		// Return the model spec (e.g., "Qwen/Qwen2.5-7B-Instruct")
 		return md.Spec.Model
 	} else if !errors.IsNotFound(err) {
 		return ""
@@ -365,6 +365,16 @@ func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) strin
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
 		return ""
 	}
+
+	// Use servedModelName if set (vLLM --served-model-name, llama.cpp alias, etc.)
+	if cfg := m.Spec.GetConfigMap(); cfg != nil {
+		if v, ok := cfg["servedModelName"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+
 	return extractModelFromSource(m.Spec.Source)
 }
 
