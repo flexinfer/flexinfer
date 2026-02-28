@@ -535,6 +535,135 @@ func (c *DaemonClient) CacheStats() (*CacheStatsResult, error) {
 	return &result, nil
 }
 
+// CostStatsResult holds the response from loom/cost-stats.
+type CostStatsResult struct {
+	Enabled   bool              `json:"enabled"`
+	Reason    string            `json:"reason,omitempty"`
+	Timestamp string            `json:"timestamp,omitempty"`
+	ByAgent   []CostAgentUsage  `json:"by_agent,omitempty"`
+	ByServer  []CostServerUsage `json:"by_server,omitempty"`
+	Totals    CostTotals        `json:"totals"`
+}
+
+// CostAgentUsage summarizes per-agent cost data.
+type CostAgentUsage struct {
+	AgentID       string `json:"agent_id"`
+	CallCount     int64  `json:"call_count"`
+	ErrorCount    int64  `json:"error_count"`
+	DeniedCount   int64  `json:"denied_count"`
+	CachedCount   int64  `json:"cached_count"`
+	TotalDuration int64  `json:"total_duration_ms"`
+}
+
+// CostServerUsage summarizes per-server cost data.
+type CostServerUsage struct {
+	Server        string `json:"server"`
+	CallCount     int64  `json:"call_count"`
+	ErrorCount    int64  `json:"error_count"`
+	TotalDuration int64  `json:"total_duration_ms"`
+}
+
+// CostTotals summarizes aggregate cost data.
+type CostTotals struct {
+	CallCount     int64 `json:"call_count"`
+	ErrorCount    int64 `json:"error_count"`
+	DeniedCount   int64 `json:"denied_count"`
+	CachedCount   int64 `json:"cached_count"`
+	TotalDuration int64 `json:"total_duration_ms"`
+}
+
+// CostStats returns cost/usage tracking statistics.
+func (c *DaemonClient) CostStats() (*CostStatsResult, error) {
+	raw, err := c.call("loom/cost-stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result CostStatsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal cost-stats: %w", err)
+	}
+	return &result, nil
+}
+
+// RBACConfigResult holds the response from loom/rbac-config.
+type RBACConfigResult struct {
+	Enabled       bool                `json:"enabled"`
+	DefaultPolicy string              `json:"default_policy,omitempty"`
+	Roles         []RBACRoleInfo      `json:"roles,omitempty"`
+	Bindings      []RBACBindingInfo   `json:"bindings,omitempty"`
+	GlobalDeny    []string            `json:"global_deny,omitempty"`
+	RateLimits    []RBACRateLimitInfo `json:"rate_limits,omitempty"`
+	RecentDenied  []RBACDeniedEntry   `json:"recent_denied,omitempty"`
+}
+
+// RBACRoleInfo describes a role definition.
+type RBACRoleInfo struct {
+	Name  string   `json:"name"`
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+// RBACBindingInfo describes an agent-to-role binding.
+type RBACBindingInfo struct {
+	AgentID   string `json:"agent_id,omitempty"`
+	AgentType string `json:"agent_type,omitempty"`
+	Role      string `json:"role"`
+}
+
+// RBACRateLimitInfo describes a rate limit rule.
+type RBACRateLimitInfo struct {
+	AgentID           string `json:"agent_id,omitempty"`
+	Tool              string `json:"tool,omitempty"`
+	RequestsPerMinute int    `json:"requests_per_minute"`
+}
+
+// RBACDeniedEntry describes a recently denied tool call.
+type RBACDeniedEntry struct {
+	AgentID   string `json:"agent_id"`
+	Server    string `json:"server"`
+	Tool      string `json:"tool"`
+	Role      string `json:"role,omitempty"`
+	Reason    string `json:"reason"`
+	Timestamp string `json:"timestamp"`
+}
+
+// RBACConfig returns RBAC configuration and recent denied calls.
+func (c *DaemonClient) RBACConfig() (*RBACConfigResult, error) {
+	raw, err := c.call("loom/rbac-config", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result RBACConfigResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal rbac-config: %w", err)
+	}
+	return &result, nil
+}
+
+// OTelStatusResult holds the response from loom/otel-status.
+type OTelStatusResult struct {
+	OTLPEndpoint    string `json:"otlp_endpoint"`
+	OTLPConfigured  bool   `json:"otlp_configured"`
+	LogFormat       string `json:"log_format"`
+	JSONLogsEnabled bool   `json:"json_logs_enabled"`
+	TracedServers   int    `json:"traced_servers"`
+	TotalServers    int    `json:"total_servers"`
+	TraceCoverage   string `json:"trace_coverage"`
+}
+
+// OTelStatus returns observability/OTel configuration status.
+func (c *DaemonClient) OTelStatus() (*OTelStatusResult, error) {
+	raw, err := c.call("loom/otel-status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result OTelStatusResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal otel-status: %w", err)
+	}
+	return &result, nil
+}
+
 // CallTool invokes an MCP tool through the daemon's tools/call method.
 func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessage, error) {
 	params := map[string]any{

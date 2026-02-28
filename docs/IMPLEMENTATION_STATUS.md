@@ -1,6 +1,6 @@
 # Loom Core Implementation Status
 
-> Last Updated: February 26, 2026
+> Last Updated: February 27, 2026
 > Canonical status source for shipped vs in-progress work.
 
 ## Current State
@@ -26,6 +26,9 @@ Shipped and actively used:
 - OTel tracing across all `cmd/mcp-*/main.go` servers (59/59) plus JSON log correlation (`trace_id`, `span_id`) via `pkg/mcplog`.
 - HUD launchd lifecycle management (`loom hud install|start|stop|status`) with `hud.env` loading and Redis-first cache defaults in launchd mode.
 - Worktree-first agent workflow nudges at session start and Antigravity `settings.json` sync parity.
+- Hub failover with `prefer-hub` routing and automatic local fallback (30s backoff). `mcp-hub-wrapper` binary with multi-source resolution (env, workspace, `~/.local/bin`, PATH).
+- `QdrantRegistry` refactor consolidating 14 individual Qdrant client fields into a single registry (`internal/agentcontext`).
+- Workflow engine enhancements: RLM recursive context strategies, `map_reduce` step type, conditional gating, deep-copy in clone.
 
 ## In Progress Now
 
@@ -36,6 +39,9 @@ These are active priorities and should be treated as implementation gaps until c
 3. Agent contract convergence across CLI, HUD API, and bridge layers.
 4. Refactor decomposition of large surfaces (`PresencePanel.svelte`, `internal/devbox/backend/k8s.go`).
 5. Daemon/runtime telemetry expansion (tool routing, server spawn/restart, proxy connection lifecycle) and OTLP export hardening.
+6. HUD cost dashboard integration: expose `loom/cost-stats` via HUD bridge, CostMonitor (10s poll), SSE `hud.cost` event, and OverviewPanel KPI tile.
+7. RBAC/audit visibility in HUD: `loom/rbac-config` RPC, denied-calls ring buffer, ServersPanel RBAC sub-tab, OverviewPanel badge.
+8. OTel settings visibility in HUD: `loom/otel-status` RPC, ServersPanel observability section, OverviewPanel badge.
 
 ## Next After Current Focus
 

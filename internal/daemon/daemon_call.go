@@ -129,4 +129,44 @@ func (d *Daemon) logAccessDecision(decision AccessDecision) {
 		d.eventBus.Publish(EventAccessDenied, decision)
 	}
 	d.metrics.RBACDenied.Inc()
+
+	// Record in ring buffer for HUD visibility.
+	d.recordDenied(decision)
+}
+
+// deniedEntry stores a denied access decision with timestamp.
+type deniedEntry struct {
+	AgentID   string    `json:"agent_id"`
+	Server    string    `json:"server"`
+	Tool      string    `json:"tool"`
+	Role      string    `json:"role,omitempty"`
+	Reason    string    `json:"reason"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// recordDenied appends a denied decision to the ring buffer.
+func (d *Daemon) recordDenied(decision AccessDecision) {
+	d.deniedMu.Lock()
+	defer d.deniedMu.Unlock()
+	entry := deniedEntry{
+		AgentID:   decision.AgentID,
+		Server:    decision.Server,
+		Tool:      decision.Tool,
+		Role:      decision.Role,
+		Reason:    decision.Reason,
+		Timestamp: time.Now().UTC(),
+	}
+	if len(d.recentDenied) >= 50 {
+		d.recentDenied = d.recentDenied[1:]
+	}
+	d.recentDenied = append(d.recentDenied, entry)
+}
+
+// recentDeniedSnapshot returns a copy of the denied calls ring buffer.
+func (d *Daemon) recentDeniedSnapshot() []deniedEntry {
+	d.deniedMu.RLock()
+	defer d.deniedMu.RUnlock()
+	cp := make([]deniedEntry, len(d.recentDenied))
+	copy(cp, d.recentDenied)
+	return cp
 }

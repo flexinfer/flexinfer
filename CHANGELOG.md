@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OAuth 2.1** (`internal/daemon/oauth.go`): Built-in authorization server with PKCE (S256), dynamic client registration (RFC 7591), AS metadata (RFC 8414), and token revocation (RFC 7009).
 - `docs/ENTERPRISE_SECURITY.md`: Configuration guide for all enterprise security features.
 - Agent lifecycle hooks bridge with nudge system and HUD API endpoints.
+- **Hub failover** (`internal/daemon/daemon.go`): `prefer-hub` routing with automatic local fallback and 30s backoff when hub is unavailable.
+- **`mcp-hub-wrapper`** (`cmd/mcp-hub-wrapper`): Hub binary resolution from env, workspace, `~/.local/bin`, and PATH with multi-source discovery.
+- **`QdrantRegistry`** (`internal/agentcontext`): Consolidated registry replacing 14 individual Qdrant client fields with a single shared registry.
+- **Workflow engine enhancements**: RLM recursive context strategies, `map_reduce` step type, conditional gating, and deep-copy in clone.
 - MCP server smoke tests for 10 additional servers (youtube, itchio, crypto, release, morph-fast-apply, alertmanager, minio, substack, qdrant, morph-embeddings).
 - Edge-case tests for daemon enterprise features (RBAC, audit, cost, OAuth) and agentcontext (workflows, memory hierarchy, service).
 - `mcp-devbox`: project-aware sandbox executor with Docker/K8s backends.

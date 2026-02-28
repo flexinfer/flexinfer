@@ -100,6 +100,7 @@ type App struct {
 	workflowMonitor *monitor.WorkflowMonitor
 	streamMonitor   *monitor.StreamMonitor
 	sandboxMonitor  *monitor.SandboxMonitor
+	costMonitor     *monitor.CostMonitor
 
 	// SSE streaming — daemon events → browser clients.
 	sseHub *SSEHub
@@ -186,8 +187,12 @@ func Run(cfg Config) error {
 	app.sandboxMonitor.Start(10 * time.Second)
 	defer app.sandboxMonitor.Stop()
 
+	app.costMonitor = monitor.NewCostMonitor(client, logger)
+	app.costMonitor.Start(10 * time.Second)
+	defer app.costMonitor.Stop()
+
 	logger.Info("background monitors started",
-		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s", "sandbox", "10s")
+		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
 
 	// Bootstrap workflow definitions from .agents/workflows/*.yaml files.
 	app.bootstrapWorkflowDefinitions()
@@ -313,6 +318,18 @@ func Run(cfg Config) error {
 		app.sseHub.Broadcast(bridge.SSEEvent{
 			ID:        fmt.Sprintf("hud-sandbox-%d", time.Now().UnixMilli()),
 			Type:      "hud.sandbox",
+			Timestamp: time.Now(),
+			Data:      data,
+		})
+	})
+	app.costMonitor.OnRefresh(func(snap monitor.CostSnapshot) {
+		data, err := json.Marshal(snap)
+		if err != nil {
+			return
+		}
+		app.sseHub.Broadcast(bridge.SSEEvent{
+			ID:        fmt.Sprintf("hud-cost-%d", time.Now().UnixMilli()),
+			Type:      "hud.cost",
 			Timestamp: time.Now(),
 			Data:      data,
 		})
@@ -653,6 +670,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/templates", a.withCORS(a.handleTemplateList))
 	mux.HandleFunc("GET /api/annotations", a.withCORS(a.handleAnnotationList))
 	mux.HandleFunc("POST /api/annotations", a.withCORS(a.handleAnnotationCreate))
+	mux.HandleFunc("GET /api/cost", a.withCORS(a.handleCost))
+	mux.HandleFunc("GET /api/rbac", a.withCORS(a.handleRBAC))
+	mux.HandleFunc("GET /api/otel", a.withCORS(a.handleOTel))
 	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
 	mux.HandleFunc("GET /api/sandbox/policy", a.withCORS(a.handleSandboxPolicy))
 	mux.HandleFunc("POST /api/sandbox/start", a.withCORS(a.handleSandboxStart))
@@ -1657,6 +1677,31 @@ func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 // handleSandbox returns devbox sandbox summary by calling the devbox_summary tool.
 // The result is cached for 5s to avoid hammering the daemon on rapid refreshes.
 // Returns {"available": false} if mcp-devbox is not running.
+func (a *App) handleCost(w http.ResponseWriter, _ *http.Request) {
+	snap := a.costMonitor.Snapshot()
+	a.writeJSON(w, http.StatusOK, snap)
+}
+
+func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
+	result, err := a.client.RBACConfig()
+	if err != nil {
+		a.logger.Debug("rbac-config call failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	a.writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleOTel(w http.ResponseWriter, _ *http.Request) {
+	result, err := a.client.OTelStatus()
+	if err != nil {
+		a.logger.Debug("otel-status call failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{"otlp_configured": false})
+		return
+	}
+	a.writeJSON(w, http.StatusOK, result)
+}
+
 func (a *App) handleSandbox(w http.ResponseWriter, _ *http.Request) {
 	if cached, ok := a.cache.Get("sandbox_summary"); ok {
 		a.writeJSON(w, http.StatusOK, cached)

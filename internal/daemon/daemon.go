@@ -121,6 +121,10 @@ type Daemon struct {
 	stopOnce            gosync.Once
 	stopErr             error
 
+	// recentDenied is a ring buffer of the last 50 RBAC-denied calls for HUD visibility.
+	deniedMu     gosync.RWMutex
+	recentDenied []deniedEntry
+
 	// activeRPCs tracks in-flight RPC call count for drain-readiness checks.
 	activeRPCs atomic.Int64
 

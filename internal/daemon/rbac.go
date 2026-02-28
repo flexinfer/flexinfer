@@ -306,6 +306,11 @@ func (e *RBACEnforcer) resolveRole(agentID, agentType string) string {
 	return wildcardMatch
 }
 
+// Config returns a copy of the RBAC configuration.
+func (e *RBACEnforcer) Config() RBACConfig {
+	return e.cfg
+}
+
 // matchesPattern checks if toolName matches a glob pattern.
 // Uses path.Match which supports *, ?, and [] wildcards.
 func matchesPattern(pattern, toolName string) bool {

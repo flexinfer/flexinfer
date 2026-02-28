@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -73,6 +74,10 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleCacheClear(ctx, msg)
 	case "loom/cost-stats":
 		resp, err = d.handleCostStats(ctx, msg)
+	case "loom/rbac-config":
+		resp, err = d.handleRBACConfig(ctx, msg)
+	case "loom/otel-status":
+		resp, err = d.handleOTelStatus(ctx, msg)
 	case "loom/session/open":
 		resp, err = d.handleSessionOpen(ctx, msg)
 	case "loom/session/heartbeat":
@@ -422,6 +427,92 @@ func (d *Daemon) handleCostStats(ctx context.Context, msg *mcp.Message) (*mcp.Me
 	}
 	snap := d.cost.Snapshot()
 	return mcp.NewResponse(msg.ID, snap)
+}
+
+// handleRBACConfig returns RBAC configuration and recent denied calls.
+func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.rbac == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"enabled": false,
+		})
+	}
+
+	cfg := d.rbac.Config()
+	result := map[string]any{
+		"enabled":        true,
+		"default_policy": cfg.DefaultPolicy,
+		"global_deny":    cfg.GlobalDeny,
+	}
+
+	var roles []map[string]any
+	for name, role := range cfg.Roles {
+		roles = append(roles, map[string]any{
+			"name":  name,
+			"allow": role.Allow,
+			"deny":  role.Deny,
+		})
+	}
+	result["roles"] = roles
+
+	var bindings []map[string]any
+	for _, b := range cfg.Bindings {
+		bindings = append(bindings, map[string]any{
+			"agent_id":   b.AgentID,
+			"agent_type": b.AgentType,
+			"role":       b.Role,
+		})
+	}
+	result["bindings"] = bindings
+
+	var rateLimits []map[string]any
+	for _, rl := range cfg.RateLimits {
+		rateLimits = append(rateLimits, map[string]any{
+			"agent_id":            rl.AgentID,
+			"tool":                rl.Tool,
+			"requests_per_minute": rl.RequestsPerMinute,
+		})
+	}
+	result["rate_limits"] = rateLimits
+
+	result["recent_denied"] = d.recentDeniedSnapshot()
+
+	return mcp.NewResponse(msg.ID, result)
+}
+
+// handleOTelStatus returns observability configuration status.
+func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	logFormat := os.Getenv("MCP_LOG_FORMAT")
+	if logFormat == "" {
+		logFormat = "text"
+	}
+
+	totalServers := 0
+	if d.registry != nil {
+		totalServers = len(d.registry.Servers)
+	}
+
+	// All 59 cmd/mcp-* servers are traced via pkg/mcpotel.
+	tracedServers := 59
+	if totalServers < tracedServers {
+		tracedServers = totalServers
+	}
+	coverage := "100%"
+	if totalServers > 0 && tracedServers < totalServers {
+		pct := float64(tracedServers) / float64(totalServers) * 100
+		coverage = fmt.Sprintf("%.0f%%", pct)
+	}
+
+	result := map[string]any{
+		"otlp_endpoint":     endpoint,
+		"otlp_configured":   endpoint != "",
+		"log_format":        logFormat,
+		"json_logs_enabled": logFormat == "json",
+		"traced_servers":    tracedServers,
+		"total_servers":     totalServers,
+		"trace_coverage":    coverage,
+	}
+	return mcp.NewResponse(msg.ID, result)
 }
 
 // Reload reloads the registry and refreshes servers.

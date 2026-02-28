@@ -1,5 +1,6 @@
 <script>
   import { healthStore } from '../stores/health.svelte.ts';
+  import { rbacStore } from '../stores/rbac.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -8,6 +9,26 @@
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import { sanitizeText } from '../utils/format.ts';
+
+  // --- RBAC state ---
+  $effect(() => {
+    rbacStore.startPolling(30000);
+    return () => rbacStore.stopPolling();
+  });
+
+  // --- OTel state ---
+  let otelInfo = $state({ otlp_endpoint: '', otlp_configured: false, log_format: 'text', json_logs_enabled: false, traced_servers: 0, total_servers: 0, trace_coverage: '0%' });
+  async function fetchOTelInfo() {
+    try {
+      const res = await globalThis.fetch('/api/otel');
+      if (res.ok) otelInfo = await res.json();
+    } catch { /* non-critical */ }
+  }
+  $effect(() => {
+    fetchOTelInfo();
+    const t = setInterval(fetchOTelInfo, 30000);
+    return () => clearInterval(t);
+  });
 
   $effect(() => {
     healthStore.startPolling(5000);
@@ -363,6 +384,89 @@
     </div>
   </div>
 
+  <!-- Enterprise: RBAC + OTel cards -->
+  <div class="infra-cards">
+    <!-- RBAC Card -->
+    <div class="infra-card">
+      <div class="infra-card-header">
+        <span class="infra-card-title">RBAC</span>
+        <Badge text={rbacStore.enabled ? 'active' : 'off'} variant={rbacStore.enabled ? 'success' : 'info'} />
+      </div>
+      <div class="infra-card-body">
+        {#if rbacStore.enabled}
+          {#if rbacStore.roles.length > 0}
+            <div class="rbac-section">
+              <span class="text-xs uppercase text-muted">Roles</span>
+              <div class="rbac-list">
+                {#each rbacStore.roles as role}
+                  <div class="rbac-row">
+                    <span class="text-mono rbac-name">{role.name}</span>
+                    <span class="text-muted text-xs">{role.allow?.length ?? 0} allow, {role.deny?.length ?? 0} deny</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if rbacStore.bindings.length > 0}
+            <div class="rbac-section">
+              <span class="text-xs uppercase text-muted">Bindings</span>
+              <div class="rbac-list">
+                {#each rbacStore.bindings as binding}
+                  <div class="rbac-row">
+                    <span class="text-mono rbac-name">{binding.agent_id || binding.agent_type || '*'}</span>
+                    <span class="text-muted text-xs">{'\u2192'} {binding.role}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if rbacStore.recentDenied.length > 0}
+            <div class="rbac-section">
+              <span class="text-xs uppercase text-muted">Recent Denied ({rbacStore.deniedCount})</span>
+              <div class="rbac-list">
+                {#each rbacStore.recentDenied.slice(0, 5) as denied}
+                  <div class="rbac-row rbac-denied">
+                    <span class="text-mono rbac-name">{denied.agent_id}</span>
+                    <span class="text-muted text-xs">{denied.tool}</span>
+                    <span class="text-xs denied-reason">{denied.reason}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        {:else}
+          <span class="text-muted text-xs">RBAC is disabled</span>
+        {/if}
+      </div>
+    </div>
+
+    <!-- OTel Card -->
+    <div class="infra-card">
+      <div class="infra-card-header">
+        <span class="infra-card-title">Observability</span>
+        <Badge text={otelInfo.otlp_configured ? 'active' : 'off'} variant={otelInfo.otlp_configured ? 'success' : 'info'} />
+      </div>
+      <div class="infra-card-body">
+        <div class="cache-grid">
+          <div class="cache-stat">
+            <span class="cache-stat-value text-mono">{otelInfo.traced_servers}/{otelInfo.total_servers}</span>
+            <span class="cache-stat-label">Traced</span>
+          </div>
+          <div class="cache-stat">
+            <span class="cache-stat-value text-mono" style:color={otelInfo.otlp_configured ? 'var(--success)' : 'var(--fg-muted)'}>{otelInfo.trace_coverage}</span>
+            <span class="cache-stat-label">Coverage</span>
+          </div>
+          <div class="cache-stat">
+            <span class="cache-stat-value text-mono">{otelInfo.log_format}</span>
+            <span class="cache-stat-label">Log Format</span>
+          </div>
+        </div>
+        {#if otelInfo.otlp_endpoint}
+          <div class="otel-endpoint text-mono text-xs text-muted">{otelInfo.otlp_endpoint}</div>
+        {/if}
+      </div>
+    </div>
+  </div>
 
 </div>
 
@@ -666,5 +770,58 @@
     padding: 2px 6px;
     background: var(--bg-tertiary);
     border-radius: var(--radius-sm);
+  }
+
+  /* RBAC section styles */
+  .rbac-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .rbac-section:last-child {
+    margin-bottom: 0;
+  }
+
+  .rbac-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .rbac-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .rbac-name {
+    color: var(--fg-primary);
+    min-width: 80px;
+  }
+
+  .rbac-denied {
+    color: var(--warning);
+  }
+
+  .denied-reason {
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+  }
+
+  /* OTel section styles */
+  .otel-endpoint {
+    margin-top: 6px;
+    padding: 2px 4px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

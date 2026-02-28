@@ -8,6 +8,8 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
   import { graphStore } from '../stores/graph.svelte.ts';
+  import { costStore } from '../stores/cost.svelte.ts';
+  import { rbacStore } from '../stores/rbac.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Gauge from '../widgets/Gauge.svelte';
 
@@ -81,6 +83,37 @@
   let pendingApprovals = $derived(
     workflowStore.activeWorkflows.filter(w => w.status === 'waiting_approval').length
   );
+
+  // Cost tracking
+  let costEnabled = $derived(costStore.enabled);
+  let totalCalls = $derived(costStore.totalCalls);
+  let totalCached = $derived(costStore.totalCached);
+  let totalDenied = $derived(costStore.totalDenied);
+  let totalErrors = $derived(costStore.totalErrors);
+
+  // RBAC
+  let rbacEnabled = $derived(rbacStore.enabled);
+  let rbacDeniedCount = $derived(rbacStore.deniedCount);
+
+  // OTel status (fetched inline)
+  let otelStatus = $state({ otlp_configured: false, traced_servers: 0, total_servers: 0 });
+  async function fetchOTelStatus() {
+    try {
+      const res = await globalThis.fetch('/api/otel');
+      if (res.ok) otelStatus = await res.json();
+    } catch { /* non-critical */ }
+  }
+  $effect(() => {
+    fetchOTelStatus();
+    costStore.startPolling(30000);
+    rbacStore.startPolling(30000);
+    const t = setInterval(fetchOTelStatus, 30000);
+    return () => {
+      clearInterval(t);
+      costStore.stopPolling();
+      rbacStore.stopPolling();
+    };
+  });
 
   // Rolling history buffers for mini sparklines (plain arrays to avoid circular deps).
   const _healthBuf = [];
@@ -318,6 +351,21 @@
       {#if agoText(workflowStore.lastUpdated)}<div class="tile-footer">{agoText(workflowStore.lastUpdated)}</div>{/if}
     </button>
 
+    <!-- Cost tile -->
+    {#if costEnabled}
+      <button class="tile" onclick={() => navigate('servers')}>
+        <div class="tile-header">
+          <span class="tile-icon">$</span>
+          <span class="tile-title">Cost</span>
+        </div>
+        <div class="tile-body">
+          <div class="tile-metric">{totalCalls.toLocaleString()} <span class="tile-unit">calls</span></div>
+          <div class="tile-detail">{totalCached} cached · {totalDenied} denied · {totalErrors} errors</div>
+        </div>
+        {#if costStore.lastUpdated}<div class="tile-footer">{agoText(costStore.lastUpdated)}</div>{/if}
+      </button>
+    {/if}
+
     <!-- Daemon tile -->
     <button class="tile" class:tile-alert-bg={!daemonRunning} onclick={() => navigate('servers')}>
       <div class="tile-header">
@@ -327,6 +375,11 @@
       <div class="tile-body">
         <div class="tile-metric">{daemonRunning ? 'Running' : 'Down'}</div>
         <div class="tile-detail">{processCount} processes · {fleetStore.status?.servers ?? 0} servers</div>
+        <div class="tile-badges">
+          <span class="tile-badge" class:badge-active={rbacEnabled} class:badge-off={!rbacEnabled}>RBAC: {rbacEnabled ? 'active' : 'off'}{#if rbacEnabled && rbacDeniedCount > 0} ({rbacDeniedCount}){/if}</span>
+          <span class="tile-badge" class:badge-active={otelStatus.otlp_configured} class:badge-off={!otelStatus.otlp_configured}>OTel: {otelStatus.otlp_configured ? 'active' : 'off'}</span>
+          <span class="tile-badge" class:badge-active={costEnabled} class:badge-off={!costEnabled}>Cost: {costEnabled ? 'active' : 'off'}</span>
+        </div>
       </div>
     </button>
 
@@ -543,6 +596,31 @@
 
   .tile-alert-bg .tile-metric {
     color: var(--error, #e74444);
+  }
+
+  .tile-badges {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+
+  .tile-badge {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+  }
+
+  .badge-active {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--success, #4caf50);
+  }
+
+  .badge-off {
+    background: var(--bg-tertiary);
+    color: var(--fg-muted);
   }
 
   @media (max-width: 600px) {
