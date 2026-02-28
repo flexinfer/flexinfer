@@ -21,9 +21,9 @@
 # ── Stage 1: build ──────────────────────────────────────────────────
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 
-ARG OLLAMA_VERSION=v0.6.2
+ARG OLLAMA_VERSION=v0.17.4
 ARG CUDA_ARCHITECTURES="50;52"
-ARG GO_VERSION=1.23.6
+ARG GO_VERSION=1.25.7
 
 ENV DEBIAN_FRONTEND=noninteractive
 

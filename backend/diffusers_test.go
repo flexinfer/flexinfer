@@ -194,6 +194,46 @@ func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 	if _, ok := findEnv(envs1100, "ENABLE_ATTENTION_SLICING"); ok {
 		t.Error("expected ENABLE_ATTENTION_SLICING to be absent for gfx1100")
 	}
+
+	// gfx1100 should get MIOPEN_FIND_MODE=2 (VAE decode crash workaround)
+	if v, ok := findEnv(envs1100, "MIOPEN_FIND_MODE"); !ok {
+		t.Error("expected MIOPEN_FIND_MODE for gfx1100 (ROCm/ROCm#4729 workaround)")
+	} else if v != "2" {
+		t.Errorf("MIOPEN_FIND_MODE = %q, want 2", v)
+	}
+
+	// gfx906 should NOT get MIOPEN_FIND_MODE (not affected by #4729)
+	if _, ok := findEnv(envs, "MIOPEN_FIND_MODE"); ok {
+		t.Error("expected MIOPEN_FIND_MODE to be absent for gfx906")
+	}
+}
+
+func TestDiffusersBackendEnv_MiopenFindModeOverride(t *testing.T) {
+	b := &DiffusersBackend{}
+
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	// Override MIOPEN_FIND_MODE via CRD config
+	spec := &ModelSpec{
+		Model:     "test-model",
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config:    map[string]interface{}{"miopenFindMode": "1"},
+	}
+	envs := b.Env(spec)
+
+	if v, ok := findEnv(envs, "MIOPEN_FIND_MODE"); !ok {
+		t.Error("expected MIOPEN_FIND_MODE to be present")
+	} else if v != "1" {
+		t.Errorf("MIOPEN_FIND_MODE = %q, want 1 (user override)", v)
+	}
 }
 
 func TestDiffusersWarmupResolutionsEnv(t *testing.T) {

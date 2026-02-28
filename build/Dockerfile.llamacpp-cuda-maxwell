@@ -17,9 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone llama.cpp
+# Clone llama.cpp at pinned release
+ARG LLAMACPP_VERSION=b8173
 WORKDIR /opt/src
-RUN git clone https://github.com/ggerganov/llama.cpp.git
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 # Build llama.cpp with CUDA support for Maxwell (sm_50, sm_52)
 WORKDIR /opt/src/llama.cpp

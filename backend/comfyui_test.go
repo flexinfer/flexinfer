@@ -49,6 +49,18 @@ func TestComfyUIBackendEnv_GFX906MemoryTuning(t *testing.T) {
 	if _, ok := findEnv(envs1100, "ENABLE_ATTENTION_SLICING"); ok {
 		t.Error("expected ENABLE_ATTENTION_SLICING to be absent for gfx1100")
 	}
+
+	// gfx1100 should get MIOPEN_FIND_MODE=2 (VAE decode crash workaround)
+	if v, ok := findEnv(envs1100, "MIOPEN_FIND_MODE"); !ok {
+		t.Error("expected MIOPEN_FIND_MODE for gfx1100 (ROCm/ROCm#4729 workaround)")
+	} else if v != "2" {
+		t.Errorf("MIOPEN_FIND_MODE = %q, want 2", v)
+	}
+
+	// gfx906 should NOT get MIOPEN_FIND_MODE
+	if _, ok := findEnv(envs, "MIOPEN_FIND_MODE"); ok {
+		t.Error("expected MIOPEN_FIND_MODE to be absent for gfx906")
+	}
 }
 
 func TestComfyUIBackendImage(t *testing.T) {

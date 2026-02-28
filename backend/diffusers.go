@@ -170,6 +170,18 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: cpuOffload,
 		})
 
+		// Workaround for ROCm/ROCm#4729: VAE decode crash on RDNA3 at
+		// resolutions above 1024px. MIOPEN_FIND_MODE=2 (FAST) avoids the
+		// kernel selection path that triggers the crash. ~10-15% slower but
+		// stable. Configurable via CRD to allow override.
+		if strings.HasPrefix(spec.GPUArch, "gfx110") {
+			findMode := spec.ConfigString("miopenFindMode", "2")
+			env = append(env, corev1.EnvVar{
+				Name:  "MIOPEN_FIND_MODE",
+				Value: findMode,
+			})
+		}
+
 		// gfx906 (16GB VRAM): tighter memory allocation and attention slicing
 		if strings.HasPrefix(spec.GPUArch, "gfx906") {
 			env = append(env,
