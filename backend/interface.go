@@ -310,6 +310,8 @@ func ROCmEnvVars(arch string) []corev1.EnvVar {
 				Name:  "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
 				Value: "1",
 			},
+			// Faster kernel dispatch on ROCm — reduces launch overhead.
+			corev1.EnvVar{Name: "HIP_FORCE_DEV_KERNARG", Value: "1"},
 			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx1100"},
 		)
 	case strings.HasPrefix(arch, "gfx90a"):

@@ -92,6 +92,28 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--trust-remote-code")
 	}
 
+	// Max concurrent sequences
+	if maxSeqs := spec.ConfigInt("maxNumSeqs", 0); maxSeqs > 0 {
+		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", maxSeqs))
+	}
+
+	// Max batched tokens for chunked prefill
+	if maxBatched := spec.ConfigInt("maxNumBatchedTokens", 0); maxBatched > 0 {
+		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
+	}
+
+	// Enforce eager mode (disable torch.compile and HIPGraph/CUDAGraph)
+	if spec.ConfigBool("enforceEager", false) {
+		args = append(args, "--enforce-eager")
+	}
+
+	// Tool calling support
+	if spec.ConfigBool("enableToolCalling", false) {
+		args = append(args, "--enable-auto-tool-choice")
+		parser := spec.ConfigString("toolCallParser", "hermes")
+		args = append(args, "--tool-call-parser", parser)
+	}
+
 	return args
 }
 

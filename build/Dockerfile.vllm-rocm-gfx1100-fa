@@ -14,13 +14,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ROCm environment for gfx1100
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
-ENV HIP_VISIBLE_DEVICES=0
-ENV ROCR_VISIBLE_DEVICES=0
 ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+# Faster kernel dispatch on ROCm
+ENV HIP_FORCE_DEV_KERNARG=1
 
 # V1 is the only engine — DO NOT set VLLM_USE_V1 (removed env var in 0.12+)
 # Triton flash attention: enabled by default in Navi images
 ENV VLLM_USE_TRITON_FLASH_ATTN=1
+# AWQ quantization via Triton (required for AWQ models on ROCm)
+ENV VLLM_USE_TRITON_AWQ=1
 # AITER: disabled (MI300X-optimized, not RDNA3)
 ENV VLLM_ROCM_USE_AITER=0
 

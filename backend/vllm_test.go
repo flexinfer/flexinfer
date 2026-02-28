@@ -88,6 +88,111 @@ func TestVLLMBackendEnv_NoInjectionWithDefaults(t *testing.T) {
 	if v, ok := envMap["HSA_OVERRIDE_GFX_VERSION"]; !ok || v != "11.0.0" {
 		t.Errorf("expected HSA_OVERRIDE_GFX_VERSION=11.0.0, got %q", v)
 	}
+	// HIP_FORCE_DEV_KERNARG should be set for gfx1100
+	if v, ok := envMap["HIP_FORCE_DEV_KERNARG"]; !ok || v != "1" {
+		t.Errorf("expected HIP_FORCE_DEV_KERNARG=1 for gfx1100, got %q (present=%v)", v, ok)
+	}
+}
+
+func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"dtype":                "half",
+			"maxModelLen":          4096,
+			"gpuMemoryUtilization": "0.92",
+			"maxNumSeqs":           256,
+			"maxNumBatchedTokens":  16384,
+			"enforceEager":         true,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	// Check new tuning args
+	if v := argMap["--max-num-seqs"]; v != "256" {
+		t.Errorf("expected --max-num-seqs=256, got %q", v)
+	}
+	if v := argMap["--max-num-batched-tokens"]; v != "16384" {
+		t.Errorf("expected --max-num-batched-tokens=16384, got %q", v)
+	}
+	// enforce-eager is a flag, check it's present
+	found := false
+	for _, a := range args {
+		if a == "--enforce-eager" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected --enforce-eager to be present")
+	}
+}
+
+func TestVLLMBackendArgs_ToolCalling(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"enableToolCalling": true,
+			"toolCallParser":    "mistral",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	// Check tool calling args
+	found := false
+	for _, a := range args {
+		if a == "--enable-auto-tool-choice" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected --enable-auto-tool-choice to be present")
+	}
+	if v := argMap["--tool-call-parser"]; v != "mistral" {
+		t.Errorf("expected --tool-call-parser=mistral, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_ToolCallingDefaultParser(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"enableToolCalling": true,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--tool-call-parser"]; v != "hermes" {
+		t.Errorf("expected default --tool-call-parser=hermes, got %q", v)
+	}
 }
 
 func TestVLLMBackendEnv_V0ExplicitOptIn(t *testing.T) {
