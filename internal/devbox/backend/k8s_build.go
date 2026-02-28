@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// buildDepFiles are dependency manifest files included in the build ConfigMap
+// for tar-pipe mode. These are the files that Dockerfile templates COPY.
+var buildDepFiles = []string{
+	"go.mod", "go.sum",
+	"package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json",
+	"pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt",
+	"Cargo.toml", "Cargo.lock",
+	"Gemfile", "Gemfile.lock",
+}
 
 const buildMaxRetries = 2
 
@@ -31,11 +42,22 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 
 	buildName := sanitizeBuildName(opts.Tag)
 
-	// Inject Dockerfile via ConfigMap so it's accessible to the Buildah pod
-	// without requiring the local filesystem to be the NFS volume.
+	// Inject Dockerfile (and dep files in tar-pipe mode) via ConfigMap.
 	cmName := "buildah-dockerfile-" + buildName
-	if err := k.createDockerfileConfigMap(buildCtx, cmName, opts.Dockerfile); err != nil {
-		return nil, fmt.Errorf("create dockerfile configmap: %w", err)
+
+	// In tar-pipe mode, bundle dep files into the ConfigMap and use it as build context.
+	// This eliminates the need for workspace volume during builds.
+	buildContextDir := "/workspace/" + contextRel
+	if k.syncMode == "tar-pipe" {
+		depFiles := readDepFiles(opts.ContextDir)
+		if err := k.createBuildConfigMap(buildCtx, cmName, opts.Dockerfile, depFiles); err != nil {
+			return nil, fmt.Errorf("create build configmap: %w", err)
+		}
+		buildContextDir = "/buildah-dockerfile"
+	} else {
+		if err := k.createDockerfileConfigMap(buildCtx, cmName, opts.Dockerfile); err != nil {
+			return nil, fmt.Errorf("create dockerfile configmap: %w", err)
+		}
 	}
 	defer func() {
 		_ = k.deleteConfigMap(context.Background(), cmName)
@@ -45,7 +67,7 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 
 	var lastErr error
 	for attempt := range buildMaxRetries {
-		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, contextRel)
+		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, buildContextDir)
 		if err == nil {
 			return result, nil
 		}
@@ -64,8 +86,10 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 }
 
 // runBuildPod creates a Buildah build pod, waits for completion, and returns the result.
-func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmName, contextRel string) (*BuildResult, error) {
-	pod := k.buildBuildahPodSpec(podName, registryTag, cmName, contextRel)
+// buildContext is the absolute path inside the pod (e.g., "/workspace/services/loom-core"
+// or "/buildah-dockerfile" for tar-pipe mode).
+func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmName, buildContext string) (*BuildResult, error) {
+	pod := k.buildBuildahPodSpec(podName, registryTag, cmName, buildContext)
 
 	// Delete any leftover build pod with the same name
 	_ = k.deletePod(ctx, podName)
@@ -92,21 +116,21 @@ func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmNa
 }
 
 // buildBuildahPodSpec creates a Pod spec for a Buildah in-cluster build.
-// Buildah runs as root with --storage-driver=vfs --isolation=chroot.
-// Root is required because chroot isolation needs to remount / (MS_REC|MS_SLAVE).
-// The Dockerfile is injected via a ConfigMap (dockerfileCM) so it doesn't
-// need to exist on the NFS workspace volume.
-//
-// Each build pod uses its own EmptyDir for storage, enabling parallel builds
-// across projects. Registry-based layer caching (--cache-from) replaces the
-// old shared PVC + mutex approach.
-func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, contextRel string) *corev1.Pod {
+// buildContext is the absolute path inside the pod to use as the Docker build context
+// (e.g., "/workspace/services/loom-core" for NFS/git, "/buildah-dockerfile" for tar-pipe).
+func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, buildContext string) *corev1.Pod {
 	gracePeriod := int64(0)
 	runAsUser := int64(0)
 	runAsGroup := int64(0)
 
-	// Cache tag: same destination with :cache suffix for layer caching.
-	cacheTag := destination + "-cache"
+	// Cache tag: same image path with a ":cache" tag for layer caching.
+	// Split off the existing tag and replace it (e.g., ":a3b9c1d" → ":cache").
+	cacheTag := destination
+	if idx := strings.LastIndex(cacheTag, ":"); idx > 0 {
+		cacheTag = cacheTag[:idx] + ":cache"
+	} else {
+		cacheTag = cacheTag + ":cache"
+	}
 
 	buildAndPush := strings.Join([]string{
 		// Configure registries for short-name resolution (non-interactive builds)
@@ -122,7 +146,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 		"--cache-from=" + cacheTag,
 		"-f /buildah-dockerfile/Dockerfile",
 		"-t " + destination,
-		"/workspace/" + contextRel,
+		buildContext,
 		"&&",
 		"buildah push --storage-driver=vfs --tls-verify=false " + destination,
 		"&&",
@@ -139,12 +163,24 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 		{Name: "auth", MountPath: "/run/containers/0/auth.json", SubPath: "config.json", ReadOnly: true},
 	}
 
-	// Workspace volume: emptyDir + git-clone initContainer when configured,
-	// otherwise NFS PVC (legacy).
+	// Workspace volume: tar-pipe and git-clone use emptyDir (no NFS),
+	// NFS mode uses the shared PVC.
 	var workspaceVolume corev1.Volume
 	var initContainers []corev1.Container
 
-	if k.gitEnabled() {
+	switch {
+	case k.syncMode == "tar-pipe":
+		// Tar-pipe mode: emptyDir workspace. For builds, dep files are injected
+		// via ConfigMap so no workspace sync is needed.
+		workspaceVolume = corev1.Volume{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					SizeLimit: resourcePtr(resource.MustParse("5Gi")),
+				},
+			},
+		}
+	case k.gitEnabled():
 		workspaceVolume = corev1.Volume{
 			Name: "workspace",
 			VolumeSource: corev1.VolumeSource{
@@ -154,11 +190,10 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 			},
 		}
 		// Build context path determines the clone target.
-		buildWorkDir := "/workspace/" + contextRel
 		initContainers = []corev1.Container{
-			k.gitCloneInitContainer(buildWorkDir),
+			k.gitCloneInitContainer(buildContext),
 		}
-	} else {
+	default:
 		workspaceVolume = corev1.Volume{
 			Name: "workspace",
 			VolumeSource: corev1.VolumeSource{
@@ -252,6 +287,46 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 			},
 		},
 	}
+}
+
+// createBuildConfigMap creates a ConfigMap containing the Dockerfile and dep files.
+// Used in tar-pipe mode where the ConfigMap serves as the entire build context.
+func (k *K8sBackend) createBuildConfigMap(ctx context.Context, name string, dockerfile []byte, depFiles map[string]string) error {
+	data := map[string]string{
+		"Dockerfile": string(dockerfile),
+	}
+	for fname, content := range depFiles {
+		data[fname] = content
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: k.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "mcp-devbox",
+				"devbox/build":                 "buildah",
+			},
+		},
+		Data: data,
+	}
+	_ = k.deleteConfigMap(ctx, name)
+	_, err := k.clientset.CoreV1().ConfigMaps(k.namespace).Create(ctx, cm, metav1.CreateOptions{})
+	return err
+}
+
+// readDepFiles reads dependency manifest files from the project directory.
+// Returns a map of filename→content for files that exist.
+func readDepFiles(projectDir string) map[string]string {
+	files := make(map[string]string)
+	for _, name := range buildDepFiles {
+		data, err := os.ReadFile(filepath.Join(projectDir, name))
+		if err != nil {
+			continue
+		}
+		files[name] = string(data)
+	}
+	return files
 }
 
 // createDockerfileConfigMap creates a ConfigMap containing the Dockerfile.

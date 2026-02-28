@@ -43,6 +43,11 @@ type managerConfig struct {
 	gitBaseURL string // base git URL (e.g., "https://gitlab.blevins.dev/homelab")
 	gitSecret  string // K8s secret name with git token (key: "token")
 
+	// Tar-pipe sync: stream local files into pods via SPDY exec
+	syncMode     string   // "tar-pipe", "git-clone", "nfs"
+	syncExcludes []string // additional exclude patterns
+	maxSyncSize  int64    // max uncompressed tar bytes
+
 	// Warm pool: pre-provision pods for these projects on startup
 	warmProjects []string
 }
@@ -172,6 +177,9 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			NFSFlush:        cfg.nfsFlush,
 			GitBaseURL:      cfg.gitBaseURL,
 			GitSecret:       cfg.gitSecret,
+			SyncMode:        cfg.syncMode,
+			SyncExcludes:    cfg.syncExcludes,
+			MaxSyncSize:     cfg.maxSyncSize,
 		})
 		if err != nil {
 			return nil, err
@@ -358,6 +366,11 @@ func (m *manager) ensureRunning(ctx context.Context, projectDir, projectName, ag
 		return "", fmt.Errorf("start container: %w", err)
 	}
 
+	// Tar-pipe sync: stream local source into the pod after it starts.
+	if err := m.syncIfNeeded(ctx, containerID, projectDir); err != nil {
+		return "", fmt.Errorf("sync workspace: %w", err)
+	}
+
 	// Persist state
 	now := time.Now()
 	if err := m.store.Set(key, &state.Entry{
@@ -385,6 +398,30 @@ func (m *manager) projectWorkDir(projectDir string) string {
 		return "/workspace"
 	}
 	return filepath.Join("/workspace", rel)
+}
+
+// syncIfNeeded performs tar-pipe workspace sync if configured.
+// It discovers the project's sibling deps (Go replace directives) and streams
+// all source files into the pod via SPDY exec.
+func (m *manager) syncIfNeeded(ctx context.Context, containerID, projectDir string) error {
+	if m.cfg.syncMode != "tar-pipe" {
+		return nil
+	}
+
+	kb, ok := m.backend.(*backend.K8sBackend)
+	if !ok {
+		return nil // tar-pipe only works with K8s backend
+	}
+
+	dirs, err := backend.DiscoverDeps(projectDir, m.cfg.workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("discover deps: %w", err)
+	}
+
+	m.logger.Info("syncing workspace", "project", filepath.Base(projectDir),
+		"dirs", len(dirs), "container", containerID)
+
+	return kb.SyncWorkspace(ctx, containerID, dirs, m.cfg.syncExcludes, m.cfg.maxSyncSize)
 }
 
 // buildMounts creates the standard bind mounts for a sandbox.

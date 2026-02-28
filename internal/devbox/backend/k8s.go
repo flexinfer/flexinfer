@@ -31,6 +31,11 @@ type K8sBackend struct {
 	nfsFlush        bool   // prepend NFS cache flush to exec commands
 	gitBaseURL      string // base git URL for workspace repos (enables git-clone mode)
 	gitSecret       string // secret name containing git token (key: "token")
+
+	// Tar-pipe sync configuration.
+	syncMode     string   // "tar-pipe", "git-clone", or "nfs"
+	syncExcludes []string // additional exclude patterns for tar-pipe sync
+	maxSyncSize  int64    // max uncompressed tar size in bytes (0 = default 200MB)
 }
 
 // K8sBackendConfig holds configuration for the K8s backend.
@@ -46,6 +51,11 @@ type K8sBackendConfig struct {
 	NFSFlush        bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
 	GitBaseURL      string // base git URL for repos (e.g., "https://gitlab.blevins.dev/homelab"); enables git-clone mode
 	GitSecret       string // secret name containing git token (key: "token"); required when GitBaseURL is set
+
+	// Tar-pipe sync: stream local files into pods via SPDY exec.
+	SyncMode     string   // "tar-pipe" (default local), "git-clone", "nfs"
+	SyncExcludes []string // additional exclude patterns for tar-pipe sync
+	MaxSyncSize  int64    // max uncompressed tar bytes (default: 200MB)
 }
 
 // NewK8sBackend creates a new Kubernetes backend.
@@ -92,6 +102,9 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		nfsFlush:        cfg.NFSFlush,
 		gitBaseURL:      cfg.GitBaseURL,
 		gitSecret:       cfg.GitSecret,
+		syncMode:        cfg.SyncMode,
+		syncExcludes:    cfg.SyncExcludes,
+		maxSyncSize:     cfg.MaxSyncSize,
 	}, nil
 }
 

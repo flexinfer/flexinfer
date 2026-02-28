@@ -36,7 +36,23 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 	var volumeMounts []corev1.VolumeMount
 	var initContainers []corev1.Container
 
-	if k.gitEnabled() {
+	switch {
+	case k.syncMode == "tar-pipe":
+		// Tar-pipe mode: emptyDir workspace populated post-start via SyncWorkspace().
+		// No initContainer needed — files are streamed in after pod is running.
+		volumes = []corev1.Volume{
+			{
+				Name: "workspace",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		}
+		volumeMounts = []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/workspace"},
+		}
+
+	case k.gitEnabled():
 		// Git-clone mode: emptyDir workspace populated by initContainer.
 		// Eliminates NFS dependency — each pod gets fresh source from git.
 		volumes = []corev1.Volume{
@@ -53,7 +69,8 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		initContainers = []corev1.Container{
 			k.gitCloneInitContainer(opts.WorkDir),
 		}
-	} else {
+
+	default:
 		// NFS PVC mode (legacy): shared workspace via NFS.
 		volumes = []corev1.Volume{
 			{

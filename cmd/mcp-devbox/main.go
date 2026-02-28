@@ -37,7 +37,8 @@ func run(ctx context.Context) error {
 	defer func() { _ = shutdownTracer(ctx) }()
 	tracer := mcpotel.Tracer(tp, "mcp-devbox")
 
-	logger.Info("starting server", "name", "mcp-devbox", "version", version)
+	logger.Info("starting server", "name", "mcp-devbox", "version", version,
+		"backend", env.String("DEVBOX_BACKEND", "docker"))
 
 	workspaceRoot := env.String("DEVBOX_WORKSPACE_ROOT", "")
 	if workspaceRoot == "" {
@@ -59,11 +60,34 @@ func run(ctx context.Context) error {
 		defaultIdleTimeout = 2 * time.Hour
 	}
 
-	// NFS cache flush: default true for K8s backend, but disabled when using git-clone mode
-	// (git-clone uses emptyDir, not NFS — no stale attr cache to flush).
+	// Sync mode: tar-pipe (default for local), git-clone, nfs.
+	// Auto-detect: if workspace root exists on disk, default to tar-pipe (local mode).
+	// Otherwise default to git-clone (hub/remote mode).
+	syncMode := env.String("DEVBOX_SYNC_MODE", "")
+	if syncMode == "" {
+		if _, err := os.Stat(workspaceRoot); err == nil {
+			syncMode = "tar-pipe"
+		} else {
+			syncMode = "git-clone"
+		}
+	}
+
+	// Parse extra sync excludes from comma-separated env var.
+	var syncExcludes []string
+	if se := env.String("DEVBOX_SYNC_EXCLUDES", ""); se != "" {
+		for _, e := range strings.Split(se, ",") {
+			e = strings.TrimSpace(e)
+			if e != "" {
+				syncExcludes = append(syncExcludes, e)
+			}
+		}
+	}
+
+	maxSyncSizeMB := env.Int("DEVBOX_MAX_SYNC_SIZE_MB", 200)
+
+	// NFS cache flush: only for NFS sync mode.
 	isK8s := backendType == "k8s" || backendType == "kubernetes"
-	gitMode := env.String("DEVBOX_K8S_GIT_BASE_URL", "") != ""
-	nfsFlush := env.Bool("DEVBOX_NFS_FLUSH", isK8s && !gitMode)
+	nfsFlush := env.Bool("DEVBOX_NFS_FLUSH", isK8s && syncMode == "nfs")
 
 	// Parse warm projects from comma-separated env var
 	var warmProjects []string
@@ -75,6 +99,8 @@ func run(ctx context.Context) error {
 			}
 		}
 	}
+
+	logger.Info("workspace sync", "mode", syncMode, "workspace", workspaceRoot)
 
 	mgr, err := newManager(ctx, logger, managerConfig{
 		workspaceRoot:      workspaceRoot,
@@ -95,6 +121,9 @@ func run(ctx context.Context) error {
 		nfsFlush:           nfsFlush,
 		gitBaseURL:         env.String("DEVBOX_K8S_GIT_BASE_URL", ""),
 		gitSecret:          env.String("DEVBOX_K8S_GIT_SECRET", ""),
+		syncMode:           syncMode,
+		syncExcludes:       syncExcludes,
+		maxSyncSize:        int64(maxSyncSizeMB) * 1024 * 1024,
 		warmProjects:       warmProjects,
 	})
 	if err != nil {

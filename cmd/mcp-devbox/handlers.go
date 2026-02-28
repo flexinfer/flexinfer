@@ -60,6 +60,12 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 		}
 	}
 
+	// Re-sync workspace before exec (tar-pipe mode) so uncommitted changes propagate.
+	if err := m.syncIfNeeded(ctx, containerID, projectDir); err != nil {
+		m.logger.Warn("pre-exec sync failed", "project", projectName, "error", err)
+		// Non-fatal: exec may still work with stale files.
+	}
+
 	// Touch last used BEFORE exec so reaper doesn't kill during long-running commands
 	_ = m.store.TouchLastUsed(key)
 	m.incActiveExecs(key)
@@ -318,6 +324,11 @@ func (m *manager) handleReadFile(ctx context.Context, args map[string]any) (*mcp
 	}
 
 	_ = m.store.TouchLastUsed(key)
+
+	// Re-sync before reading (tar-pipe mode) so we read the latest local files.
+	if err := m.syncIfNeeded(ctx, containerID, projectDir); err != nil {
+		m.logger.Warn("pre-read sync failed", "project", projectName, "error", err)
+	}
 
 	// Resolve path relative to project workdir
 	filePath := path

@@ -122,7 +122,7 @@ func TestBuildPodSpecResourcesAndMounts(t *testing.T) {
 
 func TestBuildBuildahPodSpec(t *testing.T) {
 	k := testK8sBackend()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
 
 	if pod.Name != "build-pod" || pod.Namespace != "devbox" {
 		t.Fatalf("unexpected pod metadata: %#v", pod.ObjectMeta)
@@ -254,7 +254,7 @@ func TestBuildRejectsContextOutsideWorkspaceRoot(t *testing.T) {
 
 func TestBuildBuildahPodSpec_EmptyDirAndRegistryCache(t *testing.T) {
 	k := testK8sBackend()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
 
 	// Verify the buildah-storage volume always uses EmptyDir
 	var found bool
@@ -447,9 +447,38 @@ func TestBuildPodSpec_NFSMode(t *testing.T) {
 	}
 }
 
+func TestBuildPodSpec_TarPipeMode(t *testing.T) {
+	k := testK8sBackend()
+	k.syncMode = "tar-pipe"
+	pod := k.buildPodSpec(StartOpts{
+		Name:    "devbox-loom-core",
+		WorkDir: "/workspace/services/loom-core",
+		AgentID: "claude-code",
+	}, "registry.harbor.lan/devbox/loom-core:abc123")
+
+	// Should use emptyDir (files come via SyncWorkspace after pod starts).
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.EmptyDir == nil {
+		t.Fatal("expected emptyDir workspace volume in tar-pipe mode")
+	}
+	if wsVol.PersistentVolumeClaim != nil {
+		t.Fatal("should not have PVC in tar-pipe mode")
+	}
+
+	// Should NOT have initContainers (tar-pipe syncs post-start).
+	if len(pod.Spec.InitContainers) != 0 {
+		t.Fatalf("expected 0 initContainers in tar-pipe mode, got %d", len(pod.Spec.InitContainers))
+	}
+
+	// Agent ID should be in labels.
+	if pod.Labels["devbox/agent-id"] != "claude-code" {
+		t.Fatalf("expected agent-id label, got: %v", pod.Labels)
+	}
+}
+
 func TestBuildBuildahPodSpec_GitCloneMode(t *testing.T) {
 	k := testK8sBackendGitClone()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
 
 	// Should use emptyDir for workspace, not NFS PVC
 	wsVol := pod.Spec.Volumes[0]
