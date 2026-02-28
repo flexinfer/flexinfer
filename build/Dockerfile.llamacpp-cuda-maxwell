@@ -23,12 +23,17 @@ WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 # Build llama.cpp with CUDA support for Maxwell (sm_50, sm_52)
+# llama.cpp b8173+ uses CUDA Driver API (VMM: cuMemCreate, cuMemMap).
+# In Docker builds without a GPU, we link against CUDA driver stubs.
 WORKDIR /opt/src/llama.cpp
-RUN cmake -B build -G Ninja \
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
+    echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig && \
+    cmake -B build -G Ninja \
     -DGGML_CUDA=ON \
     -DCMAKE_CUDA_ARCHITECTURES="50;52" \
     -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --config Release -j$(nproc)
+    && cmake --build build --config Release -j$(nproc) && \
+    rm /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig
 
 # Runtime stage — use runtime image (smaller, no compiler)
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04

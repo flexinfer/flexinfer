@@ -9,7 +9,9 @@ This document covers building and running MLC-LLM on AMD GPUs with ROCm, specifi
 | RX 7900 XTX | RDNA3 | gfx1100 | 24GB | Primary target |
 | RX 7900 XT | RDNA3 | gfx1100 | 20GB | Supported |
 | RX 7800 XT | RDNA3 | gfx1101 | 16GB | Should work |
-| MI300X | CDNA3 | gfx942 | 192GB | Data center |
+| MI300X | CDNA3 | gfx942 | 192GB | Data center, uses upstream images |
+| MI250 | CDNA2 | gfx90a | 64GB | Data center, uses upstream images |
+| Radeon VII | Vega20 | gfx906 | 16GB | Requires patches, see [README-gfx906.md](README-gfx906.md) |
 
 ## ROCm 6.4 Build
 
@@ -208,6 +210,80 @@ The GFX1100-specific images include:
 - `HSA_OVERRIDE_GFX_VERSION=11.0.0` for RDNA3 compatibility
 - `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` for stable flash attention
 - Flash attention disabled in vLLM (`BUILD_FA=0`) to prevent GPU hangs
+
+## MI250 (gfx90a) and MI300X (gfx942) Support
+
+AMD data-center GPUs are supported using **upstream ROCm images** — no custom-built images needed.
+
+| GPU | Architecture | GFX | VRAM | Compat Level |
+|-----|-------------|-----|------|-------------|
+| MI250 | CDNA2 | gfx90a | 64GB HBM2e | Full |
+| MI300X | CDNA3 | gfx942 | 192GB HBM3 | Full |
+
+### Why Upstream Images Work
+
+MI250 and MI300X are first-class ROCm targets. They do not require:
+- `HSA_OVERRIDE_GFX_VERSION` (natively supported)
+- `HSA_ENABLE_SDMA=0` workarounds (no SDMA issues)
+- Custom-compiled kernels or patches
+
+The generic fallback images in each backend already serve these architectures:
+- vLLM: `rocm/vllm:latest` (`backend/vllm.go:49`)
+- llama.cpp: `registry.harbor.lan/library/llamacpp:rocm-latest` (`backend/llamacpp.go`)
+- Diffusers: `registry.harbor.lan/library/diffusers-api:rocm-latest` (`backend/diffusers.go:45`)
+- ComfyUI: `registry.harbor.lan/library/comfyui:rocm6.2.3-v8` (`backend/comfyui.go:49`)
+
+### Environment Variables
+
+FlexInfer sets only `PYTORCH_ROCM_ARCH` for these architectures (`backend/interface.go:ROCmEnvVars()`):
+
+```bash
+# MI250
+PYTORCH_ROCM_ARCH=gfx90a
+
+# MI300X
+PYTORCH_ROCM_ARCH=gfx942
+```
+
+### vLLM Feature Support
+
+| Feature | MI250 (gfx90a) | MI300X (gfx942) |
+|---------|----------------|-----------------|
+| V1 Engine | Opt-in | Opt-in |
+| Triton Flash Attention | Opt-in | Opt-in |
+| AITER | Not supported (CDNA2) | Opt-in (primary target) |
+
+Enable via Model CRD config:
+```yaml
+spec:
+  config:
+    vllmEngineVersion: "v1"
+    enableFlashAttention: "true"
+    enableAiter: "true"  # MI300X only
+```
+
+### Deployment Example
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: llama3-mi300x
+spec:
+  backend: vllm
+  model: meta-llama/Llama-3.3-70B-Instruct
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: AMD
+    flexinfer.ai/gpu.arch: gfx942
+  config:
+    vllmEngineVersion: "v1"
+    enableFlashAttention: "true"
+    enableAiter: "true"
+  resources:
+    limits:
+      amd.com/gpu: 1
+      memory: 256Gi
+```
 
 ## GFX906 Support (Radeon VII / MI50)
 

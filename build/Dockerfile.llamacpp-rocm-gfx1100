@@ -22,14 +22,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rocblas \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone llama.cpp
+# Clone llama.cpp at pinned release
+ARG LLAMACPP_VERSION=b8173
 WORKDIR /opt/src
-RUN git clone https://github.com/ggerganov/llama.cpp.git
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 # Build llama.cpp with HIP (ROCm) support
 WORKDIR /opt/src/llama.cpp
 RUN cmake -B build -G Ninja \
-    -DGGML_HIPBLAS=ON \
+    -DGGML_HIP=ON \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)

@@ -49,16 +49,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfmt-dev \
     libmsgpack-dev \
     libsuitesparse-dev \
-    hipblas \
-    rocblas \
-    rocsparse \
-    hipsparse \
-    rocthrust \
-    rocprim \
-    hipcub \
-    rccl \
+    hipblas-dev \
+    rocblas-dev \
+    rocsparse-dev \
+    hipsparse-dev \
+    rocthrust-dev \
+    rocprim-dev \
+    hipcub-dev \
+    rccl-dev \
+    hip-dev \
+    rocm-device-libs \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Ensure cmake can find ROCm/HIP
+ENV CMAKE_PREFIX_PATH=/opt/rocm
 
 # Create virtual environment (PEP 668 compliance on Ubuntu 24.04)
 RUN python3 -m venv /opt/venv

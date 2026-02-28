@@ -27,9 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rocblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone llama.cpp
+# Clone llama.cpp at pinned release
+ARG LLAMACPP_VERSION=b8173
 WORKDIR /opt/src
-RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp.git
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 # Patch: make hipMemGetInfo failure non-fatal on gfx906.
 # Replace CUDA_CHECK(cudaMemGetInfo(...)) with a try/fallback that
