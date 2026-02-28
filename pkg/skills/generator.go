@@ -5,15 +5,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // Generator handles skill generation for different platforms.
 type Generator struct {
-	Registry  *Registry
-	SourceDir string // Where skill source files live (mcp/skills/)
-	Target    string // "codex" | "claude" | "kilocode" | "gemini" | "all"
-	OutputDir string // Where to generate skills (overrides platform defaults)
+	Registry     *Registry
+	RegistryPath string // Path to skills-registry.yaml on disk
+	SourceDir    string // Where skill source files live (mcp/skills/)
+	Target       string // "codex" | "claude" | "kilocode" | "gemini" | "all"
+	OutputDir    string // Where to generate skills (overrides platform defaults)
 	// CodexSkillsDir overrides the default Codex skills directory (normally ~/.codex/skills).
 	// This is intentionally separate from OutputDir so callers (like `loom sync`) can
 	// generate Codex skills into the repo while keeping manifest/instructions rooted
@@ -75,6 +78,7 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 
 	return &Generator{
 		Registry:       reg,
+		RegistryPath:   opts.RegistryPath,
 		SourceDir:      sourceDir,
 		Target:         opts.Target,
 		OutputDir:      opts.OutputDir,
@@ -165,6 +169,43 @@ func (g *Generator) Validate() []ValidationError {
 	return errs
 }
 
+// updatedLineRe matches the top-level `updated:` field in the registry YAML.
+var updatedLineRe = regexp.MustCompile(`(?m)^updated:\s*.*$`)
+
+// UpdateRegistryDate rewrites the `updated:` field in the on-disk registry
+// YAML to today's date (YYYY-MM-DD). The replacement is a targeted line swap
+// so the rest of the file (comments, ordering, formatting) is preserved.
+// Returns nil if RegistryPath is empty or the file has no `updated:` line.
+func (g *Generator) UpdateRegistryDate() error {
+	if g.RegistryPath == "" {
+		return nil
+	}
+
+	today := time.Now().Format("2006-01-02")
+	newLine := "updated: " + today
+
+	data, err := os.ReadFile(g.RegistryPath)
+	if err != nil {
+		return fmt.Errorf("read registry for date update: %w", err)
+	}
+
+	original := string(data)
+	if !updatedLineRe.MatchString(original) {
+		return nil // no updated: field to patch
+	}
+
+	updated := updatedLineRe.ReplaceAllString(original, newLine)
+	if updated == original {
+		return nil // already current
+	}
+
+	if g.Verbose {
+		fmt.Printf("Updating registry date to %s\n", today)
+	}
+
+	return os.WriteFile(g.RegistryPath, []byte(updated), 0644)
+}
+
 // Generate generates skills for the configured target(s).
 func (g *Generator) Generate() error {
 	targets := []string{g.Target}
@@ -175,6 +216,15 @@ func (g *Generator) Generate() error {
 	for _, target := range targets {
 		if err := g.generateForTarget(target); err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
+		}
+	}
+
+	// Update the registry's `updated:` date after successful generation.
+	if !g.DryRun {
+		if err := g.UpdateRegistryDate(); err != nil {
+			if g.Verbose {
+				fmt.Printf("Warning: could not update registry date: %v\n", err)
+			}
 		}
 	}
 

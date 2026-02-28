@@ -14,7 +14,7 @@ Maintain the workspace's canonical MCP server registry and regenerate downstream
 - Generate client configs (Go generator via `loom`):
   - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode`
 - Generate hub manifests (when changing hub deployments):
-  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/mcp-hub/servers`
+  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/loom-hub/servers`
 
 ## Core Workflow
 
@@ -38,7 +38,7 @@ Use `--dry-run` to preview and `--sort` to normalize.
 - Generate client configs:
   - `services/loom-core/bin/loom generate configs --registry platform/gitops/mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
 - Generate hub manifests:
-  - `services/loom-core/bin/loom generate manifests --registry platform/gitops/mcp/context/registry.yaml --output-dir platform/gitops/k3s/mcp-hub/servers`
+  - `services/loom-core/bin/loom generate manifests --registry platform/gitops/mcp/context/registry.yaml --output-dir platform/gitops/k3s/loom-hub/servers`
 
 If `services/loom-core/bin/loom` doesn't exist, build it:
 - `cd services/loom-core && go build -o bin/loom ./cmd/loom`

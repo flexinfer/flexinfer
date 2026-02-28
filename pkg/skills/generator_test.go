@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestGenerator returns a minimal Generator suitable for unit tests.
@@ -552,5 +553,144 @@ func TestValidate_NilScriptSkipped(t *testing.T) {
 	errs := g.Validate()
 	if len(errs) != 0 {
 		t.Fatalf("expected 0 errors for nil/empty script entries, got %d: %v", len(errs), errs)
+	}
+}
+
+// =========================================================================
+// UpdateRegistryDate tests
+// =========================================================================
+
+func TestUpdateRegistryDate_UpdatesStaleDate(t *testing.T) {
+	tmpDir := t.TempDir()
+	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
+
+	content := "version: 1\nupdated: 2025-01-01\nskills: []\n"
+	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &Generator{
+		Registry:     &Registry{},
+		RegistryPath: registryPath,
+	}
+
+	if err := g.UpdateRegistryDate(); err != nil {
+		t.Fatalf("UpdateRegistryDate: %v", err)
+	}
+
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	expected := "version: 1\nupdated: " + today + "\nskills: []\n"
+	if string(data) != expected {
+		t.Errorf("unexpected content:\ngot:  %q\nwant: %q", string(data), expected)
+	}
+}
+
+func TestUpdateRegistryDate_IdempotentWhenCurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
+
+	today := time.Now().Format("2006-01-02")
+	content := "version: 1\nupdated: " + today + "\nskills: []\n"
+	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, _ := os.Stat(registryPath)
+	origModTime := info.ModTime()
+
+	g := &Generator{
+		Registry:     &Registry{},
+		RegistryPath: registryPath,
+	}
+
+	if err := g.UpdateRegistryDate(); err != nil {
+		t.Fatalf("UpdateRegistryDate: %v", err)
+	}
+
+	// File should not have been rewritten (same date).
+	info2, _ := os.Stat(registryPath)
+	if !info2.ModTime().Equal(origModTime) {
+		t.Error("file was rewritten despite date being current")
+	}
+}
+
+func TestUpdateRegistryDate_PreservesComments(t *testing.T) {
+	tmpDir := t.TempDir()
+	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
+
+	content := "# Header comment\nversion: 1\nupdated: 2025-06-15\n# Skills below\nskills:\n  - name: test\n"
+	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &Generator{
+		Registry:     &Registry{},
+		RegistryPath: registryPath,
+	}
+
+	if err := g.UpdateRegistryDate(); err != nil {
+		t.Fatalf("UpdateRegistryDate: %v", err)
+	}
+
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(data)
+	if !strings.Contains(got, "# Header comment") {
+		t.Error("header comment was lost")
+	}
+	if !strings.Contains(got, "# Skills below") {
+		t.Error("inline comment was lost")
+	}
+	if !strings.Contains(got, "- name: test") {
+		t.Error("skill entry was lost")
+	}
+
+	today := time.Now().Format("2006-01-02")
+	if !strings.Contains(got, "updated: "+today) {
+		t.Errorf("date not updated, got:\n%s", got)
+	}
+}
+
+func TestUpdateRegistryDate_EmptyRegistryPath(t *testing.T) {
+	g := &Generator{
+		Registry:     &Registry{},
+		RegistryPath: "",
+	}
+
+	if err := g.UpdateRegistryDate(); err != nil {
+		t.Fatalf("expected nil error for empty path, got: %v", err)
+	}
+}
+
+func TestUpdateRegistryDate_NoUpdatedField(t *testing.T) {
+	tmpDir := t.TempDir()
+	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
+
+	content := "version: 1\nskills: []\n"
+	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &Generator{
+		Registry:     &Registry{},
+		RegistryPath: registryPath,
+	}
+
+	if err := g.UpdateRegistryDate(); err != nil {
+		t.Fatalf("expected nil error when no updated field, got: %v", err)
+	}
+
+	// File should remain unchanged.
+	data, _ := os.ReadFile(registryPath)
+	if string(data) != content {
+		t.Errorf("file was modified despite no updated field:\n%s", string(data))
 	}
 }
