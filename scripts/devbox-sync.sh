@@ -11,8 +11,8 @@
 # K8s PV: devbox-workspace-nfs (mounted at /workspace in pods)
 set -euo pipefail
 
-NFS_HOST="cblevins@192.168.50.151"
-NFS_PATH="/srv/nfs/devbox-workspace"
+NFS_HOST="cblevins@192.168.50.217"
+NFS_PATH="/srv/nfs/nas-media-bulk/devbox-workspace"
 WORKSPACE="${HOME}/workspace"
 
 RSYNC_OPTS=(-rlpgoDz --omit-dir-times)
