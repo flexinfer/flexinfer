@@ -1,0 +1,64 @@
+# vLLM nightly for AMD gfx1100 (RX 7900 series) — Qwen3.5 + AWQ support
+# Builds vLLM from main branch on AMD's Navi base for Qwen3.5 architecture support.
+#
+# Base: ROCm 7.2, PyTorch 2.9 (from AMD Navi prebuilt image)
+# vLLM: Built from source (main branch) — adds Qwen3_5ForConditionalGeneration
+# Features: AWQ 4-bit, Triton FA, tool calling, structured output, reasoning parser
+# Target models: Qwen3.5-35B-A3B-AWQ (~18-21 GB in 24 GB VRAM)
+#
+# Build time: ~30-60 minutes (compiles HIP extensions for gfx1100)
+# Build: make build-vllm-gfx1100-nightly
+
+ARG BASE_IMAGE=rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0
+FROM ${BASE_IMAGE}
+
+ENV PYTORCH_ROCM_ARCH=gfx1100
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ROCm environment for gfx1100 (RDNA3)
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+ENV HIP_FORCE_DEV_KERNARG=1
+
+# Triton flash attention for RDNA3 (via AOTriton)
+ENV VLLM_USE_TRITON_FLASH_ATTN=1
+# AWQ quantization via Triton (required for AWQ models on ROCm)
+ENV VLLM_USE_TRITON_AWQ=1
+# AITER: disabled (MI300X-optimized, not RDNA3)
+ENV VLLM_ROCM_USE_AITER=0
+
+# Build configuration for vLLM from source
+ENV VLLM_TARGET_DEVICE=rocm
+ENV CMAKE_PREFIX_PATH=/opt/rocm
+ENV MAX_JOBS=4
+
+# Remove prebuilt vLLM from base image
+RUN pip uninstall -y vllm 2>/dev/null || true
+
+# Clone and build vLLM from main branch for Qwen3.5 support
+# Qwen3_5ForConditionalGeneration requires vLLM nightly/0.17.0+
+# Gated Delta Network kernels are Triton-based (ROCm compatible)
+RUN git clone --depth 1 https://github.com/vllm-project/vllm.git /tmp/vllm-src && \
+    cd /tmp/vllm-src && \
+    pip install --no-cache-dir . && \
+    rm -rf /tmp/vllm-src
+
+# Flash-linear-attention for Gated Delta Networks (Qwen3.5 architecture)
+RUN pip install --no-cache-dir flash-linear-attention 2>/dev/null || true
+
+# Extra dependencies
+RUN pip install --no-cache-dir \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+WORKDIR /workspace
+RUN mkdir -p /models
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["vllm", "serve"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]

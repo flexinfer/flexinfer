@@ -196,6 +196,7 @@ VLLM_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100
 VLLM_GFX1100_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-fa
 VLLM_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906
 VLLM_GFX906_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906-fa
+VLLM_GFX1100_NIGHTLY_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-nightly
 VLLM_OMNI_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm-omni:rocm-gfx1100
 LLAMACPP_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:rocm-gfx1100
 LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
@@ -236,6 +237,14 @@ build-vllm-gfx1100-fa: ## Build vLLM gfx1100 flash attention image (prebuilt Nav
 .PHONY: push-vllm-gfx1100-fa
 push-vllm-gfx1100-fa: ## Push vLLM gfx1100 FA image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_FA_IMAGE)
+
+.PHONY: build-vllm-gfx1100-nightly
+build-vllm-gfx1100-nightly: ## Build vLLM nightly gfx1100 image (from-source, Qwen3.5 + AWQ, ~30-60 min)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-nightly-rocm-gfx1100 -t $(VLLM_GFX1100_NIGHTLY_IMAGE) .
+
+.PHONY: push-vllm-gfx1100-nightly
+push-vllm-gfx1100-nightly: ## Push vLLM nightly gfx1100 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_NIGHTLY_IMAGE)
 
 .PHONY: build-vllm-gfx906
 build-vllm-gfx906: ## Build vLLM gfx906 image on GPU node
