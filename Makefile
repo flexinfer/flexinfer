@@ -196,6 +196,7 @@ VLLM_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100
 VLLM_GFX1100_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-fa
 VLLM_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906
 VLLM_GFX906_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906-fa
+VLLM_OMNI_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm-omni:rocm-gfx1100
 LLAMACPP_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:rocm-gfx1100
 LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
@@ -251,6 +252,14 @@ build-vllm-gfx906-fa: ## Build vLLM gfx906 flash attention image (DEPRECATED —
 .PHONY: push-vllm-gfx906-fa
 push-vllm-gfx906-fa: ## Push vLLM gfx906 FA image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_FA_IMAGE)
+
+.PHONY: build-vllm-omni-gfx1100
+build-vllm-omni-gfx1100: ## Build vLLM-Omni gfx1100 image (multimodal generation, Navi base + pip)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-omni-rocm-gfx1100 -t $(VLLM_OMNI_GFX1100_IMAGE) .
+
+.PHONY: push-vllm-omni-gfx1100
+push-vllm-omni-gfx1100: ## Push vLLM-Omni gfx1100 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_OMNI_GFX1100_IMAGE)
 
 .PHONY: build-llamacpp-gfx1100
 build-llamacpp-gfx1100: ## Build llama.cpp gfx1100 image (ROCm, RX 7900 series)

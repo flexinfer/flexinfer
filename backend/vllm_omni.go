@@ -3,13 +3,15 @@ package backend
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
 
 // VLLMOmniBackend implements the Backend interface for vLLM-Omni.
-// vLLM-Omni provides diffusion model support with OpenAI-compatible API.
+// vLLM-Omni extends vLLM with multimodal generation (image, audio, video).
+// Entrypoint: `vllm serve` — the Dockerfile sets this as ENTRYPOINT.
 type VLLMOmniBackend struct {
 	BaseBackend
 }
@@ -29,11 +31,16 @@ func (b *VLLMOmniBackend) Aliases() []string {
 func (b *VLLMOmniBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 	switch gpuVendor {
 	case GPUVendorAMD:
+		if strings.HasPrefix(gpuArch, "gfx110") {
+			if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE_GFX1100"); img != "" {
+				return img
+			}
+			return "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"
+		}
 		if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE_AMD"); img != "" {
 			return img
 		}
-		// ROCm-enabled vLLM-Omni image for gfx1100 (RX 7900 XTX)
-		return "registry.harbor.lan/library/vllm-api:rocm-navi"
+		return "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"
 	default:
 		if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE"); img != "" {
 			return img
@@ -59,16 +66,67 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--model", spec.Model)
 	}
 
+	// Dtype
+	if dtype := spec.ConfigString("dtype", ""); dtype != "" {
+		args = append(args, "--dtype", dtype)
+	}
+
+	// Max model length
+	if maxLen := spec.ConfigInt("maxModelLen", 0); maxLen > 0 {
+		args = append(args, "--max-model-len", fmt.Sprintf("%d", maxLen))
+	}
+
+	// GPU memory utilization
+	if memUtil := spec.ConfigString("gpuMemoryUtilization", ""); memUtil != "" {
+		args = append(args, "--gpu-memory-utilization", memUtil)
+	}
+
+	// Trust remote code (often needed for omni models)
+	if spec.ConfigBool("trustRemoteCode", false) {
+		args = append(args, "--trust-remote-code")
+	}
+
+	// Max concurrent sequences
+	if maxSeqs := spec.ConfigInt("maxNumSeqs", 0); maxSeqs > 0 {
+		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", maxSeqs))
+	}
+
+	// Max batched tokens
+	if maxBatched := spec.ConfigInt("maxNumBatchedTokens", 0); maxBatched > 0 {
+		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
+	}
+
+	// Enforce eager mode
+	if spec.ConfigBool("enforceEager", false) {
+		args = append(args, "--enforce-eager")
+	}
+
+	// Quantization method
+	if quant := spec.ConfigString("quantization", ""); quant != "" {
+		args = append(args, "--quantization", quant)
+	}
+
+	// Served model name
+	if name := spec.ConfigString("servedModelName", ""); name != "" {
+		args = append(args, "--served-model-name", name)
+	}
+
+	// Disable stats logging
+	if spec.ConfigBool("disableLogStats", false) {
+		args = append(args, "--disable-log-stats")
+	}
+
 	return args
 }
 
 func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
-	env := []corev1.EnvVar{
-		{
-			Name:  "CUDA_DEVICE_ORDER",
-			Value: "PCI_BUS_ID",
-		},
-	}
+	var env []corev1.EnvVar
+
+	// CUDA device ordering
+	env = append(env, corev1.EnvVar{
+		Name:  "CUDA_DEVICE_ORDER",
+		Value: "PCI_BUS_ID",
+	})
 
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
@@ -80,7 +138,6 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 }
 
 func (b *VLLMOmniBackend) ReadinessProbe() *corev1.Probe {
-	// InitialDelay=0: startup probe handles cold start; readiness only runs after startup succeeds.
 	return HTTPReadinessProbe("/health", 8000, 0, 5, 3)
 }
 
@@ -97,7 +154,23 @@ func (b *VLLMOmniBackend) IsImageGeneration() bool {
 	return true
 }
 
-// DefaultIdleTimeout returns a longer timeout for image generation.
+// DefaultIdleTimeout returns a longer timeout for multimodal generation.
 func (b *VLLMOmniBackend) DefaultIdleTimeout() time.Duration {
 	return 10 * time.Minute
+}
+
+// SupportedQuantFormats returns AWQ, GPTQ, and FP8 — inherited from vLLM.
+func (b *VLLMOmniBackend) SupportedQuantFormats() []string {
+	return []string{"AWQ", "GPTQ", "FP8"}
+}
+
+// CompilationCacheEnvVars implements CompilationCacheConfigurer.
+func (b *VLLMOmniBackend) CompilationCacheEnvVars(cacheMountPath string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "MIOPEN_CUSTOM_CACHE_DIR", Value: cacheMountPath + "/miopen"},
+		{Name: "MIOPEN_USER_DB_PATH", Value: cacheMountPath + "/miopen/user.db"},
+		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: cacheMountPath + "/inductor"},
+		{Name: "TRITON_CACHE_DIR", Value: cacheMountPath + "/triton"},
+		{Name: "TORCH_HOME", Value: cacheMountPath + "/torch"},
+	}
 }
