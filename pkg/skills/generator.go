@@ -87,6 +87,84 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 	}, nil
 }
 
+// ValidationError describes a missing resource in a skill.
+type ValidationError struct {
+	Skill        string // Skill name
+	ResourceType string // "script", "reference", or "asset"
+	Path         string // Expected path on disk
+}
+
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("%s: missing %s: %s", e.Skill, e.ResourceType, e.Path)
+}
+
+// Validate checks that all scripts, references, and assets referenced by
+// enabled skills exist on disk. Returns a slice of validation errors (empty
+// means everything is valid).
+func (g *Generator) Validate() []ValidationError {
+	var errs []ValidationError
+
+	targets := []string{g.Target}
+	if g.Target == "all" {
+		targets = AllTargets
+	}
+
+	// Collect unique enabled skills across requested targets.
+	seen := make(map[string]bool)
+	var skills []*Skill
+	for _, target := range targets {
+		for _, skill := range g.Registry.Skills {
+			if skill.IsEnabled(target) && !seen[skill.Name] {
+				seen[skill.Name] = true
+				skills = append(skills, skill)
+			}
+		}
+	}
+
+	for _, skill := range skills {
+		if skill.Common == nil {
+			continue
+		}
+		sourceSkillDir := filepath.Join(g.SourceDir, skill.Name)
+
+		for _, script := range skill.Common.Scripts {
+			if script == nil || script.Path == "" {
+				continue
+			}
+			p := filepath.Join(sourceSkillDir, script.Path)
+			if _, err := os.Stat(p); err != nil {
+				errs = append(errs, ValidationError{
+					Skill:        skill.Name,
+					ResourceType: "script",
+					Path:         p,
+				})
+			}
+		}
+		for _, ref := range skill.Common.References {
+			p := filepath.Join(sourceSkillDir, "references", ref)
+			if _, err := os.Stat(p); err != nil {
+				errs = append(errs, ValidationError{
+					Skill:        skill.Name,
+					ResourceType: "reference",
+					Path:         p,
+				})
+			}
+		}
+		for _, asset := range skill.Common.Assets {
+			p := filepath.Join(sourceSkillDir, "assets", asset)
+			if _, err := os.Stat(p); err != nil {
+				errs = append(errs, ValidationError{
+					Skill:        skill.Name,
+					ResourceType: "asset",
+					Path:         p,
+				})
+			}
+		}
+	}
+
+	return errs
+}
+
 // Generate generates skills for the configured target(s).
 func (g *Generator) Generate() error {
 	targets := []string{g.Target}

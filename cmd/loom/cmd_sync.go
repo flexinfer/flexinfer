@@ -251,14 +251,28 @@ Example:
 
 			// Validate only mode
 			if validate {
-				reg, err := skills.Load(registryPath)
+				gen, err := skills.NewGenerator(skills.GeneratorOptions{
+					RegistryPath:  registryPath,
+					Target:        target,
+					WorkspaceRoot: workspaceRoot,
+					CodexHome:     codexHome,
+				})
 				if err != nil {
 					return fmt.Errorf("validation failed: %w", err)
 				}
-				fmt.Printf("✓ Skills registry valid: %d skills defined\n", len(reg.Skills))
-				for _, skill := range reg.Skills {
+				errs := gen.Validate()
+				fmt.Printf("Skills registry: %d skills defined\n", len(gen.Registry.Skills))
+				for _, skill := range gen.Registry.Skills {
 					fmt.Printf("  - %s (%s)\n", skill.Name, strings.Join(skill.Categories, ", "))
 				}
+				if len(errs) > 0 {
+					fmt.Printf("\n✗ %d validation error(s):\n", len(errs))
+					for _, e := range errs {
+						fmt.Printf("  ✗ %s\n", e.Error())
+					}
+					return fmt.Errorf("validation failed with %d error(s)", len(errs))
+				}
+				fmt.Printf("\n✓ All scripts, references, and assets exist on disk\n")
 				return nil
 			}
 

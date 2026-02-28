@@ -349,3 +349,208 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+// =========================================================================
+// Validate tests
+// =========================================================================
+
+func TestValidate_AllResourcesExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "my-skill")
+
+	// Create all referenced files.
+	for _, p := range []string{
+		filepath.Join(skillDir, "scripts", "run.sh"),
+		filepath.Join(skillDir, "references", "guide.md"),
+		filepath.Join(skillDir, "assets", "templates", "default.yaml"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("ok"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	skill := newTestSkill("my-skill", "A skill")
+	skill.Common.Scripts = []*Script{{Name: "run", Path: "scripts/run.sh"}}
+	skill.Common.References = []string{"guide.md"}
+	skill.Common.Assets = []string{"templates/default.yaml"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 validation errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_MissingScript(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "broken-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("broken-skill", "Missing script")
+	skill.Common.Scripts = []*Script{{Name: "run", Path: "scripts/run.sh"}}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 validation error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].ResourceType != "script" {
+		t.Errorf("expected resource type 'script', got %q", errs[0].ResourceType)
+	}
+	if errs[0].Skill != "broken-skill" {
+		t.Errorf("expected skill 'broken-skill', got %q", errs[0].Skill)
+	}
+}
+
+func TestValidate_MissingReference(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "ref-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("ref-skill", "Missing ref")
+	skill.Common.References = []string{"missing.md"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 validation error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].ResourceType != "reference" {
+		t.Errorf("expected resource type 'reference', got %q", errs[0].ResourceType)
+	}
+}
+
+func TestValidate_MissingAsset(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "asset-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("asset-skill", "Missing asset")
+	skill.Common.Assets = []string{"templates/missing.yaml"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 validation error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].ResourceType != "asset" {
+		t.Errorf("expected resource type 'asset', got %q", errs[0].ResourceType)
+	}
+}
+
+func TestValidate_MultipleErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "multi-err"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("multi-err", "Multiple missing resources")
+	skill.Common.Scripts = []*Script{
+		{Name: "a", Path: "scripts/a.sh"},
+		{Name: "b", Path: "scripts/b.sh"},
+	}
+	skill.Common.References = []string{"guide.md"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 3 {
+		t.Fatalf("expected 3 validation errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_DisabledSkillSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "disabled"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	skill := newTestSkill("disabled", "Disabled skill")
+	skill.Common.Scripts = []*Script{{Name: "run", Path: "scripts/run.sh"}}
+	skill.Targets = map[string]*TargetSpec{
+		"codex":    {Enabled: &disabled},
+		"claude":   {Enabled: &disabled},
+		"kilocode": {Enabled: &disabled},
+		"gemini":   {Enabled: &disabled},
+	}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors for disabled skill, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_NilScriptSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "nil-script"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("nil-script", "Skill with nil script entry")
+	skill.Common.Scripts = []*Script{nil, {Name: "empty", Path: ""}}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors for nil/empty script entries, got %d: %v", len(errs), errs)
+	}
+}
