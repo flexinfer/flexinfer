@@ -9,6 +9,7 @@ struct APIClientTests {
     func endpointPaths() {
         #expect(Endpoint.ping.path == "/api/mobile/v1/ping")
         #expect(Endpoint.dashboard.path == "/api/mobile/v1/dashboard")
+        #expect(Endpoint.controlPlane.path == "/api/mobile/v1/control-plane")
         #expect(Endpoint.sessions.path == "/api/mobile/v1/sessions")
         #expect(Endpoint.sessionDetail(id: "s1").path == "/api/mobile/v1/sessions/s1")
         #expect(Endpoint.sessionEvents(id: "s1").path == "/api/mobile/v1/sessions/s1/events")
@@ -34,6 +35,7 @@ struct APIClientTests {
     func endpointMethods() {
         #expect(Endpoint.ping.method == "GET")
         #expect(Endpoint.dashboard.method == "GET")
+        #expect(Endpoint.controlPlane.method == "GET")
         #expect(Endpoint.sessions.method == "GET")
         #expect(Endpoint.tasks().method == "GET")
         #expect(Endpoint.workflows().method == "GET")
@@ -46,6 +48,7 @@ struct APIClientTests {
     func mutationFlag() {
         #expect(Endpoint.ping.isMutation == false)
         #expect(Endpoint.dashboard.isMutation == false)
+        #expect(Endpoint.controlPlane.isMutation == false)
         #expect(Endpoint.stream().isMutation == false)
         #expect(Endpoint.createSession(agentId: "a1").isMutation == true)
         #expect(Endpoint.endSession(id: "s1").isMutation == true)

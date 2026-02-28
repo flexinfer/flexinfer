@@ -676,3 +676,122 @@ public struct MobileReasoningChainsResponse: Decodable, Sendable {
 public struct MobileReasoningChainDetailResponse: Decodable, Sendable {
     public let chain: MobileReasoningChain
 }
+
+public struct MobileControlPlaneCostTopAgent: Decodable, Sendable {
+    public let agentId: String
+    public let callCount: Int
+    public let errors: Int
+    public let denied: Int
+    public let cached: Int
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case callCount = "call_count"
+        case errors
+        case denied
+        case cached
+    }
+}
+
+public struct MobileControlPlaneCostTopServer: Decodable, Sendable {
+    public let server: String
+    public let callCount: Int
+    public let errors: Int
+
+    enum CodingKeys: String, CodingKey {
+        case server
+        case callCount = "call_count"
+        case errors
+    }
+}
+
+public struct MobileControlPlaneCost: Decodable, Sendable {
+    public let enabled: Bool
+    public let timestamp: String?
+    public let totalCalls: Int
+    public let totalErrors: Int
+    public let totalDenied: Int
+    public let totalCached: Int
+    public let totalDurationMs: Int
+    public let topAgent: MobileControlPlaneCostTopAgent?
+    public let topServer: MobileControlPlaneCostTopServer?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case timestamp
+        case totalCalls = "total_calls"
+        case totalErrors = "total_errors"
+        case totalDenied = "total_denied"
+        case totalCached = "total_cached"
+        case totalDurationMs = "total_duration_ms"
+        case topAgent = "top_agent"
+        case topServer = "top_server"
+    }
+}
+
+public struct MobileControlPlaneRBAC: Decodable, Sendable {
+    public let enabled: Bool
+    public let defaultPolicy: String?
+    public let roleCount: Int
+    public let bindingCount: Int
+    public let globalDenyCount: Int
+    public let rateLimitCount: Int
+    public let deniedCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case defaultPolicy = "default_policy"
+        case roleCount = "role_count"
+        case bindingCount = "binding_count"
+        case globalDenyCount = "global_deny_count"
+        case rateLimitCount = "rate_limit_count"
+        case deniedCount = "denied_count"
+    }
+}
+
+public struct MobileControlPlaneOTel: Decodable, Sendable {
+    public let otlpConfigured: Bool
+    public let otlpEndpoint: String?
+    public let jsonLogsEnabled: Bool
+    public let tracedServers: Int
+    public let totalServers: Int
+    public let traceCoverage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case otlpConfigured = "otlp_configured"
+        case otlpEndpoint = "otlp_endpoint"
+        case jsonLogsEnabled = "json_logs_enabled"
+        case tracedServers = "traced_servers"
+        case totalServers = "total_servers"
+        case traceCoverage = "trace_coverage"
+    }
+}
+
+public struct MobileControlPlaneHealth: Decodable, Sendable {
+    public let totalServers: Int
+    public let healthyServers: Int
+    public let degradedServers: Int
+    public let downServers: Int
+    public let idleServers: Int
+    public let hubTargets: Int
+    public let localTargets: Int
+    public let unavailableTargets: Int
+
+    enum CodingKeys: String, CodingKey {
+        case totalServers = "total_servers"
+        case healthyServers = "healthy_servers"
+        case degradedServers = "degraded_servers"
+        case downServers = "down_servers"
+        case idleServers = "idle_servers"
+        case hubTargets = "hub_targets"
+        case localTargets = "local_targets"
+        case unavailableTargets = "unavailable_targets"
+    }
+}
+
+public struct MobileControlPlaneResponse: Decodable, Sendable {
+    public let cost: MobileControlPlaneCost
+    public let rbac: MobileControlPlaneRBAC
+    public let otel: MobileControlPlaneOTel
+    public let health: MobileControlPlaneHealth
+}

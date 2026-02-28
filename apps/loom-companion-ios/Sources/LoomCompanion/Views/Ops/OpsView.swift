@@ -189,6 +189,44 @@ struct OpsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            GroupBox("Gateway & Daemon") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let controlPlane = viewModel.controlPlane {
+                        HStack {
+                            metric(label: "Servers", value: "\(controlPlane.health.totalServers)")
+                            Spacer()
+                            metric(label: "Hub", value: "\(controlPlane.health.hubTargets)")
+                            Spacer()
+                            metric(label: "Local", value: "\(controlPlane.health.localTargets)")
+                            Spacer()
+                            metric(label: "Idle", value: "\(controlPlane.health.idleServers)")
+                        }
+                        .font(.caption)
+
+                        Text("Health: \(controlPlane.health.healthyServers) healthy • \(controlPlane.health.degradedServers) degraded • \(controlPlane.health.downServers) down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("RBAC: \(controlPlane.rbac.enabled ? "on" : "off") • roles \(controlPlane.rbac.roleCount) • bindings \(controlPlane.rbac.bindingCount) • denied \(controlPlane.rbac.deniedCount)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("OTel: \(controlPlane.otel.otlpConfigured ? "configured" : "off") • traced \(controlPlane.otel.tracedServers)/\(controlPlane.otel.totalServers)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("Cost: \(controlPlane.cost.totalCalls) calls • errors \(controlPlane.cost.totalErrors) • denied \(controlPlane.cost.totalDenied)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Control-plane telemetry unavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Text("Read-only in Wave 1. Presence operations stay in HUD/TUI for now.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

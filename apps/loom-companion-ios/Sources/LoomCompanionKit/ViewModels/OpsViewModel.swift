@@ -30,6 +30,7 @@ public final class OpsViewModel {
     public var graphPath: MobileGraphPath?
 
     public var reasoningChains: [MobileReasoningChain] = []
+    public var controlPlane: MobileControlPlaneResponse?
 
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
@@ -169,6 +170,15 @@ public final class OpsViewModel {
         } catch {
             reasoningChains = []
             markFailure("reasoning_chains", error)
+        }
+
+        attemptedSections += 1
+        do {
+            let response: MobileControlPlaneResponse = try await apiClient.request(.controlPlane)
+            controlPlane = response
+        } catch {
+            controlPlane = nil
+            markFailure("control_plane", error)
         }
 
         if failedSections.count == attemptedSections, let firstError {

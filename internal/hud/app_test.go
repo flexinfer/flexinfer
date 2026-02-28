@@ -862,6 +862,7 @@ func TestHandler_MobileReadParityEndpoints_ReturnEnvelope(t *testing.T) {
 		dataKey   string
 		mustArray bool
 	}{
+		{"control_plane", "/api/mobile/v1/control-plane", "cost", false},
 		{"tasks", "/api/mobile/v1/tasks", "tasks", true},
 		{"workflows", "/api/mobile/v1/workflows", "workflows", true},
 		{"workflow_detail", "/api/mobile/v1/workflows/wf-1", "workflow", false},
@@ -1125,6 +1126,7 @@ func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
 	}{
 		{"GET", "/api/mobile/v1/ping", ""},
 		{"GET", "/api/mobile/v1/dashboard", ""},
+		{"GET", "/api/mobile/v1/control-plane", ""},
 		{"GET", "/api/mobile/v1/sessions", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", ""},
@@ -2287,6 +2289,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 		// Read endpoints require mobile:read.
 		{"GET", "/api/mobile/v1/ping", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/dashboard", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/control-plane", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read", false},
@@ -2318,7 +2321,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end", "mobile:push"}
 
 	// Verify endpoint count matches registered mobile routes (excluding admin/revoke which uses X-Admin-Token).
-	const expectedScopeGatedEndpoints = 25
+	const expectedScopeGatedEndpoints = 26
 	if len(contracts) != expectedScopeGatedEndpoints {
 		t.Fatalf("contract test covers %d endpoints, expected %d — update when adding mobile routes",
 			len(contracts), expectedScopeGatedEndpoints)

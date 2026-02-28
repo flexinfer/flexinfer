@@ -682,6 +682,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	// API routes — mobile companion v1.
 	mux.HandleFunc("GET /api/mobile/v1/ping", a.withCORS(a.handleMobilePing))
 	mux.HandleFunc("GET /api/mobile/v1/dashboard", a.withCORS(a.handleMobileDashboard))
+	mux.HandleFunc("GET /api/mobile/v1/control-plane", a.withCORS(a.handleMobileControlPlane))
 	mux.HandleFunc("GET /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessions))
 	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}", a.withCORS(a.handleMobileSessionDetail))
 	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}/events", a.withCORS(a.handleMobileSessionEvents))

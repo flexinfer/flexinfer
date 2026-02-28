@@ -4,6 +4,7 @@ import Foundation
 public enum Endpoint: Sendable {
     case ping
     case dashboard
+    case controlPlane
     case sessions
     case sessionDetail(id: String)
     case sessionEvents(id: String, limit: Int? = nil)
@@ -27,7 +28,7 @@ public enum Endpoint: Sendable {
 
     var method: String {
         switch self {
-        case .ping, .dashboard, .sessions, .sessionDetail, .sessionEvents,
+        case .ping, .dashboard, .controlPlane, .sessions, .sessionDetail, .sessionEvents,
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
@@ -44,6 +45,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/ping"
         case .dashboard:
             return "/api/mobile/v1/dashboard"
+        case .controlPlane:
+            return "/api/mobile/v1/control-plane"
         case .sessions:
             return "/api/mobile/v1/sessions"
         case let .sessionDetail(id):

@@ -248,6 +248,160 @@ func (a *App) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type mobileControlPlaneCostTopAgent struct {
+	AgentID   string `json:"agent_id"`
+	CallCount int64  `json:"call_count"`
+	Errors    int64  `json:"errors"`
+	Denied    int64  `json:"denied"`
+	Cached    int64  `json:"cached"`
+}
+
+type mobileControlPlaneCostTopServer struct {
+	Server    string `json:"server"`
+	CallCount int64  `json:"call_count"`
+	Errors    int64  `json:"errors"`
+}
+
+type mobileControlPlaneCost struct {
+	Enabled         bool                             `json:"enabled"`
+	Timestamp       string                           `json:"timestamp,omitempty"`
+	TotalCalls      int64                            `json:"total_calls"`
+	TotalErrors     int64                            `json:"total_errors"`
+	TotalDenied     int64                            `json:"total_denied"`
+	TotalCached     int64                            `json:"total_cached"`
+	TotalDurationMs int64                            `json:"total_duration_ms"`
+	TopAgent        *mobileControlPlaneCostTopAgent  `json:"top_agent,omitempty"`
+	TopServer       *mobileControlPlaneCostTopServer `json:"top_server,omitempty"`
+}
+
+type mobileControlPlaneRBAC struct {
+	Enabled         bool   `json:"enabled"`
+	DefaultPolicy   string `json:"default_policy,omitempty"`
+	RoleCount       int    `json:"role_count"`
+	BindingCount    int    `json:"binding_count"`
+	GlobalDenyCount int    `json:"global_deny_count"`
+	RateLimitCount  int    `json:"rate_limit_count"`
+	DeniedCount     int    `json:"denied_count"`
+}
+
+type mobileControlPlaneOTel struct {
+	OTLPConfigured  bool   `json:"otlp_configured"`
+	OTLPEndpoint    string `json:"otlp_endpoint,omitempty"`
+	JSONLogsEnabled bool   `json:"json_logs_enabled"`
+	TracedServers   int    `json:"traced_servers"`
+	TotalServers    int    `json:"total_servers"`
+	TraceCoverage   string `json:"trace_coverage,omitempty"`
+}
+
+type mobileControlPlaneHealth struct {
+	TotalServers    int `json:"total_servers"`
+	HealthyServers  int `json:"healthy_servers"`
+	DegradedServers int `json:"degraded_servers"`
+	DownServers     int `json:"down_servers"`
+	IdleServers     int `json:"idle_servers"`
+	HubTargets      int `json:"hub_targets"`
+	LocalTargets    int `json:"local_targets"`
+	Unavailable     int `json:"unavailable_targets"`
+}
+
+func (a *App) handleMobileControlPlane(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	costSnap := mobileControlPlaneCost{}
+	if a.costMonitor != nil {
+		snapshot := a.costMonitor.Snapshot()
+		costSnap = mobileControlPlaneCost{
+			Enabled:         snapshot.Enabled,
+			Timestamp:       snapshot.Timestamp,
+			TotalCalls:      snapshot.TotalCalls,
+			TotalErrors:     snapshot.TotalErrors,
+			TotalDenied:     snapshot.TotalDenied,
+			TotalCached:     snapshot.TotalCached,
+			TotalDurationMs: snapshot.TotalDuration,
+		}
+		for _, agent := range snapshot.ByAgent {
+			if costSnap.TopAgent == nil || agent.CallCount > costSnap.TopAgent.CallCount {
+				costSnap.TopAgent = &mobileControlPlaneCostTopAgent{
+					AgentID:   agent.AgentID,
+					CallCount: agent.CallCount,
+					Errors:    agent.Errors,
+					Denied:    agent.Denied,
+					Cached:    agent.Cached,
+				}
+			}
+		}
+		for _, server := range snapshot.ByServer {
+			if costSnap.TopServer == nil || server.CallCount > costSnap.TopServer.CallCount {
+				costSnap.TopServer = &mobileControlPlaneCostTopServer{
+					Server:    server.Server,
+					CallCount: server.CallCount,
+					Errors:    server.Errors,
+				}
+			}
+		}
+	}
+
+	rbac := mobileControlPlaneRBAC{}
+	if result, err := a.client.RBACConfig(); err != nil {
+		a.logger.Debug("mobile control-plane: rbac-config call failed", "error", err)
+	} else if result != nil {
+		rbac = mobileControlPlaneRBAC{
+			Enabled:         result.Enabled,
+			DefaultPolicy:   strings.TrimSpace(result.DefaultPolicy),
+			RoleCount:       len(result.Roles),
+			BindingCount:    len(result.Bindings),
+			GlobalDenyCount: len(result.GlobalDeny),
+			RateLimitCount:  len(result.RateLimits),
+			DeniedCount:     len(result.RecentDenied),
+		}
+	}
+
+	otel := mobileControlPlaneOTel{}
+	if result, err := a.client.OTelStatus(); err != nil {
+		a.logger.Debug("mobile control-plane: otel-status call failed", "error", err)
+	} else if result != nil {
+		otel = mobileControlPlaneOTel{
+			OTLPConfigured:  result.OTLPConfigured,
+			OTLPEndpoint:    strings.TrimSpace(result.OTLPEndpoint),
+			JSONLogsEnabled: result.JSONLogsEnabled,
+			TracedServers:   result.TracedServers,
+			TotalServers:    result.TotalServers,
+			TraceCoverage:   strings.TrimSpace(result.TraceCoverage),
+		}
+	}
+
+	health := mobileControlPlaneHealth{}
+	if a.healthMonitor != nil {
+		healthSum := a.healthMonitor.Summary()
+		health = mobileControlPlaneHealth{
+			TotalServers:    healthSum.TotalServers,
+			HealthyServers:  healthSum.HealthyServers,
+			DegradedServers: healthSum.DegradedServers,
+			DownServers:     healthSum.DownServers,
+			IdleServers:     healthSum.IdleServers,
+		}
+		for _, server := range a.healthMonitor.Servers() {
+			switch strings.ToLower(strings.TrimSpace(server.Target)) {
+			case "hub":
+				health.HubTargets++
+			case "local":
+				health.LocalTargets++
+			default:
+				health.Unavailable++
+			}
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"cost":   costSnap,
+		"rbac":   rbac,
+		"otel":   otel,
+		"health": health,
+	})
+}
+
 func (a *App) handleMobileSessions(w http.ResponseWriter, r *http.Request) {
 	if !a.requireMobileScope(w, r, mobileScopeRead) {
 		return

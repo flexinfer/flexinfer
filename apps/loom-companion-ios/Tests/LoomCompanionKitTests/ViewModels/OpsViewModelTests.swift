@@ -80,6 +80,46 @@ struct OpsViewModelTests {
         client.graphEntitiesResponse = MobileGraphEntitiesResponse(entities: [])
         client.graphPathResponse = MobileGraphPathResponse(path: MobileGraphPath(nodes: [], length: 0))
         client.reasoningChainsResponse = MobileReasoningChainsResponse(chains: [])
+        client.controlPlaneResponse = MobileControlPlaneResponse(
+            cost: MobileControlPlaneCost(
+                enabled: true,
+                timestamp: "2026-02-25T10:00:00Z",
+                totalCalls: 10,
+                totalErrors: 1,
+                totalDenied: 0,
+                totalCached: 2,
+                totalDurationMs: 1200,
+                topAgent: nil,
+                topServer: nil
+            ),
+            rbac: MobileControlPlaneRBAC(
+                enabled: true,
+                defaultPolicy: "allow",
+                roleCount: 2,
+                bindingCount: 3,
+                globalDenyCount: 0,
+                rateLimitCount: 1,
+                deniedCount: 0
+            ),
+            otel: MobileControlPlaneOTel(
+                otlpConfigured: true,
+                otlpEndpoint: "http://otel-collector:4317",
+                jsonLogsEnabled: true,
+                tracedServers: 4,
+                totalServers: 4,
+                traceCoverage: "100%"
+            ),
+            health: MobileControlPlaneHealth(
+                totalServers: 4,
+                healthyServers: 4,
+                degradedServers: 0,
+                downServers: 0,
+                idleServers: 0,
+                hubTargets: 4,
+                localTargets: 0,
+                unavailableTargets: 0
+            )
+        )
 
         let vm = OpsViewModel(apiClient: client)
         await vm.load()
@@ -149,6 +189,46 @@ struct OpsViewModelTests {
             ]
         )
         client.reasoningChainsResponse = MobileReasoningChainsResponse(chains: [])
+        client.controlPlaneResponse = MobileControlPlaneResponse(
+            cost: MobileControlPlaneCost(
+                enabled: true,
+                timestamp: nil,
+                totalCalls: 0,
+                totalErrors: 0,
+                totalDenied: 0,
+                totalCached: 0,
+                totalDurationMs: 0,
+                topAgent: nil,
+                topServer: nil
+            ),
+            rbac: MobileControlPlaneRBAC(
+                enabled: false,
+                defaultPolicy: nil,
+                roleCount: 0,
+                bindingCount: 0,
+                globalDenyCount: 0,
+                rateLimitCount: 0,
+                deniedCount: 0
+            ),
+            otel: MobileControlPlaneOTel(
+                otlpConfigured: false,
+                otlpEndpoint: nil,
+                jsonLogsEnabled: false,
+                tracedServers: 0,
+                totalServers: 0,
+                traceCoverage: nil
+            ),
+            health: MobileControlPlaneHealth(
+                totalServers: 0,
+                healthyServers: 0,
+                degradedServers: 0,
+                downServers: 0,
+                idleServers: 0,
+                hubTargets: 0,
+                localTargets: 0,
+                unavailableTargets: 0
+            )
+        )
         client.endpointFailures["/api/mobile/v1/graph/path"] = .apiError(code: .upstreamError, message: "path unavailable", requestId: "req-path-1")
 
         let vm = OpsViewModel(apiClient: client)

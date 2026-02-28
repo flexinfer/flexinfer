@@ -26,6 +26,7 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var graphPathResponse: MobileGraphPathResponse?
     var reasoningChainsResponse: MobileReasoningChainsResponse?
     var reasoningChainDetailResponse: MobileReasoningChainDetailResponse?
+    var controlPlaneResponse: MobileControlPlaneResponse?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -40,6 +41,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = dashboardResponse as? T { return r }
         case .sessions:
             if let r = sessionsResponse as? T { return r }
+        case .controlPlane:
+            if let r = controlPlaneResponse as? T { return r }
         case .sessionDetail:
             if let r = sessionDetailResponse as? T { return r }
         case .sessionEvents:
