@@ -206,10 +206,14 @@ func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.To
 
 func getKubeConfig() string {
 	if v := os.Getenv("MCP_K8S_KUBECONFIG"); v != "" {
-		return v
+		if kc := firstExistingPath(v); kc != "" {
+			return kc
+		}
 	}
 	if v := os.Getenv("KUBECONFIG"); v != "" {
-		return v
+		if kc := firstExistingPath(v); kc != "" {
+			return kc
+		}
 	}
 
 	// Check well-known paths; return "" to let kubectl use in-cluster config.
@@ -228,6 +232,22 @@ func getKubeConfig() string {
 	return "" // in-cluster or kubectl default
 }
 
+// firstExistingPath returns the first existing file path from a list.
+// KUBECONFIG can contain multiple paths (OS-specific list separator).
+func firstExistingPath(raw string) string {
+	for _, candidate := range filepath.SplitList(raw) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func runKubectl(ctx context.Context, contextName string, args ...string) (string, error) {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		timeoutSeconds := env.Int("MCP_K8S_OPS_TIMEOUT_SECONDS", 55)
@@ -238,17 +258,17 @@ func runKubectl(ctx context.Context, contextName string, args ...string) (string
 		}
 	}
 
-	var baseArgs []string
+	// Place --kubeconfig and --context after handler args to avoid
+	// kubectl v1.34+ "flags cannot be placed before plugin name" error.
+	finalArgs := append([]string{}, args...)
 	if kc := getKubeConfig(); kc != "" {
-		baseArgs = append(baseArgs, "--kubeconfig", kc)
+		finalArgs = append(finalArgs, "--kubeconfig", kc)
 	}
 	if contextName != "" {
-		baseArgs = append(baseArgs, "--context", contextName)
+		finalArgs = append(finalArgs, "--context", contextName)
 	} else if v := os.Getenv("KUBECONTEXT"); v != "" {
-		baseArgs = append(baseArgs, "--context", v)
+		finalArgs = append(finalArgs, "--context", v)
 	}
-
-	finalArgs := append(baseArgs, args...)
 	cmd := execCommand(ctx, "kubectl", finalArgs...)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
