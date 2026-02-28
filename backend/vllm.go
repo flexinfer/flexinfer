@@ -107,11 +107,47 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
+	// Quantization method (awq, gptq, fp8, etc.)
+	if quant := spec.ConfigString("quantization", ""); quant != "" {
+		args = append(args, "--quantization", quant)
+	}
+
+	// Served model name — controls the model name in /v1/models and routing
+	if name := spec.ConfigString("servedModelName", ""); name != "" {
+		args = append(args, "--served-model-name", name)
+	}
+
+	// KV cache dtype (auto, fp8_e5m2). FP8 requires MI300X+ hardware.
+	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
+		args = append(args, "--kv-cache-dtype", kvDtype)
+	}
+
+	// Prefix caching — enabled by default in V1, allow explicit control
+	if spec.Config != nil {
+		if _, ok := spec.Config["enablePrefixCaching"]; ok {
+			if spec.ConfigBool("enablePrefixCaching", true) {
+				args = append(args, "--enable-prefix-caching")
+			} else {
+				args = append(args, "--no-prefix-caching")
+			}
+		}
+	}
+
 	// Tool calling support
 	if spec.ConfigBool("enableToolCalling", false) {
 		args = append(args, "--enable-auto-tool-choice")
 		parser := spec.ConfigString("toolCallParser", "hermes")
 		args = append(args, "--tool-call-parser", parser)
+	}
+
+	// Reasoning parser for models with <think> blocks (e.g., DeepSeek-R1)
+	if rp := spec.ConfigString("reasoningParser", ""); rp != "" {
+		args = append(args, "--reasoning-parser", rp)
+	}
+
+	// Disable stats logging to reduce log noise in production
+	if spec.ConfigBool("disableLogStats", false) {
+		args = append(args, "--disable-log-stats")
 	}
 
 	return args

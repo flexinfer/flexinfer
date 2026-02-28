@@ -533,3 +533,159 @@ func TestVLLMBackendEnv_DeviceIsolationOverrides(t *testing.T) {
 		t.Errorf("expected GPU_DEVICE_ORDINAL=2, got %q", v)
 	}
 }
+
+func TestVLLMBackendArgs_Quantization(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"quantization": "awq",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--quantization"]; v != "awq" {
+		t.Errorf("expected --quantization=awq, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_ServedModelName(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "org/long-model-name",
+		Config: map[string]interface{}{
+			"servedModelName": "my-model",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--served-model-name"]; v != "my-model" {
+		t.Errorf("expected --served-model-name=my-model, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_KVCacheDtype(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"kvCacheDtype": "fp8_e5m2",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--kv-cache-dtype"]; v != "fp8_e5m2" {
+		t.Errorf("expected --kv-cache-dtype=fp8_e5m2, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"enablePrefixCaching": false,
+		},
+	}
+
+	args := b.Args(spec)
+	found := false
+	for _, a := range args {
+		if a == "--no-prefix-caching" {
+			found = true
+		}
+		if a == "--enable-prefix-caching" {
+			t.Error("should not have --enable-prefix-caching when explicitly disabled")
+		}
+	}
+	if !found {
+		t.Error("expected --no-prefix-caching when enablePrefixCaching=false")
+	}
+}
+
+func TestVLLMBackendArgs_PrefixCachingNotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	// No enablePrefixCaching key in config — should not emit either flag
+	spec := &ModelSpec{
+		Model:  "test-model",
+		Config: map[string]interface{}{},
+	}
+
+	args := b.Args(spec)
+	for _, a := range args {
+		if a == "--enable-prefix-caching" || a == "--no-prefix-caching" {
+			t.Errorf("should not emit prefix caching flag when not set in config, got %q", a)
+		}
+	}
+}
+
+func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "deepseek-r1",
+		Config: map[string]interface{}{
+			"reasoningParser": "deepseek_r1",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--reasoning-parser"]; v != "deepseek_r1" {
+		t.Errorf("expected --reasoning-parser=deepseek_r1, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"disableLogStats": true,
+		},
+	}
+
+	args := b.Args(spec)
+	found := false
+	for _, a := range args {
+		if a == "--disable-log-stats" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected --disable-log-stats when disableLogStats=true")
+	}
+}
