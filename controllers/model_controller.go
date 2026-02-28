@@ -944,6 +944,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		Resources:      resources,
 		ReadinessProbe: probe,
 		StartupProbe:   startupProbe,
+		// Set K8s defaults explicitly to prevent reconcile loops.
+		// The API server adds these on write; without them, every read-back
+		// differs from the generated spec, causing continuous updates.
+		TerminationMessagePath:   "/dev/termination-log",
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
 
 	// Add volume mounts if backend needs volume
@@ -1017,6 +1022,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				{Name: "model", MountPath: "/src", ReadOnly: true},
 				{Name: "flash-tmpfs", MountPath: "/models"},
 			},
+			// Set K8s defaults explicitly to prevent reconcile loops.
+			// The API server adds these on write; without them, every read-back
+			// differs from the generated spec, causing continuous updates.
+			TerminationMessagePath:   "/dev/termination-log",
+			TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		}
 		initContainers = append(initContainers, flashContainer)
 
