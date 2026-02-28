@@ -24,9 +24,9 @@ ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 # Faster kernel dispatch on ROCm
 ENV HIP_FORCE_DEV_KERNARG=1
 
-# vLLM-Omni on gfx1100: Triton FA OFF — omni attention paths not validated
-# with Triton flash attention on RDNA3. Standard attention works fine.
-ENV VLLM_USE_TRITON_FLASH_ATTN=0
+# Triton flash attention for RDNA3 (via AOTriton, base image has
+# FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE). Enabled for perf testing.
+ENV VLLM_USE_TRITON_FLASH_ATTN=1
 # AWQ quantization via Triton (required for AWQ models on ROCm)
 ENV VLLM_USE_TRITON_AWQ=1
 # AITER: disabled (MI300X-optimized, not RDNA3)

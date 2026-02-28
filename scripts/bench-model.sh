@@ -41,7 +41,12 @@ REPORT_DIR="${REPORT_DIR:-/tmp}"
 
 RUN_ID="bench-$(date +%Y%m%dT%H%M%S)-$(openssl rand -hex 3)"
 GIT_SHA="$(git -C "$(dirname "$0")/.." rev-parse --short HEAD 2>/dev/null || echo "unknown")"
-API_URL="${ENDPOINT}/model/${MODEL}/v1/chat/completions"
+# DIRECT=1 bypasses proxy /model/<name> prefix (for port-forwarded pods)
+if [[ "${DIRECT:-0}" == "1" ]]; then
+    API_URL="${ENDPOINT}/v1/chat/completions"
+else
+    API_URL="${ENDPOINT}/model/${MODEL}/v1/chat/completions"
+fi
 REPORT_JSON="${REPORT_DIR}/bench-model-${MODEL}-${RUN_ID}.json"
 
 # Colors
