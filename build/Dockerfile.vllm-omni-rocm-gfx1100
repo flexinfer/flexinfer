@@ -1,8 +1,8 @@
 # vLLM-Omni for AMD gfx1100 (RX 7900 series) — multimodal generation
 # Layers vllm-omni pip package on top of the prebuilt Navi vLLM image.
 #
-# Base: ROCm 7.2, PyTorch 2.9, vLLM 0.14.0rc0 (Navi-optimized)
-# Omni: vllm-omni 0.14.0 (pip, matches base vLLM version)
+# Base: ROCm 7.2, PyTorch 2.9, vLLM ~0.14.0rc1.dev2 (Navi-optimized)
+# Omni: vllm-omni 0.14.0 (pip, with attention registry shim)
 #
 # Key difference from FA image: Triton FA is OFF. The omni pipeline uses
 # different attention code paths that are not validated with Triton FA on RDNA3.
@@ -32,7 +32,15 @@ ENV VLLM_USE_TRITON_AWQ=1
 # AITER: disabled (MI300X-optimized, not RDNA3)
 ENV VLLM_ROCM_USE_AITER=0
 
-# Install vllm-omni on top of base vLLM (must match base vLLM version)
+# Shim: vllm.v1.attention.backends.registry module
+# The AMD Navi base image uses a vLLM fork (~0.14.0rc1.dev2) that predates
+# the attention registry restructure (vllm-project/vllm#31916, Jan 9 2026).
+# vllm-omni 0.14.0 imports AttentionBackendEnum from this module.
+# This shim provides the minimal registry API using pure Python — no compiled
+# extensions needed. Sourced from upstream vLLM v0.14.0 stable.
+COPY build/vllm-omni-shims/registry.py /opt/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/registry.py
+
+# Install vllm-omni on top of base vLLM
 RUN pip install --no-cache-dir \
     vllm-omni==0.14.0 \
     diffusers>=0.30.0 \
@@ -42,6 +50,12 @@ RUN pip install --no-cache-dir \
     soundfile \
     sox \
     "numpy<2"
+
+# Compat patch: vllm-omni 0.14.0 expects external_req_id on EngineCoreRequest
+# but the AMD Navi base image's vLLM (~0.14.0rc1.dev2) predates vllm-project/vllm#27987
+# (Dec 23 2025) which added this field. Use getattr() for safe fallback.
+RUN sed -i 's/external_req_id=request\.external_req_id/external_req_id=getattr(request, "external_req_id", None)/' \
+    /opt/venv/lib/python3.12/site-packages/vllm_omni/request.py
 
 # onnxruntime-rocm for omni audio pipelines (replaces onnxruntime)
 RUN pip uninstall -y onnxruntime 2>/dev/null; \
