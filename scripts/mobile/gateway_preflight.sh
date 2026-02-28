@@ -10,6 +10,7 @@ TOKEN_FILE="${HOME}/.config/loom/mobile-operator-token"
 
 failures=0
 TMP_DIR=""
+CF_ACCESS_HEADERS_CONFIGURED=0
 
 pass() { echo "PASS: $*"; }
 warn() { echo "WARN: $*"; }
@@ -94,17 +95,30 @@ detect_gateway_url_from_ingress() {
 
 build_cf_access_headers() {
   local id secret
-  id="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_ID HUD_MOBILE_CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_ID)"
-  secret="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_SECRET HUD_MOBILE_CF_ACCESS_CLIENT_SECRET CF_ACCESS_CLIENT_SECRET)"
+  id="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_ID HUD_MOBILE_CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_ID CLOUDFLARE_ACCESS_CLIENT_ID)"
+  secret="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_SECRET HUD_MOBILE_CF_ACCESS_CLIENT_SECRET CF_ACCESS_CLIENT_SECRET CLOUDFLARE_ACCESS_CLIENT_SECRET)"
   if [ -n "${id}" ] && [ -n "${secret}" ]; then
     CF_ACCESS_CLIENT_ID="${id}"
     CF_ACCESS_CLIENT_SECRET="${secret}"
+    CF_ACCESS_HEADERS_CONFIGURED=1
     pass "Cloudflare Access service-token headers are configured"
   elif [ -n "${id}" ] || [ -n "${secret}" ]; then
     fail "Cloudflare Access headers are partially configured; set both client id and client secret"
   else
     warn "Cloudflare Access service-token headers are not configured in env/hud.env/ai.env"
   fi
+}
+
+is_cf_access_challenge() {
+  local location="${1:-}"
+  local body="${2:-}"
+  if echo "${location}" | rg -qi 'cloudflareaccess\.com|/cdn-cgi/access/login'; then
+    return 0
+  fi
+  if echo "${body}" | rg -qi 'cloudflare access|<title>.*cloudflare access|App AUD|Ray ID'; then
+    return 0
+  fi
+  return 1
 }
 
 run_probe() {
@@ -159,15 +173,23 @@ validate_mcp_surface() {
       pass "MCP surface reachable: ${url}"
       ;;
     302|303|307|308)
-      if echo "${PROBE_LOCATION}" | rg -qi 'cloudflareaccess\.com|/cdn-cgi/access/login'; then
-        fail "MCP surface redirects to Cloudflare Access login (${PROBE_LOCATION})"
+      if is_cf_access_challenge "${PROBE_LOCATION}" "${PROBE_BODY}"; then
+        if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 1 ]; then
+          fail "MCP surface redirects to Cloudflare Access login (${PROBE_LOCATION})"
+        else
+          warn "MCP surface is Cloudflare Access-protected and service-token headers are not configured; skipping external validation"
+        fi
       else
         fail "MCP surface redirected unexpectedly (${PROBE_STATUS}) to ${PROBE_LOCATION}"
       fi
       ;;
     401|403)
-      if echo "${PROBE_BODY}" | rg -qi 'cloudflare access|<html|<title'; then
-        fail "MCP surface is blocked by Cloudflare Access challenge (configure service-token headers)"
+      if is_cf_access_challenge "${PROBE_LOCATION}" "${PROBE_BODY}"; then
+        if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 1 ]; then
+          fail "MCP surface is blocked by Cloudflare Access challenge despite configured service-token headers"
+        else
+          warn "MCP surface is blocked by Cloudflare Access challenge; skipping external validation until headers are configured"
+        fi
       else
         fail "MCP surface returned HTTP ${PROBE_STATUS}; check gateway policy and headers"
       fi
@@ -195,8 +217,12 @@ validate_mobile_surface() {
     401)
       if echo "${PROBE_BODY}" | rg -q '"ok"\s*:\s*false' && echo "${PROBE_BODY}" | rg -q '"code"\s*:\s*"(unauthorized|not_configured|token_revoked)"'; then
         pass "Mobile route exists and returned auth envelope: ${url}"
-      elif echo "${PROBE_BODY}" | rg -qi 'cloudflare access|<html|<title'; then
-        fail "Mobile route is blocked by Cloudflare Access challenge (not mobile JSON)"
+      elif is_cf_access_challenge "${PROBE_LOCATION}" "${PROBE_BODY}"; then
+        if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 1 ]; then
+          fail "Mobile route is blocked by Cloudflare Access challenge despite configured service-token headers"
+        else
+          warn "Mobile route is Cloudflare Access-protected and headers are not configured; skipping external mobile probe"
+        fi
       else
         fail "Mobile route returned HTTP 401 without mobile API envelope"
       fi
@@ -205,15 +231,23 @@ validate_mobile_surface() {
       fail "Mobile route missing: ${url} returned 404 (gateway path split not configured)"
       ;;
     302|303|307|308)
-      if echo "${PROBE_LOCATION}" | rg -qi 'cloudflareaccess\.com|/cdn-cgi/access/login'; then
-        fail "Mobile route redirects to Cloudflare Access login (${PROBE_LOCATION})"
+      if is_cf_access_challenge "${PROBE_LOCATION}" "${PROBE_BODY}"; then
+        if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 1 ]; then
+          fail "Mobile route redirects to Cloudflare Access login (${PROBE_LOCATION})"
+        else
+          warn "Mobile route redirects to Cloudflare Access and headers are not configured; skipping external mobile probe"
+        fi
       else
         fail "Mobile route redirected unexpectedly (${PROBE_STATUS}) to ${PROBE_LOCATION}"
       fi
       ;;
     *)
-      if echo "${PROBE_BODY}" | rg -qi 'cloudflare access|<html|<title'; then
-        fail "Mobile route returned non-API HTML response (HTTP ${PROBE_STATUS})"
+      if is_cf_access_challenge "${PROBE_LOCATION}" "${PROBE_BODY}"; then
+        if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 1 ]; then
+          fail "Mobile route returned non-API Cloudflare Access response (HTTP ${PROBE_STATUS})"
+        else
+          warn "Mobile route is Access-gated and returned non-API HTML; skipping external mobile probe"
+        fi
       else
         fail "Mobile route returned HTTP ${PROBE_STATUS} (expected 200/401 mobile JSON envelope)"
       fi

@@ -9,6 +9,7 @@ HUD_ENV_FILE="${HOME}/.config/loom/hud.env"
 SECRETS_ENV_FILE="${HOME}/.config/secrets/ai.env"
 TOKEN_FILE="${HOME}/.config/loom/mobile-operator-token"
 SCOPES_DEFAULT="mobile:read,mobile:session:create,mobile:session:end,mobile:push"
+CF_ACCESS_HEADERS_CONFIGURED=0
 
 require_cmd() {
   local cmd="$1"
@@ -146,6 +147,12 @@ fi
 
 CF_ACCESS_CLIENT_ID="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_ID HUD_MOBILE_CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_ID)"
 CF_ACCESS_CLIENT_SECRET="$(resolve_first_value MOBILE_GATEWAY_CF_ACCESS_CLIENT_SECRET HUD_MOBILE_CF_ACCESS_CLIENT_SECRET CF_ACCESS_CLIENT_SECRET)"
+if [ -z "${CF_ACCESS_CLIENT_ID}" ]; then
+  CF_ACCESS_CLIENT_ID="$(resolve_config_value CLOUDFLARE_ACCESS_CLIENT_ID)"
+fi
+if [ -z "${CF_ACCESS_CLIENT_SECRET}" ]; then
+  CF_ACCESS_CLIENT_SECRET="$(resolve_config_value CLOUDFLARE_ACCESS_CLIENT_SECRET)"
+fi
 if [ -n "${CF_ACCESS_CLIENT_ID}" ] && [ -z "${CF_ACCESS_CLIENT_SECRET}" ]; then
   echo "ERROR: Cloudflare Access client secret is missing" >&2
   exit 1
@@ -155,6 +162,7 @@ if [ -n "${CF_ACCESS_CLIENT_SECRET}" ] && [ -z "${CF_ACCESS_CLIENT_ID}" ]; then
   exit 1
 fi
 if [ -n "${CF_ACCESS_CLIENT_ID}" ]; then
+  CF_ACCESS_HEADERS_CONFIGURED=1
   echo "Using Cloudflare Access service-token headers from local config"
 else
   echo "WARN: Cloudflare Access service-token headers are not configured locally"
@@ -251,12 +259,18 @@ for _ in $(seq 1 40); do
 done
 
 if [ "${ready}" -ne 1 ]; then
-  echo "ERROR: mobile ping did not become ready at ${GATEWAY_URL%/}/api/mobile/v1/ping" >&2
-  echo "Last HTTP status: ${ping_status:-unknown}" >&2
-  if [ -n "${ping_body:-}" ]; then
-    echo "Last response body: ${ping_body}" >&2
+  if [ "${CF_ACCESS_HEADERS_CONFIGURED}" -eq 0 ] && [ "${ping_status:-}" = "401" ] && echo "${ping_body:-}" | rg -qi 'cloudflare access|App AUD|Ray ID'; then
+    echo "WARN: gateway mobile ping is Cloudflare Access-protected and service-token headers are not configured." >&2
+    echo "WARN: bootstrap completed (token rotated + rollout restarted), but remote ping verification was skipped." >&2
+    echo "WARN: Set MOBILE_GATEWAY_CF_ACCESS_CLIENT_ID and MOBILE_GATEWAY_CF_ACCESS_CLIENT_SECRET to enable strict verification." >&2
+  else
+    echo "ERROR: mobile ping did not become ready at ${GATEWAY_URL%/}/api/mobile/v1/ping" >&2
+    echo "Last HTTP status: ${ping_status:-unknown}" >&2
+    if [ -n "${ping_body:-}" ]; then
+      echo "Last response body: ${ping_body}" >&2
+    fi
+    exit 1
   fi
-  exit 1
 fi
 
 if command -v pbcopy >/dev/null 2>&1; then
