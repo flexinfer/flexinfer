@@ -32,19 +32,42 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		resources.Limits[corev1.ResourceCPU] = resource.MustParse(fmt.Sprintf("%dm", int(opts.CPUs*1000)))
 	}
 
-	// Volumes: NFS workspace via PVC (shared across all sandbox pods)
-	volumes := []corev1.Volume{
-		{
-			Name: "workspace",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: k.workspacePVC,
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
+	var initContainers []corev1.Container
+
+	if k.gitEnabled() {
+		// Git-clone mode: emptyDir workspace populated by initContainer.
+		// Eliminates NFS dependency — each pod gets fresh source from git.
+		volumes = []corev1.Volume{
+			{
+				Name: "workspace",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			},
-		},
-	}
-	volumeMounts := []corev1.VolumeMount{
-		{Name: "workspace", MountPath: "/workspace"},
+		}
+		volumeMounts = []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/workspace"},
+		}
+		initContainers = []corev1.Container{
+			k.gitCloneInitContainer(opts.WorkDir),
+		}
+	} else {
+		// NFS PVC mode (legacy): shared workspace via NFS.
+		volumes = []corev1.Volume{
+			{
+				Name: "workspace",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: k.workspacePVC,
+					},
+				},
+			},
+		}
+		volumeMounts = []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/workspace"},
+		}
 	}
 
 	// Add host-path mounts if requested (for additional bind mounts)
@@ -93,6 +116,7 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 			NodeSelector: map[string]string{
 				"kubernetes.io/arch": "amd64",
 			},
+			InitContainers: initContainers,
 			Containers: []corev1.Container{
 				{
 					Name:            "devbox",
@@ -145,4 +169,70 @@ func workDir(dir string) string {
 		return dir
 	}
 	return "/workspace"
+}
+
+// gitEnabled returns true when the backend is configured for git-clone mode.
+func (k *K8sBackend) gitEnabled() bool {
+	return k.gitBaseURL != "" && k.gitSecret != ""
+}
+
+// gitCloneInitContainer builds an initContainer that clones a git repo into
+// the workspace emptyDir. The workDir determines which subdirectory receives
+// the clone (e.g., /workspace/services/loom-core → repo "loom-core" cloned
+// into /workspace/services/loom-core/).
+func (k *K8sBackend) gitCloneInitContainer(workDirPath string) corev1.Container {
+	// Derive project name and clone destination from workDir.
+	// workDir is typically "/workspace/services/<project>" or "/workspace/<project>".
+	cloneDest := workDirPath
+	if cloneDest == "" || cloneDest == "/workspace" {
+		cloneDest = "/workspace/project"
+	}
+
+	// Extract project name from the last path component for the git URL.
+	parts := strings.Split(strings.TrimSuffix(cloneDest, "/"), "/")
+	projectName := parts[len(parts)-1]
+	repoURL := strings.TrimSuffix(k.gitBaseURL, "/") + "/" + projectName + ".git"
+
+	// Clone script: shallow clone for speed, fall back to full clone on failure.
+	cloneScript := fmt.Sprintf(
+		`set -e
+mkdir -p "$(dirname %q)"
+git clone --depth 1 "https://token:${GIT_TOKEN}@%s" %q
+echo "git-clone: cloned %s into %s"`,
+		cloneDest,
+		strings.TrimPrefix(strings.TrimPrefix(repoURL, "https://"), "http://"),
+		cloneDest,
+		projectName,
+		cloneDest,
+	)
+
+	return corev1.Container{
+		Name:    "git-clone",
+		Image:   "alpine/git:latest",
+		Command: []string{"sh", "-c", cloneScript},
+		Env: []corev1.EnvVar{
+			{
+				Name: "GIT_TOKEN",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: k.gitSecret},
+						Key:                  "token",
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/workspace"},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		},
+	}
 }

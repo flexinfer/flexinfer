@@ -59,8 +59,11 @@ func run(ctx context.Context) error {
 		defaultIdleTimeout = 2 * time.Hour
 	}
 
-	// NFS cache flush: default true for K8s backend
-	nfsFlush := env.Bool("DEVBOX_NFS_FLUSH", backendType == "k8s" || backendType == "kubernetes")
+	// NFS cache flush: default true for K8s backend, but disabled when using git-clone mode
+	// (git-clone uses emptyDir, not NFS — no stale attr cache to flush).
+	isK8s := backendType == "k8s" || backendType == "kubernetes"
+	gitMode := env.String("DEVBOX_K8S_GIT_BASE_URL", "") != ""
+	nfsFlush := env.Bool("DEVBOX_NFS_FLUSH", isK8s && !gitMode)
 
 	// Parse warm projects from comma-separated env var
 	var warmProjects []string
@@ -90,6 +93,8 @@ func run(ctx context.Context) error {
 		k8sImagePullSecret: env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
 		builderImage:       builderImage(),
 		nfsFlush:           nfsFlush,
+		gitBaseURL:         env.String("DEVBOX_K8S_GIT_BASE_URL", ""),
+		gitSecret:          env.String("DEVBOX_K8S_GIT_SECRET", ""),
 		warmProjects:       warmProjects,
 	})
 	if err != nil {

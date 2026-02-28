@@ -29,6 +29,13 @@ func testK8sBackend() *K8sBackend {
 	}
 }
 
+func testK8sBackendGitClone() *K8sBackend {
+	k := testK8sBackend()
+	k.gitBaseURL = "https://gitlab.blevins.dev/homelab"
+	k.gitSecret = "gitlab-creds"
+	return k
+}
+
 func envMap(vars []corev1.EnvVar) map[string]string {
 	out := make(map[string]string, len(vars))
 	for _, v := range vars {
@@ -331,6 +338,141 @@ func TestBuildPodSpec_ImagePullPolicy_Latest(t *testing.T) {
 	got := pod.Spec.Containers[0].ImagePullPolicy
 	if got != corev1.PullAlways {
 		t.Fatalf("expected Always for :latest image, got %v", got)
+	}
+}
+
+func TestGitEnabled(t *testing.T) {
+	k := testK8sBackend()
+	if k.gitEnabled() {
+		t.Fatal("expected gitEnabled=false for default backend")
+	}
+
+	k.gitBaseURL = "https://gitlab.example.com/team"
+	if k.gitEnabled() {
+		t.Fatal("expected gitEnabled=false when gitSecret is empty")
+	}
+
+	k.gitSecret = "git-creds"
+	if !k.gitEnabled() {
+		t.Fatal("expected gitEnabled=true when both gitBaseURL and gitSecret are set")
+	}
+}
+
+func TestGitCloneInitContainer(t *testing.T) {
+	k := testK8sBackendGitClone()
+
+	ic := k.gitCloneInitContainer("/workspace/services/loom-core")
+	if ic.Name != "git-clone" {
+		t.Fatalf("expected initContainer name 'git-clone', got %q", ic.Name)
+	}
+	if ic.Image != "alpine/git:latest" {
+		t.Fatalf("expected alpine/git image, got %q", ic.Image)
+	}
+
+	// Should have GIT_TOKEN env from secret ref
+	if len(ic.Env) != 1 || ic.Env[0].Name != "GIT_TOKEN" {
+		t.Fatalf("expected GIT_TOKEN env, got: %#v", ic.Env)
+	}
+	if ic.Env[0].ValueFrom == nil || ic.Env[0].ValueFrom.SecretKeyRef == nil {
+		t.Fatal("expected GIT_TOKEN from secretKeyRef")
+	}
+	if ic.Env[0].ValueFrom.SecretKeyRef.Name != "gitlab-creds" {
+		t.Fatalf("expected secret name 'gitlab-creds', got %q", ic.Env[0].ValueFrom.SecretKeyRef.Name)
+	}
+
+	// Clone script should reference the correct repo URL and destination
+	script := ic.Command[2]
+	if !strings.Contains(script, "gitlab.blevins.dev/homelab/loom-core.git") {
+		t.Fatalf("expected repo URL in clone script, got: %s", script)
+	}
+	if !strings.Contains(script, "/workspace/services/loom-core") {
+		t.Fatalf("expected clone dest /workspace/services/loom-core, got: %s", script)
+	}
+
+	// Should mount workspace volume
+	if len(ic.VolumeMounts) != 1 || ic.VolumeMounts[0].MountPath != "/workspace" {
+		t.Fatalf("expected /workspace volume mount, got: %#v", ic.VolumeMounts)
+	}
+}
+
+func TestBuildPodSpec_GitCloneMode(t *testing.T) {
+	k := testK8sBackendGitClone()
+	pod := k.buildPodSpec(StartOpts{
+		Name:    "devbox-loom-core",
+		WorkDir: "/workspace/services/loom-core",
+		AgentID: "agent-1",
+	}, "registry.harbor.lan/devbox/loom-core:abc123")
+
+	// Should use emptyDir, not NFS PVC
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.Name != "workspace" {
+		t.Fatalf("expected workspace volume first, got: %q", wsVol.Name)
+	}
+	if wsVol.EmptyDir == nil {
+		t.Fatal("expected emptyDir workspace volume in git-clone mode")
+	}
+	if wsVol.PersistentVolumeClaim != nil {
+		t.Fatal("should not have PVC in git-clone mode")
+	}
+
+	// Should have a git-clone initContainer
+	if len(pod.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 initContainer, got %d", len(pod.Spec.InitContainers))
+	}
+	ic := pod.Spec.InitContainers[0]
+	if ic.Name != "git-clone" {
+		t.Fatalf("expected git-clone initContainer, got %q", ic.Name)
+	}
+}
+
+func TestBuildPodSpec_NFSMode(t *testing.T) {
+	k := testK8sBackend() // no git config → NFS mode
+	pod := k.buildPodSpec(StartOpts{
+		Name:    "devbox-loom-core",
+		WorkDir: "/workspace/services/loom-core",
+	}, "registry.harbor.lan/devbox/loom-core:abc123")
+
+	// Should use NFS PVC
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.PersistentVolumeClaim == nil {
+		t.Fatal("expected NFS PVC workspace volume in NFS mode")
+	}
+	if wsVol.PersistentVolumeClaim.ClaimName != "devbox-workspace-nfs" {
+		t.Fatalf("unexpected PVC name: %q", wsVol.PersistentVolumeClaim.ClaimName)
+	}
+
+	// Should NOT have initContainers
+	if len(pod.Spec.InitContainers) != 0 {
+		t.Fatalf("expected 0 initContainers in NFS mode, got %d", len(pod.Spec.InitContainers))
+	}
+}
+
+func TestBuildBuildahPodSpec_GitCloneMode(t *testing.T) {
+	k := testK8sBackendGitClone()
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "services/loom-core")
+
+	// Should use emptyDir for workspace, not NFS PVC
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.EmptyDir == nil {
+		t.Fatal("expected emptyDir workspace volume in git-clone mode for build pod")
+	}
+	if wsVol.PersistentVolumeClaim != nil {
+		t.Fatal("should not have PVC in git-clone mode for build pod")
+	}
+
+	// Should have a git-clone initContainer
+	if len(pod.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 initContainer, got %d", len(pod.Spec.InitContainers))
+	}
+	ic := pod.Spec.InitContainers[0]
+	if ic.Name != "git-clone" {
+		t.Fatalf("expected git-clone initContainer, got %q", ic.Name)
+	}
+
+	// The clone script should target the correct path derived from contextRel
+	script := ic.Command[2]
+	if !strings.Contains(script, "loom-core.git") {
+		t.Fatalf("expected loom-core.git in clone script, got: %s", script)
 	}
 }
 

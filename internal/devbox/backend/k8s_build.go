@@ -139,6 +139,36 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 		{Name: "auth", MountPath: "/run/containers/0/auth.json", SubPath: "config.json", ReadOnly: true},
 	}
 
+	// Workspace volume: emptyDir + git-clone initContainer when configured,
+	// otherwise NFS PVC (legacy).
+	var workspaceVolume corev1.Volume
+	var initContainers []corev1.Container
+
+	if k.gitEnabled() {
+		workspaceVolume = corev1.Volume{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					SizeLimit: resourcePtr(resource.MustParse("5Gi")),
+				},
+			},
+		}
+		// Build context path determines the clone target.
+		buildWorkDir := "/workspace/" + contextRel
+		initContainers = []corev1.Container{
+			k.gitCloneInitContainer(buildWorkDir),
+		}
+	} else {
+		workspaceVolume = corev1.Volume{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: k.workspacePVC,
+				},
+			},
+		}
+	}
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -159,6 +189,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 			NodeSelector: map[string]string{
 				"kubernetes.io/arch": "amd64",
 			},
+			InitContainers: initContainers,
 			Containers: []corev1.Container{
 				{
 					Name:    "buildah",
@@ -188,14 +219,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, con
 				},
 			},
 			Volumes: []corev1.Volume{
-				{
-					Name: "workspace",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: k.workspacePVC,
-						},
-					},
-				},
+				workspaceVolume,
 				{
 					Name: "dockerfile",
 					VolumeSource: corev1.VolumeSource{

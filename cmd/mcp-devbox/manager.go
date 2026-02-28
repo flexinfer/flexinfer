@@ -39,6 +39,10 @@ type managerConfig struct {
 	// NFS cache flush before each exec (default true for K8s backend)
 	nfsFlush bool
 
+	// Git-clone mode: populate workspace via git clone instead of NFS PVC
+	gitBaseURL string // base git URL (e.g., "https://gitlab.blevins.dev/homelab")
+	gitSecret  string // K8s secret name with git token (key: "token")
+
 	// Warm pool: pre-provision pods for these projects on startup
 	warmProjects []string
 }
@@ -166,6 +170,8 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			WorkspaceRoot:   cfg.workspaceRoot,
 			BuilderImage:    cfg.builderImage,
 			NFSFlush:        cfg.nfsFlush,
+			GitBaseURL:      cfg.gitBaseURL,
+			GitSecret:       cfg.gitSecret,
 		})
 		if err != nil {
 			return nil, err

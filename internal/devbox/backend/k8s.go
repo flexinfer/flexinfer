@@ -29,6 +29,8 @@ type K8sBackend struct {
 	workspaceRoot   string // host path to workspace (NFS export source)
 	builderImage    string // Buildah builder image
 	nfsFlush        bool   // prepend NFS cache flush to exec commands
+	gitBaseURL      string // base git URL for workspace repos (enables git-clone mode)
+	gitSecret       string // secret name containing git token (key: "token")
 }
 
 // K8sBackendConfig holds configuration for the K8s backend.
@@ -42,6 +44,8 @@ type K8sBackendConfig struct {
 	WorkspaceRoot   string // host path to workspace (for NFS-relative path computation)
 	BuilderImage    string // Buildah builder image (default: quay.io/buildah/stable:v1.38.0)
 	NFSFlush        bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
+	GitBaseURL      string // base git URL for repos (e.g., "https://gitlab.blevins.dev/homelab"); enables git-clone mode
+	GitSecret       string // secret name containing git token (key: "token"); required when GitBaseURL is set
 }
 
 // NewK8sBackend creates a new Kubernetes backend.
@@ -86,6 +90,8 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		workspaceRoot:   cfg.WorkspaceRoot,
 		builderImage:    cfg.BuilderImage,
 		nfsFlush:        cfg.NFSFlush,
+		gitBaseURL:      cfg.GitBaseURL,
+		gitSecret:       cfg.GitSecret,
 	}, nil
 }
 
