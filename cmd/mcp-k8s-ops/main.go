@@ -331,7 +331,7 @@ func handleGetPods(ctx context.Context, args map[string]any) (*mcp.CallToolResul
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
-	cmdArgs := []string{"-n", ns, "get", "pods"}
+	cmdArgs := []string{"get", "pods", "-n", ns}
 	if sel != "" {
 		cmdArgs = append(cmdArgs, "-l", sel)
 	}
@@ -359,7 +359,7 @@ func handleLogs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
-	cmdArgs := []string{"-n", ns, "logs", target}
+	cmdArgs := []string{"logs", target, "-n", ns}
 	if container != "" {
 		cmdArgs = append(cmdArgs, "-c", container)
 	}
@@ -393,14 +393,13 @@ func handleGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, e
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
-	cmdArgs := []string{}
+	cmdArgs := []string{"get", kind}
 	if ns != "" && !allNs {
 		cmdArgs = append(cmdArgs, "-n", ns)
 	}
 	if allNs {
 		cmdArgs = append(cmdArgs, "-A")
 	}
-	cmdArgs = append(cmdArgs, "get", kind)
 	if name != "" {
 		cmdArgs = append(cmdArgs, name)
 	}
@@ -431,7 +430,7 @@ func handleDescribe(ctx context.Context, args map[string]any) (*mcp.CallToolResu
 	ctx, cancel := withTimeoutSecondsArg(ctx, args)
 	defer cancel()
 
-	out, err := runKubectl(ctx, contextName, "-n", ns, "describe", kind, name)
+	out, err := runKubectl(ctx, contextName, "describe", kind, name, "-n", ns)
 	if err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -450,7 +449,7 @@ func handleExec(ctx context.Context, args map[string]any) (*mcp.CallToolResult, 
 		return mcp.ErrorResult(err), nil
 	}
 
-	cmdArgs := []string{"-n", ns, "exec", pod}
+	cmdArgs := []string{"exec", pod, "-n", ns}
 	if container != "" {
 		cmdArgs = append(cmdArgs, "-c", container)
 	}
