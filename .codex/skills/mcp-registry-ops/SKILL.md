@@ -11,10 +11,12 @@ Maintain the workspace's canonical MCP server registry and regenerate downstream
 
 - Find the registry:
   - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_discover.py --root .`
-- Generate client configs (Go generator via `loom`):
+- Generate client configs (preview by default, --apply to write):
   - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode`
-- Generate hub manifests (when changing hub deployments):
+  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode --apply`
+- Generate hub manifests (preview by default, --apply to write):
   - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/loom-hub/servers`
+  - `bash $CODEX_HOME/skills/mcp-registry-ops/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/loom-hub/servers --apply`
 
 ## Core Workflow
 
