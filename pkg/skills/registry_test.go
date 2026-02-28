@@ -373,6 +373,51 @@ skills:
 	}
 }
 
+func TestLoad_PriorityField(t *testing.T) {
+	tmpDir := t.TempDir()
+	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
+
+	content := `version: 1
+skills:
+  - name: high-prio
+    priority: 10
+    common:
+      description: "High priority"
+      instructions: "Do first."
+  - name: no-prio
+    common:
+      description: "No priority"
+      instructions: "Do later."
+  - name: low-prio
+    priority: 50
+    common:
+      description: "Low priority"
+      instructions: "Do last."
+`
+	if err := os.WriteFile(registryPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg, err := Load(registryPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(reg.Skills) != 3 {
+		t.Fatalf("expected 3 skills, got %d", len(reg.Skills))
+	}
+
+	if reg.Skills[0].Priority == nil || *reg.Skills[0].Priority != 10 {
+		t.Errorf("high-prio: expected priority 10, got %v", reg.Skills[0].Priority)
+	}
+	if reg.Skills[1].Priority != nil {
+		t.Errorf("no-prio: expected nil priority, got %v", *reg.Skills[1].Priority)
+	}
+	if reg.Skills[2].Priority == nil || *reg.Skills[2].Priority != 50 {
+		t.Errorf("low-prio: expected priority 50, got %v", reg.Skills[2].Priority)
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/skills-registry.yaml")
 	if err == nil {

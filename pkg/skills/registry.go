@@ -21,6 +21,7 @@ type Registry struct {
 type Skill struct {
 	Name       string                 `yaml:"name"`
 	Categories []string               `yaml:"categories,omitempty"`
+	Priority   *int                   `yaml:"priority,omitempty"` // Lower = first in composite output. Nil = after explicit priorities.
 	Common     *SkillSpec             `yaml:"common,omitempty"`
 	Targets    map[string]*TargetSpec `yaml:"targets,omitempty"`
 }

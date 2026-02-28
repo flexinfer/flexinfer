@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -281,6 +282,8 @@ func (g *Generator) generateForTarget(target string) error {
 
 	// Generate composite instructions.md for platforms that support it
 	if len(instructionSkills) > 0 {
+		sortSkillsByPriority(instructionSkills)
+
 		filename := "instructions.md"
 		if target == "gemini" {
 			filename = "GEMINI.md"
@@ -956,6 +959,26 @@ func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]
 // =========================================================================
 // Helpers
 // =========================================================================
+
+// sortSkillsByPriority sorts skills by explicit Priority (lower first).
+// Skills without a Priority come after explicitly prioritized ones.
+// Registry order is preserved among skills with equal or missing priority (stable sort).
+func sortSkillsByPriority(skills []*Skill) {
+	sort.SliceStable(skills, func(i, j int) bool {
+		pi := skills[i].Priority
+		pj := skills[j].Priority
+		if pi == nil && pj == nil {
+			return false // preserve registry order
+		}
+		if pi == nil {
+			return false // nil sorts after explicit
+		}
+		if pj == nil {
+			return true // explicit sorts before nil
+		}
+		return *pi < *pj
+	})
+}
 
 // stripFirstHeader removes the first # header and any immediately following blank lines.
 func stripFirstHeader(instructions string) string {

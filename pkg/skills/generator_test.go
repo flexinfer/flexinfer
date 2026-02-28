@@ -670,6 +670,153 @@ func TestUpdateRegistryDate_EmptyRegistryPath(t *testing.T) {
 	}
 }
 
+// =========================================================================
+// sortSkillsByPriority tests
+// =========================================================================
+
+func intPtr(n int) *int { return &n }
+
+func TestSortSkillsByPriority_ExplicitOrder(t *testing.T) {
+	skills := []*Skill{
+		{Name: "c", Priority: intPtr(30)},
+		{Name: "a", Priority: intPtr(10)},
+		{Name: "b", Priority: intPtr(20)},
+	}
+
+	sortSkillsByPriority(skills)
+
+	want := []string{"a", "b", "c"}
+	for i, s := range skills {
+		if s.Name != want[i] {
+			t.Errorf("position %d: got %q, want %q", i, s.Name, want[i])
+		}
+	}
+}
+
+func TestSortSkillsByPriority_NilAfterExplicit(t *testing.T) {
+	skills := []*Skill{
+		{Name: "no-prio-1"},
+		{Name: "explicit", Priority: intPtr(10)},
+		{Name: "no-prio-2"},
+	}
+
+	sortSkillsByPriority(skills)
+
+	if skills[0].Name != "explicit" {
+		t.Errorf("explicit priority should come first, got %q", skills[0].Name)
+	}
+	// Nil-priority skills preserve registry order among themselves.
+	if skills[1].Name != "no-prio-1" || skills[2].Name != "no-prio-2" {
+		t.Errorf("nil-priority skills should preserve order, got [%s, %s]", skills[1].Name, skills[2].Name)
+	}
+}
+
+func TestSortSkillsByPriority_AllNilPreservesOrder(t *testing.T) {
+	skills := []*Skill{
+		{Name: "z"},
+		{Name: "m"},
+		{Name: "a"},
+	}
+
+	sortSkillsByPriority(skills)
+
+	// With no priorities, registry order is preserved.
+	want := []string{"z", "m", "a"}
+	for i, s := range skills {
+		if s.Name != want[i] {
+			t.Errorf("position %d: got %q, want %q", i, s.Name, want[i])
+		}
+	}
+}
+
+func TestSortSkillsByPriority_EqualPriorityPreservesOrder(t *testing.T) {
+	skills := []*Skill{
+		{Name: "second", Priority: intPtr(10)},
+		{Name: "first", Priority: intPtr(10)},
+		{Name: "third", Priority: intPtr(10)},
+	}
+
+	sortSkillsByPriority(skills)
+
+	// Same priority → stable sort preserves registry order.
+	want := []string{"second", "first", "third"}
+	for i, s := range skills {
+		if s.Name != want[i] {
+			t.Errorf("position %d: got %q, want %q", i, s.Name, want[i])
+		}
+	}
+}
+
+func TestCompositeInstructions_OrderRespectsPriority(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+
+	// Create minimal source dirs so generation doesn't fail.
+	for _, name := range []string{"guardrails", "mcp-usage", "memory"} {
+		if err := os.MkdirAll(filepath.Join(sourceDir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	enabled := true
+	skills := []*Skill{
+		{
+			Name:     "guardrails",
+			Priority: intPtr(30),
+			Common:   &SkillSpec{Description: "Safety guardrails", Instructions: "# Guardrails\n\nBe safe."},
+			Targets:  map[string]*TargetSpec{"gemini": {Enabled: &enabled, Type: "instruction"}},
+		},
+		{
+			Name:   "mcp-usage",
+			Common: &SkillSpec{Description: "MCP usage core", Instructions: "# MCP Usage\n\nUse MCP tools."},
+			// No priority → comes after explicit priorities.
+			Targets: map[string]*TargetSpec{"gemini": {Enabled: &enabled, Type: "instruction"}},
+		},
+		{
+			Name:     "memory",
+			Priority: intPtr(10),
+			Common:   &SkillSpec{Description: "Memory practices", Instructions: "# Memory\n\nRemember things."},
+			Targets:  map[string]*TargetSpec{"gemini": {Enabled: &enabled, Type: "instruction"}},
+		},
+	}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: skills},
+		SourceDir: sourceDir,
+		Target:    "gemini",
+		RepoRoot:  tmpDir,
+		CodexHome: "/tmp/codex",
+	}
+
+	if err := g.generateForTarget("gemini"); err != nil {
+		t.Fatalf("generateForTarget: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".gemini", "GEMINI.md"))
+	if err != nil {
+		t.Fatalf("read GEMINI.md: %v", err)
+	}
+
+	content := string(data)
+
+	// memory (priority 10) should come before guardrails (priority 30),
+	// which should come before mcp-usage (no priority).
+	memIdx := strings.Index(content, "## Memory")
+	guardIdx := strings.Index(content, "## Guardrails")
+	mcpIdx := strings.Index(content, "## Mcp Usage")
+
+	if memIdx < 0 || guardIdx < 0 || mcpIdx < 0 {
+		t.Fatalf("missing expected sections in GEMINI.md:\n%s", content)
+	}
+
+	if memIdx > guardIdx {
+		t.Errorf("memory (priority 10) should appear before guardrails (priority 30)")
+	}
+	if guardIdx > mcpIdx {
+		t.Errorf("guardrails (priority 30) should appear before mcp-usage (no priority)")
+	}
+}
+
 func TestUpdateRegistryDate_NoUpdatedField(t *testing.T) {
 	tmpDir := t.TempDir()
 	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")
