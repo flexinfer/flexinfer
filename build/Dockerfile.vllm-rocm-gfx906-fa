@@ -63,7 +63,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Ensure cmake can find ROCm/HIP
+# ROCm 6.4.4 removed the legacy HIP version file that vLLM's cmake expects.
 ENV CMAKE_PREFIX_PATH=/opt/rocm
+RUN mkdir -p /opt/rocm/hip/share/hip && \
+    /opt/rocm/bin/hipconfig --version > /opt/rocm/hip/share/hip/version
 
 # Create virtual environment (PEP 668 compliance on Ubuntu 24.04)
 RUN python3 -m venv /opt/venv
