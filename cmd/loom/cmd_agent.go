@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,14 +33,103 @@ import (
 // defaultHUDPort is the default port for the Agent HUD server.
 const defaultHUDPort = "3333"
 
+// hudConfig caches HUD settings loaded from config.yaml.
+// Loaded once per process to avoid repeated file reads in tight loops.
+var hudConfigOnce struct {
+	url      string
+	host     string // Host header override (for internal ingress access)
+	cfID     string
+	cfSecret string
+	loaded   bool
+}
+
+// loadHUDConfig reads HUD and CF Access settings from ~/.config/loom/config.yaml.
+func loadHUDConfig() (hudURL, cfID, cfSecret string) {
+	if hudConfigOnce.loaded {
+		return hudConfigOnce.url, hudConfigOnce.cfID, hudConfigOnce.cfSecret
+	}
+	hudConfigOnce.loaded = true
+
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(filepath.Join(home, ".config", "loom", "config.yaml"))
+	if err != nil {
+		return "", "", ""
+	}
+	var cfg struct {
+		Hub struct {
+			CFAccessClientID     string `yaml:"cf_access_client_id"`
+			CFAccessClientSecret string `yaml:"cf_access_client_secret"`
+		} `yaml:"hub"`
+		HUD struct {
+			URL                  string `yaml:"url"`
+			Host                 string `yaml:"host"`
+			CFAccessClientID     string `yaml:"cf_access_client_id"`
+			CFAccessClientSecret string `yaml:"cf_access_client_secret"`
+		} `yaml:"hud"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", "", ""
+	}
+
+	hudConfigOnce.url = cfg.HUD.URL
+	hudConfigOnce.host = cfg.HUD.Host
+	// HUD-specific CF Access creds take precedence, fallback to hub creds.
+	hudConfigOnce.cfID = cfg.HUD.CFAccessClientID
+	if hudConfigOnce.cfID == "" {
+		hudConfigOnce.cfID = cfg.Hub.CFAccessClientID
+	}
+	hudConfigOnce.cfSecret = cfg.HUD.CFAccessClientSecret
+	if hudConfigOnce.cfSecret == "" {
+		hudConfigOnce.cfSecret = cfg.Hub.CFAccessClientSecret
+	}
+
+	return hudConfigOnce.url, hudConfigOnce.cfID, hudConfigOnce.cfSecret
+}
+
+// hudHostOverride returns the Host header override for internal ingress access.
+func hudHostOverride() string {
+	loadHUDConfig() // ensure loaded
+	if h := os.Getenv("LOOM_HUD_HOST"); h != "" {
+		return h
+	}
+	return hudConfigOnce.host
+}
+
 // hudBaseURL builds the base URL for the HUD API.
+// Priority: LOOM_HUD_URL env > config.yaml hud.url > http://127.0.0.1:{port}.
 func hudBaseURL(port string) string {
+	if u := os.Getenv("LOOM_HUD_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if cfgURL, _, _ := loadHUDConfig(); cfgURL != "" {
+		return strings.TrimRight(cfgURL, "/")
+	}
 	return "http://127.0.0.1:" + port
+}
+
+// hudCFAccessHeaders returns CF Access headers if configured.
+// Priority: LOOM_HUD_CF_ACCESS_ID/SECRET env > config.yaml.
+func hudCFAccessHeaders() (cfID, cfSecret string) {
+	cfID = os.Getenv("LOOM_HUD_CF_ACCESS_ID")
+	cfSecret = os.Getenv("LOOM_HUD_CF_ACCESS_SECRET")
+	if cfID != "" && cfSecret != "" {
+		return cfID, cfSecret
+	}
+	_, configID, configSecret := loadHUDConfig()
+	return configID, configSecret
 }
 
 const defaultHUDTimeout = 10 * time.Second
 const sessionStartHUDPingTimeout = 250 * time.Millisecond
 const sessionStartHUDPostTimeout = 4 * time.Second
+
+// hudHTTPClient is a shared HTTP client for HUD requests.
+// Uses TLS skip-verify for internal ingress access (IP-based URLs).
+var hudHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // internal LAN access to K8s ingress
+	},
+}
 
 // hudRequest sends a request to the HUD API and returns the raw response body.
 func hudRequest(port, method, path string, body any, headers map[string]string, timeout time.Duration) (json.RawMessage, error) {
@@ -63,20 +153,39 @@ func hudRequest(port, method, path string, body any, headers map[string]string, 
 	if payload != nil {
 		reqBody = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, hudBaseURL(port)+path, reqBody)
+
+	baseURL := hudBaseURL(port)
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+
+	// Set Host header override for internal ingress access.
+	if host := hudHostOverride(); host != "" {
+		req.Host = host
+	}
+
 	for k, v := range headers {
 		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
 			req.Header.Set(k, v)
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	// Inject Cloudflare Access headers when connecting to a remote HUD.
+	if cfID, cfSecret := hudCFAccessHeaders(); cfID != "" && cfSecret != "" {
+		req.Header.Set("CF-Access-Client-Id", cfID)
+		req.Header.Set("CF-Access-Client-Secret", cfSecret)
+	}
+
+	// Use TLS-skip client for HTTPS URLs (internal ingress), default client for HTTP.
+	client := http.DefaultClient
+	if strings.HasPrefix(baseURL, "https://") {
+		client = hudHTTPClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -389,8 +498,9 @@ func newAgentCmd() *cobra.Command {
 These commands are designed to be called from Claude Code hooks, shell scripts,
 and other automation to ensure consistent session tracking and presence management.
 
-Set LOOM_HUD_PORT or use --port to target a non-default HUD instance. If HUD is
-not reachable, commands fall back to daemon socket tool calls.`,
+Set LOOM_HUD_URL for a remote/HTTPS HUD (e.g., https://hud.flexinfer.ai).
+Set LOOM_HUD_PORT or use --port for a local HUD on a non-default port.
+If HUD is not reachable, commands fall back to daemon socket tool calls.`,
 	}
 
 	// Persistent flag for all subcommands.

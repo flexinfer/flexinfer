@@ -55,8 +55,30 @@ type FileConfig struct {
 	// Routing controls per-server routing preferences
 	Routing RoutingConfig `yaml:"routing,omitempty"`
 
+	// HUD configures agent HUD connectivity for CLI commands
+	HUD HUDConfig `yaml:"hud,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// HUDConfig controls how `loom agent` CLI commands connect to the HUD.
+type HUDConfig struct {
+	// URL is the full HUD base URL (e.g., "https://192.168.50.227").
+	// When set, overrides the default http://127.0.0.1:{port}.
+	URL string `yaml:"url,omitempty"`
+
+	// Host is the Host header override for internal ingress access.
+	// Required when URL points to an IP-based ingress (e.g., "hud.flexinfer.ai").
+	Host string `yaml:"host,omitempty"`
+
+	// CFAccessClientID for Cloudflare Access authentication to the HUD.
+	// Falls back to hub.cf_access_client_id if not set.
+	CFAccessClientID string `yaml:"cf_access_client_id,omitempty"`
+
+	// CFAccessClientSecret for Cloudflare Access authentication to the HUD.
+	// Falls back to hub.cf_access_client_secret if not set.
+	CFAccessClientSecret string `yaml:"cf_access_client_secret,omitempty"`
 }
 
 // HTTPConfig controls the Streamable HTTP listener.

@@ -241,16 +241,17 @@ func statusHudService() error {
 	}
 
 	// Try to reach the health endpoint.
+	healthURL := hudBaseURL("3333") + "/api/health"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:3333/api/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		fmt.Println("  HTTP:    error creating request")
 		return nil
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Println("  HTTP:    not reachable (port 3333)")
+		fmt.Printf("  HTTP:    not reachable (%s)\n", healthURL)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -264,10 +265,10 @@ func statusHudService() error {
 		CacheBackend string `json:"cache_backend"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&health); err == nil && health.CacheBackend != "" {
-		fmt.Printf("  HTTP:    healthy (port 3333)\n")
+		fmt.Printf("  HTTP:    healthy (%s)\n", healthURL)
 		fmt.Printf("  Cache:   %s\n", health.CacheBackend)
 	} else {
-		fmt.Println("  HTTP:    healthy (port 3333)")
+		fmt.Printf("  HTTP:    healthy (%s)\n", healthURL)
 	}
 
 	return nil
