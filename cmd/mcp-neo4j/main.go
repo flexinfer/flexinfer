@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -21,7 +22,12 @@ import (
 var version = "1.0.0"
 
 type neo4jServer struct {
-	driver neo4j.DriverWithContext
+	driver      neo4j.DriverWithContext
+	uri         string
+	username    string
+	password    string
+	resolvedURI string
+	mu          sync.Mutex
 }
 
 func main() {
@@ -60,18 +66,29 @@ func run(ctx context.Context) error {
 		password = "password"
 	}
 
+	ns := &neo4jServer{
+		uri:      uri,
+		username: username,
+		password: password,
+	}
 	driver, resolvedURI, err := connectNeo4j(ctx, uri, username, password)
 	if err != nil {
-		return fmt.Errorf("failed to connect to Neo4j: %w", err)
+		logger.Warn("neo4j startup connectivity failed; server will run in degraded mode", "error", err, "uri", uri)
+	} else {
+		ns.driver = driver
+		ns.resolvedURI = resolvedURI
+		if resolvedURI != uri {
+			logger.Warn("normalized Neo4j URI after failed initial connect", "from", uri, "to", resolvedURI)
+		}
 	}
-	defer driver.Close(ctx)
-
-	ns := &neo4jServer{driver: driver}
-
-	if resolvedURI != uri {
-		logger.Warn("normalized Neo4j URI after failed initial connect", "from", uri, "to", resolvedURI)
-	}
-	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", resolvedURI)
+	defer func() {
+		ns.mu.Lock()
+		defer ns.mu.Unlock()
+		if ns.driver != nil {
+			_ = ns.driver.Close(ctx)
+		}
+	}()
+	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", uri)
 
 	server := mcp.NewServer("mcp-neo4j", version)
 	server.SetInstructions("Neo4j graph database MCP server. Execute Cypher queries, inspect schema, and explore graph data.")
@@ -272,14 +289,32 @@ func run(ctx context.Context) error {
 	return server.Run(ctx)
 }
 
-func (s *neo4jServer) getSession(ctx context.Context, database string, accessMode neo4j.AccessMode) neo4j.SessionWithContext {
+func (s *neo4jServer) ensureDriver(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.driver != nil {
+		return nil
+	}
+	driver, resolvedURI, err := connectNeo4j(ctx, s.uri, s.username, s.password)
+	if err != nil {
+		return err
+	}
+	s.driver = driver
+	s.resolvedURI = resolvedURI
+	return nil
+}
+
+func (s *neo4jServer) getSession(ctx context.Context, database string, accessMode neo4j.AccessMode) (neo4j.SessionWithContext, error) {
+	if err := s.ensureDriver(ctx); err != nil {
+		return nil, fmt.Errorf("neo4j not reachable: %w", err)
+	}
 	if database == "" {
 		database = "neo4j"
 	}
 	return s.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: database,
 		AccessMode:   accessMode,
-	})
+	}), nil
 }
 
 func (s *neo4jServer) handleQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -309,7 +344,10 @@ func (s *neo4jServer) handleQuery(ctx context.Context, args map[string]any) (*mc
 		accessMode = neo4j.AccessModeWrite
 	}
 
-	session := s.getSession(ctx, database, accessMode)
+	session, err := s.getSession(ctx, database, accessMode)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, query, params)
@@ -512,7 +550,10 @@ func (s *neo4jServer) handleSchema(ctx context.Context, args map[string]any) (*m
 	v := validate.NewArgs(args)
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	// Get labels
@@ -565,7 +606,10 @@ func (s *neo4jServer) handleLabels(ctx context.Context, args map[string]any) (*m
 	v := validate.NewArgs(args)
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	labels, err := s.queryStringList(ctx, session, "CALL db.labels()")
@@ -584,7 +628,10 @@ func (s *neo4jServer) handleRelationshipTypes(ctx context.Context, args map[stri
 	v := validate.NewArgs(args)
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	relTypes, err := s.queryStringList(ctx, session, "CALL db.relationshipTypes()")
@@ -603,7 +650,10 @@ func (s *neo4jServer) handleIndexes(ctx context.Context, args map[string]any) (*
 	v := validate.NewArgs(args)
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, "SHOW INDEXES", nil)
@@ -637,7 +687,10 @@ func (s *neo4jServer) handleConstraints(ctx context.Context, args map[string]any
 	v := validate.NewArgs(args)
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, "SHOW CONSTRAINTS", nil)
@@ -672,7 +725,10 @@ func (s *neo4jServer) handleCountNodes(ctx context.Context, args map[string]any)
 	label := v.String("label", "")
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	var query string
@@ -714,7 +770,10 @@ func (s *neo4jServer) handleCountRelationships(ctx context.Context, args map[str
 	relType := v.String("type", "")
 	database := v.String("database", "neo4j")
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	var query string
@@ -760,7 +819,10 @@ func (s *neo4jServer) handleNodeProperties(ctx context.Context, args map[string]
 		return mcp.ErrorResult(err), nil
 	}
 
-	session := s.getSession(ctx, database, neo4j.AccessModeRead)
+	session, err := s.getSession(ctx, database, neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	// Sample some nodes to discover properties
@@ -801,10 +863,10 @@ func (s *neo4jServer) handleNodeProperties(ctx context.Context, args map[string]
 }
 
 func (s *neo4jServer) handleDatabases(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	session := s.driver.NewSession(ctx, neo4j.SessionConfig{
-		DatabaseName: "system",
-		AccessMode:   neo4j.AccessModeRead,
-	})
+	session, err := s.getSession(ctx, "system", neo4j.AccessModeRead)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, "SHOW DATABASES", nil)
