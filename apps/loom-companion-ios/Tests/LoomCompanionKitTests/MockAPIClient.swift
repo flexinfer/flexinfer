@@ -30,6 +30,9 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var alertPolicyResponse: MobileAlertPolicyResponse?
     var pushRegistrationResponse: PushRegistrationResponse?
     var pushUnregisterResponse: PushUnregisterResponse?
+    var sandboxResponse: MobileSandboxSummary?
+    var sandboxStartResponse: MobileSandboxStartResponse?
+    var sandboxStopResponse: MobileSandboxStopResponse?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -86,6 +89,12 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = pushRegistrationResponse as? T { return r }
         case .pushUnregister:
             if let r = pushUnregisterResponse as? T { return r }
+        case .sandbox:
+            if let r = sandboxResponse as? T { return r }
+        case .sandboxStart:
+            if let r = sandboxStartResponse as? T { return r }
+        case .sandboxStop:
+            if let r = sandboxStopResponse as? T { return r }
         case .audit, .ping, .eventsStream:
             break
         }

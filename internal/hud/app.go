@@ -707,6 +707,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/v1/push/register", a.withCORS(a.handleMobilePushRegister))
 	mux.HandleFunc("POST /api/mobile/v1/push/unregister", a.withCORS(a.handleMobilePushUnregister))
 	mux.HandleFunc("POST /api/mobile/v1/admin/revoke", a.withCORS(a.handleMobileAdminRevoke))
+	mux.HandleFunc("GET /api/mobile/v1/sandbox", a.withCORS(a.handleMobileSandbox))
+	mux.HandleFunc("POST /api/mobile/v1/sandbox/start", a.withCORS(a.handleMobileSandboxStart))
+	mux.HandleFunc("POST /api/mobile/v1/sandbox/stop", a.withCORS(a.handleMobileSandboxStop))
 
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))

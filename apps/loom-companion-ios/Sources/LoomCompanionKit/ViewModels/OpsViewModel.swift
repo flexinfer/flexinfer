@@ -35,6 +35,11 @@ public final class OpsViewModel {
     public var reasoningChains: [MobileReasoningChain] = []
     public var controlPlane: MobileControlPlaneResponse?
 
+    public var sandboxSummary: MobileSandboxSummary?
+    public var isMutatingSandbox = false
+    public var sandboxMutationMessage: String?
+    public var sandboxMutationError: String?
+
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
 
@@ -184,6 +189,15 @@ public final class OpsViewModel {
             markFailure("control_plane", error)
         }
 
+        attemptedSections += 1
+        do {
+            let response: MobileSandboxSummary = try await apiClient.request(.sandbox)
+            sandboxSummary = response
+        } catch {
+            sandboxSummary = nil
+            markFailure("sandbox", error)
+        }
+
         if failedSections.count == attemptedSections, let firstError {
             error = firstError
             warningMessage = nil
@@ -253,9 +267,57 @@ public final class OpsViewModel {
         }
     }
 
+    public func startSandbox(project: String, agentID: String?) async {
+        let trimmedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProject.isEmpty else {
+            sandboxMutationError = "Project is required"
+            return
+        }
+
+        isMutatingSandbox = true
+        sandboxMutationError = nil
+        defer { isMutatingSandbox = false }
+
+        do {
+            let response: MobileSandboxStartResponse = try await apiClient.request(
+                .sandboxStart(project: trimmedProject, agentId: normalizedOptional(agentID))
+            )
+            sandboxMutationMessage = response.started
+                ? "Sandbox started: \(response.project)"
+                : "Sandbox build queued: \(response.project)"
+        } catch {
+            sandboxMutationError = toLoomError(error).description
+        }
+    }
+
+    public func stopSandbox(project: String) async {
+        let trimmedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProject.isEmpty else {
+            sandboxMutationError = "Project is required"
+            return
+        }
+
+        isMutatingSandbox = true
+        sandboxMutationError = nil
+        defer { isMutatingSandbox = false }
+
+        do {
+            let response: MobileSandboxStopResponse = try await apiClient.request(
+                .sandboxStop(project: trimmedProject)
+            )
+            sandboxMutationMessage = response.stopped
+                ? "Sandbox stopped: \(response.project)"
+                : "Sandbox stop requested: \(response.project)"
+        } catch {
+            sandboxMutationError = toLoomError(error).description
+        }
+    }
+
     public func clearMutationMessages() {
         mutationStatusMessage = nil
         mutationErrorMessage = nil
+        sandboxMutationMessage = nil
+        sandboxMutationError = nil
     }
 
     private func normalizedOptional(_ value: String?) -> String? {

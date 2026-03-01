@@ -1628,6 +1628,108 @@ func (a *App) handleMobilePushUnregister(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handleMobileSandbox returns sandbox/devbox summary via mobile envelope.
+// GET /api/mobile/v1/sandbox
+func (a *App) handleMobileSandbox(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	if cached, ok := a.cache.Get("sandbox_summary"); ok {
+		a.writeMobileJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	result, err := a.client.CallTool("devbox_summary", nil)
+	if err != nil {
+		a.logger.Debug("devbox_summary call failed, returning unavailable", "error", err)
+		fallback := map[string]any{"available": false}
+		a.cache.Set("sandbox_summary", fallback, 5*time.Second)
+		a.writeMobileJSON(w, http.StatusOK, fallback)
+		return
+	}
+
+	var summary map[string]any
+	if err := json.Unmarshal(result, &summary); err != nil {
+		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
+		a.writeMobileJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	summary["available"] = true
+	a.cache.Set("sandbox_summary", summary, 5*time.Second)
+	a.writeMobileJSON(w, http.StatusOK, summary)
+}
+
+// handleMobileSandboxStart triggers devbox_build for a project.
+// POST /api/mobile/v1/sandbox/start
+func (a *App) handleMobileSandboxStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeSessionCreate) {
+		return
+	}
+
+	var body struct {
+		Project string `json:"project"`
+		AgentID string `json:"agent_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	if body.Project == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "missing_project", "project is required")
+		return
+	}
+
+	args := map[string]any{"project": body.Project}
+	if body.AgentID != "" {
+		args["agent_id"] = body.AgentID
+	}
+	result, err := a.client.CallTool("devbox_build", args)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "devbox_build_failed", "failed to start sandbox: "+err.Error())
+		return
+	}
+
+	a.cache.Invalidate("sandbox_summary")
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		a.writeMobileJSON(w, http.StatusOK, map[string]any{"started": true, "project": body.Project})
+		return
+	}
+	parsed["started"] = true
+	a.writeMobileJSON(w, http.StatusOK, parsed)
+}
+
+// handleMobileSandboxStop stops a running sandbox for a project.
+// POST /api/mobile/v1/sandbox/stop
+func (a *App) handleMobileSandboxStop(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeSessionCreate) {
+		return
+	}
+
+	var body struct {
+		Project string `json:"project"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	if body.Project == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "missing_project", "project is required")
+		return
+	}
+
+	_, err := a.client.CallTool("devbox_stop", map[string]any{"project": body.Project})
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadGateway, "devbox_stop_failed", "failed to stop sandbox: "+err.Error())
+		return
+	}
+
+	a.cache.Invalidate("sandbox_summary")
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stopped": true, "project": body.Project})
+}
+
 func parseMobileLimit(r *http.Request, fallback, max int) int {
 	limit := fallback
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {

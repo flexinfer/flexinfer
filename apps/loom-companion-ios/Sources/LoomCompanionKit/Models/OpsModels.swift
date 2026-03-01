@@ -795,3 +795,80 @@ public struct MobileControlPlaneResponse: Decodable, Sendable {
     public let otel: MobileControlPlaneOTel
     public let health: MobileControlPlaneHealth
 }
+
+// MARK: - Sandbox / Devbox
+
+public struct MobileSandboxProject: Decodable, Sendable, Identifiable {
+    public let project: String
+    public let status: String
+    public let agentId: String
+    public let uptime: String
+    public let backend: String
+
+    public var id: String { project + "-" + agentId }
+
+    enum CodingKeys: String, CodingKey {
+        case project
+        case status
+        case agentId = "agent_id"
+        case uptime
+        case backend
+    }
+
+    public init(project: String, status: String, agentId: String, uptime: String, backend: String) {
+        self.project = project
+        self.status = status
+        self.agentId = agentId
+        self.uptime = uptime
+        self.backend = backend
+    }
+}
+
+public struct MobileSandboxSummary: Decodable, Sendable {
+    public let available: Bool
+    public let projects: [MobileSandboxProject]
+    public let totalRunning: Int
+    public let backend: String
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case projects
+        case totalRunning = "total_running"
+        case backend
+    }
+
+    public init(available: Bool, projects: [MobileSandboxProject], totalRunning: Int, backend: String) {
+        self.available = available
+        self.projects = projects
+        self.totalRunning = totalRunning
+        self.backend = backend
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        available = (try? container.decode(Bool.self, forKey: .available)) ?? false
+        projects = (try? container.decode([MobileSandboxProject].self, forKey: .projects)) ?? []
+        totalRunning = (try? container.decode(Int.self, forKey: .totalRunning)) ?? 0
+        backend = (try? container.decode(String.self, forKey: .backend)) ?? "unknown"
+    }
+}
+
+public struct MobileSandboxStartResponse: Decodable, Sendable {
+    public let started: Bool
+    public let project: String
+
+    public init(started: Bool, project: String) {
+        self.started = started
+        self.project = project
+    }
+}
+
+public struct MobileSandboxStopResponse: Decodable, Sendable {
+    public let stopped: Bool
+    public let project: String
+
+    public init(stopped: Bool, project: String) {
+        self.stopped = stopped
+        self.project = project
+    }
+}

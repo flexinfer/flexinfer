@@ -393,6 +393,64 @@ struct OpsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            GroupBox("Sandbox / Devbox") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let sandbox = viewModel.sandboxSummary {
+                        if sandbox.available {
+                            HStack {
+                                metric(label: "Running", value: "\(sandbox.totalRunning)")
+                                Spacer()
+                                metric(label: "Backend", value: sandbox.backend)
+                            }
+                            .font(.caption)
+
+                            if sandbox.projects.isEmpty {
+                                Text("No active sandboxes")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(sandbox.projects) { project in
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(project.project).font(.subheadline).fontWeight(.medium)
+                                            Text("\(project.status) • \(project.agentId) • \(project.uptime)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Button(role: .destructive) {
+                                            Task { await viewModel.stopSandbox(project: project.project) }
+                                        } label: {
+                                            Image(systemName: "stop.circle")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .disabled(viewModel.isMutatingSandbox)
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        } else {
+                            Text("Devbox unavailable")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Sandbox data unavailable")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let msg = viewModel.sandboxMutationMessage {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let err = viewModel.sandboxMutationError {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Text("Read-only in Wave 1. Presence operations stay in HUD/TUI for now.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

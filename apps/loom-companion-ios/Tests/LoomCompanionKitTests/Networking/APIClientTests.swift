@@ -32,6 +32,9 @@ struct APIClientTests {
         #expect(Endpoint.pushRegister(token: "tok", platform: .apns).path == "/api/mobile/v1/push/register")
         #expect(Endpoint.pushUnregister(token: "tok").path == "/api/mobile/v1/push/unregister")
         #expect(Endpoint.eventsStream.path == "/api/mobile/v1/events/stream")
+        #expect(Endpoint.sandbox.path == "/api/mobile/v1/sandbox")
+        #expect(Endpoint.sandboxStart(project: "loom-core").path == "/api/mobile/v1/sandbox/start")
+        #expect(Endpoint.sandboxStop(project: "loom-core").path == "/api/mobile/v1/sandbox/stop")
     }
 
     @Test("Endpoint methods are correct")
@@ -48,6 +51,9 @@ struct APIClientTests {
         #expect(Endpoint.endSession(id: "s1").method == "POST")
         #expect(Endpoint.pushRegister(token: "tok", platform: .apns).method == "POST")
         #expect(Endpoint.pushUnregister(token: "tok").method == "POST")
+        #expect(Endpoint.sandbox.method == "GET")
+        #expect(Endpoint.sandboxStart(project: "p").method == "POST")
+        #expect(Endpoint.sandboxStop(project: "p").method == "POST")
     }
 
     @Test("Mutation endpoints are flagged correctly")
@@ -61,6 +67,9 @@ struct APIClientTests {
         #expect(Endpoint.endSession(id: "s1").isMutation == true)
         #expect(Endpoint.pushRegister(token: "tok", platform: .apns).isMutation == true)
         #expect(Endpoint.pushUnregister(token: "tok").isMutation == true)
+        #expect(Endpoint.sandbox.isMutation == false)
+        #expect(Endpoint.sandboxStart(project: "p").isMutation == true)
+        #expect(Endpoint.sandboxStop(project: "p").isMutation == true)
     }
 
     @Test("Session events endpoint includes limit query param")
@@ -157,6 +166,27 @@ struct APIClientTests {
         #expect(json["agent_id"] as? String == "codex")
         #expect(json["auto_recall"] as? Bool == true)
         #expect(json["namespace"] == nil)
+    }
+
+    @Test("Sandbox start includes body")
+    func sandboxStartBody() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.sandboxStart(project: "loom-core", agentId: "claude-code").urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(json["project"] as? String == "loom-core")
+        #expect(json["agent_id"] as? String == "claude-code")
+    }
+
+    @Test("Sandbox stop includes body")
+    func sandboxStopBody() throws {
+        let base = URL(string: "https://localhost:3333")!
+        let request = try Endpoint.sandboxStop(project: "loom-core").urlRequest(baseURL: base)
+
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        #expect(json["project"] as? String == "loom-core")
     }
 
     @Test("Error code parsing")

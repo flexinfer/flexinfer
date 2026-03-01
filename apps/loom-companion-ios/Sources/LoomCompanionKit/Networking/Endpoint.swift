@@ -28,6 +28,9 @@ public enum Endpoint: Sendable {
     case pushUnregister(token: String)
     case eventsStream
     case audit(source: String? = nil, limit: Int? = nil)
+    case sandbox
+    case sandboxStart(project: String, agentId: String? = nil)
+    case sandboxStop(project: String)
 
     var method: String {
         switch self {
@@ -35,9 +38,10 @@ public enum Endpoint: Sendable {
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
-             .eventsStream, .audit:
+             .eventsStream, .audit, .sandbox:
             return "GET"
-        case .createSession, .endSession, .pushRegister, .pushUnregister:
+        case .createSession, .endSession, .pushRegister, .pushUnregister,
+             .sandboxStart, .sandboxStop:
             return "POST"
         }
     }
@@ -96,6 +100,12 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/events/stream"
         case .audit:
             return "/api/mobile/v1/audit"
+        case .sandbox:
+            return "/api/mobile/v1/sandbox"
+        case .sandboxStart:
+            return "/api/mobile/v1/sandbox/start"
+        case .sandboxStop:
+            return "/api/mobile/v1/sandbox/stop"
         }
     }
 
@@ -251,6 +261,17 @@ public enum Endpoint: Sendable {
         case let .pushUnregister(token):
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let body: [String: Any] = ["token": token]
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        case let .sandboxStart(project, agentId):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            var body: [String: Any] = ["project": project]
+            if let agentId { body["agent_id"] = agentId }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        case let .sandboxStop(project):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = ["project": project]
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         default:

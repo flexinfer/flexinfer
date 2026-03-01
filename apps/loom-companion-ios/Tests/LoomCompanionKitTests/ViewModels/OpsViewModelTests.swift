@@ -121,6 +121,15 @@ struct OpsViewModelTests {
             )
         )
 
+        client.sandboxResponse = MobileSandboxSummary(
+            available: true,
+            projects: [
+                MobileSandboxProject(project: "loom-core", status: "running", agentId: "claude-code", uptime: "5m", backend: "k8s"),
+            ],
+            totalRunning: 1,
+            backend: "k8s"
+        )
+
         let vm = OpsViewModel(apiClient: client)
         await vm.load()
 
@@ -132,6 +141,9 @@ struct OpsViewModelTests {
         #expect(vm.memoryStats?.totalItems == 60)
         #expect(vm.graphStats?.totalEntities == 12)
         #expect(vm.topology != nil)
+        #expect(vm.sandboxSummary?.available == true)
+        #expect(vm.sandboxSummary?.totalRunning == 1)
+        #expect(vm.sandboxSummary?.projects.count == 1)
     }
 
     @Test("Load failure surfaces API error")
@@ -229,6 +241,7 @@ struct OpsViewModelTests {
                 unavailableTargets: 0
             )
         )
+        client.sandboxResponse = MobileSandboxSummary(available: false, projects: [], totalRunning: 0, backend: "unknown")
         client.endpointFailures["/api/mobile/v1/graph/path"] = .apiError(code: .upstreamError, message: "path unavailable", requestId: "req-path-1")
 
         let vm = OpsViewModel(apiClient: client)
@@ -238,6 +251,7 @@ struct OpsViewModelTests {
         #expect(vm.warningMessage != nil)
         #expect(vm.graphPath == nil)
         #expect(vm.graphEntities.count == 2)
+        #expect(vm.sandboxSummary?.available == false)
     }
 
     @Test("Create session mutation success returns status message")
