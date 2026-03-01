@@ -226,6 +226,10 @@ security:govulncheck:
 lint:mcp-godot:
   image: node:20
   stage: lint
+  variables:
+    # This job needs repository files under tools/mcp-godot.
+    # Global GIT_STRATEGY is "none", so override to fetch sources here.
+    GIT_STRATEGY: fetch
   rules:
     - changes:
         - tools/mcp-godot/**/*
