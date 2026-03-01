@@ -101,14 +101,57 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
+	// CPU offload — move part of model weights to CPU to free VRAM for KV cache
+	if cpuOffload := spec.ConfigInt("cpuOffloadGb", 0); cpuOffload > 0 {
+		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", cpuOffload))
+	}
+
+	// Override KV cache blocks — bypasses the profiling step
+	if blocks := spec.ConfigInt("numGpuBlocksOverride", 0); blocks > 0 {
+		args = append(args, "--num-gpu-blocks-override", fmt.Sprintf("%d", blocks))
+	}
+
 	// Quantization method
 	if quant := spec.ConfigString("quantization", ""); quant != "" {
 		args = append(args, "--quantization", quant)
 	}
 
+	// Tokenizer override
+	if tok := spec.ConfigString("tokenizer", ""); tok != "" {
+		args = append(args, "--tokenizer", tok)
+	}
+
 	// Served model name
 	if name := spec.ConfigString("servedModelName", ""); name != "" {
 		args = append(args, "--served-model-name", name)
+	}
+
+	// KV cache dtype
+	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
+		args = append(args, "--kv-cache-dtype", kvDtype)
+	}
+
+	// Prefix caching
+	if spec.Config != nil {
+		if _, ok := spec.Config["enablePrefixCaching"]; ok {
+			if spec.ConfigBool("enablePrefixCaching", true) {
+				args = append(args, "--enable-prefix-caching")
+			} else {
+				args = append(args, "--no-prefix-caching")
+			}
+		}
+	}
+
+	// Tool calling support
+	if spec.ConfigBool("enableToolCalling", false) {
+		args = append(args, "--enable-auto-tool-choice")
+		parser := spec.ConfigString("toolCallParser", "hermes")
+		args = append(args, "--tool-call-parser", parser)
+	}
+
+	// Reasoning parser
+	if rp := spec.ConfigString("reasoningParser", ""); rp != "" {
+		args = append(args, "--reasoning-parser", rp)
 	}
 
 	// Disable stats logging
@@ -131,7 +174,45 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	// Add ROCm environment for AMD GPUs
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
+
+		engineVersion := spec.ConfigString("vllmEngineVersion", "")
+		enableFA := spec.ConfigBool("enableFlashAttention", false)
+		enableAiter := spec.ConfigBool("enableAiter", false)
+
+		var vllmEnv []corev1.EnvVar
+		if engineVersion == "v1" {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "1"})
+		} else if engineVersion == "v0" {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"})
+		}
+		if enableFA {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
+		}
+
+		supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
+			strings.HasPrefix(spec.GPUArch, "gfx942")
+		if enableAiter && supportsAiter {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
+		}
+
+		env = append(env, vllmEnv...)
 		env = append(env, DeviceIsolationEnvVars(spec)...)
+	}
+
+	// VLLM_DISABLED_KERNELS
+	if dk := spec.ConfigString("disabledKernels", ""); dk != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "VLLM_DISABLED_KERNELS",
+			Value: dk,
+		})
+	}
+
+	// PYTORCH_CUDA_ALLOC_CONF
+	if allocConf := spec.ConfigString("pytorchCudaAllocConf", ""); allocConf != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "PYTORCH_CUDA_ALLOC_CONF",
+			Value: allocConf,
+		})
 	}
 
 	return env

@@ -227,6 +227,18 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
+	// PYTORCH_CUDA_ALLOC_CONF — PyTorch CUDA memory allocator configuration.
+	// Controls memory fragmentation strategy. Key setting: expandable_segments:True
+	// reduces fragmentation on VRAM-constrained GPUs (e.g., 24 GB running 22+ GiB
+	// models). Without this, PyTorch may fail to allocate KV cache blocks even when
+	// enough total free memory exists.
+	if allocConf := spec.ConfigString("pytorchCudaAllocConf", ""); allocConf != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "PYTORCH_CUDA_ALLOC_CONF",
+			Value: allocConf,
+		})
+	}
+
 	return env
 }
 

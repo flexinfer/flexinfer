@@ -782,6 +782,66 @@ func TestVLLMBackendEnv_DisabledKernels_NotSetByDefault(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendEnv_PytorchCudaAllocConf(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"pytorchCudaAllocConf": "expandable_segments:True",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["PYTORCH_CUDA_ALLOC_CONF"]; !ok || v != "expandable_segments:True" {
+		t.Errorf("expected PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, got %q (present=%v)", v, ok)
+	}
+}
+
+func TestVLLMBackendEnv_PytorchCudaAllocConf_NotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+	}
+
+	env := b.Env(spec)
+	for _, e := range env {
+		if e.Name == "PYTORCH_CUDA_ALLOC_CONF" {
+			t.Error("expected PYTORCH_CUDA_ALLOC_CONF to be absent by default")
+		}
+	}
+}
+
+func TestVLLMBackendEnv_PytorchCudaAllocConf_NVIDIA(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorNVIDIA,
+		GPUArch:   "sm_89",
+		Config: map[string]interface{}{
+			"pytorchCudaAllocConf": "expandable_segments:True,max_split_size_mb:128",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["PYTORCH_CUDA_ALLOC_CONF"]; !ok || v != "expandable_segments:True,max_split_size_mb:128" {
+		t.Errorf("expected PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128, got %q (present=%v)", v, ok)
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 
