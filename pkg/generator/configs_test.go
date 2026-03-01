@@ -914,6 +914,32 @@ func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 	}
 }
 
+func TestBuildPlatformHooks_StopHookUsesSummaryAsync(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "test",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	})
+
+	stop := hooks["Stop"].([]map[string]any)
+	stopHooks := stop[0]["hooks"].([]map[string]any)
+
+	found := false
+	for _, h := range stopHooks {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "session-end") && strings.Contains(cmd, "--summary-async") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected Stop hook to include --summary-async")
+	}
+}
+
 func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	var sb strings.Builder
 	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace")

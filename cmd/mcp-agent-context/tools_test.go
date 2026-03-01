@@ -108,6 +108,10 @@ func TestSessionEndSchema_RequiresSessionID(t *testing.T) {
 	if !found {
 		t.Errorf("expected 'session_id' in required fields, got %v", tool.InputSchema.Required)
 	}
+
+	if _, ok := tool.InputSchema.Properties["summary_async"]; !ok {
+		t.Error("expected summary_async property in session end schema")
+	}
 }
 
 func TestContextAddSchema_HasEntries(t *testing.T) {

@@ -775,7 +775,7 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; loom agent session-end --agent-id "$AGENT_ID" --summarize --quiet %s || true`,
+							`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; loom agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
 							bootstrap, log),
 					},
 				},

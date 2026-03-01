@@ -536,6 +536,7 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 	v := validate.NewArgs(args)
 	sessionID := v.Required("session_id")
 	summarize := v.Bool("summarize", true)
+	summaryAsync := v.Bool("summary_async", false)
 	cleanup := v.Bool("cleanup", true)
 
 	if err := v.Validate(); err != nil {
@@ -568,13 +569,18 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 
 	// Optionally generate summary
 	if summarize && s.cfg.AutoSummarize {
-		if err := s.generateSummary(ctx, session); err != nil {
-			result["summary_error"] = err.Error()
+		if summaryAsync {
+			result["summary_queued"] = true
+			go s.runSessionSummaryAsync(session)
 		} else {
-			result["summarized"] = true
-			session.Status = string(SessionStatusSummarized)
-			if err := s.persistSession(ctx, session); err != nil {
-				result["_persist_error"] = err.Error()
+			if err := s.generateSummary(ctx, session); err != nil {
+				result["summary_error"] = err.Error()
+			} else {
+				result["summarized"] = true
+				session.Status = string(SessionStatusSummarized)
+				if err := s.persistSession(ctx, session); err != nil {
+					result["_persist_error"] = err.Error()
+				}
 			}
 		}
 	}
@@ -613,6 +619,31 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 	}
 
 	return mcp.JSONResult(result)
+}
+
+// runSessionSummaryAsync performs end-of-session summarization in background so
+// hooks can return immediately and avoid blocking follow-on session-start calls.
+func (s *Service) runSessionSummaryAsync(session *Session) {
+	bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if err := s.generateSummary(bg, session); err != nil {
+		s.logger.Warn("async session summarize failed",
+			"session_id", session.ID,
+			"agent_id", session.AgentID,
+			"error", err,
+		)
+		return
+	}
+
+	session.Status = string(SessionStatusSummarized)
+	if err := s.persistSession(bg, session); err != nil {
+		s.logger.Warn("async session summarize persist failed",
+			"session_id", session.ID,
+			"agent_id", session.AgentID,
+			"error", err,
+		)
+	}
 }
 
 // endActiveSessionsForAgent ends all active sessions belonging to the given agent.

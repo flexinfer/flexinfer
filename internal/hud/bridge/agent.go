@@ -1677,9 +1677,10 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 
 // SessionEndParams holds parameters for ending an agent session.
 type SessionEndParams struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
-	Summarize bool   `json:"summarize"`
+	SessionID    string `json:"session_id"`
+	AgentID      string `json:"agent_id"`
+	Summarize    bool   `json:"summarize"`
+	SummaryAsync bool   `json:"summary_async,omitempty"`
 }
 
 // EndSession ends a session, optionally summarizes context, and deregisters presence.
@@ -1703,6 +1704,9 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 	}
 	if p.Summarize {
 		args["summarize"] = true
+	}
+	if p.SummaryAsync {
+		args["summary_async"] = true
 	}
 	if err := a.callAgentTool("agent_session_end", args, nil); err != nil {
 		return false, fmt.Errorf("end session: %w", err)

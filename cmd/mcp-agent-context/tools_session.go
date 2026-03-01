@@ -57,6 +57,10 @@ func registerSessionTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 					"type":        "boolean",
 					"description": "Generate session summary on end (default: true).",
 				},
+				"summary_async": map[string]any{
+					"type":        "boolean",
+					"description": "Run summarization in background and return immediately (default: false).",
+				},
 				"cleanup": map[string]any{
 					"type":        "boolean",
 					"description": "Auto-release file claims, deregister presence, and mark worktrees as orphaned (default: true).",
