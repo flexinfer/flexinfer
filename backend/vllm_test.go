@@ -744,6 +744,44 @@ func TestVLLMBackendArgs_Tokenizer(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendEnv_DisabledKernels(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"disabledKernels": "ExllamaLinearKernel",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["VLLM_DISABLED_KERNELS"]; !ok || v != "ExllamaLinearKernel" {
+		t.Errorf("expected VLLM_DISABLED_KERNELS=ExllamaLinearKernel, got %q (present=%v)", v, ok)
+	}
+}
+
+func TestVLLMBackendEnv_DisabledKernels_NotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+	}
+
+	env := b.Env(spec)
+	for _, e := range env {
+		if e.Name == "VLLM_DISABLED_KERNELS" {
+			t.Error("expected VLLM_DISABLED_KERNELS to be absent by default")
+		}
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 

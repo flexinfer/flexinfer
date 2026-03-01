@@ -216,6 +216,17 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, DeviceIsolationEnvVars(spec)...)
 	}
 
+	// VLLM_DISABLED_KERNELS — comma-separated list of quantization kernels to skip.
+	// Forces vLLM to fall back to alternative implementations (e.g., Triton).
+	// Common use: disable ExllamaLinearKernel to avoid its fixed 288 MiB scratch
+	// buffer on VRAM-constrained GPUs running compressed-tensors WNA16 models.
+	if dk := spec.ConfigString("disabledKernels", ""); dk != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "VLLM_DISABLED_KERNELS",
+			Value: dk,
+		})
+	}
+
 	return env
 }
 
