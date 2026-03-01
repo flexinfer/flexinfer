@@ -668,6 +668,29 @@ func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_CPUOffloadGb(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"cpuOffloadGb": 2,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--cpu-offload-gb"]; v != "2" {
+		t.Errorf("expected --cpu-offload-gb=2, got %q", v)
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 

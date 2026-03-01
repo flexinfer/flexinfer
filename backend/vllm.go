@@ -107,6 +107,11 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
+	// CPU offload — move part of model weights to CPU to free VRAM for KV cache
+	if cpuOffload := spec.ConfigInt("cpuOffloadGb", 0); cpuOffload > 0 {
+		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", cpuOffload))
+	}
+
 	// Quantization method (awq, gptq, fp8, etc.)
 	if quant := spec.ConfigString("quantization", ""); quant != "" {
 		args = append(args, "--quantization", quant)
