@@ -1029,6 +1029,67 @@ func TestCallPipelineExecute_SuccessCachesResponse(t *testing.T) {
 	}
 }
 
+func TestCallPipelineExecute_LocalSendFailureRetriesOnce(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: false})
+	localDials := 0
+	var reqID any
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			localDials++
+			return &fakeTransport{
+				sendFn: func(_ context.Context, msg *mcp.Message) error {
+					reqID = msg.ID
+					return nil
+				},
+				recvFn: func(_ context.Context) (*mcp.Message, error) {
+					return &mcp.Message{
+						JSONRPC: mcp.JSONRPCVersion,
+						ID:      reqID,
+						Result:  json.RawMessage(`{"retried":true}`),
+					}, nil
+				},
+			}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "local-send-retry"},
+		serverName: "gitlab",
+		toolName:   "list_pipelines",
+		method:     "tools/call",
+		conn: &pool.Conn{
+			ServerName: "gitlab",
+			Transport:  &fakeTransport{sendErr: io.EOF},
+			Healthy:    true,
+		},
+		target:    router.TargetLocal,
+		targetStr: router.TargetLocal.String(),
+	}
+	defer p.releaseConnection()
+
+	req := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "local-send-retry", Method: "tools/call"}
+	resp := p.execute(req)
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected successful retry response, got %+v", resp)
+	}
+	if string(resp.Result) != `{"retried":true}` {
+		t.Fatalf("result = %s, want retry success result", string(resp.Result))
+	}
+	if localDials != 1 {
+		t.Fatalf("local dials = %d, want 1", localDials)
+	}
+	if !p.localTransportRetryUsed {
+		t.Fatal("expected local transport retry flag to be set")
+	}
+}
+
 func TestCallPipelineTransportFailure_LocalClearsIdleAndStopsServer(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	d.pool = newTestPool(t)
@@ -1793,25 +1854,26 @@ func TestCallPipeline_TransportFailureThenRecovery(t *testing.T) {
 		t.Fatalf("call 1: unexpected error response: %+v", resp1.Error)
 	}
 
-	// Call 2: same connection reused from pool, send fails (sendCount=2).
+	// Call 2: same connection reused from pool, send fails (sendCount=2),
+	// then daemon retries once with a fresh local connection in the same call.
 	resp2, err2 := d.handleCall(context.Background(), msg)
 	if err2 != nil {
 		t.Fatalf("call 2: unexpected error: %v", err2)
 	}
-	if resp2.Error == nil {
-		t.Fatal("call 2: expected transport failure error response")
+	if resp2.Error != nil {
+		t.Fatalf("call 2: expected retry success, got error: %+v", resp2.Error)
 	}
-	if !strings.Contains(resp2.Error.Message, "broken pipe") {
-		t.Fatalf("call 2: expected broken pipe in error, got %q", resp2.Error.Message)
+	if string(resp2.Result) != `{"recovered":true}` {
+		t.Fatalf("call 2: result = %s, want in-call recovery response", string(resp2.Result))
 	}
 
-	// Pool should be cleared after transport failure.
+	// Pool should still have a healthy connection after in-call recovery.
 	stats := d.pool.Stats()
-	if stats.IdleConns != 0 {
-		t.Fatalf("pool idle conns = %d, want 0 after transport failure", stats.IdleConns)
+	if stats.IdleConns == 0 {
+		t.Fatalf("pool idle conns = %d, want > 0 after in-call recovery", stats.IdleConns)
 	}
 
-	// Call 3: recovery with fresh connection from new dial.
+	// Call 3: subsequent calls continue succeeding after recovery.
 	resp3, err3 := d.handleCall(context.Background(), msg)
 	if err3 != nil {
 		t.Fatalf("call 3: unexpected error: %v", err3)

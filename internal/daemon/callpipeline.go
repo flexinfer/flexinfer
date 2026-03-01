@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
 	gosync "sync"
+	"syscall"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -56,9 +58,10 @@ type callPipeline struct {
 	callMu    *gosync.Mutex
 	lockHeld  bool
 
-	routingPreference      RoutingPreference
-	preferHubRetryEligible bool
-	localRetryUsed         bool
+	routingPreference       RoutingPreference
+	preferHubRetryEligible  bool
+	localRetryUsed          bool
+	localTransportRetryUsed bool
 }
 
 func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipeline {
@@ -306,6 +309,9 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	sendCancel()
 	if sendErr != nil {
 		err := daemonRPCPhaseError(p.method, "send", callTimeout, sendErr)
+		if resp, retried := p.retryLocalAfterLocalSendFailure(err, req, start); retried {
+			return resp
+		}
 		if resp, retried := p.retryLocalAfterHubFailure("send", err, req, start); retried {
 			return resp
 		}
@@ -342,6 +348,45 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	p.emitResponseAudit(resp)
 	p.emitDecompHintIfLarge(resp)
 	return resp
+}
+
+func (p *callPipeline) retryLocalAfterLocalSendFailure(err error, req *mcp.Message, start time.Time) (*mcp.Message, bool) {
+	if p.localTransportRetryUsed || p.target != router.TargetLocal || p.daemon == nil || p.daemon.pool == nil {
+		return nil, false
+	}
+	if !shouldResetDaemonTransport(err) {
+		return nil, false
+	}
+
+	p.localTransportRetryUsed = true
+	if p.conn != nil {
+		p.conn.Healthy = false
+	}
+	p.daemon.router.RecordFailure(p.serverName, p.target, err)
+	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "send")
+	p.daemon.logger.Warn("local transport send failed; reconnecting and retrying once",
+		"server", p.serverName, "error", err)
+
+	p.daemon.pool.ClearServer(p.serverName)
+	if p.daemon.procMgr != nil {
+		_ = p.daemon.procMgr.Stop(p.serverName)
+	}
+	p.daemon.runningServers.Delete(p.serverName)
+	if p.daemon.eventBus != nil {
+		p.daemon.eventBus.Publish(EventProcessStop, map[string]any{
+			"server": p.serverName,
+			"reason": "transport_send_retry",
+		})
+	}
+
+	p.releaseConnection()
+	if connectErr := p.connectTarget(router.TargetLocal, "local transport send retry"); connectErr != nil {
+		combined := fmt.Errorf("local send failed: %v; local retry failed: %w", err, connectErr)
+		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
+		return p.internalErrorWithAudit(p.targetStr, combined.Error()), true
+	}
+
+	return p.execute(req), true
 }
 
 func (p *callPipeline) connectTarget(target router.Target, reason string) error {
@@ -743,4 +788,32 @@ func isRPCTimeout(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "i/o timeout")
+}
+
+func shouldResetDaemonTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRPCTimeout(err) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ENOTCONN) {
+		return true
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "use of closed network connection") ||
+		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "transport closed")
 }
