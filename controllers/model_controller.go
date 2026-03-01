@@ -1387,8 +1387,10 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 		plan.ModelPath = modelValue
 	}
 
-	// llama.cpp needs a concrete GGUF file path under the staged HF directory.
-	if backendName == "llamacpp" &&
+	// Backends that load a single GGUF file need a concrete file path under the
+	// staged HF directory. llama.cpp always requires it; vLLM uses it when the
+	// user specifies ggufFile to select a specific variant from multi-GGUF repos.
+	if (backendName == "llamacpp" || backendName == "vllm") &&
 		strings.HasPrefix(source, "HF://") &&
 		strategy == "SharedPVC" &&
 		model.Status.Cache != nil &&
@@ -3049,7 +3051,10 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 	}
 
 	backendName := strings.ToLower(strings.TrimSpace(model.Spec.Backend))
-	if backendName == "llamacpp" || backendName == "llama.cpp" {
+
+	// Backends that load GGUF files: filter downloads to just the specified file
+	// to avoid downloading all quantization variants from multi-GGUF repos.
+	if backendName == "llamacpp" || backendName == "llama.cpp" || backendName == "vllm" {
 		ggufFile := configStringValue(cfg, "ggufFile", "modelFile")
 		if ggufFile != "" {
 			opts.allowPatterns = append(opts.allowPatterns, ggufFile)

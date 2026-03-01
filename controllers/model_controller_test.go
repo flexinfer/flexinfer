@@ -995,6 +995,29 @@ func TestResolveHFDownloadOptions_RespectsPatternOverrides(t *testing.T) {
 	}
 }
 
+func TestResolveHFDownloadOptions_VLLMAddsGGUFFile(t *testing.T) {
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://unsloth/Qwen3.5-35B-A3B-GGUF",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{
+					"ggufFile":"Qwen3.5-35B-A3B-UD-Q4_K_M.gguf",
+					"tokenizer":"Qwen/Qwen3.5-35B-A3B"
+				}`),
+			},
+		},
+	}
+
+	opts := resolveHFDownloadOptions(model)
+	if got, want := len(opts.allowPatterns), 1; got != want {
+		t.Fatalf("allowPatterns len = %d, want %d (%v)", got, want, opts.allowPatterns)
+	}
+	if opts.allowPatterns[0] != "Qwen3.5-35B-A3B-UD-Q4_K_M.gguf" {
+		t.Fatalf("allowPatterns[0] = %q", opts.allowPatterns[0])
+	}
+}
+
 func TestJobForPrefetch_IncludesHFPatternEnv(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {

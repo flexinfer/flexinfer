@@ -714,6 +714,36 @@ func TestVLLMBackendArgs_CPUOffloadGb(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_Tokenizer(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		ModelPath: "/models/my-model/model-Q4_K_M.gguf",
+		Config: map[string]interface{}{
+			"quantization": "gguf",
+			"tokenizer":    "Qwen/Qwen3.5-35B-A3B",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--tokenizer"]; v != "Qwen/Qwen3.5-35B-A3B" {
+		t.Errorf("expected --tokenizer=Qwen/Qwen3.5-35B-A3B, got %q", v)
+	}
+	if v := argMap["--quantization"]; v != "gguf" {
+		t.Errorf("expected --quantization=gguf, got %q", v)
+	}
+	if v := argMap["--model"]; v != "/models/my-model/model-Q4_K_M.gguf" {
+		t.Errorf("expected --model=/models/my-model/model-Q4_K_M.gguf, got %q", v)
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 

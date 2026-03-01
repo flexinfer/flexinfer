@@ -120,9 +120,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--num-gpu-blocks-override", fmt.Sprintf("%d", blocks))
 	}
 
-	// Quantization method (awq, gptq, fp8, etc.)
+	// Quantization method (awq, gptq, fp8, gguf, etc.)
 	if quant := spec.ConfigString("quantization", ""); quant != "" {
 		args = append(args, "--quantization", quant)
+	}
+
+	// Tokenizer override — required for GGUF models which lack HF tokenizer files.
+	// Points to the base HF repo (e.g., "Qwen/Qwen3.5-35B-A3B").
+	if tok := spec.ConfigString("tokenizer", ""); tok != "" {
+		args = append(args, "--tokenizer", tok)
 	}
 
 	// Served model name — controls the model name in /v1/models and routing
@@ -258,9 +264,9 @@ func (b *VLLMBackend) UnloadLoRAEndpoint() string {
 	return "/v1/unload_lora_adapter"
 }
 
-// SupportedQuantFormats returns AWQ, GPTQ, and FP8 — the formats vLLM natively loads.
+// SupportedQuantFormats returns AWQ, GPTQ, FP8, and GGUF — the formats vLLM natively loads.
 func (b *VLLMBackend) SupportedQuantFormats() []string {
-	return []string{"AWQ", "GPTQ", "FP8"}
+	return []string{"AWQ", "GPTQ", "FP8", "GGUF"}
 }
 
 // CompilationCacheEnvVars implements CompilationCacheConfigurer.
