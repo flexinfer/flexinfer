@@ -20,6 +20,11 @@ ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
 ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 ENV HIP_FORCE_DEV_KERNARG=1
 
+# PyTorch memory allocator: expandable segments reduces fragmentation and
+# reclaims reserved-but-unallocated memory — critical for VRAM-constrained
+# models like Qwen3.5-35B-A3B (22.82 GiB on 24 GB GPU).
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # Triton flash attention for RDNA3 (via AOTriton)
 ENV VLLM_USE_TRITON_FLASH_ATTN=1
 # AWQ quantization via Triton (required for AWQ models on ROCm)

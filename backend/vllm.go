@@ -108,8 +108,16 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	}
 
 	// CPU offload — move part of model weights to CPU to free VRAM for KV cache
+	// Note: not supported in vLLM V1 engine (nightly 0.14.0+), only V0 (0.7.x)
 	if cpuOffload := spec.ConfigInt("cpuOffloadGb", 0); cpuOffload > 0 {
 		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", cpuOffload))
+	}
+
+	// Override KV cache blocks — bypasses the profiling step that measures
+	// available GPU memory. Useful when model weights consume nearly all VRAM
+	// and the profiling allocation itself causes OOM.
+	if blocks := spec.ConfigInt("numGpuBlocksOverride", 0); blocks > 0 {
+		args = append(args, "--num-gpu-blocks-override", fmt.Sprintf("%d", blocks))
 	}
 
 	// Quantization method (awq, gptq, fp8, etc.)

@@ -668,6 +668,29 @@ func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_NumGpuBlocksOverride(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"numGpuBlocksOverride": 10,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--num-gpu-blocks-override"]; v != "10" {
+		t.Errorf("expected --num-gpu-blocks-override=10, got %q", v)
+	}
+}
+
 func TestVLLMBackendArgs_CPUOffloadGb(t *testing.T) {
 	b := &VLLMBackend{}
 
