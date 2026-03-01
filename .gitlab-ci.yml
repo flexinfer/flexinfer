@@ -58,7 +58,9 @@ variables:
   IMAGE_REGISTRY: registry.flexinfer.ai
   IMAGE_REGISTRIES: "registry.harbor.lan registry.flexinfer.ai"
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
-  DOCKER_CONFIG: /kaniko/.docker
+  BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
+  BUILDKIT_FALLBACK_HOSTS: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234,tcp://buildkitd.ci-build.svc.cluster.local:1234"
+  BUILDKIT_CLI_IMAGE: "registry.harbor.lan/dockerhub-cache/moby/buildkit:v0.12.5"
   # The CI runner injects a pre-build step that waits for a Docker daemon when DOCKER_HOST is tcp://localhost:2375.
   # This repo doesn't use DinD for its Go jobs; disable that wait globally to prevent jobs hanging.
   DOCKER_HOST: ""
@@ -525,26 +527,62 @@ ios:archive-export:
 
 build:image:loom-core:
   stage: deploy
-  # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
-  resource_group: kaniko
+  # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
+  resource_group: buildkit-images
   retry:
     max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    name: $BUILDKIT_CLI_IMAGE
     entrypoint: [""]
-  # This repo sets GIT_STRATEGY=none globally; Kaniko jobs need a checked-out
+  # This repo sets GIT_STRATEGY=none globally; image jobs need a checked-out
   # working tree, and the GitLab archive API has been returning 404.
   variables:
     GIT_STRATEGY: fetch
+    # Remote BuildKit does not need local DinD.
+    DOCKER_HOST: ""
   script:
-    - mkdir -p "$DOCKER_CONFIG"
-    - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
-    - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
     - |
-      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-$IMAGE_REGISTRY}"
+      set -eu
+
+      pick_buildkit_host() {
+        CANDIDATES="${BUILDKIT_HOST:-}"
+        if [ -n "${BUILDKIT_FALLBACK_HOSTS:-}" ]; then
+          CANDIDATES="$CANDIDATES $(echo "$BUILDKIT_FALLBACK_HOSTS" | tr ',' ' ')"
+        fi
+
+        if [ -z "$CANDIDATES" ]; then
+          echo "No BuildKit endpoint configured."
+          return 1
+        fi
+
+        SEEN=""
+        for HOST in $CANDIDATES; do
+          [ -z "$HOST" ] && continue
+          case " $SEEN " in
+            *" $HOST "*) continue ;;
+          esac
+          SEEN="$SEEN $HOST"
+
+          echo "Checking BuildKit endpoint: $HOST"
+          if buildctl --addr "$HOST" debug info >/dev/null 2>&1; then
+            BUILDKIT_HOST="$HOST"
+            export BUILDKIT_HOST
+            echo "Using BuildKit endpoint: $BUILDKIT_HOST"
+            buildctl --addr "$BUILDKIT_HOST" debug info
+            return 0
+          fi
+        done
+
+        echo "No healthy BuildKit endpoint found."
+        return 1
+      }
+
+      pick_buildkit_host
+
+      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-${IMAGE_REGISTRY}}"
       SUCCESS=0
       LAST_RC=1
 
@@ -566,26 +604,30 @@ build:image:loom-core:
         rm -f "$PROBE_LOG"
 
         IMAGE="$REGISTRY/mcp/loom-core"
-        DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
+        CACHE_REF="$REGISTRY/library/build-cache/loom-core"
+        IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA"
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-          DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
         fi
         if [ -n "$CI_COMMIT_TAG" ]; then
-          DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
         fi
 
         echo "Attempting build/push via registry host: $REGISTRY"
-        echo "Building with destinations: $DESTINATIONS"
-        LOG_FILE="$CI_PROJECT_DIR/.kaniko-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        echo "Building with image names: $IMAGE_NAMES"
+        LOG_FILE="$CI_PROJECT_DIR/.buildctl-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
         rm -f "$LOG_FILE"
-        if /kaniko/executor \
-          --context "$CI_PROJECT_DIR" \
-          --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-          $DESTINATIONS \
-          --cleanup \
-          --build-arg "RUNTIME_REGISTRY=$REGISTRY" \
-          --build-arg "VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN" >"$LOG_FILE" 2>&1; then
+        if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+          --frontend dockerfile.v0 \
+          --local context="$CI_PROJECT_DIR" \
+          --local dockerfile="$CI_PROJECT_DIR" \
+          --opt filename=Dockerfile \
+          --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
+          --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
+          --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
+          --import-cache "type=registry,ref=${CACHE_REF}" \
+          --export-cache "type=registry,ref=${CACHE_REF},mode=max,image-manifest=true" \
+          --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
           cat "$LOG_FILE"
           rm -f "$LOG_FILE"
           SUCCESS=1
@@ -594,7 +636,29 @@ build:image:loom-core:
 
         LAST_RC=$?
         cat "$LOG_FILE"
-        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied" "$LOG_FILE"; then
+        if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
+          echo "Registry cache export failed; retrying without cache flags."
+          rm -f "$LOG_FILE"
+          LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+          if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+            --frontend dockerfile.v0 \
+            --local context="$CI_PROJECT_DIR" \
+            --local dockerfile="$CI_PROJECT_DIR" \
+            --opt filename=Dockerfile \
+            --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
+            --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
+            --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
+            --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+            cat "$LOG_FILE"
+            rm -f "$LOG_FILE"
+            SUCCESS=1
+            break
+          fi
+          LAST_RC=$?
+          cat "$LOG_FILE"
+        fi
+
+        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied|failed to list workers|transport: error while dialing|dial tcp|unexpected EOF|connection reset by peer" "$LOG_FILE"; then
           echo "Registry host $REGISTRY failed; trying next configured host."
           rm -f "$LOG_FILE"
           continue
@@ -614,24 +678,60 @@ build:image:loom-core:
 
 build:image:custom-server:
   stage: deploy
-  # Avoid concurrent Kaniko builds piling up ephemeral storage across nodes.
-  resource_group: kaniko
+  # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
+  resource_group: buildkit-images
   retry:
     max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    name: $BUILDKIT_CLI_IMAGE
     entrypoint: [""]
   variables:
     GIT_STRATEGY: fetch
+    # Remote BuildKit does not need local DinD.
+    DOCKER_HOST: ""
   script:
-    - mkdir -p "$DOCKER_CONFIG"
-    - test -f /docker-secrets/config.json || (echo "missing /docker-secrets/config.json (Harbor auth)" && exit 1)
-    - cp /docker-secrets/config.json "$DOCKER_CONFIG/config.json"
     - |
-      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-$IMAGE_REGISTRY}"
+      set -eu
+
+      pick_buildkit_host() {
+        CANDIDATES="${BUILDKIT_HOST:-}"
+        if [ -n "${BUILDKIT_FALLBACK_HOSTS:-}" ]; then
+          CANDIDATES="$CANDIDATES $(echo "$BUILDKIT_FALLBACK_HOSTS" | tr ',' ' ')"
+        fi
+
+        if [ -z "$CANDIDATES" ]; then
+          echo "No BuildKit endpoint configured."
+          return 1
+        fi
+
+        SEEN=""
+        for HOST in $CANDIDATES; do
+          [ -z "$HOST" ] && continue
+          case " $SEEN " in
+            *" $HOST "*) continue ;;
+          esac
+          SEEN="$SEEN $HOST"
+
+          echo "Checking BuildKit endpoint: $HOST"
+          if buildctl --addr "$HOST" debug info >/dev/null 2>&1; then
+            BUILDKIT_HOST="$HOST"
+            export BUILDKIT_HOST
+            echo "Using BuildKit endpoint: $BUILDKIT_HOST"
+            buildctl --addr "$BUILDKIT_HOST" debug info
+            return 0
+          fi
+        done
+
+        echo "No healthy BuildKit endpoint found."
+        return 1
+      }
+
+      pick_buildkit_host
+
+      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-${IMAGE_REGISTRY}}"
       SUCCESS=0
       LAST_RC=1
 
@@ -653,25 +753,29 @@ build:image:custom-server:
         rm -f "$PROBE_LOG"
 
         IMAGE="$REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
-        DESTINATIONS="--destination $IMAGE:$CI_COMMIT_SHORT_SHA"
+        CACHE_REF="$REGISTRY/library/build-cache/custom-server"
+        IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA"
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-          DESTINATIONS="$DESTINATIONS --destination $IMAGE:latest"
+          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
         fi
         if [ -n "$CI_COMMIT_TAG" ]; then
-          DESTINATIONS="$DESTINATIONS --destination $IMAGE:$CI_COMMIT_TAG"
+          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
         fi
 
         echo "Attempting build/push via registry host: $REGISTRY"
-        echo "Building with destinations: $DESTINATIONS"
-        LOG_FILE="$CI_PROJECT_DIR/.kaniko-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+        echo "Building with image names: $IMAGE_NAMES"
+        LOG_FILE="$CI_PROJECT_DIR/.buildctl-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
         rm -f "$LOG_FILE"
-        if /kaniko/executor \
-          --context "$CI_PROJECT_DIR" \
-          --dockerfile "$CI_PROJECT_DIR/Dockerfile.custom-server" \
-          $DESTINATIONS \
-          --cleanup \
-          --build-arg "RUNTIME_REGISTRY=$REGISTRY" \
-          --build-arg "CI_JOB_TOKEN=$CI_JOB_TOKEN" >"$LOG_FILE" 2>&1; then
+        if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+          --frontend dockerfile.v0 \
+          --local context="$CI_PROJECT_DIR" \
+          --local dockerfile="$CI_PROJECT_DIR" \
+          --opt filename=Dockerfile.custom-server \
+          --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
+          --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
+          --import-cache "type=registry,ref=${CACHE_REF}" \
+          --export-cache "type=registry,ref=${CACHE_REF},mode=max,image-manifest=true" \
+          --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
           cat "$LOG_FILE"
           rm -f "$LOG_FILE"
           SUCCESS=1
@@ -680,7 +784,28 @@ build:image:custom-server:
 
         LAST_RC=$?
         cat "$LOG_FILE"
-        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied" "$LOG_FILE"; then
+        if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
+          echo "Registry cache export failed; retrying without cache flags."
+          rm -f "$LOG_FILE"
+          LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
+          if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+            --frontend dockerfile.v0 \
+            --local context="$CI_PROJECT_DIR" \
+            --local dockerfile="$CI_PROJECT_DIR" \
+            --opt filename=Dockerfile.custom-server \
+            --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
+            --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
+            --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+            cat "$LOG_FILE"
+            rm -f "$LOG_FILE"
+            SUCCESS=1
+            break
+          fi
+          LAST_RC=$?
+          cat "$LOG_FILE"
+        fi
+
+        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied|failed to list workers|transport: error while dialing|dial tcp|unexpected EOF|connection reset by peer" "$LOG_FILE"; then
           echo "Registry host $REGISTRY failed; trying next configured host."
           rm -f "$LOG_FILE"
           continue
