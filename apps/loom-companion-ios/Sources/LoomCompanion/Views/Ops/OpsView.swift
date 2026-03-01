@@ -16,8 +16,11 @@ struct OpsView: View {
     @State private var createAutoRecall = true
     @State private var endSessionID = ""
     @State private var endWithSummary = false
+    @State private var startSandboxProject = ""
+    @State private var startSandboxAgentID = ""
     @State private var showCreateConfirmation = false
     @State private var showEndConfirmation = false
+    @State private var showSandboxStartConfirmation = false
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -140,6 +143,19 @@ struct OpsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(endWithSummary ? "This will end the session and request a summary." : "This will end the session without summary.")
+        }
+        .confirmationDialog("Start Sandbox?", isPresented: $showSandboxStartConfirmation, titleVisibility: .visible) {
+            Button("Start Sandbox") {
+                Task {
+                    await viewModel.startSandbox(
+                        project: startSandboxProject,
+                        agentID: startSandboxAgentID
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This triggers sandbox start/build for the selected project.")
         }
         .overlay(alignment: .top) {
             if showToast, let toastMessage {
@@ -395,6 +411,44 @@ struct OpsView: View {
 
             GroupBox("Sandbox / Devbox") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text("Scoped mobile mutations: sandbox start/stop only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    TextField("Project (e.g. loom-core)", text: $startSandboxProject)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+
+                    TextField("Agent ID (optional)", text: $startSandboxAgentID)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+
+                    Button {
+                        viewModel.clearMutationMessages()
+                        showSandboxStartConfirmation = true
+                    } label: {
+                        if viewModel.isMutatingSandbox {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Label("Start Sandbox", systemImage: "play.circle")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        startSandboxProject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        viewModel.isMutatingSandbox
+                    )
+
+                    Divider()
+
                     if let sandbox = viewModel.sandboxSummary {
                         if sandbox.available {
                             HStack {
@@ -451,7 +505,7 @@ struct OpsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text("Read-only in Wave 1. Presence operations stay in HUD/TUI for now.")
+            Text("Presence remains read-only in mobile. Use HUD/TUI for heartbeats/claims/worktree mutations.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -285,6 +285,7 @@ public final class OpsViewModel {
             sandboxMutationMessage = response.started
                 ? "Sandbox started: \(response.project)"
                 : "Sandbox build queued: \(response.project)"
+            await refreshSandboxSummaryAfterMutation()
         } catch {
             sandboxMutationError = toLoomError(error).description
         }
@@ -308,6 +309,7 @@ public final class OpsViewModel {
             sandboxMutationMessage = response.stopped
                 ? "Sandbox stopped: \(response.project)"
                 : "Sandbox stop requested: \(response.project)"
+            await refreshSandboxSummaryAfterMutation()
         } catch {
             sandboxMutationError = toLoomError(error).description
         }
@@ -324,6 +326,15 @@ public final class OpsViewModel {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func refreshSandboxSummaryAfterMutation() async {
+        do {
+            let latest: MobileSandboxSummary = try await apiClient.request(.sandbox)
+            sandboxSummary = latest
+        } catch {
+            // Keep mutation success visible even if follow-up refresh fails.
+        }
     }
 
     private func toLoomError(_ error: Error) -> LoomAPIError {

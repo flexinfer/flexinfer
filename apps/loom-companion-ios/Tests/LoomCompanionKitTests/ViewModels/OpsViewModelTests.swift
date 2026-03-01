@@ -299,4 +299,60 @@ struct OpsViewModelTests {
 
         #expect(vm.mutationErrorMessage == "Session ID is required")
     }
+
+    @Test("Start sandbox mutation refreshes sandbox summary")
+    func startSandboxMutationSuccess() async {
+        let client = MockAPIClient()
+        client.sandboxStartResponse = MobileSandboxStartResponse(started: true, project: "loom-core")
+        client.sandboxResponse = MobileSandboxSummary(
+            available: true,
+            projects: [
+                MobileSandboxProject(project: "loom-core", status: "running", agentId: "codex", uptime: "10s", backend: "k8s"),
+            ],
+            totalRunning: 1,
+            backend: "k8s"
+        )
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.startSandbox(project: "loom-core", agentID: "codex")
+
+        #expect(vm.sandboxMutationError == nil)
+        #expect(vm.sandboxMutationMessage == "Sandbox started: loom-core")
+        #expect(vm.sandboxSummary?.totalRunning == 1)
+        #expect(vm.sandboxSummary?.projects.first?.project == "loom-core")
+        #expect(vm.isMutatingSandbox == false)
+    }
+
+    @Test("Stop sandbox mutation refreshes sandbox summary")
+    func stopSandboxMutationSuccess() async {
+        let client = MockAPIClient()
+        client.sandboxStopResponse = MobileSandboxStopResponse(stopped: true, project: "loom-core")
+        client.sandboxResponse = MobileSandboxSummary(
+            available: true,
+            projects: [],
+            totalRunning: 0,
+            backend: "k8s"
+        )
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.stopSandbox(project: "loom-core")
+
+        #expect(vm.sandboxMutationError == nil)
+        #expect(vm.sandboxMutationMessage == "Sandbox stopped: loom-core")
+        #expect(vm.sandboxSummary?.totalRunning == 0)
+        #expect(vm.sandboxSummary?.projects.isEmpty == true)
+        #expect(vm.isMutatingSandbox == false)
+    }
+
+    @Test("Sandbox mutations require project name")
+    func sandboxMutationValidation() async {
+        let client = MockAPIClient()
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.startSandbox(project: "   ", agentID: "codex")
+        #expect(vm.sandboxMutationError == "Project is required")
+
+        await vm.stopSandbox(project: " ")
+        #expect(vm.sandboxMutationError == "Project is required")
+    }
 }
