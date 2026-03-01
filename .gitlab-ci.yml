@@ -609,7 +609,7 @@ build:image:loom-core:
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
           IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
         fi
-        if [ -n "$CI_COMMIT_TAG" ]; then
+        if [ -n "${CI_COMMIT_TAG:-}" ]; then
           IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
         fi
 
@@ -758,7 +758,7 @@ build:image:custom-server:
         if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
           IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
         fi
-        if [ -n "$CI_COMMIT_TAG" ]; then
+        if [ -n "${CI_COMMIT_TAG:-}" ]; then
           IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
         fi
 
