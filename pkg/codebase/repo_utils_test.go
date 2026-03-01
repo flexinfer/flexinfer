@@ -64,6 +64,7 @@ func runGit(t *testing.T, repo string, args ...string) {
 	defer cancel()
 	cmdArgs := append([]string{"-C", repo}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd.Env = cleanGitEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}

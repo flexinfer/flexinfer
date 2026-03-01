@@ -3,6 +3,7 @@ package codebase
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -43,11 +44,25 @@ func runGitOutput(repoPath string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 	cmdArgs := append([]string{"-C", repoPath}, args...)
-	out, err := exec.CommandContext(ctx, "git", cmdArgs...).Output()
+	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd.Env = cleanGitEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func cleanGitEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_DIR=") || strings.HasPrefix(kv, "GIT_WORK_TREE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // normalizeStringSlice trims whitespace and lowercases each element,
