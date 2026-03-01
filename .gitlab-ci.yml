@@ -627,7 +627,7 @@ build:image:loom-core:
           --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
           --import-cache "type=registry,ref=${CACHE_REF}" \
           --export-cache "type=registry,ref=${CACHE_REF},mode=max,image-manifest=true" \
-          --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+          --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
           cat "$LOG_FILE"
           rm -f "$LOG_FILE"
           SUCCESS=1
@@ -648,7 +648,7 @@ build:image:loom-core:
             --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
             --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
             --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
-            --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+            --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
             cat "$LOG_FILE"
             rm -f "$LOG_FILE"
             SUCCESS=1
@@ -775,7 +775,7 @@ build:image:custom-server:
           --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
           --import-cache "type=registry,ref=${CACHE_REF}" \
           --export-cache "type=registry,ref=${CACHE_REF},mode=max,image-manifest=true" \
-          --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+          --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
           cat "$LOG_FILE"
           rm -f "$LOG_FILE"
           SUCCESS=1
@@ -795,7 +795,7 @@ build:image:custom-server:
             --opt filename=Dockerfile.custom-server \
             --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
             --opt "build-arg:CI_JOB_TOKEN=$CI_JOB_TOKEN" \
-            --output "type=image,name=${IMAGE_NAMES},push=true" >"$LOG_FILE" 2>&1; then
+            --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
             cat "$LOG_FILE"
             rm -f "$LOG_FILE"
             SUCCESS=1
