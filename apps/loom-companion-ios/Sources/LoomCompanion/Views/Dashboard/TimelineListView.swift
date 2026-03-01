@@ -5,27 +5,27 @@ struct TimelineListView: View {
     let entries: [TimelineEntry]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Activity")
-                .font(.headline)
+        LoomCard {
+            VStack(alignment: .leading, spacing: LoomSpacing.cardSpacing) {
+                Text("Recent Activity")
+                    .font(LoomTypography.headlineMedium)
 
-            if entries.isEmpty {
-                Text("No recent events")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(entries) { entry in
-                    TimelineRow(entry: entry)
-                    if entry.id != entries.last?.id {
-                        Divider()
+                if entries.isEmpty {
+                    Text("No recent events")
+                        .font(LoomTypography.bodyRegular)
+                        .foregroundStyle(LoomColors.textSecondary)
+                        .padding(.vertical, LoomSpacing.sm)
+                } else {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        TimelineRow(entry: entry)
+                            .cardAppear(index: index)
+                        if entry.id != entries.last?.id {
+                            Divider()
+                        }
                     }
                 }
             }
         }
-        .padding()
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -38,21 +38,21 @@ private struct TimelineRow: View {
                 .font(.body)
                 .foregroundStyle(colorForEventType(entry.eventType))
                 .frame(width: 24)
+                .symbolEffect(.bounce, value: entry.id)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(formatEventType(entry.eventType))
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(LoomTypography.bodyMedium)
 
                 if let agentId = entry.agentId {
                     Text(agentId)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.textSecondary)
                 }
 
                 Text(entry.timestamp)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(LoomTypography.monoCaption)
+                    .foregroundStyle(LoomColors.textTertiary)
             }
 
             Spacer()
@@ -75,11 +75,11 @@ private struct TimelineRow: View {
 
     private func colorForEventType(_ type: String) -> Color {
         switch type {
-        case "agent.session.start": return .green
-        case "agent.session.end": return .orange
-        case "agent.session.reaped": return .red
+        case "agent.session.start": return LoomColors.statusHealthy
+        case "agent.session.end": return LoomColors.statusDegraded
+        case "agent.session.reaped": return LoomColors.statusCritical
         case "agent.heartbeat": return .pink
-        default: return .blue
+        default: return LoomColors.statusActive
         }
     }
 

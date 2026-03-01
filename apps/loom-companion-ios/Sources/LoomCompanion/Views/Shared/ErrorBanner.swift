@@ -4,6 +4,7 @@ import LoomCompanionKit
 struct ErrorBanner: View {
     let health: ConnectionHealth
     let onRetry: (() -> Void)?
+    @State private var isDismissed = false
 
     init(health: ConnectionHealth, onRetry: (() -> Void)? = nil) {
         self.health = health
@@ -11,22 +12,40 @@ struct ErrorBanner: View {
     }
 
     var body: some View {
-        if let message = bannerMessage {
+        if let message = bannerMessage, !isDismissed {
             HStack {
                 Image(systemName: bannerIcon)
                     .foregroundStyle(bannerColor)
+                    .symbolEffect(.pulse, isActive: true)
+
                 Text(message)
                     .font(.caption)
+
                 Spacer()
+
                 if let onRetry {
                     Button("Retry", action: onRetry)
                         .font(.caption)
                         .buttonStyle(.bordered)
                 }
+
+                Button {
+                    withAnimation(.spring(duration: 0.3)) {
+                        isDismissed = true
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(10)
             .background(bannerColor.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .transition(.slideInFromTop)
+            .onAppear {
+                HapticManager.warning()
+            }
         }
     }
 

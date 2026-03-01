@@ -4,10 +4,14 @@ import LoomCompanionKit
 @main
 struct LoomCompanionApp: App {
     @State private var connectionVM = ConnectionViewModel()
+    @State private var pendingDeepLink: DeepLink?
 
     var body: some Scene {
         WindowGroup {
-            ContentView(connectionVM: connectionVM)
+            ContentView(connectionVM: connectionVM, pendingDeepLink: $pendingDeepLink)
+                .onOpenURL { url in
+                    pendingDeepLink = DeepLink.from(url)
+                }
         }
     }
 }

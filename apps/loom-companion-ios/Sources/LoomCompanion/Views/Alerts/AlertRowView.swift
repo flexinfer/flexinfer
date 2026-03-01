@@ -5,34 +5,32 @@ struct AlertRowView: View {
     let alert: AlertItem
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: LoomSpacing.md) {
             severityIcon
                 .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: LoomSpacing.xxs) {
                 HStack {
                     Text(alert.title)
-                        .font(.headline)
+                        .font(LoomTypography.headlineMedium)
                         .fontWeight(alert.isRead ? .regular : .bold)
 
                     Spacer()
 
                     if !alert.isRead {
-                        Circle()
-                            .fill(.blue)
-                            .frame(width: 8, height: 8)
+                        PulsingDot(color: LoomColors.statusActive, size: 8, isPulsing: true)
                     }
                 }
 
                 Text(alert.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(LoomTypography.bodyRegular)
+                    .foregroundStyle(LoomColors.textSecondary)
                     .lineLimit(2)
 
                 HStack {
                     Text(alert.timestamp, style: .relative)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.textTertiary)
 
                     if alert.primaryAction != .acknowledge {
                         Spacer()
@@ -41,8 +39,13 @@ struct AlertRowView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, LoomSpacing.xxs)
         .opacity(alert.isRead ? 0.7 : 1.0)
+        .listRowBackground(
+            alert.isRead
+                ? Color.clear
+                : LoomColors.severityBackground(alert.severity)
+        )
     }
 
     @ViewBuilder
@@ -50,15 +53,16 @@ struct AlertRowView: View {
         switch alert.severity {
         case .critical:
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(LoomColors.statusCritical)
                 .font(.title3)
+                .symbolEffect(.variableColor.iterative, isActive: !alert.isRead)
         case .warning:
             Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(LoomColors.statusDegraded)
                 .font(.title3)
         case .info:
             Image(systemName: "info.circle.fill")
-                .foregroundStyle(.blue)
+                .foregroundStyle(LoomColors.statusInfo)
                 .font(.title3)
         }
     }
@@ -68,16 +72,16 @@ struct AlertRowView: View {
         switch alert.primaryAction {
         case .viewSession:
             Label("Session", systemImage: "arrow.right.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(LoomTypography.caption)
+                .foregroundStyle(LoomColors.textSecondary)
         case .viewWorkflow:
             Label("Workflow", systemImage: "arrow.right.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(LoomTypography.caption)
+                .foregroundStyle(LoomColors.textSecondary)
         case .viewDashboard:
             Label("Dashboard", systemImage: "arrow.right.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(LoomTypography.caption)
+                .foregroundStyle(LoomColors.textSecondary)
         case .acknowledge:
             EmptyView()
         }

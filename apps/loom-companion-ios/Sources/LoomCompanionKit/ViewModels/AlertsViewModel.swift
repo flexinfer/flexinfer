@@ -40,6 +40,11 @@ public final class AlertsViewModel {
         }
     }
 
+    /// Remove a single alert by ID.
+    public func removeAlert(_ id: UUID) {
+        alerts.removeAll { $0.id == id }
+    }
+
     /// Remove all alerts.
     public func clearAll() {
         alerts.removeAll()
