@@ -741,7 +741,7 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; %s; loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --quiet %s || true`,
+				`%s; %s; loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast --quiet %s || true`,
 				bootstrap, staleCleanup, cfg.AgentType, cfg.Description, log),
 		},
 		{

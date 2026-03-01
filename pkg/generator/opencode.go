@@ -118,7 +118,9 @@ export default (async ({ $, project }) => {
         "--agent-id", agentId,
         "--agent-type", agentType,
         "--description", "OpenCode session",
-        "--auto-recall", "--quiet"
+        "--auto-recall",
+        "--auto-recall-strategy", "fast",
+        "--quiet"
       )
     },
 
@@ -126,7 +128,9 @@ export default (async ({ $, project }) => {
       await loom(
         "agent", "session-end",
         "--agent-id", agentId,
-        "--summarize", "--quiet"
+        "--summarize",
+        "--summary-async",
+        "--quiet"
       )
     },
 

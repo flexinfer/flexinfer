@@ -1590,11 +1590,14 @@ func (a *AgentBridge) AnnotationAdd(filePath, content, category string, line int
 
 // SessionStartParams holds parameters for starting an agent session.
 type SessionStartParams struct {
-	Namespace   string `json:"namespace"`
-	AgentID     string `json:"agent_id"`
-	AgentType   string `json:"agent_type"`
-	Description string `json:"description"`
-	AutoRecall  bool   `json:"auto_recall"`
+	Namespace             string `json:"namespace"`
+	AgentID               string `json:"agent_id"`
+	AgentType             string `json:"agent_type"`
+	Description           string `json:"description"`
+	AutoRecall            bool   `json:"auto_recall"`
+	AutoRecallStrategy    string `json:"auto_recall_strategy,omitempty"`
+	AutoRecallQuery       string `json:"auto_recall_query,omitempty"`
+	AutoRecallTokenBudget int    `json:"auto_recall_token_budget,omitempty"`
 }
 
 // SessionStartResult holds the result of starting a session.
@@ -1605,6 +1608,102 @@ type SessionStartResult struct {
 }
 
 const sessionStartActiveLookupTimeout = 1500 * time.Millisecond
+
+const (
+	autoRecallStrategyFast     = "fast"
+	autoRecallStrategyBalanced = "balanced"
+	autoRecallStrategyDeep     = "deep"
+	autoRecallBudgetMin        = 256
+	autoRecallBudgetMax        = 32000
+)
+
+type autoRecallProfile struct {
+	TokenBudget   int
+	IncludeTasks  bool
+	RecencyWeight float64
+}
+
+var autoRecallProfiles = map[string]autoRecallProfile{
+	autoRecallStrategyFast: {
+		TokenBudget:   1500,
+		IncludeTasks:  false,
+		RecencyWeight: 0.45,
+	},
+	autoRecallStrategyBalanced: {
+		TokenBudget:   4000,
+		IncludeTasks:  true,
+		RecencyWeight: 0.20,
+	},
+	autoRecallStrategyDeep: {
+		TokenBudget:   8000,
+		IncludeTasks:  true,
+		RecencyWeight: 0.10,
+	},
+}
+
+func normalizeAutoRecallStrategy(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case autoRecallStrategyFast:
+		return autoRecallStrategyFast
+	case autoRecallStrategyDeep:
+		return autoRecallStrategyDeep
+	default:
+		return autoRecallStrategyBalanced
+	}
+}
+
+func clampAutoRecallBudget(budget int) int {
+	switch {
+	case budget < autoRecallBudgetMin:
+		return autoRecallBudgetMin
+	case budget > autoRecallBudgetMax:
+		return autoRecallBudgetMax
+	default:
+		return budget
+	}
+}
+
+func defaultAutoRecallQuery(p SessionStartParams) string {
+	if q := strings.TrimSpace(p.Description); q != "" {
+		return q
+	}
+	if q := strings.TrimSpace(p.Namespace); q != "" {
+		return q
+	}
+	return "recent implementation context and open tasks"
+}
+
+func buildSessionStartRecallArgs(p SessionStartParams) map[string]any {
+	strategy := normalizeAutoRecallStrategy(p.AutoRecallStrategy)
+	profile := autoRecallProfiles[strategy]
+
+	query := strings.TrimSpace(p.AutoRecallQuery)
+	if query == "" {
+		query = defaultAutoRecallQuery(p)
+	}
+
+	tokenBudget := profile.TokenBudget
+	if p.AutoRecallTokenBudget > 0 {
+		tokenBudget = clampAutoRecallBudget(p.AutoRecallTokenBudget)
+	}
+
+	args := map[string]any{
+		"query":             query,
+		"token_budget":      tokenBudget,
+		"include_decisions": true,
+		"include_summaries": true,
+		"include_tasks":     profile.IncludeTasks,
+		"recency_weight":    profile.RecencyWeight,
+	}
+	if id := strings.TrimSpace(p.AgentID); id != "" {
+		args["agent_id"] = id
+	}
+	if ns := strings.TrimSpace(p.Namespace); ns != "" {
+		args["file_context"] = ns
+	}
+
+	return args
+}
 
 // StartSession creates a session, registers presence, and optionally recalls context.
 // It is idempotent: if the agent already has an active session in the same namespace,
@@ -1662,13 +1761,7 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 
 	// Fire-and-forget: recall context (best-effort, not returned to caller).
 	if p.AutoRecall {
-		recallArgs := map[string]any{
-			"query":        p.Description,
-			"token_budget": 4000,
-		}
-		if p.Namespace != "" {
-			recallArgs["file_context"] = p.Namespace
-		}
+		recallArgs := buildSessionStartRecallArgs(p)
 		go func() { _ = a.callAgentTool("agent_context_recall_enhanced", recallArgs, nil) }()
 	}
 

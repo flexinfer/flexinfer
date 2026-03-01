@@ -902,15 +902,21 @@ func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
 
 	foundStaleCleanup := false
+	foundFastRecallStrategy := false
 	for _, h := range sessionHooks {
 		cmd, _ := h["command"].(string)
 		if strings.Contains(cmd, "session-start") && strings.Contains(cmd, "kill -0") {
 			foundStaleCleanup = true
-			break
+		}
+		if strings.Contains(cmd, "session-start") && strings.Contains(cmd, "--auto-recall-strategy fast") {
+			foundFastRecallStrategy = true
 		}
 	}
 	if !foundStaleCleanup {
 		t.Error("expected stale cleanup (kill -0) in session-start hook chain")
+	}
+	if !foundFastRecallStrategy {
+		t.Error("expected session-start hook to include --auto-recall-strategy fast")
 	}
 }
 

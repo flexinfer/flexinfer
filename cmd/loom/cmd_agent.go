@@ -530,12 +530,15 @@ If HUD is not reachable, commands fall back to daemon socket tool calls.`,
 // newAgentSessionStartCmd creates the `loom agent session-start` command.
 func newAgentSessionStartCmd() *cobra.Command {
 	var (
-		namespace   string
-		agentID     string
-		agentType   string
-		description string
-		autoRecall  bool
-		quiet       bool
+		namespace             string
+		agentID               string
+		agentType             string
+		description           string
+		autoRecall            bool
+		autoRecallStrategy    string
+		autoRecallQuery       string
+		autoRecallTokenBudget int
+		quiet                 bool
 	)
 
 	cmd := &cobra.Command{
@@ -551,11 +554,14 @@ Designed for use in Claude Code SessionStart hooks.`,
 			port := resolvePort(cmd)
 
 			result, err := startSessionWithFallback(cmd, port, bridge.SessionStartParams{
-				Namespace:   namespace,
-				AgentID:     agentID,
-				AgentType:   agentType,
-				Description: description,
-				AutoRecall:  autoRecall,
+				Namespace:             namespace,
+				AgentID:               agentID,
+				AgentType:             agentType,
+				Description:           description,
+				AutoRecall:            autoRecall,
+				AutoRecallStrategy:    autoRecallStrategy,
+				AutoRecallQuery:       autoRecallQuery,
+				AutoRecallTokenBudget: autoRecallTokenBudget,
 			})
 			if err != nil {
 				if quiet {
@@ -576,6 +582,9 @@ Designed for use in Claude Code SessionStart hooks.`,
 	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type (e.g., claude-code)")
 	cmd.Flags().StringVar(&description, "description", "", "Session description")
 	cmd.Flags().BoolVar(&autoRecall, "auto-recall", false, "Auto-recall context on start")
+	cmd.Flags().StringVar(&autoRecallStrategy, "auto-recall-strategy", "balanced", "Auto-recall depth profile: fast, balanced, deep")
+	cmd.Flags().StringVar(&autoRecallQuery, "auto-recall-query", "", "Override auto-recall query (defaults to description, then namespace)")
+	cmd.Flags().IntVar(&autoRecallTokenBudget, "auto-recall-token-budget", 0, "Override auto-recall token budget (256-32000)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd

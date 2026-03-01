@@ -861,3 +861,156 @@ func TestAgentBridge_KnowledgeRecall_SetsCrossAgent(t *testing.T) {
 		t.Fatalf("expected entry_type 'decision', got %q", result.Entries[0].EntryType)
 	}
 }
+
+func TestBuildSessionStartRecallArgs_DefaultsBalanced(t *testing.T) {
+	args := buildSessionStartRecallArgs(SessionStartParams{
+		Namespace:   "loom-core/main",
+		AgentID:     "codex-gpt5",
+		Description: "stabilize hook startup and memory pressure",
+	})
+
+	if got, _ := args["query"].(string); got != "stabilize hook startup and memory pressure" {
+		t.Fatalf("expected description-backed query, got %q", got)
+	}
+	if got, _ := args["agent_id"].(string); got != "codex-gpt5" {
+		t.Fatalf("expected agent_id codex-gpt5, got %q", got)
+	}
+	if got, _ := args["file_context"].(string); got != "loom-core/main" {
+		t.Fatalf("expected file_context loom-core/main, got %q", got)
+	}
+	if got, _ := args["token_budget"].(int); got != 4000 {
+		t.Fatalf("expected token_budget 4000, got %v", args["token_budget"])
+	}
+	if got, _ := args["include_tasks"].(bool); !got {
+		t.Fatalf("expected include_tasks=true, got %v", args["include_tasks"])
+	}
+	if got, _ := args["include_decisions"].(bool); !got {
+		t.Fatalf("expected include_decisions=true, got %v", args["include_decisions"])
+	}
+	if got, _ := args["include_summaries"].(bool); !got {
+		t.Fatalf("expected include_summaries=true, got %v", args["include_summaries"])
+	}
+	if got, _ := args["recency_weight"].(float64); got != 0.20 {
+		t.Fatalf("expected recency_weight=0.20, got %v", args["recency_weight"])
+	}
+}
+
+func TestBuildSessionStartRecallArgs_FastProfileAndOverrides(t *testing.T) {
+	args := buildSessionStartRecallArgs(SessionStartParams{
+		Namespace:             "loom-core/feature-x",
+		AgentID:               "codex-gpt5",
+		AutoRecallStrategy:    "FAST",
+		AutoRecallQuery:       "focus on recent queue-policy decisions",
+		AutoRecallTokenBudget: 64,
+	})
+
+	if got, _ := args["query"].(string); got != "focus on recent queue-policy decisions" {
+		t.Fatalf("expected override query, got %q", got)
+	}
+	if got, _ := args["token_budget"].(int); got != 256 {
+		t.Fatalf("expected clamped token_budget 256, got %v", args["token_budget"])
+	}
+	if got, _ := args["include_tasks"].(bool); got {
+		t.Fatalf("expected include_tasks=false for fast profile, got %v", args["include_tasks"])
+	}
+	if got, _ := args["recency_weight"].(float64); got != 0.45 {
+		t.Fatalf("expected recency_weight=0.45 for fast profile, got %v", args["recency_weight"])
+	}
+}
+
+func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	recallArgsCh := make(chan map[string]any, 1)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[]}`},
+				},
+			}, nil
+		case "agent_context__agent_session_start":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"session_id":"sess-123"}`},
+				},
+			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		case "agent_context__agent_context_recall_enhanced":
+			select {
+			case recallArgsCh <- req.Arguments:
+			default:
+			}
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.StartSession(SessionStartParams{
+		Namespace:             "loom-core/main",
+		AgentID:               "codex-gpt5",
+		AgentType:             "codex",
+		Description:           "stabilize session bootstrap behavior",
+		AutoRecall:            true,
+		AutoRecallStrategy:    "fast",
+		AutoRecallTokenBudget: 1800,
+	})
+	if err != nil {
+		t.Fatalf("start session failed: %v", err)
+	}
+	if result == nil || result.SessionID != "sess-123" {
+		t.Fatalf("unexpected session result: %+v", result)
+	}
+
+	select {
+	case recallArgs := <-recallArgsCh:
+		if got, _ := recallArgs["agent_id"].(string); got != "codex-gpt5" {
+			t.Fatalf("expected recall agent_id codex-gpt5, got %q", got)
+		}
+		if got, _ := recallArgs["file_context"].(string); got != "loom-core/main" {
+			t.Fatalf("expected recall file_context loom-core/main, got %q", got)
+		}
+		if got, _ := recallArgs["query"].(string); got != "stabilize session bootstrap behavior" {
+			t.Fatalf("expected recall query from description, got %q", got)
+		}
+		if got, _ := recallArgs["token_budget"].(float64); int(got) != 1800 {
+			t.Fatalf("expected recall token_budget 1800, got %v", recallArgs["token_budget"])
+		}
+		if got, _ := recallArgs["include_tasks"].(bool); got {
+			t.Fatalf("expected include_tasks=false for fast strategy, got %v", recallArgs["include_tasks"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for recall call")
+	}
+}
