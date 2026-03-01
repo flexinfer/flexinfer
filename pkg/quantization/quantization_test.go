@@ -353,6 +353,63 @@ func TestAWQJobBuilder_BuildJob(t *testing.T) {
 	}
 }
 
+func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "qwen3-awq-amd",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen3-awq-amd",
+		ModelPath: "qwen3-awq-amd",
+		GPUVendor: "amd",
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "gpu-node",
+		},
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatAWQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	amdGPU := corev1.ResourceName("amd.com/gpu")
+	gpuLimit, ok := container.Resources.Limits[amdGPU]
+	if !ok {
+		t.Fatal("expected amd.com/gpu limit to be set")
+	}
+	if gpuLimit.Cmp(resource.MustParse("1")) != 0 {
+		t.Fatalf("GPU limit = %q, want 1", gpuLimit.String())
+	}
+
+	// nvidia.com/gpu should NOT be present
+	nvidiaGPU := corev1.ResourceName("nvidia.com/gpu")
+	if _, ok := container.Resources.Limits[nvidiaGPU]; ok {
+		t.Fatal("nvidia.com/gpu should not be set for AMD vendor")
+	}
+
+	// NodeSelector should be propagated
+	podSpec := job.Spec.Template.Spec
+	if podSpec.NodeSelector == nil || podSpec.NodeSelector["kubernetes.io/hostname"] != "gpu-node" {
+		t.Fatalf("NodeSelector not propagated, got %v", podSpec.NodeSelector)
+	}
+
+	script := container.Args[0]
+	if !contains(script, "device_map=None") {
+		t.Fatal("expected AWQ script to use device_map=None for ROCm compatibility")
+	}
+	if !contains(script, `"version": "GEMM"`) {
+		t.Fatal("expected AWQ script to use version GEMM for native AWQ format")
+	}
+}
+
 func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(8)

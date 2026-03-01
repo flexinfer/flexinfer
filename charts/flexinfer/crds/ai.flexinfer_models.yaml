@@ -331,6 +331,42 @@ spec:
                   NodeSelector for scheduling the model to specific nodes.
                   If not specified, auto-detects GPU nodes.
                 type: object
+              quantize:
+                description: |-
+                  Quantize configures post-download quantization of model weights.
+                  When set, the controller downloads the source model, quantizes it,
+                  and serves the quantized output.
+                properties:
+                  format:
+                    description: Format is the target quantization format.
+                    enum:
+                    - GGUF
+                    - AWQ
+                    - GPTQ
+                    - EXL2
+                    - FP8
+                    type: string
+                  ggufType:
+                    description: GGUFType is the GGUF quantization level (e.g., Q4_K_M).
+                    type: string
+                  bits:
+                    description: Bits is the quantization bit width for AWQ/GPTQ formats.
+                    format: int32
+                    type: integer
+                  groupSize:
+                    description: GroupSize is the quantization group size for AWQ/GPTQ formats.
+                    format: int32
+                    type: integer
+                  useGPU:
+                    description: UseGPU enables GPU-accelerated quantization.
+                    type: boolean
+                  maxMemoryGB:
+                    description: MaxMemoryGB limits memory available to the quantization job.
+                    format: int32
+                    type: integer
+                required:
+                - format
+                type: object
               resources:
                 description: Resources defines compute resources for the model container.
                 properties:
@@ -492,6 +528,30 @@ spec:
                   strategy:
                     description: Strategy being used.
                     type: string
+                  quantization:
+                    description: Quantization records the result of weight quantization.
+                    properties:
+                      format:
+                        description: Format is the quantization format that was applied.
+                        type: string
+                      type:
+                        description: Type is the specific quantization type (e.g., Q4_K_M).
+                        type: string
+                      originalSizeBytes:
+                        description: OriginalSizeBytes is the size before quantization.
+                        format: int64
+                        type: integer
+                      compressedSizeBytes:
+                        description: CompressedSizeBytes is the size after quantization.
+                        format: int64
+                        type: integer
+                      compressionRatio:
+                        description: CompressionRatio is original/compressed (e.g., "3.75").
+                        type: string
+                      quantizationTime:
+                        description: QuantizationTime is the wall-clock duration.
+                        type: string
+                    type: object
                 type: object
               conditions:
                 description: Conditions represent the latest observations of the Model's

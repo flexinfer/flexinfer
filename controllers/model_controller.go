@@ -52,6 +52,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/quantization"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -1400,7 +1401,49 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 		}
 	}
 
+	// When quantization completed, redirect model path to the quantized output subdirectory.
+	if model.Spec.Quantize != nil &&
+		model.Status.Cache != nil &&
+		model.Status.Cache.Quantization != nil &&
+		model.Status.Cache.Quantization.Type != "" {
+		quantizedSubdir := quantizedOutputDir(model.Spec.Quantize)
+		if quantizedSubdir != "" {
+			plan.ModelPath = "/models/" + model.Name + "/" + quantizedSubdir
+		}
+	}
+
 	return plan
+}
+
+// quantizedOutputDir returns the output subdirectory name for a given quantization spec.
+func quantizedOutputDir(spec *aiv1alpha1.QuantizationSpec) string {
+	if spec == nil {
+		return ""
+	}
+	switch spec.Format {
+	case aiv1alpha1.QuantizationFormatAWQ:
+		bits := int32(quantization.DefaultAWQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return fmt.Sprintf("awq-w%d-g%d", bits, groupSize)
+	case aiv1alpha1.QuantizationFormatGPTQ:
+		bits := int32(quantization.DefaultGPTQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+	default:
+		return ""
+	}
 }
 
 func resolveGGUFFile(config map[string]interface{}) string {
@@ -1946,9 +1989,23 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		}
 
 		if job.Status.Succeeded > 0 {
+			// Prefetch done — run quantization if requested.
+			if model.Spec.Quantize != nil {
+				quantizeReady, qErr := r.ensureQuantization(ctx, model, pvcName, original)
+				if qErr != nil {
+					return false, qErr
+				}
+				if !quantizeReady {
+					return false, nil
+				}
+				// Quantization done — cache is ready.
+			}
 			model.Status.Cache.Ready = true
 			model.Status.Cache.JobPhase = "Succeeded"
 			model.Status.Cache.Message = "artifact prefetched"
+			if model.Spec.Quantize != nil {
+				model.Status.Cache.Message = "artifact prefetched and quantized"
+			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PrefetchSucceeded", model.Status.Cache.Message)
 		} else if job.Status.Failed > 0 {
 			model.Status.Cache.Ready = false
@@ -1986,6 +2043,159 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		return false, err
 	}
 	return model.Status.Cache.Ready, nil
+}
+
+// ensureQuantization manages the quantization job lifecycle for a model.
+// Returns (ready, error) — ready=true means quantization is complete.
+func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alpha2.Model, pvcName string, original *aiv1alpha2.Model) (bool, error) {
+	log := log.FromContext(ctx)
+	spec := model.Spec.Quantize
+
+	builder, err := quantization.GetBuilder(spec.Format)
+	if err != nil {
+		return false, fmt.Errorf("unsupported quantization format %q: %w", spec.Format, err)
+	}
+	if err := builder.Validate(spec); err != nil {
+		return false, fmt.Errorf("invalid quantization spec: %w", err)
+	}
+
+	jobName := model.Name + "-quantize"
+
+	// Determine GPU vendor for the quantization job.
+	gpuVendor := "nvidia"
+	if model.Spec.GPU != nil {
+		switch model.Spec.GetGPUVendor() {
+		case aiv1alpha2.GPUVendorAMD:
+			gpuVendor = "amd"
+		case aiv1alpha2.GPUVendorNVIDIA:
+			gpuVendor = "nvidia"
+		}
+	}
+
+	params := quantization.JobParams{
+		Name:         model.Name,
+		Namespace:    model.Namespace,
+		PVCName:      pvcName,
+		ModelPath:    model.Name,
+		Spec:         spec,
+		GPUVendor:    gpuVendor,
+		NodeSelector: model.Spec.NodeSelector,
+	}
+
+	job := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+	if err != nil && !errors.IsNotFound(err) {
+		return false, err
+	}
+
+	if errors.IsNotFound(err) {
+		newJob, buildErr := builder.BuildJob(params)
+		if buildErr != nil {
+			return false, fmt.Errorf("building quantization job: %w", buildErr)
+		}
+		newJob.OwnerReferences = []metav1.OwnerReference{
+			*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model")),
+		}
+		if err := r.Create(ctx, newJob); err != nil {
+			return false, err
+		}
+		log.Info("created quantization job", "job", jobName, "format", spec.Format)
+
+		model.Status.Cache.Ready = false
+		model.Status.Cache.JobName = jobName
+		model.Status.Cache.JobPhase = "Running"
+		model.Status.Cache.Message = fmt.Sprintf("quantization job started (format=%s)", spec.Format)
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationRunning", model.Status.Cache.Message)
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	// Job exists — check status.
+	if job.Status.Succeeded > 0 {
+		meta, _ := r.readQuantizationMetadataFromJob(ctx, model.Namespace, jobName)
+		if meta != nil {
+			model.Status.Cache.Quantization = &aiv1alpha1.QuantizationStatus{
+				Format:              string(spec.Format),
+				Type:                meta.Type,
+				OriginalSizeBytes:   meta.OriginalSizeBytes,
+				CompressedSizeBytes: meta.CompressedSizeBytes,
+			}
+			if meta.OriginalSizeBytes > 0 && meta.CompressedSizeBytes > 0 {
+				ratio := float64(meta.OriginalSizeBytes) / float64(meta.CompressedSizeBytes)
+				model.Status.Cache.Quantization.CompressionRatio = fmt.Sprintf("%.2f", ratio)
+			}
+			if meta.QuantizationTimeSeconds > 0 {
+				model.Status.Cache.Quantization.QuantizationTime = fmt.Sprintf("%ds", meta.QuantizationTimeSeconds)
+			}
+		}
+		log.Info("quantization job completed", "job", jobName)
+		return true, nil
+	}
+
+	if job.Status.Failed > 0 {
+		model.Status.Cache.Ready = false
+		model.Status.Cache.JobName = jobName
+		model.Status.Cache.JobPhase = "Failed"
+		model.Status.Cache.Message = "quantization job failed"
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationFailed", model.Status.Cache.Message)
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	// Still running.
+	model.Status.Cache.Ready = false
+	model.Status.Cache.JobName = jobName
+	model.Status.Cache.JobPhase = "Running"
+	model.Status.Cache.Message = "quantization job running"
+	setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationRunning", model.Status.Cache.Message)
+	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// quantizationJobMetadataV2 mirrors the termination-log JSON from quantization jobs.
+type quantizationJobMetadataV2 struct {
+	Type                    string `json:"type,omitempty"`
+	OriginalSizeBytes       int64  `json:"originalSizeBytes,omitempty"`
+	CompressedSizeBytes     int64  `json:"compressedSizeBytes,omitempty"`
+	QuantizationTimeSeconds int64  `json:"quantizationTimeSeconds,omitempty"`
+	OutputFile              string `json:"outputFile,omitempty"`
+	OutputDir               string `json:"outputDir,omitempty"`
+}
+
+// readQuantizationMetadataFromJob reads termination-log metadata from completed quantization job pods.
+func (r *ModelReconciler) readQuantizationMetadataFromJob(ctx context.Context, namespace, jobName string) (*quantizationJobMetadataV2, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return nil, err
+	}
+
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.Name != "quantizer" {
+				continue
+			}
+			if cs.State.Terminated == nil {
+				continue
+			}
+			msg := strings.TrimSpace(cs.State.Terminated.Message)
+			if msg == "" {
+				continue
+			}
+			var meta quantizationJobMetadataV2
+			if err := json.Unmarshal([]byte(msg), &meta); err != nil {
+				continue
+			}
+			return &meta, nil
+		}
+	}
+	return nil, nil
 }
 
 // handleSharedGPU implements GPU sharing logic for models with gpu.shared set.

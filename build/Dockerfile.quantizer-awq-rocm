@@ -1,0 +1,31 @@
+# Dockerfile.quantizer-awq-rocm
+# AWQ quantization runtime image for FlexInfer on AMD ROCm GPUs.
+# AutoAWQ v0.2.9+ uses Triton for GPU ops — Triton has ROCm/HIP support,
+# so quantization works on gfx1100 (7900 XTX) and gfx90a (MI250) without
+# custom CUDA kernels.
+#
+# Build:
+#   docker --context 7900xtx build -f build/Dockerfile.quantizer-awq-rocm \
+#     -t registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100 .
+#
+# The resulting image is ~12 GB (ROCm base + PyTorch + AutoAWQ).
+
+FROM rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# AutoAWQ 0.2.9 is a pure-Python wheel that delegates GPU work to Triton.
+# transformers >= 4.51 for Qwen3 support.
+RUN python3 -m pip install \
+    autoawq==0.2.9 \
+    transformers>=4.51.0 \
+    safetensors \
+    accelerate \
+    datasets \
+    sentencepiece
+
+ENTRYPOINT ["/bin/sh"]

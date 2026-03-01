@@ -131,7 +131,7 @@ out_dir = os.environ["OUT_DIR"]
 bits = int(os.environ["BITS"])
 group_size = int(os.environ["GROUP_SIZE"])
 
-model = AutoAWQForCausalLM.from_pretrained(model_dir, safetensors=True)
+model = AutoAWQForCausalLM.from_pretrained(model_dir, safetensors=True, device_map=None)
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
 model.quantize(
     tokenizer,
@@ -139,6 +139,7 @@ model.quantize(
         "w_bit": bits,
         "q_group_size": group_size,
         "zero_point": True,
+        "version": "GEMM",
     },
 )
 model.save_quantized(out_dir)
@@ -324,7 +325,47 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	backoffLimit := int32(2)
 	pvcVol, pvcMount := modelPVCVolume(params.PVCName)
 	wsVol, wsMount := workspaceVolume(fmt.Sprintf("%dGi", memoryGB*2))
-	gpuResource := corev1.ResourceName("nvidia.com/gpu")
+
+	gpuResourceName := "nvidia.com/gpu"
+	if params.GPUVendor == "amd" {
+		gpuResourceName = "amd.com/gpu"
+	}
+	gpuResource := corev1.ResourceName(gpuResourceName)
+
+	podSpec := corev1.PodSpec{
+		RestartPolicy: corev1.RestartPolicyNever,
+		Containers: []corev1.Container{
+			{
+				Name:    "quantizer",
+				Image:   image,
+				Command: []string{"/bin/sh", "-c"},
+				Args:    []string{script},
+				VolumeMounts: []corev1.VolumeMount{
+					pvcMount,
+					wsMount,
+				},
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
+						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+						gpuResource:           resource.MustParse("1"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+						gpuResource:           resource.MustParse("1"),
+					},
+				},
+			},
+		},
+		Volumes: []corev1.Volume{
+			pvcVol,
+			wsVol,
+		},
+	}
+
+	if len(params.NodeSelector) > 0 {
+		podSpec.NodeSelector = params.NodeSelector
+	}
 
 	return &batchv1.Job{
 		ObjectMeta: defaultJobMeta(params),
@@ -332,36 +373,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 			ActiveDeadlineSeconds: &deadline,
 			BackoffLimit:          &backoffLimit,
 			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					Containers: []corev1.Container{
-						{
-							Name:    "quantizer",
-							Image:   image,
-							Command: []string{"/bin/sh", "-c"},
-							Args:    []string{script},
-							VolumeMounts: []corev1.VolumeMount{
-								pvcMount,
-								wsMount,
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
-									corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
-									gpuResource:           resource.MustParse("1"),
-								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
-									gpuResource:           resource.MustParse("1"),
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						pvcVol,
-						wsVol,
-					},
-				},
+				Spec: podSpec,
 			},
 		},
 	}, nil

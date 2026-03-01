@@ -42,6 +42,12 @@ type JobParams struct {
 
 	// Spec is the quantization configuration from the ModelCache.
 	Spec *aiv1alpha1.QuantizationSpec
+
+	// GPUVendor selects the GPU resource name: "nvidia" (default) or "amd".
+	GPUVendor string
+
+	// NodeSelector constrains which nodes the quantization job runs on.
+	NodeSelector map[string]string
 }
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.
