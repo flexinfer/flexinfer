@@ -9,8 +9,252 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/mcperror"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
+
+	"go.opentelemetry.io/otel/trace"
 )
+
+func registerRepositoryTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+	// search_repositories
+	server.AddTool(mcp.Tool{
+		Name:        "search_repositories",
+		Description: "Search for GitLab projects/repositories",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"search": map[string]any{
+					"type":        "string",
+					"description": "Search query",
+				},
+				"per_page": map[string]any{
+					"type":        "integer",
+					"description": "Results per page (max 100). Defaults to 20.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
+			},
+			Required: []string{"search"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "search_repositories", gl.handleSearchRepositories))
+
+	// get_file_contents
+	server.AddTool(mcp.Tool{
+		Name:        "get_file_contents",
+		Description: "Get contents of a file from a repository",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path (e.g., 'namespace/project')",
+				},
+				"path": map[string]any{
+					"type":        "string",
+					"description": "File path within the repository",
+				},
+				"ref": map[string]any{
+					"type":        "string",
+					"description": "Branch, tag, or commit SHA. Defaults to default branch.",
+				},
+			},
+			Required: []string{"project", "path"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "get_file_contents", gl.handleGetFileContents))
+
+	// create_or_update_file
+	server.AddTool(mcp.Tool{
+		Name:        "create_or_update_file",
+		Description: "Create or update a file in a repository",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"path": map[string]any{
+					"type":        "string",
+					"description": "File path",
+				},
+				"branch": map[string]any{
+					"type":        "string",
+					"description": "Branch name",
+				},
+				"content": map[string]any{
+					"type":        "string",
+					"description": "File content",
+				},
+				"commit_message": map[string]any{
+					"type":        "string",
+					"description": "Commit message",
+				},
+			},
+			Required: []string{"project", "path", "branch", "content", "commit_message"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "create_or_update_file", gl.handleCreateOrUpdateFile))
+
+	// push_files
+	server.AddTool(mcp.Tool{
+		Name:        "push_files",
+		Description: "Push multiple files in a single commit",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"branch": map[string]any{
+					"type":        "string",
+					"description": "Branch name",
+				},
+				"commit_message": map[string]any{
+					"type":        "string",
+					"description": "Commit message",
+				},
+				"actions": map[string]any{
+					"type":        "array",
+					"description": "Array of file actions",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"action":    map[string]any{"type": "string", "description": "create, update, delete, move"},
+							"file_path": map[string]any{"type": "string"},
+							"content":   map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+			Required: []string{"project", "branch", "commit_message", "actions"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "push_files", gl.handlePushFiles))
+
+	// create_repository
+	server.AddTool(mcp.Tool{
+		Name:        "create_repository",
+		Description: "Create a new GitLab project/repository",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "Project name",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Project description",
+				},
+				"visibility": map[string]any{
+					"type":        "string",
+					"description": "Visibility: private, internal, public. Defaults to private.",
+				},
+				"namespace_id": map[string]any{
+					"type":        "integer",
+					"description": "Namespace/group ID to create project in",
+				},
+				"initialize_with_readme": map[string]any{
+					"type":        "boolean",
+					"description": "Initialize with README",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "create_repository", gl.handleCreateRepository))
+
+	// fork_repository
+	server.AddTool(mcp.Tool{
+		Name:        "fork_repository",
+		Description: "Fork a project",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path to fork",
+				},
+				"namespace_id": map[string]any{
+					"type":        "integer",
+					"description": "Namespace ID to fork into",
+				},
+				"name": map[string]any{
+					"type":        "string",
+					"description": "New project name (optional)",
+				},
+			},
+			Required: []string{"project"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "fork_repository", gl.handleForkRepository))
+
+	// create_branch
+	server.AddTool(mcp.Tool{
+		Name:        "create_branch",
+		Description: "Create a new branch",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"branch": map[string]any{
+					"type":        "string",
+					"description": "New branch name",
+				},
+				"ref": map[string]any{
+					"type":        "string",
+					"description": "Source branch or commit SHA",
+				},
+			},
+			Required: []string{"project", "branch", "ref"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "create_branch", gl.handleCreateBranch))
+
+	// get_project
+	server.AddTool(mcp.Tool{
+		Name:        "get_project",
+		Description: "Get project details",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+			},
+			Required: []string{"project"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "get_project", gl.handleGetProject))
+
+	// list_projects
+	server.AddTool(mcp.Tool{
+		Name:        "list_projects",
+		Description: "List projects accessible to the authenticated user",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"owned": map[string]any{
+					"type":        "boolean",
+					"description": "Only list owned projects",
+				},
+				"membership": map[string]any{
+					"type":        "boolean",
+					"description": "Only list projects user is member of",
+				},
+				"per_page": map[string]any{
+					"type":        "integer",
+					"description": "Results per page (max 100). Defaults to 20.",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
+			},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "list_projects", gl.handleListProjects))
+}
 
 func (g *gitlabServer) handleSearchRepositories(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)

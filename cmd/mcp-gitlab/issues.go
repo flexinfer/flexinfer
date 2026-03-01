@@ -9,8 +9,128 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/mcperror"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
+
+	"go.opentelemetry.io/otel/trace"
 )
+
+func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+	// create_issue
+	server.AddTool(mcp.Tool{
+		Name:        "create_issue",
+		Description: "Create a new issue in a project",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"title": map[string]any{
+					"type":        "string",
+					"description": "Issue title",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Issue description",
+				},
+				"labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated label names",
+				},
+				"assignee_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "integer"},
+					"description": "User IDs to assign",
+				},
+			},
+			Required: []string{"project", "title"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "create_issue", gl.handleCreateIssue))
+
+	// update_issue
+	server.AddTool(mcp.Tool{
+		Name:        "update_issue",
+		Description: "Update an issue in a project (labels, assignees, state, and fields)",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"issue_iid": map[string]any{
+					"type":        "integer",
+					"description": "Issue IID within the project",
+				},
+				"title": map[string]any{
+					"type":        "string",
+					"description": "Updated issue title",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Updated issue description",
+				},
+				"labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to set (replaces current labels)",
+				},
+				"add_labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to add",
+				},
+				"remove_labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated labels to remove",
+				},
+				"assignee_ids": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "integer"},
+					"description": "User IDs to assign",
+				},
+				"state_event": map[string]any{
+					"type":        "string",
+					"description": "Issue state transition: close or reopen",
+					"enum":        []string{"close", "reopen"},
+				},
+			},
+			Required: []string{"project", "issue_iid"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "update_issue", gl.handleUpdateIssue))
+
+	// list_issues
+	server.AddTool(mcp.Tool{
+		Name:        "list_issues",
+		Description: "List issues for a project",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"state": map[string]any{
+					"type":        "string",
+					"description": "State: opened, closed, all. Defaults to 'opened'.",
+				},
+				"labels": map[string]any{
+					"type":        "string",
+					"description": "Comma-separated label names",
+				},
+				"per_page": map[string]any{
+					"type":        "integer",
+					"description": "Results per page (max 100)",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
+			},
+			Required: []string{"project"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "list_issues", gl.handleListIssues))
+}
 
 func (g *gitlabServer) handleCreateIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)

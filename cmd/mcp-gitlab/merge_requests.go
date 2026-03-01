@@ -7,8 +7,77 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
+
+	"go.opentelemetry.io/otel/trace"
 )
+
+func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+	// create_merge_request
+	server.AddTool(mcp.Tool{
+		Name:        "create_merge_request",
+		Description: "Create a new merge request",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"source_branch": map[string]any{
+					"type":        "string",
+					"description": "Source branch",
+				},
+				"target_branch": map[string]any{
+					"type":        "string",
+					"description": "Target branch",
+				},
+				"title": map[string]any{
+					"type":        "string",
+					"description": "MR title",
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "MR description",
+				},
+				"remove_source_branch": map[string]any{
+					"type":        "boolean",
+					"description": "Remove source branch after merge",
+				},
+			},
+			Required: []string{"project", "source_branch", "target_branch", "title"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "create_merge_request", gl.handleCreateMergeRequest))
+
+	// list_merge_requests
+	server.AddTool(mcp.Tool{
+		Name:        "list_merge_requests",
+		Description: "List merge requests for a project",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project ID or URL-encoded path",
+				},
+				"state": map[string]any{
+					"type":        "string",
+					"description": "State: opened, closed, merged, all. Defaults to 'opened'.",
+				},
+				"per_page": map[string]any{
+					"type":        "integer",
+					"description": "Results per page (max 100)",
+				},
+				"page": map[string]any{
+					"type":        "integer",
+					"description": "Page number (default 1).",
+				},
+			},
+			Required: []string{"project"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "list_merge_requests", gl.handleListMergeRequests))
+}
 
 func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
