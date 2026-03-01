@@ -2,6 +2,7 @@ package codebase
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,11 @@ import (
 )
 
 func TestDeriveRepoID_NoGitRepoFallsBackToRootHash(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir, err := os.MkdirTemp("/tmp", "repo-utils-no-git-*")
+	if err != nil {
+		t.Fatalf("os.MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 	abs, err := filepath.Abs(tempDir)
 	if err != nil {
 		t.Fatalf("filepath.Abs: %v", err)
@@ -33,7 +38,11 @@ func TestDeriveRepoID_UsesRemoteOriginHashWhenAvailable(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := t.TempDir()
+	repo, err := os.MkdirTemp("/tmp", "repo-utils-git-*")
+	if err != nil {
+		t.Fatalf("os.MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repo) })
 	runGit(t, repo, "init")
 	remote := "https://example.com/org/repo.git"
 	runGit(t, repo, "remote", "add", "origin", remote)
