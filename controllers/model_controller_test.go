@@ -2821,6 +2821,51 @@ func TestCleanupFlashTmpfs(t *testing.T) {
 		}
 	})
 
+	t.Run("shared GPU model cleanup job gets dedicated toleration", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-gpu-llm",
+				Namespace: "prod",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "llamacpp",
+				Source:  "HF://test/model",
+				GPU: &aiv1alpha2.GPUSpec{
+					Shared: "gpu-group-1",
+					Count:  func() *int32 { v := int32(1); return &v }(),
+				},
+				NodeSelector: map[string]string{
+					"kubernetes.io/hostname": "gpu-node-01",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+		r := &ModelReconciler{Client: fakeClient, Scheme: s}
+		ctx := context.Background()
+
+		if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
+			t.Fatalf("cleanupFlashTmpfs() error: %v", err)
+		}
+
+		job := &batchv1.Job{}
+		if err := fakeClient.Get(ctx, client.ObjectKey{
+			Name:      "shared-gpu-llm-tmpfs-cleanup",
+			Namespace: "prod",
+		}, job); err != nil {
+			t.Fatalf("expected cleanup job to exist: %v", err)
+		}
+
+		podSpec := job.Spec.Template.Spec
+		if len(podSpec.Tolerations) != 1 {
+			t.Fatalf("Tolerations count = %d, want 1", len(podSpec.Tolerations))
+		}
+		tol := podSpec.Tolerations[0]
+		if tol.Key != "dedicated" || tol.Value != "gpu" || tol.Effect != corev1.TaintEffectNoSchedule {
+			t.Errorf("Toleration = %+v, want dedicated=gpu:NoSchedule", tol)
+		}
+	})
+
 	t.Run("non-shared model skips cleanup", func(t *testing.T) {
 		model := &aiv1alpha2.Model{
 			ObjectMeta: metav1.ObjectMeta{

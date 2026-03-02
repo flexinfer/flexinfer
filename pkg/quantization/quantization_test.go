@@ -789,6 +789,7 @@ func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	groupSize := int32(128)
 	maxSeqLen := int32(2048)
 	maxSamples := int32(512)
+	nParallel := int32(8)
 
 	params := JobParams{
 		Name:      "test-awq-calib",
@@ -801,8 +802,9 @@ func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
 			GroupSize: &groupSize,
 			UseGPU:    true,
 			Calibration: &aiv1alpha1.CalibrationSpec{
-				MaxSeqLen:  &maxSeqLen,
-				MaxSamples: &maxSamples,
+				MaxSeqLen:             &maxSeqLen,
+				MaxSamples:            &maxSamples,
+				NParallelCalibSamples: &nParallel,
 			},
 		},
 	}
@@ -819,8 +821,11 @@ func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "max_calib_samples=512") {
 		t.Error("expected AWQ script to contain max_calib_samples=512")
 	}
-	if !contains(script, "maxSeqLen=2048 maxSamples=512") {
-		t.Error("expected AWQ script to log calibration params")
+	if !contains(script, "n_parallel_calib_samples=8") {
+		t.Error("expected AWQ script to contain n_parallel_calib_samples=8")
+	}
+	if !contains(script, "maxSeqLen=2048 maxSamples=512 nParallel=8") {
+		t.Error("expected AWQ script to log calibration params including nParallel")
 	}
 }
 
@@ -854,6 +859,12 @@ func TestAWQJobBuilder_BuildJob_DefaultCalibration(t *testing.T) {
 	}
 	if !contains(script, "max_calib_samples=256") {
 		t.Error("expected AWQ script to contain default max_calib_samples=256")
+	}
+	if contains(script, "n_parallel_calib_samples") {
+		t.Error("expected AWQ script to NOT contain n_parallel_calib_samples when not configured")
+	}
+	if !contains(script, "nParallel=None") {
+		t.Error("expected AWQ script to log nParallel=None when not configured")
 	}
 }
 

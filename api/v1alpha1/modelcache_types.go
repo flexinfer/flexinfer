@@ -96,6 +96,14 @@ type CalibrationSpec struct {
 	// +kubebuilder:validation:Maximum=2048
 	// +optional
 	MaxSamples *int32 `json:"maxSamples,omitempty"`
+
+	// NParallelCalibSamples controls how many calibration samples are processed
+	// in parallel during AWQ quantization. Lower values reduce peak VRAM usage.
+	// Defaults to 16 for models >10B params on <=24GB VRAM.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=256
+	// +optional
+	NParallelCalibSamples *int32 `json:"nParallelCalibSamples,omitempty"`
 }
 
 // QuantizationSpec configures post-download quantization of model weights.

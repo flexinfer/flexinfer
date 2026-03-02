@@ -30,6 +30,10 @@ const (
 	// DefaultCalibrationMaxSamples is the default number of calibration samples.
 	DefaultCalibrationMaxSamples = 256
 
+	// DefaultNParallelCalibSamples is the default parallel calibration batch size.
+	// Keeps VRAM usage in check for 14B+ models on 24GB cards.
+	DefaultNParallelCalibSamples = 16
+
 	// DefaultAWQBits is the default bit width for AWQ.
 	DefaultAWQBits = 4
 
@@ -108,6 +112,7 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) string {
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
+	var nParallel *int32
 	if calib != nil {
 		if calib.MaxSeqLen != nil {
 			maxSeqLen = *calib.MaxSeqLen
@@ -115,6 +120,17 @@ func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib
 		if calib.MaxSamples != nil {
 			maxSamples = *calib.MaxSamples
 		}
+		nParallel = calib.NParallelCalibSamples
+	}
+
+	// Build the n_parallel_calib_samples kwarg line.
+	// When nil, AutoAWQ processes all samples on GPU (default behavior).
+	// When set, AutoAWQ offloads to CPU RAM between batches (higher CPU memory).
+	nParallelKwarg := ""
+	nParallelLog := "None"
+	if nParallel != nil {
+		nParallelKwarg = fmt.Sprintf("    n_parallel_calib_samples=%d,\n", *nParallel)
+		nParallelLog = fmt.Sprintf("%d", *nParallel)
 	}
 
 	return fmt.Sprintf(`set -euo pipefail
@@ -132,7 +148,7 @@ trap cleanup EXIT
 echo "=== AWQ Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
-echo "Calibration: maxSeqLen=%d maxSamples=%d"
+echo "Calibration: maxSeqLen=%d maxSamples=%d nParallel=%s"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -164,7 +180,7 @@ model.quantize(
     },
     max_calib_seq_len=%d,
     max_calib_samples=%d,
-)
+%s)
 model.save_quantized(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
@@ -199,7 +215,7 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize, maxSeqLen, maxSamples, maxSeqLen, maxSamples)
+`, modelPath, bits, groupSize, maxSeqLen, maxSamples, nParallelLog, maxSeqLen, maxSamples, nParallelKwarg)
 }
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
