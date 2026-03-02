@@ -63,12 +63,9 @@ type Service struct {
 	persistedWorkflowEngine *persistedWorkflowEngine
 
 	// Domain sub-services
-	presence *PresenceSvc
-	claims   *ClaimSvc
-
-	// Worktree assignments
-	worktreeMu    sync.RWMutex
-	worktreeAssns map[string]*WorktreeAssignment
+	presence  *PresenceSvc
+	claims    *ClaimSvc
+	worktrees *WorktreeSvc
 
 	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
 	nudgeMu sync.Mutex
@@ -77,7 +74,6 @@ type Service struct {
 	// Background services
 	compactionScheduler *CompactionScheduler
 	taskReconciler      *TaskReconciler
-	worktreeReconciler  *WorktreeReconciler
 	memoryExporter      *MemoryExporter
 	memoryImporter      *MemoryImporter
 	bgCancel            context.CancelFunc
@@ -164,9 +160,8 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		qdrant: qdrantReg,
 		embed:  embedder,
 
-		sessions:      make(map[string]*Session),
-		worktreeAssns: make(map[string]*WorktreeAssignment),
-		nudges:        make(map[string][]*Nudge),
+		sessions: make(map[string]*Session),
+		nudges:   make(map[string][]*Nudge),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
@@ -216,6 +211,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	// Initialize domain sub-services
 	svc.presence = NewPresenceSvc(qdrantReg.Get(CollPresence), cfg, svc.logger, svc.metrics)
 	svc.claims = NewClaimSvc(qdrantReg.Get(CollFileClaims), svc.logger, svc.metrics)
+	svc.worktrees = NewWorktreeSvc(qdrantReg.Get(CollWorktree), cfg, svc.logger, svc.metrics)
 
 	// Wire cross-domain callbacks for presence cleanup
 	svc.presence.releaseClaimsForAgent = func(agentID string) {
@@ -228,6 +224,10 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		conflicts = append(conflicts, svc.claims.DetectConflicts(agentID, files)...)
 		return conflicts
 	}
+
+	// Wire worktree ↔ presence callbacks
+	svc.worktrees.setPresenceWorktreeID = svc.presence.SetWorktreeID
+	svc.worktrees.clearPresenceWorktreeID = svc.presence.ClearWorktreeID
 
 	// Initialize compaction scheduler
 	compactionConfig := DefaultCompactionConfig()
@@ -252,7 +252,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	}
 	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.qdrant.Get(CollTasks), svc, svc.logger)
 
-	// Initialize worktree reconciler
+	// Initialize worktree reconciler (stored on WorktreeSvc)
 	wtReconcilerConfig := DefaultWorktreeReconcilerConfig()
 	wtReconcilerConfig.Enabled = cfg.WorktreeReconcilerEnabled
 	if cfg.WorktreeReconcilerInterval > 0 {
@@ -268,7 +268,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	}
 	wtReconcilerConfig.DiskScanEnabled = cfg.WorktreeDiskScanEnabled
 	wtReconcilerConfig.DetectUntracked = cfg.WorktreeDetectUntracked
-	svc.worktreeReconciler = NewWorktreeReconciler(wtReconcilerConfig, svc, svc.logger)
+	svc.worktrees.reconciler = NewWorktreeReconciler(wtReconcilerConfig, svc.worktrees, svc.logger)
 
 	// Initialize memory exporter/importer
 	svc.memoryExporter = NewMemoryExporter(svc.memoryHierarchy, svc.knowledgeGraph, svc.workflowEngine)
@@ -322,7 +322,7 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 	}
 
 	// Load worktree assignments
-	if err := s.loadWorktreeAssignmentsFromQdrant(ctx); err != nil {
+	if err := s.worktrees.LoadFromQdrant(ctx); err != nil {
 		s.logger.Warn("failed to load worktree assignments", "error", err)
 	}
 
@@ -381,8 +381,8 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 	}
 
 	// Start worktree reconciler
-	if s.worktreeReconciler != nil && s.cfg.WorktreeReconcilerEnabled {
-		s.worktreeReconciler.Start(bgCtx)
+	if s.cfg.WorktreeReconcilerEnabled {
+		s.worktrees.StartReconciler(bgCtx)
 	}
 
 	// Start presence cleanup goroutine
@@ -407,9 +407,7 @@ func (s *Service) StopBackgroundServices() {
 	if s.taskReconciler != nil {
 		s.taskReconciler.Stop()
 	}
-	if s.worktreeReconciler != nil {
-		s.worktreeReconciler.Stop()
-	}
+	s.worktrees.StopReconciler()
 	if s.bgCancel != nil {
 		s.bgCancel()
 	}

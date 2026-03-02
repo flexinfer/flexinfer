@@ -62,7 +62,7 @@ type WorktreeReconciler struct {
 	mu sync.RWMutex
 
 	config WorktreeReconcilerConfig
-	svc    *Service
+	wt     *WorktreeSvc
 	logger *slog.Logger
 
 	running   bool
@@ -73,13 +73,13 @@ type WorktreeReconciler struct {
 }
 
 // NewWorktreeReconciler creates a worktree reconciler.
-func NewWorktreeReconciler(config WorktreeReconcilerConfig, svc *Service, logger *slog.Logger) *WorktreeReconciler {
+func NewWorktreeReconciler(config WorktreeReconcilerConfig, wt *WorktreeSvc, logger *slog.Logger) *WorktreeReconciler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &WorktreeReconciler{
 		config: config,
-		svc:    svc,
+		wt:     wt,
 		logger: logger,
 		stopCh: make(chan struct{}),
 	}
@@ -157,13 +157,13 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 	stats := WorktreeReconcileStats{StartTime: start}
 	now := time.Now()
 
-	r.svc.worktreeMu.Lock()
+	r.wt.mu.Lock()
 	// Snapshot current assignments for processing
-	assignments := make([]*WorktreeAssignment, 0, len(r.svc.worktreeAssns))
-	for _, a := range r.svc.worktreeAssns {
+	assignments := make([]*WorktreeAssignment, 0, len(r.wt.assns))
+	for _, a := range r.wt.assns {
 		assignments = append(assignments, a)
 	}
-	r.svc.worktreeMu.Unlock()
+	r.wt.mu.Unlock()
 
 	// ── Pass 1: Disk scan ──
 	if r.config.DiskScanEnabled {
@@ -175,15 +175,15 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 			if err != nil {
 				continue
 			}
-			r.svc.worktreeMu.Lock()
+			r.wt.mu.Lock()
 			a.DiskUsage = size
 			measuredAt := now
 			a.DiskMeasuredAt = &measuredAt
-			r.svc.worktreeMu.Unlock()
+			r.wt.mu.Unlock()
 			stats.DiskScanned++
 
 			// Best-effort persist
-			_ = r.svc.persistWorktreeAssignment(ctx, a)
+			_ = r.wt.Persist(ctx, a)
 		}
 	}
 
@@ -204,11 +204,11 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 
 		deadline := a.CreatedAt.Add(time.Duration(ttl) * time.Hour)
 		if now.After(deadline) {
-			r.svc.worktreeMu.Lock()
+			r.wt.mu.Lock()
 			a.Status = WorktreeStatusOrphaned
 			orphanedAt := now
 			a.OrphanedAt = &orphanedAt
-			r.svc.worktreeMu.Unlock()
+			r.wt.mu.Unlock()
 			stats.TTLExpired++
 
 			r.logger.Info("worktree TTL expired",
@@ -218,8 +218,8 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 				"age_hours", int(now.Sub(a.CreatedAt).Hours()),
 			)
 
-			_ = r.svc.persistWorktreeAssignment(ctx, a)
-			r.svc.metrics.WorktreeOrphansRemoved.Add(1)
+			_ = r.wt.Persist(ctx, a)
+			r.wt.metrics.WorktreeOrphansRemoved.Add(1)
 		}
 	}
 
@@ -232,11 +232,11 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 		orphanedAt := a.OrphanedAt
 		if orphanedAt == nil {
 			// Legacy orphan without timestamp — set it now and skip this round
-			r.svc.worktreeMu.Lock()
+			r.wt.mu.Lock()
 			ot := now
 			a.OrphanedAt = &ot
-			r.svc.worktreeMu.Unlock()
-			_ = r.svc.persistWorktreeAssignment(ctx, a)
+			r.wt.mu.Unlock()
+			_ = r.wt.Persist(ctx, a)
 			continue
 		}
 
@@ -265,9 +265,9 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 		}
 
 		// Remove the worktree via git
-		repoPath := r.svc.cfg.GitRepoPath
+		repoPath := r.wt.cfg.GitRepoPath
 		if repoPath != "" {
-			_, err := r.svc.runGit(ctx, repoPath, "worktree", "remove", "--force", a.WorktreePath)
+			_, err := r.wt.RunGit(ctx, repoPath, "worktree", "remove", "--force", a.WorktreePath)
 			if err != nil {
 				r.logger.Warn("failed to remove orphaned worktree",
 					"assignment_id", a.ID,
@@ -290,27 +290,27 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 		)
 
 		// Remove from in-memory map and Qdrant
-		r.svc.worktreeMu.Lock()
-		delete(r.svc.worktreeAssns, a.ID)
-		r.svc.worktreeMu.Unlock()
+		r.wt.mu.Lock()
+		delete(r.wt.assns, a.ID)
+		r.wt.mu.Unlock()
 
-		if r.svc.qdrant.Get(CollWorktree) != nil {
-			_ = r.svc.qdrant.Get(CollWorktree).Delete(ctx, []string{a.ID})
+		if r.wt.qdrant != nil {
+			_ = r.wt.qdrant.Delete(ctx, []string{a.ID})
 		}
 
-		r.svc.metrics.WorktreeOrphansRemoved.Add(1)
-		r.svc.metrics.WorktreeBytesFreed.Add(bytesFreed + a.DiskUsage)
+		r.wt.metrics.WorktreeOrphansRemoved.Add(1)
+		r.wt.metrics.WorktreeBytesFreed.Add(bytesFreed + a.DiskUsage)
 	}
 
 	// ── Pass 4: Untracked worktree detection ──
-	if r.config.DetectUntracked && r.svc.cfg.GitRepoPath != "" {
+	if r.config.DetectUntracked && r.wt.cfg.GitRepoPath != "" {
 		untrackedCount := r.detectUntrackedWorktrees(ctx)
 		stats.UntrackedFound += untrackedCount
 	}
 
 	// ── Pass 5: Git prune ──
-	if r.svc.cfg.GitRepoPath != "" {
-		if _, err := r.svc.runGit(ctx, r.svc.cfg.GitRepoPath, "worktree", "prune"); err != nil {
+	if r.wt.cfg.GitRepoPath != "" {
+		if _, err := r.wt.RunGit(ctx, r.wt.cfg.GitRepoPath, "worktree", "prune"); err != nil {
 			r.logger.Warn("git worktree prune failed", "error", err)
 			stats.Errors++
 		}
@@ -324,7 +324,7 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 	r.lastStats = stats
 	r.mu.Unlock()
 
-	r.svc.metrics.WorktreeReconcileRuns.Add(1)
+	r.wt.metrics.WorktreeReconcileRuns.Add(1)
 
 	return &stats, nil
 }
@@ -332,7 +332,7 @@ func (r *WorktreeReconciler) reconcile(ctx context.Context) (*WorktreeReconcileS
 // detectUntrackedWorktrees cross-references `git worktree list` with known
 // assignments and adopts untracked worktrees as orphaned entries.
 func (r *WorktreeReconciler) detectUntrackedWorktrees(ctx context.Context) int {
-	output, err := r.svc.runGit(ctx, r.svc.cfg.GitRepoPath, "worktree", "list", "--porcelain")
+	output, err := r.wt.RunGit(ctx, r.wt.cfg.GitRepoPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		r.logger.Warn("git worktree list failed", "error", err)
 		return 0
@@ -370,12 +370,12 @@ func (r *WorktreeReconciler) detectUntrackedWorktrees(ctx context.Context) int {
 	}
 
 	// Build set of known worktree paths
-	r.svc.worktreeMu.RLock()
-	knownPaths := make(map[string]struct{}, len(r.svc.worktreeAssns))
-	for _, a := range r.svc.worktreeAssns {
+	r.wt.mu.RLock()
+	knownPaths := make(map[string]struct{}, len(r.wt.assns))
+	for _, a := range r.wt.assns {
 		knownPaths[a.WorktreePath] = struct{}{}
 	}
-	r.svc.worktreeMu.RUnlock()
+	r.wt.mu.RUnlock()
 
 	// The main repo worktree is the first entry — skip it
 	found := 0
@@ -401,11 +401,11 @@ func (r *WorktreeReconciler) detectUntrackedWorktrees(ctx context.Context) int {
 			OrphanedAt:   &now,
 		}
 
-		r.svc.worktreeMu.Lock()
-		r.svc.worktreeAssns[assignment.ID] = assignment
-		r.svc.worktreeMu.Unlock()
+		r.wt.mu.Lock()
+		r.wt.assns[assignment.ID] = assignment
+		r.wt.mu.Unlock()
 
-		_ = r.svc.persistWorktreeAssignment(ctx, assignment)
+		_ = r.wt.Persist(ctx, assignment)
 
 		r.logger.Info("detected untracked worktree",
 			"path", gw.path,
@@ -414,7 +414,7 @@ func (r *WorktreeReconciler) detectUntrackedWorktrees(ctx context.Context) int {
 		)
 
 		found++
-		r.svc.metrics.WorktreeUntrackedFound.Add(1)
+		r.wt.metrics.WorktreeUntrackedFound.Add(1)
 	}
 
 	return found

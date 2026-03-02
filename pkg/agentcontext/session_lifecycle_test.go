@@ -115,26 +115,26 @@ func TestSessionEndCleanup_OrphansWorktrees(t *testing.T) {
 	svc := newTestService()
 
 	now := time.Now()
-	svc.worktreeAssns["wt-1"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-1"] = &WorktreeAssignment{
 		ID: "wt-1", AgentID: "agent-1", Status: WorktreeStatusActive, CreatedAt: now,
 	}
-	svc.worktreeAssns["wt-2"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-2"] = &WorktreeAssignment{
 		ID: "wt-2", AgentID: "agent-1", Status: WorktreeStatusActive, CreatedAt: now,
 	}
-	svc.worktreeAssns["wt-3"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-3"] = &WorktreeAssignment{
 		ID: "wt-3", AgentID: "agent-2", Status: WorktreeStatusActive, CreatedAt: now,
 	}
 
 	svc.orphanWorktreesForAgent("agent-1")
 
-	if svc.worktreeAssns["wt-1"].Status != WorktreeStatusOrphaned {
-		t.Errorf("wt-1 status = %q, want orphaned", svc.worktreeAssns["wt-1"].Status)
+	if svc.worktrees.assns["wt-1"].Status != WorktreeStatusOrphaned {
+		t.Errorf("wt-1 status = %q, want orphaned", svc.worktrees.assns["wt-1"].Status)
 	}
-	if svc.worktreeAssns["wt-2"].Status != WorktreeStatusOrphaned {
-		t.Errorf("wt-2 status = %q, want orphaned", svc.worktreeAssns["wt-2"].Status)
+	if svc.worktrees.assns["wt-2"].Status != WorktreeStatusOrphaned {
+		t.Errorf("wt-2 status = %q, want orphaned", svc.worktrees.assns["wt-2"].Status)
 	}
-	if svc.worktreeAssns["wt-3"].Status != WorktreeStatusActive {
-		t.Errorf("wt-3 status = %q, want active (different agent)", svc.worktreeAssns["wt-3"].Status)
+	if svc.worktrees.assns["wt-3"].Status != WorktreeStatusActive {
+		t.Errorf("wt-3 status = %q, want active (different agent)", svc.worktrees.assns["wt-3"].Status)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 	svc.claims.claims["file.go"] = map[string]*FileClaim{
 		"agent-1": {ID: "c1", AgentID: "agent-1", FilePath: "file.go", CreatedAt: now},
 	}
-	svc.worktreeAssns["wt-1"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-1"] = &WorktreeAssignment{
 		ID: "wt-1", AgentID: "agent-1", Status: WorktreeStatusActive, CreatedAt: now,
 	}
 
@@ -181,8 +181,8 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 	if len(svc.claims.claims) != 0 {
 		t.Error("file claims should be empty")
 	}
-	if svc.worktreeAssns["wt-1"].Status != WorktreeStatusOrphaned {
-		t.Errorf("worktree status = %q, want orphaned", svc.worktreeAssns["wt-1"].Status)
+	if svc.worktrees.assns["wt-1"].Status != WorktreeStatusOrphaned {
+		t.Errorf("worktree status = %q, want orphaned", svc.worktrees.assns["wt-1"].Status)
 	}
 }
 

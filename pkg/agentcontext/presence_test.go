@@ -35,12 +35,12 @@ func newTestService() *Service {
 		tracer:  noop.NewTracerProvider().Tracer("test"),
 		metrics: metrics,
 
-		presence: NewPresenceSvc(nil, cfg, logger, metrics),
-		claims:   NewClaimSvc(nil, logger, metrics),
+		presence:  NewPresenceSvc(nil, cfg, logger, metrics),
+		claims:    NewClaimSvc(nil, logger, metrics),
+		worktrees: NewWorktreeSvc(nil, cfg, logger, metrics),
 
-		sessions:      make(map[string]*Session),
-		worktreeAssns: make(map[string]*WorktreeAssignment),
-		nudges:        make(map[string][]*Nudge),
+		sessions: make(map[string]*Session),
+		nudges:   make(map[string][]*Nudge),
 	}
 }
 
