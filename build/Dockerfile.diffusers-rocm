@@ -84,7 +84,9 @@ RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 
 # Install bitsandbytes separately with --no-deps to prevent torch replacement.
 # bitsandbytes' only real dependency is torch (already installed as ROCm build).
-RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.44.0"
+# >= 0.49.2 required: fixes blocksize=128→64 default on ROCm (incorrect dequantization)
+# and indexing overflow in blockwise quantization kernels (PR #1796).
+RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.49.2"
 
 # Create the API server
 COPY <<'EOF' /app/server.py
@@ -553,27 +555,30 @@ def load_pipeline(model_id: str):
             flux_kwargs = {k: v for k, v in pipeline_kwargs.items()
                           if k not in ("safety_checker", "vae", "variant")}
             # Optional NF4 quantization via bitsandbytes (reduces ~24GB FP16 to ~6GB NF4)
+            _flux_nf4 = False
             quant_mode = os.environ.get("QUANTIZATION", "").lower()
             if quant_mode == "nf4":
                 try:
                     from diffusers import BitsAndBytesConfig as DiffusersBnBConfig
                     from diffusers.quantizers import PipelineQuantizationConfig
-                    # Use float16 compute dtype — bfloat16 has known issues on gfx1100/RDNA3
+                    # BNB NF4: float32 compute dtype for numerical stability.
+                    # BNB stores linear biases as float32; compute_dtype must match
+                    # to avoid "Input type and bias type should be the same" errors.
                     bnb_config = DiffusersBnBConfig(
                         load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_compute_dtype=torch.float32,
                         bnb_4bit_quant_type="nf4",
                     )
-                    # diffusers 0.36+ requires PipelineQuantizationConfig wrapper
                     flux_kwargs["quantization_config"] = PipelineQuantizationConfig(
                         quant_mapping={"transformer": bnb_config}
                     )
-                    # Keep torch_dtype=float16 for non-quantized components (T5-XXL, CLIP, VAE).
-                    # Without this, T5-XXL loads as FP32 (~18.8 GB) which OOMs when moved to GPU
-                    # alongside the NF4 transformer (~6 GB) on a 24 GB card.
-                    # Note: variant="fp16" (file lookup) is already filtered at line 538.
-                    flux_kwargs["torch_dtype"] = torch.float16
-                    print("NF4 quantization enabled for FLUX pipeline (float16 compute)")
+                    # Load as float32 so BNB biases and transformer norms are float32.
+                    # After loading, text encoders are downcast to bfloat16 to prevent
+                    # T5-XXL overflow (float16 max ~65504 is too small for T5 attention).
+                    # Memory: T5 bf16 (~9.4 GB) + NF4 transformer (~6 GB) = ~15.4 GB.
+                    flux_kwargs["torch_dtype"] = torch.float32
+                    _flux_nf4 = True
+                    print("NF4 quantization enabled for FLUX pipeline (float32 compute)")
                 except (ImportError, Exception) as e:
                     print(f"WARNING: NF4 quantization not available ({e}), loading without quantization")
             if PIPELINE_MODE == "inpainting":
@@ -590,6 +595,29 @@ def load_pipeline(model_id: str):
                     resolved_path,
                     **flux_kwargs,
                 )
+            # NF4 + float32: downcast text encoders to bfloat16 to prevent
+            # T5-XXL overflow (float16 max ~65504 is too small) and save VRAM.
+            # Transformer stays float32 (matching BNB bias dtypes).
+            # VAE stays float32 (prevents NaN in decode).
+            # Patch encode_prompt to cast output to float32 (transformer expects float32).
+            if _flux_nf4:
+                for enc_attr in ("text_encoder", "text_encoder_2"):
+                    enc = getattr(pipeline, enc_attr, None)
+                    if enc is not None:
+                        enc.to(torch.bfloat16)
+                        param_mb = sum(p.numel() * p.element_size() for p in enc.parameters()) / 1024**2
+                        print(f"Downcast {enc_attr} to bfloat16 ({param_mb:.0f} MB)")
+                # Wrap encode_prompt to cast bfloat16 text embeddings → float32
+                # so the float32 transformer receives matching dtypes for Q/K/V.
+                _orig_encode = pipeline.encode_prompt
+                def _encode_prompt_fp32(*args, **kwargs):
+                    result = _orig_encode(*args, **kwargs)
+                    return tuple(
+                        r.to(torch.float32) if isinstance(r, torch.Tensor) and r.dtype == torch.bfloat16
+                        else r for r in result
+                    )
+                pipeline.encode_prompt = _encode_prompt_fp32
+                print("Wrapped encode_prompt to cast bfloat16 → float32")
         elif PIPELINE_MODE == "inpainting":
             print("Loading AutoPipelineForInpainting (loading to CPU, local files only)...")
             sys.stdout.flush()

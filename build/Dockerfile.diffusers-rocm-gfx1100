@@ -63,7 +63,9 @@ RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 
 # Install bitsandbytes separately with --no-deps to prevent torch replacement.
 # bitsandbytes' only real dependency is torch (already installed as ROCm build).
-RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.44.0"
+# >= 0.49.2 required: fixes blocksize=128→64 default on ROCm (incorrect dequantization)
+# and indexing overflow in blockwise quantization kernels (PR #1796).
+RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.49.2"
 
 COPY build/Dockerfile.diffusers-rocm /tmp/_ref
 RUN sed -n '/^COPY <<.*EOF.*\/app\/server\.py/,/^EOF/p' /tmp/_ref > /dev/null
