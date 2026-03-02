@@ -81,6 +81,18 @@ const (
 	HandoffStatusRejected HandoffStatus = "rejected"
 )
 
+// Durability defines how an entry is stored when added via agent_context_add.
+type Durability string
+
+const (
+	// DurabilitySession stores to context backend (default, session-scoped).
+	DurabilitySession Durability = "session"
+	// DurabilityPersistent promotes to memory hierarchy (long-term tier).
+	DurabilityPersistent Durability = "persistent"
+	// DurabilityGraph creates an entity in the knowledge graph.
+	DurabilityGraph Durability = "graph"
+)
+
 // Visibility defines who can access a context entry
 type Visibility string
 
