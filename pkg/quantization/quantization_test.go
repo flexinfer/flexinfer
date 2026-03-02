@@ -417,6 +417,17 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 		t.Fatalf("unexpected toleration: %+v", podSpec.Tolerations[0])
 	}
 
+	// PYTORCH_HIP_ALLOC_CONF should be set for AMD GPUs
+	var hipAllocConf string
+	for _, e := range container.Env {
+		if e.Name == "PYTORCH_HIP_ALLOC_CONF" {
+			hipAllocConf = e.Value
+		}
+	}
+	if hipAllocConf != "expandable_segments:True" {
+		t.Fatalf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", hipAllocConf)
+	}
+
 	script := container.Args[0]
 	if !contains(script, "device_map=None") {
 		t.Fatal("expected AWQ script to use device_map=None for ROCm compatibility")

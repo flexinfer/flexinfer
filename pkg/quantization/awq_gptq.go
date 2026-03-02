@@ -399,6 +399,15 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	}
 	gpuResource := corev1.ResourceName(gpuResourceName)
 
+	// Set memory allocator config for AMD GPUs to reduce fragmentation.
+	var env []corev1.EnvVar
+	if params.GPUVendor == "amd" {
+		env = append(env, corev1.EnvVar{
+			Name:  "PYTORCH_HIP_ALLOC_CONF",
+			Value: "expandable_segments:True",
+		})
+	}
+
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,
 		Containers: []corev1.Container{
@@ -408,6 +417,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 				ImagePullPolicy: corev1.PullAlways,
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
+				Env:             env,
 				VolumeMounts: []corev1.VolumeMount{
 					pvcMount,
 					wsMount,
