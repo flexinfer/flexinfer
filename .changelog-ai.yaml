@@ -1,0 +1,32 @@
+# py-changelog-ai configuration for loom-core
+# Generate: make changelog
+# Docs: https://github.com/user/py-changelog-ai
+
+# GitLab integration for MR/issue linking
+gitlab:
+  url: https://gitlab.flexinfer.ai
+  project: services/loom-core
+  token_env: GITLAB_TOKEN
+
+# Output settings
+output:
+  format: keepachangelog
+  file: CHANGELOG.generated.md
+  prepend: false
+
+# Group entries by conventional commit scope
+grouping:
+  by_component: true
+  component_patterns:
+    - '^(?:feat|fix|refactor|perf|docs|test|chore|ci)\((?P<component>[^)]+)\):'
+
+# Map conventional commit types to Keep-a-Changelog categories
+types:
+  feat: Added
+  fix: Fixed
+  docs: Documentation
+  perf: Performance
+  refactor: Changed
+  test: Tests
+  chore: Maintenance
+  ci: CI/CD
