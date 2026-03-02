@@ -1,83 +1,14 @@
-// opencode.go generates OpenCode configuration files.
+// opencode.go contains OpenCode-specific hook generation.
 //
-// OpenCode uses opencode.json with a "mcp" key for MCP servers and
-// JS/TS plugins in .opencode/plugins/ for lifecycle hooks.
+// The MCP config generation for OpenCode is handled by the unified
+// generateJSONConfig path (using profile.Features.CommandFormat == "array").
+// This file only contains the TypeScript plugin generation for lifecycle hooks.
 package generator
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/crb2nu/loom/pkg/registry"
 )
-
-// generateOpenCodeConfig generates opencode.json with MCP server definitions.
-// OpenCode uses a different JSON format than Claude Code:
-//   - Root key is "mcp" (not "mcpServers")
-//   - Command is a string array ["cmd", "arg1", "arg2"] (not separate command + args)
-//   - Environment is "environment" (not "env")
-//   - Each server has an explicit "type": "local" field
-func generateOpenCodeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {
-	targets, err := buildTargetMap(reg, "opencode", hubMode, hubURL, "opencode", loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-	if err != nil {
-		return err
-	}
-
-	type OpenCodeServer struct {
-		Type        string            `json:"type"`
-		Command     []string          `json:"command"`
-		Environment map[string]string `json:"environment,omitempty"`
-		Enabled     bool              `json:"enabled"`
-		Timeout     int               `json:"timeout,omitempty"`
-	}
-
-	// Build the MCP servers map.
-	mcpServers := make(map[string]OpenCodeServer)
-	for name, spec := range targets {
-		cmd := []string{spec.Command}
-		for _, a := range spec.Args {
-			cmd = append(cmd, fmt.Sprintf("%v", a))
-		}
-
-		server := OpenCodeServer{
-			Type:    "local",
-			Command: cmd,
-			Enabled: true,
-		}
-		if len(spec.Env) > 0 {
-			server.Environment = spec.Env
-		}
-		if spec.Timeout > 0 {
-			server.Timeout = spec.Timeout * 1000 // OpenCode uses milliseconds
-		}
-		mcpServers[name] = server
-	}
-
-	// Build full config.
-	config := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"mcp":     mcpServers,
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	destDir := filepath.Join(outputDir, "opencode")
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	perm := os.FileMode(0644)
-	if resolveSecrets {
-		perm = 0600
-		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for opencode (file contains sensitive values)\n")
-	}
-	return os.WriteFile(filepath.Join(destDir, "opencode.json"), data, perm)
-}
 
 // generateOpenCodeHooksPlugin writes a TypeScript plugin for OpenCode lifecycle hooks.
 // The plugin provides session tracking, heartbeats, and presence management

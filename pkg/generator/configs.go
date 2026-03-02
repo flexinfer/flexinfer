@@ -129,13 +129,48 @@ func InferWorkspaceRoot(candidate string) string {
 }
 
 // GenerateConfigsWithPath generates MCP client configurations with an explicit registry path.
+// GenerateParams bundles the parameters that all config generators share.
+// Reduces 10-parameter function signatures to a single struct.
+type GenerateParams struct {
+	Reg            *registry.Registry
+	OutputDir      string
+	Target         string
+	Profile        *PlatformProfile
+	HubMode        bool
+	HubURL         string
+	LoomMode       bool
+	LoomBinary     string
+	WorkspaceRoot  string
+	RegistryRoot   string
+	ResolveSecrets bool
+}
+
+// buildTargets resolves the MCP server specs for this target.
+func (p *GenerateParams) buildTargets() (map[string]*registry.TargetSpec, error) {
+	return buildTargetMap(p.Reg, p.Target, p.HubMode, p.HubURL, p.Target, p.LoomMode, p.LoomBinary, p.WorkspaceRoot, p.RegistryRoot, p.ResolveSecrets)
+}
+
+// destDir returns the platform-specific output directory.
+func (p *GenerateParams) destDir() string {
+	return filepath.Join(p.OutputDir, p.Target)
+}
+
+// filePerm returns the output file permission (restrictive when secrets are resolved).
+func (p *GenerateParams) filePerm() os.FileMode {
+	if p.ResolveSecrets {
+		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for %s (file contains sensitive values)\n", p.Target)
+		return 0600
+	}
+	return 0644
+}
+
 func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, outputDir string, targets []string, hubMode bool, hubURL string, loomMode bool, loomBinary string, resolveSecrets bool) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
 	if len(targets) == 0 || targets[0] == "all" {
-		targets = []string{"codex", "kilocode", "vscode", "claude", "claude_desktop", "gemini", "antigravity", "zed", "opencode"}
+		targets = AllPlatformNames()
 	}
 
 	// Resolve repo root from registry path
@@ -148,18 +183,26 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 			return fmt.Errorf("unknown target %q: %w", target, profileErr)
 		}
 
+		params := &GenerateParams{
+			Reg:            reg,
+			OutputDir:      outputDir,
+			Target:         target,
+			Profile:        profile,
+			HubMode:        hubMode,
+			HubURL:         hubURL,
+			LoomMode:       loomMode,
+			LoomBinary:     loomBinary,
+			WorkspaceRoot:  workspaceRoot,
+			RegistryRoot:   registryRoot,
+			ResolveSecrets: resolveSecrets,
+		}
+
 		var err error
-		switch {
-		case target == "opencode":
-			// OpenCode has unique serialization (array commands, "mcp" root, etc.)
-			err = generateOpenCodeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case target == "claude_desktop":
-			// Claude Desktop omits timeout field.
-			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case profile.ConfigFormat == "json":
-			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case profile.ConfigFormat == "toml":
-			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+		switch profile.ConfigFormat {
+		case "json":
+			err = generateJSONConfig(params)
+		case "toml":
+			err = generateTomlConfig(params)
 		default:
 			err = fmt.Errorf("unsupported config format %q for %s", profile.ConfigFormat, target)
 		}
@@ -413,38 +456,110 @@ func probeHubWrapper(path string) error {
 
 // generateJSONConfig generates mcp.json format configs for vscode and claude targets
 // Uses "mcpServers" as root key per Claude Code CLI specification
-func generateJSONConfig(reg *registry.Registry, outputDir string, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {
-	// Use the actual target from registry (claude, vscode, etc.)
-	// The registry.GetServerSpec() will fall back to common config if target not found
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+// generateJSONConfig generates a JSON MCP configuration file.
+// Uses profile data to determine the root key, config filename, timeout support,
+// command format, and environment key — eliminating per-platform special cases.
+func generateJSONConfig(p *GenerateParams) error {
+	targets, err := p.buildTargets()
 	if err != nil {
 		return err
 	}
 
-	type JSONServer struct {
-		Command string            `json:"command"`
-		Args    []string          `json:"args"`
-		Env     map[string]string `json:"env,omitempty"`
-		Timeout int               `json:"timeout,omitempty"`
+	profile := p.Profile
+
+	// OpenCode uses array-style commands, "environment" key, and millisecond timeouts.
+	if profile.Features.CommandFormat == "array" {
+		return generateOpenCodeJSONConfig(p, targets)
 	}
 
-	// Claude Code CLI expects "mcpServers" as the root key
-	config := map[string]map[string]JSONServer{"mcpServers": {}}
+	// Standard JSON: separate command/args, configurable root key and timeout.
+	rootKey := profile.ConfigRoot
+	if rootKey == "" {
+		rootKey = "mcpServers"
+	}
+
+	servers := make(map[string]any)
 	for name, spec := range targets {
-		args := []string{}
+		args := make([]string, 0, len(spec.Args))
 		for _, a := range spec.Args {
 			args = append(args, fmt.Sprintf("%v", a))
 		}
 
-		server := JSONServer{
-			Command: spec.Command,
-			Args:    args,
-			Env:     spec.Env,
+		server := map[string]any{
+			"command": spec.Command,
+			"args":    args,
+		}
+		if len(spec.Env) > 0 {
+			server[profile.Features.EnvKey] = spec.Env
+		}
+		if spec.Timeout > 0 && profile.Features.SupportsTimeout {
+			field := profile.Features.TimeoutField
+			if field == "" {
+				field = "timeout"
+			}
+			server[field] = spec.Timeout
+		}
+		servers[name] = server
+	}
+
+	config := map[string]any{rootKey: servers}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	destDir := p.destDir()
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	configFile := profile.ConfigFile
+	if configFile == "" {
+		configFile = "mcp.json"
+	}
+	return os.WriteFile(filepath.Join(destDir, configFile), data, p.filePerm())
+}
+
+// generateOpenCodeJSONConfig handles OpenCode's unique JSON format:
+// array commands, "environment" key, millisecond timeouts, and "type": "local" field.
+func generateOpenCodeJSONConfig(p *GenerateParams, targets map[string]*registry.TargetSpec) error {
+	type OpenCodeServer struct {
+		Type        string            `json:"type"`
+		Command     []string          `json:"command"`
+		Environment map[string]string `json:"environment,omitempty"`
+		Enabled     bool              `json:"enabled"`
+		Timeout     int               `json:"timeout,omitempty"`
+	}
+
+	mcpServers := make(map[string]OpenCodeServer)
+	for name, spec := range targets {
+		cmd := []string{spec.Command}
+		for _, a := range spec.Args {
+			cmd = append(cmd, fmt.Sprintf("%v", a))
+		}
+
+		server := OpenCodeServer{
+			Type:    "local",
+			Command: cmd,
+			Enabled: true,
+		}
+		if len(spec.Env) > 0 {
+			server.Environment = spec.Env
 		}
 		if spec.Timeout > 0 {
-			server.Timeout = spec.Timeout
+			server.Timeout = spec.Timeout * 1000 // OpenCode uses milliseconds
 		}
-		config["mcpServers"][name] = server
+		mcpServers[name] = server
+	}
+
+	rootKey := p.Profile.ConfigRoot
+	if rootKey == "" {
+		rootKey = "mcp"
+	}
+
+	config := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		rootKey:   mcpServers,
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
@@ -452,72 +567,32 @@ func generateJSONConfig(reg *registry.Registry, outputDir string, target string,
 		return err
 	}
 
-	destDir := filepath.Join(outputDir, target)
+	destDir := p.destDir()
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
 
-	perm := os.FileMode(0644)
-	if resolveSecrets {
-		perm = 0600
-		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for %s (file contains sensitive values)\n", target)
+	configFile := p.Profile.ConfigFile
+	if configFile == "" {
+		configFile = "opencode.json"
 	}
-	return os.WriteFile(filepath.Join(destDir, "mcp.json"), data, perm)
+	return os.WriteFile(filepath.Join(destDir, configFile), data, p.filePerm())
 }
 
-func generateClaudeDesktopConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {
-	// Claude Desktop uses claude_desktop target, falling back to common config
-	targets, err := buildTargetMap(reg, "claude_desktop", hubMode, hubURL, "claude_desktop", loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+// generateTomlConfig generates a TOML MCP configuration file.
+// Uses profile features to determine timeout field name, description support,
+// and preamble requirements — eliminating per-platform target name checks.
+func generateTomlConfig(p *GenerateParams) error {
+	targets, err := p.buildTargets()
 	if err != nil {
 		return err
 	}
 
-	type ClaudeServer struct {
-		Command string            `json:"command"`
-		Args    []string          `json:"args"`
-		Env     map[string]string `json:"env,omitempty"`
-	}
-
-	config := map[string]map[string]ClaudeServer{"mcpServers": {}}
-	for name, spec := range targets {
-		args := []string{}
-		for _, a := range spec.Args {
-			args = append(args, fmt.Sprintf("%v", a))
-		}
-
-		config["mcpServers"][name] = ClaudeServer{
-			Command: spec.Command,
-			Args:    args,
-			Env:     spec.Env,
-		}
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	destDir := filepath.Join(outputDir, "claude_desktop")
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	perm := os.FileMode(0644)
-	if resolveSecrets {
-		perm = 0600
-		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for claude_desktop (file contains sensitive values)\n")
-	}
-	return os.WriteFile(filepath.Join(destDir, "claude_desktop_config.json"), data, perm)
-}
-
-func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {
-	targets, err := buildTargetMap(reg, target, hubMode, hubURL, target, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-	if err != nil {
-		return err
-	}
+	profile := p.Profile
+	target := p.Target
 
 	var sb strings.Builder
-	if resolveSecrets {
+	if p.ResolveSecrets {
 		sb.WriteString("# WARNING: Secret templates resolved to literal values.\n")
 		sb.WriteString(fmt.Sprintf("# %s does not support template syntax.\n", target))
 		sb.WriteString(fmt.Sprintf("# To regenerate: loom sync %s --regen\n", target))
@@ -525,12 +600,10 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 	sb.WriteString(fmt.Sprintf("# Generated MCP configuration for %s\n", target))
 	sb.WriteString("# Source: mcp/context/registry.yaml\n\n")
 
-	// Codex supports a notify hook that fires on agent-turn-complete.
-	// This is the only lifecycle hook Codex provides. Combined with --infer-namespace
-	// and --ensure-session, the first heartbeat auto-bootstraps a session with
-	// git-derived namespace context. The session reaper handles cleanup on idle.
-	if target == "codex" {
-		emitCodexPreamble(&sb, reg, workspaceRoot)
+	// Platforms with requires_preamble get a config preamble (e.g., Codex's
+	// approval_policy, features, sandbox_mode, and notify hook).
+	if profile.Features.RequiresPreamble {
+		emitCodexPreamble(&sb, p.Reg, p.WorkspaceRoot)
 	}
 
 	// Sort keys for deterministic output
@@ -542,7 +615,8 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 
 	for _, name := range names {
 		spec := targets[name]
-		if len(spec.AlwaysAllow) == 0 && (target == "codex" || target == "gemini" || target == "kilocode") {
+		// TOML platforms that lack fine-grained permissions default to allow-all.
+		if len(spec.AlwaysAllow) == 0 && !profile.Capabilities.Permissions {
 			spec.AlwaysAllow = []string{"*"}
 		}
 		sb.WriteString(fmt.Sprintf("[mcp_servers.%s]\n", name))
@@ -551,33 +625,34 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 		argsJSON, _ := json.Marshal(spec.Args)
 		sb.WriteString(fmt.Sprintf("args = %s\n", string(argsJSON)))
 
-		// NOTE: Codex has a strict upstream schema for mcp_servers entries.
-		// Keep Codex server blocks schema-compliant to avoid breaking config load.
-		if target != "codex" {
+		// Emit optional fields based on profile feature support.
+		if profile.Features.SupportsDescription {
 			if spec.Description != "" {
 				sb.WriteString(fmt.Sprintf("description = %q\n", spec.Description))
 			}
 			if spec.Hint != "" {
 				sb.WriteString(fmt.Sprintf("hint = %q\n", spec.Hint))
 			}
-			if spec.Timeout > 0 {
-				sb.WriteString(fmt.Sprintf("timeout = %d\n", spec.Timeout))
+		}
+
+		if spec.Timeout > 0 && profile.Features.SupportsTimeout {
+			field := profile.Features.TimeoutField
+			if field == "" {
+				field = "timeout"
 			}
-			if len(spec.AlwaysAllow) > 0 {
-				allowJSON, _ := json.Marshal(spec.AlwaysAllow)
-				sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
-			}
-		} else {
-			// Best-effort mapping of our registry timeout to Codex's per-tool timeout.
-			if spec.Timeout > 0 {
-				sb.WriteString(fmt.Sprintf("tool_timeout_sec = %d\n", spec.Timeout))
-			}
+			sb.WriteString(fmt.Sprintf("%s = %d\n", field, spec.Timeout))
+		}
+
+		// Always-allow only emitted when platform supports description (proxy for
+		// "has extended TOML schema"). Platforms with strict schemas skip this.
+		if profile.Features.SupportsDescription && len(spec.AlwaysAllow) > 0 {
+			allowJSON, _ := json.Marshal(spec.AlwaysAllow)
+			sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
 		}
 
 		if len(spec.Env) > 0 {
 			sb.WriteString(fmt.Sprintf("[mcp_servers.%s.env]\n", name))
 
-			// Sort env keys
 			var envKeys []string
 			for k := range spec.Env {
 				envKeys = append(envKeys, k)
@@ -591,27 +666,24 @@ func generateTomlConfig(reg *registry.Registry, outputDir, target string, hubMod
 		sb.WriteString("\n")
 	}
 
-	destDir := filepath.Join(outputDir, target)
+	destDir := p.destDir()
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
 
-	// Use restrictive permissions when secrets are resolved
-	perm := os.FileMode(0644)
-	if resolveSecrets {
-		perm = 0600
-		fmt.Fprintf(os.Stderr, "Note: resolved secret templates for %s (file contains sensitive values)\n", target)
+	configFile := profile.ConfigFile
+	if configFile == "" {
+		configFile = "config.toml"
 	}
-
-	configPath := filepath.Join(destDir, "config.toml")
+	configPath := filepath.Join(destDir, configFile)
 	content := []byte(sb.String())
 
-	if err := os.WriteFile(configPath, content, perm); err != nil {
+	if err := os.WriteFile(configPath, content, p.filePerm()); err != nil {
 		return err
 	}
 
 	// Validate Codex configs against upstream schema.
-	if target == "codex" {
+	if profile.Features.RequiresPreamble {
 		result := validator.ValidateCodexConfig(configPath, content)
 		if result != nil {
 			if !result.HasErrors() && !result.HasWarnings() {

@@ -1133,3 +1133,254 @@ func writeTestWrapper(t *testing.T, dir string, name string, healthy bool) strin
 	}
 	return path
 }
+
+// --- CONFIG-2: Unified generator interface tests ---
+
+func TestGenerateParams_DestDir(t *testing.T) {
+	t.Parallel()
+	p := &GenerateParams{OutputDir: "/out", Target: "claude"}
+	if got := p.destDir(); got != "/out/claude" {
+		t.Errorf("destDir() = %q, want /out/claude", got)
+	}
+}
+
+func TestGenerateParams_FilePerm(t *testing.T) {
+	t.Parallel()
+
+	p := &GenerateParams{Target: "test", ResolveSecrets: false}
+	if perm := p.filePerm(); perm != 0644 {
+		t.Errorf("filePerm() = %o, want 0644", perm)
+	}
+
+	p.ResolveSecrets = true
+	if perm := p.filePerm(); perm != 0600 {
+		t.Errorf("filePerm() = %o, want 0600", perm)
+	}
+}
+
+func TestProfileDrivenJSONConfig_AllJSONPlatforms(t *testing.T) {
+	t.Parallel()
+
+	profiles, err := loadProfiles()
+	if err != nil {
+		t.Fatalf("loadProfiles: %v", err)
+	}
+
+	for name, profile := range profiles {
+		if profile.ConfigFormat != "json" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			reg := &registry.Registry{
+				Servers: []*registry.Server{
+					{
+						Name: "test-server",
+						Common: &registry.TargetSpec{
+							Command:     "echo",
+							Args:        []any{"hello"},
+							Description: "test server",
+						},
+					},
+				},
+			}
+
+			p := &GenerateParams{
+				Reg:       reg,
+				OutputDir: tmpDir,
+				Target:    name,
+				Profile:   profile,
+			}
+
+			if err := generateJSONConfig(p); err != nil {
+				t.Fatalf("generateJSONConfig(%s): %v", name, err)
+			}
+
+			outFile := filepath.Join(tmpDir, name, profile.ConfigFile)
+			data, err := os.ReadFile(outFile)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+
+			var parsed map[string]any
+			if err := json.Unmarshal(data, &parsed); err != nil {
+				t.Fatalf("invalid JSON for %s: %v", name, err)
+			}
+
+			// Verify root key matches profile.
+			if profile.Features.CommandFormat != "array" {
+				rootKey := profile.ConfigRoot
+				if rootKey == "" {
+					rootKey = "mcpServers"
+				}
+				if _, ok := parsed[rootKey]; !ok {
+					t.Errorf("missing root key %q in %s output", rootKey, name)
+				}
+			}
+		})
+	}
+}
+
+func TestProfileDrivenTOMLConfig_AllTOMLPlatforms(t *testing.T) {
+	t.Parallel()
+
+	profiles, err := loadProfiles()
+	if err != nil {
+		t.Fatalf("loadProfiles: %v", err)
+	}
+
+	for name, profile := range profiles {
+		if profile.ConfigFormat != "toml" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			reg := &registry.Registry{
+				Servers: []*registry.Server{
+					{
+						Name: "test-server",
+						Common: &registry.TargetSpec{
+							Command:     "echo",
+							Args:        []any{"hello"},
+							Description: "test server",
+							Timeout:     30,
+						},
+					},
+				},
+			}
+
+			p := &GenerateParams{
+				Reg:       reg,
+				OutputDir: tmpDir,
+				Target:    name,
+				Profile:   profile,
+			}
+
+			if err := generateTomlConfig(p); err != nil {
+				t.Fatalf("generateTomlConfig(%s): %v", name, err)
+			}
+
+			outFile := filepath.Join(tmpDir, name, profile.ConfigFile)
+			data, err := os.ReadFile(outFile)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+
+			content := string(data)
+			// All TOML configs should have the mcp_servers section.
+			if !strings.Contains(content, "[mcp_servers.test-server]") {
+				t.Errorf("missing [mcp_servers.test-server] in %s output", name)
+			}
+
+			// Verify timeout field name matches profile.
+			if profile.Features.SupportsTimeout {
+				field := profile.Features.TimeoutField
+				if field == "" {
+					field = "timeout"
+				}
+				if !strings.Contains(content, field+" = ") {
+					t.Errorf("missing %s field in %s output", field, name)
+				}
+			}
+
+			// Verify description support.
+			if profile.Features.SupportsDescription {
+				if !strings.Contains(content, "description = ") {
+					t.Errorf("missing description in %s output (SupportsDescription=true)", name)
+				}
+			}
+		})
+	}
+}
+
+func TestProfileDrivenConfig_ClaudeDesktopUsesCustomFilename(t *testing.T) {
+	t.Parallel()
+
+	profile, err := GetPlatformProfile("claude_desktop")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	reg := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name: "test",
+				Common: &registry.TargetSpec{
+					Command: "echo",
+					Args:    []any{"test"},
+				},
+			},
+		},
+	}
+
+	p := &GenerateParams{
+		Reg:       reg,
+		OutputDir: tmpDir,
+		Target:    "claude_desktop",
+		Profile:   profile,
+	}
+
+	if err := generateJSONConfig(p); err != nil {
+		t.Fatalf("generateJSONConfig: %v", err)
+	}
+
+	// Verify the output uses the profile-specified filename.
+	expected := filepath.Join(tmpDir, "claude_desktop", "claude_desktop_config.json")
+	if _, err := os.Stat(expected); err != nil {
+		t.Errorf("expected output at %s: %v", expected, err)
+	}
+
+	// Verify no timeout field (SupportsTimeout=false for claude_desktop).
+	data, _ := os.ReadFile(expected)
+	if strings.Contains(string(data), "timeout") {
+		t.Error("claude_desktop should not have timeout field (SupportsTimeout=false)")
+	}
+}
+
+func TestProfileDrivenConfig_CodexUsesToolTimeoutSec(t *testing.T) {
+	t.Parallel()
+
+	profile, err := GetPlatformProfile("codex")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	reg := testRegistry()
+	reg.Servers = []*registry.Server{
+		{
+			Name: "test",
+			Common: &registry.TargetSpec{
+				Command: "echo",
+				Args:    []any{"test"},
+				Timeout: 60,
+			},
+		},
+	}
+
+	p := &GenerateParams{
+		Reg:       reg,
+		OutputDir: tmpDir,
+		Target:    "codex",
+		Profile:   profile,
+	}
+
+	if err := generateTomlConfig(p); err != nil {
+		t.Fatalf("generateTomlConfig: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(tmpDir, "codex", "config.toml"))
+	content := string(data)
+
+	if !strings.Contains(content, "tool_timeout_sec = 60") {
+		t.Error("codex should use tool_timeout_sec for timeout field")
+	}
+	if strings.Contains(content, "\ntimeout = ") {
+		t.Error("codex should not have generic 'timeout' field")
+	}
+}
