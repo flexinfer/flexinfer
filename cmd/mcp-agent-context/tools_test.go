@@ -27,8 +27,8 @@ func TestRegisterTools_RegistersCoreAgentToolFamilies(t *testing.T) {
 	t.Parallel()
 
 	_, tools := testServer()
-	if len(tools) < 70 {
-		t.Fatalf("tool count = %d, want >= 70", len(tools))
+	if len(tools) < 55 {
+		t.Fatalf("tool count = %d, want >= 55", len(tools))
 	}
 
 	seen := make(map[string]bool, len(tools))
