@@ -43,6 +43,7 @@ func TestRegisterTools_RegistersCoreAgentToolFamilies(t *testing.T) {
 		"agent_session_start",
 		"agent_session_end",
 		"agent_context_add",
+		"agent_recall",
 		"agent_context_recall_enhanced",
 		"agent_task_add",
 		"agent_task_update",
@@ -180,6 +181,57 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	props := tool.InputSchema.Properties
 	if _, ok := props["items"]; !ok {
 		t.Error("expected items property")
+	}
+}
+
+func TestUnifiedRecallSchema_HasScopeAndQuery(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	tool := toolByName(tools, "agent_recall")
+	if tool == nil {
+		t.Fatal("agent_recall not found")
+	}
+
+	if tool.Description == "" {
+		t.Error("expected non-empty description")
+	}
+
+	props := tool.InputSchema.Properties
+	for _, field := range []string{"query", "scope", "agent_id", "token_budget", "file_context", "memory_tiers"} {
+		if _, ok := props[field]; !ok {
+			t.Errorf("expected property %q in agent_recall schema", field)
+		}
+	}
+
+	if len(tool.InputSchema.Required) == 0 {
+		t.Error("expected query to be required")
+	}
+	found := false
+	for _, r := range tool.InputSchema.Required {
+		if r == "query" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'query' in required fields")
+	}
+}
+
+func TestDeprecatedRecallToolsHaveDeprecationNotice(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	deprecated := []string{"agent_context_recall", "agent_context_recall_enhanced", "agent_memory_recall"}
+	for _, name := range deprecated {
+		tool := toolByName(tools, name)
+		if tool == nil {
+			t.Errorf("deprecated tool %q should still be registered", name)
+			continue
+		}
+		if len(tool.Description) < 12 || tool.Description[:12] != "[Deprecated:" {
+			t.Errorf("tool %q should have [Deprecated:] prefix, got %q", name, tool.Description[:30])
+		}
 	}
 }
 

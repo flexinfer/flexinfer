@@ -104,7 +104,7 @@ func registerMemoryTools(server *mcp.Server, svc *agentcontext.Service, tracer t
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_memory_recall",
-		Description: "Recall memories matching criteria. Returns most relevant items within token budget, prioritized by importance and recency.",
+		Description: "[Deprecated: use agent_recall with scope='memory'] Recall memories matching criteria. Returns most relevant items within token budget, prioritized by importance and recency.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
