@@ -54,7 +54,6 @@ func TestRegisterTools_RegistersCoreAgentToolFamilies(t *testing.T) {
 		"agent_file_claim_acquire",
 		"agent_worktree_allocate",
 		"agent_handoff_create",
-		"agent_compaction_status",
 	}
 
 	for _, name := range expected {
@@ -180,6 +179,22 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	props := tool.InputSchema.Properties
 	if _, ok := props["items"]; !ok {
 		t.Error("expected items property")
+	}
+}
+
+func TestRemovedCompactionToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{
+		"agent_compaction_status",
+		"agent_compaction_trigger",
+		"agent_reconcile_trigger",
+	}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-6)", name)
+		}
 	}
 }
 
