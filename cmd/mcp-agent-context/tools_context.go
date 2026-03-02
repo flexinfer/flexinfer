@@ -377,7 +377,7 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_context_recall_enhanced",
-		Description: "Enhanced recall with task priority, symbol context, recency weighting, and code annotations.",
+		Description: "Unified recall across context entries, memory hierarchy, and knowledge graph. Queries all backends in parallel with round-robin result merging. Each result includes recall_source attribution.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -392,6 +392,10 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 				"session_id": map[string]any{
 					"type":        "string",
 					"description": "Filter to specific session.",
+				},
+				"namespace": map[string]any{
+					"type":        "string",
+					"description": "Filter to specific namespace.",
 				},
 				"token_budget": map[string]any{
 					"type":        "integer",
@@ -423,7 +427,20 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 				},
 				"cross_agent": map[string]any{
 					"type":        "boolean",
-					"description": "Search across all agents/sessions instead of filtering to one. Returns entries with source agent_id attribution (default: false).",
+					"description": "Search across all agents/sessions (default: false).",
+				},
+				"include_memory": map[string]any{
+					"type":        "boolean",
+					"description": "Include memory hierarchy results (default: true).",
+				},
+				"include_graph": map[string]any{
+					"type":        "boolean",
+					"description": "Include knowledge graph entity results (default: true).",
+				},
+				"scope": map[string]any{
+					"type":        "array",
+					"description": "Restrict to specific backends: \"context\", \"memory\", \"graph\". Empty = all.",
+					"items":       map[string]any{"type": "string", "enum": []string{"context", "memory", "graph"}},
 				},
 			},
 			Required: []string{"query"},
