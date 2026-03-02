@@ -77,7 +77,7 @@ cache:
 
 # Base template for Go jobs
 .go-template: &go-template
-  image: golang:${GO_VERSION}
+  image: registry.harbor.lan/dockerhub-cache/library/golang:${GO_VERSION}
   before_script:
     - |
       # Ensure required OS tools exist (golang image may not include them).
@@ -226,7 +226,7 @@ security:govulncheck:
     expire_in: 1 week
 
 lint:mcp-godot:
-  image: node:20
+  image: registry.harbor.lan/dockerhub-cache/library/node:20
   stage: lint
   variables:
     # This job needs repository files under tools/mcp-godot.
@@ -489,7 +489,7 @@ release:
 
 deploy:homebrew:
   stage: deploy
-  image: alpine:latest
+  image: registry.harbor.lan/dockerhub-cache/library/alpine:latest
   before_script:
     - apk add --no-cache git curl
   script:
