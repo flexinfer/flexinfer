@@ -92,8 +92,9 @@ func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any)
 	annotationTypes := v.StringSlice("annotation_types")
 	limit := v.Int("limit", 50)
 
-	// Build filter
-	var conds []any
+	// Build filter — always include _record_type discriminator since
+	// annotations share the context collection (SIMP-12).
+	conds := []any{Match("_record_type", "annotation")}
 	if filePath != "" {
 		conds = append(conds, Match("file_path", filePath))
 	}
@@ -104,10 +105,7 @@ func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any)
 		conds = append(conds, FilterShould(Matches("annotation_type", annotationTypes)...))
 	}
 
-	var filter map[string]any
-	if len(conds) > 0 {
-		filter = FilterMust(conds...)
-	}
+	filter := FilterMust(conds...)
 
 	points, err := s.qdrant.Get(CollAnnotations).ScrollPoints(ctx, filter, limit, false)
 	if err != nil {
@@ -143,8 +141,7 @@ func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any)
 }
 
 func (s *Service) getAnnotationsForFile(ctx context.Context, agentID, filePath string, limit int) ([]CodeAnnotation, error) {
-	var conds []any
-	conds = append(conds, Match("file_path", filePath))
+	conds := []any{Match("_record_type", "annotation"), Match("file_path", filePath)}
 	if agentID != "" {
 		conds = append(conds, Match("agent_id", agentID))
 	}
@@ -168,6 +165,7 @@ func (s *Service) getAnnotationsForFile(ctx context.Context, agentID, filePath s
 
 func annotationToPayload(a CodeAnnotation) map[string]any {
 	return map[string]any{
+		"_record_type":    "annotation", // discriminator for shared context collection
 		"id":              a.ID,
 		"session_id":      a.SessionID,
 		"agent_id":        a.AgentID,

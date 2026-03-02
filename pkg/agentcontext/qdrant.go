@@ -542,6 +542,7 @@ func Matches(key string, values []string) []any {
 
 func EntryToPayload(e ContextEntry, embedModel string) map[string]any {
 	payload := map[string]any{
+		"_record_type":   "entry", // discriminator for shared collection (SIMP-12)
 		"id":             e.ID,
 		"schema_version": e.SchemaVersion,
 		"agent_id":       e.AgentID,
