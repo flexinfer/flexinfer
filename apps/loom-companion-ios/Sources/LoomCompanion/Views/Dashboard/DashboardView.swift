@@ -8,7 +8,6 @@ struct DashboardView: View {
     let sseClient: SSEClient?
     @State private var showingAlerts = false
 
-    /// Stable identity for the SSEClient so `.task(id:)` re-fires when it changes.
     private var sseClientId: ObjectIdentifier? {
         sseClient.map { ObjectIdentifier($0) }
     }
@@ -23,20 +22,44 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: LoomSpacing.lg) {
                 ErrorBanner(health: healthMonitor.health)
 
                 if !alertsViewModel.criticalAlerts.isEmpty {
                     criticalAlertBanner
+                        .transition(.slideInFromTop)
                 }
 
                 if let dashboard = viewModel.dashboard {
                     HealthStatusCard(health: dashboard.health)
+                        .cardAppear(index: 0)
                     FleetSummaryCard(dashboard: dashboard)
+                        .cardAppear(index: 1)
+                    #if canImport(Charts)
+                    if !dashboard.recentTimeline.isEmpty {
+                        LoomCard {
+                            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                                Text("Event Activity")
+                                    .font(LoomTypography.headlineMedium)
+                                    .foregroundStyle(LoomColors.textPrimary)
+                                SessionTimelineChart(entries: dashboard.recentTimeline)
+                            }
+                        }
+                        .cardAppear(index: 2)
+                    }
+                    #endif
+
                     TimelineListView(entries: dashboard.recentTimeline)
+                        .cardAppear(index: 3)
                 } else if viewModel.isLoading {
-                    ProgressView("Loading dashboard...")
-                        .padding(.top, 40)
+                    VStack(spacing: LoomSpacing.lg) {
+                        SkeletonDashboardCard()
+                            .cardAppear(index: 0)
+                        SkeletonDashboardCard()
+                            .cardAppear(index: 1)
+                        SkeletonDashboardCard()
+                            .cardAppear(index: 2)
+                    }
                 } else if let error = viewModel.error {
                     ContentUnavailableView {
                         Label("Error", systemImage: "exclamationmark.triangle")
@@ -50,6 +73,7 @@ struct DashboardView: View {
                 }
             }
             .padding()
+            .animation(.spring(duration: 0.4), value: alertsViewModel.criticalAlerts.isEmpty)
         }
         .navigationTitle("Dashboard")
         .navigationDestination(isPresented: $showingAlerts) {
@@ -57,9 +81,9 @@ struct DashboardView: View {
         }
         .refreshable {
             await viewModel.load()
+            HapticManager.light()
         }
         .task(id: sseClientId) {
-            // Wire polling fallback so degraded SSE still refreshes data.
             healthMonitor.onPollRefresh = { [weak viewModel] in
                 await viewModel?.load()
             }
@@ -74,21 +98,22 @@ struct DashboardView: View {
 
     private var criticalAlertBanner: some View {
         Button {
+            HapticManager.medium()
             showingAlerts = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: LoomSpacing.sm) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.white)
+                    .symbolEffect(.pulse, isActive: true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(alertsViewModel.criticalAlerts.count) Critical Alert\(alertsViewModel.criticalAlerts.count == 1 ? "" : "s")")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(LoomTypography.bodyMedium)
                         .foregroundStyle(.white)
 
                     if let first = alertsViewModel.criticalAlerts.first {
                         Text(first.message)
-                            .font(.caption)
+                            .font(LoomTypography.caption)
                             .foregroundStyle(.white.opacity(0.9))
                             .lineLimit(1)
                     }
@@ -100,14 +125,13 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.7))
             }
-            .padding(12)
+            .padding(LoomSpacing.md)
             .background(.red, in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// No-op client used when no real client is available yet.
 private struct NoOpAPIClient: LoomAPIClientProtocol {
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         throw LoomAPIError.noToken

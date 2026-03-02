@@ -3,6 +3,7 @@ import LoomCompanionKit
 
 struct ContentView: View {
     @Bindable var connectionVM: ConnectionViewModel
+    @Binding var pendingDeepLink: DeepLink?
     @State private var healthMonitor = ConnectionHealthMonitor()
     @State private var alertsViewModel = AlertsViewModel()
     @State private var selectedTab: AppTab = .dashboard
@@ -38,6 +39,35 @@ struct ContentView: View {
             } else {
                 teardownSSE()
             }
+        }
+        .onChange(of: selectedTab) { _, _ in
+            HapticManager.selection()
+        }
+        .onChange(of: pendingDeepLink) { _, link in
+            guard let link else { return }
+            handleDeepLink(link)
+            pendingDeepLink = nil
+        }
+    }
+
+    private func handleDeepLink(_ link: DeepLink) {
+        switch link {
+        case .dashboard:
+            selectedTab = .dashboard
+        case .session(let id):
+            pendingSessionDeepLinkID = id
+            selectedTab = .sessions
+        case .sessions:
+            selectedTab = .sessions
+        case .workflow(let id, _):
+            pendingWorkflowDeepLinkID = id
+            selectedTab = .ops
+        case .tasks:
+            selectedTab = .ops
+        case .alerts:
+            selectedTab = .alerts
+        case .connection:
+            selectedTab = .connection
         }
     }
 

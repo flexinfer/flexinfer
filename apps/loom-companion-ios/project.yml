@@ -26,6 +26,8 @@ targets:
       - Sources/LoomCompanion
     dependencies:
       - target: LoomCompanionKit
+      - target: LoomCompanionWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion
@@ -40,3 +42,28 @@ targets:
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Loom Companion needs local network access to connect to your local Loom HUD server.
         INFOPLIST_KEY_NSBonjourServices:
           - _http._tcp
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
+    entitlements:
+      com.apple.security.application-groups:
+        - group.ai.flexinfer.loom.companion
+  LoomCompanionWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/LoomCompanionWidget
+    dependencies:
+      - target: LoomCompanionKit
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion.widget
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        INFOPLIST_KEY_NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      com.apple.security.application-groups:
+        - group.ai.flexinfer.loom.companion

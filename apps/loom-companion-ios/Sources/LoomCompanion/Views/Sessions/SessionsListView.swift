@@ -37,6 +37,24 @@ struct SessionsListView: View {
                     NavigationLink(value: session.id) {
                         SessionRowView(session: session)
                     }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            HapticManager.medium()
+                            onPrefillEndSession?(session.id)
+                        } label: {
+                            Label("End", systemImage: "stop.circle")
+                        }
+                        .tint(LoomColors.statusCritical)
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            HapticManager.light()
+                            navigationPath.append(session.id)
+                        } label: {
+                            Label("View", systemImage: "eye")
+                        }
+                        .tint(LoomColors.accent)
+                    }
                     .contextMenu {
                         Button {
                             onPrefillEndSession?(session.id)
@@ -70,7 +88,13 @@ struct SessionsListView: View {
             }
             .overlay {
                 if viewModel.isLoading && viewModel.sessions.isEmpty {
-                    ProgressView("Loading sessions...")
+                    VStack(spacing: LoomSpacing.sm) {
+                        ForEach(0..<5, id: \.self) { i in
+                            SkeletonSessionRow()
+                                .cardAppear(index: i)
+                        }
+                    }
+                    .padding()
                 } else if let error = viewModel.error, viewModel.sessions.isEmpty {
                     ContentUnavailableView {
                         Label("Error", systemImage: "exclamationmark.triangle")

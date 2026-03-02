@@ -5,37 +5,50 @@ struct SessionRowView: View {
     let session: SessionInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(session.agentId)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                Spacer()
-                StatusBadge(sessionStatus: session.status)
-            }
+        HStack(spacing: LoomSpacing.sm) {
+            StatusAccentBar(sessionStatus: session.status)
+                .frame(height: nil)
 
-            Text(session.namespace)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: LoomSpacing.xs) {
+                HStack {
+                    Text(session.agentId)
+                        .font(LoomTypography.bodyMedium)
+                    Spacer()
+                    StatusBadge(sessionStatus: session.status)
+                }
 
-            if !session.description.isEmpty {
-                Text(session.description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+                Text(session.namespace)
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.textSecondary)
 
-            HStack(spacing: 12) {
-                Label("\(session.entryCount)", systemImage: "doc.text")
-                Label("\(session.totalTokens)", systemImage: "number")
-                Spacer()
-                Text(session.startedAt)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if !session.description.isEmpty {
+                    Text(session.description)
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.textSecondary)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: LoomSpacing.md) {
+                    Label("\(session.entryCount)", systemImage: "doc.text")
+                    Label("\(session.totalTokens)", systemImage: "number")
+
+                    if session.status == .active {
+                        Spacer()
+                        Label("Live", systemImage: "circle.fill")
+                            .font(LoomTypography.monoCaption)
+                            .foregroundStyle(LoomColors.statusHealthy)
+                            .symbolEffect(.pulse, isActive: true)
+                    } else {
+                        Spacer()
+                        Text(session.startedAt)
+                            .font(LoomTypography.monoCaption)
+                            .foregroundStyle(LoomColors.textTertiary)
+                    }
+                }
+                .font(LoomTypography.labelSmall)
+                .foregroundStyle(LoomColors.textSecondary)
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, LoomSpacing.xxs)
     }
 }

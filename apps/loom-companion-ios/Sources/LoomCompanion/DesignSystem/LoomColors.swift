@@ -1,0 +1,60 @@
+import SwiftUI
+import LoomCompanionKit
+
+enum LoomColors {
+    // MARK: - Semantic Status
+
+    static let statusHealthy = Color.green
+    static let statusDegraded = Color.orange
+    static let statusCritical = Color.red
+    static let statusIdle = Color.gray
+    static let statusActive = Color.blue
+    static let statusInfo = Color.indigo
+
+    // MARK: - Accent
+
+    static let accent = Color.indigo
+
+    // MARK: - Text
+
+    static let textPrimary = Color.primary
+    static let textSecondary = Color.secondary
+    static let textTertiary = Color.secondary.opacity(0.6)
+
+    // MARK: - Surface Overlays
+
+    static let cardBorderLight = Color.white.opacity(0.12)
+    static let cardBorderDark = Color.white.opacity(0.04)
+
+    // MARK: - Severity Backgrounds
+
+    static func severityBackground(_ severity: AlertSeverity) -> Color {
+        switch severity {
+        case .critical: return statusCritical.opacity(0.12)
+        case .warning: return statusDegraded.opacity(0.10)
+        case .info: return statusInfo.opacity(0.08)
+        }
+    }
+
+    // MARK: - Session Status Color
+
+    static func sessionStatusColor(_ status: SessionStatus) -> Color {
+        switch status {
+        case .active: return statusHealthy
+        case .ended: return textTertiary
+        case .summarized: return statusActive
+        case .unknown: return statusIdle
+        }
+    }
+
+    // MARK: - Health Status Color
+
+    static func healthStatusColor(_ status: OverallHealthStatus) -> Color {
+        switch status {
+        case .healthy: return statusHealthy
+        case .degraded: return statusDegraded
+        case .critical: return statusCritical
+        case .unknown: return statusIdle
+        }
+    }
+}

@@ -3,79 +3,105 @@ import LoomCompanionKit
 
 struct FleetSummaryCard: View {
     let dashboard: DashboardData
+    @State private var tileAnimationTrigger = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Fleet Overview")
-                    .font(.headline)
-                Spacer()
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(dashboard.daemonRunning ? .green : .red)
-                        .frame(width: 8, height: 8)
-                    Text(dashboard.daemonRunning ? "Daemon running" : "Daemon stopped")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        LoomCard {
+            VStack(alignment: .leading, spacing: LoomSpacing.cardSpacing) {
+                HStack {
+                    Text("Fleet Overview")
+                        .font(LoomTypography.headlineMedium)
+                    Spacer()
+                    HStack(spacing: LoomSpacing.xxs) {
+                        PulsingDot(
+                            color: dashboard.daemonRunning
+                                ? LoomColors.statusHealthy
+                                : LoomColors.statusCritical,
+                            isPulsing: dashboard.daemonRunning
+                        )
+                        Text(dashboard.daemonRunning ? "Daemon running" : "Daemon stopped")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textSecondary)
+                    }
+                }
+
+                #if canImport(Charts)
+                FleetCompositionChart(
+                    active: dashboard.activeAgents,
+                    idle: dashboard.idleAgents,
+                    offline: dashboard.offlineAgents
+                )
+                #endif
+
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                ], spacing: LoomSpacing.cardSpacing) {
+                    SummaryTile(
+                        label: "Sessions",
+                        value: dashboard.activeSessions,
+                        icon: "rectangle.stack",
+                        index: 0,
+                        trigger: tileAnimationTrigger
+                    )
+                    SummaryTile(
+                        label: "Active",
+                        value: dashboard.activeAgents,
+                        icon: "person.fill",
+                        index: 1,
+                        trigger: tileAnimationTrigger
+                    )
+                    SummaryTile(
+                        label: "Idle",
+                        value: dashboard.idleAgents,
+                        icon: "person",
+                        index: 2,
+                        trigger: tileAnimationTrigger
+                    )
+                    SummaryTile(
+                        label: "Offline",
+                        value: dashboard.offlineAgents,
+                        icon: "person.slash",
+                        index: 3,
+                        trigger: tileAnimationTrigger
+                    )
+                    SummaryTile(
+                        label: "Servers",
+                        value: dashboard.serverCount,
+                        icon: "server.rack",
+                        index: 4,
+                        trigger: tileAnimationTrigger
+                    )
                 }
             }
-
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible()),
-                GridItem(.flexible()),
-            ], spacing: 12) {
-                SummaryTile(
-                    label: "Sessions",
-                    value: "\(dashboard.activeSessions)",
-                    icon: "rectangle.stack"
-                )
-                SummaryTile(
-                    label: "Active",
-                    value: "\(dashboard.activeAgents)",
-                    icon: "person.fill"
-                )
-                SummaryTile(
-                    label: "Idle",
-                    value: "\(dashboard.idleAgents)",
-                    icon: "person"
-                )
-                SummaryTile(
-                    label: "Offline",
-                    value: "\(dashboard.offlineAgents)",
-                    icon: "person.slash"
-                )
-                SummaryTile(
-                    label: "Servers",
-                    value: "\(dashboard.serverCount)",
-                    icon: "server.rack"
-                )
-            }
         }
-        .padding()
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onAppear { tileAnimationTrigger.toggle() }
     }
 }
 
 private struct SummaryTile: View {
     let label: String
-    let value: String
+    let value: Int
     let icon: String
+    let index: Int
+    let trigger: Bool
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: LoomSpacing.xs) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3)
-                .fontWeight(.semibold)
+                .foregroundStyle(LoomColors.textSecondary)
+                .symbolEffect(.bounce, value: trigger)
+
+            AnimatedCounter(value, font: LoomTypography.counterSmall)
+
             Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(LoomTypography.labelSmall)
+                .foregroundStyle(LoomColors.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, LoomSpacing.sm)
+        .cardAppear(index: index)
     }
 }
