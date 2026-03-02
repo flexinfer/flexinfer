@@ -1041,71 +1041,153 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 		return mcp.ErrorResult(fmt.Errorf("entries array is required")), nil
 	}
 
-	if strings.TrimSpace(s.cfg.EmbedAPIKey) == "" {
-		return mcp.ErrorResult(fmt.Errorf("AGENT_CONTEXT_EMBED_API_KEY (or MORPH_API_KEY / OPENAI_API_KEY) is not set")), nil
+	// Partition entries by durability hint.
+	type parsedEntry struct {
+		raw        map[string]any
+		durability Durability
+		title      string
+		content    string
 	}
-
-	var entries []ContextEntry
-	var embedTexts []string
-
+	var parsed []parsedEntry
 	for _, raw := range entriesArr {
 		m, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-
-		entryType := EntryType(toString(m["entry_type"]))
 		title := toString(m["title"])
 		content := toString(m["content"])
-
 		if title == "" || content == "" {
 			continue
 		}
-
-		visibility := Visibility(toString(m["visibility"]))
-		if visibility == "" {
-			visibility = s.cfg.DefaultVisibility
+		dur := Durability(toString(m["durability"]))
+		if dur == "" {
+			dur = DurabilitySession
 		}
-
-		ts := time.Now()
-		entry := ContextEntry{
-			ID:            GenerateID(session.AgentID, sessionID, title+"\n"+content, ts),
-			SchemaVersion: SchemaVersion,
-			AgentID:       session.AgentID,
-			SessionID:     sessionID,
-			Namespace:     session.Namespace,
-			EntryType:     entryType,
-			Timestamp:     ts,
-			Title:         title,
-			Content:       content,
-			ContentHash:   ContentHashFunc(content),
-			FilePath:      toString(m["file_path"]),
-			LineStart:     toInt(m["line_start"]),
-			LineEnd:       toInt(m["line_end"]),
-			Tags:          toStringSlice(m["tags"]),
-			TokenCount:    EstimateTokens(title + " " + content),
-			Visibility:    visibility,
-			SharedWith:    toStringSlice(m["shared_with"]),
-		}
-
-		if meta, ok := m["metadata"].(map[string]any); ok {
-			entry.Metadata = meta
-		}
-
-		entries = append(entries, entry)
-		embedTexts = append(embedTexts, entry.Title+"\n"+entry.Content)
+		parsed = append(parsed, parsedEntry{raw: m, durability: dur, title: title, content: content})
 	}
 
-	if len(entries) == 0 {
+	if len(parsed) == 0 {
 		return mcp.ErrorResult(fmt.Errorf("no valid entries provided")), nil
 	}
 
+	var allIDs []string
+	routedCounts := map[string]int{}
+
+	// --- Session (context) entries: embed + Qdrant ---
+	var contextEntries []ContextEntry
+	var embedTexts []string
+	for _, p := range parsed {
+		if p.durability != DurabilitySession {
+			continue
+		}
+		entry := s.buildContextEntry(session, p.raw, p.title, p.content)
+		contextEntries = append(contextEntries, entry)
+		embedTexts = append(embedTexts, entry.Title+"\n"+entry.Content)
+	}
+
+	if len(contextEntries) > 0 {
+		if strings.TrimSpace(s.cfg.EmbedAPIKey) == "" {
+			return mcp.ErrorResult(fmt.Errorf("AGENT_CONTEXT_EMBED_API_KEY (or MORPH_API_KEY / OPENAI_API_KEY) is not set")), nil
+		}
+		ids, err := s.storeContextEntries(ctx, contextEntries, embedTexts)
+		if err != nil {
+			return mcp.ErrorResult(err), nil
+		}
+		allIDs = append(allIDs, ids...)
+		routedCounts["context"] = len(ids)
+	}
+
+	// --- Persistent (memory) entries ---
+	for _, p := range parsed {
+		if p.durability != DurabilityPersistent {
+			continue
+		}
+		id, err := s.routeToMemory(ctx, session, p.raw, p.title, p.content)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Errorf("memory store: %w", err)), nil
+		}
+		allIDs = append(allIDs, id)
+		routedCounts["memory"]++
+	}
+
+	// --- Graph entries ---
+	for _, p := range parsed {
+		if p.durability != DurabilityGraph {
+			continue
+		}
+		id, err := s.routeToGraph(session, p.raw, p.title, p.content)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Errorf("graph store: %w", err)), nil
+		}
+		allIDs = append(allIDs, id)
+		routedCounts["graph"]++
+	}
+
+	// Update session stats for all entries.
+	totalTokens := 0
+	for _, p := range parsed {
+		totalTokens += EstimateTokens(p.title + " " + p.content)
+	}
+	s.sessionsMu.Lock()
+	session.EntryCount += len(allIDs)
+	session.TotalTokens += totalTokens
+	s.sessionsMu.Unlock()
+	if err := s.persistSession(ctx, session); err != nil {
+		s.logger.Warn("persist session stats failed", "error", err)
+	}
+
+	if s.cfg.AutoSummarize {
+		s.maybeAutoSummarize(ctx, session)
+	}
+
+	return mcp.JSONResult(map[string]any{
+		"ok":        true,
+		"count":     len(allIDs),
+		"entry_ids": allIDs,
+		"routed":    routedCounts,
+	})
+}
+
+// buildContextEntry constructs a ContextEntry from raw input map fields.
+func (s *Service) buildContextEntry(session *Session, m map[string]any, title, content string) ContextEntry {
+	visibility := Visibility(toString(m["visibility"]))
+	if visibility == "" {
+		visibility = s.cfg.DefaultVisibility
+	}
+	ts := time.Now()
+	entry := ContextEntry{
+		ID:            GenerateID(session.AgentID, session.ID, title+"\n"+content, ts),
+		SchemaVersion: SchemaVersion,
+		AgentID:       session.AgentID,
+		SessionID:     session.ID,
+		Namespace:     session.Namespace,
+		EntryType:     EntryType(toString(m["entry_type"])),
+		Timestamp:     ts,
+		Title:         title,
+		Content:       content,
+		ContentHash:   ContentHashFunc(content),
+		FilePath:      toString(m["file_path"]),
+		LineStart:     toInt(m["line_start"]),
+		LineEnd:       toInt(m["line_end"]),
+		Tags:          toStringSlice(m["tags"]),
+		TokenCount:    EstimateTokens(title + " " + content),
+		Visibility:    visibility,
+		SharedWith:    toStringSlice(m["shared_with"]),
+	}
+	if meta, ok := m["metadata"].(map[string]any); ok {
+		entry.Metadata = meta
+	}
+	return entry
+}
+
+// storeContextEntries embeds and upserts context entries to Qdrant.
+func (s *Service) storeContextEntries(ctx context.Context, entries []ContextEntry, embedTexts []string) ([]string, error) {
 	vectors, err := s.embed.EmbedDocuments(ctx, embedTexts)
 	if err != nil {
-		return mcp.ErrorResult(fmt.Errorf("embedding entries: %w", err)), nil
+		return nil, fmt.Errorf("embedding entries: %w", err)
 	}
 	if len(vectors) != len(entries) {
-		return mcp.ErrorResult(fmt.Errorf("embedding count mismatch: got %d want %d", len(vectors), len(entries))), nil
+		return nil, fmt.Errorf("embedding count mismatch: got %d want %d", len(vectors), len(entries))
 	}
 
 	for _, v := range vectors {
@@ -1115,22 +1197,18 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 		}
 	}
 	if s.vectorSize <= 0 {
-		return mcp.ErrorResult(fmt.Errorf("unknown vector size (empty embeddings)")), nil
+		return nil, fmt.Errorf("unknown vector size (empty embeddings)")
 	}
 
-	// Ensure collection exists
-	if s.vectorSize > 0 {
-		if err := s.qdrant.Get(CollContext).EnsureCollection(ctx, s.vectorSize); err != nil {
-			return mcp.ErrorResult(fmt.Errorf("ensure collection: %w", err)), nil
-		}
+	if err := s.qdrant.Get(CollContext).EnsureCollection(ctx, s.vectorSize); err != nil {
+		return nil, fmt.Errorf("ensure collection: %w", err)
 	}
 
-	// Upsert to Qdrant
 	points := make([]Point, 0, len(entries))
 	for i, entry := range entries {
 		vector := vectors[i]
 		if len(vector) > 0 && len(vector) != s.vectorSize {
-			return mcp.ErrorResult(fmt.Errorf("embedding vector size mismatch: got %d want %d", len(vector), s.vectorSize)), nil
+			return nil, fmt.Errorf("embedding vector size mismatch: got %d want %d", len(vector), s.vectorSize)
 		}
 		if len(vector) == 0 {
 			vector = make([]float64, s.vectorSize)
@@ -1143,37 +1221,88 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 	}
 
 	if err := s.upsertPointsBatched(ctx, s.qdrant.Get(CollContext), points); err != nil {
-		return mcp.ErrorResult(fmt.Errorf("upsert entries: %w", err)), nil
-	}
-
-	// Update session stats
-	s.sessionsMu.Lock()
-	session.EntryCount += len(entries)
-	for _, e := range entries {
-		session.TotalTokens += e.TokenCount
-	}
-	s.sessionsMu.Unlock()
-	// Best-effort persist - don't fail the add operation
-	if err := s.persistSession(ctx, session); err != nil {
-		// Log to stderr since we can't add to the result at this point
-		s.logger.Warn("persist session stats failed", "error", err)
-	}
-
-	// Check for auto-summarization
-	if s.cfg.AutoSummarize {
-		s.maybeAutoSummarize(ctx, session)
+		return nil, fmt.Errorf("upsert entries: %w", err)
 	}
 
 	ids := make([]string, len(entries))
 	for i, e := range entries {
 		ids[i] = e.ID
 	}
+	return ids, nil
+}
 
-	return mcp.JSONResult(map[string]any{
-		"ok":        true,
-		"count":     len(entries),
-		"entry_ids": ids,
-	})
+// routeToMemory converts an entry to a MemoryItem and stores it in the memory hierarchy.
+func (s *Service) routeToMemory(ctx context.Context, session *Session, m map[string]any, title, content string) (string, error) {
+	if s.persistedMemoryHierarchy == nil {
+		return "", fmt.Errorf("memory hierarchy not available")
+	}
+
+	category := toString(m["entry_type"])
+	if category == "" {
+		category = "finding"
+	}
+
+	item := &MemoryItem{
+		Tier:       MemoryTierLongTerm,
+		Importance: ImportanceLevelMedium,
+		Title:      title,
+		Content:    content,
+		Category:   category,
+		Namespace:  session.Namespace,
+		SessionID:  session.ID,
+		AgentID:    session.AgentID,
+		Tags:       toStringSlice(m["tags"]),
+	}
+	if metadata, ok := m["metadata"].(map[string]any); ok {
+		item.Metadata = metadata
+	}
+	item.OriginalTokens = EstimateTokens(title + " " + content)
+
+	if err := s.persistedMemoryHierarchy.AddItemWithPersistence(ctx, item, nil); err != nil {
+		return "", err
+	}
+
+	s.metrics.LongTermMemoryItems.Add(1)
+	s.metrics.LongTermMemoryTokens.Add(int64(item.OriginalTokens))
+
+	return item.ID, nil
+}
+
+// routeToGraph converts an entry to an Entity and stores it in the knowledge graph.
+func (s *Service) routeToGraph(session *Session, m map[string]any, title, content string) (string, error) {
+	if s.knowledgeGraph == nil {
+		return "", fmt.Errorf("knowledge graph not available")
+	}
+
+	entityType := EntityType(toString(m["entry_type"]))
+	if entityType == "" {
+		entityType = EntityTypeConcept
+	}
+
+	entity := &Entity{
+		Type:        entityType,
+		Name:        title,
+		Description: content,
+		Namespace:   session.Namespace,
+		FilePath:    toString(m["file_path"]),
+		LineStart:   toInt(m["line_start"]),
+		LineEnd:     toInt(m["line_end"]),
+		Language:    toString(m["language"]),
+		SessionID:   session.ID,
+		AgentID:     session.AgentID,
+		Tags:        toStringSlice(m["tags"]),
+	}
+
+	if props, ok := m["metadata"].(map[string]any); ok {
+		entity.Properties = props
+	}
+
+	if err := s.knowledgeGraph.AddEntity(entity); err != nil {
+		return "", err
+	}
+
+	s.metrics.GraphEntitiesAdded.Add(1)
+	return entity.ID, nil
 }
 
 func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

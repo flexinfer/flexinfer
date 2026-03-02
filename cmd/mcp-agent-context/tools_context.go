@@ -15,7 +15,7 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_context_add",
-		Description: "Add one or more context entries to a session. Each entry represents something the agent learned, decided, or read.",
+		Description: "Unified store: add entries to context, memory, or knowledge graph. Use the durability hint to route: 'session' (default) stores to context backend, 'persistent' promotes to long-term memory, 'graph' creates a knowledge graph entity.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -25,26 +25,31 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 				},
 				"entries": map[string]any{
 					"type":        "array",
-					"description": "Array of context entries to add.",
+					"description": "Array of entries to add. Each entry is routed based on its durability hint.",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
+							"durability": map[string]any{
+								"type":        "string",
+								"enum":        []string{"session", "persistent", "graph"},
+								"description": "Storage routing: 'session' (default) = context store, 'persistent' = long-term memory, 'graph' = knowledge graph entity.",
+							},
 							"entry_type": map[string]any{
 								"type":        "string",
 								"enum":        []string{"file_read", "decision", "finding", "question", "note", "error", "code_context"},
-								"description": "Type of context entry.",
+								"description": "Type of context entry. For graph durability, also used as entity type.",
 							},
 							"title": map[string]any{
 								"type":        "string",
-								"description": "Short descriptive title.",
+								"description": "Short descriptive title. For graph durability, used as entity name.",
 							},
 							"content": map[string]any{
 								"type":        "string",
-								"description": "Full content text.",
+								"description": "Full content text. For graph durability, used as entity description.",
 							},
 							"file_path": map[string]any{
 								"type":        "string",
-								"description": "File path (for file_read entries).",
+								"description": "File path (for file_read entries or graph entities).",
 							},
 							"line_start": map[string]any{
 								"type":        "integer",
@@ -61,12 +66,12 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 							},
 							"metadata": map[string]any{
 								"type":        "object",
-								"description": "Additional structured metadata.",
+								"description": "Additional structured metadata. For graph durability, stored as entity properties.",
 							},
 							"visibility": map[string]any{
 								"type":        "string",
 								"enum":        []string{"private", "shared", "public"},
-								"description": "Who can access this entry (default: private).",
+								"description": "Who can access this entry (default: private). Session durability only.",
 							},
 							"shared_with": map[string]any{
 								"type":        "array",
