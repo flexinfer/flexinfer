@@ -1194,7 +1194,7 @@ func TestExtractModelName_MultipartFormData(t *testing.T) {
 	_ = writer.WriteField("prompt", "replace background with a beach")
 	_ = writer.WriteField("model", "image-edit")
 	_ = writer.WriteField("n", "1")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest("POST", "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -1210,7 +1210,7 @@ func TestExtractModelName_MultipartWithoutModel(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("prompt", "a cat in space")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest("POST", "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -1227,7 +1227,7 @@ func TestExtractModelName_MultipartBodyRestored(t *testing.T) {
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("prompt", "test prompt")
 	_ = writer.WriteField("model", "test-model")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	originalBytes := body.Bytes()
 	req := httptest.NewRequest("POST", "/v1/images/edits", bytes.NewReader(originalBytes))
@@ -1248,7 +1248,7 @@ func TestExtractModelName_HeaderOverridesMultipart(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("model", "multipart-model")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest("POST", "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -1264,7 +1264,7 @@ func TestExtractModelName_PathOverridesMultipart(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("model", "multipart-model")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest("POST", "/model/path-model/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -1279,7 +1279,7 @@ func TestExtractModelName_MultipartWithWhitespace(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("model", "  image-edit  ")
-	writer.Close()
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest("POST", "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
