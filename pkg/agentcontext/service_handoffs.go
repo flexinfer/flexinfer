@@ -11,7 +11,9 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
-func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+type HandoffSvc struct{ *Service }
+
+func (s *HandoffSvc) HandleHandoffCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.Required("session_id")
 	targetAgentID := v.Required("target_agent_id")
@@ -132,7 +134,7 @@ func (s *Service) HandleHandoffCreate(ctx context.Context, args map[string]any) 
 	})
 }
 
-func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *HandoffSvc) HandleHandoffAccept(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	handoffID := v.Required("handoff_id")
 	sessionID := v.Required("session_id")
@@ -215,7 +217,7 @@ func (s *Service) HandleHandoffAccept(ctx context.Context, args map[string]any) 
 }
 
 // HandleHandoffInbox lists pending handoffs for an agent
-func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *HandoffSvc) HandleHandoffInbox(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	agentID := v.Required("agent_id")
 	includeViewed := v.Bool("include_viewed", false)
@@ -292,7 +294,7 @@ func (s *Service) HandleHandoffInbox(ctx context.Context, args map[string]any) (
 }
 
 // HandleHandoffReject rejects a handoff with a reason
-func (s *Service) HandleHandoffReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *HandoffSvc) HandleHandoffReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	handoffID := v.Required("handoff_id")
 	reason := v.String("reason", "")

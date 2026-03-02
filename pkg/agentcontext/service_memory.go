@@ -11,13 +11,15 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
+type MemorySvc struct{ *Service }
+
 // GetMemoryHierarchy returns the memory hierarchy for direct access
-func (s *Service) GetMemoryHierarchy() *MemoryHierarchy {
+func (s *MemorySvc) GetMemoryHierarchy() *MemoryHierarchy {
 	return s.memoryHierarchy
 }
 
 // HandleMemoryAdd adds items to the memory hierarchy
-func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
@@ -108,7 +110,7 @@ func (s *Service) HandleMemoryAdd(ctx context.Context, args map[string]any) (*mc
 }
 
 // HandleMemoryGet retrieves memory items by ID
-func (s *Service) HandleMemoryGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	itemIDs := v.RequiredStringSlice("item_ids")
 
@@ -133,7 +135,7 @@ func (s *Service) HandleMemoryGet(ctx context.Context, args map[string]any) (*mc
 }
 
 // HandleMemoryRecall recalls memories matching criteria
-func (s *Service) HandleMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	query := v.String("query", "")
 	namespace := v.String("namespace", "")
@@ -187,7 +189,7 @@ func (s *Service) HandleMemoryRecall(ctx context.Context, args map[string]any) (
 }
 
 // HandleMemoryDelete deletes memory items
-func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	itemIDs := v.RequiredStringSlice("item_ids")
 	confirm := v.Bool("confirm", false)
@@ -214,7 +216,7 @@ func (s *Service) HandleMemoryDelete(ctx context.Context, args map[string]any) (
 }
 
 // HandleMemoryPromote promotes items to a higher tier
-func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryPromote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	itemIDs := v.RequiredStringSlice("item_ids")
 
@@ -244,7 +246,7 @@ func (s *Service) HandleMemoryPromote(ctx context.Context, args map[string]any) 
 }
 
 // HandleMemoryDemote demotes items to a lower tier
-func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryDemote(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	itemIDs := v.RequiredStringSlice("item_ids")
 
@@ -274,7 +276,7 @@ func (s *Service) HandleMemoryDemote(ctx context.Context, args map[string]any) (
 }
 
 // HandleMemoryCompress compresses items to reduce token usage
-func (s *Service) HandleMemoryCompress(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryCompress(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	// Check if we're compressing specific items or running tier-wide compression
 	itemIDs := v.StringSlice("item_ids")
@@ -327,7 +329,7 @@ func (s *Service) HandleMemoryCompress(ctx context.Context, args map[string]any)
 }
 
 // HandleMemoryMerge merges multiple items into one
-func (s *Service) HandleMemoryMerge(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryMerge(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	itemIDs := v.RequiredStringSlice("item_ids")
 	newTitle := v.String("new_title", "Merged Memory")
@@ -354,7 +356,7 @@ func (s *Service) HandleMemoryMerge(ctx context.Context, args map[string]any) (*
 }
 
 // HandleMemoryStats returns memory hierarchy statistics
-func (s *Service) HandleMemoryStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	stats := s.memoryHierarchy.Stats()
 
 	return mcp.JSONResult(map[string]any{
@@ -389,7 +391,7 @@ func (s *Service) HandleMemoryStats(ctx context.Context, args map[string]any) (*
 }
 
 // HandleMemoryPolicyGet returns retention policy for a tier
-func (s *Service) HandleMemoryPolicyGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryPolicyGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	tierStr := v.Required("tier")
 
@@ -426,7 +428,7 @@ func (s *Service) HandleMemoryPolicyGet(ctx context.Context, args map[string]any
 }
 
 // HandleMemoryPolicySet updates retention policy for a tier
-func (s *Service) HandleMemoryPolicySet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryPolicySet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	tierStr := v.Required("tier")
 	name := v.String("name", "")
@@ -554,7 +556,7 @@ func memoryItemToMap(item *MemoryItem) map[string]any {
 }
 
 // HandleMemoryExport exports memory to universal JSON format
-func (s *Service) HandleMemoryExport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryExport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	agentID := v.String("agent_id", "")
 	namespace := v.String("namespace", "")
@@ -596,7 +598,7 @@ func (s *Service) HandleMemoryExport(ctx context.Context, args map[string]any) (
 }
 
 // HandleMemoryImport imports memory from universal JSON format
-func (s *Service) HandleMemoryImport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *MemorySvc) HandleMemoryImport(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	conflictStrategy := v.String("conflict_strategy", "skip")
 	idPrefix := v.String("id_prefix", "")

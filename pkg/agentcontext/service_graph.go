@@ -10,13 +10,15 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
+type GraphSvc struct{ *Service }
+
 // GetKnowledgeGraph returns the knowledge graph for direct access
-func (s *Service) GetKnowledgeGraph() *KnowledgeGraph {
+func (s *GraphSvc) GetKnowledgeGraph() *KnowledgeGraph {
 	return s.knowledgeGraph
 }
 
 // HandleEntityAdd adds entities to the knowledge graph
-func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleEntityAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
@@ -88,7 +90,7 @@ func (s *Service) HandleEntityAdd(ctx context.Context, args map[string]any) (*mc
 }
 
 // HandleEntityGet retrieves entities by ID
-func (s *Service) HandleEntityGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleEntityGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	entityIDs := v.RequiredStringSlice("entity_ids")
 
@@ -113,7 +115,7 @@ func (s *Service) HandleEntityGet(ctx context.Context, args map[string]any) (*mc
 }
 
 // HandleEntityFind searches for entities
-func (s *Service) HandleEntityFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleEntityFind(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	entityTypeStr := v.String("type", "")
 	namespace := v.String("namespace", "")
@@ -137,7 +139,7 @@ func (s *Service) HandleEntityFind(ctx context.Context, args map[string]any) (*m
 }
 
 // HandleEntityDelete removes entities
-func (s *Service) HandleEntityDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleEntityDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	entityIDs := v.RequiredStringSlice("entity_ids")
 	confirm := v.Bool("confirm", false)
@@ -164,7 +166,7 @@ func (s *Service) HandleEntityDelete(ctx context.Context, args map[string]any) (
 }
 
 // HandleRelationAdd adds relations to the knowledge graph
-func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleRelationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
@@ -221,7 +223,7 @@ func (s *Service) HandleRelationAdd(ctx context.Context, args map[string]any) (*
 }
 
 // HandleRelationGet gets relations for an entity
-func (s *Service) HandleRelationGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleRelationGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	entityID := v.Required("entity_id")
 	outgoing := v.Bool("outgoing", true)
@@ -255,7 +257,7 @@ func (s *Service) HandleRelationGet(ctx context.Context, args map[string]any) (*
 }
 
 // HandleRelationDelete removes relations
-func (s *Service) HandleRelationDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleRelationDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	relationIDs := v.RequiredStringSlice("relation_ids")
 	confirm := v.Bool("confirm", false)
@@ -282,7 +284,7 @@ func (s *Service) HandleRelationDelete(ctx context.Context, args map[string]any)
 }
 
 // HandleGraphQuery executes a graph query
-func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleGraphQuery(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	pattern := v.String("pattern", "")
 	entityID := v.String("entity_id", "")
@@ -367,7 +369,7 @@ func (s *Service) HandleGraphQuery(ctx context.Context, args map[string]any) (*m
 }
 
 // HandleFindPath finds a path between two entities
-func (s *Service) HandleFindPath(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleFindPath(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sourceID := v.Required("source_id")
 	targetID := v.Required("target_id")
@@ -400,7 +402,7 @@ func (s *Service) HandleFindPath(ctx context.Context, args map[string]any) (*mcp
 }
 
 // HandleReasoningChainAdd adds a reasoning chain
-func (s *Service) HandleReasoningChainAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleReasoningChainAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
@@ -450,7 +452,7 @@ func (s *Service) HandleReasoningChainAdd(ctx context.Context, args map[string]a
 }
 
 // HandleReasoningChainGet retrieves a reasoning chain
-func (s *Service) HandleReasoningChainGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleReasoningChainGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	chainID := v.Required("chain_id")
 
@@ -487,7 +489,7 @@ func (s *Service) HandleReasoningChainGet(ctx context.Context, args map[string]a
 }
 
 // HandleReasoningChainList lists reasoning chains
-func (s *Service) HandleReasoningChainList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleReasoningChainList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", "")
@@ -515,7 +517,7 @@ func (s *Service) HandleReasoningChainList(ctx context.Context, args map[string]
 }
 
 // HandleGraphStats returns knowledge graph statistics
-func (s *Service) HandleGraphStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *GraphSvc) HandleGraphStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	stats := s.knowledgeGraph.Stats()
 
 	return mcp.JSONResult(map[string]any{

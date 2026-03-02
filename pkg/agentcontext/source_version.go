@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+type SourceVersionSvc struct{ *Service }
+
 // SourceVersionProvider provides source version information
 type SourceVersionProvider struct {
 	workingDir string
@@ -134,7 +136,7 @@ func (svp *SourceVersionProvider) GenerateStalenessReport(entry *ContextEntry) (
 // Service methods for source versioning
 
 // HandleCheckStale handles the agent_context_check_stale tool
-func (s *Service) HandleCheckStale(ctx context.Context, args map[string]any) (map[string]any, error) {
+func (s *SourceVersionSvc) HandleCheckStale(ctx context.Context, args map[string]any) (map[string]any, error) {
 	entryIDs := toStringSlice(args["entry_ids"])
 	filePath := toString(args["file_path"])
 	sessionID := toString(args["session_id"])
@@ -222,7 +224,7 @@ func (s *Service) HandleCheckStale(ctx context.Context, args map[string]any) (ma
 }
 
 // HandleRefreshStale handles refreshing stale entries
-func (s *Service) HandleRefreshStale(ctx context.Context, args map[string]any) (map[string]any, error) {
+func (s *SourceVersionSvc) HandleRefreshStale(ctx context.Context, args map[string]any) (map[string]any, error) {
 	entryIDs := toStringSlice(args["entry_ids"])
 	if len(entryIDs) == 0 {
 		return nil, fmt.Errorf("entry_ids is required")
@@ -343,7 +345,7 @@ type AskSourceEntry struct {
 
 // HandleAskSource handles the agent_context_ask_source tool
 // This combines context recall with live codebase search and freshness checking
-func (s *Service) HandleAskSource(ctx context.Context, args map[string]any) (map[string]any, error) {
+func (s *SourceVersionSvc) HandleAskSource(ctx context.Context, args map[string]any) (map[string]any, error) {
 	query := toString(args["query"])
 	if query == "" {
 		return nil, fmt.Errorf("query is required")

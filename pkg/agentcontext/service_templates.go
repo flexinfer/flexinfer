@@ -10,7 +10,9 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
-func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+type TemplateSvc struct{ *Service }
+
+func (s *TemplateSvc) HandleTemplateCreate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	name := v.Required("name")
 	description := v.String("description", "")
@@ -85,7 +87,7 @@ func (s *Service) HandleTemplateCreate(ctx context.Context, args map[string]any)
 	})
 }
 
-func (s *Service) HandleTemplateList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *TemplateSvc) HandleTemplateList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	namespace := v.String("namespace", "")
 	limit := v.Int("limit", 50)

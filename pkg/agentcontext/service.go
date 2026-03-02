@@ -64,6 +64,14 @@ type Service struct {
 	// Context operations (entries, annotations, recall, search, summaries)
 	ctxSvc *ContextSvc
 
+	// Phase 2 domain extractions
+	graph         *GraphSvc
+	memory        *MemorySvc
+	workflow      *WorkflowSvc
+	sourceVersion *SourceVersionSvc
+	handoffs      *HandoffSvc
+	templates     *TemplateSvc
+
 	// Nudge queue
 	nudges *NudgeSvc
 
@@ -249,6 +257,14 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		session.LastSummaryAt = &t
 		svc.sess.mu.Unlock()
 	}
+
+	// Initialize phase-2 domain sub-services.
+	svc.graph = &GraphSvc{Service: svc}
+	svc.memory = &MemorySvc{Service: svc}
+	svc.workflow = &WorkflowSvc{Service: svc}
+	svc.sourceVersion = &SourceVersionSvc{Service: svc}
+	svc.handoffs = &HandoffSvc{Service: svc}
+	svc.templates = &TemplateSvc{Service: svc}
 
 	// Wire session summary callbacks to ContextSvc
 	svc.sess.generateSummary = svc.ctxSvc.GenerateSummary

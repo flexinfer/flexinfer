@@ -10,18 +10,20 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
+type WorkflowSvc struct{ *Service }
+
 // SetToolExecutor sets the callback for executing MCP tools from workflows
-func (s *Service) SetToolExecutor(executor ToolExecutor) {
+func (s *WorkflowSvc) SetToolExecutor(executor ToolExecutor) {
 	s.workflowEngine.toolExecutor = executor
 }
 
 // GetWorkflowEngine returns the workflow engine for direct access
-func (s *Service) GetWorkflowEngine() *WorkflowEngine {
+func (s *WorkflowSvc) GetWorkflowEngine() *WorkflowEngine {
 	return s.workflowEngine
 }
 
 // HandleWorkflowDefine registers a new workflow definition
-func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowDefine(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	id := v.String("id", "")
 	name := v.Required("name")
@@ -118,7 +120,7 @@ func (s *Service) HandleWorkflowDefine(ctx context.Context, args map[string]any)
 }
 
 // HandleWorkflowStart starts a new workflow instance
-func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	definitionID := v.Required("definition_id")
 	sessionID := v.Required("session_id")
@@ -150,7 +152,7 @@ func (s *Service) HandleWorkflowStart(ctx context.Context, args map[string]any) 
 }
 
 // HandleWorkflowStatus gets the status of a workflow
-func (s *Service) HandleWorkflowStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowStatus(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	workflowID := v.Required("workflow_id")
 
@@ -218,7 +220,7 @@ func (s *Service) HandleWorkflowStatus(ctx context.Context, args map[string]any)
 }
 
 // HandleWorkflowList lists workflows with filtering
-func (s *Service) HandleWorkflowList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	sessionID := v.String("session_id", "")
 	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
@@ -251,7 +253,7 @@ func (s *Service) HandleWorkflowList(ctx context.Context, args map[string]any) (
 }
 
 // HandleWorkflowApprove approves a pending step
-func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowApprove(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	workflowID := v.Required("workflow_id")
 	stepID := v.Required("step_id")
@@ -280,7 +282,7 @@ func (s *Service) HandleWorkflowApprove(ctx context.Context, args map[string]any
 }
 
 // HandleWorkflowReject rejects a pending step
-func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowReject(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	workflowID := v.Required("workflow_id")
 	stepID := v.Required("step_id")
@@ -309,7 +311,7 @@ func (s *Service) HandleWorkflowReject(ctx context.Context, args map[string]any)
 }
 
 // HandleWorkflowCancel cancels a running workflow
-func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowCancel(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	workflowID := v.Required("workflow_id")
 	reason := v.String("reason", "cancelled by user")
@@ -335,7 +337,7 @@ func (s *Service) HandleWorkflowCancel(ctx context.Context, args map[string]any)
 }
 
 // HandleWorkflowEvents gets events for a workflow
-func (s *Service) HandleWorkflowEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	workflowID := v.Required("workflow_id")
 
@@ -372,7 +374,7 @@ func (s *Service) HandleWorkflowEvents(ctx context.Context, args map[string]any)
 }
 
 // HandleWorkflowDefinitionList lists workflow definitions
-func (s *Service) HandleWorkflowDefinitionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+func (s *WorkflowSvc) HandleWorkflowDefinitionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	namespace := v.String("namespace", "")
 
