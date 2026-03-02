@@ -1762,7 +1762,7 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	// Fire-and-forget: recall context (best-effort, not returned to caller).
 	if p.AutoRecall {
 		recallArgs := buildSessionStartRecallArgs(p)
-		go func() { _ = a.callAgentTool("agent_context_recall_enhanced", recallArgs, nil) }()
+		go func() { _ = a.callAgentTool("agent_recall", recallArgs, nil) }()
 	}
 
 	return result, nil
@@ -2058,7 +2058,7 @@ func (a *AgentBridge) KnowledgeRecall(query string, category string, tokenBudget
 		args["token_budget"] = tokenBudget
 	}
 	var result KnowledgeResult
-	if err := a.callAgentTool("agent_context_recall_enhanced", args, &result); err != nil {
+	if err := a.callAgentTool("agent_recall", args, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

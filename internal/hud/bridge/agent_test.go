@@ -821,7 +821,7 @@ func TestAgentBridge_KnowledgeRecall_SetsCrossAgent(t *testing.T) {
 		if err := json.Unmarshal(params, &req); err != nil {
 			t.Fatalf("unmarshal params: %v", err)
 		}
-		if req.Name != "agent_context__agent_context_recall_enhanced" {
+		if req.Name != "agent_context__agent_recall" {
 			t.Fatalf("unexpected tool name: %s", req.Name)
 		}
 		crossAgent, _ := req.Arguments["cross_agent"].(bool)
@@ -953,7 +953,7 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 					{"type": "text", "text": `{"ok":true}`},
 				},
 			}, nil
-		case "agent_context__agent_context_recall_enhanced":
+		case "agent_context__agent_recall":
 			select {
 			case recallArgsCh <- req.Arguments:
 			default:

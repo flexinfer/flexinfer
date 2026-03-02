@@ -448,6 +448,142 @@ func (s *Service) graphSearchToEntries(ctx context.Context, vector []float64, na
 	return entries
 }
 
+// HandleUnifiedRecall is the single recall entry point that queries both context
+// and memory backends. It supersedes HandleContextRecall, HandleEnhancedRecall,
+// and HandleMemoryRecall. The "scope" parameter controls which backends are queried:
+// "context" (default), "memory", or "all".
+func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	query := v.Required("query")
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
+	namespace := v.String("namespace", "")
+	tokenBudget := v.Int("token_budget", s.cfg.DefaultTokenBudget)
+	includeSummaries := v.Bool("include_summaries", true)
+	includeDecisions := v.Bool("include_decisions", true)
+	fileContext := v.String("file_context", "")
+	symbolContext := v.String("symbol_context", "")
+	recencyWeight := v.Float("recency_weight", s.cfg.DefaultRecencyWeight)
+	includeTasks := v.Bool("include_tasks", true)
+	crossAgent := v.Bool("cross_agent", false)
+	scope := v.String("scope", "context")
+	// Memory-specific filters (used when scope includes memory).
+	memoryTiers := v.StringSlice("memory_tiers")
+	memoryCategories := v.StringSlice("memory_categories")
+	memoryTags := v.StringSlice("memory_tags")
+
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	includeContext := scope == "context" || scope == "all"
+	includeMemory := scope == "memory" || scope == "all"
+
+	resp := map[string]any{
+		"ok":           true,
+		"token_budget": tokenBudget,
+		"scope":        scope,
+	}
+
+	totalTokens := 0
+	totalCount := 0
+
+	// --- Context backend ---
+	if includeContext {
+		opts := EnhancedRecallOptions{
+			RecallOptions: RecallOptions{
+				Query:            query,
+				AgentID:          agentID,
+				SessionID:        sessionID,
+				Namespace:        namespace,
+				TokenBudget:      tokenBudget,
+				IncludeSummaries: includeSummaries,
+				IncludeDecisions: includeDecisions,
+				FileContext:      fileContext,
+			},
+			SymbolContext: symbolContext,
+			RecencyWeight: recencyWeight,
+			IncludeTasks:  includeTasks,
+			CrossAgent:    crossAgent,
+		}
+
+		entries, err := s.enhancedRecallContext(ctx, opts)
+		if err != nil {
+			return mcp.ErrorResult(fmt.Errorf("recall context: %w", err)), nil
+		}
+
+		for _, e := range entries {
+			totalTokens += e.TokenCount
+		}
+		totalCount += len(entries)
+		resp["entries"] = entries
+		resp["context_count"] = len(entries)
+	}
+
+	// --- Memory backend ---
+	if includeMemory {
+		memBudget := tokenBudget - totalTokens
+		if memBudget < 256 {
+			memBudget = 256
+		}
+
+		req := MemoryRecallRequest{
+			Query:       query,
+			Namespace:   namespace,
+			SessionID:   sessionID,
+			AgentID:     agentID,
+			TokenBudget: memBudget,
+			Limit:       50,
+			Categories:  memoryCategories,
+			Tags:        memoryTags,
+		}
+		for _, t := range memoryTiers {
+			if t != "" {
+				req.Tiers = append(req.Tiers, MemoryTier(t))
+			}
+		}
+
+		result, err := s.memoryHierarchy.Recall(req)
+		if err == nil && len(result.Items) > 0 {
+			items := make([]map[string]any, len(result.Items))
+			for i, item := range result.Items {
+				items[i] = memoryItemToMap(&item)
+			}
+			totalTokens += result.TotalTokens
+			totalCount += len(items)
+			resp["memory_items"] = items
+			resp["memory_count"] = len(items)
+		}
+	}
+
+	resp["count"] = totalCount
+	resp["total_tokens"] = totalTokens
+
+	s.metrics.RecallRequests.Add(1)
+	if totalCount > 0 {
+		s.metrics.RecallHits.Add(1)
+	} else {
+		s.metrics.RecallMisses.Add(1)
+	}
+	if totalTokens >= tokenBudget {
+		s.metrics.RecallTruncated.Add(1)
+	}
+
+	return mcp.JSONResult(resp)
+}
+
+// HandleDeprecatedContextRecall wraps HandleUnifiedRecall with a deprecation notice.
+func (s *Service) HandleDeprecatedContextRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	args["scope"] = "context"
+	return s.HandleUnifiedRecall(ctx, args)
+}
+
+// HandleDeprecatedMemoryRecall wraps HandleUnifiedRecall with a deprecation notice.
+func (s *Service) HandleDeprecatedMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	args["scope"] = "memory"
+	return s.HandleUnifiedRecall(ctx, args)
+}
+
 func (s *Service) getEntriesForSymbol(ctx context.Context, agentID, symbol string, limit int) ([]ContextEntry, error) {
 	vector, err := s.embed.EmbedQuery(ctx, symbol)
 	if err != nil {
