@@ -66,6 +66,7 @@ type Service struct {
 	presence  *PresenceSvc
 	claims    *ClaimSvc
 	worktrees *WorktreeSvc
+	tasks     *TaskSvc
 
 	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
 	nudgeMu sync.Mutex
@@ -73,7 +74,6 @@ type Service struct {
 
 	// Background services
 	compactionScheduler *CompactionScheduler
-	taskReconciler      *TaskReconciler
 	memoryExporter      *MemoryExporter
 	memoryImporter      *MemoryImporter
 	bgCancel            context.CancelFunc
@@ -212,6 +212,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.presence = NewPresenceSvc(qdrantReg.Get(CollPresence), cfg, svc.logger, svc.metrics)
 	svc.claims = NewClaimSvc(qdrantReg.Get(CollFileClaims), svc.logger, svc.metrics)
 	svc.worktrees = NewWorktreeSvc(qdrantReg.Get(CollWorktree), cfg, svc.logger, svc.metrics)
+	svc.tasks = NewTaskSvc(qdrantReg.Get(CollTasks), svc.embed, cfg, svc.logger, &svc.vectorSize)
 
 	// Wire cross-domain callbacks for presence cleanup
 	svc.presence.releaseClaimsForAgent = func(agentID string) {
@@ -228,6 +229,10 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	// Wire worktree ↔ presence callbacks
 	svc.worktrees.setPresenceWorktreeID = svc.presence.SetWorktreeID
 	svc.worktrees.clearPresenceWorktreeID = svc.presence.ClearWorktreeID
+
+	// Wire task callbacks
+	svc.tasks.getSession = svc.getSession
+	svc.tasks.upsertBatched = svc.upsertPointsBatched
 
 	// Initialize compaction scheduler
 	compactionConfig := DefaultCompactionConfig()
@@ -250,7 +255,8 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	if cfg.TaskReconcilerStaleTimeout > 0 {
 		reconcilerConfig.StaleTimeout = time.Duration(cfg.TaskReconcilerStaleTimeout) * time.Hour
 	}
-	svc.taskReconciler = NewTaskReconciler(reconcilerConfig, svc.qdrant.Get(CollTasks), svc, svc.logger)
+	svc.tasks.reconciler = NewTaskReconciler(reconcilerConfig, svc.tasks, svc.logger)
+	svc.tasks.reconciler.getSession = svc.getSession
 
 	// Initialize worktree reconciler (stored on WorktreeSvc)
 	wtReconcilerConfig := DefaultWorktreeReconcilerConfig()
@@ -376,8 +382,8 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 	}
 
 	// Start task reconciler
-	if s.taskReconciler != nil && s.cfg.TaskReconcilerEnabled {
-		s.taskReconciler.Start(bgCtx)
+	if s.cfg.TaskReconcilerEnabled {
+		s.tasks.StartReconciler(bgCtx)
 	}
 
 	// Start worktree reconciler
@@ -404,9 +410,7 @@ func (s *Service) StopBackgroundServices() {
 	if s.compactionScheduler != nil {
 		s.compactionScheduler.Stop()
 	}
-	if s.taskReconciler != nil {
-		s.taskReconciler.Stop()
-	}
+	s.tasks.StopReconciler()
 	s.worktrees.StopReconciler()
 	if s.bgCancel != nil {
 		s.bgCancel()
@@ -681,43 +685,6 @@ func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string)
 	}
 	s.logger.Info("ended active sessions for expired agent",
 		"agent_id", agentID, "count", len(points))
-}
-
-// markSessionTasksStale marks pending/in_progress tasks for a session as blocked
-// with a stale note, so they surface in the reconciler and HUD.
-func (s *Service) markSessionTasksStale(ctx context.Context, sessionID string) int {
-	filter := FilterMust(
-		Match("session_id", sessionID),
-		FilterShould(
-			Match("status", string(TaskStatusPending)),
-			Match("status", string(TaskStatusInProgress)),
-		),
-	)
-
-	points, err := s.qdrant.Get(CollTasks).ScrollPoints(ctx, filter, 500, false)
-	if err != nil || len(points) == 0 {
-		return 0
-	}
-
-	count := 0
-	now := time.Now().Format(time.RFC3339Nano)
-	for _, p := range points {
-		id := toString(p.Payload["id"])
-		if id == "" {
-			continue
-		}
-		payload := map[string]any{
-			"status":     string(TaskStatusBlocked),
-			"resolution": "session ended — task incomplete",
-			"updated_at": now,
-		}
-		if err := s.qdrant.Get(CollTasks).SetPayload(ctx, []string{id}, payload, false); err != nil {
-			s.logger.Warn("failed to mark task stale on session end", "task_id", id, "error", err)
-			continue
-		}
-		count++
-	}
-	return count
 }
 
 func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
