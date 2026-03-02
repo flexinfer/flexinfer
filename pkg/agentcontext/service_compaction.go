@@ -51,11 +51,11 @@ func (s *Service) HandleCompactionStatus(ctx context.Context, args map[string]an
 	}
 
 	// Include task reconciler status if available.
-	if s.taskReconciler != nil {
-		rs := s.taskReconciler.LastStats()
+	if s.tasks.reconciler != nil {
+		rs := s.tasks.reconciler.LastStats()
 		reconciler := map[string]any{
 			"enabled":        s.cfg.TaskReconcilerEnabled,
-			"check_interval": s.taskReconciler.config.CheckInterval.String(),
+			"check_interval": s.tasks.reconciler.config.CheckInterval.String(),
 		}
 		if !rs.StartTime.IsZero() {
 			reconciler["last_run"] = rs.StartTime.Format(time.RFC3339)
@@ -76,11 +76,11 @@ func (s *Service) HandleCompactionStatus(ctx context.Context, args map[string]an
 
 // HandleReconcileTrigger manually triggers a task reconciliation cycle
 func (s *Service) HandleReconcileTrigger(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	if s.taskReconciler == nil {
+	if s.tasks.reconciler == nil {
 		return mcp.ErrorResult(fmt.Errorf("task reconciler not initialized")), nil
 	}
 
-	stats, err := s.taskReconciler.TriggerReconcile(ctx)
+	stats, err := s.tasks.reconciler.TriggerReconcile(ctx)
 	if err != nil {
 		return mcp.ErrorResult(fmt.Errorf("trigger reconcile: %w", err)), nil
 	}

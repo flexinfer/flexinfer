@@ -378,7 +378,7 @@ func (s *Service) HandleAskSource(ctx context.Context, args map[string]any) (map
 		FileContext:      fileContext,
 	}
 
-	contextEntries, err := s.recallContext(ctx, recallOpts)
+	contextEntries, err := s.ctxSvc.recallContext(ctx, recallOpts)
 	if err != nil {
 		return nil, fmt.Errorf("recall context: %w", err)
 	}

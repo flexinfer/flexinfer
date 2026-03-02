@@ -12,88 +12,6 @@ import (
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
-func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	query := v.Required("query")
-	agentID := v.String("agent_id", "")
-	sessionID := v.String("session_id", "")
-	namespace := v.String("namespace", "")
-	tokenBudget := v.Int("token_budget", s.cfg.DefaultTokenBudget)
-	includeSummaries := v.Bool("include_summaries", true)
-	includeDecisions := v.Bool("include_decisions", true)
-	fileContext := v.String("file_context", "")
-	symbolContext := v.String("symbol_context", "")
-	recencyWeight := v.Float("recency_weight", s.cfg.DefaultRecencyWeight)
-	includeTasks := v.Bool("include_tasks", true)
-	crossAgent := v.Bool("cross_agent", false)
-	includeMemory := v.Bool("include_memory", true)
-	includeGraph := v.Bool("include_graph", true)
-
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	// Parse scope parameter (optional array of backend names).
-	var scope RecallScope
-	if raw, ok := args["scope"].([]any); ok {
-		for _, item := range raw {
-			if s, ok := item.(string); ok {
-				scope = append(scope, RecallSource(s))
-			}
-		}
-	}
-
-	opts := EnhancedRecallOptions{
-		RecallOptions: RecallOptions{
-			Query:            query,
-			AgentID:          agentID,
-			SessionID:        sessionID,
-			Namespace:        namespace,
-			TokenBudget:      tokenBudget,
-			IncludeSummaries: includeSummaries,
-			IncludeDecisions: includeDecisions,
-			FileContext:      fileContext,
-		},
-		SymbolContext: symbolContext,
-		RecencyWeight: recencyWeight,
-		IncludeTasks:  includeTasks,
-		CrossAgent:    crossAgent,
-		Scope:         scope,
-		IncludeMemory: includeMemory,
-		IncludeGraph:  includeGraph,
-	}
-
-	entries, sourceCounts, err := s.enhancedRecallContext(ctx, opts)
-	if err != nil {
-		return mcp.ErrorResult(fmt.Errorf("recall: %w", err)), nil
-	}
-
-	s.metrics.RecallRequests.Add(1)
-	if len(entries) > 0 {
-		s.metrics.RecallHits.Add(1)
-	} else {
-		s.metrics.RecallMisses.Add(1)
-	}
-
-	totalTokens := 0
-	for _, e := range entries {
-		totalTokens += e.TokenCount
-	}
-
-	if totalTokens >= opts.TokenBudget {
-		s.metrics.RecallTruncated.Add(1)
-	}
-
-	return mcp.JSONResult(map[string]any{
-		"ok":           true,
-		"entries":      entries,
-		"count":        len(entries),
-		"total_tokens": totalTokens,
-		"token_budget": opts.TokenBudget,
-		"sources":      sourceCounts,
-	})
-}
-
 // scopeIncludes returns true if the given source is within the recall scope.
 // An empty scope means all sources are included.
 func scopeIncludes(scope RecallScope, src RecallSource) bool {
@@ -184,7 +102,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 		// Phase 2: Recent decisions
 		if opts.IncludeDecisions && remainingBudget > 0 {
-			decisions, _ := s.getRecentByType(ctx, agentID, sessionID, EntryTypeDecision, 5)
+			decisions, _ := s.ctxSvc.getRecentByType(ctx, agentID, sessionID, EntryTypeDecision, 5)
 			for _, d := range decisions {
 				addEntry(d, RecallSourceContext)
 			}
@@ -192,7 +110,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 		// Phase 3: Session summaries
 		if opts.IncludeSummaries && remainingBudget > 0 {
-			summaries, _ := s.getRecentByType(ctx, agentID, sessionID, EntryTypeSummary, 3)
+			summaries, _ := s.ctxSvc.getRecentByType(ctx, agentID, sessionID, EntryTypeSummary, 3)
 			for _, sum := range summaries {
 				addEntry(sum, RecallSourceContext)
 			}
@@ -287,7 +205,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 	if includeContext {
 		// Phase 6: File-context boosting
 		if opts.FileContext != "" && remainingBudget > 200 {
-			fileEntries, _ := s.getEntriesForFile(ctx, agentID, opts.FileContext, 5)
+				fileEntries, _ := s.ctxSvc.getEntriesForFile(ctx, agentID, opts.FileContext, 5)
 			for _, fe := range fileEntries {
 				addEntry(fe, RecallSourceContext)
 			}
@@ -295,7 +213,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 		// Phase 7: Code annotations for current file
 		if opts.FileContext != "" && remainingBudget > 100 {
-			annotations, _ := s.getAnnotationsForFile(ctx, agentID, opts.FileContext, 5)
+				annotations, _ := s.ctxSvc.GetAnnotationsForFile(ctx, agentID, opts.FileContext, 5)
 			for _, ann := range annotations {
 				entry := ContextEntry{
 					ID:         ann.ID,
