@@ -40,7 +40,7 @@ func newTestService() *Service {
 		worktrees: NewWorktreeSvc(nil, cfg, logger, metrics),
 		sess:      NewSessionSvc(nil, cfg, logger, metrics),
 
-		nudges: make(map[string][]*Nudge),
+		nudges: NewNudgeSvc(),
 	}
 }
 

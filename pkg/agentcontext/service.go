@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -66,9 +65,8 @@ type Service struct {
 	tasks     *TaskSvc
 	sess      *SessionSvc
 
-	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
-	nudgeMu sync.Mutex
-	nudges  map[string][]*Nudge // agentID -> pending nudges
+	// Nudge queue
+	nudges *NudgeSvc
 
 	// Background services
 	compactionScheduler *CompactionScheduler
@@ -89,30 +87,13 @@ func (s *Service) OnPresenceEvent(fn func(eventType string, agentID string, oldS
 }
 
 // AddNudge enqueues a nudge for the given agent, delivered on next heartbeat.
-func (s *Service) AddNudge(agentID string, nudge *Nudge) {
-	s.nudgeMu.Lock()
-	defer s.nudgeMu.Unlock()
-	if s.nudges == nil {
-		s.nudges = make(map[string][]*Nudge)
-	}
-	s.nudges[agentID] = append(s.nudges[agentID], nudge)
-}
+func (s *Service) AddNudge(agentID string, nudge *Nudge) { s.nudges.Add(agentID, nudge) }
 
 // DrainNudges returns and clears all pending nudges for the given agent.
-func (s *Service) DrainNudges(agentID string) []*Nudge {
-	s.nudgeMu.Lock()
-	defer s.nudgeMu.Unlock()
-	nudges := s.nudges[agentID]
-	delete(s.nudges, agentID)
-	return nudges
-}
+func (s *Service) DrainNudges(agentID string) []*Nudge { return s.nudges.Drain(agentID) }
 
 // PendingNudgeCount returns the number of pending nudges for the given agent.
-func (s *Service) PendingNudgeCount(agentID string) int {
-	s.nudgeMu.Lock()
-	defer s.nudgeMu.Unlock()
-	return len(s.nudges[agentID])
-}
+func (s *Service) PendingNudgeCount(agentID string) int { return s.nudges.PendingCount(agentID) }
 
 func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	cfg, err := LoadConfigFromEnv()
@@ -158,7 +139,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		qdrant: qdrantReg,
 		embed:  embedder,
 
-		nudges: make(map[string][]*Nudge),
+		nudges: NewNudgeSvc(),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
