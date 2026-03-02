@@ -2072,6 +2072,17 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		}
 	}
 
+	// Tolerate dedicated GPU nodes when requesting GPUs for quantization.
+	var tolerations []corev1.Toleration
+	if spec.UseGPU {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
 	params := quantization.JobParams{
 		Name:         model.Name,
 		Namespace:    model.Namespace,
@@ -2080,6 +2091,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		Spec:         spec,
 		GPUVendor:    gpuVendor,
 		NodeSelector: model.Spec.NodeSelector,
+		Tolerations:  tolerations,
 	}
 
 	job := &batchv1.Job{}

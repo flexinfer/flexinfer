@@ -48,6 +48,10 @@ type JobParams struct {
 
 	// NodeSelector constrains which nodes the quantization job runs on.
 	NodeSelector map[string]string
+
+	// Tolerations allows the quantization pod to schedule on tainted nodes
+	// (e.g. dedicated=gpu nodes).
+	Tolerations []corev1.Toleration
 }
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.

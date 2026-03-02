@@ -33,4 +33,4 @@ RUN python3 -m pip install \
     sentencepiece==0.2.0 \
     huggingface_hub==0.26.2
 
-ENTRYPOINT ["/bin/sh"]
+ENTRYPOINT ["/bin/bash"]

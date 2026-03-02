@@ -120,6 +120,13 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		},
 	}
 
+	if len(params.NodeSelector) > 0 {
+		job.Spec.Template.Spec.NodeSelector = params.NodeSelector
+	}
+	if len(params.Tolerations) > 0 {
+		job.Spec.Template.Spec.Tolerations = params.Tolerations
+	}
+
 	return job, nil
 }
 

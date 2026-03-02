@@ -366,6 +366,14 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 		NodeSelector: map[string]string{
 			"kubernetes.io/hostname": "gpu-node",
 		},
+		Tolerations: []corev1.Toleration{
+			{
+				Key:      "dedicated",
+				Operator: corev1.TolerationOpEqual,
+				Value:    "gpu",
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		},
 		Spec: &aiv1alpha1.QuantizationSpec{
 			Format:    aiv1alpha1.QuantizationFormatAWQ,
 			Bits:      &bits,
@@ -401,12 +409,63 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 		t.Fatalf("NodeSelector not propagated, got %v", podSpec.NodeSelector)
 	}
 
+	// Tolerations should be propagated
+	if len(podSpec.Tolerations) != 1 {
+		t.Fatalf("expected 1 toleration, got %d", len(podSpec.Tolerations))
+	}
+	if podSpec.Tolerations[0].Key != "dedicated" || podSpec.Tolerations[0].Value != "gpu" {
+		t.Fatalf("unexpected toleration: %+v", podSpec.Tolerations[0])
+	}
+
 	script := container.Args[0]
 	if !contains(script, "device_map=None") {
 		t.Fatal("expected AWQ script to use device_map=None for ROCm compatibility")
 	}
 	if !contains(script, `"version": "GEMM"`) {
 		t.Fatal("expected AWQ script to use version GEMM for native AWQ format")
+	}
+}
+
+func TestGGUFJobBuilder_BuildJob_Tolerations(t *testing.T) {
+	builder := &GGUFJobBuilder{}
+	params := JobParams{
+		Name:      "test-model",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-model",
+		ModelPath: "test-model",
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "gpu-node",
+		},
+		Tolerations: []corev1.Toleration{
+			{
+				Key:      "dedicated",
+				Operator: corev1.TolerationOpEqual,
+				Value:    "gpu",
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		},
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:   aiv1alpha1.QuantizationFormatGGUF,
+			GGUFType: "Q4_K_M",
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	podSpec := job.Spec.Template.Spec
+
+	if podSpec.NodeSelector == nil || podSpec.NodeSelector["kubernetes.io/hostname"] != "gpu-node" {
+		t.Fatalf("NodeSelector not propagated, got %v", podSpec.NodeSelector)
+	}
+
+	if len(podSpec.Tolerations) != 1 {
+		t.Fatalf("expected 1 toleration, got %d", len(podSpec.Tolerations))
+	}
+	if podSpec.Tolerations[0].Key != "dedicated" || podSpec.Tolerations[0].Value != "gpu" {
+		t.Fatalf("unexpected toleration: %+v", podSpec.Tolerations[0])
 	}
 }
 

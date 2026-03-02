@@ -64,4 +64,4 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 ENV PATH="/opt/llama.cpp:${PATH}"
 
 # Default entrypoint for debugging; Jobs override with their script
-ENTRYPOINT ["/bin/sh"]
+ENTRYPOINT ["/bin/bash"]

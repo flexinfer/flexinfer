@@ -1854,12 +1854,24 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			return ctrl.Result{}, nil
 		}
 
+		// Tolerate dedicated GPU nodes when requesting GPUs for quantization.
+		var tolerations []corev1.Toleration
+		if modelCache.Spec.Quantization.UseGPU {
+			tolerations = append(tolerations, corev1.Toleration{
+				Key:      "dedicated",
+				Operator: corev1.TolerationOpEqual,
+				Value:    "gpu",
+				Effect:   corev1.TaintEffectNoSchedule,
+			})
+		}
+
 		params := quantization.JobParams{
-			Name:      modelCache.Name,
-			Namespace: modelCache.Namespace,
-			PVCName:   pvcName,
-			ModelPath: modelPath,
-			Spec:      modelCache.Spec.Quantization,
+			Name:        modelCache.Name,
+			Namespace:   modelCache.Namespace,
+			PVCName:     pvcName,
+			ModelPath:   modelPath,
+			Spec:        modelCache.Spec.Quantization,
+			Tolerations: tolerations,
 		}
 
 		newJob, buildErr := builder.BuildJob(params)

@@ -18,14 +18,21 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
+# The ROCm PyTorch base image ships a broken editable Triton install
+# (/var/lib/jenkins/triton/python) that lacks the jit API. Replace it
+# with the PyPI wheel which includes full ROCm/HIP support.
+RUN python3 -m pip install --force-reinstall triton==3.2.0
+
 # AutoAWQ 0.2.9 is a pure-Python wheel that delegates GPU work to Triton.
-# transformers >= 4.51 for Qwen3 support.
+# Pin transformers to 4.51.3 — the last version tested with AutoAWQ 0.2.9.
+# Newer 4.x versions removed PytorchGELUTanh from activations, and 5.x
+# introduces an incompatible attention_type API for Qwen3.
 RUN python3 -m pip install \
     autoawq==0.2.9 \
-    transformers>=4.51.0 \
+    transformers==4.51.3 \
     safetensors \
     accelerate \
     datasets \
     sentencepiece
 
-ENTRYPOINT ["/bin/sh"]
+ENTRYPOINT ["/bin/bash"]

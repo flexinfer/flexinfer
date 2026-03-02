@@ -336,10 +336,11 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 		RestartPolicy: corev1.RestartPolicyNever,
 		Containers: []corev1.Container{
 			{
-				Name:    "quantizer",
-				Image:   image,
-				Command: []string{"/bin/sh", "-c"},
-				Args:    []string{script},
+				Name:            "quantizer",
+				Image:           image,
+				ImagePullPolicy: corev1.PullAlways,
+				Command:         []string{"/bin/bash", "-c"},
+				Args:            []string{script},
 				VolumeMounts: []corev1.VolumeMount{
 					pvcMount,
 					wsMount,
@@ -365,6 +366,9 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 
 	if len(params.NodeSelector) > 0 {
 		podSpec.NodeSelector = params.NodeSelector
+	}
+	if len(params.Tolerations) > 0 {
+		podSpec.Tolerations = params.Tolerations
 	}
 
 	return &batchv1.Job{
