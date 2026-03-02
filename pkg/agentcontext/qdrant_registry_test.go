@@ -32,10 +32,11 @@ func TestNewQdrantRegistry(t *testing.T) {
 
 	reg := NewQdrantRegistry(hc, cfg)
 
-	// All 14 collections must be registered
+	// 13 unique map entries: annotations merged into context (same key),
+	// templates kept as deprecated.
 	names := reg.Names()
-	if len(names) != 14 {
-		t.Fatalf("Names() returned %d entries, want 14", len(names))
+	if len(names) != 13 {
+		t.Fatalf("Names() returned %d entries, want 13", len(names))
 	}
 }
 
@@ -144,8 +145,9 @@ func TestQdrantRegistry_NamesStable(t *testing.T) {
 	names := reg.Names()
 	sort.Strings(names)
 
+	// CollAnnotations == CollContext after SIMP-12, so 13 unique keys.
 	expected := []string{
-		CollAnnotations, CollContext, CollFileClaims, CollGraphEntities,
+		CollContext, CollFileClaims, CollGraphEntities,
 		CollGraphRelations, CollHandoffs, CollMemory, CollPresence,
 		CollSessions, CollTasks, CollTemplates, CollWorktree,
 		CollWorkflowDefs, CollWorkflows,
