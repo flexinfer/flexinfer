@@ -376,6 +376,19 @@ type SessionTemplate struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RecallSource identifies which storage backend produced a recall result.
+type RecallSource string
+
+const (
+	RecallSourceContext RecallSource = "context" // Qdrant context entries
+	RecallSourceMemory  RecallSource = "memory"  // Memory hierarchy (working/short/long-term)
+	RecallSourceGraph   RecallSource = "graph"   // Knowledge graph entities
+)
+
+// RecallScope restricts which backends are queried during unified recall.
+// An empty slice queries all backends.
+type RecallScope []RecallSource
+
 // EnhancedRecallOptions extends RecallOptions with new capabilities
 type EnhancedRecallOptions struct {
 	RecallOptions
@@ -388,6 +401,15 @@ type EnhancedRecallOptions struct {
 	// CrossAgent searches across all sessions/agents instead of filtering
 	// to a single agent_id/session_id. Results include source attribution.
 	CrossAgent bool `json:"cross_agent"`
+
+	// Scope restricts which backends to query. Empty = all backends.
+	// Valid values: "context", "memory", "graph"
+	Scope RecallScope `json:"scope,omitempty"`
+
+	// IncludeMemory enables memory hierarchy recall (default true).
+	IncludeMemory bool `json:"include_memory"`
+	// IncludeGraph enables knowledge graph entity search (default true).
+	IncludeGraph bool `json:"include_graph"`
 }
 
 // =========================================================================
