@@ -205,7 +205,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 	if includeContext {
 		// Phase 6: File-context boosting
 		if opts.FileContext != "" && remainingBudget > 200 {
-				fileEntries, _ := s.ctxSvc.getEntriesForFile(ctx, agentID, opts.FileContext, 5)
+			fileEntries, _ := s.ctxSvc.getEntriesForFile(ctx, agentID, opts.FileContext, 5)
 			for _, fe := range fileEntries {
 				addEntry(fe, RecallSourceContext)
 			}
@@ -213,7 +213,7 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 
 		// Phase 7: Code annotations for current file
 		if opts.FileContext != "" && remainingBudget > 100 {
-				annotations, _ := s.ctxSvc.GetAnnotationsForFile(ctx, agentID, opts.FileContext, 5)
+			annotations, _ := s.ctxSvc.GetAnnotationsForFile(ctx, agentID, opts.FileContext, 5)
 			for _, ann := range annotations {
 				entry := ContextEntry{
 					ID:         ann.ID,

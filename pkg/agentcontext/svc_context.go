@@ -16,12 +16,12 @@ import (
 
 // ContextSvc manages context entries, annotations, recall, search, and summary generation.
 type ContextSvc struct {
-	qdrant     *QdrantRegistry
-	embed      embed.Embedder
-	vectorSize *int // shared mutable — pointer to Service.vectorSize
-	cfg        Config
-	logger     *slog.Logger
-	metrics    *Metrics
+	qdrant                   *QdrantRegistry
+	embed                    embed.Embedder
+	vectorSize               *int // shared mutable — pointer to Service.vectorSize
+	cfg                      Config
+	logger                   *slog.Logger
+	metrics                  *Metrics
 	persistedMemoryHierarchy *persistedMemoryHierarchy
 	knowledgeGraph           *KnowledgeGraph
 
