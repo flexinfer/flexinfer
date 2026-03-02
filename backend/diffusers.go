@@ -114,6 +114,11 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
+	// Quantization mode (e.g. "nf4" for bitsandbytes NF4 on FLUX models)
+	if quant := spec.ConfigString("quantization", ""); quant != "" {
+		env = append(env, corev1.EnvVar{Name: "QUANTIZATION", Value: quant})
+	}
+
 	// Image editing pipeline mode (inpainting, instruct, or default text2image)
 	if mode := spec.ConfigString("pipelineMode", ""); mode != "" {
 		env = append(env, corev1.EnvVar{Name: "PIPELINE_MODE", Value: mode})
@@ -210,7 +215,7 @@ func (b *DiffusersBackend) StartupProbe() *corev1.Probe {
 }
 
 func (b *DiffusersBackend) StartupTimeout() time.Duration {
-	return 180 * time.Second // Image gen models can take longer to load
+	return 300 * time.Second // Image gen models can take long to load (especially FLUX with NF4)
 }
 
 // NeedsVolume returns true so HuggingFace artifacts can be cached on a SharedPVC.

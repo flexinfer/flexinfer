@@ -64,12 +64,24 @@ WORKDIR /app
 
 # Install pinned Python dependencies
 COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+# Remove pre-installed torchvision — its _meta_registrations.py crashes on this
+# base image (torchvision::nms operator conflict). The server doesn't use it,
+# and transformers/diffusers gracefully fall back when it's absent.
+RUN pip uninstall -y torchvision && \
+    pip install --no-cache-dir --upgrade pip && \
+    # Freeze the ROCm PyTorch to prevent pip from overwriting it with CUDA PyTorch.
+    # Packages like bitsandbytes depend on torch and pip would "upgrade" to
+    # the PyPI CUDA wheel, breaking ROCm GPU support.
+    python -c "import torch; print('torch==' + torch.__version__)" > /tmp/constraints.txt && \
+    pip install --no-cache-dir -c /tmp/constraints.txt -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt /tmp/constraints.txt
 
 # Force numpy < 2 for ROCm compatibility (overrides any transitive upgrade)
 RUN pip install --no-cache-dir --force-reinstall "numpy<2"
+
+# Install bitsandbytes separately with --no-deps to prevent torch replacement.
+# bitsandbytes' only real dependency is torch (already installed as ROCm build).
+RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.44.0"
 
 # Create the API server
 COPY <<'EOF' /app/server.py
@@ -94,14 +106,22 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from diffusers import (
-    AutoPipelineForText2Image,
-    AutoPipelineForInpainting,
     DiffusionPipeline,
     AutoencoderKL,
     StableDiffusionXLPipeline,
     StableDiffusionPipeline,
     StableDiffusionInstructPix2PixPipeline,
+    FluxPipeline,
+    FluxFillPipeline,
 )
+# Lazy-import AutoPipeline* to avoid cascading import of all pipelines
+# (CogView4, QwenImage etc. require transformers >= 4.49)
+def _lazy_auto_pipeline_text2image():
+    from diffusers import AutoPipelineForText2Image
+    return AutoPipelineForText2Image
+def _lazy_auto_pipeline_inpainting():
+    from diffusers import AutoPipelineForInpainting
+    return AutoPipelineForInpainting
 
 # Global pipeline cache
 pipeline = None
@@ -185,23 +205,35 @@ def _is_sdxl_turbo(model_id: str) -> bool:
     model_id = (model_id or "").lower()
     return "sdxl-turbo" in model_id or "sdxl_turbo" in model_id
 
+def _is_flux(model_id: str) -> bool:
+    return "flux" in (model_id or "").lower()
+
+def _is_flux_schnell(model_id: str) -> bool:
+    return _is_flux(model_id) and "schnell" in (model_id or "").lower()
+
 def _default_steps(model_id: str) -> int:
     # Per-deployment override via env
     steps = _env_int("DEFAULT_NUM_INFERENCE_STEPS")
     if steps is not None and steps > 0:
         return steps
-    # SDXL Turbo is designed for very few steps.
     if _is_sdxl_turbo(model_id):
         return 4
+    if _is_flux_schnell(model_id):
+        return 4
+    if _is_flux(model_id):
+        return 28
     return 20
 
 def _default_guidance_scale(model_id: str) -> float:
     scale = _env_float("DEFAULT_GUIDANCE_SCALE")
     if scale is not None and scale >= 0.0:
         return scale
-    # SDXL Turbo typically uses low/zero CFG for speed.
     if _is_sdxl_turbo(model_id):
         return 0.0
+    if _is_flux_schnell(model_id):
+        return 0.0
+    if _is_flux(model_id):
+        return 3.5
     return 7.5
 
 def _default_negative_prompt() -> Optional[str]:
@@ -470,9 +502,52 @@ def load_pipeline(model_id: str):
             pipeline_kwargs["vae"] = vae
 
         print(f"Pipeline mode: {PIPELINE_MODE}")
-        if PIPELINE_MODE == "inpainting":
+
+        # FLUX pipelines: detect from model_id and use explicit pipeline classes.
+        # FLUX doesn't use safety_checker or custom VAE overrides.
+        if _is_flux(model_id):
+            flux_kwargs = {k: v for k, v in pipeline_kwargs.items()
+                          if k not in ("safety_checker", "vae", "variant")}
+            # Optional NF4 quantization via bitsandbytes (reduces ~24GB FP16 to ~6GB NF4)
+            quant_mode = os.environ.get("QUANTIZATION", "").lower()
+            if quant_mode == "nf4":
+                try:
+                    from diffusers import BitsAndBytesConfig as DiffusersBnBConfig
+                    from diffusers.quantizers import PipelineQuantizationConfig
+                    # Use float16 compute dtype — bfloat16 has known issues on gfx1100/RDNA3
+                    bnb_config = DiffusersBnBConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_quant_type="nf4",
+                    )
+                    # diffusers 0.36+ requires PipelineQuantizationConfig wrapper
+                    flux_kwargs["quantization_config"] = PipelineQuantizationConfig(
+                        quant_mapping={"transformer": bnb_config}
+                    )
+                    # Don't set torch_dtype here — it triggers fp16 variant file lookup.
+                    # The quantizer handles compute dtype internally via bnb_4bit_compute_dtype.
+                    flux_kwargs.pop("torch_dtype", None)
+                    print("NF4 quantization enabled for FLUX pipeline (float16 compute)")
+                except (ImportError, Exception) as e:
+                    print(f"WARNING: NF4 quantization not available ({e}), loading without quantization")
+            if PIPELINE_MODE == "inpainting":
+                print("Loading FluxFillPipeline (loading to CPU, local files only)...")
+                sys.stdout.flush()
+                pipeline = FluxFillPipeline.from_pretrained(
+                    resolved_path,
+                    **flux_kwargs,
+                )
+            else:
+                print("Loading FluxPipeline (loading to CPU, local files only)...")
+                sys.stdout.flush()
+                pipeline = FluxPipeline.from_pretrained(
+                    resolved_path,
+                    **flux_kwargs,
+                )
+        elif PIPELINE_MODE == "inpainting":
             print("Loading AutoPipelineForInpainting (loading to CPU, local files only)...")
             sys.stdout.flush()
+            AutoPipelineForInpainting = _lazy_auto_pipeline_inpainting()
             pipeline = AutoPipelineForInpainting.from_pretrained(
                 resolved_path,
                 **pipeline_kwargs,
@@ -492,6 +567,7 @@ def load_pipeline(model_id: str):
                 if vae is not None:
                     print("  Using custom VAE (madebyollin/sdxl-vae-fp16-fix)")
                 sys.stdout.flush()
+                AutoPipelineForText2Image = _lazy_auto_pipeline_text2image()
                 pipeline = AutoPipelineForText2Image.from_pretrained(
                     resolved_path,
                     requires_safety_checker=False,
@@ -526,10 +602,11 @@ def load_pipeline(model_id: str):
     elif offload_env == "0":
         use_cpu_offload = False
     else:
-        # Auto-detect: use CPU offload for SDXL pipelines on ROCm
+        # Auto-detect: use CPU offload for SDXL and FLUX pipelines on ROCm
         is_sdxl = "XL" in type(pipeline).__name__
+        is_flux_pipe = "Flux" in type(pipeline).__name__
         is_rocm = hasattr(torch.version, 'hip') and torch.version.hip is not None
-        use_cpu_offload = is_sdxl and is_rocm
+        use_cpu_offload = (is_sdxl or is_flux_pipe) and is_rocm
         if use_cpu_offload:
             print(f"Auto-detected {type(pipeline).__name__} on ROCm, enabling CPU offload")
 
@@ -657,7 +734,8 @@ def warmup_inference():
             if PIPELINE_MODE == "inpainting":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
                 kw["mask_image"] = Image.new("L", (w, h), 255)
-                kw["strength"] = 0.5
+                if not _is_flux(current_model):
+                    kw["strength"] = 0.5
             elif PIPELINE_MODE == "instruct":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
             with torch.no_grad():
@@ -740,14 +818,17 @@ async def generate_images(request: ImageGenerationRequest):
         results = []
         for _ in range(request.n):
             with torch.inference_mode():
-                result = pipe(
-                    prompt=request.prompt,
-                    negative_prompt=negative_prompt,
-                    num_inference_steps=steps,
-                    guidance_scale=guidance_scale,
-                    width=width,
-                    height=height,
-                )
+                gen_kwargs = {
+                    "prompt": request.prompt,
+                    "num_inference_steps": steps,
+                    "guidance_scale": guidance_scale,
+                    "width": width,
+                    "height": height,
+                }
+                # FLUX doesn't support negative_prompt
+                if not _is_flux(model_id) and negative_prompt:
+                    gen_kwargs["negative_prompt"] = negative_prompt
+                result = pipe(**gen_kwargs)
             img = result.images[0]
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
@@ -820,16 +901,28 @@ async def edit_images(
                     if mask_bytes is None:
                         raise ValueError("Inpainting mode requires a mask image")
                     mask_img = _decode_mask(mask_bytes, src_img.size)
-                    s = strength if strength is not None else _default_strength()
-                    result = pipe(
-                        prompt=prompt,
-                        image=src_img,
-                        mask_image=mask_img,
-                        strength=s,
-                        guidance_scale=cfg_scale,
-                        num_inference_steps=steps,
-                        negative_prompt=neg,
-                    )
+                    if _is_flux(model_id):
+                        # FluxFillPipeline: no strength, no negative_prompt
+                        result = pipe(
+                            prompt=prompt,
+                            image=src_img,
+                            mask_image=mask_img,
+                            guidance_scale=cfg_scale,
+                            num_inference_steps=steps,
+                            height=src_img.size[1],
+                            width=src_img.size[0],
+                        )
+                    else:
+                        s = strength if strength is not None else _default_strength()
+                        result = pipe(
+                            prompt=prompt,
+                            image=src_img,
+                            mask_image=mask_img,
+                            strength=s,
+                            guidance_scale=cfg_scale,
+                            num_inference_steps=steps,
+                            negative_prompt=neg,
+                        )
                 elif PIPELINE_MODE == "instruct":
                     img_scale = image_guidance_scale if image_guidance_scale is not None else _default_image_guidance_scale()
                     result = pipe(

@@ -44,11 +44,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+# Remove pre-installed torchvision — its _meta_registrations.py crashes on this
+# base image (torchvision::nms operator conflict). The server doesn't use it,
+# and transformers/diffusers gracefully fall back when it's absent.
+RUN pip uninstall -y torchvision && \
+    pip install --no-cache-dir --upgrade pip && \
+    # Freeze the ROCm PyTorch to prevent pip from overwriting it with CUDA PyTorch.
+    # Packages like transformers/diffusers depend on torch and pip would "upgrade" to
+    # the PyPI CUDA wheel, breaking ROCm GPU support.
+    python -c "import torch; print('torch==' + torch.__version__)" > /tmp/constraints.txt && \
+    pip install --no-cache-dir -c /tmp/constraints.txt -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt /tmp/constraints.txt
 
 RUN pip install --no-cache-dir --force-reinstall "numpy<2"
+
+# Install bitsandbytes separately with --no-deps to prevent torch replacement.
+# bitsandbytes' only real dependency is torch (already installed as ROCm build).
+RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.44.0"
 
 COPY build/Dockerfile.diffusers-rocm /tmp/_ref
 RUN sed -n '/^COPY <<.*EOF.*\/app\/server\.py/,/^EOF/p' /tmp/_ref > /dev/null
