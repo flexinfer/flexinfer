@@ -221,6 +221,18 @@ func TestRemovedCompactionToolsAreGone(t *testing.T) {
 	}
 }
 
+func TestRemovedTemplateToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{"agent_template_create", "agent_template_list"}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-7)", name)
+		}
+	}
+}
+
 func TestAllToolsHaveDescriptions(t *testing.T) {
 	t.Parallel()
 	_, tools := testServer()
