@@ -837,10 +837,23 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 	}
 
 	// Update service. Avoid clobbering immutable fields (e.g., clusterIP/clusterIPs).
+	existingPorts := service.Spec.Ports
+	existingSelector := service.Spec.Selector
+	existingLabels := service.Labels
+	existingAnnotations := service.Annotations
+
 	service.Spec.Ports = desiredService.Spec.Ports
 	service.Spec.Selector = desiredService.Spec.Selector
 	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
+
+	if apiequality.Semantic.DeepEqual(service.Spec.Ports, existingPorts) &&
+		apiequality.Semantic.DeepEqual(service.Spec.Selector, existingSelector) &&
+		apiequality.Semantic.DeepEqual(service.Labels, existingLabels) &&
+		apiequality.Semantic.DeepEqual(service.Annotations, existingAnnotations) {
+		return nil
+	}
+
 	log.Info("Updating Service", "name", model.Name)
 	return r.Update(ctx, service)
 }
@@ -1241,36 +1254,60 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return r.Create(ctx, desiredDeployment)
 	}
 
-	// Snapshot existing state for change detection.
-	existingSpec := deployment.Spec.DeepCopy()
-	existingLabels := deployment.Labels
-	existingAnnotations := deployment.Annotations
+	// Build the desired deployment state and compare only controller-managed fields.
+	// Using a targeted comparison (rather than DeepEqual on the entire spec) avoids
+	// infinite update loops caused by K8s-defaulted fields that the controller doesn't
+	// set (terminationGracePeriodSeconds, dnsPolicy, schedulerName, revisionHistoryLimit,
+	// progressDeadlineSeconds, container terminationMessagePath/Policy, imagePullPolicy).
+	desired := desiredDeployment.Spec
 
-	// Apply desired state onto the existing deployment.
-	existingPodAnnotations := deployment.Spec.Template.Annotations
-	desiredSpec := desiredDeployment.Spec
 	// Deployment selectors are immutable. Preserve the existing selector on updates to avoid
 	// deadlocking reconciliation when labels change (e.g., shared GPU group assignment).
-	if deployment.Spec.Selector != nil {
-		desiredSpec.Selector = deployment.Spec.Selector.DeepCopy()
-		if desiredSpec.Selector.MatchLabels != nil {
-			desiredSpec.Template.Labels = mergeStringMap(desiredSpec.Template.Labels, desiredSpec.Selector.MatchLabels)
-		}
+	// Merge existing selector labels into desired template labels so pods always match.
+	desiredTemplateLabels := desired.Template.Labels
+	if deployment.Spec.Selector != nil && deployment.Spec.Selector.MatchLabels != nil {
+		desiredTemplateLabels = mergeStringMap(desiredTemplateLabels, deployment.Spec.Selector.MatchLabels)
 	}
-	deployment.Spec = desiredSpec
-	deployment.Labels = desiredDeployment.Labels
-	deployment.Annotations = applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
-	deployment.Spec.Template.Annotations = applyManagedAnnotations(existingPodAnnotations, desiredDeployment.Spec.Template.Annotations, managedModelPodAnnotations)
 
-	// Skip update if nothing changed.
-	if apiequality.Semantic.DeepEqual(&deployment.Spec, existingSpec) &&
-		apiequality.Semantic.DeepEqual(deployment.Labels, existingLabels) &&
-		apiequality.Semantic.DeepEqual(deployment.Annotations, existingAnnotations) {
+	desiredAnnotations := applyManagedAnnotations(deployment.Annotations, desiredDeployment.Annotations, managedModelAnnotations)
+	desiredPodAnnotations := applyManagedAnnotations(
+		deployment.Spec.Template.Annotations,
+		desiredDeployment.Spec.Template.Annotations,
+		managedModelPodAnnotations,
+	)
+
+	// Compare only controller-managed fields to decide if an update is needed.
+	changed := deploymentManagedFieldChanges(deployment, &desired, desiredDeployment.Labels, desiredAnnotations, desiredTemplateLabels, desiredPodAnnotations)
+	if len(changed) == 0 {
 		return nil
 	}
 
-	// Log which fields changed to aid debugging.
-	changed := deploymentChangedFields(existingSpec, &deployment.Spec)
+	// Apply all controller-managed fields onto the existing deployment.
+	deployment.Spec.Replicas = desired.Replicas
+	deployment.Spec.Strategy = desired.Strategy
+	deployment.Spec.Template.Labels = desiredTemplateLabels
+	deployment.Spec.Template.Annotations = desiredPodAnnotations
+	deployment.Spec.Template.Spec.NodeSelector = desired.Template.Spec.NodeSelector
+	deployment.Spec.Template.Spec.Tolerations = desired.Template.Spec.Tolerations
+	deployment.Spec.Template.Spec.SecurityContext = desired.Template.Spec.SecurityContext
+	deployment.Spec.Template.Spec.Affinity = desired.Template.Spec.Affinity
+	deployment.Spec.Template.Spec.TopologySpreadConstraints = desired.Template.Spec.TopologySpreadConstraints
+	deployment.Spec.Template.Spec.InitContainers = desired.Template.Spec.InitContainers
+	deployment.Spec.Template.Spec.Volumes = desired.Template.Spec.Volumes
+	deployment.Spec.Template.Spec.RuntimeClassName = desired.Template.Spec.RuntimeClassName
+	deployment.Spec.Template.Spec.AutomountServiceAccountToken = desired.Template.Spec.AutomountServiceAccountToken
+	deployment.Spec.Template.Spec.RestartPolicy = desired.Template.Spec.RestartPolicy
+	deployment.Spec.Template.Spec.ServiceAccountName = desired.Template.Spec.ServiceAccountName
+	// Merge containers: update only controller-managed fields, preserve K8s defaults.
+	// If container count changed, full replacement is needed.
+	if len(deployment.Spec.Template.Spec.Containers) != len(desired.Template.Spec.Containers) {
+		deployment.Spec.Template.Spec.Containers = desired.Template.Spec.Containers
+	} else {
+		mergeContainers(deployment.Spec.Template.Spec.Containers, desired.Template.Spec.Containers)
+	}
+	deployment.Labels = desiredDeployment.Labels
+	deployment.Annotations = desiredAnnotations
+
 	log.Info("Updating Deployment", "name", model.Name, "changedFields", changed)
 
 	return r.Update(ctx, deployment)
@@ -1317,9 +1354,21 @@ func deploymentChangedFields(old, new *appsv1.DeploymentSpec) []string {
 	if !apiequality.Semantic.DeepEqual(old.Template.Annotations, new.Template.Annotations) {
 		fields = append(fields, "podAnnotations")
 	}
+	if !apiequality.Semantic.DeepEqual(old.Template.Labels, new.Template.Labels) {
+		fields = append(fields, "podLabels")
+	}
+	if !ptr.Equal(old.RevisionHistoryLimit, new.RevisionHistoryLimit) {
+		fields = append(fields, "revisionHistoryLimit")
+	}
+	if !ptr.Equal(old.ProgressDeadlineSeconds, new.ProgressDeadlineSeconds) {
+		fields = append(fields, "progressDeadlineSeconds")
+	}
+	if !apiequality.Semantic.DeepEqual(old.Strategy, new.Strategy) {
+		fields = append(fields, "strategy")
+	}
 
 	if len(fields) == 0 {
-		fields = append(fields, "metadata")
+		fields = append(fields, "other")
 	}
 	return fields
 }
@@ -1329,6 +1378,202 @@ func firstContainer(spec *appsv1.DeploymentSpec) *corev1.Container {
 		return &spec.Template.Spec.Containers[0]
 	}
 	return nil
+}
+
+// deploymentManagedFieldChanges compares only the fields the controller manages between
+// the existing deployment and the desired state. Returns a list of changed field names,
+// or nil if nothing needs updating. This avoids false positives from K8s-defaulted fields
+// that the controller doesn't set (terminationGracePeriodSeconds, dnsPolicy, schedulerName,
+// revisionHistoryLimit, progressDeadlineSeconds, container terminationMessagePath, etc.).
+func deploymentManagedFieldChanges(
+	existing *appsv1.Deployment,
+	desired *appsv1.DeploymentSpec,
+	desiredLabels map[string]string,
+	desiredAnnotations map[string]string,
+	desiredTemplateLabels map[string]string,
+	desiredPodAnnotations map[string]string,
+) []string {
+	var fields []string
+	e := &existing.Spec
+
+	// Deployment-level.
+	if !ptr.Equal(e.Replicas, desired.Replicas) {
+		fields = append(fields, fmt.Sprintf("replicas(%d→%d)",
+			ptr.Deref(e.Replicas, 1), ptr.Deref(desired.Replicas, 1)))
+	}
+	if !apiequality.Semantic.DeepEqual(e.Strategy, desired.Strategy) {
+		fields = append(fields, "strategy")
+	}
+
+	// Pod template metadata.
+	if !apiequality.Semantic.DeepEqual(existing.Spec.Template.Labels, desiredTemplateLabels) {
+		fields = append(fields, "podLabels")
+	}
+	if !apiequality.Semantic.DeepEqual(existing.Spec.Template.Annotations, desiredPodAnnotations) {
+		fields = append(fields, "podAnnotations")
+	}
+
+	// Pod spec (only controller-managed fields).
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.NodeSelector, desired.Template.Spec.NodeSelector) {
+		fields = append(fields, "nodeSelector")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.Tolerations, desired.Template.Spec.Tolerations) {
+		fields = append(fields, "tolerations")
+	}
+	if !podSecurityContextEqual(e.Template.Spec.SecurityContext, desired.Template.Spec.SecurityContext) {
+		fields = append(fields, "securityContext")
+	}
+	if !podObjectEqual(e.Template.Spec.Affinity, desired.Template.Spec.Affinity) {
+		fields = append(fields, "affinity")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.TopologySpreadConstraints, desired.Template.Spec.TopologySpreadConstraints) {
+		fields = append(fields, "topologySpreadConstraints")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.Volumes, desired.Template.Spec.Volumes) {
+		fields = append(fields, "volumes")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.InitContainers, desired.Template.Spec.InitContainers) {
+		fields = append(fields, "initContainers")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.RuntimeClassName, desired.Template.Spec.RuntimeClassName) {
+		fields = append(fields, "runtimeClassName")
+	}
+	if !ptr.Equal(e.Template.Spec.AutomountServiceAccountToken, desired.Template.Spec.AutomountServiceAccountToken) {
+		fields = append(fields, "automountServiceAccountToken")
+	}
+	if e.Template.Spec.RestartPolicy != desired.Template.Spec.RestartPolicy {
+		fields = append(fields, "restartPolicy")
+	}
+	if e.Template.Spec.ServiceAccountName != desired.Template.Spec.ServiceAccountName {
+		fields = append(fields, "serviceAccountName")
+	}
+
+	// Container comparison — only controller-managed fields (image, args, env, resources,
+	// volumeMounts, ports, imagePullPolicy). Ignores K8s-defaulted fields like
+	// terminationMessagePath and terminationMessagePolicy.
+	if containerManagedFieldsChanged(e.Template.Spec.Containers, desired.Template.Spec.Containers) {
+		fields = append(fields, "containers")
+	}
+
+	// Deployment metadata.
+	if !apiequality.Semantic.DeepEqual(existing.Labels, desiredLabels) {
+		fields = append(fields, "labels")
+	}
+	if !apiequality.Semantic.DeepEqual(existing.Annotations, desiredAnnotations) {
+		fields = append(fields, "annotations")
+	}
+
+	return fields
+}
+
+// containerManagedFieldsChanged compares only the fields the controller sets on containers.
+func containerManagedFieldsChanged(existing, desired []corev1.Container) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+	for i := range existing {
+		e, d := &existing[i], &desired[i]
+		if e.Name != d.Name || e.Image != d.Image {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.Args, d.Args) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.Command, d.Command) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.Env, d.Env) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.EnvFrom, d.EnvFrom) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.Resources, d.Resources) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.VolumeMounts, d.VolumeMounts) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.Ports, d.Ports) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.ReadinessProbe, d.ReadinessProbe) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.LivenessProbe, d.LivenessProbe) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.StartupProbe, d.StartupProbe) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(e.SecurityContext, d.SecurityContext) {
+			return true
+		}
+		if e.WorkingDir != d.WorkingDir {
+			return true
+		}
+		if e.ImagePullPolicy != d.ImagePullPolicy {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeContainers updates controller-managed fields on existing containers from desired,
+// preserving K8s-defaulted fields (terminationMessagePath, terminationMessagePolicy).
+func mergeContainers(existing []corev1.Container, desired []corev1.Container) {
+	// If container count changed, we can't merge — the full replacement is needed.
+	// This case is handled by clearing and re-appending.
+	if len(existing) != len(desired) {
+		// Full replacement needed, caller handles this case via direct assignment.
+		return
+	}
+	for i := range existing {
+		e, d := &existing[i], &desired[i]
+		e.Name = d.Name
+		e.Image = d.Image
+		e.Command = d.Command
+		e.Args = d.Args
+		e.Env = d.Env
+		e.EnvFrom = d.EnvFrom
+		e.Resources = d.Resources
+		e.VolumeMounts = d.VolumeMounts
+		e.Ports = d.Ports
+		e.ReadinessProbe = d.ReadinessProbe
+		e.LivenessProbe = d.LivenessProbe
+		e.StartupProbe = d.StartupProbe
+		e.SecurityContext = d.SecurityContext
+		e.WorkingDir = d.WorkingDir
+		e.ImagePullPolicy = d.ImagePullPolicy
+	}
+}
+
+// podSecurityContextEqual compares two PodSecurityContext pointers, treating nil
+// and the zero value (&PodSecurityContext{}) as equal. K8s stores removed security
+// contexts as {} rather than null, causing nil vs {} oscillation.
+func podSecurityContextEqual(a, b *corev1.PodSecurityContext) bool {
+	normalize := func(p *corev1.PodSecurityContext) *corev1.PodSecurityContext {
+		if p == nil {
+			return &corev1.PodSecurityContext{}
+		}
+		return p
+	}
+	return apiequality.Semantic.DeepEqual(normalize(a), normalize(b))
+}
+
+// podObjectEqual compares two objects where nil and zero-value pointer should
+// be treated as equal (same K8s nil-vs-empty problem as PodSecurityContext).
+func podObjectEqual[T any](a, b *T) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil {
+		return apiequality.Semantic.DeepEqual(new(T), b)
+	}
+	if b == nil {
+		return apiequality.Semantic.DeepEqual(a, new(T))
+	}
+	return apiequality.Semantic.DeepEqual(a, b)
 }
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.

@@ -2110,9 +2110,9 @@ func TestDeploymentChangedFields(t *testing.T) {
 		wantFields []string
 	}{
 		{
-			name:       "no changes returns metadata",
+			name:       "no changes returns other",
 			modify:     func(s *appsv1.DeploymentSpec) {},
-			wantFields: []string{"metadata"},
+			wantFields: []string{"other"},
 		},
 		{
 			name: "replica change",

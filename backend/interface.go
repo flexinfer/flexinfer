@@ -385,22 +385,26 @@ func DeviceIsolationEnvVars(spec *ModelSpec) []corev1.EnvVar {
 }
 
 // HTTPReadinessProbe creates a standard HTTP readiness probe.
+// K8s defaults (Scheme, SuccessThreshold) are set explicitly to prevent reconcile loops.
 func HTTPReadinessProbe(path string, port int32, initialDelay, period, timeout int32) *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: path,
-				Port: intstr.FromInt32(port),
+				Path:   path,
+				Port:   intstr.FromInt32(port),
+				Scheme: corev1.URISchemeHTTP,
 			},
 		},
 		InitialDelaySeconds: initialDelay,
 		PeriodSeconds:       period,
 		TimeoutSeconds:      timeout,
+		SuccessThreshold:    1,
 		FailureThreshold:    30, // Allow 5 minutes of failures (30 * 10s)
 	}
 }
 
 // TCPReadinessProbe creates a TCP socket readiness probe.
+// K8s defaults (SuccessThreshold) are set explicitly to prevent reconcile loops.
 func TCPReadinessProbe(port int32, initialDelay, period, timeout int32) *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -411,6 +415,7 @@ func TCPReadinessProbe(port int32, initialDelay, period, timeout int32) *corev1.
 		InitialDelaySeconds: initialDelay,
 		PeriodSeconds:       period,
 		TimeoutSeconds:      timeout,
+		SuccessThreshold:    1,
 		FailureThreshold:    90, // Allow 15 minutes (90 * 10s) for large models
 	}
 }
@@ -418,6 +423,8 @@ func TCPReadinessProbe(port int32, initialDelay, period, timeout int32) *corev1.
 // HTTPStartupProbe creates an HTTP startup probe that polls aggressively during
 // cold start. Once the startup probe succeeds, K8s switches to the readiness
 // probe. This eliminates the need for large InitialDelaySeconds on readiness.
+// HTTPStartupProbe creates an HTTP startup probe with the given timeout.
+// K8s defaults (Scheme, SuccessThreshold) are set explicitly to prevent reconcile loops.
 func HTTPStartupProbe(path string, port int32, startupTimeout time.Duration) *corev1.Probe {
 	period := int32(2)
 	failureThreshold := int32(startupTimeout.Seconds()) / period
@@ -427,13 +434,15 @@ func HTTPStartupProbe(path string, port int32, startupTimeout time.Duration) *co
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: path,
-				Port: intstr.FromInt32(port),
+				Path:   path,
+				Port:   intstr.FromInt32(port),
+				Scheme: corev1.URISchemeHTTP,
 			},
 		},
 		InitialDelaySeconds: 5,
 		PeriodSeconds:       period,
 		TimeoutSeconds:      3,
+		SuccessThreshold:    1,
 		FailureThreshold:    failureThreshold,
 	}
 }
