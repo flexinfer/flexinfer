@@ -175,6 +175,37 @@ spec:
                     description: Bits is the quantization bit width for AWQ/GPTQ formats.
                     format: int32
                     type: integer
+                  calibration:
+                    description: |-
+                      Calibration configures calibration parameters for AWQ/GPTQ quantization.
+                      Ignored for GGUF and EXL2 formats.
+                    properties:
+                      maxSamples:
+                        description: |-
+                          MaxSamples is the number of calibration samples to use.
+                          Defaults to 256.
+                        format: int32
+                        maximum: 2048
+                        minimum: 8
+                        type: integer
+                      maxSeqLen:
+                        description: |-
+                          MaxSeqLen is the maximum sequence length for calibration samples.
+                          Defaults to 4096.
+                        format: int32
+                        maximum: 32768
+                        minimum: 128
+                        type: integer
+                      nParallelCalibSamples:
+                        description: |-
+                          NParallelCalibSamples controls how many calibration samples are processed
+                          in parallel during AWQ quantization. Lower values reduce peak VRAM usage.
+                          Defaults to 16 for models >10B params on <=24GB VRAM.
+                        format: int32
+                        maximum: 256
+                        minimum: 1
+                        type: integer
+                    type: object
                   format:
                     description: Format is the target quantization format.
                     enum:
@@ -199,6 +230,13 @@ spec:
                       MaxMemoryGB limits the memory available to the quantization job.
                       Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
                     format: int32
+                    type: integer
+                  timeoutSeconds:
+                    description: TimeoutSeconds overrides the default 2-hour deadline
+                      for quantization jobs.
+                    format: int64
+                    maximum: 43200
+                    minimum: 300
                     type: integer
                   useGPU:
                     description: |-
@@ -363,6 +401,41 @@ spec:
                   Quantization records the result of model quantization.
                   Only populated when spec.quantization is set and the job completes.
                 properties:
+                  calibrationParams:
+                    description: CalibrationParams records the calibration parameters
+                      that were actually used.
+                    properties:
+                      maxSamples:
+                        description: |-
+                          MaxSamples is the number of calibration samples to use.
+                          Defaults to 256.
+                        format: int32
+                        maximum: 2048
+                        minimum: 8
+                        type: integer
+                      maxSeqLen:
+                        description: |-
+                          MaxSeqLen is the maximum sequence length for calibration samples.
+                          Defaults to 4096.
+                        format: int32
+                        maximum: 32768
+                        minimum: 128
+                        type: integer
+                      nParallelCalibSamples:
+                        description: |-
+                          NParallelCalibSamples controls how many calibration samples are processed
+                          in parallel during AWQ quantization. Lower values reduce peak VRAM usage.
+                          Defaults to 16 for models >10B params on <=24GB VRAM.
+                        format: int32
+                        maximum: 256
+                        minimum: 1
+                        type: integer
+                    type: object
+                  completedAt:
+                    description: CompletedAt is the timestamp when the quantization
+                      job completed.
+                    format: date-time
+                    type: string
                   compressedSizeBytes:
                     description: CompressedSizeBytes is the size of the model after
                       quantization.
@@ -371,6 +444,10 @@ spec:
                   compressionRatio:
                     description: CompressionRatio is the ratio of original to compressed
                       size (e.g., "3.75").
+                    type: string
+                  failureMessage:
+                    description: FailureMessage contains the last lines of pod logs
+                      on failure.
                     type: string
                   format:
                     description: Format is the quantization format that was applied.
@@ -383,6 +460,11 @@ spec:
                   quantizationTime:
                     description: QuantizationTime is the wall-clock duration of the
                       quantization job.
+                    type: string
+                  startedAt:
+                    description: StartedAt is the timestamp when the quantization
+                      job started.
+                    format: date-time
                     type: string
                   type:
                     description: Type is the specific quantization type (e.g., Q4_K_M

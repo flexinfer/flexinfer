@@ -307,6 +307,13 @@ spec:
                           with higher priority models preempting lower priority ones.
                           If not set, model gets exclusive GPU access.
                         type: string
+                      swapCooldown:
+                        description: |-
+                          SwapCooldown overrides the default anti-thrashing cooldown for this
+                          model's shared group. After a swap, the controller blocks further
+                          demand-based swaps for this duration. Defaults to 5m if unset.
+                          Set lower for small models that load quickly, higher for large ones.
+                        type: string
                       vendor:
                         default: auto
                         description: |-
@@ -409,6 +416,88 @@ spec:
                     description: |-
                       NodeSelector for scheduling the model to specific nodes.
                       If not specified, auto-detects GPU nodes.
+                    type: object
+                  quantize:
+                    description: |-
+                      Quantize configures post-download quantization of model weights.
+                      When set, the controller downloads the source model, quantizes it,
+                      and serves the quantized output. Reuses v1alpha1 QuantizationSpec.
+                    properties:
+                      bits:
+                        description: Bits is the quantization bit width for AWQ/GPTQ
+                          formats.
+                        format: int32
+                        type: integer
+                      calibration:
+                        description: |-
+                          Calibration configures calibration parameters for AWQ/GPTQ quantization.
+                          Ignored for GGUF and EXL2 formats.
+                        properties:
+                          maxSamples:
+                            description: |-
+                              MaxSamples is the number of calibration samples to use.
+                              Defaults to 256.
+                            format: int32
+                            maximum: 2048
+                            minimum: 8
+                            type: integer
+                          maxSeqLen:
+                            description: |-
+                              MaxSeqLen is the maximum sequence length for calibration samples.
+                              Defaults to 4096.
+                            format: int32
+                            maximum: 32768
+                            minimum: 128
+                            type: integer
+                          nParallelCalibSamples:
+                            description: |-
+                              NParallelCalibSamples controls how many calibration samples are processed
+                              in parallel during AWQ quantization. Lower values reduce peak VRAM usage.
+                              Defaults to 16 for models >10B params on <=24GB VRAM.
+                            format: int32
+                            maximum: 256
+                            minimum: 1
+                            type: integer
+                        type: object
+                      format:
+                        description: Format is the target quantization format.
+                        enum:
+                        - GGUF
+                        - AWQ
+                        - GPTQ
+                        - EXL2
+                        - FP8
+                        type: string
+                      ggufType:
+                        description: |-
+                          GGUFType is the GGUF quantization level (e.g., Q4_K_M, Q5_K_M, Q8_0).
+                          Only used when Format is GGUF.
+                        type: string
+                      groupSize:
+                        description: GroupSize is the quantization group size for
+                          AWQ/GPTQ formats.
+                        format: int32
+                        type: integer
+                      maxMemoryGB:
+                        description: |-
+                          MaxMemoryGB limits the memory available to the quantization job.
+                          Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
+                        format: int32
+                        type: integer
+                      timeoutSeconds:
+                        description: TimeoutSeconds overrides the default 2-hour deadline
+                          for quantization jobs.
+                        format: int64
+                        maximum: 43200
+                        minimum: 300
+                        type: integer
+                      useGPU:
+                        description: |-
+                          UseGPU enables GPU-accelerated quantization (required for AWQ/GPTQ).
+                          GGUF quantization runs on CPU only.
+                        type: boolean
+                    required:
+                    - format
                     type: object
                   resources:
                     description: Resources defines compute resources for the model
