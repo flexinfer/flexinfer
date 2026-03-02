@@ -183,6 +183,35 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	}
 }
 
+func TestRemovedGraphToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{
+		"agent_graph_find_path",
+		"agent_reasoning_chain_add",
+		"agent_reasoning_chain_get",
+		"agent_reasoning_chain_list",
+	}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-4)", name)
+		}
+	}
+
+	// Core graph tools should still be present
+	retained := []string{
+		"agent_entity_add", "agent_entity_get", "agent_entity_find",
+		"agent_entity_delete", "agent_relation_add", "agent_relation_get",
+		"agent_relation_delete", "agent_graph_query", "agent_graph_stats",
+	}
+	for _, name := range retained {
+		if tool := toolByName(tools, name); tool == nil {
+			t.Errorf("core graph tool %q should still be registered", name)
+		}
+	}
+}
+
 func TestAllToolsHaveDescriptions(t *testing.T) {
 	t.Parallel()
 	_, tools := testServer()
