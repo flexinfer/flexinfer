@@ -89,45 +89,9 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 		return svc.HandleContextAdd(ctx, args)
 	}))
 
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_get",
-		Description: "Retrieve specific context entries by ID.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"entry_ids": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Entry IDs to retrieve.",
-				},
-			},
-			Required: []string{"entry_ids"},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextGet(ctx, args)
-	})
-
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_delete",
-		Description: "Delete context entries by ID. Requires confirm=true.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"entry_ids": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Entry IDs to delete.",
-				},
-				"confirm": map[string]any{
-					"type":        "boolean",
-					"description": "Must be true to confirm deletion.",
-				},
-			},
-			Required: []string{"entry_ids", "confirm"},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextDelete(ctx, args)
-	})
+	// NOTE: agent_context_get and agent_context_delete removed in SIMP-8.
+	// Retrieval is handled by agent_recall (SIMP-1). Deletion is rare and
+	// available via CLI only.
 
 	// Context Retrieval Tools
 
@@ -223,73 +187,8 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 		return svc.HandleContextRecall(ctx, args)
 	}))
 
-	// Cross-Agent Coordination Tools
-
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_share",
-		Description: "Share context entries with other agents.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"entry_ids": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Entry IDs to share.",
-				},
-				"target_agents": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Agent IDs to share with.",
-				},
-				"visibility": map[string]any{
-					"type":        "string",
-					"enum":        []string{"shared", "public"},
-					"description": "Visibility level (default: shared).",
-				},
-			},
-			Required: []string{"entry_ids", "target_agents"},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextShare(ctx, args)
-	})
-
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_query_shared",
-		Description: "Query context shared by other agents. Only returns entries explicitly shared with you or marked public.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"query": map[string]any{
-					"type":        "string",
-					"description": "Search query text.",
-				},
-				"requesting_agent_id": map[string]any{
-					"type":        "string",
-					"description": "Your agent ID (for access control).",
-				},
-				"source_agent_id": map[string]any{
-					"type":        "string",
-					"description": "Specific agent to query (or empty for all shared).",
-				},
-				"entry_types": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Filter by entry types.",
-				},
-				"namespace": map[string]any{
-					"type":        "string",
-					"description": "Filter by namespace.",
-				},
-				"limit": map[string]any{
-					"type":        "integer",
-					"description": "Maximum results (default: 10).",
-				},
-			},
-			Required: []string{"query", "requesting_agent_id"},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextQueryShared(ctx, args)
-	})
+	// NOTE: agent_context_share and agent_context_query_shared removed in SIMP-8.
+	// Cross-agent sharing is handled by the handoff system.
 
 	// Summarization Tool
 
@@ -310,71 +209,11 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 		return svc.HandleContextSummarize(ctx, args)
 	}))
 
-	// Codebase Integration Tool
+	// NOTE: agent_context_link_codebase removed in SIMP-8. Use
+	// agent_context_add with entry_type="code_context" instead.
 
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_link_codebase",
-		Description: "Link agent context to codebase-memory entries. Creates a code_context entry referencing a specific file/symbol.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "Session ID.",
-				},
-				"file_path": map[string]any{
-					"type":        "string",
-					"description": "File path being referenced.",
-				},
-				"repo_id": map[string]any{
-					"type":        "string",
-					"description": "Repository ID from codebase-memory.",
-				},
-				"symbol": map[string]any{
-					"type":        "string",
-					"description": "Symbol name (function, class, etc.).",
-				},
-				"note": map[string]any{
-					"type":        "string",
-					"description": "Context note about this code.",
-				},
-				"tags": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Tags for categorization.",
-				},
-			},
-			Required: []string{"session_id", "file_path"},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextLinkCodebase(ctx, args)
-	})
-
-	// Statistics Tool
-
-	server.AddTool(mcp.Tool{
-		Name:        "agent_context_stats",
-		Description: "Get statistics about agent context storage.",
-		InputSchema: mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"agent_id": map[string]any{
-					"type":        "string",
-					"description": "Filter by agent ID.",
-				},
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "Filter by session ID.",
-				},
-				"namespace": map[string]any{
-					"type":        "string",
-					"description": "Filter by namespace.",
-				},
-			},
-		},
-	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextStats(ctx, args)
-	})
+	// NOTE: agent_context_stats removed in SIMP-8. Statistics available
+	// via CLI only (loom agent context stats).
 
 	// =========================================================================
 	// Enhanced Recall Tool
