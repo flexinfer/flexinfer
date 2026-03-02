@@ -10,10 +10,10 @@ func TestEnrichSessionStartResult_ActiveAgents(t *testing.T) {
 	svc := newTestService()
 
 	// Register 3 agents, expire 1
-	svc.presenceMap["agent-1"] = newTestPresence("agent-1", 120)
-	svc.presenceMap["agent-2"] = newTestPresence("agent-2", 120)
-	svc.presenceMap["agent-3"] = newTestPresence("agent-3", 120)
-	svc.presenceMap["agent-3"].LastHeartbeat = time.Now().Add(-300 * time.Second) // expired
+	svc.presence.reg["agent-1"] = newTestPresence("agent-1", 120)
+	svc.presence.reg["agent-2"] = newTestPresence("agent-2", 120)
+	svc.presence.reg["agent-3"] = newTestPresence("agent-3", 120)
+	svc.presence.reg["agent-3"].LastHeartbeat = time.Now().Add(-300 * time.Second) // expired
 
 	result := map[string]any{}
 	svc.enrichSessionStartResult(context.Background(), result, "agent-1", "default")
@@ -65,10 +65,10 @@ func TestSessionEndCleanup_ReleasesFileClaims(t *testing.T) {
 
 	// Agent-1 has claims on 2 files
 	now := time.Now()
-	svc.fileClaims["main.go"] = map[string]*FileClaim{
+	svc.claims.claims["main.go"] = map[string]*FileClaim{
 		"agent-1": {ID: "c1", AgentID: "agent-1", FilePath: "main.go", CreatedAt: now},
 	}
-	svc.fileClaims["service.go"] = map[string]*FileClaim{
+	svc.claims.claims["service.go"] = map[string]*FileClaim{
 		"agent-1": {ID: "c2", AgentID: "agent-1", FilePath: "service.go", CreatedAt: now},
 		"agent-2": {ID: "c3", AgentID: "agent-2", FilePath: "service.go", CreatedAt: now},
 	}
@@ -80,36 +80,33 @@ func TestSessionEndCleanup_ReleasesFileClaims(t *testing.T) {
 	}
 
 	// agent-2's claim should still exist
-	svc.fileClaimsMu.RLock()
-	if _, ok := svc.fileClaims["service.go"]["agent-2"]; !ok {
+	svc.claims.mu.RLock()
+	if _, ok := svc.claims.claims["service.go"]["agent-2"]; !ok {
 		t.Error("agent-2 claim on service.go should still exist")
 	}
 	// main.go should be fully removed
-	if _, ok := svc.fileClaims["main.go"]; ok {
+	if _, ok := svc.claims.claims["main.go"]; ok {
 		t.Error("main.go should have been removed (no claims left)")
 	}
-	svc.fileClaimsMu.RUnlock()
+	svc.claims.mu.RUnlock()
 }
 
 func TestSessionEndCleanup_DeregistersPresence(t *testing.T) {
 	svc := newTestService()
 
-	svc.presenceMap["agent-1"] = newTestPresence("agent-1", 120)
-	svc.presenceMap["agent-2"] = newTestPresence("agent-2", 120)
+	svc.presence.reg["agent-1"] = newTestPresence("agent-1", 120)
+	svc.presence.reg["agent-2"] = newTestPresence("agent-2", 120)
 
 	// Simulate cleanup for agent-1
-	svc.presenceMu.Lock()
-	_, hadPresence := svc.presenceMap["agent-1"]
-	delete(svc.presenceMap, "agent-1")
-	svc.presenceMu.Unlock()
+	hadPresence := svc.presence.Remove("agent-1")
 
 	if !hadPresence {
 		t.Error("agent-1 should have been registered")
 	}
-	if len(svc.presenceMap) != 1 {
-		t.Errorf("presence map should have 1 entry, got %d", len(svc.presenceMap))
+	if len(svc.presence.reg) != 1 {
+		t.Errorf("presence registry should have 1 entry, got %d", len(svc.presence.reg))
 	}
-	if _, ok := svc.presenceMap["agent-2"]; !ok {
+	if _, ok := svc.presence.reg["agent-2"]; !ok {
 		t.Error("agent-2 should still be registered")
 	}
 }
@@ -152,10 +149,10 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 	}
 	svc.sessions["session-1"] = session
 
-	svc.presenceMap["agent-1"] = newTestPresence("agent-1", 120)
+	svc.presence.reg["agent-1"] = newTestPresence("agent-1", 120)
 
 	now := time.Now()
-	svc.fileClaims["file.go"] = map[string]*FileClaim{
+	svc.claims.claims["file.go"] = map[string]*FileClaim{
 		"agent-1": {ID: "c1", AgentID: "agent-1", FilePath: "file.go", CreatedAt: now},
 	}
 	svc.worktreeAssns["wt-1"] = &WorktreeAssignment{
@@ -167,10 +164,7 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 
 	released := svc.releaseAllClaimsForAgent(agentID)
 
-	svc.presenceMu.Lock()
-	_, hadPresence := svc.presenceMap[agentID]
-	delete(svc.presenceMap, agentID)
-	svc.presenceMu.Unlock()
+	hadPresence := svc.presence.Remove(agentID)
 
 	svc.orphanWorktreesForAgent(agentID)
 
@@ -181,10 +175,10 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 	if !hadPresence {
 		t.Error("should have had presence")
 	}
-	if len(svc.presenceMap) != 0 {
-		t.Error("presence map should be empty")
+	if len(svc.presence.reg) != 0 {
+		t.Error("presence registry should be empty")
 	}
-	if len(svc.fileClaims) != 0 {
+	if len(svc.claims.claims) != 0 {
 		t.Error("file claims should be empty")
 	}
 	if svc.worktreeAssns["wt-1"].Status != WorktreeStatusOrphaned {

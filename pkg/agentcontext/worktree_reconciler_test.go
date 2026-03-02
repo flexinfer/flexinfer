@@ -10,17 +10,22 @@ import (
 )
 
 func newTestServiceForWorktree() *Service {
+	logger := slog.Default()
+	metrics := NewMetrics()
+	cfg := Config{
+		PresenceHeartbeatTTL:            120,
+		PresenceCleanupInterval:         60,
+		WorktreeArtifactCleanupPatterns: ".next,node_modules,target",
+	}
 	return &Service{
-		cfg: Config{
-			PresenceHeartbeatTTL:            120,
-			PresenceCleanupInterval:         60,
-			WorktreeArtifactCleanupPatterns: ".next,node_modules,target",
-		},
-		logger:        slog.Default(),
-		tracer:        noop.NewTracerProvider().Tracer("test"),
-		metrics:       NewMetrics(),
-		presenceMap:   make(map[string]*AgentPresence),
-		fileClaims:    make(map[string]map[string]*FileClaim),
+		cfg:     cfg,
+		logger:  logger,
+		tracer:  noop.NewTracerProvider().Tracer("test"),
+		metrics: metrics,
+
+		presence: NewPresenceSvc(nil, cfg, logger, metrics),
+		claims:   NewClaimSvc(nil, logger, metrics),
+
 		worktreeAssns: make(map[string]*WorktreeAssignment),
 		sessions:      make(map[string]*Session),
 	}

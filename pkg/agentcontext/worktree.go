@@ -75,11 +75,7 @@ func (s *Service) HandleWorktreeAllocate(ctx context.Context, args map[string]an
 	s.worktreeMu.Unlock()
 
 	// Update presence with worktree ID
-	s.presenceMu.Lock()
-	if p, ok := s.presenceMap[agentID]; ok {
-		p.WorktreeID = assignment.ID
-	}
-	s.presenceMu.Unlock()
+	s.presence.SetWorktreeID(agentID, assignment.ID)
 
 	result := map[string]any{
 		"ok":            true,
@@ -135,13 +131,7 @@ func (s *Service) HandleWorktreeRelease(ctx context.Context, args map[string]any
 	}
 
 	// Update presence
-	s.presenceMu.Lock()
-	if p, ok := s.presenceMap[assignment.AgentID]; ok {
-		if p.WorktreeID == assignmentID {
-			p.WorktreeID = ""
-		}
-	}
-	s.presenceMu.Unlock()
+	s.presence.ClearWorktreeID(assignment.AgentID, assignmentID)
 
 	result := map[string]any{
 		"ok":               true,

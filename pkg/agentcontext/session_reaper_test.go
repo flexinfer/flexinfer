@@ -194,13 +194,13 @@ func TestLiveAgentIDs(t *testing.T) {
 	svc := newTestService()
 	now := time.Now()
 
-	svc.presenceMap["alive"] = &AgentPresence{
+	svc.presence.reg["alive"] = &AgentPresence{
 		AgentID:       "alive",
 		LastHeartbeat: now,
 		HeartbeatTTL:  120,
 		Status:        PresenceStatusActive,
 	}
-	svc.presenceMap["stale"] = &AgentPresence{
+	svc.presence.reg["stale"] = &AgentPresence{
 		AgentID:       "stale",
 		LastHeartbeat: now.Add(-10 * time.Minute), // 600s > 3×120s = 360s
 		HeartbeatTTL:  120,

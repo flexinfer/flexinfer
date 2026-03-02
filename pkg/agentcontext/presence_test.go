@@ -22,17 +22,24 @@ func newTestPresence(agentID string, ttl int) *AgentPresence {
 }
 
 func newTestService() *Service {
+	logger := slog.Default()
+	metrics := GetMetrics()
+	cfg := Config{
+		PresenceHeartbeatTTL:    45,
+		PresenceCleanupInterval: 60,
+	}
+
 	return &Service{
-		cfg: Config{
-			PresenceHeartbeatTTL:    45,
-			PresenceCleanupInterval: 60,
-		},
-		logger:        slog.Default(),
-		tracer:        noop.NewTracerProvider().Tracer("test"),
-		presenceMap:   make(map[string]*AgentPresence),
-		fileClaims:    make(map[string]map[string]*FileClaim),
-		worktreeAssns: make(map[string]*WorktreeAssignment),
+		cfg:     cfg,
+		logger:  logger,
+		tracer:  noop.NewTracerProvider().Tracer("test"),
+		metrics: metrics,
+
+		presence: NewPresenceSvc(nil, cfg, logger, metrics),
+		claims:   NewClaimSvc(nil, logger, metrics),
+
 		sessions:      make(map[string]*Session),
+		worktreeAssns: make(map[string]*WorktreeAssignment),
 		nudges:        make(map[string][]*Nudge),
 	}
 }
@@ -41,13 +48,13 @@ func TestPresenceRegister(t *testing.T) {
 	svc := newTestService()
 
 	p := newTestPresence("agent-1", 45)
-	svc.presenceMap[p.AgentID] = p
+	svc.presence.reg[p.AgentID] = p
 
-	if len(svc.presenceMap) != 1 {
-		t.Fatalf("expected 1 presence entry, got %d", len(svc.presenceMap))
+	if len(svc.presence.reg) != 1 {
+		t.Fatalf("expected 1 presence entry, got %d", len(svc.presence.reg))
 	}
 
-	got := svc.presenceMap["agent-1"]
+	got := svc.presence.reg["agent-1"]
 	if got.AgentID != "agent-1" {
 		t.Errorf("agent_id = %q, want %q", got.AgentID, "agent-1")
 	}
@@ -64,7 +71,7 @@ func TestPresenceHeartbeat(t *testing.T) {
 
 	p := newTestPresence("agent-1", 120)
 	originalHeartbeat := p.LastHeartbeat
-	svc.presenceMap[p.AgentID] = p
+	svc.presence.reg[p.AgentID] = p
 
 	// Simulate heartbeat update
 	time.Sleep(time.Millisecond)
@@ -83,7 +90,7 @@ func TestPresenceHeartbeatNotRegistered(t *testing.T) {
 	svc := newTestService()
 
 	// Agent not registered — heartbeat should fail
-	_, ok := svc.presenceMap["ghost-agent"]
+	_, ok := svc.presence.reg["ghost-agent"]
 	if ok {
 		t.Error("unregistered agent should not be in presence map")
 	}
@@ -95,13 +102,13 @@ func TestPresenceList(t *testing.T) {
 	// Register 2 agents
 	p1 := newTestPresence("agent-1", 120)
 	p2 := newTestPresence("agent-2", 120)
-	svc.presenceMap[p1.AgentID] = p1
-	svc.presenceMap[p2.AgentID] = p2
+	svc.presence.reg[p1.AgentID] = p1
+	svc.presence.reg[p2.AgentID] = p2
 
 	// Count active (non-expired) agents
 	now := time.Now()
 	active := 0
-	for _, p := range svc.presenceMap {
+	for _, p := range svc.presence.reg {
 		if !now.After(p.LastHeartbeat.Add(time.Duration(p.HeartbeatTTL) * time.Second)) {
 			active++
 		}
@@ -114,7 +121,7 @@ func TestPresenceList(t *testing.T) {
 	p2.LastHeartbeat = time.Now().Add(-300 * time.Second)
 	active = 0
 	now = time.Now()
-	for _, p := range svc.presenceMap {
+	for _, p := range svc.presence.reg {
 		if !now.After(p.LastHeartbeat.Add(time.Duration(p.HeartbeatTTL) * time.Second)) {
 			active++
 		}
@@ -128,15 +135,15 @@ func TestPresenceDeregister(t *testing.T) {
 	svc := newTestService()
 
 	p := newTestPresence("agent-1", 120)
-	svc.presenceMap[p.AgentID] = p
+	svc.presence.reg[p.AgentID] = p
 
-	if len(svc.presenceMap) != 1 {
+	if len(svc.presence.reg) != 1 {
 		t.Fatal("expected 1 entry before deregister")
 	}
 
-	delete(svc.presenceMap, "agent-1")
+	delete(svc.presence.reg, "agent-1")
 
-	if len(svc.presenceMap) != 0 {
+	if len(svc.presence.reg) != 0 {
 		t.Error("expected 0 entries after deregister")
 	}
 }
@@ -147,11 +154,11 @@ func TestDetectFileConflicts(t *testing.T) {
 	// Register 2 agents with overlapping files
 	p1 := newTestPresence("agent-1", 120)
 	p1.ActiveFiles = []string{"main.go", "service.go"}
-	svc.presenceMap[p1.AgentID] = p1
+	svc.presence.reg[p1.AgentID] = p1
 
 	p2 := newTestPresence("agent-2", 120)
 	p2.ActiveFiles = []string{"service.go", "config.go"}
-	svc.presenceMap[p2.AgentID] = p2
+	svc.presence.reg[p2.AgentID] = p2
 
 	// Detect conflicts from agent-1's perspective
 	conflicts := svc.detectFileConflicts("agent-1", []string{"service.go"})
@@ -202,17 +209,17 @@ func TestPresenceStateMachine(t *testing.T) {
 	// Register an agent with a short TTL for testing.
 	ttl := 10 // 10 seconds
 	p := newTestPresence("agent-sm", ttl)
-	svc.presenceMap[p.AgentID] = p
+	svc.presence.reg[p.AgentID] = p
 
 	// Track state transitions via the callback.
 	var transitions []struct{ from, to PresenceStatus }
-	svc.onPresenceEvent = func(eventType, agentID string, oldStatus, newStatus PresenceStatus) {
+	svc.presence.SetOnEvent(func(eventType, agentID string, oldStatus, newStatus PresenceStatus) {
 		transitions = append(transitions, struct{ from, to PresenceStatus }{oldStatus, newStatus})
-	}
+	})
 
 	// 1. After 1×TTL: active → idle
 	p.LastHeartbeat = time.Now().Add(-time.Duration(ttl+1) * time.Second)
-	svc.cleanupExpiredPresence(context.TODO())
+	svc.presence.cleanupExpired(context.TODO())
 
 	if p.Status != PresenceStatusIdle {
 		t.Errorf("expected idle after 1×TTL, got %s", p.Status)
@@ -223,7 +230,7 @@ func TestPresenceStateMachine(t *testing.T) {
 
 	// 2. After 2×TTL: idle → offline
 	p.LastHeartbeat = time.Now().Add(-time.Duration(2*ttl+1) * time.Second)
-	svc.cleanupExpiredPresence(context.TODO())
+	svc.presence.cleanupExpired(context.TODO())
 
 	if p.Status != PresenceStatusOffline {
 		t.Errorf("expected offline after 2×TTL, got %s", p.Status)
@@ -234,10 +241,10 @@ func TestPresenceStateMachine(t *testing.T) {
 
 	// 3. After 3×TTL: offline → expired (removed from map)
 	p.LastHeartbeat = time.Now().Add(-time.Duration(3*ttl+1) * time.Second)
-	svc.cleanupExpiredPresence(context.TODO())
+	svc.presence.cleanupExpired(context.TODO())
 
-	if _, exists := svc.presenceMap["agent-sm"]; exists {
-		t.Error("expected agent to be removed from presenceMap after 3×TTL")
+	if _, exists := svc.presence.reg["agent-sm"]; exists {
+		t.Error("expected agent to be removed from presence registry after 3×TTL")
 	}
 	if len(transitions) != 3 || transitions[2].to != PresenceStatusExpired {
 		t.Errorf("expected transition to expired, got %+v", transitions)
@@ -249,7 +256,7 @@ func TestPresenceHeartbeatResetsToActive(t *testing.T) {
 
 	p := newTestPresence("agent-idle", 45)
 	p.Status = PresenceStatusIdle
-	svc.presenceMap[p.AgentID] = p
+	svc.presence.reg[p.AgentID] = p
 
 	// Simulate heartbeat (no explicit status) — should reset to active.
 	p.LastHeartbeat = time.Now()

@@ -62,21 +62,13 @@ type Service struct {
 	// Workflow engine (with persistence)
 	persistedWorkflowEngine *persistedWorkflowEngine
 
-	// Agent presence registry
-	presenceMu  sync.RWMutex
-	presenceMap map[string]*AgentPresence
-
-	// File claims (advisory locks)
-	fileClaimsMu sync.RWMutex
-	fileClaims   map[string]map[string]*FileClaim // filePath -> agentID -> claim
+	// Domain sub-services
+	presence *PresenceSvc
+	claims   *ClaimSvc
 
 	// Worktree assignments
 	worktreeMu    sync.RWMutex
 	worktreeAssns map[string]*WorktreeAssignment
-
-	// Presence event callback — HUD wires this to broadcast SSE events
-	// when presence state transitions occur (idle, offline, expired).
-	onPresenceEvent func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)
 
 	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
 	nudgeMu sync.Mutex
@@ -99,7 +91,7 @@ func (s *Service) Tracer() trace.Tracer {
 // OnPresenceEvent registers a callback invoked when an agent's presence
 // state transitions (e.g., active → idle, idle → offline).
 func (s *Service) OnPresenceEvent(fn func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)) {
-	s.onPresenceEvent = fn
+	s.presence.SetOnEvent(fn)
 }
 
 // AddNudge enqueues a nudge for the given agent, delivered on next heartbeat.
@@ -165,14 +157,14 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		embedder = embed.NewMorphClient(hc, cfg.EmbedBaseURL, cfg.EmbedAPIKey, cfg.EmbedModel)
 	}
 
+	qdrantReg := NewQdrantRegistry(hc, cfg)
+
 	svc := &Service{
 		cfg:    cfg,
-		qdrant: NewQdrantRegistry(hc, cfg),
+		qdrant: qdrantReg,
 		embed:  embedder,
 
 		sessions:      make(map[string]*Session),
-		presenceMap:   make(map[string]*AgentPresence),
-		fileClaims:    make(map[string]map[string]*FileClaim),
 		worktreeAssns: make(map[string]*WorktreeAssignment),
 		nudges:        make(map[string][]*Nudge),
 	}
@@ -220,6 +212,22 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		svc.tracer = noop.NewTracerProvider().Tracer("agentcontext")
 	}
 	svc.metrics = GetMetrics()
+
+	// Initialize domain sub-services
+	svc.presence = NewPresenceSvc(qdrantReg.Get(CollPresence), cfg, svc.logger, svc.metrics)
+	svc.claims = NewClaimSvc(qdrantReg.Get(CollFileClaims), svc.logger, svc.metrics)
+
+	// Wire cross-domain callbacks for presence cleanup
+	svc.presence.releaseClaimsForAgent = func(agentID string) {
+		svc.claims.ReleaseAllForAgent(agentID)
+	}
+	svc.presence.orphanWorktrees = svc.orphanWorktreesForAgent
+	svc.presence.endSessionsForAgent = svc.endActiveSessionsForAgent
+	svc.presence.detectConflicts = func(agentID string, files []string) []map[string]any {
+		conflicts := svc.presence.DetectActiveFileConflicts(agentID, files)
+		conflicts = append(conflicts, svc.claims.DetectConflicts(agentID, files)...)
+		return conflicts
+	}
 
 	// Initialize compaction scheduler
 	compactionConfig := DefaultCompactionConfig()
@@ -304,12 +312,12 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 	}
 
 	// Load presence registry
-	if err := s.loadPresenceFromQdrant(ctx); err != nil {
+	if err := s.presence.LoadFromQdrant(ctx); err != nil {
 		s.logger.Warn("failed to load presence", "error", err)
 	}
 
 	// Load file claims
-	if err := s.loadFileClaimsFromQdrant(ctx); err != nil {
+	if err := s.claims.LoadFromQdrant(ctx); err != nil {
 		s.logger.Warn("failed to load file claims", "error", err)
 	}
 
@@ -378,7 +386,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 	}
 
 	// Start presence cleanup goroutine
-	go s.runPresenceCleanup(bgCtx)
+	go s.presence.RunCleanup(bgCtx)
 
 	// Start session reaper
 	if s.cfg.SessionReaperEnabled {
@@ -490,18 +498,9 @@ func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (
 // enrichSessionStartResult adds coordination info (pending handoffs, active agents) to a session start result.
 func (s *Service) enrichSessionStartResult(ctx context.Context, result map[string]any, agentID, namespace string) {
 	// Count active agents in same namespace
-	activeAgents := 0
-	s.presenceMu.RLock()
-	now := time.Now()
-	for _, p := range s.presenceMap {
-		if now.After(p.LastHeartbeat.Add(time.Duration(p.HeartbeatTTL) * time.Second)) {
-			continue // expired
-		}
-		activeAgents++
-	}
-	s.presenceMu.RUnlock()
-	result["active_agents"] = activeAgents
+	result["active_agents"] = len(s.presence.LiveAgentIDs())
 
+	now := time.Now()
 	// Fetch pending handoffs for this agent
 	var pendingHandoffs []map[string]any
 	if s.qdrant.Get(CollHandoffs) != nil {
@@ -591,14 +590,11 @@ func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*m
 		cleanedUp := map[string]any{}
 
 		// Release all file claims for this agent
-		released := s.releaseAllClaimsForAgent(agentID)
+		released := s.claims.ReleaseAllForAgent(agentID)
 		cleanedUp["file_claims_released"] = released
 
 		// Deregister presence
-		s.presenceMu.Lock()
-		_, hadPresence := s.presenceMap[agentID]
-		delete(s.presenceMap, agentID)
-		s.presenceMu.Unlock()
+		hadPresence := s.presence.Remove(agentID)
 		cleanedUp["presence_deregistered"] = hadPresence
 
 		if hadPresence && s.qdrant.Get(CollPresence) != nil {
@@ -1007,15 +1003,10 @@ func (s *Service) endStaleSessions(ctx context.Context, maxAgeHours int) int {
 
 // liveAgentIDs returns the set of agent IDs with non-expired presence.
 func (s *Service) liveAgentIDs() map[string]bool {
-	s.presenceMu.RLock()
-	defer s.presenceMu.RUnlock()
-	result := make(map[string]bool, len(s.presenceMap))
-	now := time.Now()
-	for agentID, p := range s.presenceMap {
-		ttl := time.Duration(p.HeartbeatTTL) * time.Second
-		if now.Sub(p.LastHeartbeat) < 3*ttl {
-			result[agentID] = true
-		}
+	ids := s.presence.LiveAgentIDs()
+	result := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		result[id] = true
 	}
 	return result
 }
