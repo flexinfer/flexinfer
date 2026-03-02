@@ -183,6 +183,18 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	}
 }
 
+func TestRemovedMemoryExportImportToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{"agent_memory_export", "agent_memory_import"}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-3)", name)
+		}
+	}
+}
+
 func TestAllToolsHaveDescriptions(t *testing.T) {
 	t.Parallel()
 	_, tools := testServer()
