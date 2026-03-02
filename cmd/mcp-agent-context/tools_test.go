@@ -54,7 +54,6 @@ func TestRegisterTools_RegistersCoreAgentToolFamilies(t *testing.T) {
 		"agent_file_claim_acquire",
 		"agent_worktree_allocate",
 		"agent_handoff_create",
-		"agent_compaction_status",
 	}
 
 	for _, name := range expected {
@@ -203,6 +202,22 @@ func TestRemovedMemoryLifecycleToolsAreGone(t *testing.T) {
 	// agent_memory_policy_get should still be present (read-only introspection)
 	if tool := toolByName(tools, "agent_memory_policy_get"); tool == nil {
 		t.Error("agent_memory_policy_get should be retained as read-only")
+	}
+}
+
+func TestRemovedCompactionToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{
+		"agent_compaction_status",
+		"agent_compaction_trigger",
+		"agent_reconcile_trigger",
+	}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-6)", name)
+		}
 	}
 }
 
