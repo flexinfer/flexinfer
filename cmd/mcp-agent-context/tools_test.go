@@ -54,7 +54,6 @@ func TestRegisterTools_RegistersCoreAgentToolFamilies(t *testing.T) {
 		"agent_file_claim_acquire",
 		"agent_worktree_allocate",
 		"agent_handoff_create",
-		"agent_compaction_status",
 	}
 
 	for _, name := range expected {
@@ -180,6 +179,37 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	props := tool.InputSchema.Properties
 	if _, ok := props["items"]; !ok {
 		t.Error("expected items property")
+	}
+}
+
+func TestRemovedLowUtilityContextToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{
+		"agent_context_get",
+		"agent_context_delete",
+		"agent_context_share",
+		"agent_context_query_shared",
+		"agent_context_link_codebase",
+		"agent_context_stats",
+	}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-8)", name)
+		}
+	}
+
+	// Core context tools should still be present
+	retained := []string{
+		"agent_context_add", "agent_context_search",
+		"agent_context_recall", "agent_context_summarize",
+		"agent_context_recall_enhanced",
+	}
+	for _, name := range retained {
+		if tool := toolByName(tools, name); tool == nil {
+			t.Errorf("core context tool %q should still be registered", name)
+		}
 	}
 }
 
