@@ -720,6 +720,17 @@ func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alph
 	log := log.FromContext(ctx)
 	flashDir := filepath.Join("/dev/shm/flexinfer", model.Namespace, model.Name)
 
+	// Tolerate dedicated GPU nodes so the cleanup pod can schedule on tainted nodes.
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      model.Name + "-tmpfs-cleanup",
@@ -733,6 +744,7 @@ func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alph
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					NodeSelector:                 model.Spec.NodeSelector,
+					Tolerations:                  tolerations,
 					AutomountServiceAccountToken: ptr.To(false),
 					Containers: []corev1.Container{{
 						Name:    "cleanup",
@@ -1899,6 +1911,67 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		Ready:    true,
 	}
 
+	// For Local cache strategy with a nodeSelector, verify the cache
+	// directory on the target node is non-empty before marking ready.
+	// This prevents pods from scheduling with empty hostPath volumes
+	// (e.g. when a model is moved to a new node that lacks the cache).
+	if strategy == "Local" && len(model.Spec.NodeSelector) > 0 {
+		log := log.FromContext(ctx)
+		jobName := model.Name + "-cache-check"
+		job := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+		if errors.IsNotFound(err) {
+			newJob, err := r.jobForLocalCacheCheck(model)
+			if err != nil {
+				return false, fmt.Errorf("build local cache check job: %w", err)
+			}
+			if err := r.Create(ctx, newJob); err != nil {
+				if !errors.IsAlreadyExists(err) {
+					return false, fmt.Errorf("create local cache check job: %w", err)
+				}
+			} else {
+				log.Info("Created local cache check job", "job", jobName)
+			}
+			model.Status.Cache.Ready = false
+			model.Status.Cache.JobName = jobName
+			model.Status.Cache.JobPhase = "Pending"
+			model.Status.Cache.Message = "verifying local cache"
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheCheck", "verifying local cache directory")
+			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				return false, err
+			}
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+
+		// Job exists — check completion status.
+		ready := false
+		jobPhase := "Unknown"
+		message := "verifying local cache"
+		if job.Status.Succeeded > 0 {
+			ready = true
+			jobPhase = "Succeeded"
+			message = "local cache verified"
+		} else if job.Status.Failed > 0 {
+			jobPhase = "Failed"
+			message = "local cache directory is empty or missing — populate the cache before deploying"
+		} else if job.Status.Active > 0 {
+			jobPhase = "Running"
+			message = "local cache check running"
+		}
+
+		model.Status.Cache.Ready = ready
+		model.Status.Cache.JobName = jobName
+		model.Status.Cache.JobPhase = jobPhase
+		model.Status.Cache.Message = message
+		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			return false, err
+		}
+		return ready, nil
+	}
+
 	if strategy != "SharedPVC" {
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "NoCacheJob", "no cache job required")
 		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
@@ -2141,16 +2214,45 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 			if meta.QuantizationTimeSeconds > 0 {
 				model.Status.Cache.Quantization.QuantizationTime = fmt.Sprintf("%ds", meta.QuantizationTimeSeconds)
 			}
+		} else {
+			model.Status.Cache.Quantization = &aiv1alpha1.QuantizationStatus{
+				Format: string(spec.Format),
+			}
+		}
+		if job.Status.StartTime != nil {
+			model.Status.Cache.Quantization.StartedAt = job.Status.StartTime
+		}
+		if job.Status.CompletionTime != nil {
+			model.Status.Cache.Quantization.CompletedAt = job.Status.CompletionTime
+		}
+		if spec.Calibration != nil {
+			model.Status.Cache.Quantization.CalibrationParams = spec.Calibration.DeepCopy()
 		}
 		log.Info("quantization job completed", "job", jobName)
 		return true, nil
 	}
 
 	if job.Status.Failed > 0 {
+		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, model.Namespace, jobName)
 		model.Status.Cache.Ready = false
 		model.Status.Cache.JobName = jobName
 		model.Status.Cache.JobPhase = "Failed"
-		model.Status.Cache.Message = "quantization job failed"
+		if failureMsg != "" {
+			model.Status.Cache.Message = fmt.Sprintf("quantization job failed: %s", truncateString(failureMsg, 200))
+		} else {
+			model.Status.Cache.Message = "quantization job failed"
+		}
+		quantStatus := &aiv1alpha1.QuantizationStatus{
+			Format:         string(spec.Format),
+			FailureMessage: failureMsg,
+		}
+		if job.Status.StartTime != nil {
+			quantStatus.StartedAt = job.Status.StartTime
+		}
+		if spec.Calibration != nil {
+			quantStatus.CalibrationParams = spec.Calibration.DeepCopy()
+		}
+		model.Status.Cache.Quantization = quantStatus
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationFailed", model.Status.Cache.Message)
 		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
 			return false, err
@@ -2158,11 +2260,15 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		return false, nil
 	}
 
-	// Still running.
+	// Still running — include elapsed time for progress visibility.
+	elapsed := ""
+	if job.Status.StartTime != nil {
+		elapsed = fmt.Sprintf(" (elapsed %s)", time.Since(job.Status.StartTime.Time).Truncate(time.Second))
+	}
 	model.Status.Cache.Ready = false
 	model.Status.Cache.JobName = jobName
 	model.Status.Cache.JobPhase = "Running"
-	model.Status.Cache.Message = "quantization job running"
+	model.Status.Cache.Message = fmt.Sprintf("quantization job running%s", elapsed)
 	setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationRunning", model.Status.Cache.Message)
 	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
 		return false, err
@@ -3579,6 +3685,103 @@ echo "Artifact present at file $TARGET"
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 								ClaimName: pvcName,
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// jobForLocalCacheCheck creates a Job that verifies the Local cache hostPath
+// directory on the target node contains model files. This prevents the controller
+// from marking cache ready when the directory is empty (e.g. after moving a model
+// to a new node that has not been pre-populated).
+func (r *ModelReconciler) jobForLocalCacheCheck(model *aiv1alpha2.Model) (*batchv1.Job, error) {
+	cachePath := resolveLocalCachePath(model)
+
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
+	script := fmt.Sprintf(`
+set -ex
+DIR="%s"
+if [ ! -d "$DIR" ]; then
+  echo "Cache directory does not exist: $DIR"
+  exit 1
+fi
+# Check for at least one .safetensors, .bin, .gguf, or .json file
+COUNT=$(find "$DIR" -maxdepth 3 -type f \( -name "*.safetensors" -o -name "*.bin" -o -name "*.gguf" -o -name "*.json" \) 2>/dev/null | head -5 | wc -l)
+if [ "$COUNT" -eq 0 ]; then
+  echo "Cache directory is empty or contains no model files: $DIR"
+  ls -la "$DIR" 2>/dev/null || true
+  exit 1
+fi
+echo "Local cache verified: $DIR ($COUNT+ model files found)"
+`, cachePath)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-check",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":     model.Spec.Source,
+				"flexinfer.ai/cache-kind": "local-check",
+				"flexinfer.ai/cache-path": cachePath,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            ptr.To(int32(0)),
+			TTLSecondsAfterFinished: ptr.To(int32(300)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy:                corev1.RestartPolicyNever,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
+					Containers: []corev1.Container{{
+						Name:    "checker",
+						Image:   "alpine:3.19",
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{script},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "cache-dir",
+							MountPath: cachePath,
+						}},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("32Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "cache-dir",
+						VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: cachePath,
+								Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 							},
 						},
 					}},

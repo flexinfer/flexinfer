@@ -1959,6 +1959,15 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			modelCache.Status.CacheSizeBytes = quantStatus.CompressedSizeBytes
 		}
 
+		if quantJob.Status.StartTime != nil {
+			quantStatus.StartedAt = quantJob.Status.StartTime
+		}
+		if quantJob.Status.CompletionTime != nil {
+			quantStatus.CompletedAt = quantJob.Status.CompletionTime
+		}
+		if modelCache.Spec.Quantization.Calibration != nil {
+			quantStatus.CalibrationParams = modelCache.Spec.Quantization.Calibration.DeepCopy()
+		}
 		modelCache.Status.Quantization = quantStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -1992,17 +2001,40 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	if quantJob.Status.Failed > 0 {
 		log.Info("Quantization job failed", "cache", modelCache.Name)
+
+		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, modelCache.Namespace, quantJob.Name)
+		quantStatus := &aiv1alpha1.QuantizationStatus{
+			Format:         string(modelCache.Spec.Quantization.Format),
+			Type:           quantizationTypeFromSpec(modelCache.Spec.Quantization),
+			FailureMessage: failureMsg,
+		}
+		if quantJob.Status.StartTime != nil {
+			quantStatus.StartedAt = quantJob.Status.StartTime
+		}
+		if modelCache.Spec.Quantization.Calibration != nil {
+			quantStatus.CalibrationParams = modelCache.Spec.Quantization.Calibration.DeepCopy()
+		}
+		modelCache.Status.Quantization = quantStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
-			"Quantization job failed - check job logs for details")
+
+		eventMsg := "Quantization job failed"
+		if failureMsg != "" {
+			eventMsg = fmt.Sprintf("Quantization job failed: %s", truncateString(failureMsg, 200))
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed", eventMsg)
 		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running — requeue to check later
+	// Job still running — emit progress and requeue to check later.
+	if quantJob.Status.StartTime != nil {
+		elapsed := time.Since(quantJob.Status.StartTime.Time).Truncate(time.Second)
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
+			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
+	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -2186,6 +2218,48 @@ func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
 	default:
 		return string(spec.Format)
 	}
+}
+
+// captureQuantizationFailureLogs reads the termination message from the quantizer
+// container of a failed job's pods. Returns the message or empty string.
+func captureQuantizationFailureLogs(ctx context.Context, c client.Client, namespace, jobName string) string {
+	podList := &corev1.PodList{}
+	if err := c.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return ""
+	}
+	for i := range podList.Items {
+		for _, cs := range podList.Items[i].Status.ContainerStatuses {
+			if cs.Name != "quantizer" {
+				continue
+			}
+			terminated := cs.State.Terminated
+			if terminated == nil {
+				terminated = cs.LastTerminationState.Terminated
+			}
+			if terminated == nil {
+				continue
+			}
+			msg := strings.TrimSpace(terminated.Message)
+			if msg != "" {
+				return truncateString(msg, 1024)
+			}
+			if terminated.Reason != "" {
+				return truncateString(terminated.Reason, 256)
+			}
+		}
+	}
+	return ""
+}
+
+// truncateString truncates s to maxLen, appending "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // SetupWithManager sets up the controller with the Manager.

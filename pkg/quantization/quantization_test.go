@@ -757,6 +757,244 @@ func TestRecommendSpec(t *testing.T) {
 	})
 }
 
+func TestGGUFJobBuilder_BuildJob_CustomTimeout(t *testing.T) {
+	builder := &GGUFJobBuilder{}
+	timeout := int64(14400) // 4 hours
+
+	params := JobParams{
+		Name:      "test-model",
+		Namespace: "default",
+		PVCName:   "test-model",
+		ModelPath: "test-model",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:         aiv1alpha1.QuantizationFormatGGUF,
+			GGUFType:       "Q4_K_M",
+			TimeoutSeconds: &timeout,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != timeout {
+		t.Errorf("ActiveDeadlineSeconds = %v, want %d", job.Spec.ActiveDeadlineSeconds, timeout)
+	}
+}
+
+func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	maxSeqLen := int32(2048)
+	maxSamples := int32(512)
+
+	params := JobParams{
+		Name:      "test-awq-calib",
+		Namespace: "default",
+		PVCName:   "test-awq-calib",
+		ModelPath: "test-awq-calib",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatAWQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			Calibration: &aiv1alpha1.CalibrationSpec{
+				MaxSeqLen:  &maxSeqLen,
+				MaxSamples: &maxSamples,
+			},
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "max_calib_seq_len=2048") {
+		t.Error("expected AWQ script to contain max_calib_seq_len=2048")
+	}
+	if !contains(script, "max_calib_samples=512") {
+		t.Error("expected AWQ script to contain max_calib_samples=512")
+	}
+	if !contains(script, "maxSeqLen=2048 maxSamples=512") {
+		t.Error("expected AWQ script to log calibration params")
+	}
+}
+
+func TestAWQJobBuilder_BuildJob_DefaultCalibration(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+
+	params := JobParams{
+		Name:      "test-awq-default",
+		Namespace: "default",
+		PVCName:   "test-awq-default",
+		ModelPath: "test-awq-default",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatAWQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			// Calibration is nil — should use defaults
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "max_calib_seq_len=4096") {
+		t.Error("expected AWQ script to contain default max_calib_seq_len=4096")
+	}
+	if !contains(script, "max_calib_samples=256") {
+		t.Error("expected AWQ script to contain default max_calib_samples=256")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	maxSeqLen := int32(1024)
+	maxSamples := int32(64)
+
+	params := JobParams{
+		Name:      "test-gptq-calib",
+		Namespace: "default",
+		PVCName:   "test-gptq-calib",
+		ModelPath: "test-gptq-calib",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			Calibration: &aiv1alpha1.CalibrationSpec{
+				MaxSeqLen:  &maxSeqLen,
+				MaxSamples: &maxSamples,
+			},
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "max_seq_len = 1024") {
+		t.Error("expected GPTQ script to contain max_seq_len = 1024")
+	}
+	if !contains(script, "max_samples = 64") {
+		t.Error("expected GPTQ script to contain max_samples = 64")
+	}
+	if !contains(script, "load_dataset") {
+		t.Error("expected GPTQ script to load calibration dataset")
+	}
+}
+
+func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	timeout := int64(10800) // 3 hours
+
+	params := JobParams{
+		Name:      "test-timeout",
+		Namespace: "default",
+		PVCName:   "test-timeout",
+		ModelPath: "test-timeout",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:         aiv1alpha1.QuantizationFormatAWQ,
+			Bits:           &bits,
+			GroupSize:      &groupSize,
+			UseGPU:         true,
+			TimeoutSeconds: &timeout,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != timeout {
+		t.Errorf("ActiveDeadlineSeconds = %v, want %d", job.Spec.ActiveDeadlineSeconds, timeout)
+	}
+}
+
+func TestCleanupTrapInScripts(t *testing.T) {
+	tests := []struct {
+		name    string
+		builder JobBuilder
+		params  JobParams
+	}{
+		{
+			name:    "AWQ has cleanup trap",
+			builder: &AWQJobBuilder{},
+			params: JobParams{
+				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
+				Spec: &aiv1alpha1.QuantizationSpec{
+					Format: aiv1alpha1.QuantizationFormatAWQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
+				},
+			},
+		},
+		{
+			name:    "GPTQ has cleanup trap",
+			builder: &GPTQJobBuilder{},
+			params: JobParams{
+				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
+				Spec: &aiv1alpha1.QuantizationSpec{
+					Format: aiv1alpha1.QuantizationFormatGPTQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
+				},
+			},
+		},
+		{
+			name:    "EXL2 has cleanup trap",
+			builder: &EXL2JobBuilder{},
+			params: JobParams{
+				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
+				Spec: &aiv1alpha1.QuantizationSpec{
+					Format: aiv1alpha1.QuantizationFormatEXL2, Bits: int32Ptr(4), UseGPU: true,
+				},
+			},
+		},
+		{
+			name:    "FP8 has cleanup trap",
+			builder: &FP8JobBuilder{},
+			params: JobParams{
+				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
+				Spec: &aiv1alpha1.QuantizationSpec{
+					Format: aiv1alpha1.QuantizationFormatFP8, Bits: int32Ptr(8), UseGPU: true,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job, err := tt.builder.BuildJob(tt.params)
+			if err != nil {
+				t.Fatalf("BuildJob() returned error: %v", err)
+			}
+			script := job.Spec.Template.Spec.Containers[0].Args[0]
+			if !contains(script, "trap cleanup EXIT") {
+				t.Error("script should contain cleanup trap")
+			}
+			if !contains(script, "trap - EXIT") {
+				t.Error("script should disable cleanup trap before metadata")
+			}
+		})
+	}
+}
+
+func int32Ptr(v int32) *int32 { return &v }
+
 func contains(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && containsStr([]string{s}, substr)
 }

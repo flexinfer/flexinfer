@@ -24,6 +24,12 @@ const (
 	// DefaultGPUQuantizationCPU is the default CPU request for AWQ/GPTQ jobs.
 	DefaultGPUQuantizationCPU = 8
 
+	// DefaultCalibrationMaxSeqLen is the default max sequence length for calibration.
+	DefaultCalibrationMaxSeqLen = 4096
+
+	// DefaultCalibrationMaxSamples is the default number of calibration samples.
+	DefaultCalibrationMaxSamples = 256
+
 	// DefaultAWQBits is the default bit width for AWQ.
 	DefaultAWQBits = 4
 
@@ -93,13 +99,24 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	return buildGPUQuantizationJob(
 		params,
 		awqQuantizerImage(),
-		b.buildScript(params.ModelPath, bits, groupSize),
+		b.buildScript(params.ModelPath, bits, groupSize, params.Spec.Calibration),
 		memoryGB,
 	)
 }
 
 // buildScript generates the shell script for AWQ quantization.
-func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int) string {
+func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) string {
+	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
+	maxSamples := int32(DefaultCalibrationMaxSamples)
+	if calib != nil {
+		if calib.MaxSeqLen != nil {
+			maxSeqLen = *calib.MaxSeqLen
+		}
+		if calib.MaxSamples != nil {
+			maxSamples = *calib.MaxSamples
+		}
+	}
+
 	return fmt.Sprintf(`set -euo pipefail
 
 MODEL_DIR="/cache/%s"
@@ -109,9 +126,13 @@ TYPE="W${BITS}_G${GROUP_SIZE}"
 OUT_DIR="${MODEL_DIR}/awq-w${BITS}-g${GROUP_SIZE}"
 START_TS=$(date +%%s)
 
+cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
+trap cleanup EXIT
+
 echo "=== AWQ Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
+echo "Calibration: maxSeqLen=%d maxSamples=%d"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -141,10 +162,14 @@ model.quantize(
         "zero_point": True,
         "version": "GEMM",
     },
+    max_calib_seq_len=%d,
+    max_calib_samples=%d,
 )
 model.save_quantized(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
+
+trap - EXIT
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
@@ -174,7 +199,7 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize)
+`, modelPath, bits, groupSize, maxSeqLen, maxSamples, maxSeqLen, maxSamples)
 }
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
@@ -238,13 +263,24 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	return buildGPUQuantizationJob(
 		params,
 		gptqQuantizerImage(),
-		b.buildScript(params.ModelPath, bits, groupSize),
+		b.buildScript(params.ModelPath, bits, groupSize, params.Spec.Calibration),
 		memoryGB,
 	)
 }
 
 // buildScript generates the shell script for GPTQ quantization.
-func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int) string {
+func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) string {
+	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
+	maxSamples := int32(DefaultCalibrationMaxSamples)
+	if calib != nil {
+		if calib.MaxSeqLen != nil {
+			maxSeqLen = *calib.MaxSeqLen
+		}
+		if calib.MaxSamples != nil {
+			maxSamples = *calib.MaxSamples
+		}
+	}
+
 	return fmt.Sprintf(`set -euo pipefail
 
 MODEL_DIR="/cache/%s"
@@ -254,9 +290,13 @@ TYPE="W${BITS}_G${GROUP_SIZE}"
 OUT_DIR="${MODEL_DIR}/gptq-w${BITS}-g${GROUP_SIZE}"
 START_TS=$(date +%%s)
 
+cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
+trap cleanup EXIT
+
 echo "=== GPTQ Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
+echo "Calibration: maxSeqLen=%d maxSamples=%d"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -268,6 +308,7 @@ mkdir -p "${OUT_DIR}"
 export MODEL_DIR OUT_DIR BITS GROUP_SIZE
 python3 - <<'PY'
 import os
+from datasets import load_dataset
 from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
 from transformers import AutoTokenizer
 
@@ -275,6 +316,8 @@ model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
 bits = int(os.environ["BITS"])
 group_size = int(os.environ["GROUP_SIZE"])
+max_seq_len = %d
+max_samples = %d
 
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
 quantize_config = BaseQuantizeConfig(bits=bits, group_size=group_size, desc_act=False)
@@ -283,11 +326,19 @@ model = AutoGPTQForCausalLM.from_pretrained(
     quantize_config=quantize_config,
     trust_remote_code=True,
 )
-examples = [tokenizer("The quick brown fox jumps over the lazy dog", return_tensors="pt")]
+
+dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
+examples = []
+for sample in dataset.select(range(min(max_samples, len(dataset)))):
+    tok = tokenizer(sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True)
+    examples.append(tok)
+
 model.quantize(examples)
 model.save_quantized(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
+
+trap - EXIT
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
@@ -317,11 +368,11 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize)
+`, modelPath, bits, groupSize, maxSeqLen, maxSamples, maxSeqLen, maxSamples)
 }
 
 func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB int32) (*batchv1.Job, error) {
-	deadline := DefaultActiveDeadlineSeconds
+	deadline := effectiveDeadline(params.Spec)
 	backoffLimit := int32(2)
 	pvcVol, pvcMount := modelPVCVolume(params.PVCName)
 	wsVol, wsMount := workspaceVolume(fmt.Sprintf("%dGi", memoryGB*2))

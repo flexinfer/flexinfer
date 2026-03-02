@@ -83,6 +83,9 @@ TYPE="FP8_B${BITS}"
 OUT_DIR="${MODEL_DIR}/fp8-b${BITS}"
 START_TS=$(date +%%s)
 
+cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
+trap cleanup EXIT
+
 echo "=== FP8 Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
@@ -115,6 +118,8 @@ cmd = [
 ]
 subprocess.check_call(cmd)
 PY
+
+trap - EXIT
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"

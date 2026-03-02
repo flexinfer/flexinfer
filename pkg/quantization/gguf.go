@@ -70,7 +70,7 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	}
 
 	image := quantizerImage()
-	deadline := DefaultActiveDeadlineSeconds
+	deadline := effectiveDeadline(params.Spec)
 	backoffLimit := int32(2)
 
 	// Build the quantization script.

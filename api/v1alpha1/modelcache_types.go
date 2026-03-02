@@ -80,6 +80,24 @@ const (
 	QuantizationFormatFP8  QuantizationFormat = "FP8"
 )
 
+// CalibrationSpec configures calibration parameters for AWQ/GPTQ quantization.
+// +kubebuilder:object:generate=true
+type CalibrationSpec struct {
+	// MaxSeqLen is the maximum sequence length for calibration samples.
+	// Defaults to 4096.
+	// +kubebuilder:validation:Minimum=128
+	// +kubebuilder:validation:Maximum=32768
+	// +optional
+	MaxSeqLen *int32 `json:"maxSeqLen,omitempty"`
+
+	// MaxSamples is the number of calibration samples to use.
+	// Defaults to 256.
+	// +kubebuilder:validation:Minimum=8
+	// +kubebuilder:validation:Maximum=2048
+	// +optional
+	MaxSamples *int32 `json:"maxSamples,omitempty"`
+}
+
 // QuantizationSpec configures post-download quantization of model weights.
 // When set on a ModelCache, the controller creates a quantization Job after
 // the download completes.
@@ -111,6 +129,17 @@ type QuantizationSpec struct {
 	// Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
 	// +optional
 	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// TimeoutSeconds overrides the default 2-hour deadline for quantization jobs.
+	// +kubebuilder:validation:Minimum=300
+	// +kubebuilder:validation:Maximum=43200
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+
+	// Calibration configures calibration parameters for AWQ/GPTQ quantization.
+	// Ignored for GGUF and EXL2 formats.
+	// +optional
+	Calibration *CalibrationSpec `json:"calibration,omitempty"`
 }
 
 // QuantizationStatus records the result of quantization.
@@ -133,6 +162,22 @@ type QuantizationStatus struct {
 
 	// QuantizationTime is the wall-clock duration of the quantization job.
 	QuantizationTime string `json:"quantizationTime,omitempty"`
+
+	// StartedAt is the timestamp when the quantization job started.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// CompletedAt is the timestamp when the quantization job completed.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// CalibrationParams records the calibration parameters that were actually used.
+	// +optional
+	CalibrationParams *CalibrationSpec `json:"calibrationParams,omitempty"`
+
+	// FailureMessage contains the last lines of pod logs on failure.
+	// +optional
+	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
 // ModelCacheSpec defines the desired state of ModelCache

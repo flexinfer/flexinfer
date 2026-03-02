@@ -147,6 +147,14 @@ func workspaceVolume(sizeLimit string) (corev1.Volume, corev1.VolumeMount) {
 	return vol, mount
 }
 
+// effectiveDeadline returns the job deadline from spec override or the default.
+func effectiveDeadline(spec *aiv1alpha1.QuantizationSpec) int64 {
+	if spec != nil && spec.TimeoutSeconds != nil && *spec.TimeoutSeconds >= 300 {
+		return *spec.TimeoutSeconds
+	}
+	return DefaultActiveDeadlineSeconds
+}
+
 func resourcePtr(s string) *resource.Quantity {
 	q := resource.MustParse(s)
 	return &q
