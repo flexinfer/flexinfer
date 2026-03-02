@@ -507,7 +507,7 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 			CrossAgent:    crossAgent,
 		}
 
-		entries, err := s.enhancedRecallContext(ctx, opts)
+		entries, _, err := s.enhancedRecallContext(ctx, opts)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Errorf("recall context: %w", err)), nil
 		}
