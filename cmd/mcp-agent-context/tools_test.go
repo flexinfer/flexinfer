@@ -183,6 +183,29 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	}
 }
 
+func TestRemovedMemoryLifecycleToolsAreGone(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	removed := []string{
+		"agent_memory_promote",
+		"agent_memory_demote",
+		"agent_memory_compress",
+		"agent_memory_merge",
+		"agent_memory_policy_set",
+	}
+	for _, name := range removed {
+		if tool := toolByName(tools, name); tool != nil {
+			t.Errorf("tool %q should have been removed (SIMP-2)", name)
+		}
+	}
+
+	// agent_memory_policy_get should still be present (read-only introspection)
+	if tool := toolByName(tools, "agent_memory_policy_get"); tool == nil {
+		t.Error("agent_memory_policy_get should be retained as read-only")
+	}
+}
+
 func TestAllToolsHaveDescriptions(t *testing.T) {
 	t.Parallel()
 	_, tools := testServer()
