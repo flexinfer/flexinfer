@@ -157,6 +157,7 @@ from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionPipeline,
     StableDiffusionInstructPix2PixPipeline,
+    StableDiffusionXLInpaintPipeline,
     FluxPipeline,
     FluxFillPipeline,
 )
@@ -165,9 +166,6 @@ from diffusers import (
 def _lazy_auto_pipeline_text2image():
     from diffusers import AutoPipelineForText2Image
     return AutoPipelineForText2Image
-def _lazy_auto_pipeline_inpainting():
-    from diffusers import AutoPipelineForInpainting
-    return AutoPipelineForInpainting
 
 # Global pipeline cache
 pipeline = None
@@ -619,10 +617,9 @@ def load_pipeline(model_id: str):
                 pipeline.encode_prompt = _encode_prompt_fp32
                 print("Wrapped encode_prompt to cast bfloat16 → float32")
         elif PIPELINE_MODE == "inpainting":
-            print("Loading AutoPipelineForInpainting (loading to CPU, local files only)...")
+            print("Loading StableDiffusionXLInpaintPipeline (loading to CPU, local files only)...")
             sys.stdout.flush()
-            AutoPipelineForInpainting = _lazy_auto_pipeline_inpainting()
-            pipeline = AutoPipelineForInpainting.from_pretrained(
+            pipeline = StableDiffusionXLInpaintPipeline.from_pretrained(
                 resolved_path,
                 **pipeline_kwargs,
             )
