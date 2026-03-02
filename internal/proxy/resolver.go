@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"sync"
@@ -33,14 +35,17 @@ func (p *Proxy) getModel(ctx context.Context, modelName string) (*aiv1alpha2.Mod
 
 // extractModelNameAndBody extracts the model name from a request and returns the body bytes.
 // The body is restored to the request for downstream handlers.
+// For multipart/form-data requests (e.g., /v1/images/edits), body bytes are returned as nil
+// to signal that downstream JSON rewriting must be skipped.
 func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 	var bodyBytes []byte
+	ct := r.Header.Get("Content-Type")
 
 	// Check X-Model-ID header first
 	modelName := r.Header.Get("X-Model-ID")
 	if modelName != "" {
-		// Still need to read body for validation
-		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		// Still need to read body for validation (JSON only)
+		if r.Method == http.MethodPost && strings.Contains(ct, "application/json") {
 			if b, err := io.ReadAll(r.Body); err == nil {
 				bodyBytes = b
 			} else {
@@ -59,8 +64,8 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 		modelName = pathParts[1]
 		// Strip the /model/<name> prefix for upstream
 		r.URL.Path = "/" + strings.Join(pathParts[2:], "/")
-		// Still need to read body for validation
-		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		// Still need to read body for validation (JSON only)
+		if r.Method == http.MethodPost && strings.Contains(ct, "application/json") {
 			if b, err := io.ReadAll(r.Body); err == nil {
 				bodyBytes = b
 			} else {
@@ -74,7 +79,7 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 	}
 
 	// Fallback: Check JSON Body (OpenAI Standard)
-	if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+	if r.Method == http.MethodPost && strings.Contains(ct, "application/json") {
 		if b, err := io.ReadAll(r.Body); err == nil {
 			bodyBytes = b
 		} else {
@@ -94,7 +99,48 @@ func (p *Proxy) extractModelNameAndBody(r *http.Request) (string, []byte) {
 		}
 	}
 
+	// Fallback: Check multipart/form-data body (OpenAI /v1/images/edits)
+	if r.Method == http.MethodPost && strings.Contains(ct, "multipart/form-data") {
+		modelName, _ = extractModelFromMultipart(r)
+		return modelName, nil // nil signals non-JSON body; skip model rewriting downstream
+	}
+
 	return "", bodyBytes
+}
+
+// extractModelFromMultipart extracts the "model" form field from a multipart/form-data request.
+// The request body is buffered and restored so downstream handlers can read the full payload.
+func extractModelFromMultipart(r *http.Request) (string, error) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		slog.Debug("failed to read multipart body", "error", err)
+		return "", err
+	}
+	// Restore body for downstream (reverse proxy must forward the original payload)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	r.ContentLength = int64(len(bodyBytes))
+
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return "", err
+	}
+	boundary, ok := params["boundary"]
+	if !ok {
+		return "", nil
+	}
+
+	mr := multipart.NewReader(bytes.NewReader(bodyBytes), boundary)
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		if part.FormName() == "model" {
+			val, _ := io.ReadAll(part)
+			return strings.TrimSpace(string(val)), nil
+		}
+	}
+	return "", nil
 }
 
 // extractModelName extracts the model name from a request (for backward compatibility).

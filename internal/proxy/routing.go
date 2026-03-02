@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -312,8 +313,9 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		targetURL = k8surl.ServiceURL(resolvedModel, p.namespace, port, true)
 	}
 
-	// Rewrite model name in request body if needed
-	if backendModelName != "" && len(bodyBytes) > 0 {
+	// Rewrite model name in request body if needed (JSON only — skip for multipart/form-data)
+	if backendModelName != "" && len(bodyBytes) > 0 &&
+		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 		bodyBytes = p.rewriteModelInBody(bodyBytes, backendModelName)
 	}
 

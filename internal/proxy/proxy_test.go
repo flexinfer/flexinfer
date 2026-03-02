@@ -1,8 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1179,6 +1182,110 @@ func TestResolveModelAlias_MultipleModels(t *testing.T) {
 	assert.Equal(t, "model-alpha", p.resolveModelAlias(ctx, "fast-chat"))
 	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "beta-served"))
 	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "embeddings"))
+}
+
+// Multipart Form-Data Model Extraction Tests
+
+func TestExtractModelName_MultipartFormData(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("prompt", "replace background with a beach")
+	_ = writer.WriteField("model", "image-edit")
+	_ = writer.WriteField("n", "1")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	modelName, bodyBytes := p.extractModelNameAndBody(req)
+	assert.Equal(t, "image-edit", modelName)
+	assert.Nil(t, bodyBytes, "multipart requests should return nil bodyBytes to skip JSON rewriting")
+}
+
+func TestExtractModelName_MultipartWithoutModel(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("prompt", "a cat in space")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	modelName, bodyBytes := p.extractModelNameAndBody(req)
+	assert.Equal(t, "", modelName)
+	assert.Nil(t, bodyBytes)
+}
+
+func TestExtractModelName_MultipartBodyRestored(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("prompt", "test prompt")
+	_ = writer.WriteField("model", "test-model")
+	writer.Close()
+
+	originalBytes := body.Bytes()
+	req := httptest.NewRequest("POST", "/v1/images/edits", bytes.NewReader(originalBytes))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	modelName, _ := p.extractModelNameAndBody(req)
+	assert.Equal(t, "test-model", modelName)
+
+	// Body should be restored and re-readable
+	restored, err := io.ReadAll(req.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, originalBytes, restored, "body must be restored for downstream reverse proxy")
+}
+
+func TestExtractModelName_HeaderOverridesMultipart(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("model", "multipart-model")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-Model-ID", "header-model")
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "header-model", modelName, "X-Model-ID header should take precedence over multipart body")
+}
+
+func TestExtractModelName_PathOverridesMultipart(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("model", "multipart-model")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/model/path-model/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	modelName := p.extractModelName(req)
+	assert.Equal(t, "path-model", modelName, "/model/<name> path should take precedence over multipart body")
+}
+
+func TestExtractModelName_MultipartWithWhitespace(t *testing.T) {
+	p := setupTestProxy(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("model", "  image-edit  ")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	modelName, _ := p.extractModelNameAndBody(req)
+	assert.Equal(t, "image-edit", modelName, "model name should be trimmed of whitespace")
 }
 
 func TestResolveModelAlias_CacheRefresh(t *testing.T) {
