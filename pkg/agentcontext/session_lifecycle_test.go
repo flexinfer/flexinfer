@@ -61,7 +61,7 @@ func TestSessionEndCleanup_ReleasesFileClaims(t *testing.T) {
 		AgentID: "agent-1",
 		Status:  string(SessionStatusActive),
 	}
-	svc.sessions["session-1"] = session
+	svc.sess.sessions["session-1"] = session
 
 	// Agent-1 has claims on 2 files
 	now := time.Now()
@@ -147,7 +147,7 @@ func TestSessionEndCleanup_FullIntegration(t *testing.T) {
 		AgentID: "agent-1",
 		Status:  string(SessionStatusActive),
 	}
-	svc.sessions["session-1"] = session
+	svc.sess.sessions["session-1"] = session
 
 	svc.presence.reg["agent-1"] = newTestPresence("agent-1", 120)
 
@@ -197,7 +197,7 @@ func TestGetSession_CacheRecheck(t *testing.T) {
 		Status:    string(SessionStatusActive),
 		StartedAt: time.Now(),
 	}
-	svc.sessions["session-1"] = session
+	svc.sess.sessions["session-1"] = session
 
 	// getSession should return from cache (no Qdrant needed)
 	got, err := svc.getSession(context.Background(), "session-1")

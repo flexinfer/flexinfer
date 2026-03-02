@@ -43,9 +43,6 @@ type Service struct {
 	qdrant *QdrantRegistry
 	embed  embed.Embedder
 
-	sessionsMu sync.RWMutex
-	sessions   map[string]*Session
-
 	vectorSize int
 
 	// Workflow orchestration
@@ -67,6 +64,7 @@ type Service struct {
 	claims    *ClaimSvc
 	worktrees *WorktreeSvc
 	tasks     *TaskSvc
+	sess      *SessionSvc
 
 	// Nudge queue — pending nudges per agent, delivered via heartbeat response.
 	nudgeMu sync.Mutex
@@ -160,8 +158,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		qdrant: qdrantReg,
 		embed:  embedder,
 
-		sessions: make(map[string]*Session),
-		nudges:   make(map[string][]*Nudge),
+		nudges: make(map[string][]*Nudge),
 	}
 
 	// Best-effort: if the context collection already exists, remember its vector size
@@ -230,6 +227,27 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.worktrees.setPresenceWorktreeID = svc.presence.SetWorktreeID
 	svc.worktrees.clearPresenceWorktreeID = svc.presence.ClearWorktreeID
 
+	// Initialize session sub-service
+	svc.sess = NewSessionSvc(qdrantReg.Get(CollSessions), cfg, svc.logger, svc.metrics)
+
+	// Wire session cleanup callbacks
+	svc.sess.releaseClaimsForAgent = func(agentID string) int {
+		return svc.claims.ReleaseAllForAgent(agentID)
+	}
+	svc.sess.removePresence = svc.presence.Remove
+	svc.sess.deletePresenceFromQdrant = func(ctx context.Context, agentID string) error {
+		if svc.qdrant.Get(CollPresence) == nil {
+			return nil
+		}
+		return svc.qdrant.Get(CollPresence).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID)))
+	}
+	svc.sess.orphanWorktrees = svc.orphanWorktreesForAgent
+	svc.sess.markTasksStale = svc.markSessionTasksStale
+	svc.sess.enrichResult = svc.enrichSessionStartResult
+	svc.sess.generateSummary = svc.generateSummary
+	svc.sess.runSummaryAsync = svc.runSessionSummaryAsync
+	svc.sess.liveAgentIDs = svc.presence.LiveAgentIDs
+
 	// Wire task callbacks
 	svc.tasks.getSession = svc.getSession
 	svc.tasks.upsertBatched = svc.upsertPointsBatched
@@ -292,7 +310,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 // loadPersistedState loads all persisted data from Qdrant on startup
 func (s *Service) loadPersistedState(ctx context.Context) error {
 	// Load sessions
-	if err := s.loadSessionsFromQdrant(ctx); err != nil {
+	if err := s.sess.LoadFromQdrant(ctx); err != nil {
 		s.logger.Warn("failed to load sessions", "error", err)
 	}
 
@@ -335,32 +353,6 @@ func (s *Service) loadPersistedState(ctx context.Context) error {
 	return nil
 }
 
-// loadSessionsFromQdrant loads active sessions from Qdrant into memory
-func (s *Service) loadSessionsFromQdrant(ctx context.Context) error {
-	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, FilterMust(Match("status", string(SessionStatusActive))), 500, false)
-	if err != nil {
-		return err
-	}
-
-	s.sessionsMu.Lock()
-	defer s.sessionsMu.Unlock()
-
-	loaded := 0
-	for _, p := range points {
-		sess, err := PayloadToSession(p.Payload)
-		if err != nil || sess == nil {
-			continue
-		}
-		s.sessions[sess.ID] = sess
-		loaded++
-	}
-
-	if loaded > 0 {
-		s.logger.Info("restored active sessions", "count", loaded)
-	}
-	return nil
-}
-
 // StartBackgroundServices starts background goroutines (compaction, presence cleanup)
 func (s *Service) StartBackgroundServices(ctx context.Context) {
 	bgCtx, cancel := context.WithCancel(ctx)
@@ -400,7 +392,7 @@ func (s *Service) StartBackgroundServices(ctx context.Context) {
 			"interval_s", s.cfg.SessionReaperInterval,
 			"max_age_hours", s.cfg.SessionReaperMaxAge,
 		)
-		go s.runSessionReaper(bgCtx)
+		go s.sess.RunReaper(bgCtx)
 	}
 }
 
@@ -417,93 +409,34 @@ func (s *Service) StopBackgroundServices() {
 	}
 }
 
-// Session Handlers
+// Session Handlers — thin delegation to SessionSvc.
 
 func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	agentID := v.String("agent_id", s.cfg.DefaultAgentID)
-	namespace := v.String("namespace", s.cfg.DefaultNamespace)
-	description := v.String("description", "")
-	workingDir := v.String("working_dir", "")
-	resumeID := v.String("resume_session_id", "")
-
-	// agent_id is required if no default is configured
-	if agentID == "" {
-		return mcp.ErrorResult(fmt.Errorf("agent_id is required")), nil
-	}
-
-	// Check for resume
-	if resumeID != "" {
-		existing, err := s.getSession(ctx, resumeID)
-		if err != nil || existing == nil {
-			return mcp.ErrorResult(fmt.Errorf("session %s not found or cannot be resumed", resumeID)), nil
-		}
-		if existing.Status != string(SessionStatusActive) {
-			existing.Status = string(SessionStatusActive)
-			existing.EndedAt = nil
-			if err := s.persistSession(ctx, existing); err != nil {
-				return mcp.ErrorResult(fmt.Errorf("persist resumed session: %w", err)), nil
-			}
-		}
-		result := map[string]any{
-			"ok":         true,
-			"session_id": resumeID,
-			"resumed":    true,
-			"agent_id":   existing.AgentID,
-		}
-		s.enrichSessionStartResult(ctx, result, existing.AgentID, existing.Namespace)
-		return mcp.JSONResult(result)
-	}
-
-	// End any prior active sessions for this agent to prevent accumulation.
-	// Sessions can become orphaned when the Stop hook doesn't fire (crash,
-	// context exhaustion, transport disconnect).
-	s.endActiveSessionsForAgent(ctx, agentID)
-
-	// Create new session
-	sessionID := GenerateID(agentID, "", time.Now().String(), time.Now())
-	session := &Session{
-		ID:          sessionID,
-		AgentID:     agentID,
-		Namespace:   namespace,
-		StartedAt:   time.Now(),
-		Status:      string(SessionStatusActive),
-		Description: description,
-		WorkingDir:  workingDir,
-	}
-
-	s.sessionsMu.Lock()
-	s.sessions[sessionID] = session
-	s.sessionsMu.Unlock()
-
-	result := map[string]any{
-		"ok":         true,
-		"session_id": sessionID,
-		"agent_id":   agentID,
-		"namespace":  namespace,
-		"started_at": session.StartedAt.Format(time.RFC3339),
-	}
-
-	// Persist to Qdrant (sessions collection doesn't need vectors)
-	if err := s.persistSession(ctx, session); err != nil {
-		// Include warning in result but don't fail - session is in memory
-		result["_warning"] = fmt.Sprintf("failed to persist session: %v", err)
-	}
-
-	s.metrics.SessionsActive.Add(1)
-	s.metrics.SessionsTotal.Add(1)
-
-	s.enrichSessionStartResult(ctx, result, agentID, namespace)
-	return mcp.JSONResult(result)
+	return s.sess.Start(ctx, args)
 }
 
-// enrichSessionStartResult adds coordination info (pending handoffs, active agents) to a session start result.
+func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	return s.sess.End(ctx, args)
+}
+
+func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	return s.sess.List(ctx, args)
+}
+
+func (s *Service) HandleSessionDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	return s.sess.Delete(ctx, args)
+}
+
+func (s *Service) HandleSessionPrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	return s.sess.Prune(ctx, args)
+}
+
+// enrichSessionStartResult adds coordination info (pending handoffs, active agents).
+// Stays on Service because it accesses CollHandoffs (not owned by SessionSvc).
 func (s *Service) enrichSessionStartResult(ctx context.Context, result map[string]any, agentID, namespace string) {
-	// Count active agents in same namespace
 	result["active_agents"] = len(s.presence.LiveAgentIDs())
 
 	now := time.Now()
-	// Fetch pending handoffs for this agent
 	var pendingHandoffs []map[string]any
 	if s.qdrant.Get(CollHandoffs) != nil {
 		conds := []any{
@@ -533,94 +466,8 @@ func (s *Service) enrichSessionStartResult(ctx context.Context, result map[strin
 	result["pending_handoffs"] = pendingHandoffs
 }
 
-func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	sessionID := v.Required("session_id")
-	summarize := v.Bool("summarize", true)
-	summaryAsync := v.Bool("summary_async", false)
-	cleanup := v.Bool("cleanup", true)
-
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	session, err := s.getSession(ctx, sessionID)
-	if err != nil || session == nil {
-		return mcp.ErrorResult(fmt.Errorf("session %s not found", sessionID)), nil
-	}
-	now := time.Now()
-	session.EndedAt = &now
-	session.Status = string(SessionStatusEnded)
-	s.sessionsMu.Lock()
-	s.sessions[sessionID] = session
-	s.sessionsMu.Unlock()
-	s.metrics.SessionsActive.Add(-1)
-
-	result := map[string]any{
-		"ok":         true,
-		"session_id": sessionID,
-		"ended_at":   now.Format(time.RFC3339),
-		"summarized": false,
-	}
-
-	// Persist updated session
-	if err := s.persistSession(ctx, session); err != nil {
-		result["_warning"] = fmt.Sprintf("failed to persist session end: %v", err)
-	}
-
-	// Optionally generate summary
-	if summarize && s.cfg.AutoSummarize {
-		if summaryAsync {
-			result["summary_queued"] = true
-			go s.runSessionSummaryAsync(session)
-		} else {
-			if err := s.generateSummary(ctx, session); err != nil {
-				result["summary_error"] = err.Error()
-			} else {
-				result["summarized"] = true
-				session.Status = string(SessionStatusSummarized)
-				if err := s.persistSession(ctx, session); err != nil {
-					result["_persist_error"] = err.Error()
-				}
-			}
-		}
-	}
-
-	// Auto-cleanup coordination resources
-	if cleanup {
-		agentID := session.AgentID
-		cleanedUp := map[string]any{}
-
-		// Release all file claims for this agent
-		released := s.claims.ReleaseAllForAgent(agentID)
-		cleanedUp["file_claims_released"] = released
-
-		// Deregister presence
-		hadPresence := s.presence.Remove(agentID)
-		cleanedUp["presence_deregistered"] = hadPresence
-
-		if hadPresence && s.qdrant.Get(CollPresence) != nil {
-			if err := s.qdrant.Get(CollPresence).DeleteByFilter(ctx, FilterMust(Match("agent_id", agentID))); err != nil {
-				s.logger.Warn("failed to delete presence from Qdrant", "agent_id", agentID, "error", err)
-			}
-		}
-
-		// Orphan worktrees
-		s.orphanWorktreesForAgent(agentID)
-		cleanedUp["worktrees_orphaned"] = true
-
-		// Mark incomplete session tasks as blocked/stale
-		staleTasks := s.markSessionTasksStale(ctx, sessionID)
-		cleanedUp["tasks_marked_stale"] = staleTasks
-
-		result["cleanup"] = cleanedUp
-	}
-
-	return mcp.JSONResult(result)
-}
-
-// runSessionSummaryAsync performs end-of-session summarization in background so
-// hooks can return immediately and avoid blocking follow-on session-start calls.
+// runSessionSummaryAsync performs end-of-session summarization in background.
+// Stays on Service because generateSummary accesses CollContext and embedder.
 func (s *Service) runSessionSummaryAsync(session *Session) {
 	bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -635,7 +482,7 @@ func (s *Service) runSessionSummaryAsync(session *Session) {
 	}
 
 	session.Status = string(SessionStatusSummarized)
-	if err := s.persistSession(bg, session); err != nil {
+	if err := s.sess.Persist(bg, session); err != nil {
 		s.logger.Warn("async session summarize persist failed",
 			"session_id", session.ID,
 			"agent_id", session.AgentID,
@@ -644,336 +491,19 @@ func (s *Service) runSessionSummaryAsync(session *Session) {
 	}
 }
 
-// endActiveSessionsForAgent ends all active sessions belonging to the given agent.
-// Called when agent presence expires so sessions don't linger indefinitely.
+// endActiveSessionsForAgent delegates to SessionSvc.
 func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string) {
-	now := time.Now()
-
-	// End in-memory sessions.
-	s.sessionsMu.Lock()
-	for _, sess := range s.sessions {
-		if sess.AgentID == agentID && sess.Status == string(SessionStatusActive) {
-			sess.Status = string(SessionStatusEnded)
-			sess.EndedAt = &now
-		}
-	}
-	s.sessionsMu.Unlock()
-
-	// End persisted sessions in Qdrant.
-	if s.qdrant.Get(CollSessions) == nil {
-		return
-	}
-	filter := FilterMust(
-		Match("agent_id", agentID),
-		Match("status", "active"),
-	)
-	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 500, false)
-	if err != nil || len(points) == 0 {
-		return
-	}
-	for _, p := range points {
-		sess, err := PayloadToSession(p.Payload)
-		if err != nil || sess == nil {
-			continue
-		}
-		sess.Status = string(SessionStatusEnded)
-		sess.EndedAt = &now
-		if err := s.persistSession(ctx, sess); err != nil {
-			s.logger.Warn("failed to end stale session for expired agent",
-				"session_id", sess.ID, "agent_id", agentID, "error", err)
-		}
-	}
-	s.logger.Info("ended active sessions for expired agent",
-		"agent_id", agentID, "count", len(points))
+	s.sess.EndActiveForAgent(ctx, agentID)
 }
 
-func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	agentID := v.String("agent_id", "")
-	namespace := v.String("namespace", "")
-	status := v.String("status", "")
-	limit := v.Int("limit", 20)
-
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	// Build filter
-	var conds []any
-	if agentID != "" {
-		conds = append(conds, Match("agent_id", agentID))
-	}
-	if namespace != "" {
-		conds = append(conds, Match("namespace", namespace))
-	}
-	if status != "" {
-		conds = append(conds, Match("status", status))
-	}
-
-	var filter map[string]any
-	if len(conds) > 0 {
-		filter = FilterMust(conds...)
-	}
-	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, limit, false)
-	if err != nil {
-		return mcp.ErrorResult(fmt.Errorf("list sessions: %w", err)), nil
-	}
-
-	sessions := make([]Session, 0, len(points))
-	for _, p := range points {
-		sess, err := PayloadToSession(p.Payload)
-		if err != nil || sess == nil {
-			continue
-		}
-		sessions = append(sessions, *sess)
-	}
-
-	// Sort by started_at descending
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].StartedAt.After(sessions[j].StartedAt)
-	})
-
-	if len(sessions) > limit {
-		sessions = sessions[:limit]
-	}
-
-	return mcp.JSONResult(map[string]any{
-		"ok":       true,
-		"sessions": sessions,
-		"count":    len(sessions),
-	})
+// getSession delegates to SessionSvc.Get.
+func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, error) {
+	return s.sess.Get(ctx, sessionID)
 }
 
-// HandleSessionDelete deletes a single session by ID from both memory and Qdrant.
-func (s *Service) HandleSessionDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	sessionID := v.Required("session_id")
-
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	// Remove from in-memory map
-	s.sessionsMu.Lock()
-	_, existed := s.sessions[sessionID]
-	delete(s.sessions, sessionID)
-	s.sessionsMu.Unlock()
-
-	// Remove from Qdrant
-	if s.qdrant.Get(CollSessions) != nil {
-		if err := s.qdrant.Get(CollSessions).Delete(ctx, []string{sessionID}); err != nil {
-			return mcp.ErrorResult(fmt.Errorf("delete session from Qdrant: %w", err)), nil
-		}
-	}
-
-	return mcp.JSONResult(map[string]any{
-		"ok":         true,
-		"session_id": sessionID,
-		"existed":    existed,
-	})
-}
-
-// HandleSessionPrune deletes stale sessions matching status and age criteria.
-func (s *Service) HandleSessionPrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	maxAgeHours := v.Int("max_age_hours", 72)
-	statusFilter := v.String("status", "ended,summarized")
-	dryRun := v.Bool("dry_run", false)
-
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
-	}
-
-	pruned, err := s.pruneSessions(ctx, maxAgeHours, statusFilter, dryRun)
-	if err != nil {
-		return mcp.ErrorResult(fmt.Errorf("prune sessions: %w", err)), nil
-	}
-
-	return mcp.JSONResult(map[string]any{
-		"ok":      true,
-		"pruned":  pruned,
-		"dry_run": dryRun,
-	})
-}
-
-// pruneSessions deletes sessions matching status and age criteria.
-// Returns the number of sessions pruned.
-func (s *Service) pruneSessions(ctx context.Context, maxAgeHours int, statusFilter string, dryRun bool) (int, error) {
-	if s.qdrant.Get(CollSessions) == nil {
-		return 0, nil
-	}
-
-	statuses := strings.Split(statusFilter, ",")
-	for i, st := range statuses {
-		statuses[i] = strings.TrimSpace(st)
-	}
-
-	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour)
-
-	// Query sessions matching the status filter
-	var statusConds []any
-	for _, st := range statuses {
-		if st != "" {
-			statusConds = append(statusConds, Match("status", st))
-		}
-	}
-	if len(statusConds) == 0 {
-		return 0, nil
-	}
-
-	filter := FilterMust(FilterShould(statusConds...))
-	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 1000, false)
-	if err != nil {
-		return 0, fmt.Errorf("scroll sessions: %w", err)
-	}
-
-	var toDelete []string
-	for _, p := range points {
-		sess, err := PayloadToSession(p.Payload)
-		if err != nil || sess == nil {
-			continue
-		}
-
-		// Check age: use EndedAt if available, otherwise StartedAt
-		ts := sess.StartedAt
-		if sess.EndedAt != nil {
-			ts = *sess.EndedAt
-		}
-		if ts.Before(cutoff) {
-			toDelete = append(toDelete, sess.ID)
-		}
-	}
-
-	if dryRun || len(toDelete) == 0 {
-		return len(toDelete), nil
-	}
-
-	// Delete from Qdrant
-	if err := s.qdrant.Get(CollSessions).Delete(ctx, toDelete); err != nil {
-		return 0, fmt.Errorf("delete sessions: %w", err)
-	}
-
-	// Remove from in-memory map
-	s.sessionsMu.Lock()
-	for _, id := range toDelete {
-		delete(s.sessions, id)
-	}
-	s.sessionsMu.Unlock()
-
-	s.logger.Info("pruned stale sessions", "count", len(toDelete), "max_age_hours", maxAgeHours, "statuses", statusFilter)
-	return len(toDelete), nil
-}
-
-// runSessionReaper periodically prunes old ended/summarized sessions
-// and reaps stale active sessions whose agents are no longer present.
-// It runs an immediate sweep on startup (the MCP server is frequently
-// restarted by the daemon idle reaper, so waiting for the first ticker
-// would mean the reaper never fires if the idle timeout < reaper interval).
-func (s *Service) runSessionReaper(ctx context.Context) {
-	interval := time.Duration(s.cfg.SessionReaperInterval) * time.Second
-	if interval <= 0 {
-		interval = 30 * time.Minute
-	}
-
-	// Immediate sweep on startup.
-	s.sessionReaperTick(ctx)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.sessionReaperTick(ctx)
-		}
-	}
-}
-
-// sessionReaperTick performs one reaper cycle: prune ended/summarized sessions
-// and end stale active sessions.
-func (s *Service) sessionReaperTick(ctx context.Context) {
-	// Prune old ended/summarized sessions.
-	statusFilter := "ended,summarized"
-	pruned, err := s.pruneSessions(ctx, s.cfg.SessionReaperMaxAge, statusFilter, false)
-	if err != nil {
-		s.logger.Warn("session reaper failed", "error", err)
-	} else if pruned > 0 {
-		s.logger.Info("session reaper completed", "pruned", pruned, "filter", statusFilter)
-	}
-
-	// End stale active sessions (no heartbeat, older than threshold).
-	activeMaxAge := s.cfg.SessionReaperActiveMaxAge
-	if activeMaxAge <= 0 {
-		activeMaxAge = 24
-	}
-	ended := s.endStaleSessions(ctx, activeMaxAge)
-	if ended > 0 {
-		s.logger.Info("ended stale active sessions", "count", ended, "max_age_hours", activeMaxAge)
-	}
-}
-
-// endStaleSessions finds active sessions older than maxAgeHours whose agents
-// have no current presence, and marks them ended. Returns the count ended.
-func (s *Service) endStaleSessions(ctx context.Context, maxAgeHours int) int {
-	if s.qdrant.Get(CollSessions) == nil {
-		return 0
-	}
-
-	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour)
-
-	filter := FilterMust(Match("status", "active"))
-	points, err := s.qdrant.Get(CollSessions).ScrollPoints(ctx, filter, 1000, false)
-	if err != nil {
-		s.logger.Warn("endStaleSessions scroll failed", "error", err)
-		return 0
-	}
-
-	// Snapshot of agents with live presence.
-	liveAgents := s.liveAgentIDs()
-
-	now := time.Now()
-	var ended int
-	for _, p := range points {
-		sess, err := PayloadToSession(p.Payload)
-		if err != nil || sess == nil {
-			continue
-		}
-		// Skip sessions from agents that still have live presence.
-		if liveAgents[sess.AgentID] {
-			continue
-		}
-		// Skip sessions younger than the cutoff.
-		if sess.StartedAt.After(cutoff) {
-			continue
-		}
-		// End the stale session.
-		sess.Status = string(SessionStatusEnded)
-		sess.EndedAt = &now
-		if err := s.persistSession(ctx, sess); err != nil {
-			s.logger.Warn("failed to persist stale session end", "session_id", sess.ID, "error", err)
-			continue
-		}
-		s.sessionsMu.Lock()
-		if existing, ok := s.sessions[sess.ID]; ok {
-			existing.Status = string(SessionStatusEnded)
-			existing.EndedAt = &now
-		}
-		s.sessionsMu.Unlock()
-		ended++
-	}
-	return ended
-}
-
-// liveAgentIDs returns the set of agent IDs with non-expired presence.
-func (s *Service) liveAgentIDs() map[string]bool {
-	ids := s.presence.LiveAgentIDs()
-	result := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		result[id] = true
-	}
-	return result
+// persistSession delegates to SessionSvc.Persist.
+func (s *Service) persistSession(ctx context.Context, session *Session) error {
+	return s.sess.Persist(ctx, session)
 }
 
 // Context Storage Handlers
@@ -1103,12 +633,12 @@ func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*m
 	}
 
 	// Update session stats
-	s.sessionsMu.Lock()
+	s.sess.mu.Lock()
 	session.EntryCount += len(entries)
 	for _, e := range entries {
 		session.TotalTokens += e.TokenCount
 	}
-	s.sessionsMu.Unlock()
+	s.sess.mu.Unlock()
 	// Best-effort persist - don't fail the add operation
 	if err := s.persistSession(ctx, session); err != nil {
 		// Log to stderr since we can't add to the result at this point
@@ -1561,25 +1091,6 @@ func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string
 
 // Internal helpers
 
-func (s *Service) persistSession(ctx context.Context, session *Session) error {
-	payload := SessionToPayload(*session)
-
-	// For sessions, we use a minimal vector (not for search)
-	dummyVector := make([]float64, sessionsVectorSize)
-
-	point := Point{
-		ID:      session.ID,
-		Vector:  dummyVector,
-		Payload: payload,
-	}
-
-	// Ensure sessions collection with minimal vector size
-	if err := s.qdrant.Get(CollSessions).EnsureCollection(ctx, sessionsVectorSize); err != nil {
-		return err
-	}
-	return s.qdrant.Get(CollSessions).Upsert(ctx, []Point{point}, true)
-}
-
 func (s *Service) recallContext(ctx context.Context, opts RecallOptions) ([]ContextEntry, error) {
 	var results []ContextEntry
 	seen := make(map[string]bool)
@@ -1800,19 +1311,19 @@ func (s *Service) generateSummary(ctx context.Context, session *Session) error {
 
 	// Update session
 	now := time.Now()
-	s.sessionsMu.Lock()
+	s.sess.mu.Lock()
 	session.LastSummaryAt = &now
-	s.sessionsMu.Unlock()
+	s.sess.mu.Unlock()
 
 	return nil
 }
 
 func (s *Service) maybeAutoSummarize(ctx context.Context, session *Session) {
-	s.sessionsMu.RLock()
+	s.sess.mu.RLock()
 	entryCount := session.EntryCount
 	totalTokens := session.TotalTokens
 	lastSummary := session.LastSummaryAt
-	s.sessionsMu.RUnlock()
+	s.sess.mu.RUnlock()
 
 	// Check thresholds
 	shouldSummarize := false
@@ -1849,35 +1360,6 @@ func (s *Service) maybeAutoSummarize(ctx context.Context, session *Session) {
 			}
 		}()
 	}
-}
-
-func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, error) {
-	s.sessionsMu.RLock()
-	if sess, ok := s.sessions[sessionID]; ok {
-		s.sessionsMu.RUnlock()
-		return sess, nil
-	}
-	s.sessionsMu.RUnlock()
-
-	p, err := s.qdrant.Get(CollSessions).GetPoint(ctx, sessionID, false)
-	if err != nil {
-		return nil, err
-	}
-	sess, err := PayloadToSession(p.Payload)
-	if err != nil || sess == nil {
-		return nil, fmt.Errorf("session %s not found", sessionID)
-	}
-
-	s.sessionsMu.Lock()
-	// Re-check: another goroutine may have loaded the same session concurrently
-	if existing, ok := s.sessions[sessionID]; ok {
-		s.sessionsMu.Unlock()
-		return existing, nil
-	}
-	s.sessions[sessionID] = sess
-	s.sessionsMu.Unlock()
-
-	return sess, nil
 }
 
 func (s *Service) upsertPointsBatched(ctx context.Context, q *QdrantClient, points []Point) error {

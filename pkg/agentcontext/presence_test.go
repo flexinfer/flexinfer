@@ -38,9 +38,9 @@ func newTestService() *Service {
 		presence:  NewPresenceSvc(nil, cfg, logger, metrics),
 		claims:    NewClaimSvc(nil, logger, metrics),
 		worktrees: NewWorktreeSvc(nil, cfg, logger, metrics),
+		sess:      NewSessionSvc(nil, cfg, logger, metrics),
 
-		sessions: make(map[string]*Session),
-		nudges:   make(map[string][]*Nudge),
+		nudges: make(map[string][]*Nudge),
 	}
 }
 

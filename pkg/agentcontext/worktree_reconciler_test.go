@@ -27,7 +27,7 @@ func newTestServiceForWorktree() *Service {
 		claims:    NewClaimSvc(nil, logger, metrics),
 		worktrees: NewWorktreeSvc(nil, cfg, logger, metrics),
 
-		sessions: make(map[string]*Session),
+		sess: NewSessionSvc(nil, cfg, logger, metrics),
 	}
 }
 
