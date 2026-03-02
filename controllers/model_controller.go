@@ -956,7 +956,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	container := corev1.Container{
 		Name:            "model",
 		Image:           image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: corev1.PullAlways,
 		Command:         command,
 		Args:            args,
 		Env:             env,
