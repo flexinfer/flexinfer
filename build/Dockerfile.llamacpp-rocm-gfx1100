@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     build-essential \
     curl \
-    hipblas \
-    rocblas \
+    hipblas-dev \
+    rocblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone llama.cpp at pinned release
@@ -31,6 +31,7 @@ RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org
 WORKDIR /opt/src/llama.cpp
 RUN cmake -B build -G Ninja \
     -DGGML_HIP=ON \
+    -DGGML_NATIVE=OFF \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
@@ -57,8 +58,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built binary
-COPY --from=builder /opt/src/llama.cpp/build/bin/llama-server /opt/src/llama.cpp/build/bin/llama-server
+# Copy built binaries and shared libraries
+COPY --from=builder /opt/src/llama.cpp/build/bin/ /opt/src/llama.cpp/build/bin/
+ENV LD_LIBRARY_PATH=/opt/src/llama.cpp/build/bin
 
 # Create model directory
 RUN mkdir -p /models

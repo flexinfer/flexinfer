@@ -67,7 +67,10 @@ COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
 # Remove pre-installed torchvision — its _meta_registrations.py crashes on this
 # base image (torchvision::nms operator conflict). The server doesn't use it,
 # and transformers/diffusers gracefully fall back when it's absent.
-RUN pip uninstall -y torchvision && \
+# Remove Apex — its fused_rms_norm_affine doesn't support FP16 input,
+# causing "expected scalar type Float but found Half" when T5-XXL runs
+# in FP16 during FLUX inference. Standard PyTorch norms handle FP16 fine.
+RUN pip uninstall -y torchvision apex && \
     pip install --no-cache-dir --upgrade pip && \
     # Freeze the ROCm PyTorch to prevent pip from overwriting it with CUDA PyTorch.
     # Packages like bitsandbytes depend on torch and pip would "upgrade" to
@@ -101,6 +104,47 @@ from typing import Optional, List
 from contextlib import asynccontextmanager
 
 import torch
+
+# Polyfill torch.nn.RMSNorm for PyTorch < 2.4 (required by diffusers 0.36+ FLUX transformer).
+if not hasattr(torch.nn, "RMSNorm"):
+    class _RMSNorm(torch.nn.Module):
+        def __init__(self, normalized_shape, eps=1e-6, elementwise_affine=True):
+            super().__init__()
+            if isinstance(normalized_shape, int):
+                normalized_shape = (normalized_shape,)
+            self.normalized_shape = tuple(normalized_shape)
+            self.eps = eps
+            self.elementwise_affine = elementwise_affine
+            if elementwise_affine:
+                self.weight = torch.nn.Parameter(torch.ones(self.normalized_shape))
+            else:
+                self.register_parameter("weight", None)
+
+        def forward(self, x):
+            norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+            if self.weight is not None:
+                norm = norm * self.weight
+            return norm
+
+        def extra_repr(self):
+            return f"{self.normalized_shape}, eps={self.eps}, elementwise_affine={self.elementwise_affine}"
+
+    torch.nn.RMSNorm = _RMSNorm
+    print("Patched torch.nn.RMSNorm for PyTorch < 2.4 compatibility")
+
+# Polyfill enable_gqa for scaled_dot_product_attention (PyTorch < 2.5).
+# diffusers 0.36+ FLUX attention processors pass enable_gqa=True, which
+# PyTorch 2.3 doesn't accept. Strip it and fall back to standard SDPA.
+import torch.nn.functional as F
+_torch_version = tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2])
+if _torch_version < (2, 5):
+    _orig_sdpa = F.scaled_dot_product_attention
+    def _patched_sdpa(*args, **kwargs):
+        kwargs.pop("enable_gqa", None)
+        return _orig_sdpa(*args, **kwargs)
+    F.scaled_dot_product_attention = _patched_sdpa
+    print(f"Patched F.scaled_dot_product_attention to strip enable_gqa (PyTorch {torch.__version__} < 2.5)")
+
 from PIL import Image
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -524,9 +568,11 @@ def load_pipeline(model_id: str):
                     flux_kwargs["quantization_config"] = PipelineQuantizationConfig(
                         quant_mapping={"transformer": bnb_config}
                     )
-                    # Don't set torch_dtype here — it triggers fp16 variant file lookup.
-                    # The quantizer handles compute dtype internally via bnb_4bit_compute_dtype.
-                    flux_kwargs.pop("torch_dtype", None)
+                    # Keep torch_dtype=float16 for non-quantized components (T5-XXL, CLIP, VAE).
+                    # Without this, T5-XXL loads as FP32 (~18.8 GB) which OOMs when moved to GPU
+                    # alongside the NF4 transformer (~6 GB) on a 24 GB card.
+                    # Note: variant="fp16" (file lookup) is already filtered at line 538.
+                    flux_kwargs["torch_dtype"] = torch.float16
                     print("NF4 quantization enabled for FLUX pipeline (float16 compute)")
                 except (ImportError, Exception) as e:
                     print(f"WARNING: NF4 quantization not available ({e}), loading without quantization")
