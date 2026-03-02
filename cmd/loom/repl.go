@@ -88,7 +88,7 @@ func runRepl(socketPath string) error {
 			}
 
 		case "status":
-			if err := showStatus(socketPath); err != nil {
+			if err := showStatus(socketPath, defaultHUDPort, false); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}
 

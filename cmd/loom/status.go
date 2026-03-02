@@ -7,14 +7,69 @@ import (
 	"os"
 )
 
-func showStatus(socketPath string) error {
-	result, err := call(socketPath, "loom/status", nil)
-	if err != nil {
-		fmt.Println("Daemon: not running")
-		return nil
+// platformStatus aggregates daemon, agent, and HUD status into one struct.
+type platformStatus struct {
+	Daemon   daemonStatus `json:"daemon"`
+	Agents   agentStatus  `json:"agents"`
+	Sessions sessionCount `json:"sessions"`
+	HUD      hudStatus    `json:"hud"`
+	Healthy  bool         `json:"healthy"`
+}
+
+type daemonStatus struct {
+	Running             bool     `json:"running"`
+	Servers             int      `json:"servers"`
+	ActiveConns         int      `json:"active_conns"`
+	IdleConns           int      `json:"idle_conns"`
+	ActiveRPCs          int64    `json:"active_rpcs"`
+	ActiveProxySessions int      `json:"active_proxy_sessions"`
+	DaemonEpoch         int64    `json:"daemon_epoch"`
+	Processes           []string `json:"processes,omitempty"`
+}
+
+type agentStatus struct {
+	Active  int `json:"active"`
+	Idle    int `json:"idle"`
+	Offline int `json:"offline"`
+	Total   int `json:"total"`
+}
+
+type sessionCount struct {
+	Active int `json:"active"`
+	Total  int `json:"total"`
+}
+
+type hudStatus struct {
+	Reachable bool `json:"reachable"`
+}
+
+func showStatus(socketPath, hudPort string, jsonOutput bool) error {
+	ps := collectPlatformStatus(socketPath, hudPort)
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(ps)
 	}
 
-	var status struct {
+	printPlatformStatus(ps, socketPath)
+
+	if !ps.Daemon.Running {
+		return fmt.Errorf("daemon not running")
+	}
+	return nil
+}
+
+func collectPlatformStatus(socketPath, hudPort string) platformStatus {
+	ps := platformStatus{}
+
+	// 1. Daemon status via socket RPC.
+	result, err := call(socketPath, "loom/status", nil)
+	if err != nil {
+		return ps // daemon not running — everything zeroed
+	}
+
+	var raw struct {
 		Running             bool     `json:"running"`
 		Servers             int      `json:"servers"`
 		ActiveConns         int      `json:"activeConns"`
@@ -25,22 +80,85 @@ func showStatus(socketPath string) error {
 		DaemonEpoch         int64    `json:"daemonEpoch"`
 		ActiveProxySessions int      `json:"activeProxySessions"`
 	}
-
-	if err := json.Unmarshal(result, &status); err != nil {
-		return fmt.Errorf("parse status: %w", err)
+	if err := json.Unmarshal(result, &raw); err != nil {
+		return ps
 	}
 
-	fmt.Println("Daemon: running")
-	fmt.Printf("Socket: %s\n", socketPath)
-	fmt.Printf("Epoch: %d, Proxy Sessions: %d\n", status.DaemonEpoch, status.ActiveProxySessions)
-	fmt.Printf("Servers: %d registered\n", status.Servers)
-	fmt.Printf("Connections: %d active, %d idle\n", status.ActiveConns, status.IdleConns)
-	fmt.Printf("RPCs: %d active, drain_ready=%v\n", status.ActiveRPCs, status.DrainReady)
-	if len(status.Processes) > 0 {
-		fmt.Printf("Processes: %v\n", status.Processes)
+	ps.Daemon = daemonStatus{
+		Running:             true,
+		Servers:             raw.Servers,
+		ActiveConns:         raw.ActiveConns,
+		IdleConns:           raw.IdleConns,
+		ActiveRPCs:          raw.ActiveRPCs,
+		ActiveProxySessions: raw.ActiveProxySessions,
+		DaemonEpoch:         raw.DaemonEpoch,
+		Processes:           raw.Processes,
+	}
+	ps.Healthy = true
+
+	// 2. Agent presence from HUD (best-effort).
+	presenceData, err := hudGetFast(hudPort, "/api/presence", 2*defaultHUDTimeout/5)
+	if err == nil {
+		ps.HUD.Reachable = true
+		var presence struct {
+			ActiveAgents  int `json:"active_agents"`
+			IdleAgents    int `json:"idle_agents"`
+			OfflineAgents int `json:"offline_agents"`
+			Total         int `json:"total"`
+		}
+		if json.Unmarshal(presenceData, &presence) == nil {
+			ps.Agents = agentStatus{
+				Active:  presence.ActiveAgents,
+				Idle:    presence.IdleAgents,
+				Offline: presence.OfflineAgents,
+				Total:   presence.Total,
+			}
+		}
 	}
 
-	return nil
+	// 3. Session counts from HUD (best-effort).
+	if ps.HUD.Reachable {
+		sessData, err := hudGetFast(hudPort, "/api/sessions", 2*defaultHUDTimeout/5)
+		if err == nil {
+			var sessResp struct {
+				Sessions []struct {
+					EndedAt string `json:"ended_at"`
+				} `json:"sessions"`
+			}
+			if json.Unmarshal(sessData, &sessResp) == nil {
+				active := 0
+				for _, s := range sessResp.Sessions {
+					if s.EndedAt == "" {
+						active++
+					}
+				}
+				ps.Sessions = sessionCount{Active: active, Total: len(sessResp.Sessions)}
+			}
+		}
+	}
+
+	return ps
+}
+
+func printPlatformStatus(ps platformStatus, socketPath string) {
+	if !ps.Daemon.Running {
+		fmt.Println("Daemon:   not running")
+		fmt.Printf("Socket:   %s\n", socketPath)
+		return
+	}
+
+	fmt.Println("Daemon:   running")
+	fmt.Printf("Servers:  %d registered\n", ps.Daemon.Servers)
+	fmt.Printf("Agents:   %d active, %d idle, %d offline\n",
+		ps.Agents.Active, ps.Agents.Idle, ps.Agents.Offline)
+	fmt.Printf("Sessions: %d active, %d total\n",
+		ps.Sessions.Active, ps.Sessions.Total)
+
+	hudLabel := "unavailable"
+	if ps.HUD.Reachable {
+		hudLabel = "running"
+	}
+	fmt.Printf("HUD:      %s\n", hudLabel)
 }
 
 func showTunnelStatus(socketPath string, jsonOutput bool) error {

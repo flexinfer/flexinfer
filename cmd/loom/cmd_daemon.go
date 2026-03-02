@@ -8,16 +8,25 @@ import (
 )
 
 func newStatusCmd(socketPath string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show daemon status",
-		Long:  "Show daemon status including uptime, connected MCP servers, and active proxy sessions.",
+		Short: "Show platform status summary",
+		Long: `Show unified platform status: daemon health, active agents, sessions,
+MCP servers, and HUD availability in a single glanceable output.
+
+Exits with non-zero status when the daemon is not running.`,
 		Example: `  loom status
-  loom status --socket /tmp/loom.sock`,
+  loom status --json
+  loom status --port 3333`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return showStatus(socketPath)
+			port := resolvePort(cmd)
+			return showStatus(socketPath, port, jsonOutput)
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().String("port", "", "HUD port (env: LOOM_HUD_PORT)")
+	return cmd
 }
 
 func newStartCmd(socketPath string) *cobra.Command {
