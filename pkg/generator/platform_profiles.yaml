@@ -1,0 +1,206 @@
+# Platform profiles for Loom MCP config generation.
+# Each platform defines its config format, file paths, hook support,
+# capabilities, and serialization features. Adding a new platform
+# requires only a new entry here — no Go code changes.
+
+platforms:
+  claude:
+    display_name: "Claude Code"
+    config_format: "json"
+    config_file: "mcp.json"
+    config_root: "mcpServers"
+    hooks:
+      enabled: true
+      file: "settings.json"
+      events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse"]
+    capabilities:
+      mcp_servers: true
+      permissions: true
+      sandbox: false
+      web_search: true
+      custom_models: true
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      timeout_field: "timeout"
+      supports_timeout: true
+      supports_description: true
+
+  claude_desktop:
+    display_name: "Claude Desktop"
+    config_format: "json"
+    config_file: "claude_desktop_config.json"
+    config_root: "mcpServers"
+    hooks:
+      enabled: false
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: false
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      supports_timeout: false
+      supports_description: true
+
+  gemini:
+    display_name: "Gemini CLI"
+    config_format: "toml"
+    config_file: "config.toml"
+    hooks:
+      enabled: true
+      file: "settings.json"
+      events: ["sessionStart", "sessionEnd", "postToolUse"]
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: true
+      custom_models: true
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      supports_timeout: true
+      supports_description: true
+
+  codex:
+    display_name: "Codex CLI"
+    config_format: "toml"
+    config_file: "config.toml"
+    hooks:
+      enabled: true
+      file: "config.toml"
+      events: ["notify"]
+    capabilities:
+      mcp_servers: true
+      permissions: true
+      sandbox: true
+      web_search: true
+      custom_models: true
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      timeout_field: "tool_timeout_sec"
+      supports_timeout: true
+      supports_description: false
+      requires_preamble: true
+
+  opencode:
+    display_name: "OpenCode"
+    config_format: "json"
+    config_file: "opencode.json"
+    config_root: "mcp"
+    hooks:
+      enabled: true
+      file: "plugins/loom-hooks.ts"
+      type: "typescript"
+      events: ["sessionCreated", "sessionDeleted", "sessionIdle", "toolExecuteAfter"]
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: true
+      plugin_system: true
+    features:
+      command_format: "array"
+      env_key: "environment"
+      timeout_unit: "milliseconds"
+      supports_timeout: true
+      supports_description: false
+
+  vscode:
+    display_name: "VS Code"
+    config_format: "json"
+    config_file: "mcp.json"
+    config_root: "mcpServers"
+    hooks:
+      enabled: false
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: false
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      timeout_field: "timeout"
+      supports_timeout: true
+      supports_description: true
+
+  antigravity:
+    display_name: "Antigravity"
+    config_format: "json"
+    config_file: "mcp.json"
+    config_root: "mcpServers"
+    hooks:
+      enabled: false
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: false
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      timeout_field: "timeout"
+      supports_timeout: true
+      supports_description: true
+
+  kilocode:
+    display_name: "Kilo Code"
+    config_format: "toml"
+    config_file: "config.toml"
+    hooks:
+      enabled: false
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: false
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      supports_timeout: true
+      supports_description: true
+
+  zed:
+    display_name: "Zed"
+    config_format: "json"
+    config_file: "mcp.json"
+    config_root: "mcpServers"
+    hooks:
+      enabled: false
+    capabilities:
+      mcp_servers: true
+      permissions: false
+      sandbox: false
+      web_search: false
+      custom_models: false
+      plugin_system: false
+    features:
+      command_format: "separate"
+      env_key: "env"
+      timeout_unit: "seconds"
+      timeout_field: "timeout"
+      supports_timeout: true
+      supports_description: true

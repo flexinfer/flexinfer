@@ -143,20 +143,25 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	registryRoot := inferRegistryRoot(registryPath)
 
 	for _, target := range targets {
+		profile, profileErr := GetPlatformProfile(target)
+		if profileErr != nil {
+			return fmt.Errorf("unknown target %q: %w", target, profileErr)
+		}
+
 		var err error
-		switch target {
-		case "vscode", "antigravity", "zed":
-			// VSCode, Antigravity (VSCode fork), and Zed use mcp.json format
-			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case "claude":
-			err = generateClaudeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case "claude_desktop":
-			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		case "opencode":
+		switch {
+		case target == "opencode":
+			// OpenCode has unique serialization (array commands, "mcp" root, etc.)
 			err = generateOpenCodeConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
-		default:
-			// Codex, Kilocode, Gemini use TOML format
+		case target == "claude_desktop":
+			// Claude Desktop omits timeout field.
+			err = generateClaudeDesktopConfig(reg, outputDir, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+		case profile.ConfigFormat == "json":
+			err = generateJSONConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+		case profile.ConfigFormat == "toml":
 			err = generateTomlConfig(reg, outputDir, target, hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
+		default:
+			err = fmt.Errorf("unsupported config format %q for %s", profile.ConfigFormat, target)
 		}
 		if err != nil {
 			return fmt.Errorf("generate %s: %w", target, err)
@@ -404,10 +409,6 @@ func probeHubWrapper(path string) error {
 		return fmt.Errorf("%w: %s", err, msg)
 	}
 	return nil
-}
-
-func generateClaudeConfig(reg *registry.Registry, outputDir string, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) error {
-	return generateJSONConfig(reg, outputDir, "claude", hubMode, hubURL, loomMode, loomBinary, workspaceRoot, registryRoot, resolveSecrets)
 }
 
 // generateJSONConfig generates mcp.json format configs for vscode and claude targets

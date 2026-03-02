@@ -23,134 +23,19 @@ type VendorCapabilities struct {
 	DisplayName string
 }
 
-// vendorMatrix maps platform names to their known capabilities.
-var vendorMatrix = map[string]*VendorCapabilities{
-	"claude": {
-		DisplayName:      "Claude Code",
-		SessionStartHook: true,
-		SessionEndHook:   true,
-		PostToolUseHook:  true,
-		PreToolUseHook:   true,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      true,
-		SandboxMode:      false,
-		WebSearch:        true,
-		CustomModels:     true,
-		PluginSystem:     false,
-	},
-	"gemini": {
-		DisplayName:      "Gemini CLI",
-		SessionStartHook: true,
-		SessionEndHook:   true,
-		PostToolUseHook:  true,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        true,
-		CustomModels:     true,
-		PluginSystem:     false,
-	},
-	"codex": {
-		DisplayName:      "Codex CLI",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       true,
-		MCPServers:       true,
-		Permissions:      true,
-		SandboxMode:      true,
-		WebSearch:        true,
-		CustomModels:     true,
-		PluginSystem:     false,
-	},
-	"opencode": {
-		DisplayName:      "OpenCode",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        false,
-		CustomModels:     true,
-		PluginSystem:     true,
-	},
-	"kilocode": {
-		DisplayName:      "Kilo Code",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        false,
-		CustomModels:     false,
-		PluginSystem:     false,
-	},
-	"antigravity": {
-		DisplayName:      "Antigravity",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        false,
-		CustomModels:     false,
-		PluginSystem:     false,
-	},
-	"vscode": {
-		DisplayName:      "VS Code",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        false,
-		CustomModels:     false,
-		PluginSystem:     false,
-	},
-	"zed": {
-		DisplayName:      "Zed",
-		SessionStartHook: false,
-		SessionEndHook:   false,
-		PostToolUseHook:  false,
-		PreToolUseHook:   false,
-		NotifyHook:       false,
-		MCPServers:       true,
-		Permissions:      false,
-		SandboxMode:      false,
-		WebSearch:        false,
-		CustomModels:     false,
-		PluginSystem:     false,
-	},
-}
-
-// GetVendorCapabilities returns the capabilities for a platform, or nil if unknown.
+// GetVendorCapabilities returns the capabilities for a platform, derived from
+// the YAML platform profile. Returns nil if the platform is unknown.
 func GetVendorCapabilities(platform string) *VendorCapabilities {
-	return vendorMatrix[platform]
+	p, err := GetPlatformProfile(platform)
+	if err != nil {
+		return nil
+	}
+	return p.ToVendorCapabilities()
 }
 
-// AllVendors returns all known platform names.
+// AllVendors returns all known platform names from the YAML profiles.
 func AllVendors() []string {
-	names := make([]string, 0, len(vendorMatrix))
-	for name := range vendorMatrix {
-		names = append(names, name)
-	}
-	return names
+	return AllPlatformNames()
 }
 
 // VendorWarning represents a feature mismatch between config and vendor capabilities.
@@ -163,7 +48,7 @@ type VendorWarning struct {
 // CheckVendorFeatures compares what the generator would emit for a platform
 // against the vendor capability matrix and returns any warnings.
 func CheckVendorFeatures(platform string) []VendorWarning {
-	caps := vendorMatrix[platform]
+	caps := GetVendorCapabilities(platform)
 	if caps == nil {
 		return nil
 	}
