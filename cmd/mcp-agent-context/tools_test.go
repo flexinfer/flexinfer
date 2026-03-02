@@ -183,6 +183,70 @@ func TestMemoryAddSchema_HasItems(t *testing.T) {
 	}
 }
 
+func TestAnnotationToolsDeprecated(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	deprecated := []string{"agent_code_annotate", "agent_code_annotations_get"}
+	for _, name := range deprecated {
+		tool := toolByName(tools, name)
+		if tool == nil {
+			t.Errorf("deprecated tool %q should still be registered", name)
+			continue
+		}
+		if len(tool.Description) < 12 || tool.Description[:12] != "[Deprecated:" {
+			t.Errorf("tool %q should have [Deprecated:] prefix, got %q", name, tool.Description[:30])
+		}
+	}
+}
+
+func TestContextAddSchema_SupportsAnnotations(t *testing.T) {
+	t.Parallel()
+	_, tools := testServer()
+
+	tool := toolByName(tools, "agent_context_add")
+	if tool == nil {
+		t.Fatal("agent_context_add not found")
+	}
+
+	entries, ok := tool.InputSchema.Properties["entries"].(map[string]any)
+	if !ok {
+		t.Fatal("entries property not found or wrong type")
+	}
+	items, ok := entries["items"].(map[string]any)
+	if !ok {
+		t.Fatal("entries.items not found or wrong type")
+	}
+	props, ok := items["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("entries.items.properties not found or wrong type")
+	}
+
+	for _, field := range []string{"annotation_type", "symbol"} {
+		if _, ok := props[field]; !ok {
+			t.Errorf("expected property %q in context entry schema for annotation support", field)
+		}
+	}
+
+	entryType, ok := props["entry_type"].(map[string]any)
+	if !ok {
+		t.Fatal("entry_type property not found")
+	}
+	enumVals, ok := entryType["enum"].([]string)
+	if !ok {
+		t.Fatal("entry_type enum not found")
+	}
+	found := false
+	for _, v := range enumVals {
+		if v == "annotation" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'annotation' in entry_type enum")
+	}
+}
+
 func TestAllToolsHaveDescriptions(t *testing.T) {
 	t.Parallel()
 	_, tools := testServer()

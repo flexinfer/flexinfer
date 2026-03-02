@@ -31,8 +31,8 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 						"properties": map[string]any{
 							"entry_type": map[string]any{
 								"type":        "string",
-								"enum":        []string{"file_read", "decision", "finding", "question", "note", "error", "code_context"},
-								"description": "Type of context entry.",
+								"enum":        []string{"file_read", "decision", "finding", "question", "note", "error", "code_context", "annotation"},
+								"description": "Type of context entry. Use 'annotation' for code annotations (replaces agent_code_annotate).",
 							},
 							"title": map[string]any{
 								"type":        "string",
@@ -44,15 +44,24 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 							},
 							"file_path": map[string]any{
 								"type":        "string",
-								"description": "File path (for file_read entries).",
+								"description": "File path (for file_read and annotation entries).",
 							},
 							"line_start": map[string]any{
 								"type":        "integer",
-								"description": "Start line (for file_read entries).",
+								"description": "Start line (for file_read and annotation entries).",
 							},
 							"line_end": map[string]any{
 								"type":        "integer",
-								"description": "End line (for file_read entries).",
+								"description": "End line (for file_read and annotation entries).",
+							},
+							"annotation_type": map[string]any{
+								"type":        "string",
+								"enum":        []string{"todo", "fixme", "note", "question", "important", "bug", "perf"},
+								"description": "Annotation subtype (for entry_type='annotation').",
+							},
+							"symbol": map[string]any{
+								"type":        "string",
+								"description": "Related symbol name (for annotation entries).",
 							},
 							"tags": map[string]any{
 								"type":        "array",

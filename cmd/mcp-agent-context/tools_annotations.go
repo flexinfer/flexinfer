@@ -17,7 +17,7 @@ func registerAnnotationTools(server *mcp.Server, svc *agentcontext.Service, trac
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_code_annotate",
-		Description: "Create a code annotation attached to a specific file location.",
+		Description: "[Deprecated: use agent_context_add with entry_type='annotation'] Create a code annotation attached to a specific file location.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -63,7 +63,7 @@ func registerAnnotationTools(server *mcp.Server, svc *agentcontext.Service, trac
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_code_annotations_get",
-		Description: "Get code annotations for a file or range.",
+		Description: "[Deprecated: use agent_context_search with entry_type='annotation'] Get code annotations for a file or range.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
