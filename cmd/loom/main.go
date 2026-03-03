@@ -66,6 +66,7 @@ func main() {
 		newSyncCmd(),
 		newPullCmd(),
 		newBackupCmd(),
+		newCatalogCmd(),
 		newValidateCmd(),
 		newProfileCmd(),
 		newContextCmd(),
