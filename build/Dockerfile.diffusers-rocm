@@ -886,19 +886,37 @@ async def generate_images(request: ImageGenerationRequest):
 
     def _run_inference():
         """Run blocking pipeline inference in a thread so the event loop stays responsive."""
+        # FluxFillPipeline is an inpainting model — route text2image through
+        # a blank image + full mask so a single Fill model can serve both
+        # /v1/images/generations and /v1/images/edits endpoints.
+        is_fill = isinstance(pipe, FluxFillPipeline)
         results = []
         for _ in range(request.n):
             with torch.inference_mode():
-                gen_kwargs = {
-                    "prompt": request.prompt,
-                    "num_inference_steps": steps,
-                    "guidance_scale": guidance_scale,
-                    "width": width,
-                    "height": height,
-                }
-                # FLUX doesn't support negative_prompt
-                if not _is_flux(model_id) and negative_prompt:
-                    gen_kwargs["negative_prompt"] = negative_prompt
+                if is_fill:
+                    # Text2image via fill: blank canvas + full mask = generate from scratch
+                    blank = Image.new("RGB", (width, height), (128, 128, 128))
+                    mask = Image.new("L", (width, height), 255)
+                    gen_kwargs = {
+                        "prompt": request.prompt,
+                        "image": blank,
+                        "mask_image": mask,
+                        "num_inference_steps": steps,
+                        "guidance_scale": guidance_scale,
+                        "height": height,
+                        "width": width,
+                    }
+                else:
+                    gen_kwargs = {
+                        "prompt": request.prompt,
+                        "num_inference_steps": steps,
+                        "guidance_scale": guidance_scale,
+                        "width": width,
+                        "height": height,
+                    }
+                    # FLUX doesn't support negative_prompt
+                    if not _is_flux(model_id) and negative_prompt:
+                        gen_kwargs["negative_prompt"] = negative_prompt
                 result = pipe(**gen_kwargs)
             img = result.images[0]
             buffer = io.BytesIO()

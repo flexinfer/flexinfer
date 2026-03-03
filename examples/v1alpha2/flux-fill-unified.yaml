@@ -1,0 +1,46 @@
+# FLUX.1 Fill Dev — Unified Image Generation + Editing
+# Single model for both /v1/images/generations and /v1/images/edits
+# on AMD gfx1100 (24GB VRAM) with NF4 quantization (~15GB peak VRAM)
+#
+# How it works:
+#   - PIPELINE_MODE=inpainting loads FluxFillPipeline
+#   - /v1/images/edits: standard inpainting with user-provided image + mask
+#   - /v1/images/generations: server auto-generates blank image + full mask
+#     for text2image via the fill path (no separate text2image model needed)
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: flux-fill-unified
+spec:
+  backend: diffusers
+  source: HF://black-forest-labs/FLUX.1-Fill-dev
+
+  gpu:
+    vendor: amd
+    arch: gfx1100
+
+  serviceLabels:
+    - imagegen
+    - image-edit
+    - dall-e-3
+    - text-to-image
+
+  litellm:
+    enabled: true
+    servedModelName: flux-fill-unified
+    aliases:
+      - dall-e-3
+      - image-gen
+      - text-to-image
+      - image-edit
+
+  config:
+    pipelineMode: inpainting     # Loads FluxFillPipeline
+    quantization: nf4            # NF4 via bitsandbytes (~6GB transformer)
+    useFp16: "0"                 # NF4 uses float32 compute dtype
+    warmupResolutions: "512x512,1024x1024"
+    skipWarmup: "0"
+
+  serverless:
+    idleTimeout: 10m             # Keep warm — reload is expensive with NF4
