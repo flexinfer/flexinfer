@@ -1014,3 +1014,138 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 		t.Fatal("timed out waiting for recall call")
 	}
 }
+
+func TestAgentBridge_StartSession_IdempotentForSameNamespace(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	sessionStartCalls := 0
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/main","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_session_start":
+			sessionStartCalls++
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"session_id":"sess-new"}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.StartSession(SessionStartParams{
+		Namespace: "loom-core/main",
+		AgentID:   "codex-gpt5",
+		AgentType: "codex",
+	})
+	if err != nil {
+		t.Fatalf("start session failed: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil session result")
+	}
+	if result.SessionID != "sess-existing" {
+		t.Fatalf("session_id = %q, want sess-existing", result.SessionID)
+	}
+	if !result.AlreadyExisted {
+		t.Fatal("expected already_existed=true")
+	}
+	if sessionStartCalls != 0 {
+		t.Fatalf("session_start calls = %d, want 0", sessionStartCalls)
+	}
+}
+
+func TestAgentBridge_StartSession_NewNamespaceStartsNewSession(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	sessionStartCalls := 0
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/old","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_session_start":
+			sessionStartCalls++
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"session_id":"sess-new"}`},
+				},
+			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.StartSession(SessionStartParams{
+		Namespace: "loom-core/new",
+		AgentID:   "codex-gpt5",
+		AgentType: "codex",
+	})
+	if err != nil {
+		t.Fatalf("start session failed: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil session result")
+	}
+	if result.SessionID != "sess-new" {
+		t.Fatalf("session_id = %q, want sess-new", result.SessionID)
+	}
+	if result.AlreadyExisted {
+		t.Fatal("expected already_existed=false")
+	}
+	if sessionStartCalls != 1 {
+		t.Fatalf("session_start calls = %d, want 1", sessionStartCalls)
+	}
+}

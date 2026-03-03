@@ -77,6 +77,9 @@ Progress (this branch):
   - `agent_session_start` now returns existing active session when `agent_id + namespace` already active.
   - Existing cross-namespace behavior preserved: prior active sessions are ended before new session creation.
   - Added lifecycle tests for both same-namespace idempotency and new-namespace rollover.
+- Added bridge-level contract tests for session-start idempotency:
+  - same namespace reuses the active session without issuing `agent_session_start`.
+  - namespace change issues a new `agent_session_start` and returns a new session id.
 
 ### P2 - Documentation and operator clarity
 
