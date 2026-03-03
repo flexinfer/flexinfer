@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -161,5 +162,106 @@ func TestGraphSearchToEntries_NilGraph(t *testing.T) {
 	entries := svc.graphSearchToEntries(context.Background(), nil, "")
 	if entries != nil {
 		t.Errorf("expected nil for nil graph, got %d entries", len(entries))
+	}
+}
+
+func TestNormalizeLegacyEnhancedScope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                               string
+		raw                                any
+		wantScope                          string
+		wantContext, wantMemory, wantGraph bool
+	}{
+		{
+			name:        "context string",
+			raw:         "context",
+			wantScope:   "context",
+			wantContext: true,
+		},
+		{
+			name:       "memory array any",
+			raw:        []any{"memory"},
+			wantScope:  "memory",
+			wantMemory: true,
+		},
+		{
+			name:        "context and graph mixed",
+			raw:         []string{"context", "graph"},
+			wantScope:   "context",
+			wantContext: true,
+			wantGraph:   true,
+		},
+		{
+			name:      "graph only maps to context backend",
+			raw:       []any{"graph"},
+			wantScope: "context",
+			wantGraph: true,
+		},
+		{
+			name:      "invalid scope",
+			raw:       []any{"unknown"},
+			wantScope: "",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			scope, hasContext, hasMemory, hasGraph := normalizeLegacyEnhancedScope(tc.raw)
+			if scope != tc.wantScope {
+				t.Fatalf("scope = %q, want %q", scope, tc.wantScope)
+			}
+			if hasContext != tc.wantContext {
+				t.Fatalf("hasContext = %v, want %v", hasContext, tc.wantContext)
+			}
+			if hasMemory != tc.wantMemory {
+				t.Fatalf("hasMemory = %v, want %v", hasMemory, tc.wantMemory)
+			}
+			if hasGraph != tc.wantGraph {
+				t.Fatalf("hasGraph = %v, want %v", hasGraph, tc.wantGraph)
+			}
+		})
+	}
+}
+
+func TestHandleDeprecatedEnhancedRecall_DefaultRouteToUnified(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:         GetMetrics(),
+		memoryHierarchy: NewMemoryHierarchy(),
+	}
+
+	result, err := svc.HandleDeprecatedEnhancedRecall(context.Background(), map[string]any{
+		"query":             "test",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleDeprecatedEnhancedRecall error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("expected non-error result, got %#v", result)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("expected non-empty content")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	if got := payload["scope"]; got != "all" {
+		t.Fatalf("scope = %v, want all", got)
 	}
 }
