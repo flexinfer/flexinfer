@@ -2444,6 +2444,14 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 
 	// Job exists — check status.
 	if job.Status.Succeeded > 0 {
+		// Idempotency: if the cache already reflects a completed quantization with
+		// the correct format, skip re-writing status to avoid an infinite reconcile
+		// loop (each status write triggers a new reconcile that re-enters this branch).
+		if model.Status.Cache.Ready && model.Status.Cache.Quantization != nil &&
+			model.Status.Cache.Quantization.Format == string(spec.Format) &&
+			model.Status.Cache.Quantization.CompletedAt != nil {
+			return true, nil
+		}
 		meta, _ := r.readQuantizationMetadataFromJob(ctx, model.Namespace, jobName)
 		if meta != nil {
 			model.Status.Cache.Quantization = &aiv1alpha1.QuantizationStatus{
