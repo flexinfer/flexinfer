@@ -80,6 +80,9 @@ Progress (this branch):
 - Added bridge-level contract tests for session-start idempotency:
   - same namespace reuses the active session without issuing `agent_session_start`.
   - namespace change issues a new `agent_session_start` and returns a new session id.
+- Added HUD route-level contract tests for session-start idempotency:
+  - `/api/agent/session-start` reuses active same-namespace sessions and returns `already_existed=true`.
+  - namespace changes still create a new session and return `already_existed=false`.
 
 ### P2 - Documentation and operator clarity
 
@@ -98,4 +101,5 @@ Migration note (2026-03-03):
   - stale active sessions for non-live agents are ended and persisted,
   - live-agent sessions are preserved,
   - reaper tick respects `SessionReaperActiveMaxAge`.
-- Next focus: close remaining session unification hardening and run integration smoke against daemon/HUD path.
+- Hardened daemon/HUD session-start integration path with route-level idempotency regression tests.
+- Next focus: confirm CI stability and close out remaining operator-doc cleanup.
