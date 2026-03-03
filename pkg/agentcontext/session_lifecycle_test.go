@@ -413,3 +413,102 @@ func TestSessionEnd_CleanupContract(t *testing.T) {
 			releaseCalled, removeCalled, deleteCalled, orphanCalled, staleCalled)
 	}
 }
+
+func TestSessionStart_IdempotentForSameAgentAndNamespace(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := newTestService()
+	started := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	svc.sess.sessions["s1"] = &Session{
+		ID:        "s1",
+		AgentID:   "agent-1",
+		Namespace: "loom-core/main",
+		Status:    string(SessionStatusActive),
+		StartedAt: started,
+	}
+
+	result, err := svc.sess.Start(context.Background(), map[string]any{
+		"agent_id":    "agent-1",
+		"namespace":   "loom-core/main",
+		"description": "should be idempotent",
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	if payload["session_id"] != "s1" {
+		t.Fatalf("session_id = %v, want s1", payload["session_id"])
+	}
+	if payload["already_existed"] != true {
+		t.Fatalf("already_existed = %v, want true", payload["already_existed"])
+	}
+	if payload["started_at"] != started.Format(time.RFC3339) {
+		t.Fatalf("started_at = %v, want %s", payload["started_at"], started.Format(time.RFC3339))
+	}
+
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
+	if len(svc.sess.sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1", len(svc.sess.sessions))
+	}
+	if svc.sess.sessions["s1"].Status != string(SessionStatusActive) {
+		t.Fatalf("existing session status = %q, want active", svc.sess.sessions["s1"].Status)
+	}
+	if svc.sess.sessions["s1"].EndedAt != nil {
+		t.Fatalf("existing session EndedAt should remain nil, got %v", svc.sess.sessions["s1"].EndedAt)
+	}
+}
+
+func TestSessionStart_NewNamespaceEndsPriorActiveSession(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := newTestService()
+	svc.sess.sessions["old"] = &Session{
+		ID:        "old",
+		AgentID:   "agent-1",
+		Namespace: "loom-core/old",
+		Status:    string(SessionStatusActive),
+		StartedAt: time.Now().Add(-time.Hour),
+	}
+
+	result, err := svc.sess.Start(context.Background(), map[string]any{
+		"agent_id":  "agent-1",
+		"namespace": "loom-core/new",
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	newID, _ := payload["session_id"].(string)
+	if newID == "" || newID == "old" {
+		t.Fatalf("expected new session id, got %q", newID)
+	}
+
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
+	old := svc.sess.sessions["old"]
+	if old.Status != string(SessionStatusEnded) {
+		t.Fatalf("old session status = %q, want ended", old.Status)
+	}
+	if old.EndedAt == nil {
+		t.Fatal("old session EndedAt should be set")
+	}
+	newSess := svc.sess.sessions[newID]
+	if newSess == nil {
+		t.Fatalf("new session %q missing from cache", newID)
+	}
+	if newSess.Namespace != "loom-core/new" {
+		t.Fatalf("new session namespace = %q, want loom-core/new", newSess.Namespace)
+	}
+	if newSess.Status != string(SessionStatusActive) {
+		t.Fatalf("new session status = %q, want active", newSess.Status)
+	}
+}

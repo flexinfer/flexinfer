@@ -52,3 +52,12 @@ trap cleanup EXIT
 cp -p "$src" "$tmp"
 chmod +x "$tmp" 2>/dev/null || true
 mv -f "$tmp" "$dst"
+
+# On macOS, ad-hoc sign installed binaries to avoid taskgated
+# "Code Signature Invalid" kills when launched by GUI helpers/extensions.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
+  if ! codesign --force --sign - "$dst" >/dev/null 2>&1; then
+    echo "install_atomic: codesign failed for $dst" >&2
+    exit 1
+  fi
+fi

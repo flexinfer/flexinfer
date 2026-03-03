@@ -145,6 +145,23 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		return mcp.JSONResult(result)
 	}
 
+	// Idempotent start: if an active session already exists for this agent in the
+	// same namespace, return it instead of rolling sessions.
+	if existing := ss.activeSessionForAgentNamespace(agentID, namespace); existing != nil {
+		result := map[string]any{
+			"ok":              true,
+			"session_id":      existing.ID,
+			"agent_id":        existing.AgentID,
+			"namespace":       existing.Namespace,
+			"started_at":      existing.StartedAt.Format(time.RFC3339),
+			"already_existed": true,
+		}
+		if ss.enrichResult != nil {
+			ss.enrichResult(ctx, result, existing.AgentID, existing.Namespace)
+		}
+		return mcp.JSONResult(result)
+	}
+
 	// End any prior active sessions for this agent.
 	ss.EndActiveForAgent(ctx, agentID)
 
@@ -183,6 +200,17 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		ss.enrichResult(ctx, result, agentID, namespace)
 	}
 	return mcp.JSONResult(result)
+}
+
+func (ss *SessionSvc) activeSessionForAgentNamespace(agentID, namespace string) *Session {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	for _, sess := range ss.sessions {
+		if sess.AgentID == agentID && sess.Namespace == namespace && sess.Status == string(SessionStatusActive) {
+			return sess
+		}
+	}
+	return nil
 }
 
 // End marks a session as ended and optionally generates a summary.
