@@ -69,3 +69,4 @@ All `SIMP-1` through `SIMP-12` branches are merged into `main`.
   - `pkg/agentcontext/svc_sessions_wrappers.go`
   - `pkg/agentcontext/svc_context_wrappers.go`
 - Purpose: continue shrinking `service.go` and maintain clean domain boundaries.
+- Route deprecated recall handlers (`agent_context_recall`, `agent_context_recall_enhanced`) through unified `agent_recall` internals with legacy argument normalization.

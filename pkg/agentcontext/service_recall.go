@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -385,6 +386,8 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	includeTasks := v.Bool("include_tasks", true)
 	crossAgent := v.Bool("cross_agent", false)
 	scope := v.String("scope", "context")
+	includeMemoryEntries := v.Bool("include_memory", false)
+	includeGraphEntries := v.Bool("include_graph", false)
 	// Memory-specific filters (used when scope includes memory).
 	memoryTiers := v.StringSlice("memory_tiers")
 	memoryCategories := v.StringSlice("memory_categories")
@@ -423,6 +426,8 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 			RecencyWeight: recencyWeight,
 			IncludeTasks:  includeTasks,
 			CrossAgent:    crossAgent,
+			IncludeMemory: includeMemoryEntries,
+			IncludeGraph:  includeGraphEntries,
 		}
 
 		entries, _, err := s.enhancedRecallContext(ctx, opts)
@@ -439,7 +444,10 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	}
 
 	// --- Memory backend ---
-	if includeMemory {
+	// When context recall already merged memory entries (legacy enhanced path),
+	// avoid emitting a second memory-only section.
+	mergeMemoryIntoEntries := includeContext && includeMemoryEntries
+	if includeMemory && !mergeMemoryIntoEntries {
 		memBudget := tokenBudget - totalTokens
 		if memBudget < 256 {
 			memBudget = 256
@@ -496,10 +504,88 @@ func (s *Service) HandleDeprecatedContextRecall(ctx context.Context, args map[st
 	return s.HandleUnifiedRecall(ctx, args)
 }
 
+// HandleDeprecatedEnhancedRecall normalizes legacy enhanced recall args and
+// routes to the unified recall path.
+func (s *Service) HandleDeprecatedEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	normalized := make(map[string]any, len(args)+3)
+	for k, v := range args {
+		normalized[k] = v
+	}
+
+	if raw, ok := normalized["scope"]; ok {
+		scope, hasContext, hasMemory, hasGraph := normalizeLegacyEnhancedScope(raw)
+		if scope == "" {
+			scope = "context"
+		}
+		normalized["scope"] = scope
+		if _, exists := normalized["include_memory"]; !exists {
+			normalized["include_memory"] = hasMemory
+		}
+		if _, exists := normalized["include_graph"]; !exists {
+			normalized["include_graph"] = hasGraph
+		}
+		if !hasContext && hasGraph {
+			// Graph results are emitted from the context recall path.
+			normalized["scope"] = "context"
+		}
+	} else {
+		normalized["scope"] = "all"
+		if _, exists := normalized["include_memory"]; !exists {
+			normalized["include_memory"] = true
+		}
+		if _, exists := normalized["include_graph"]; !exists {
+			normalized["include_graph"] = true
+		}
+	}
+
+	return s.HandleUnifiedRecall(ctx, normalized)
+}
+
 // HandleDeprecatedMemoryRecall wraps HandleUnifiedRecall with a deprecation notice.
 func (s *Service) HandleDeprecatedMemoryRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	args["scope"] = "memory"
 	return s.HandleUnifiedRecall(ctx, args)
+}
+
+func normalizeLegacyEnhancedScope(raw any) (scope string, hasContext, hasMemory, hasGraph bool) {
+	add := func(s string) {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "context":
+			hasContext = true
+		case "memory":
+			hasMemory = true
+		case "graph":
+			hasGraph = true
+		}
+	}
+
+	switch v := raw.(type) {
+	case string:
+		add(v)
+	case []string:
+		for _, s := range v {
+			add(s)
+		}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				add(s)
+			}
+		}
+	}
+
+	switch {
+	case hasMemory && !hasContext && !hasGraph:
+		return "memory", hasContext, hasMemory, hasGraph
+	case hasContext && !hasMemory:
+		return "context", hasContext, hasMemory, hasGraph
+	case hasGraph && !hasContext && !hasMemory:
+		return "context", hasContext, hasMemory, hasGraph
+	case hasContext || hasMemory || hasGraph:
+		return "all", hasContext, hasMemory, hasGraph
+	default:
+		return "", false, false, false
+	}
 }
 
 func (s *Service) getEntriesForSymbol(ctx context.Context, agentID, symbol string, limit int) ([]ContextEntry, error) {

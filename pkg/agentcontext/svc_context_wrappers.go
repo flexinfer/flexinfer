@@ -25,7 +25,7 @@ func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleContextRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Recall(ctx, args)
+	return s.HandleDeprecatedContextRecall(ctx, args)
 }
 
 func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -49,7 +49,7 @@ func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string
 }
 
 func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.EnhancedRecall(ctx, args)
+	return s.HandleDeprecatedEnhancedRecall(ctx, args)
 }
 
 func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
