@@ -715,6 +715,108 @@ func TestHandler_MobileToken_DeniedOnDirectAgentMutationRoute(t *testing.T) {
 	}
 }
 
+func TestHandler_AgentSessionStart_IdempotentForSameNamespace(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+	sessionStartCalls := 0
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-existing\",\"agent_id\":\"codex-gpt5\",\"namespace\":\"loom-core/main\",\"status\":\"active\"}]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			sessionStartCalls++
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-new\"}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/session-start", strings.NewReader(`{"agent_id":"codex-gpt5","agent_type":"codex","namespace":"loom-core/main"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		SessionID      string `json:"session_id"`
+		AlreadyExisted bool   `json:"already_existed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.SessionID != "sess-existing" {
+		t.Fatalf("expected session_id=sess-existing, got %q", payload.SessionID)
+	}
+	if !payload.AlreadyExisted {
+		t.Fatal("expected already_existed=true")
+	}
+	if sessionStartCalls != 0 {
+		t.Fatalf("session_start calls = %d, want 0", sessionStartCalls)
+	}
+}
+
+func TestHandler_AgentSessionStart_NewNamespaceStartsNewSession(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+	sessionStartCalls := 0
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-existing\",\"agent_id\":\"codex-gpt5\",\"namespace\":\"loom-core/old\",\"status\":\"active\"}]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			sessionStartCalls++
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-new\"}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/session-start", strings.NewReader(`{"agent_id":"codex-gpt5","agent_type":"codex","namespace":"loom-core/new"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		SessionID      string `json:"session_id"`
+		AlreadyExisted bool   `json:"already_existed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.SessionID != "sess-new" {
+		t.Fatalf("expected session_id=sess-new, got %q", payload.SessionID)
+	}
+	if payload.AlreadyExisted {
+		t.Fatal("expected already_existed=false")
+	}
+	if sessionStartCalls != 1 {
+		t.Fatalf("session_start calls = %d, want 1", sessionStartCalls)
+	}
+}
+
 func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"
@@ -2183,9 +2285,26 @@ func TestMobileContract_SessionEnd_ExplicitFalseDisablesSummarize(t *testing.T) 
 }
 
 func TestMobileContract_SessionCreate_ResponseShape(t *testing.T) {
-	app, mux := newTestApp(t)
+	app, mux, handlers := newTestAppWithHandlers(t)
 	app.config.MobileOperatorToken = "mobile-secret"
 	app.config.MobileOperatorScopes = "mobile:session:create"
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-created\"}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
 
 	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions",
 		strings.NewReader(`{"agent_id":"test-agent","namespace":"test/ns"}`))
@@ -2211,6 +2330,12 @@ func TestMobileContract_SessionCreate_ResponseShape(t *testing.T) {
 	}
 	if !env.OK {
 		t.Fatal("expected ok=true")
+	}
+	if env.Data.SessionID != "sess-created" {
+		t.Fatalf("expected session_id='sess-created', got %q", env.Data.SessionID)
+	}
+	if env.Data.AlreadyExisted {
+		t.Fatal("expected already_existed=false for new session create")
 	}
 	if env.Meta.RequestID == "" {
 		t.Fatal("expected request_id in meta")
