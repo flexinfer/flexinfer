@@ -2011,10 +2011,11 @@ func (a *App) sessionReaper(ctx context.Context) {
 					"session_id", session.ID,
 					"offline_since", agent.LastHeartbeat)
 
+				summarize := true
 				_, endErr := a.agent.EndSession(bridge.SessionEndParams{
 					SessionID: session.ID,
 					AgentID:   agent.AgentID,
-					Summarize: true,
+					Summarize: &summarize,
 				})
 				if endErr != nil {
 					a.logger.Warn("session reaper: failed to end session",

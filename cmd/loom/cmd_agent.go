@@ -595,7 +595,7 @@ func newAgentSessionEndCmd() *cobra.Command {
 	var (
 		sessionID    string
 		agentID      string
-		summarize    bool
+		summarize    = true
 		summaryAsync bool
 		quiet        bool
 	)
@@ -614,7 +614,7 @@ Designed for use in Claude Code Stop hooks.`,
 			result, err := endSessionWithFallback(cmd, port, bridge.SessionEndParams{
 				SessionID:    sessionID,
 				AgentID:      agentID,
-				Summarize:    summarize,
+				Summarize:    &summarize,
 				SummaryAsync: summaryAsync,
 			})
 			if err != nil {
@@ -633,7 +633,7 @@ Designed for use in Claude Code Stop hooks.`,
 
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID to end (optional; finds by agent-id)")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
-	cmd.Flags().BoolVar(&summarize, "summarize", false, "Summarize and compress context on end")
+	cmd.Flags().BoolVar(&summarize, "summarize", true, "Summarize and compress context on end")
 	cmd.Flags().BoolVar(&summaryAsync, "summary-async", false, "Queue summarization in background and return immediately")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 

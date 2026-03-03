@@ -65,6 +65,15 @@ Progress (this branch):
 - Add regression coverage around stale session reaping and summarize-on-end behavior.
 - Gate: session lifecycle tests + integration smoke pass.
 
+Progress (this branch):
+- Standardized summarize-on-end semantics across CLI/HUD/bridge:
+  - `SessionEndParams.summarize` now uses explicit tri-state (`nil` => default true).
+  - Bridge always forwards an explicit `summarize` argument to `agent_session_end`.
+  - `loom agent session-end` now defaults `--summarize=true` (still overridable via `--summarize=false`).
+- Added regression coverage for session-end summarize propagation:
+  - bridge tests verify default summarize=true and explicit summarize=false.
+  - mobile session-end tests verify empty body defaults to summarize=true and explicit false is honored.
+
 ### P2 - Documentation and operator clarity
 
 - Keep this file synced with merged slices and superseded MR closures.

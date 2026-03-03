@@ -2090,7 +2090,7 @@ func TestMobileContract_SessionEnd_EmptyBody(t *testing.T) {
 	app.config.MobileOperatorToken = "mobile-secret"
 	app.config.MobileOperatorScopes = "mobile:session:end"
 
-	// Empty body is valid — summarize defaults to false.
+	// Empty body is valid — summarize defaults to true.
 	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", nil)
 	req.Header.Set("Authorization", "Bearer mobile-secret")
 	w := httptest.NewRecorder()
@@ -2098,6 +2098,87 @@ func TestMobileContract_SessionEnd_EmptyBody(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMobileContract_SessionEnd_EmptyBodyDefaultsSummarizeTrue(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	var sawSessionEnd bool
+	var summarizeValue any
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		if req.Name == "agent_context__agent_session_end" {
+			sawSessionEnd = true
+			summarizeValue = req.Arguments["summarize"]
+		}
+
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawSessionEnd {
+		t.Fatal("expected agent_session_end tool call")
+	}
+	if got, ok := summarizeValue.(bool); !ok || !got {
+		t.Fatalf("expected summarize=true, got %#v", summarizeValue)
+	}
+}
+
+func TestMobileContract_SessionEnd_ExplicitFalseDisablesSummarize(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+
+	var sawSessionEnd bool
+	var summarizeValue any
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		if req.Name == "agent_context__agent_session_end" {
+			sawSessionEnd = true
+			summarizeValue = req.Arguments["summarize"]
+		}
+
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", strings.NewReader(`{"summarize":false}`))
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawSessionEnd {
+		t.Fatal("expected agent_session_end tool call")
+	}
+	if got, ok := summarizeValue.(bool); !ok || got {
+		t.Fatalf("expected summarize=false, got %#v", summarizeValue)
 	}
 }
 
