@@ -182,7 +182,7 @@ The `mcp-agent-context` server provides persistent memory for AI agents across s
 ```
 1. agent_presence_register(agent_id="claude-1", agent_type="claude-code", description="Working on auth")
 2. agent_session_start(namespace="project/feature-x")
-3. agent_context_recall_enhanced(query="previous work on this feature")
+3. agent_recall(query="previous work on this feature", scope="context")
 4. agent_task_add(tasks=[{title: "...", context: "...", priority: "high", file_path: "..."}])
 5. agent_task_update(task_id="...", status="in_progress")
 6. agent_context_add(entries=[{entry_type: "decision", title: "...", content: "..."}])
@@ -213,8 +213,10 @@ The `mcp-agent-context` server provides persistent memory for AI agents across s
 | Tool | Description |
 |------|-------------|
 | `agent_context_search` | Semantic search across entries. |
-| `agent_context_recall` | Token-efficient retrieval (prioritizes decisions/summaries). |
-| `agent_context_recall_enhanced` | Enhanced recall with tasks, recency weighting, symbol context. |
+| `agent_recall` | Unified recall across context/memory/graph (`scope=context|memory|all`). |
+| `agent_context_recall` | Deprecated compatibility alias routed to unified recall internals. |
+| `agent_context_recall_enhanced` | Deprecated compatibility alias routed to unified recall internals. |
+| `agent_memory_recall` | Deprecated compatibility alias routed to unified recall internals. |
 
 #### Task Tracking
 | Tool | Description |

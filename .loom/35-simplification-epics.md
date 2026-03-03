@@ -93,6 +93,7 @@ Migration note (2026-03-03):
 - Preferred tool: `agent_recall` (use `scope=context|memory|all` plus `include_memory`/`include_graph` when needed).
 - Deprecated but still supported: `agent_context_recall`, `agent_context_recall_enhanced`, `agent_memory_recall`.
 - Compatibility behavior: deprecated recall tools normalize legacy arguments and route through unified recall internals.
+- Operator docs alignment: `AGENTS.md` quick-start + context-retrieval tables now point to `agent_recall` as primary and mark legacy recall tools as compatibility aliases.
 
 ## Current Slice (2026-03-03)
 
@@ -102,4 +103,5 @@ Migration note (2026-03-03):
   - live-agent sessions are preserved,
   - reaper tick respects `SessionReaperActiveMaxAge`.
 - Hardened daemon/HUD session-start integration path with route-level idempotency regression tests.
-- Next focus: confirm CI stability and close out remaining operator-doc cleanup.
+- Closed operator-doc recall migration cleanup by aligning AGENTS quick-start + retrieval matrix with unified recall.
+- Next focus: monitor CI stability and triage any follow-up regressions only if they surface.
