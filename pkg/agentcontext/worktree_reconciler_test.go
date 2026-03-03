@@ -10,19 +10,24 @@ import (
 )
 
 func newTestServiceForWorktree() *Service {
+	logger := slog.Default()
+	metrics := NewMetrics()
+	cfg := Config{
+		PresenceHeartbeatTTL:            120,
+		PresenceCleanupInterval:         60,
+		WorktreeArtifactCleanupPatterns: ".next,node_modules,target",
+	}
 	return &Service{
-		cfg: Config{
-			PresenceHeartbeatTTL:            120,
-			PresenceCleanupInterval:         60,
-			WorktreeArtifactCleanupPatterns: ".next,node_modules,target",
-		},
-		logger:        slog.Default(),
-		tracer:        noop.NewTracerProvider().Tracer("test"),
-		metrics:       NewMetrics(),
-		presenceMap:   make(map[string]*AgentPresence),
-		fileClaims:    make(map[string]map[string]*FileClaim),
-		worktreeAssns: make(map[string]*WorktreeAssignment),
-		sessions:      make(map[string]*Session),
+		cfg:     cfg,
+		logger:  logger,
+		tracer:  noop.NewTracerProvider().Tracer("test"),
+		metrics: metrics,
+
+		presence:  NewPresenceSvc(nil, cfg, logger, metrics),
+		claims:    NewClaimSvc(nil, logger, metrics),
+		worktrees: NewWorktreeSvc(nil, cfg, logger, metrics),
+
+		sess: NewSessionSvc(nil, cfg, logger, metrics),
 	}
 }
 
@@ -31,7 +36,7 @@ func TestWorktreeReconciler_StartStop(t *testing.T) {
 	config := DefaultWorktreeReconcilerConfig()
 	config.CheckInterval = 100 * time.Millisecond
 
-	r := NewWorktreeReconciler(config, svc, slog.Default())
+	r := NewWorktreeReconciler(config, svc.worktrees, slog.Default())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -69,11 +74,11 @@ func TestWorktreeReconciler_OrphanGracePeriod(t *testing.T) {
 	config.DiskScanEnabled = false
 	config.DetectUntracked = false
 
-	r := NewWorktreeReconciler(config, svc, slog.Default())
+	r := NewWorktreeReconciler(config, svc.worktrees, slog.Default())
 
 	// Create an orphaned worktree that expired a while ago
 	pastOrphan := time.Now().Add(-1 * time.Hour)
-	svc.worktreeAssns["wt-old"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-old"] = &WorktreeAssignment{
 		ID:           "wt-old",
 		AgentID:      "agent-1",
 		WorktreePath: t.TempDir(), // Use temp dir so disk scan doesn't fail
@@ -84,7 +89,7 @@ func TestWorktreeReconciler_OrphanGracePeriod(t *testing.T) {
 	}
 
 	// Create an orphaned worktree that was JUST orphaned (no OrphanedAt yet)
-	svc.worktreeAssns["wt-new"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-new"] = &WorktreeAssignment{
 		ID:           "wt-new",
 		AgentID:      "agent-2",
 		WorktreePath: t.TempDir(),
@@ -95,7 +100,7 @@ func TestWorktreeReconciler_OrphanGracePeriod(t *testing.T) {
 	}
 
 	// Create an active worktree — should not be touched
-	svc.worktreeAssns["wt-active"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-active"] = &WorktreeAssignment{
 		ID:           "wt-active",
 		AgentID:      "agent-3",
 		WorktreePath: t.TempDir(),
@@ -116,12 +121,12 @@ func TestWorktreeReconciler_OrphanGracePeriod(t *testing.T) {
 	// wt-active should be untouched
 
 	// Check wt-new got an OrphanedAt timestamp
-	if svc.worktreeAssns["wt-new"] != nil && svc.worktreeAssns["wt-new"].OrphanedAt == nil {
+	if svc.worktrees.assns["wt-new"] != nil && svc.worktrees.assns["wt-new"].OrphanedAt == nil {
 		t.Error("wt-new should have OrphanedAt set")
 	}
 
 	// wt-active should still be active
-	if active, ok := svc.worktreeAssns["wt-active"]; !ok || active.Status != WorktreeStatusActive {
+	if active, ok := svc.worktrees.assns["wt-active"]; !ok || active.Status != WorktreeStatusActive {
 		t.Error("wt-active should still be active")
 	}
 
@@ -138,10 +143,10 @@ func TestWorktreeReconciler_TTLExpiration(t *testing.T) {
 	config.DiskScanEnabled = false
 	config.DetectUntracked = false
 
-	r := NewWorktreeReconciler(config, svc, slog.Default())
+	r := NewWorktreeReconciler(config, svc.worktrees, slog.Default())
 
 	// Worktree with TTL that has expired
-	svc.worktreeAssns["wt-expired"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-expired"] = &WorktreeAssignment{
 		ID:           "wt-expired",
 		AgentID:      "agent-1",
 		WorktreePath: t.TempDir(),
@@ -152,7 +157,7 @@ func TestWorktreeReconciler_TTLExpiration(t *testing.T) {
 	}
 
 	// Worktree with TTL that has NOT expired
-	svc.worktreeAssns["wt-valid"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-valid"] = &WorktreeAssignment{
 		ID:           "wt-valid",
 		AgentID:      "agent-2",
 		WorktreePath: t.TempDir(),
@@ -163,7 +168,7 @@ func TestWorktreeReconciler_TTLExpiration(t *testing.T) {
 	}
 
 	// Worktree with no TTL
-	svc.worktreeAssns["wt-no-ttl"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-no-ttl"] = &WorktreeAssignment{
 		ID:           "wt-no-ttl",
 		AgentID:      "agent-3",
 		WorktreePath: t.TempDir(),
@@ -184,21 +189,21 @@ func TestWorktreeReconciler_TTLExpiration(t *testing.T) {
 	}
 
 	// wt-expired should be orphaned
-	if svc.worktreeAssns["wt-expired"].Status != WorktreeStatusOrphaned {
-		t.Errorf("wt-expired status = %q, want orphaned", svc.worktreeAssns["wt-expired"].Status)
+	if svc.worktrees.assns["wt-expired"].Status != WorktreeStatusOrphaned {
+		t.Errorf("wt-expired status = %q, want orphaned", svc.worktrees.assns["wt-expired"].Status)
 	}
-	if svc.worktreeAssns["wt-expired"].OrphanedAt == nil {
+	if svc.worktrees.assns["wt-expired"].OrphanedAt == nil {
 		t.Error("wt-expired should have OrphanedAt set")
 	}
 
 	// wt-valid should still be active
-	if svc.worktreeAssns["wt-valid"].Status != WorktreeStatusActive {
-		t.Errorf("wt-valid status = %q, want active", svc.worktreeAssns["wt-valid"].Status)
+	if svc.worktrees.assns["wt-valid"].Status != WorktreeStatusActive {
+		t.Errorf("wt-valid status = %q, want active", svc.worktrees.assns["wt-valid"].Status)
 	}
 
 	// wt-no-ttl should still be active
-	if svc.worktreeAssns["wt-no-ttl"].Status != WorktreeStatusActive {
-		t.Errorf("wt-no-ttl status = %q, want active", svc.worktreeAssns["wt-no-ttl"].Status)
+	if svc.worktrees.assns["wt-no-ttl"].Status != WorktreeStatusActive {
+		t.Errorf("wt-no-ttl status = %q, want active", svc.worktrees.assns["wt-no-ttl"].Status)
 	}
 }
 
@@ -209,10 +214,10 @@ func TestWorktreeReconciler_TTLExpiration_GlobalMaxTTL(t *testing.T) {
 	config.DetectUntracked = false
 	config.MaxTTLHours = 4 // Global max TTL
 
-	r := NewWorktreeReconciler(config, svc, slog.Default())
+	r := NewWorktreeReconciler(config, svc.worktrees, slog.Default())
 
 	// Worktree with no per-assignment TTL, but exceeds global max
-	svc.worktreeAssns["wt-global"] = &WorktreeAssignment{
+	svc.worktrees.assns["wt-global"] = &WorktreeAssignment{
 		ID:           "wt-global",
 		AgentID:      "agent-1",
 		WorktreePath: t.TempDir(),
@@ -232,7 +237,7 @@ func TestWorktreeReconciler_TTLExpiration_GlobalMaxTTL(t *testing.T) {
 		t.Errorf("TTLExpired = %d, want 1", stats.TTLExpired)
 	}
 
-	if svc.worktreeAssns["wt-global"].Status != WorktreeStatusOrphaned {
-		t.Errorf("wt-global status = %q, want orphaned", svc.worktreeAssns["wt-global"].Status)
+	if svc.worktrees.assns["wt-global"].Status != WorktreeStatusOrphaned {
+		t.Errorf("wt-global status = %q, want orphaned", svc.worktrees.assns["wt-global"].Status)
 	}
 }

@@ -11,7 +11,7 @@ func TestHandleSessionDelete_RemovesFromMemory(t *testing.T) {
 	now := time.Now()
 
 	// Create a session
-	svc.sessions["sess-1"] = &Session{
+	svc.sess.sessions["sess-1"] = &Session{
 		ID:        "sess-1",
 		AgentID:   "agent-1",
 		Status:    string(SessionStatusEnded),
@@ -30,9 +30,9 @@ func TestHandleSessionDelete_RemovesFromMemory(t *testing.T) {
 	}
 
 	// Verify removed from memory
-	svc.sessionsMu.RLock()
-	_, exists := svc.sessions["sess-1"]
-	svc.sessionsMu.RUnlock()
+	svc.sess.mu.RLock()
+	_, exists := svc.sess.sessions["sess-1"]
+	svc.sess.mu.RUnlock()
 	if exists {
 		t.Error("session should have been deleted from memory")
 	}
@@ -69,7 +69,7 @@ func TestHandleSessionDelete_RequiresSessionID(t *testing.T) {
 func TestHandleSessionPrune_DryRun(t *testing.T) {
 	svc := newTestService()
 
-	// Without Qdrant, pruneSessions returns 0 pruned (no data source)
+	// Without Qdrant, PruneSessions returns 0 pruned (no data source)
 	result, err := svc.HandleSessionPrune(context.Background(), map[string]any{
 		"max_age_hours": 72,
 		"status":        "ended,summarized",
@@ -87,7 +87,7 @@ func TestPruneSessions_NilQdrant(t *testing.T) {
 	svc := newTestService()
 
 	// With nil Qdrant client, should return 0 gracefully
-	pruned, err := svc.pruneSessions(context.Background(), 72, "ended,summarized", false)
+	pruned, err := svc.sess.PruneSessions(context.Background(), 72, "ended,summarized", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPruneSessions_NilQdrant(t *testing.T) {
 func TestPruneSessions_EmptyStatusFilter(t *testing.T) {
 	svc := newTestService()
 
-	pruned, err := svc.pruneSessions(context.Background(), 72, "", false)
+	pruned, err := svc.sess.PruneSessions(context.Background(), 72, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,20 +130,20 @@ func TestEndActiveSessionsForAgent(t *testing.T) {
 	now := time.Now()
 
 	// Create active sessions for agent-1
-	svc.sessions["s1"] = &Session{
+	svc.sess.sessions["s1"] = &Session{
 		ID:        "s1",
 		AgentID:   "agent-1",
 		Status:    string(SessionStatusActive),
 		StartedAt: now.Add(-2 * time.Hour),
 	}
-	svc.sessions["s2"] = &Session{
+	svc.sess.sessions["s2"] = &Session{
 		ID:        "s2",
 		AgentID:   "agent-1",
 		Status:    string(SessionStatusActive),
 		StartedAt: now.Add(-1 * time.Hour),
 	}
 	// Create a session for a different agent (should not be ended)
-	svc.sessions["s3"] = &Session{
+	svc.sess.sessions["s3"] = &Session{
 		ID:        "s3",
 		AgentID:   "agent-2",
 		Status:    string(SessionStatusActive),
@@ -151,7 +151,7 @@ func TestEndActiveSessionsForAgent(t *testing.T) {
 	}
 	// Create an already-ended session for agent-1 (should stay ended)
 	ended := now.Add(-30 * time.Minute)
-	svc.sessions["s4"] = &Session{
+	svc.sess.sessions["s4"] = &Session{
 		ID:        "s4",
 		AgentID:   "agent-1",
 		Status:    string(SessionStatusEnded),
@@ -161,30 +161,30 @@ func TestEndActiveSessionsForAgent(t *testing.T) {
 
 	svc.endActiveSessionsForAgent(context.Background(), "agent-1")
 
-	svc.sessionsMu.RLock()
-	defer svc.sessionsMu.RUnlock()
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
 
-	if svc.sessions["s1"].Status != string(SessionStatusEnded) {
-		t.Errorf("s1 status = %s, want ended", svc.sessions["s1"].Status)
+	if svc.sess.sessions["s1"].Status != string(SessionStatusEnded) {
+		t.Errorf("s1 status = %s, want ended", svc.sess.sessions["s1"].Status)
 	}
-	if svc.sessions["s1"].EndedAt == nil {
+	if svc.sess.sessions["s1"].EndedAt == nil {
 		t.Error("s1 EndedAt should be set")
 	}
-	if svc.sessions["s2"].Status != string(SessionStatusEnded) {
-		t.Errorf("s2 status = %s, want ended", svc.sessions["s2"].Status)
+	if svc.sess.sessions["s2"].Status != string(SessionStatusEnded) {
+		t.Errorf("s2 status = %s, want ended", svc.sess.sessions["s2"].Status)
 	}
-	if svc.sessions["s3"].Status != string(SessionStatusActive) {
-		t.Errorf("s3 (agent-2) status = %s, want active", svc.sessions["s3"].Status)
+	if svc.sess.sessions["s3"].Status != string(SessionStatusActive) {
+		t.Errorf("s3 (agent-2) status = %s, want active", svc.sess.sessions["s3"].Status)
 	}
-	if svc.sessions["s4"].Status != string(SessionStatusEnded) {
-		t.Errorf("s4 status = %s, want ended", svc.sessions["s4"].Status)
+	if svc.sess.sessions["s4"].Status != string(SessionStatusEnded) {
+		t.Errorf("s4 status = %s, want ended", svc.sess.sessions["s4"].Status)
 	}
 }
 
 func TestEndStaleSessions_NilQdrant(t *testing.T) {
 	svc := newTestService()
 
-	ended := svc.endStaleSessions(context.Background(), 24)
+	ended := svc.sess.EndStale(context.Background(), 24)
 	if ended != 0 {
 		t.Errorf("expected 0 ended with nil Qdrant, got %d", ended)
 	}
@@ -194,20 +194,24 @@ func TestLiveAgentIDs(t *testing.T) {
 	svc := newTestService()
 	now := time.Now()
 
-	svc.presenceMap["alive"] = &AgentPresence{
+	svc.presence.reg["alive"] = &AgentPresence{
 		AgentID:       "alive",
 		LastHeartbeat: now,
 		HeartbeatTTL:  120,
 		Status:        PresenceStatusActive,
 	}
-	svc.presenceMap["stale"] = &AgentPresence{
+	svc.presence.reg["stale"] = &AgentPresence{
 		AgentID:       "stale",
 		LastHeartbeat: now.Add(-10 * time.Minute), // 600s > 3×120s = 360s
 		HeartbeatTTL:  120,
 		Status:        PresenceStatusOffline,
 	}
 
-	live := svc.liveAgentIDs()
+	ids := svc.presence.LiveAgentIDs()
+	live := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		live[id] = true
+	}
 	if !live["alive"] {
 		t.Error("alive agent should be live")
 	}
@@ -221,13 +225,13 @@ func TestSessionStartEndsPriorActiveSessions(t *testing.T) {
 	now := time.Now()
 
 	// Create existing active sessions for the agent.
-	svc.sessions["old-1"] = &Session{
+	svc.sess.sessions["old-1"] = &Session{
 		ID:        "old-1",
 		AgentID:   "test-agent",
 		Status:    string(SessionStatusActive),
 		StartedAt: now.Add(-2 * time.Hour),
 	}
-	svc.sessions["old-2"] = &Session{
+	svc.sess.sessions["old-2"] = &Session{
 		ID:        "old-2",
 		AgentID:   "test-agent",
 		Status:    string(SessionStatusActive),
@@ -239,17 +243,17 @@ func TestSessionStartEndsPriorActiveSessions(t *testing.T) {
 	// the new session. We test the helper directly to avoid requiring Qdrant.)
 	svc.endActiveSessionsForAgent(context.Background(), "test-agent")
 
-	svc.sessionsMu.RLock()
-	defer svc.sessionsMu.RUnlock()
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
 
-	if svc.sessions["old-1"].Status != string(SessionStatusEnded) {
-		t.Errorf("old-1 status = %s, want ended", svc.sessions["old-1"].Status)
+	if svc.sess.sessions["old-1"].Status != string(SessionStatusEnded) {
+		t.Errorf("old-1 status = %s, want ended", svc.sess.sessions["old-1"].Status)
 	}
-	if svc.sessions["old-1"].EndedAt == nil {
+	if svc.sess.sessions["old-1"].EndedAt == nil {
 		t.Error("old-1 EndedAt should be set")
 	}
-	if svc.sessions["old-2"].Status != string(SessionStatusEnded) {
-		t.Errorf("old-2 status = %s, want ended", svc.sessions["old-2"].Status)
+	if svc.sess.sessions["old-2"].Status != string(SessionStatusEnded) {
+		t.Errorf("old-2 status = %s, want ended", svc.sess.sessions["old-2"].Status)
 	}
 }
 
@@ -264,11 +268,11 @@ func TestSessionReaperActiveMaxAgeConfig(t *testing.T) {
 
 func TestSessionReaperTick_EndsStaleInMemorySessions(t *testing.T) {
 	svc := newTestService()
-	svc.cfg.SessionReaperActiveMaxAge = 1 // 1 hour
+	svc.sess.cfg.SessionReaperActiveMaxAge = 1 // 1 hour
 	now := time.Now()
 
 	// Create a stale active session older than 1 hour with no live presence.
-	svc.sessions["stale-1"] = &Session{
+	svc.sess.sessions["stale-1"] = &Session{
 		ID:        "stale-1",
 		AgentID:   "dead-agent",
 		Status:    string(SessionStatusActive),
@@ -276,7 +280,7 @@ func TestSessionReaperTick_EndsStaleInMemorySessions(t *testing.T) {
 	}
 
 	// Create a recent active session (should NOT be ended).
-	svc.sessions["recent-1"] = &Session{
+	svc.sess.sessions["recent-1"] = &Session{
 		ID:        "recent-1",
 		AgentID:   "dead-agent",
 		Status:    string(SessionStatusActive),
@@ -284,14 +288,14 @@ func TestSessionReaperTick_EndsStaleInMemorySessions(t *testing.T) {
 	}
 
 	// Run one reaper tick (same function called on startup).
-	svc.sessionReaperTick(context.Background())
+	svc.sess.reaperTick(context.Background())
 
-	svc.sessionsMu.RLock()
-	defer svc.sessionsMu.RUnlock()
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
 
-	// Stale session should remain active in memory (no Qdrant = endStaleSessions returns 0).
-	// But sessionReaperTick should not panic or error with nil Qdrant.
-	if svc.sessions["recent-1"].Status != string(SessionStatusActive) {
-		t.Errorf("recent-1 status = %s, want active", svc.sessions["recent-1"].Status)
+	// Stale session should remain active in memory (no Qdrant = EndStale returns 0).
+	// But reaperTick should not panic or error with nil Qdrant.
+	if svc.sess.sessions["recent-1"].Status != string(SessionStatusActive) {
+		t.Errorf("recent-1 status = %s, want active", svc.sess.sessions["recent-1"].Status)
 	}
 }

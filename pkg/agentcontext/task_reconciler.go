@@ -49,9 +49,11 @@ type TaskReconciler struct {
 	mu sync.RWMutex
 
 	config TaskReconcilerConfig
-	tasks  *QdrantClient
-	svc    *Service // for session lookups and task mutations
+	ts     *TaskSvc
 	logger *slog.Logger
+
+	// Cross-domain callback for orphan detection.
+	getSession func(ctx context.Context, sessionID string) (*Session, error)
 
 	running   bool
 	stopCh    chan struct{}
@@ -61,14 +63,13 @@ type TaskReconciler struct {
 }
 
 // NewTaskReconciler creates a task reconciler.
-func NewTaskReconciler(config TaskReconcilerConfig, tasks *QdrantClient, svc *Service, logger *slog.Logger) *TaskReconciler {
+func NewTaskReconciler(config TaskReconcilerConfig, ts *TaskSvc, logger *slog.Logger) *TaskReconciler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &TaskReconciler{
 		config: config,
-		tasks:  tasks,
-		svc:    svc,
+		ts:     ts,
 		logger: logger,
 		stopCh: make(chan struct{}),
 	}
@@ -144,7 +145,7 @@ func (r *TaskReconciler) reconcile(ctx context.Context) (*ReconcileStats, error)
 	stats := ReconcileStats{StartTime: start}
 
 	// Scroll all tasks (up to max).
-	points, err := r.tasks.ScrollPoints(ctx, nil, r.config.MaxPerRun, false)
+	points, err := r.ts.qdrant.ScrollPoints(ctx, nil, r.config.MaxPerRun, false)
 	if err != nil {
 		return nil, err
 	}
@@ -181,8 +182,8 @@ func (r *TaskReconciler) reconcile(ctx context.Context) (*ReconcileStats, error)
 		}
 
 		// ── Pass 2: Orphan detection (session no longer exists) ──
-		if t.SessionID != "" && t.Status != TaskStatusCompleted {
-			sess, err := r.svc.getSession(ctx, t.SessionID)
+		if t.SessionID != "" && t.Status != TaskStatusCompleted && r.getSession != nil {
+			sess, err := r.getSession(ctx, t.SessionID)
 			if err != nil || sess == nil {
 				// Session gone — cancel orphaned task.
 				deleteIDs = append(deleteIDs, t.ID)
@@ -230,7 +231,7 @@ func (r *TaskReconciler) reconcile(ctx context.Context) (*ReconcileStats, error)
 
 	// Batch delete GC'd and orphaned tasks.
 	if len(deleteIDs) > 0 {
-		if err := r.tasks.Delete(ctx, deleteIDs); err != nil {
+		if err := r.ts.qdrant.Delete(ctx, deleteIDs); err != nil {
 			r.logger.Warn("reconcile: batch delete failed", "count", len(deleteIDs), "error", err)
 			stats.Errors++
 		}
@@ -254,7 +255,7 @@ func (r *TaskReconciler) unblockTask(ctx context.Context, t *Task) error {
 		"blocked_by": []string{},
 		"updated_at": time.Now().Format(time.RFC3339Nano),
 	}
-	return r.tasks.SetPayload(ctx, []string{t.ID}, payload, true)
+	return r.ts.qdrant.SetPayload(ctx, []string{t.ID}, payload, true)
 }
 
 // markStale sets an in_progress task to blocked with a stale marker.
@@ -264,5 +265,5 @@ func (r *TaskReconciler) markStale(ctx context.Context, t *Task) error {
 		"resolution": "auto-marked stale: no update for " + r.config.StaleTimeout.String(),
 		"updated_at": time.Now().Format(time.RFC3339Nano),
 	}
-	return r.tasks.SetPayload(ctx, []string{t.ID}, payload, true)
+	return r.ts.qdrant.SetPayload(ctx, []string{t.ID}, payload, true)
 }

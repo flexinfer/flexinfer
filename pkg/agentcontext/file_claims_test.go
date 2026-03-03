@@ -19,17 +19,17 @@ func TestFileClaimAcquire(t *testing.T) {
 		CreatedAt: now,
 	}
 
-	svc.fileClaims["main.go"] = map[string]*FileClaim{
+	svc.claims.claims["main.go"] = map[string]*FileClaim{
 		"agent-1": claim,
 	}
 
-	if len(svc.fileClaims) != 1 {
-		t.Fatalf("expected 1 file with claims, got %d", len(svc.fileClaims))
+	if len(svc.claims.claims) != 1 {
+		t.Fatalf("expected 1 file with claims, got %d", len(svc.claims.claims))
 	}
-	if svc.fileClaims["main.go"]["agent-1"].AgentID != "agent-1" {
+	if svc.claims.claims["main.go"]["agent-1"].AgentID != "agent-1" {
 		t.Error("claim agent_id mismatch")
 	}
-	if svc.fileClaims["main.go"]["agent-1"].ClaimType != ClaimTypeEdit {
+	if svc.claims.claims["main.go"]["agent-1"].ClaimType != ClaimTypeEdit {
 		t.Error("claim type mismatch")
 	}
 }
@@ -48,7 +48,7 @@ func TestFileClaimConflict(t *testing.T) {
 		ClaimType: ClaimTypeEdit,
 		CreatedAt: now,
 	}
-	svc.fileClaims["service.go"] = map[string]*FileClaim{
+	svc.claims.claims["service.go"] = map[string]*FileClaim{
 		"agent-1": claim1,
 	}
 
@@ -61,10 +61,10 @@ func TestFileClaimConflict(t *testing.T) {
 		ClaimType: ClaimTypeEdit,
 		CreatedAt: now,
 	}
-	svc.fileClaims["service.go"]["agent-2"] = claim2
+	svc.claims.claims["service.go"]["agent-2"] = claim2
 
 	// Check for conflicts from agent-2's perspective
-	agents := svc.fileClaims["service.go"]
+	agents := svc.claims.claims["service.go"]
 	hasConflict := false
 	for otherAgent := range agents {
 		if otherAgent != "agent-2" {
@@ -88,22 +88,22 @@ func TestFileClaimRelease(t *testing.T) {
 		ClaimType: ClaimTypeEdit,
 		CreatedAt: now,
 	}
-	svc.fileClaims["main.go"] = map[string]*FileClaim{
+	svc.claims.claims["main.go"] = map[string]*FileClaim{
 		"agent-1": claim,
 	}
 
 	// Release
-	svc.fileClaimsMu.Lock()
-	if agents, ok := svc.fileClaims["main.go"]; ok {
+	svc.claims.mu.Lock()
+	if agents, ok := svc.claims.claims["main.go"]; ok {
 		delete(agents, "agent-1")
 		if len(agents) == 0 {
-			delete(svc.fileClaims, "main.go")
+			delete(svc.claims.claims, "main.go")
 		}
 	}
-	svc.fileClaimsMu.Unlock()
+	svc.claims.mu.Unlock()
 
-	if len(svc.fileClaims) != 0 {
-		t.Errorf("expected 0 claims after release, got %d", len(svc.fileClaims))
+	if len(svc.claims.claims) != 0 {
+		t.Errorf("expected 0 claims after release, got %d", len(svc.claims.claims))
 	}
 }
 
@@ -115,7 +115,7 @@ func TestFileClaimReleaseAll(t *testing.T) {
 	// Agent-1 claims 3 files
 	files := []string{"main.go", "service.go", "config.go"}
 	for _, f := range files {
-		svc.fileClaims[f] = map[string]*FileClaim{
+		svc.claims.claims[f] = map[string]*FileClaim{
 			"agent-1": {
 				ID:        GenerateID("agent-1", f, "claim", now),
 				AgentID:   "agent-1",
@@ -131,8 +131,8 @@ func TestFileClaimReleaseAll(t *testing.T) {
 	if released != 3 {
 		t.Errorf("released = %d, want 3", released)
 	}
-	if len(svc.fileClaims) != 0 {
-		t.Errorf("expected 0 claims after release all, got %d", len(svc.fileClaims))
+	if len(svc.claims.claims) != 0 {
+		t.Errorf("expected 0 claims after release all, got %d", len(svc.claims.claims))
 	}
 }
 
@@ -142,7 +142,7 @@ func TestFileClaimQuery(t *testing.T) {
 	now := time.Now()
 
 	// Agent-1 claims file-a
-	svc.fileClaims["file-a.go"] = map[string]*FileClaim{
+	svc.claims.claims["file-a.go"] = map[string]*FileClaim{
 		"agent-1": {
 			ID:        GenerateID("agent-1", "file-a.go", "claim", now),
 			AgentID:   "agent-1",
@@ -154,7 +154,7 @@ func TestFileClaimQuery(t *testing.T) {
 	}
 
 	// Agent-2 claims file-b
-	svc.fileClaims["file-b.go"] = map[string]*FileClaim{
+	svc.claims.claims["file-b.go"] = map[string]*FileClaim{
 		"agent-2": {
 			ID:        GenerateID("agent-2", "file-b.go", "claim", now),
 			AgentID:   "agent-2",
@@ -166,9 +166,9 @@ func TestFileClaimQuery(t *testing.T) {
 	}
 
 	// Query file-a
-	svc.fileClaimsMu.RLock()
-	agents, ok := svc.fileClaims["file-a.go"]
-	svc.fileClaimsMu.RUnlock()
+	svc.claims.mu.RLock()
+	agents, ok := svc.claims.claims["file-a.go"]
+	svc.claims.mu.RUnlock()
 
 	if !ok {
 		t.Fatal("expected claims on file-a.go")
@@ -178,9 +178,9 @@ func TestFileClaimQuery(t *testing.T) {
 	}
 
 	// Query unclaimed file
-	svc.fileClaimsMu.RLock()
-	_, ok = svc.fileClaims["unclaimed.go"]
-	svc.fileClaimsMu.RUnlock()
+	svc.claims.mu.RLock()
+	_, ok = svc.claims.claims["unclaimed.go"]
+	svc.claims.mu.RUnlock()
 
 	if ok {
 		t.Error("expected no claims on unclaimed.go")
@@ -193,7 +193,7 @@ func TestFileClaimExpiry(t *testing.T) {
 	past := time.Now().Add(-1 * time.Hour)
 	expiresAt := time.Now().Add(-30 * time.Minute)
 
-	svc.fileClaims["expired.go"] = map[string]*FileClaim{
+	svc.claims.claims["expired.go"] = map[string]*FileClaim{
 		"agent-1": {
 			ID:        GenerateID("agent-1", "expired.go", "claim", past),
 			AgentID:   "agent-1",
@@ -207,7 +207,7 @@ func TestFileClaimExpiry(t *testing.T) {
 
 	// Detect conflicts — expired claim should be skipped
 	// Set up agent-2 in presence to use detectFileConflicts
-	svc.presenceMap["agent-2"] = newTestPresence("agent-2", 120)
+	svc.presence.reg["agent-2"] = newTestPresence("agent-2", 120)
 
 	conflicts := svc.detectFileConflicts("agent-2", []string{"expired.go"})
 
