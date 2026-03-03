@@ -215,7 +215,7 @@ func (b *DiffusersBackend) StartupProbe() *corev1.Probe {
 }
 
 func (b *DiffusersBackend) StartupTimeout() time.Duration {
-	return 300 * time.Second // Image gen models can take long to load (especially FLUX with NF4)
+	return 900 * time.Second // NF4+cpuOffload models need ~8-10 min to load + setup accelerate hooks
 }
 
 // NeedsVolume returns true so HuggingFace artifacts can be cached on a SharedPVC.
