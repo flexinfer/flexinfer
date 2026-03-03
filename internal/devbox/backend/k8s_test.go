@@ -44,6 +44,114 @@ func envMap(vars []corev1.EnvVar) map[string]string {
 	return out
 }
 
+func writeTestKubeconfig(t *testing.T) string {
+	t.Helper()
+
+	cfg := []byte(`apiVersion: v1
+kind: Config
+clusters:
+  - name: test
+    cluster:
+      server: https://127.0.0.1:6443
+contexts:
+  - name: test
+    context:
+      cluster: test
+      user: test
+current-context: test
+users:
+  - name: test
+    user:
+      token: fake-token
+`)
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+	return path
+}
+
+func TestBuildRestConfig_UsesExplicitKubeconfig(t *testing.T) {
+	kubeconfig := writeTestKubeconfig(t)
+
+	cfg, err := buildRestConfig(kubeconfig)
+	if err != nil {
+		t.Fatalf("buildRestConfig returned error: %v", err)
+	}
+	if got := cfg.Host; got != "https://127.0.0.1:6443" {
+		t.Fatalf("unexpected kube API host: %q", got)
+	}
+}
+
+func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	kubeconfig := writeTestKubeconfig(t)
+
+	t.Run("defaults", func(t *testing.T) {
+		k, err := NewK8sBackend(K8sBackendConfig{Kubeconfig: kubeconfig})
+		if err != nil {
+			t.Fatalf("NewK8sBackend returned error: %v", err)
+		}
+
+		if k.namespace != "devbox" {
+			t.Fatalf("namespace=%q", k.namespace)
+		}
+		if k.registry != "registry.harbor.lan" {
+			t.Fatalf("registry=%q", k.registry)
+		}
+		if k.workspacePVC != "devbox-workspace-nfs" {
+			t.Fatalf("workspacePVC=%q", k.workspacePVC)
+		}
+		if k.imagePullSecret != "harbor-creds" {
+			t.Fatalf("imagePullSecret=%q", k.imagePullSecret)
+		}
+		if k.builderImage != defaultBuilderImage {
+			t.Fatalf("builderImage=%q", k.builderImage)
+		}
+		if k.workspaceRoot != filepath.Join(homeDir, "workspace") {
+			t.Fatalf("workspaceRoot=%q", k.workspaceRoot)
+		}
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		k, err := NewK8sBackend(K8sBackendConfig{
+			Kubeconfig:      kubeconfig,
+			Namespace:       "custom-ns",
+			Registry:        "registry.example.test",
+			WorkspacePVC:    "custom-pvc",
+			ImagePullSecret: "custom-secret",
+			WorkspaceRoot:   "/srv/workspace",
+			BuilderImage:    "quay.io/custom/buildah:v1",
+			SyncMode:        "tar-pipe",
+			SyncExcludes:    []string{"**/*.tmp"},
+			MaxSyncSize:     512,
+			GitBaseURL:      "https://gitlab.example.test/team",
+			GitSecret:       "git-token",
+		})
+		if err != nil {
+			t.Fatalf("NewK8sBackend returned error: %v", err)
+		}
+
+		if k.namespace != "custom-ns" || k.registry != "registry.example.test" {
+			t.Fatalf("unexpected core overrides: namespace=%q registry=%q", k.namespace, k.registry)
+		}
+		if k.workspacePVC != "custom-pvc" || k.imagePullSecret != "custom-secret" {
+			t.Fatalf("unexpected storage overrides: pvc=%q secret=%q", k.workspacePVC, k.imagePullSecret)
+		}
+		if k.workspaceRoot != "/srv/workspace" || k.builderImage != "quay.io/custom/buildah:v1" {
+			t.Fatalf("unexpected path/image overrides: root=%q image=%q", k.workspaceRoot, k.builderImage)
+		}
+		if k.syncMode != "tar-pipe" || len(k.syncExcludes) != 1 || k.syncExcludes[0] != "**/*.tmp" || k.maxSyncSize != 512 {
+			t.Fatalf("unexpected sync overrides: mode=%q excludes=%v max=%d", k.syncMode, k.syncExcludes, k.maxSyncSize)
+		}
+		if k.gitBaseURL != "https://gitlab.example.test/team" || k.gitSecret != "git-token" {
+			t.Fatalf("unexpected git overrides: base=%q secret=%q", k.gitBaseURL, k.gitSecret)
+		}
+	})
+}
+
 func TestBuildPodSpecDefaults(t *testing.T) {
 	k := testK8sBackend()
 	pod := k.buildPodSpec(StartOpts{
