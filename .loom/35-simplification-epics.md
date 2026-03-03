@@ -36,15 +36,15 @@ All `SIMP-1` through `SIMP-12` branches are merged into `main`.
 | 5 | NudgeSvc extraction | Done |
 | 6 | ContextSvc extraction | Done |
 | 7 | Graph/Memory/Workflow/SourceVersion/Handoff/Template service extraction | Done |
-| 8 | Wrapper split to keep `service.go` as composition-only facade | In progress |
+| 8 | Wrapper split to keep `service.go` as composition-only facade | Done |
 
 ## Remaining Work (Execution Queue)
 
-### P0 - Finish facade split for agentcontext
+### P0 - Finish facade split for agentcontext (Complete)
 
-- Move remaining wrapper/delegation methods out of `pkg/agentcontext/service.go` into domain wrapper files.
-- Target: keep `service.go` focused on wiring/bootstrapping.
-- Gate: `go test ./pkg/agentcontext ./cmd/mcp-agent-context` and MR pipeline green.
+- `service.go` now contains wiring and background lifecycle only (`loadPersistedState`, `StartBackgroundServices`, `StopBackgroundServices`).
+- Remaining presence/nudge accessors were moved to `pkg/agentcontext/svc_presence_nudge_wrappers.go`.
+- Gate status: `go test -count=1 ./pkg/agentcontext ./cmd/mcp-agent-context` passed on this branch.
 
 ### P1 - Remove duplicate/deprecated recall implementation paths
 
@@ -77,9 +77,9 @@ Migration note (2026-03-03):
 
 ## Current Slice (2026-03-03)
 
-- Extract session/context wrapper methods from `service.go` into:
-  - `pkg/agentcontext/svc_sessions_wrappers.go`
-  - `pkg/agentcontext/svc_context_wrappers.go`
-- Purpose: continue shrinking `service.go` and maintain clean domain boundaries.
-- Route deprecated recall handlers (`agent_context_recall`, `agent_context_recall_enhanced`) through unified `agent_recall` internals with legacy argument normalization.
-- Remove duplicate recall logic from `svc_context.go` and keep a single recall implementation path.
+- Finalized Phase-8 facade split by moving presence/nudge wrappers out of `service.go` into `pkg/agentcontext/svc_presence_nudge_wrappers.go`.
+- Hardened session reaper lifecycle coverage with persisted-store test doubles:
+  - stale active sessions for non-live agents are ended and persisted,
+  - live-agent sessions are preserved,
+  - reaper tick respects `SessionReaperActiveMaxAge`.
+- Next focus: close remaining session unification hardening and run integration smoke against daemon/HUD path.
