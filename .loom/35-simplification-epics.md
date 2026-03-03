@@ -73,6 +73,10 @@ Progress (this branch):
 - Added regression coverage for session-end summarize propagation:
   - bridge tests verify default summarize=true and explicit summarize=false.
   - mobile session-end tests verify empty body defaults to summarize=true and explicit false is honored.
+- Standardized session-start idempotency at MCP service level:
+  - `agent_session_start` now returns existing active session when `agent_id + namespace` already active.
+  - Existing cross-namespace behavior preserved: prior active sessions are ended before new session creation.
+  - Added lifecycle tests for both same-namespace idempotency and new-namespace rollover.
 
 ### P2 - Documentation and operator clarity
 
