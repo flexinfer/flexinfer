@@ -82,6 +82,16 @@ type AccessDecision struct {
 	Reason  string `json:"reason"`
 }
 
+// RBACEvaluationMode controls whether an RBAC check should enforce side effects.
+type RBACEvaluationMode string
+
+const (
+	// RBACEvaluationModeEnforce applies normal enforcement behavior.
+	RBACEvaluationModeEnforce RBACEvaluationMode = "enforce"
+	// RBACEvaluationModeDryRun evaluates policy without mutating limiter state.
+	RBACEvaluationModeDryRun RBACEvaluationMode = "dry-run"
+)
+
 // RBACEnforcer evaluates tool access based on agent identity and role bindings.
 type RBACEnforcer struct {
 	cfg    RBACConfig
@@ -122,6 +132,11 @@ func DefaultRBACConfig() RBACConfig {
 
 // Check evaluates whether the given agent may call the specified tool.
 func (e *RBACEnforcer) Check(agentID, agentType, server, tool string) AccessDecision {
+	return e.CheckWithMode(agentID, agentType, server, tool, RBACEvaluationModeEnforce)
+}
+
+// CheckWithMode evaluates RBAC for the given tool call in the specified mode.
+func (e *RBACEnforcer) CheckWithMode(agentID, agentType, server, tool string, mode RBACEvaluationMode) AccessDecision {
 	qualifiedTool := server + "__" + tool
 
 	// Global deny policy always wins, even for privileged roles.
@@ -142,7 +157,7 @@ func (e *RBACEnforcer) Check(agentID, agentType, server, tool string) AccessDeci
 	if roleName == "" {
 		allowed := strings.EqualFold(e.cfg.DefaultPolicy, "allow")
 		if allowed {
-			return e.allowWithRateLimit(agentID, agentType, server, tool, "", fmt.Sprintf("no binding matched; default_policy=%s", e.cfg.DefaultPolicy))
+			return e.allowWithRateLimit(agentID, agentType, server, tool, "", fmt.Sprintf("no binding matched; default_policy=%s", e.cfg.DefaultPolicy), mode)
 		}
 		return AccessDecision{
 			Allowed: false,
@@ -183,7 +198,7 @@ func (e *RBACEnforcer) Check(agentID, agentType, server, tool string) AccessDeci
 	// Check allow patterns.
 	for _, pattern := range role.Allow {
 		if matchesPattern(pattern, qualifiedTool) {
-			return e.allowWithRateLimit(agentID, agentType, server, tool, roleName, fmt.Sprintf("allowed by pattern %q", pattern))
+			return e.allowWithRateLimit(agentID, agentType, server, tool, roleName, fmt.Sprintf("allowed by pattern %q", pattern), mode)
 		}
 	}
 
@@ -198,8 +213,8 @@ func (e *RBACEnforcer) Check(agentID, agentType, server, tool string) AccessDeci
 	}
 }
 
-func (e *RBACEnforcer) allowWithRateLimit(agentID, agentType, server, tool, role, allowReason string) AccessDecision {
-	if denyReason, limited := e.checkRateLimit(agentID, agentType, server, tool); limited {
+func (e *RBACEnforcer) allowWithRateLimit(agentID, agentType, server, tool, role, allowReason string, mode RBACEvaluationMode) AccessDecision {
+	if denyReason, limited := e.checkRateLimit(agentID, agentType, server, tool, mode); limited {
 		return AccessDecision{
 			Allowed: false,
 			AgentID: agentID,
@@ -219,7 +234,7 @@ func (e *RBACEnforcer) allowWithRateLimit(agentID, agentType, server, tool, role
 	}
 }
 
-func (e *RBACEnforcer) checkRateLimit(agentID, agentType, server, tool string) (string, bool) {
+func (e *RBACEnforcer) checkRateLimit(agentID, agentType, server, tool string, mode RBACEvaluationMode) (string, bool) {
 	for i, rule := range e.cfg.RateLimits {
 		if rule.RequestsPerMinute <= 0 || !matchesRateRule(rule, agentID, agentType, server, tool) {
 			continue
@@ -237,6 +252,10 @@ func (e *RBACEnforcer) checkRateLimit(agentID, agentType, server, tool string) (
 			e.counts[key] = counter
 			e.mu.Unlock()
 			return fmt.Sprintf("rate limit exceeded: rule[%d] max=%d/min", i, rule.RequestsPerMinute), true
+		}
+		if mode == RBACEvaluationModeDryRun {
+			e.mu.Unlock()
+			return "", false
 		}
 		counter.Count++
 		e.counts[key] = counter

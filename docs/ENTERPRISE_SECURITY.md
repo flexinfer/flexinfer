@@ -73,6 +73,21 @@ Tools are qualified as `server__tool` (e.g., `git__git_status`). The enforcer ev
 
 Pattern matching uses glob syntax (`path.Match`): `*` matches any sequence within a segment.
 
+### Dry-Run Simulation
+
+Use CLI simulation to evaluate policy decisions before rollout:
+
+```bash
+# Simulate using repo policy file (.loom/rbac-policy.yaml)
+loom rbac simulate --source repo --agent-id codex --agent-type codex --server github --tool list_repos
+
+# Compare with enforce mode (consumes limiter counters)
+loom rbac simulate --source repo --mode enforce --agent-id codex --server github --tool list_repos
+
+# Simulate against user daemon config without restarting the daemon
+loom rbac simulate --source user --agent-id claude-code --server k8s_apps_k3s --tool k8s_apply --json
+```
+
 ## Audit Trail
 
 The audit logger writes a structured JSONL entry for every tool call through the proxy.

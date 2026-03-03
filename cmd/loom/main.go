@@ -70,6 +70,7 @@ func main() {
 		newProfileCmd(),
 		newContextCmd(),
 		newSchemasCmd(),
+		newRBACCmd(),
 
 		// Tools
 		newToolsCmd(socketPath),

@@ -585,6 +585,71 @@ func TestRBAC_EmptyRolesMap(t *testing.T) {
 	}
 }
 
+func TestRBAC_DryRunMatchesEnforceDecision(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles: map[string]RBACRole{
+			"developer": {
+				Allow: []string{"git__*"},
+				Deny:  []string{"git__git_push"},
+			},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "agent-1", Role: "developer"},
+		},
+	}
+
+	enforce := NewRBACEnforcer(cfg, slog.Default())
+	dryRun := NewRBACEnforcer(cfg, slog.Default())
+	if enforce == nil || dryRun == nil {
+		t.Fatal("expected non-nil enforcers")
+	}
+
+	gotDryRun := dryRun.CheckWithMode("agent-1", "", "git", "git_status", RBACEvaluationModeDryRun)
+	gotEnforce := enforce.CheckWithMode("agent-1", "", "git", "git_status", RBACEvaluationModeEnforce)
+	if gotDryRun != gotEnforce {
+		t.Fatalf("dry-run and enforce should match for equivalent inputs:\ndry-run=%+v\nenforce=%+v", gotDryRun, gotEnforce)
+	}
+}
+
+func TestRBAC_DryRunDoesNotConsumeRateLimit(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "allow",
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-2",
+				Server:            "github",
+				Tool:              "list_repos",
+				RequestsPerMinute: 1,
+			},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+	now := time.Date(2026, 3, 3, 12, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return now }
+
+	firstDryRun := e.CheckWithMode("agent-2", "", "github", "list_repos", RBACEvaluationModeDryRun)
+	secondDryRun := e.CheckWithMode("agent-2", "", "github", "list_repos", RBACEvaluationModeDryRun)
+	if !firstDryRun.Allowed || !secondDryRun.Allowed {
+		t.Fatalf("dry-run should not consume limiter state: first=%+v second=%+v", firstDryRun, secondDryRun)
+	}
+
+	firstEnforce := e.CheckWithMode("agent-2", "", "github", "list_repos", RBACEvaluationModeEnforce)
+	if !firstEnforce.Allowed {
+		t.Fatalf("first enforce call should still be allowed after dry-runs: %+v", firstEnforce)
+	}
+	secondEnforce := e.CheckWithMode("agent-2", "", "github", "list_repos", RBACEvaluationModeEnforce)
+	if secondEnforce.Allowed {
+		t.Fatalf("second enforce call should be denied by rate limit: %+v", secondEnforce)
+	}
+}
+
 // contains checks if s contains substr (case-insensitive-ish, simple check).
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
