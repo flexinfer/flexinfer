@@ -56,6 +56,8 @@ Progress (this branch):
 - Deprecated recall handlers are routed through unified recall internals (`HandleDeprecatedContextRecall`, `HandleDeprecatedEnhancedRecall`).
 - Duplicate `ContextSvc` recall/enhanced-recall implementations removed; recall behavior now lives in `service_recall.go`.
 - `SourceVersionSvc.HandleAskSource` now uses unified context recall internals instead of the removed `ContextSvc` recall helper.
+- Remaining presence/nudge delegation helpers were split out of `service.go` into `svc_presence_nudge_wrappers.go` to keep `service.go` focused on wiring and lifecycle concerns.
+- Session reaper coverage now includes persisted stale-session ending with live-agent filtering and `SessionReaperActiveMaxAge` tick behavior.
 
 ### P1 - Session unification hardening for CLI + IDE agents
 
