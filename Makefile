@@ -1,7 +1,7 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
 		loom loomd \
 		install-core install-all bootstrap-local dev-upgrade dev-reload \
-		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-race ci-benchmark ci-security ci-baseline \
+		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
 		security security-gosec security-vuln \
 		changelog changelog-html changelog-json \
 		docker-build docker-build-loom-core docker-build-custom-server \
@@ -91,6 +91,7 @@ help:
 	@echo "  make ci-test         - Run CI test stage (unit + integration)"
 	@echo "  make ci-test-unit    - Run unit tests with coverage threshold"
 	@echo "  make ci-test-integration - Run integration tests"
+	@echo "  make ci-test-enterprise-smoke - Run enterprise smoke suite (gateway + RBAC + devbox)"
 	@echo "  make ci-benchmark    - Run benchmarks"
 	@echo "  make ci-security     - Run CI security stage (gosec + govulncheck)"
 	@echo "  make ci-baseline     - Capture benchmark + health baseline artifacts"
@@ -619,6 +620,11 @@ ci-test-integration: ci-build
 	ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"; \
 	echo ""; \
 	go test -v -race ./internal/integration/...
+
+# Enterprise smoke suite (mirrors GitLab CI test:enterprise-smoke)
+ci-test-enterprise-smoke:
+	@echo "Running enterprise smoke suite..."
+	@bash scripts/ci/enterprise_smoke_suite.sh
 
 # Race detection tests (mirrors GitLab CI test:race)
 ci-test-race:
