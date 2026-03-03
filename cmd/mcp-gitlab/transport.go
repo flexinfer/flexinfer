@@ -85,20 +85,9 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 			reqBody = bytes.NewReader(body)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		req, err := g.newRequest(ctx, method, reqURL, reqBody, headers)
 		if err != nil {
 			return nil, nil, err
-		}
-
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
-		for k, v := range headers {
-			if k != "" && v != "" {
-				req.Header.Set(k, v)
-			}
-		}
-		if g.token != "" {
-			req.Header.Set("PRIVATE-TOKEN", g.token)
 		}
 
 		resp, err := g.httpClient.HTTP().Do(req)
@@ -126,14 +115,7 @@ func (g *gitlabServer) doRequest(ctx context.Context, method, reqURL string, bod
 		}
 
 		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			delay := parseRetryAfter(respHeaders.Get("Retry-After"))
-			if delay <= 0 {
-				delay = backoffDelay(attempt, maxRetryDelay)
-			}
-			if delay > maxRetryDelay {
-				delay = maxRetryDelay
-			}
-			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := waitRetryDelay(ctx, attempt, respHeaders.Get("Retry-After"), maxRetryDelay); sleepErr != nil {
 				return nil, respHeaders, sleepErr
 			}
 			continue
@@ -173,20 +155,9 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 			reqBody = bytes.NewReader(body)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		req, err := g.newRequest(ctx, method, reqURL, reqBody, headers)
 		if err != nil {
 			return nil, nil, false, err
-		}
-
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
-		for k, v := range headers {
-			if k != "" && v != "" {
-				req.Header.Set(k, v)
-			}
-		}
-		if g.token != "" {
-			req.Header.Set("PRIVATE-TOKEN", g.token)
 		}
 
 		resp, err := g.httpClient.HTTP().Do(req)
@@ -213,14 +184,7 @@ func (g *gitlabServer) doRequestLimited(ctx context.Context, method, reqURL stri
 		}
 
 		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
-			if delay <= 0 {
-				delay = backoffDelay(attempt, maxRetryDelay)
-			}
-			if delay > maxRetryDelay {
-				delay = maxRetryDelay
-			}
-			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := waitRetryDelay(ctx, attempt, resp.Header.Get("Retry-After"), maxRetryDelay); sleepErr != nil {
 				return nil, resp, false, sleepErr
 			}
 			continue
@@ -259,20 +223,9 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
+		req, err := g.newRequest(ctx, method, reqURL, nil, headers)
 		if err != nil {
 			return nil, nil, 0, err
-		}
-
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("User-Agent", "mcp-gitlab/"+version)
-		for k, v := range headers {
-			if k != "" && v != "" {
-				req.Header.Set(k, v)
-			}
-		}
-		if g.token != "" {
-			req.Header.Set("PRIVATE-TOKEN", g.token)
 		}
 
 		resp, err := g.httpClient.HTTP().Do(req)
@@ -288,14 +241,7 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 
 		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
 			_ = resp.Body.Close()
-			delay := parseRetryAfter(resp.Header.Get("Retry-After"))
-			if delay <= 0 {
-				delay = backoffDelay(attempt, maxRetryDelay)
-			}
-			if delay > maxRetryDelay {
-				delay = maxRetryDelay
-			}
-			if sleepErr := poll.WaitWithContext(ctx, delay); sleepErr != nil {
+			if sleepErr := waitRetryDelay(ctx, attempt, resp.Header.Get("Retry-After"), maxRetryDelay); sleepErr != nil {
 				return nil, nil, 0, sleepErr
 			}
 			continue
@@ -329,6 +275,36 @@ func (g *gitlabServer) doRequestTail(ctx context.Context, method, reqURL string,
 	}
 
 	return nil, nil, 0, fmt.Errorf("request failed after retries")
+}
+
+func (g *gitlabServer) newRequest(ctx context.Context, method, reqURL string, body io.Reader, headers map[string]string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", "mcp-gitlab/"+version)
+	for k, v := range headers {
+		if k != "" && v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	if g.token != "" {
+		req.Header.Set("PRIVATE-TOKEN", g.token)
+	}
+	return req, nil
+}
+
+func waitRetryDelay(ctx context.Context, attempt int, retryAfter string, maxRetryDelay time.Duration) error {
+	delay := parseRetryAfter(retryAfter)
+	if delay <= 0 {
+		delay = backoffDelay(attempt, maxRetryDelay)
+	}
+	if delay > maxRetryDelay {
+		delay = maxRetryDelay
+	}
+	return poll.WaitWithContext(ctx, delay)
 }
 
 func (g *gitlabServer) fetchJobTraceTail(ctx context.Context, project string, jobID int, tailLines int, maxBytes int) (string, string, bool, error) {
