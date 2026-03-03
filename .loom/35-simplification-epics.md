@@ -68,6 +68,11 @@ Progress (this branch):
 - Keep this file synced with merged slices and superseded MR closures.
 - Add a short migration note documenting deprecated recall tools and preferred replacements.
 
+Migration note (2026-03-03):
+- Preferred tool: `agent_recall` (use `scope=context|memory|all` plus `include_memory`/`include_graph` when needed).
+- Deprecated but still supported: `agent_context_recall`, `agent_context_recall_enhanced`, `agent_memory_recall`.
+- Compatibility behavior: deprecated recall tools normalize legacy arguments and route through unified recall internals.
+
 ## Current Slice (2026-03-03)
 
 - Extract session/context wrapper methods from `service.go` into:
