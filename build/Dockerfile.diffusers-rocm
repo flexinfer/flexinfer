@@ -684,7 +684,7 @@ def load_pipeline(model_id: str):
     # Force CPU offload for NF4/bitsandbytes quantized models regardless of user setting.
     # bitsandbytes quantized models cannot use .to('cuda') — accelerate handles device
     # placement through dispatch hooks via enable_model_cpu_offload().
-    if QUANTIZATION == "nf4" and not use_cpu_offload:
+    if quant_mode == "nf4" and not use_cpu_offload:
         print("NF4 quantization detected: forcing CPU offload (bitsandbytes requires accelerate dispatch)")
         use_cpu_offload = True
 
