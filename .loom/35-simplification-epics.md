@@ -52,6 +52,11 @@ All `SIMP-1` through `SIMP-12` branches are merged into `main`.
 - Preserve backward compatibility for deprecated tools while consolidating internals.
 - Gate: no schema regressions in `cmd/mcp-agent-context/tools_test.go`.
 
+Progress (this branch):
+- Deprecated recall handlers are routed through unified recall internals (`HandleDeprecatedContextRecall`, `HandleDeprecatedEnhancedRecall`).
+- Duplicate `ContextSvc` recall/enhanced-recall implementations removed; recall behavior now lives in `service_recall.go`.
+- `SourceVersionSvc.HandleAskSource` now uses unified context recall internals instead of the removed `ContextSvc` recall helper.
+
 ### P1 - Session unification hardening for CLI + IDE agents
 
 - Confirm single behavior contract for session open/resume/end across daemon/HUD/MCP tools.
@@ -70,3 +75,4 @@ All `SIMP-1` through `SIMP-12` branches are merged into `main`.
   - `pkg/agentcontext/svc_context_wrappers.go`
 - Purpose: continue shrinking `service.go` and maintain clean domain boundaries.
 - Route deprecated recall handlers (`agent_context_recall`, `agent_context_recall_enhanced`) through unified `agent_recall` internals with legacy argument normalization.
+- Remove duplicate recall logic from `svc_context.go` and keep a single recall implementation path.

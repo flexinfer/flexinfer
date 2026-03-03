@@ -238,7 +238,6 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.ctxSvc.knowledgeGraph = svc.knowledgeGraph
 	svc.ctxSvc.getSession = svc.getSession
 	svc.ctxSvc.persistSession = svc.persistSession
-	svc.ctxSvc.getActiveTasks = svc.getActiveTasks
 	svc.ctxSvc.addSessionEntryStats = func(session *Session, entries int, tokens int) {
 		svc.sess.mu.Lock()
 		session.EntryCount += entries

@@ -368,19 +368,25 @@ func (s *SourceVersionSvc) HandleAskSource(ctx context.Context, args map[string]
 		limit = 10
 	}
 
-	// Phase 1: Recall from context
-	recallOpts := RecallOptions{
-		Query:            query,
-		AgentID:          agentID,
-		SessionID:        sessionID,
-		Namespace:        namespace,
-		TokenBudget:      tokenBudget,
-		IncludeSummaries: true,
-		IncludeDecisions: true,
-		FileContext:      fileContext,
+	// Phase 1: Recall from context (unified recall path).
+	recallOpts := EnhancedRecallOptions{
+		RecallOptions: RecallOptions{
+			Query:            query,
+			AgentID:          agentID,
+			SessionID:        sessionID,
+			Namespace:        namespace,
+			TokenBudget:      tokenBudget,
+			IncludeSummaries: true,
+			IncludeDecisions: true,
+			FileContext:      fileContext,
+		},
+		RecencyWeight: s.cfg.DefaultRecencyWeight,
+		IncludeTasks:  false,
+		IncludeMemory: false,
+		IncludeGraph:  false,
 	}
 
-	contextEntries, err := s.ctxSvc.recallContext(ctx, recallOpts)
+	contextEntries, _, err := s.enhancedRecallContext(ctx, recallOpts)
 	if err != nil {
 		return nil, fmt.Errorf("recall context: %w", err)
 	}
