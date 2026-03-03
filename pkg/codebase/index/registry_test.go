@@ -26,6 +26,7 @@ func TestCollectFiles_RespectsDefaultExcludes(t *testing.T) {
 	mustWrite(".venv/ignored.py")
 	mustWrite("node_modules/pkg/index.js")
 	mustWrite("vendor/foo.go")
+	mustWrite(".worktrees/wt/foo.go")
 	mustWrite("src/main.go")
 
 	r := NewRegistry(0)
@@ -58,6 +59,9 @@ func TestCollectFiles_RespectsDefaultExcludes(t *testing.T) {
 	}
 	if got["vendor/foo.go"] {
 		t.Fatalf("expected vendor/** to be excluded")
+	}
+	if got[".worktrees/wt/foo.go"] {
+		t.Fatalf("expected .worktrees/** to be excluded")
 	}
 }
 

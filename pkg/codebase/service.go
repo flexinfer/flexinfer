@@ -1700,73 +1700,59 @@ func (s *Service) runIndexJob(
 		go worker()
 	}
 
-	enqueued := 0
-enqueueLoop:
-	for _, absPath := range files {
-		select {
-		case <-ctx.Done():
-			break enqueueLoop
-		case workerJobs <- absPath:
-			enqueued++
+	go func() {
+		defer close(workerJobs)
+		for _, absPath := range files {
+			select {
+			case <-ctx.Done():
+				return
+			case workerJobs <- absPath:
+			}
 		}
-	}
-	close(workerJobs)
+	}()
 
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	if enqueued == 0 {
-		s.setJobDone(jobID)
-		return
-	}
+	for r := range results {
+		if r.err != nil {
+			s.incrementJobError(jobID, r.err.Error())
+			s.incrementFilesDone(jobID, 0)
+			continue
+		}
+		if r.skipped {
+			s.incrementFilesSkipped(jobID)
+			continue
+		}
 
-	for received := 0; received < enqueued; {
-		select {
-		case <-ctx.Done():
-			s.setJobCanceled(jobID)
-			for range results {
+		for _, ch := range r.chunks {
+			text := ch.Content
+			if ch.Docstring != "" {
+				text = ch.Docstring + "\n\n" + text
 			}
-			return
-		case r, ok := <-results:
-			if !ok {
-				s.setJobDone(jobID)
+			var vec []float64
+			if embeddings && r.fileCache != nil {
+				if v, ok := r.fileCache[ch.ContentHash]; ok && len(v) > 0 {
+					vec = v
+				}
+			}
+			pending = append(pending, pendingChunk{chunk: ch, text: text, vector: vec})
+		}
+		s.incrementFilesDone(jobID, len(r.chunks))
+
+		if len(pending) >= embedBatch {
+			if err := flush(); err != nil {
+				s.setJobFailed(jobID, fmt.Sprintf("flush chunks: %v", err))
 				return
 			}
-			received++
-			if r.err != nil {
-				s.incrementJobError(jobID, r.err.Error())
-				s.incrementFilesDone(jobID, 0)
-				continue
-			}
-			if r.skipped {
-				s.incrementFilesSkipped(jobID)
-				continue
-			}
-
-			for _, ch := range r.chunks {
-				text := ch.Content
-				if ch.Docstring != "" {
-					text = ch.Docstring + "\n\n" + text
-				}
-				var vec []float64
-				if embeddings && r.fileCache != nil {
-					if v, ok := r.fileCache[ch.ContentHash]; ok && len(v) > 0 {
-						vec = v
-					}
-				}
-				pending = append(pending, pendingChunk{chunk: ch, text: text, vector: vec})
-			}
-			s.incrementFilesDone(jobID, len(r.chunks))
-
-			if len(pending) >= embedBatch {
-				if err := flush(); err != nil {
-					s.setJobFailed(jobID, fmt.Sprintf("flush chunks: %v", err))
-					return
-				}
-			}
 		}
+	}
+
+	if ctx.Err() != nil {
+		s.setJobCanceled(jobID)
+		return
 	}
 
 	if err := flush(); err != nil {

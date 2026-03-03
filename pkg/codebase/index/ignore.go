@@ -28,6 +28,7 @@ func NewIgnoreMatcher(root string, extraPatterns []string) *IgnoreMatcher {
 		root: root,
 		fastPrefix: map[string]struct{}{
 			".git":         {},
+			".worktrees":   {},
 			"node_modules": {},
 			"dist":         {},
 			"build":        {},
@@ -103,8 +104,7 @@ func (m *IgnoreMatcher) IsIgnored(path string, isDir bool) bool {
 		if rule.directory && !isDir {
 			continue
 		}
-		matched, err := doublestar.PathMatch(rule.pattern, path)
-		if err != nil || !matched {
+		if !doublestar.PathMatchUnvalidated(rule.pattern, path) {
 			continue
 		}
 		ignored = !rule.negate
@@ -138,6 +138,9 @@ func (m *IgnoreMatcher) addPatterns(patterns []string, base string) {
 func (m *IgnoreMatcher) addPattern(base, pattern string, negate bool) {
 	rule := ruleFromPattern(base, pattern, negate)
 	if rule == nil {
+		return
+	}
+	if !doublestar.ValidatePathPattern(rule.pattern) {
 		return
 	}
 	if negate {

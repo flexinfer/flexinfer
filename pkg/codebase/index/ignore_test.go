@@ -110,3 +110,56 @@ func TestIgnoreMatcher_DefaultIgnoreCanBeOverridden(t *testing.T) {
 		t.Fatal("expected build/main.go to be unignored by explicit exclude negation")
 	}
 }
+
+func TestIgnoreMatcher_DefaultWorktreesIgnored(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	wtDir := filepath.Join(root, ".worktrees", "child")
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatalf("mkdir .worktrees: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	matcher := NewIgnoreMatcher(root, nil)
+	if !matcher.IsIgnored(".worktrees/child/main.go", false) {
+		t.Fatal("expected .worktrees/child/main.go to be ignored by default")
+	}
+}
+
+func TestIgnoreMatcher_WorktreesCanBeUnignored(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	wtDir := filepath.Join(root, ".worktrees", "child")
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatalf("mkdir .worktrees: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	matcher := NewIgnoreMatcher(root, []string{"!.worktrees/**"})
+	if matcher.IsIgnored(".worktrees/child/main.go", false) {
+		t.Fatal("expected .worktrees/child/main.go to be unignored by explicit negation")
+	}
+}
+
+func TestIgnoreMatcher_InvalidPatternIgnored(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("[invalid\nignored.go\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ignored.go"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write ignored.go: %v", err)
+	}
+
+	matcher := NewIgnoreMatcher(root, nil)
+	if !matcher.IsIgnored("ignored.go", false) {
+		t.Fatal("expected ignored.go to be ignored even with invalid pattern present")
+	}
+}
