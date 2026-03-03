@@ -2,9 +2,19 @@ package agentcontext
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func decodeToolPayload(t *testing.T, resultText string) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(resultText), &payload); err != nil {
+		t.Fatalf("unmarshal tool payload: %v", err)
+	}
+	return payload
+}
 
 func TestEnrichSessionStartResult_ActiveAgents(t *testing.T) {
 	svc := newTestService()
@@ -209,5 +219,197 @@ func TestGetSession_CacheRecheck(t *testing.T) {
 	}
 	if got.AgentID != "agent-1" {
 		t.Errorf("agent_id = %q, want %q", got.AgentID, "agent-1")
+	}
+}
+
+func TestSessionEnd_SummarizeSyncTransitionsToSummarized(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := newTestService()
+	svc.sess.cfg.AutoSummarize = true
+
+	svc.sess.sessions["s1"] = &Session{
+		ID:        "s1",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusActive),
+		StartedAt: time.Now().Add(-time.Hour),
+	}
+
+	summaryCalls := 0
+	svc.sess.generateSummary = func(_ context.Context, session *Session) error {
+		summaryCalls++
+		if session.ID != "s1" {
+			t.Fatalf("summary called for session %q, want s1", session.ID)
+		}
+		return nil
+	}
+
+	result, err := svc.sess.End(context.Background(), map[string]any{
+		"session_id":    "s1",
+		"summarize":     true,
+		"summary_async": false,
+		"cleanup":       false,
+	})
+	if err != nil {
+		t.Fatalf("End returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	if payload["summarized"] != true {
+		t.Fatalf("payload summarized = %v, want true", payload["summarized"])
+	}
+	if summaryCalls != 1 {
+		t.Fatalf("summary calls = %d, want 1", summaryCalls)
+	}
+
+	ended := svc.sess.sessions["s1"]
+	if ended.Status != string(SessionStatusSummarized) {
+		t.Fatalf("session status = %q, want %q", ended.Status, SessionStatusSummarized)
+	}
+}
+
+func TestSessionEnd_SummaryAsyncQueuesWork(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := newTestService()
+	svc.sess.cfg.AutoSummarize = true
+
+	svc.sess.sessions["s1"] = &Session{
+		ID:        "s1",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusActive),
+		StartedAt: time.Now().Add(-time.Hour),
+	}
+
+	queued := make(chan string, 1)
+	svc.sess.runSummaryAsync = func(session *Session) {
+		queued <- session.ID
+	}
+
+	result, err := svc.sess.End(context.Background(), map[string]any{
+		"session_id":    "s1",
+		"summarize":     true,
+		"summary_async": true,
+		"cleanup":       false,
+	})
+	if err != nil {
+		t.Fatalf("End returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	if payload["summary_queued"] != true {
+		t.Fatalf("summary_queued = %v, want true", payload["summary_queued"])
+	}
+	if payload["summarized"] != false {
+		t.Fatalf("summarized = %v, want false", payload["summarized"])
+	}
+
+	select {
+	case sessionID := <-queued:
+		if sessionID != "s1" {
+			t.Fatalf("queued session id = %q, want s1", sessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async summary callback")
+	}
+
+	ended := svc.sess.sessions["s1"]
+	if ended.Status != string(SessionStatusEnded) {
+		t.Fatalf("session status = %q, want %q", ended.Status, SessionStatusEnded)
+	}
+}
+
+func TestSessionEnd_CleanupContract(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := newTestService()
+	svc.sess.sessions["s1"] = &Session{
+		ID:        "s1",
+		AgentID:   "agent-1",
+		Status:    string(SessionStatusActive),
+		StartedAt: time.Now().Add(-time.Hour),
+	}
+
+	releaseCalled := 0
+	removeCalled := 0
+	deleteCalled := 0
+	orphanCalled := 0
+	staleCalled := 0
+
+	svc.sess.releaseClaimsForAgent = func(agentID string) int {
+		releaseCalled++
+		if agentID != "agent-1" {
+			t.Fatalf("releaseClaimsForAgent agentID = %q, want agent-1", agentID)
+		}
+		return 2
+	}
+	svc.sess.removePresence = func(agentID string) bool {
+		removeCalled++
+		if agentID != "agent-1" {
+			t.Fatalf("removePresence agentID = %q, want agent-1", agentID)
+		}
+		return true
+	}
+	svc.sess.deletePresenceFromQdrant = func(_ context.Context, agentID string) error {
+		deleteCalled++
+		if agentID != "agent-1" {
+			t.Fatalf("deletePresenceFromQdrant agentID = %q, want agent-1", agentID)
+		}
+		return nil
+	}
+	svc.sess.orphanWorktrees = func(agentID string) {
+		orphanCalled++
+		if agentID != "agent-1" {
+			t.Fatalf("orphanWorktrees agentID = %q, want agent-1", agentID)
+		}
+	}
+	svc.sess.markTasksStale = func(_ context.Context, sessionID string) int {
+		staleCalled++
+		if sessionID != "s1" {
+			t.Fatalf("markTasksStale sessionID = %q, want s1", sessionID)
+		}
+		return 5
+	}
+
+	result, err := svc.sess.End(context.Background(), map[string]any{
+		"session_id": "s1",
+		"summarize":  false,
+		"cleanup":    true,
+	})
+	if err != nil {
+		t.Fatalf("End returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	cleanup, ok := payload["cleanup"].(map[string]any)
+	if !ok {
+		t.Fatalf("cleanup payload missing or wrong type: %T", payload["cleanup"])
+	}
+
+	if cleanup["file_claims_released"] != float64(2) {
+		t.Fatalf("file_claims_released = %v, want 2", cleanup["file_claims_released"])
+	}
+	if cleanup["presence_deregistered"] != true {
+		t.Fatalf("presence_deregistered = %v, want true", cleanup["presence_deregistered"])
+	}
+	if cleanup["worktrees_orphaned"] != true {
+		t.Fatalf("worktrees_orphaned = %v, want true", cleanup["worktrees_orphaned"])
+	}
+	if cleanup["tasks_marked_stale"] != float64(5) {
+		t.Fatalf("tasks_marked_stale = %v, want 5", cleanup["tasks_marked_stale"])
+	}
+
+	if releaseCalled != 1 || removeCalled != 1 || deleteCalled != 1 || orphanCalled != 1 || staleCalled != 1 {
+		t.Fatalf("callback counts = release:%d remove:%d delete:%d orphan:%d stale:%d; want all 1",
+			releaseCalled, removeCalled, deleteCalled, orphanCalled, staleCalled)
 	}
 }
