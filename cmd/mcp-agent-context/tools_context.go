@@ -193,7 +193,7 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 			Required: []string{"query"},
 		},
 	}, traced(tracer, "agent_context_recall", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleContextRecall(ctx, args)
+		return svc.HandleDeprecatedContextRecall(ctx, args)
 	}))
 
 	// NOTE: agent_context_share and agent_context_query_shared removed in SIMP-8.
@@ -384,6 +384,6 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 			Required: []string{"query"},
 		},
 	}, traced(tracer, "agent_context_recall_enhanced", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-		return svc.HandleEnhancedRecall(ctx, args)
+		return svc.HandleDeprecatedEnhancedRecall(ctx, args)
 	}))
 }

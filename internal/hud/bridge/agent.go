@@ -1772,8 +1772,15 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 type SessionEndParams struct {
 	SessionID    string `json:"session_id"`
 	AgentID      string `json:"agent_id"`
-	Summarize    bool   `json:"summarize"`
+	Summarize    *bool  `json:"summarize,omitempty"`
 	SummaryAsync bool   `json:"summary_async,omitempty"`
+}
+
+func (p SessionEndParams) summarizeEnabled() bool {
+	if p.Summarize == nil {
+		return true
+	}
+	return *p.Summarize
 }
 
 // EndSession ends a session, optionally summarizes context, and deregisters presence.
@@ -1794,9 +1801,7 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 
 	args := map[string]any{
 		"session_id": sessionID,
-	}
-	if p.Summarize {
-		args["summarize"] = true
+		"summarize":  p.summarizeEnabled(),
 	}
 	if p.SummaryAsync {
 		args["summary_async"] = true

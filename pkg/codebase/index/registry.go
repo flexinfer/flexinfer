@@ -42,6 +42,7 @@ func NewRegistry(maxFileBytes int64) *Registry {
 func DefaultExcludeGlobs() []string {
 	return []string{
 		".git/**",
+		".worktrees/**",
 		"node_modules/**",
 		"vendor/**",
 		"dist/**",

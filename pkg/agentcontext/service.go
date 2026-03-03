@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
-
 	"github.com/crb2nu/loom/pkg/codebase/embed"
 	"github.com/crb2nu/loom/pkg/httpclient"
 
@@ -81,26 +79,6 @@ type Service struct {
 	memoryImporter      *MemoryImporter
 	bgCancel            context.CancelFunc
 }
-
-// Tracer returns the service's OTel tracer. Returns a noop tracer if none was configured.
-func (s *Service) Tracer() trace.Tracer {
-	return s.tracer
-}
-
-// OnPresenceEvent registers a callback invoked when an agent's presence
-// state transitions (e.g., active → idle, idle → offline).
-func (s *Service) OnPresenceEvent(fn func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)) {
-	s.presence.SetOnEvent(fn)
-}
-
-// AddNudge enqueues a nudge for the given agent, delivered on next heartbeat.
-func (s *Service) AddNudge(agentID string, nudge *Nudge) { s.nudges.Add(agentID, nudge) }
-
-// DrainNudges returns and clears all pending nudges for the given agent.
-func (s *Service) DrainNudges(agentID string) []*Nudge { return s.nudges.Drain(agentID) }
-
-// PendingNudgeCount returns the number of pending nudges for the given agent.
-func (s *Service) PendingNudgeCount(agentID string) int { return s.nudges.PendingCount(agentID) }
 
 func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	cfg, err := LoadConfigFromEnv()
@@ -240,7 +218,6 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.ctxSvc.knowledgeGraph = svc.knowledgeGraph
 	svc.ctxSvc.getSession = svc.getSession
 	svc.ctxSvc.persistSession = svc.persistSession
-	svc.ctxSvc.getActiveTasks = svc.getActiveTasks
 	svc.ctxSvc.addSessionEntryStats = func(session *Session, entries int, tokens int) {
 		svc.sess.mu.Lock()
 		session.EntryCount += entries
@@ -429,154 +406,4 @@ func (s *Service) StopBackgroundServices() {
 	if s.bgCancel != nil {
 		s.bgCancel()
 	}
-}
-
-// Session Handlers — thin delegation to SessionSvc.
-
-func (s *Service) HandleSessionStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.sess.Start(ctx, args)
-}
-
-func (s *Service) HandleSessionEnd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.sess.End(ctx, args)
-}
-
-func (s *Service) HandleSessionList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.sess.List(ctx, args)
-}
-
-func (s *Service) HandleSessionDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.sess.Delete(ctx, args)
-}
-
-func (s *Service) HandleSessionPrune(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.sess.Prune(ctx, args)
-}
-
-// enrichSessionStartResult adds coordination info (pending handoffs, active agents).
-// Stays on Service because it accesses CollHandoffs (not owned by SessionSvc).
-func (s *Service) enrichSessionStartResult(ctx context.Context, result map[string]any, agentID, namespace string) {
-	result["active_agents"] = len(s.presence.LiveAgentIDs())
-
-	now := time.Now()
-	var pendingHandoffs []map[string]any
-	if s.qdrant.Get(CollHandoffs) != nil {
-		conds := []any{
-			Match("target_agent_id", agentID),
-			Match("status", string(HandoffStatusPending)),
-		}
-		points, err := s.qdrant.Get(CollHandoffs).ScrollPoints(ctx, FilterMust(conds...), 50, false)
-		if err == nil {
-			for _, p := range points {
-				h, err := payloadToHandoff(p.Payload)
-				if err != nil || h == nil {
-					continue
-				}
-				if h.ExpiresAt != nil && now.After(*h.ExpiresAt) {
-					continue
-				}
-				pendingHandoffs = append(pendingHandoffs, map[string]any{
-					"handoff_id":   h.ID,
-					"source_agent": h.SourceAgentID,
-					"instructions": h.Instructions,
-					"summary":      h.Summary,
-					"created_at":   h.CreatedAt.Format(time.RFC3339),
-				})
-			}
-		}
-	}
-	result["pending_handoffs"] = pendingHandoffs
-}
-
-// runSessionSummaryAsync performs end-of-session summarization in background.
-func (s *Service) runSessionSummaryAsync(session *Session) {
-	bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	if err := s.ctxSvc.GenerateSummary(bg, session); err != nil {
-		s.logger.Warn("async session summarize failed",
-			"session_id", session.ID,
-			"agent_id", session.AgentID,
-			"error", err,
-		)
-		return
-	}
-
-	session.Status = string(SessionStatusSummarized)
-	if err := s.sess.Persist(bg, session); err != nil {
-		s.logger.Warn("async session summarize persist failed",
-			"session_id", session.ID,
-			"agent_id", session.AgentID,
-			"error", err,
-		)
-	}
-}
-
-// endActiveSessionsForAgent delegates to SessionSvc.
-func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string) {
-	s.sess.EndActiveForAgent(ctx, agentID)
-}
-
-// getSession delegates to SessionSvc.Get.
-func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, error) {
-	return s.sess.Get(ctx, sessionID)
-}
-
-// persistSession delegates to SessionSvc.Persist.
-func (s *Service) persistSession(ctx context.Context, session *Session) error {
-	return s.sess.Persist(ctx, session)
-}
-
-// Context handlers — thin delegation to ContextSvc.
-
-func (s *Service) HandleContextAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Add(ctx, args)
-}
-
-func (s *Service) HandleContextGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Get(ctx, args)
-}
-
-func (s *Service) HandleContextDelete(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Delete(ctx, args)
-}
-
-func (s *Service) HandleContextSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Search(ctx, args)
-}
-
-func (s *Service) HandleContextRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Recall(ctx, args)
-}
-
-func (s *Service) HandleContextShare(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Share(ctx, args)
-}
-
-func (s *Service) HandleContextQueryShared(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.QueryShared(ctx, args)
-}
-
-func (s *Service) HandleContextSummarize(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Summarize(ctx, args)
-}
-
-func (s *Service) HandleContextStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.Stats(ctx, args)
-}
-
-func (s *Service) HandleContextLinkCodebase(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.LinkCodebase(ctx, args)
-}
-
-func (s *Service) HandleEnhancedRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.EnhancedRecall(ctx, args)
-}
-
-func (s *Service) HandleAnnotationAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.AnnotationAdd(ctx, args)
-}
-
-func (s *Service) HandleAnnotationsGet(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	return s.ctxSvc.AnnotationsGet(ctx, args)
 }

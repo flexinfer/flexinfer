@@ -1393,7 +1393,7 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Summarize bool `json:"summarize"`
+		Summarize *bool `json:"summarize,omitempty"`
 	}
 	if r.Body != nil {
 		data, err := io.ReadAll(r.Body)
@@ -1409,9 +1409,14 @@ func (a *App) handleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	summarize := true
+	if body.Summarize != nil {
+		summarize = *body.Summarize
+	}
+
 	a.logMobileAudit(r, "session_end", map[string]string{
 		"session_id": sessionID,
-		"summarize":  strconv.FormatBool(body.Summarize),
+		"summarize":  strconv.FormatBool(summarize),
 	}, "initiated", nil)
 
 	endParams := bridge.SessionEndParams{
