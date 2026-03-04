@@ -9,7 +9,6 @@ spec:
   source: "ollama://mistral:7b"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx906
-  resources:
-    limits:
-      amd.com/gpu: 1
-      memory: 20Gi
+  gpu:
+    vendor: amd
+    count: 1

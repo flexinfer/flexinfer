@@ -9,10 +9,9 @@ spec:
   source: "HF://TheBloke/Mistral-7B-Instruct-v0.2-AWQ"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx906
-  resources:
-    limits:
-      amd.com/gpu: 1
-      memory: 20Gi
+  gpu:
+    vendor: amd
+    count: 1
   config:
     maxModelLen: 8192
     dtype: auto
