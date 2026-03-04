@@ -259,7 +259,9 @@ build:binaries:
       paths:
         - .go/pkg/mod/
         - .go-build/
-      policy: pull-push
+      # Uploading this cache adds several minutes of archive time in practice
+      # (40k+ files). Keep pull-only to avoid CI wall-clock bottlenecks.
+      policy: pull
     - key: ${CI_COMMIT_SHA}-bin
       paths:
         - bin/
@@ -528,7 +530,7 @@ ios:archive-export:
 build:image:loom-core:
   stage: deploy
   # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
-  resource_group: buildkit-images
+  resource_group: buildkit-images-loom-core
   retry:
     max: 1
     when:
@@ -679,7 +681,7 @@ build:image:loom-core:
 build:image:custom-server:
   stage: deploy
   # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
-  resource_group: buildkit-images
+  resource_group: buildkit-images-custom-server
   retry:
     max: 1
     when:
