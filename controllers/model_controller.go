@@ -2154,9 +2154,17 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	}
 
 	strategy := cacheStrategy(model)
+	// Preserve existing cache sub-status (e.g. Quantization) when rebuilding.
+	// Creating a fresh struct here wiped Quantization, causing ensureQuantization
+	// to re-write status on every reconcile (infinite loop).
+	var existingQuant *aiv1alpha1.QuantizationStatus
+	if model.Status.Cache != nil {
+		existingQuant = model.Status.Cache.Quantization
+	}
 	model.Status.Cache = &aiv1alpha2.CacheStatus{
-		Strategy: strategy,
-		Ready:    true,
+		Strategy:     strategy,
+		Ready:        true,
+		Quantization: existingQuant,
 	}
 
 	// For Local cache strategy with a nodeSelector, verify the cache
