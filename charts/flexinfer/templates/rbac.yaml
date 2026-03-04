@@ -267,12 +267,67 @@ roleRef:
   kind: ClusterRole
   name: {{ $fullname }}-scheduler
 ---
-# The kube-scheduler sidecar needs full scheduler permissions.
-# Bind to system:kube-scheduler for kube-scheduler compatibility.
+# Dedicated ClusterRole for the kube-scheduler sidecar container.
+# Replaces the overly-broad system:kube-scheduler binding with least-privilege.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-kube-scheduler
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+rules:
+  # Core scheduling: read pods, nodes, namespaces
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete", "update"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["patch", "update"]
+  # Bind pods to nodes (the core scheduling action)
+  - apiGroups: [""]
+    resources: ["bindings", "pods/binding"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Emit scheduling events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+  # Volume-aware scheduling
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csinodes", "csidrivers"]
+    verbs: ["get", "list", "watch"]
+  # Topology-aware scheduling
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  # Configmaps for scheduler policy
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Endpoints for leader election (legacy path)
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ $fullname }}-scheduler-system
+  name: {{ $fullname }}-kube-scheduler
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 subjects:
@@ -282,7 +337,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: system:kube-scheduler
+  name: {{ $fullname }}-kube-scheduler
 ---
 {{- end }}
 
