@@ -249,7 +249,7 @@ security:gosec:
     GO_WARM_MOD_CACHE: "false"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
-    - $(go env GOPATH)/bin/gosec -exclude-dir=.go -exclude-dir=vendor -fmt json -out gosec-report.json ${GO_APP_PKGS}
+    - $(go env GOPATH)/bin/gosec -concurrency=2 -exclude-dir=.go -exclude-dir=vendor -fmt json -out gosec-report.json ${GO_APP_PKGS}
   artifacts:
     when: always
     paths:
@@ -264,7 +264,7 @@ security:govulncheck:
     GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
-    - $(go env GOPATH)/bin/govulncheck ${GO_APP_PKGS} > govulncheck-report.txt
+    - $(go env GOPATH)/bin/govulncheck -scan=module ${GO_APP_PKGS} > govulncheck-report.txt
     - cat govulncheck-report.txt
   artifacts:
     when: always
