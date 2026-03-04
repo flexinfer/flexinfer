@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - CI now seeds Go dependency cache in a dedicated `prepare` stage (`pull-push`) using `.go/pkg/mod/cache/download` (runner-size-safe) plus `.go-build`; lint jobs skip eager `go mod download` prewarm and use shallow clones for `../../libs/*` replacements.
-- CI static-analysis jobs now target first-party packages (`./cmd`, `./internal`, `./pkg`) to avoid scanning `.go/pkg/mod`; `golangci-lint` timeout increased to 10m, `gosec` now runs with reduced concurrency, and `govulncheck` now runs in module-scan mode (invoked from `cmd/loom`) with `GOMEMLIMIT=6GiB` to reduce OOM failures on the k3s runner.
+- CI static-analysis jobs now target first-party packages (`./cmd`, `./internal`, `./pkg`) to avoid scanning `.go/pkg/mod`; `golangci-lint` timeout increased to 10m, `gosec` now runs with reduced concurrency, `govulncheck` now runs in module-scan mode (invoked from `cmd/loom`) with `GOMEMLIMIT=6GiB`, and heavyweight security scans are scoped to `main`/tag/scheduled pipelines to keep feature-branch CI fast.
 - HUD M3/M4 completion: BulkToolbar in PresencePanel Claims tab, lazy-loaded LifecyclePanel, color-blind safe StatusDot in OverlayShell, row pagination via `maxRows` in Fleet/Tasks DataTables, GitLab issue-reference linking in task titles.
 - Devbox now mounts workspace root and sets project-relative container workdirs for better monorepo support.
 - HUD web/TUI surfaces were refined (polish, interactions, and Ghostty palette alignment).
