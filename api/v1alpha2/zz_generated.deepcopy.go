@@ -21,10 +21,10 @@ limitations under the License.
 package v1alpha2
 
 import (
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -58,8 +58,8 @@ func (in *CacheStatus) DeepCopyInto(out *CacheStatus) {
 	*out = *in
 	if in.Quantization != nil {
 		in, out := &in.Quantization, &out.Quantization
-		*out = new(aiv1alpha1.QuantizationStatus)
-		**out = **in
+		*out = new(v1alpha1.QuantizationStatus)
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -1146,6 +1146,13 @@ func (in *ModelSpec) DeepCopyInto(out *ModelSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Tolerations != nil {
+		in, out := &in.Tolerations, &out.Tolerations
+		*out = make([]corev1.Toleration, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.LiteLLM != nil {
 		in, out := &in.LiteLLM, &out.LiteLLM
 		*out = new(LiteLLMSpec)
@@ -1168,7 +1175,7 @@ func (in *ModelSpec) DeepCopyInto(out *ModelSpec) {
 	}
 	if in.Quantize != nil {
 		in, out := &in.Quantize, &out.Quantize
-		*out = new(aiv1alpha1.QuantizationSpec)
+		*out = new(v1alpha1.QuantizationSpec)
 		(*in).DeepCopyInto(*out)
 	}
 }
@@ -1215,7 +1222,7 @@ func (in *ModelStatus) DeepCopyInto(out *ModelStatus) {
 	if in.Cache != nil {
 		in, out := &in.Cache, &out.Cache
 		*out = new(CacheStatus)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.KVCache != nil {
 		in, out := &in.KVCache, &out.KVCache

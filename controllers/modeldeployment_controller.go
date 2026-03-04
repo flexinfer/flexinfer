@@ -986,15 +986,16 @@ ls -la /checkpoints || true
 					NodeSelector:  r.getNodeSelector(m),
 					// Use NVIDIA runtime for CUDA workloads (provides libcuda.so driver access)
 					RuntimeClassName: r.getRuntimeClassName(m),
-					// Tolerate GPU node taints so model pods can run on dedicated GPU nodes
-					Tolerations: []corev1.Toleration{
+					// Tolerate GPU node taints so model pods can run on dedicated GPU nodes.
+					// User-specified tolerations from spec are appended to the default.
+					Tolerations: append([]corev1.Toleration{
 						{
 							Key:      "dedicated",
 							Operator: corev1.TolerationOpEqual,
 							Value:    "gpu",
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
-					},
+					}, m.Spec.Tolerations...),
 					// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
 					// Add the render group GID (992 on most systems) to supplementalGroups so
 					// non-root users can access GPU devices without running as root.

@@ -126,6 +126,12 @@ type ModelDeploymentSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// Tolerations are appended to the pod's tolerations.
+	// The controller always adds a GPU-node toleration (dedicated=gpu:NoSchedule);
+	// any tolerations specified here are merged with that default.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
 	// MLCLLM contains MLC-LLM backend-specific configuration.
 	// Only applies when Backend is "mlc-llm" or "mlc".
 	// +optional
