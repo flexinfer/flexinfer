@@ -1078,7 +1078,7 @@ publish_vllm_rocm:
 # See: https://github.com/vllm-project/vllm/pull/2768
 publish_vllm_rocm_gfx1100:
   stage: publish
-  image: moby/buildkit:v0.12.5
+  image: moby/buildkit:v0.28.0
   timeout: 2h  # Longer timeout - builds vLLM from source
   needs: []
   script:
