@@ -47,6 +47,7 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: go-mod-tidy
         name: go mod tidy
@@ -54,6 +55,7 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: golangci-lint
         name: golangci-lint
@@ -62,13 +64,15 @@ repos:
         types: [go]
         pass_filenames: false
         verbose: true
+        stages: [pre-commit]
 
       - id: go-build
         name: go build
-        entry: go build ./...
+        entry: bash scripts/ci/go_build_hook.sh
         language: system
         types: [go]
         pass_filenames: false
+        stages: [pre-commit, pre-push]
 
       - id: go-test
         name: go test (fast)
