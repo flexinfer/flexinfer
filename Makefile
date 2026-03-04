@@ -199,6 +199,7 @@ VLLM_GFX906_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906-fa
 VLLM_GFX1100_NIGHTLY_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-nightly
 VLLM_OMNI_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm-omni:rocm-gfx1100
 LLAMACPP_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:rocm-gfx1100
+LLAMACPP_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:rocm-gfx906
 LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 DIFFUSERS_ROCM_IMAGE ?= $(HARBOR_REGISTRY)/library/diffusers-api:rocm-$(shell git rev-parse --short HEAD)
@@ -277,6 +278,14 @@ build-llamacpp-gfx1100: ## Build llama.cpp gfx1100 image (ROCm, RX 7900 series)
 .PHONY: push-llamacpp-gfx1100
 push-llamacpp-gfx1100: ## Push llama.cpp gfx1100 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_GFX1100_IMAGE)
+
+.PHONY: build-llamacpp-gfx906
+build-llamacpp-gfx906: ## Build llama.cpp gfx906 image (ROCm, Radeon VII / Vega20)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.llamacpp-rocm-gfx906 -t $(LLAMACPP_GFX906_IMAGE) build/
+
+.PHONY: push-llamacpp-gfx906
+push-llamacpp-gfx906: ## Push llama.cpp gfx906 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_GFX906_IMAGE)
 
 .PHONY: build-llamacpp-maxwell
 build-llamacpp-maxwell: ## Build llama.cpp Maxwell image (CUDA 11.8, sm_52)

@@ -36,7 +36,7 @@ RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org
 # Replace CUDA_CHECK(cudaMemGetInfo(...)) with a try/fallback that
 # returns 16 GB when the call fails (VMM not supported on Vega20).
 WORKDIR /opt/src/llama.cpp
-COPY build/patch-hipmemgetinfo.sh /tmp/
+COPY patch-hipmemgetinfo.sh /tmp/
 RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
 
 # Build llama.cpp with HIP (ROCm) support

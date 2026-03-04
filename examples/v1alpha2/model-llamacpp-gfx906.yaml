@@ -7,14 +7,13 @@ metadata:
 spec:
   backend: llamacpp
   source: "HF://TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
-  modelFileName: "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx906
-  resources:
-    limits:
-      amd.com/gpu: 1
-      memory: 20Gi
+  gpu:
+    vendor: amd
+    count: 1
   config:
+    ggufFile: "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
     contextSize: 8192
     nGPULayers: 999
     flashAttention: false  # Not supported on gfx906
