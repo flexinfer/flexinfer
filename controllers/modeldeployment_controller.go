@@ -1172,6 +1172,9 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 					// No GPU-specific node selector needed - benchmark is just a client
 					// Can run on any node that can reach the proxy
 					RestartPolicy: corev1.RestartPolicyNever,
+					// Share PID namespace so the benchmark container can signal sidecar
+					// containers (e.g., Istio envoy) to exit after benchmark completes.
+					ShareProcessNamespace: ptr.To(true),
 					Containers: []corev1.Container{
 						{
 							Name:  "flexinfer-bench",
@@ -1198,10 +1201,21 @@ func (r *ModelDeploymentReconciler) jobForBenchmark(m *aiv1alpha1.ModelDeploymen
 									Value: os.Getenv("POSTGRES_DSN"),
 								},
 							},
-							// Simple execution - just run the benchmark
-							// Proxy handles model scale-up via GPUGroup
-							Command: []string{"/flexinfer-bench"},
-							Args:    benchArgs,
+							// Wrap benchmark in sidecar-termination shell:
+							// 1. Run the benchmark binary with all args
+							// 2. Capture its exit code
+							// 3. Try Istio pilot-agent quit endpoint (best-effort)
+							// 4. Kill remaining processes via shared PID namespace
+							// Without this, sidecar-injected pods hang forever after benchmark exits.
+							Command: []string{"sh", "-c"},
+							Args: []string{
+								"/flexinfer-bench " + strings.Join(benchArgs, " ") + "; " +
+									"EXIT_CODE=$?; " +
+									"echo \"Benchmark exited ($EXIT_CODE), terminating sidecars...\"; " +
+									"curl -sf -XPOST http://127.0.0.1:15020/quitquitquit >/dev/null 2>&1 || true; " +
+									"sleep 2; " +
+									"exit $EXIT_CODE",
+							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("100m"),
