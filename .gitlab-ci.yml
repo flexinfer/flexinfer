@@ -77,7 +77,9 @@ variables:
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
-    - .go/pkg/mod/
+    # Cache the module download ZIP/index cache (not extracted modules).
+    # This stays well under the runner's 512MB cache upload limit.
+    - .go/pkg/mod/cache/download/
     - .go-build/
   # Pull cache everywhere, but only push from selected jobs to avoid repeatedly
   # archiving tens of thousands of small Go cache files on every job.
@@ -170,7 +172,7 @@ prepare:go-cache:
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
-      - .go/pkg/mod/
+      - .go/pkg/mod/cache/download/
       - .go-build/
     policy: pull-push
   script:
