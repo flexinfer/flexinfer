@@ -82,7 +82,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added error handling guardrails with `pkg/mcperror`.
   - Added config schema validation and upstream spec tracking.
 
-- ✅ **Observability expansion (2026-02-26 slices)**
+- ✅ **Observability expansion (2026-02-26 slices)** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/5))
   - Added `pkg/mcpotel` tracing wrappers across all `cmd/mcp-*/main.go` handlers (`59/59`).
   - Added JSON log formatting in `pkg/mcplog` with `trace_id`/`span_id` correlation for context-aware logs.
 
