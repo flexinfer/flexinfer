@@ -10,6 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestDetectGPUNvidia(t *testing.T) {
@@ -55,7 +59,20 @@ func TestDetectGPUAMD(t *testing.T) {
 }
 
 func TestDetectGPUNone(t *testing.T) {
-	a := &Agent{labelPrefix: "flexinfer.ai/"}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("8"),
+				corev1.ResourceMemory: resource.MustParse("32Gi"),
+			},
+		},
+	}
+	a := &Agent{
+		labelPrefix: "flexinfer.ai/",
+		nodeName:    "test-node",
+		kubeClient:  fake.NewSimpleClientset(node),
+	}
 	// Keep sysfs probing hermetic on linux CI runners.
 	a.sysfsRoot = t.TempDir()
 	a.runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -63,6 +80,73 @@ func TestDetectGPUNone(t *testing.T) {
 	}
 	labels := make(map[string]string)
 	a.detectGPU(context.Background(), labels)
+	_, ok := labels["flexinfer.ai/gpu.vendor"]
+	assert.False(t, ok)
+}
+
+func TestDetectGPUFromAllocatable_NVIDIA(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("2"),
+			},
+		},
+	}
+	a := &Agent{
+		labelPrefix: "flexinfer.ai/",
+		nodeName:    "test-node",
+		kubeClient:  fake.NewSimpleClientset(node),
+	}
+	labels := make(map[string]string)
+	a.detectGPUFromAllocatable(context.Background(), labels)
+
+	assert.Equal(t, "NVIDIA", labels["flexinfer.ai/gpu.vendor"])
+	assert.Equal(t, "2", labels["flexinfer.ai/gpu.count"])
+	// No VRAM or arch available from allocatable
+	_, hasVRAM := labels["flexinfer.ai/gpu.vram"]
+	assert.False(t, hasVRAM)
+}
+
+func TestDetectGPUFromAllocatable_AMD(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceName("amd.com/gpu"): resource.MustParse("1"),
+			},
+		},
+	}
+	a := &Agent{
+		labelPrefix: "flexinfer.ai/",
+		nodeName:    "test-node",
+		kubeClient:  fake.NewSimpleClientset(node),
+	}
+	labels := make(map[string]string)
+	a.detectGPUFromAllocatable(context.Background(), labels)
+
+	assert.Equal(t, "AMD", labels["flexinfer.ai/gpu.vendor"])
+	assert.Equal(t, "1", labels["flexinfer.ai/gpu.count"])
+}
+
+func TestDetectGPUFromAllocatable_NoGPU(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+		},
+	}
+	a := &Agent{
+		labelPrefix: "flexinfer.ai/",
+		nodeName:    "test-node",
+		kubeClient:  fake.NewSimpleClientset(node),
+	}
+	labels := make(map[string]string)
+	a.detectGPUFromAllocatable(context.Background(), labels)
+
 	_, ok := labels["flexinfer.ai/gpu.vendor"]
 	assert.False(t, ok)
 }

@@ -217,12 +217,60 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		return
 	}
 
-	log.Info("no GPU detected")
+	// Final fallback: K8s allocatable resources from device plugins.
+	// When vendor tools and sysfs are unavailable (e.g. toolless containers),
+	// the node's status.allocatable may still report GPU resources from device
+	// plugins (nvidia-device-plugin, amd-gpu-device-plugin).
+	a.detectGPUFromAllocatable(ctx, labels)
 }
 
 // detectCPU populates the label map with CPU-related features.
 func (a *Agent) detectCPU(labels map[string]string) {
 	labels[a.labelPrefix+"cpu.avx512"] = strconv.FormatBool(cpu.X86.HasAVX512)
+}
+
+// gpuAllocatableResources maps K8s device plugin resource names to vendor labels.
+var gpuAllocatableResources = []struct {
+	resource string
+	vendor   string
+}{
+	{"nvidia.com/gpu", "NVIDIA"},
+	{"amd.com/gpu", "AMD"},
+}
+
+// detectGPUFromAllocatable checks the node's status.allocatable for GPU device
+// plugin resources as a last-resort fallback. This works when vendor tools
+// (nvidia-smi, rocm-smi) and sysfs are all unavailable (e.g., toolless agent
+// containers) but a device plugin is installed.
+//
+// Limitation: only provides vendor + count; cannot determine VRAM or arch.
+func (a *Agent) detectGPUFromAllocatable(ctx context.Context, labels map[string]string) {
+	log := log.FromContext(ctx)
+
+	node, err := a.kubeClient.CoreV1().Nodes().Get(ctx, a.nodeName, metav1.GetOptions{})
+	if err != nil {
+		log.V(1).Info("failed to get node for allocatable fallback", "error", err)
+		log.Info("no GPU detected")
+		return
+	}
+
+	for _, gr := range gpuAllocatableResources {
+		qty, ok := node.Status.Allocatable[corev1.ResourceName(gr.resource)]
+		if !ok {
+			continue
+		}
+		count := qty.Value()
+		if count <= 0 {
+			continue
+		}
+		log.Info("GPU detected via K8s allocatable (no vendor tools available)",
+			"vendor", gr.vendor, "count", count, "resource", gr.resource)
+		labels[a.labelPrefix+"gpu.vendor"] = gr.vendor
+		labels[a.labelPrefix+"gpu.count"] = strconv.FormatInt(count, 10)
+		return
+	}
+
+	log.Info("no GPU detected")
 }
 
 func extractAMDArch(infoOut string) string {
