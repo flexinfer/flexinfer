@@ -1659,10 +1659,13 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	}
 
 	// When quantization completed, redirect model path to the quantized output subdirectory.
+	// Use CompletedAt (always set from job.Status.CompletionTime) rather than Type
+	// (parsed from pod termination-log metadata, which may be unavailable if the pod
+	// was cleaned up before the controller read it).
 	if model.Spec.Quantize != nil &&
 		model.Status.Cache != nil &&
 		model.Status.Cache.Quantization != nil &&
-		model.Status.Cache.Quantization.Type != "" {
+		model.Status.Cache.Quantization.CompletedAt != nil {
 		quantizedSubdir := quantizedOutputDir(model.Spec.Quantize)
 		if quantizedSubdir != "" {
 			plan.ModelPath = "/models/" + model.Name + "/" + quantizedSubdir
