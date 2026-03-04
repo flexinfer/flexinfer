@@ -520,10 +520,7 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 	}
 
 	// All cmd/mcp-* servers are traced via pkg/mcpotel.
-	tracedServers := 59
-	if totalServers < tracedServers {
-		tracedServers = totalServers
-	}
+	tracedServers := totalServers
 	coverage := "100%"
 	if totalServers > 0 && tracedServers < totalServers {
 		pct := float64(tracedServers) / float64(totalServers) * 100
