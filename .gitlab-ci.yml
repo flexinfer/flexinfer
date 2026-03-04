@@ -264,7 +264,8 @@ security:govulncheck:
     GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
-    - $(go env GOPATH)/bin/govulncheck -scan=module ${GO_APP_PKGS} > govulncheck-report.txt
+    # module mode scans the current module and does not accept package patterns
+    - $(go env GOPATH)/bin/govulncheck -scan=module > govulncheck-report.txt
     - cat govulncheck-report.txt
   artifacts:
     when: always
