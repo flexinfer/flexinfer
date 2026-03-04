@@ -319,6 +319,36 @@ func TestProfile_SecretFilesAreSet(t *testing.T) {
 	}
 }
 
+func TestAntigravityProfile_HomePathAndFilenameOverride(t *testing.T) {
+	m, err := NewManager("/tmp/test-repo")
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	p := m.Get("antigravity")
+	if p == nil {
+		t.Fatal("antigravity profile not found")
+	}
+	if p.HomeDir != ".gemini/antigravity" {
+		t.Fatalf("HomeDir = %q, want %q", p.HomeDir, ".gemini/antigravity")
+	}
+	if p.GeneratedFile != "mcp.json" {
+		t.Fatalf("GeneratedFile = %q, want %q", p.GeneratedFile, "mcp.json")
+	}
+	if p.HomeGeneratedFile != "mcp_config.json" {
+		t.Fatalf("HomeGeneratedFile = %q, want %q", p.HomeGeneratedFile, "mcp_config.json")
+	}
+	if p.SkillsTarget != "gemini" {
+		t.Fatalf("SkillsTarget = %q, want %q", p.SkillsTarget, "gemini")
+	}
+	if !p.SkillsDirectToHome {
+		t.Fatal("expected SkillsDirectToHome=true for antigravity")
+	}
+	if p.SkillsHomePath != "$HOME/.gemini/antigravity/skills" {
+		t.Fatalf("SkillsHomePath = %q, want %q", p.SkillsHomePath, "$HOME/.gemini/antigravity/skills")
+	}
+}
+
 // Test that the manager uses the actual user home directory
 func TestNewManager_UsesRealHomeDir(t *testing.T) {
 	m, err := NewManager("/tmp/repo")

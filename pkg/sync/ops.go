@@ -124,7 +124,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	fmt.Printf("Syncing %s -> %s\n", repoPath, homePath)
 
 	if backup && Exists(homePath) {
-		if !p.SyncGeneratedOnly || (p.GeneratedFile != "" && Exists(filepath.Join(homePath, p.GeneratedFile))) {
+		if !p.SyncGeneratedOnly || (p.GeneratedFile != "" && Exists(filepath.Join(homePath, primaryHomeGeneratedFile(p)))) {
 			if err := m.Backup(profileName, "home"); err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
@@ -142,7 +142,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		if err := os.MkdirAll(homePath, 0755); err != nil {
 			return fmt.Errorf("create home dir: %w", err)
 		}
-		dstFile := filepath.Join(homePath, p.GeneratedFile)
+		dstFile := filepath.Join(homePath, primaryHomeGeneratedFile(p))
 		if err := CopyFile(srcFile, dstFile); err != nil {
 			return err
 		}
@@ -980,6 +980,12 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 		RepoRoot:      m.RepoRoot,
 		WorkspaceRoot: m.RepoRoot,
 		OutputDir:     outputDir,
+		GeminiSkillsHome: func() string {
+			if p.SkillsTarget != "gemini" {
+				return ""
+			}
+			return p.SkillsHomePath
+		}(),
 		// Codex normally generates directly into ~/.codex/skills; for sync we generate
 		// into the repo's .codex/ so status + sync can verify and propagate changes.
 		CodexSkillsDir: func() string {
@@ -1264,7 +1270,7 @@ func (m *Manager) PullFromHome(profileName string, backup bool) error {
 		if p.GeneratedFile == "" {
 			return fmt.Errorf("profile %s has no generated file", p.Name)
 		}
-		srcFile := filepath.Join(homePath, p.GeneratedFile)
+		srcFile := filepath.Join(homePath, primaryHomeGeneratedFile(p))
 		if !Exists(srcFile) {
 			return fmt.Errorf("generated file not found: %s", srcFile)
 		}
@@ -1319,11 +1325,15 @@ func (m *Manager) Backup(profileName string, source string) error {
 		if err := os.MkdirAll(backupPath, 0755); err != nil {
 			return err
 		}
-		srcFile := filepath.Join(srcPath, p.GeneratedFile)
+		fileName := p.GeneratedFile
+		if source != "repo" {
+			fileName = primaryHomeGeneratedFile(p)
+		}
+		srcFile := filepath.Join(srcPath, fileName)
 		if !Exists(srcFile) {
 			return fmt.Errorf("generated file not found: %s", srcFile)
 		}
-		return CopyFile(srcFile, filepath.Join(backupPath, p.GeneratedFile))
+		return CopyFile(srcFile, filepath.Join(backupPath, fileName))
 	}
 
 	// Merge default excludes with profile excludes
@@ -1356,13 +1366,20 @@ func (m *Manager) Validate(profileName string) error {
 		configFile = filepath.Join(homePath, "claude_desktop_config.json")
 		target = "claude_desktop"
 	case "claude", "vscode", "antigravity":
-		configFile = filepath.Join(homePath, "mcp.json")
+		fileName := primaryHomeGeneratedFile(p)
+		if fileName == "" {
+			fileName = "mcp.json"
+		}
+		configFile = filepath.Join(homePath, fileName)
 		target = p.GeneratorTarget
 	default:
 		// Fallback: check for known config files
 		if Exists(filepath.Join(homePath, "config.toml")) {
 			configFile = filepath.Join(homePath, "config.toml")
 			target = "codex"
+		} else if Exists(filepath.Join(homePath, "mcp_config.json")) {
+			configFile = filepath.Join(homePath, "mcp_config.json")
+			target = "antigravity"
 		} else if Exists(filepath.Join(homePath, "mcp.json")) {
 			configFile = filepath.Join(homePath, "mcp.json")
 			target = "claude"

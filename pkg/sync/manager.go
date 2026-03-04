@@ -16,6 +16,10 @@ type Profile struct {
 	SecretFiles     []string
 	GeneratorTarget string // Target name for the generator (e.g. "codex")
 	GeneratedFile   string // Filename generated (e.g. "config.toml")
+	// HomeGeneratedFile overrides the primary generated filename when syncing
+	// to home. This is useful when a platform expects a different filename than
+	// the generated artifact kept in-repo.
+	HomeGeneratedFile string
 	// ExtraGeneratedFiles lists additional files produced by the generator
 	// (e.g. "settings.json" for lifecycle hooks). These are synced alongside
 	// GeneratedFile but are optional — missing extras are silently skipped.
@@ -26,6 +30,9 @@ type Profile struct {
 	SyncGeneratedOnly bool
 	SkillsTarget      string // Target name for skills generator (mirrors GeneratorTarget)
 	SkillsManifest    string // Filename of skills manifest (e.g., ".loom-skills-manifest.json")
+	// SkillsHomePath sets the final home skills base path used for ${SKILL_PATH}
+	// resolution in generated skill instructions.
+	SkillsHomePath string
 	// SkillsDirectToHome generates skills directly into the home directory instead
 	// of the repo directory. This avoids duplication when the CLI discovers skills
 	// from both repo and home (e.g. Gemini CLI reading ~/.gemini/skills/ and
@@ -137,6 +144,7 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:   true,
 		SkillsTarget:        "gemini",
 		SkillsManifest:      ".loom-skills-manifest.json",
+		SkillsHomePath:      "$HOME/.gemini/skills",
 		SkillsDirectToHome:  true,
 		DefaultLoomMode:     true,
 	}
@@ -144,7 +152,7 @@ func (m *Manager) registerProfiles() {
 	m.Profiles["antigravity"] = &Profile{
 		Name:    "antigravity",
 		RepoDir: ".antigravity",
-		HomeDir: ".antigravity",
+		HomeDir: ".gemini/antigravity",
 		Excludes: []string{
 			"auth.json", "sessions", "backups", "extensions",
 			"antigravity", "argv.json", "logs", "CachedData",
@@ -152,8 +160,13 @@ func (m *Manager) registerProfiles() {
 		SecretFiles:         []string{"auth.json"},
 		GeneratorTarget:     "antigravity", // Uses mcp.json format (VSCode fork)
 		GeneratedFile:       "mcp.json",
+		HomeGeneratedFile:   "mcp_config.json",
 		ExtraGeneratedFiles: []string{"settings.json"}, // Stub for sync architecture consistency
 		SyncGeneratedOnly:   true,
+		SkillsTarget:        "gemini",
+		SkillsManifest:      ".loom-skills-manifest.json",
+		SkillsHomePath:      "$HOME/.gemini/antigravity/skills",
+		SkillsDirectToHome:  true,
 		DefaultLoomMode:     true,
 	}
 

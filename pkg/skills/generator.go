@@ -25,22 +25,26 @@ type Generator struct {
 	CodexSkillsDir string
 	RepoRoot       string // Base directory containing .claude/, .codex/, .kilocode/, .gemini/
 	CodexHome      string // ~/.codex
-	WorkspaceRoot  string // For Claude: workspace root for .agents/skills/
-	DryRun         bool
-	Verbose        bool
+	// GeminiSkillsHome controls the ${SKILL_PATH} base for Gemini-formatted
+	// skill bundles. Defaults to $HOME/.gemini/skills when empty.
+	GeminiSkillsHome string
+	WorkspaceRoot    string // For Claude: workspace root for .agents/skills/
+	DryRun           bool
+	Verbose          bool
 }
 
 // GeneratorOptions configures the generator.
 type GeneratorOptions struct {
-	RegistryPath   string
-	Target         string
-	OutputDir      string
-	RepoRoot       string
-	CodexHome      string
-	CodexSkillsDir string
-	WorkspaceRoot  string
-	DryRun         bool
-	Verbose        bool
+	RegistryPath     string
+	Target           string
+	OutputDir        string
+	RepoRoot         string
+	CodexHome        string
+	GeminiSkillsHome string
+	CodexSkillsDir   string
+	WorkspaceRoot    string
+	DryRun           bool
+	Verbose          bool
 }
 
 // AllTargets lists all supported skill generation targets.
@@ -78,17 +82,18 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 	}
 
 	return &Generator{
-		Registry:       reg,
-		RegistryPath:   opts.RegistryPath,
-		SourceDir:      sourceDir,
-		Target:         opts.Target,
-		OutputDir:      opts.OutputDir,
-		CodexSkillsDir: opts.CodexSkillsDir,
-		RepoRoot:       repoRoot,
-		CodexHome:      codexHome,
-		WorkspaceRoot:  workspaceRoot,
-		DryRun:         opts.DryRun,
-		Verbose:        opts.Verbose,
+		Registry:         reg,
+		RegistryPath:     opts.RegistryPath,
+		SourceDir:        sourceDir,
+		Target:           opts.Target,
+		OutputDir:        opts.OutputDir,
+		CodexSkillsDir:   opts.CodexSkillsDir,
+		RepoRoot:         repoRoot,
+		CodexHome:        codexHome,
+		GeminiSkillsHome: opts.GeminiSkillsHome,
+		WorkspaceRoot:    workspaceRoot,
+		DryRun:           opts.DryRun,
+		Verbose:          opts.Verbose,
 	}, nil
 }
 
@@ -540,8 +545,13 @@ func (g *Generator) generateGeminiSkillMD(skill *Skill) string {
 	sb.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(desc)))
 	sb.WriteString("---\n\n")
 
-	// Use the final Gemini skills home path to keep references stable after sync.
-	geminiSkillPath := fmt.Sprintf("$HOME/.gemini/skills/%s", skill.Name)
+	// Use the final Gemini/Antigravity skills home path to keep references
+	// stable after sync.
+	skillsHome := strings.TrimSpace(g.GeminiSkillsHome)
+	if skillsHome == "" {
+		skillsHome = "$HOME/.gemini/skills"
+	}
+	geminiSkillPath := fmt.Sprintf("%s/%s", strings.TrimRight(skillsHome, "/"), skill.Name)
 	instructions := skill.ResolveInstructions("gemini", g.CodexHome, geminiSkillPath)
 	sb.WriteString(instructions)
 

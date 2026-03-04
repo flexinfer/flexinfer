@@ -212,8 +212,17 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 		// For platforms with no native hook support, add --agent-hint so the
 		// proxy fires heartbeats on each tool call, providing universal presence.
 		switch target {
-		case "kilocode", "antigravity", "zed":
+		case "kilocode", "zed":
 			args = append(args, "--agent-hint", target)
+		case "antigravity":
+			// Antigravity currently hard-limits MCP registrations to ~100 tools.
+			// Apply a proxy-local core profile so Antigravity gets a stable
+			// high-value subset without affecting other clients sharing loomd.
+			args = append(args,
+				"--agent-hint", "antigravity",
+				"--tool-profile", "antigravity-core",
+				"--max-tools", "100",
+			)
 		}
 		return map[string]*registry.TargetSpec{
 			"loom": {

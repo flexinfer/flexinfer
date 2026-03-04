@@ -36,6 +36,12 @@ var remoteURLGlobal string
 // remoteTokenGlobal stores the --remote-token flag value.
 var remoteTokenGlobal string
 
+// toolProfileGlobal stores the optional per-proxy tool filter profile.
+var toolProfileGlobal string
+
+// maxToolsGlobal stores the optional per-proxy tool cap.
+var maxToolsGlobal int
+
 // lastHeartbeat tracks the unix nanos of the last heartbeat to rate-limit goroutine spawning.
 var lastHeartbeat atomic.Int64
 
@@ -86,10 +92,12 @@ func (e *proxyTransportError) Unwrap() error { return e.err }
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
-func runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken string) error {
+func runProxyWithHint(socketPath, agentHint, remoteURL, remoteToken, toolProfile string, maxTools int) error {
 	agentHintGlobal = agentHint
 	remoteURLGlobal = remoteURL
 	remoteTokenGlobal = remoteToken
+	toolProfileGlobal = strings.TrimSpace(toolProfile)
+	maxToolsGlobal = maxTools
 	return runProxy(socketPath)
 }
 
@@ -422,7 +430,7 @@ func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 
 	result := struct {
 		Tools []mcp.Tool `json:"tools"`
-	}{Tools: cachedResult.Tools}
+	}{Tools: filterProxyTools(cachedResult.Tools, agentHintGlobal, toolProfileGlobal, maxToolsGlobal)}
 
 	return mcp.NewResponse(msg.ID, result)
 }
