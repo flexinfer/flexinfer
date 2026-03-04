@@ -2444,10 +2444,13 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 
 	// Job exists — check status.
 	if job.Status.Succeeded > 0 {
-		// Idempotency: if the cache already reflects a completed quantization with
+		// Idempotency: if the status already reflects a completed quantization with
 		// the correct format, skip re-writing status to avoid an infinite reconcile
 		// loop (each status write triggers a new reconcile that re-enters this branch).
-		if model.Status.Cache.Ready && model.Status.Cache.Quantization != nil &&
+		// Note: we do NOT check model.Status.Cache.Ready here because ensureCache
+		// resets it to false before calling us — Ready is set by the caller after
+		// we return.
+		if model.Status.Cache.Quantization != nil &&
 			model.Status.Cache.Quantization.Format == string(spec.Format) &&
 			model.Status.Cache.Quantization.CompletedAt != nil {
 			return true, nil
