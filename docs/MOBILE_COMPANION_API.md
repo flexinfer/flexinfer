@@ -574,7 +574,7 @@ The push notification infrastructure enforces the following contracts:
 
 **Payload guardrails:** APNs and FCM payloads are validated against 4096-byte limits. Oversized payloads are truncated at the body field with UTF-8-safe `"..."` suffix. Truncation never breaks multi-byte characters.
 
-**Token lifecycle:** Invalid tokens (404/410 from APNs) are automatically removed from the device token store. Stale tokens (not used within a configurable window) can be cleaned up via `CleanupStale`.
+**Token lifecycle:** Invalid tokens (404/410 from APNs) are automatically removed from the device token store. Stale tokens are pruned by a background reaper every hour using a 30-day idle cutoff (via `CleanupStale`).
 
 Source: `internal/hud/mobile_push.go` (ClassifyPushResponse, PushBackoffConfig, PushPayload.ValidateAndTruncate, DeviceTokenStore)
 

@@ -121,6 +121,13 @@ type App struct {
 	deviceTokenStore     *DeviceTokenStore // Push notification device tokens (MBL-7).
 }
 
+const (
+	// pushTokenCleanupInterval controls how often stale push tokens are pruned.
+	pushTokenCleanupInterval = 1 * time.Hour
+	// pushTokenMaxIdle controls token staleness before automatic removal.
+	pushTokenMaxIdle = 30 * 24 * time.Hour
+)
+
 // Run creates and starts the HUD application. This is the main entry point
 // called from the CLI command.
 func Run(cfg Config) error {
@@ -207,6 +214,13 @@ func Run(cfg Config) error {
 	reaperCtx, reaperCancel := context.WithCancel(context.Background())
 	defer reaperCancel()
 	go app.sessionReaper(reaperCtx)
+
+	// Start push token reaper when mobile push endpoints are enabled.
+	if cfg.MobilePushEnabled {
+		pushCleanupCtx, pushCleanupCancel := context.WithCancel(context.Background())
+		defer pushCleanupCancel()
+		go app.pushTokenReaper(pushCleanupCtx)
+	}
 
 	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
 	// This enables "SSE-first" data flow: stores apply data directly from
@@ -2033,6 +2047,36 @@ func (a *App) sessionReaper(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// pushTokenReaper periodically removes stale push registration tokens.
+func (a *App) pushTokenReaper(ctx context.Context) {
+	if a.deviceTokenStore == nil {
+		return
+	}
+	ticker := time.NewTicker(pushTokenCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if removed := a.cleanupStalePushTokensNow(time.Now(), pushTokenMaxIdle); removed > 0 {
+				a.logger.Info("push token reaper removed stale device tokens", "removed", removed)
+			}
+		}
+	}
+}
+
+// cleanupStalePushTokensNow removes tokens that have been idle longer than maxIdle.
+// It is extracted for deterministic tests and one-shot invocations.
+func (a *App) cleanupStalePushTokensNow(now time.Time, maxIdle time.Duration) int {
+	if a.deviceTokenStore == nil || maxIdle <= 0 {
+		return 0
+	}
+	cutoff := now.Add(-maxIdle)
+	return a.deviceTokenStore.CleanupStale(cutoff)
 }
 
 // --- Command center API handlers ---

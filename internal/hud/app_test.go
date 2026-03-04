@@ -2876,6 +2876,38 @@ func TestDeviceTokenStore_CleanupStale(t *testing.T) {
 	}
 }
 
+func TestAppCleanupStalePushTokensNow(t *testing.T) {
+	app := &App{
+		deviceTokenStore: NewDeviceTokenStore(),
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	store := app.deviceTokenStore
+
+	baseTime := time.Date(2026, 3, 4, 9, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return baseTime }
+
+	store.Register("tok-old", "dev-1", "apns")
+
+	store.now = func() time.Time { return baseTime.Add(10 * 24 * time.Hour) }
+	store.Register("tok-fresh", "dev-2", "fcm")
+
+	removed := app.cleanupStalePushTokensNow(baseTime.Add(40*24*time.Hour), 30*24*time.Hour)
+	if removed != 1 {
+		t.Fatalf("expected 1 stale token removed, got %d", removed)
+	}
+	if store.Count() != 1 {
+		t.Fatalf("expected 1 token remaining, got %d", store.Count())
+	}
+}
+
+func TestAppCleanupStalePushTokensNow_NoStore(t *testing.T) {
+	app := &App{}
+	removed := app.cleanupStalePushTokensNow(time.Now(), 24*time.Hour)
+	if removed != 0 {
+		t.Fatalf("expected 0 removed when store is nil, got %d", removed)
+	}
+}
+
 func TestMobilePushRegister_FeatureFlagDisabled(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"
