@@ -265,7 +265,8 @@ security:govulncheck:
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
     # module mode scans the current module and does not accept package patterns
-    - $(go env GOPATH)/bin/govulncheck -scan=module > govulncheck-report.txt
+    # run from a package dir since repo root has no Go files
+    - (cd cmd/loom && $(go env GOPATH)/bin/govulncheck -scan=module) > govulncheck-report.txt
     - cat govulncheck-report.txt
   artifacts:
     when: always
