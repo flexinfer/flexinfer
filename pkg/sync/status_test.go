@@ -436,6 +436,40 @@ func TestGetSyncStatus_ResolvesRelativeHomeDir(t *testing.T) {
 	}
 }
 
+func TestGetSyncStatus_UsesHomeGeneratedFileOverride(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	repoProfileDir := filepath.Join(repoDir, "test-profile")
+	homeProfileDir := filepath.Join(homeDir, ".test-home")
+	os.MkdirAll(repoProfileDir, 0755)
+	os.MkdirAll(homeProfileDir, 0755)
+	os.WriteFile(filepath.Join(repoProfileDir, "mcp.json"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(homeProfileDir, "mcp_config.json"), []byte("content"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           ".test-home",
+		GeneratedFile:     "mcp.json",
+		HomeGeneratedFile: "mcp_config.json",
+		SyncGeneratedOnly: true,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.InSync {
+		t.Fatalf("expected InSync = true, got false (drift=%v)", status.DriftDetails)
+	}
+	if len(status.DriftDetails) != 1 || status.DriftDetails[0].Status != DriftInSync {
+		t.Fatalf("expected single in-sync item, got %v", status.DriftDetails)
+	}
+}
+
 func TestGetSyncStatus_OutOfSync(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()

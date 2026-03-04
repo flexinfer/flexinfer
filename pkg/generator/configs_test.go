@@ -1087,6 +1087,35 @@ func TestBuildTargetMap_HubModeUsesResolvedWrapper(t *testing.T) {
 	}
 }
 
+func TestBuildTargetMap_LoomModeAntigravityAddsToolFilterArgs(t *testing.T) {
+	reg := &registry.Registry{}
+
+	targets, err := buildTargetMap(reg, "antigravity", false, "", "antigravity", true, "", "", "", false)
+	if err != nil {
+		t.Fatalf("buildTargetMap: %v", err)
+	}
+
+	spec := targets["loom"]
+	if spec == nil {
+		t.Fatal("expected loom target spec in loom-mode")
+	}
+
+	gotArgs := make([]string, 0, len(spec.Args))
+	for _, a := range spec.Args {
+		gotArgs = append(gotArgs, fmt.Sprintf("%v", a))
+	}
+
+	want := []string{
+		"proxy",
+		"--agent-hint", "antigravity",
+		"--tool-profile", "antigravity-core",
+		"--max-tools", "100",
+	}
+	if strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("loom-mode antigravity args = %v, want %v", gotArgs, want)
+	}
+}
+
 func writeTestWrapper(t *testing.T, dir string, name string, healthy bool) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {

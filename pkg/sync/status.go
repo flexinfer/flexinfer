@@ -325,7 +325,8 @@ func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftIt
 	var items []DriftItem
 	for _, rel := range files {
 		repoFile := filepath.Join(repoPath, rel)
-		homeFile := filepath.Join(homePath, rel)
+		homeRel := mapRepoGeneratedToHome(profile, rel)
+		homeFile := filepath.Join(homePath, homeRel)
 
 		repoExists := Exists(repoFile)
 		homeExists := Exists(homeFile)

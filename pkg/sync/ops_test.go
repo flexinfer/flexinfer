@@ -814,6 +814,30 @@ func TestValidate_McpJson(t *testing.T) {
 	}
 }
 
+func TestValidate_McpConfigJsonWithHomeGeneratedFileOverride(t *testing.T) {
+	homeDir := t.TempDir()
+	profileDir := filepath.Join(homeDir, "test-profile")
+	os.MkdirAll(profileDir, 0755)
+	validJSON := `{"mcpServers": {"test": {"command": "node", "args": ["server.js"]}}}`
+	os.WriteFile(filepath.Join(profileDir, "mcp_config.json"), []byte(validJSON), 0644)
+
+	m, _ := NewManager(t.TempDir())
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-repo",
+		HomeDir:           filepath.Join(homeDir, "test-profile"),
+		GeneratorTarget:   "antigravity",
+		GeneratedFile:     "mcp.json",
+		HomeGeneratedFile: "mcp_config.json",
+	}
+
+	err := m.Validate("test")
+	if err != nil {
+		t.Errorf("Validate should pass when mcp_config.json exists: %v", err)
+	}
+}
+
 func TestValidate_ClaudeDesktopConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	profileDir := filepath.Join(homeDir, "test-profile")
@@ -1108,6 +1132,38 @@ func TestSyncToHome_GeneratedOnly(t *testing.T) {
 	}
 }
 
+func TestSyncToHome_GeneratedOnly_HomeGeneratedFileOverride(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	repoProfDir := filepath.Join(repoDir, "test-profile")
+	os.MkdirAll(repoProfDir, 0755)
+	os.WriteFile(filepath.Join(repoProfDir, "mcp.json"), []byte("content"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           filepath.Join(homeDir, "dest"),
+		GeneratedFile:     "mcp.json",
+		HomeGeneratedFile: "mcp_config.json",
+		SyncGeneratedOnly: true,
+	}
+
+	err := m.SyncToHome("test", false, false, false, false, "", false, "", false)
+	if err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	if !Exists(filepath.Join(homeDir, "dest", "mcp_config.json")) {
+		t.Error("expected mcp.json to be synced to home as mcp_config.json")
+	}
+	if Exists(filepath.Join(homeDir, "dest", "mcp.json")) {
+		t.Error("did not expect mcp.json in home when HomeGeneratedFile is set")
+	}
+}
+
 func TestBackup_GeneratedOnly(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()
@@ -1146,6 +1202,35 @@ func TestBackup_GeneratedOnly(t *testing.T) {
 	}
 	if Exists(filepath.Join(backupDir, "extra.txt")) {
 		t.Error("did not expect extra.txt to be backed up for generated-only profile")
+	}
+}
+
+func TestPullFromHome_GeneratedOnly_HomeGeneratedFileOverride(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	homeProfDir := filepath.Join(homeDir, "app-dir")
+	os.MkdirAll(homeProfDir, 0755)
+	os.WriteFile(filepath.Join(homeProfDir, "mcp_config.json"), []byte("content"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:              "test",
+		RepoDir:           "test-profile",
+		HomeDir:           homeProfDir,
+		GeneratedFile:     "mcp.json",
+		HomeGeneratedFile: "mcp_config.json",
+		SyncGeneratedOnly: true,
+	}
+
+	err := m.PullFromHome("test", false)
+	if err != nil {
+		t.Fatalf("PullFromHome failed: %v", err)
+	}
+
+	if !Exists(filepath.Join(repoDir, "test-profile", "mcp.json")) {
+		t.Error("expected home mcp_config.json to be pulled into repo mcp.json")
 	}
 }
 
@@ -1614,7 +1699,7 @@ func TestFilterPrunedExtensions_NoPrunedIsNoop(t *testing.T) {
 	}
 }
 
-func TestGeminiProfile_HasSkillsDirectToHome(t *testing.T) {
+func TestGeminiAndAntigravityProfiles_HaveSkillsDirectToHome(t *testing.T) {
 	m, _ := NewManager(t.TempDir())
 
 	gemini := m.Get("gemini")
@@ -1623,6 +1708,23 @@ func TestGeminiProfile_HasSkillsDirectToHome(t *testing.T) {
 	}
 	if !gemini.SkillsDirectToHome {
 		t.Error("gemini profile should have SkillsDirectToHome=true")
+	}
+	if gemini.SkillsHomePath != "$HOME/.gemini/skills" {
+		t.Errorf("gemini SkillsHomePath = %q, want %q", gemini.SkillsHomePath, "$HOME/.gemini/skills")
+	}
+
+	antigravity := m.Get("antigravity")
+	if antigravity == nil {
+		t.Fatal("antigravity profile not found")
+	}
+	if !antigravity.SkillsDirectToHome {
+		t.Error("antigravity profile should have SkillsDirectToHome=true")
+	}
+	if antigravity.SkillsTarget != "gemini" {
+		t.Errorf("antigravity SkillsTarget = %q, want %q", antigravity.SkillsTarget, "gemini")
+	}
+	if antigravity.SkillsHomePath != "$HOME/.gemini/antigravity/skills" {
+		t.Errorf("antigravity SkillsHomePath = %q, want %q", antigravity.SkillsHomePath, "$HOME/.gemini/antigravity/skills")
 	}
 
 	// Other profiles should NOT have it

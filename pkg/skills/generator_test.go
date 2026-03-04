@@ -342,6 +342,26 @@ func TestGenerateForTarget_GeminiSkillCreatesBundle(t *testing.T) {
 	}
 }
 
+func TestGenerateGeminiSkillMD_UsesConfiguredSkillsHomePath(t *testing.T) {
+	g := &Generator{
+		CodexHome:        "/tmp/codex",
+		GeminiSkillsHome: "$HOME/.gemini/antigravity/skills",
+	}
+
+	skill := &Skill{
+		Name: "ops-helper",
+		Common: &SkillSpec{
+			Description:  "Ops helper skill",
+			Instructions: "Run ${SKILL_PATH}/scripts/run.sh",
+		},
+	}
+
+	got := g.generateGeminiSkillMD(skill)
+	if !strings.Contains(got, "$HOME/.gemini/antigravity/skills/ops-helper/scripts/run.sh") {
+		t.Fatalf("expected antigravity skill path in generated output:\n%s", got)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, v := range values {
 		if v == want {
