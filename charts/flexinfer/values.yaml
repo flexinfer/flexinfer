@@ -254,7 +254,7 @@ scheduler:
   kubeScheduler:
     image:
       repository: registry.k8s.io/kube-scheduler
-      tag: "v1.33.4"
+      tag: "v1.35.2"
       pullPolicy: IfNotPresent
   kubeconfigInit:
     image:
