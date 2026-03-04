@@ -529,8 +529,8 @@ ios:archive-export:
 
 build:image:loom-core:
   stage: deploy
-  # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
-  resource_group: buildkit-images-loom-core
+  # Keep serialization within a ref, but don't let feature/MR pipelines block main.
+  resource_group: "buildkit-images-loom-core-${CI_COMMIT_REF_SLUG}"
   retry:
     max: 1
     when:
@@ -680,8 +680,8 @@ build:image:loom-core:
 
 build:image:custom-server:
   stage: deploy
-  # Avoid concurrent image pushes saturating BuildKit workers and registry IO.
-  resource_group: buildkit-images-custom-server
+  # Keep serialization within a ref, but don't let feature/MR pipelines block main.
+  resource_group: "buildkit-images-custom-server-${CI_COMMIT_REF_SLUG}"
   retry:
     max: 1
     when:
