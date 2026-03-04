@@ -85,6 +85,8 @@ cache:
 # Base template for Go jobs
 .go-template: &go-template
   image: registry.harbor.lan/dockerhub-cache/library/golang:${GO_VERSION}
+  variables:
+    GO_WARM_MOD_CACHE: "true"
   before_script:
     - |
       # Ensure required OS tools exist (golang image may not include them).
@@ -114,14 +116,17 @@ cache:
       # In CI, ensure those sibling repos exist so `go mod download` and builds work.
       LIBS_DIR="$(realpath "${CI_PROJECT_DIR}/../../libs")"
       mkdir -p "${LIBS_DIR}"
-      if [ ! -d "${LIBS_DIR}/mcp-go" ]; then
-        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/mcp-go.git" "${LIBS_DIR}/mcp-go"
+      if [ ! -d "${LIBS_DIR}/mcp-go/.git" ]; then
+        rm -rf "${LIBS_DIR}/mcp-go"
+        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/mcp-go.git" "${LIBS_DIR}/mcp-go"
       fi
-      if [ ! -d "${LIBS_DIR}/fi-mcp-kit" ]; then
-        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" "${LIBS_DIR}/fi-mcp-kit"
+      if [ ! -d "${LIBS_DIR}/fi-mcp-kit/.git" ]; then
+        rm -rf "${LIBS_DIR}/fi-mcp-kit"
+        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" "${LIBS_DIR}/fi-mcp-kit"
       fi
-      if [ ! -d "${LIBS_DIR}/fi-accel" ]; then
-        git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-accel.git" "${LIBS_DIR}/fi-accel"
+      if [ ! -d "${LIBS_DIR}/fi-accel/.git" ]; then
+        rm -rf "${LIBS_DIR}/fi-accel"
+        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-accel.git" "${LIBS_DIR}/fi-accel"
       fi
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
@@ -137,15 +142,18 @@ cache:
         sleep 2
       done
     - |
-      # Go module downloads are occasionally flaky on the homelab runner; retry a few times.
-      for i in 1 2 3; do
-        if go mod download; then
-          exit 0
-        fi
-        echo "go mod download failed (attempt ${i}/3); retrying..."
-        sleep 3
-      done
-      exit 1
+      if [ "${GO_WARM_MOD_CACHE:-true}" = "true" ]; then
+        # Go module downloads are occasionally flaky on the homelab runner; retry a few times.
+        for i in 1 2 3; do
+          if go mod download; then
+            exit 0
+          fi
+          echo "go mod download failed (attempt ${i}/3); retrying..."
+          sleep 3
+        done
+        exit 1
+      fi
+      echo "Skipping eager go mod download (GO_WARM_MOD_CACHE=false); resolving modules on demand."
 
 # =============================================================================
 # LINT STAGE
@@ -154,6 +162,8 @@ cache:
 lint:
   <<: *go-template
   stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
     - $(go env GOPATH)/bin/golangci-lint run --timeout 5m ./...
@@ -162,12 +172,18 @@ lint:
 vet:
   <<: *go-template
   stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - go vet ./...
 
 fmt:
   <<: *go-template
   stage: lint
+  variables:
+    GIT_STRATEGY: fetch
+    GO_WARM_MOD_CACHE: "false"
+  before_script: []
   script:
     - |
       UNFORMATTED=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' | grep -v '^\.go/' | grep -v '\.pb\.go$' || true)
@@ -181,6 +197,8 @@ fmt:
 guardrails:docs-cli:
   <<: *go-template
   stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - |
       # The shared template may fetch sources via archive (no .git metadata).
@@ -201,6 +219,8 @@ guardrails:docs-cli:
 security:gosec:
   <<: *go-template
   stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
     - $(go env GOPATH)/bin/gosec -fmt json -out gosec-report.json ./...
@@ -213,6 +233,8 @@ security:gosec:
 security:govulncheck:
   <<: *go-template
   stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
     - $(go env GOPATH)/bin/govulncheck ./... > govulncheck-report.txt
