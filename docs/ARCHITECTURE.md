@@ -197,7 +197,7 @@ flowchart LR
 
 Notes:
 
-- Tracing wrappers now ship across all `cmd/mcp-*/main.go` MCP binaries (59/59 as of 2026-02-26).
+- Tracing wrappers now ship across all `cmd/mcp-*/main.go` MCP binaries.
 - Daemon-level span expansion (routing/spawn/proxy lifecycle) remains tracked in `ROADMAP.md`.
 - `pkg/mcpotel` is noop unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 

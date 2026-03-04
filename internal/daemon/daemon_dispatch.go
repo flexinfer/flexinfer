@@ -519,7 +519,7 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 		totalServers = len(d.registry.Servers)
 	}
 
-	// All 59 cmd/mcp-* servers are traced via pkg/mcpotel.
+	// All cmd/mcp-* servers are traced via pkg/mcpotel.
 	tracedServers := 59
 	if totalServers < tracedServers {
 		tracedServers = totalServers

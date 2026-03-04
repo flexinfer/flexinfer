@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LOOM_SOCKET` env var support for `--socket` flag.
 - Error handling guardrail (`scripts/ci/check_error_handling.sh`) prevents `return nil, err` count from increasing in MCP handler files.
 - Migration tracker in `docs/ERROR_HANDLING.md` covering all 40 MCP servers.
-- OTel tracing wrappers now cover all `cmd/mcp-*/main.go` servers (`59/59`) via `pkg/mcpotel`.
+- OTel tracing wrappers now cover all `cmd/mcp-*/main.go` servers via `pkg/mcpotel`.
 - `loom hud install|start|stop|status|uninstall` launchd management commands, with `~/.config/loom/hud.env` bootstrap for HUD-specific secrets/env.
 - Sync/hook generation updates for worktree-first workflows:
   - Session start hooks now include a non-blocking main-branch worktree nudge.

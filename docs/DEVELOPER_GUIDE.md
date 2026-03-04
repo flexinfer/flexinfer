@@ -167,7 +167,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ./bin/loomd --debug
 ```
 
-Tracing wrappers now cover every `cmd/mcp-*/main.go` server entrypoint (`59/59` as of 2026-02-26).
+Tracing wrappers now cover every `cmd/mcp-*/main.go` server entrypoint.
 
 Quick verification:
 

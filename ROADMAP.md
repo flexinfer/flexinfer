@@ -9,7 +9,7 @@ Loom Core is the production backend for Loom's local MCP runtime:
 - `loom` CLI for config generation/sync, daemon control, HUD launch, and agent hooks
 - `loomd` daemon for routing, process lifecycle, health monitoring, and tunnel management
 - `loom proxy` aggregating proxy for multi-platform agent support (Claude, Codex, Gemini, Zed, VS Code, Kilocode)
-- 59 `mcp-*` server binaries in Go (Git, GitLab, GitHub, K8s, observability, memory, sandbox, and more)
+- `cmd/mcp-*` server binaries in Go (Git, GitLab, GitHub, K8s, observability, memory, sandbox, and more)
 - HUD web dashboard with real-time agent observability, fleet monitoring, and workflow management
 - Agent context system with presence, file claims, worktree allocation, and workflow orchestration
 
@@ -83,7 +83,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added config schema validation and upstream spec tracking.
 
 - ✅ **Observability expansion (2026-02-26 slices)** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/5))
-  - Added `pkg/mcpotel` tracing wrappers across all `cmd/mcp-*/main.go` handlers (`59/59`).
+  - Added `pkg/mcpotel` tracing wrappers across all `cmd/mcp-*/main.go` handlers.
   - Added JSON log formatting in `pkg/mcplog` with `trace_id`/`span_id` correlation for context-aware logs.
 
 - ✅ **HUD launchd operations**
@@ -165,7 +165,7 @@ These address capabilities the market now expects from production MCP infrastruc
 - [ ] **OTel trace export from daemon** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12))
   - ✅ 2026-02-26 slice: added `pkg/mcpotel` tracing wrappers to `mcp-alertmanager`, `mcp-grafana`, and `mcp-loki` (tool spans + error status propagation).
   - ✅ 2026-02-26 slice: expanded `pkg/mcpotel` tracing to `mcp-github`, `mcp-github-actions`, `mcp-jira`, and `mcp-slack`.
-  - ✅ 2026-02-26 slice: completed `pkg/mcpotel` adoption across the remaining MCP binaries (`59/59` `cmd/mcp-*/main.go` handlers traced).
+  - ✅ 2026-02-26 slice: completed `pkg/mcpotel` adoption across the remaining MCP binaries (`cmd/mcp-*/main.go` handlers traced).
   - ✅ 2026-02-26 slice: added `pkg/mcplog` `MCP_LOG_FORMAT` (`text`/`json`) plus automatic `trace_id`/`span_id` enrichment for context-aware logs.
   - Instrument tool call latency, server spawn/restart, proxy connection lifecycle in `loomd`.
   - Add OTLP gRPC export to configurable endpoint (Prometheus, Grafana, Jaeger).

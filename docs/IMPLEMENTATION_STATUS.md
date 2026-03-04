@@ -12,7 +12,7 @@ Shipped and actively used:
 - `loom` CLI for config generation/sync, daemon lifecycle, HUD launch, and agent hooks.
 - `loomd` daemon for routing, server lifecycle management, health monitoring, and tunneling.
 - `loom proxy` single-entry MCP bridge for multi-platform client support.
-- 59 Go MCP servers spanning Git, GitLab/GitHub, Kubernetes, observability, agent memory, and sandbox execution.
+- Go MCP servers spanning Git, GitLab/GitHub, Kubernetes, observability, agent memory, and sandbox execution.
 - HUD command center (web, TUI, macOS overlay) for server/agent/sandbox visibility.
 
 ## Recently Shipped (Post `v0.9.7`)
@@ -27,7 +27,7 @@ Shipped and actively used:
 - Configurable session-start recall strategies (`--recall-strategy`).
 - Async summarize on session end (non-blocking agent hooks).
 - Developer-safe local upgrade flow (`make dev-upgrade`, `make dev-reload`).
-- OTel tracing across all `cmd/mcp-*/main.go` servers (59/59) plus JSON log correlation (`trace_id`, `span_id`) via `pkg/mcplog`.
+- OTel tracing across all `cmd/mcp-*/main.go` servers plus JSON log correlation (`trace_id`, `span_id`) via `pkg/mcplog`.
 - HUD launchd lifecycle management (`loom hud install|start|stop|status`) with `hud.env` loading and Redis-first cache defaults in launchd mode.
 - HUD enterprise dashboard: cost dashboard, RBAC visibility, OTel status panels.
 - Worktree-first agent workflow nudges at session start and Antigravity `settings.json` sync parity.
