@@ -48,6 +48,8 @@ variables:
   AUTO_DEVOPS_ENABLED: "false"
   GO_VERSION: "1.25.5"
   BINARY_NAME: "loom"
+  # Limit static-analysis scans to first-party packages.
+  GO_APP_PKGS: "./cmd/... ./internal/... ./pkg/..."
   # Ensure private modules never go to public proxies/sumdb.
   GOPRIVATE: "gitlab.flexinfer.ai/*"
   # Athens is the preferred in-cluster proxy; fall back to public proxy then direct
@@ -190,7 +192,7 @@ lint:
     GO_WARM_MOD_CACHE: "false"
   script:
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
-    - $(go env GOPATH)/bin/golangci-lint run --timeout 5m ./...
+    - $(go env GOPATH)/bin/golangci-lint run --timeout 10m ${GO_APP_PKGS}
   allow_failure: true
 
 vet:
@@ -247,7 +249,7 @@ security:gosec:
     GO_WARM_MOD_CACHE: "false"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
-    - $(go env GOPATH)/bin/gosec -fmt json -out gosec-report.json ./...
+    - $(go env GOPATH)/bin/gosec -exclude-dir=.go -exclude-dir=vendor -fmt json -out gosec-report.json ${GO_APP_PKGS}
   artifacts:
     when: always
     paths:
@@ -259,9 +261,10 @@ security:govulncheck:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
+    GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
-    - $(go env GOPATH)/bin/govulncheck ./... > govulncheck-report.txt
+    - $(go env GOPATH)/bin/govulncheck ${GO_APP_PKGS} > govulncheck-report.txt
     - cat govulncheck-report.txt
   artifacts:
     when: always
