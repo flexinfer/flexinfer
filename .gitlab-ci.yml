@@ -88,28 +88,19 @@ cache:
       fi
     - |
       if [ ! -f go.mod ]; then
-        echo "Fetching repository sources (archive)..."
-        URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.tar.gz?sha=${CI_COMMIT_SHA}"
-        # Some GitLab deployments return 404 for archive downloads when using
-        # CI_JOB_TOKEN (JOB-TOKEN header). If the archive fetch fails for any reason,
-        # fall back to a normal git fetch using CI_JOB_TOKEN in the remote URL.
-        if curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "$URL" | tar -xz --strip-components=1; then
-          :
-        else
-          echo "Archive fetch failed; falling back to git fetch..."
-          if [ -z "${CI_JOB_TOKEN:-}" ]; then
-            echo "ERROR: CI_JOB_TOKEN is not set; cannot fetch via git"
-            exit 1
-          fi
-
-          # Avoid printing the token in logs.
-          git init -q
-          git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
-          # Fetch the exact commit SHA (not just branch tip) so checkout always works,
-          # even when the branch has advanced since the pipeline was created.
-          git fetch -q origin "${CI_COMMIT_SHA}"
-          git checkout -q -f "${CI_COMMIT_SHA}"
+        echo "Fetching repository sources (git)..."
+        if [ -z "${CI_JOB_TOKEN:-}" ]; then
+          echo "ERROR: CI_JOB_TOKEN is not set; cannot fetch via git"
+          exit 1
         fi
+
+        # Avoid printing the token in logs.
+        git init -q
+        git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+        # Fetch the exact commit SHA (not just branch tip) so checkout always works,
+        # even when the branch has advanced since the pipeline was created.
+        git fetch -q origin "${CI_COMMIT_SHA}"
+        git checkout -q -f "${CI_COMMIT_SHA}"
       fi
     - |
       # This repo uses local `replace` directives to `../../libs/*`.
