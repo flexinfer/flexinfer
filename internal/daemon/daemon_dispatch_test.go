@@ -15,11 +15,28 @@ func TestHandleOTelStatus_DerivesServerCoverageFromRegistry(t *testing.T) {
 	t.Setenv("MCP_LOG_FORMAT", "json")
 
 	d := &Daemon{
+		cfg: Config{Target: "dev"},
 		registry: &registry.Registry{
 			Servers: []*registry.Server{
-				{Name: "alpha"},
-				{Name: "beta"},
-				{Name: "gamma"},
+				{
+					Name: "alpha",
+					Common: &registry.TargetSpec{
+						Command: "./bin/mcp-alpha",
+					},
+				},
+				{
+					Name: "beta",
+					Common: &registry.TargetSpec{
+						Command: "./bin/mcp-beta",
+					},
+				},
+				{
+					Name: "gamma",
+					Common: &registry.TargetSpec{
+						Command: "go",
+						Args:    []any{"run", "./cmd/mcp-gamma"},
+					},
+				},
 			},
 		},
 	}
