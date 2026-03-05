@@ -120,27 +120,17 @@ func newToolsCmd(socketPath string) *cobra.Command {
 		Short: "Search tools by name or description",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := args[0]
-			detail := strings.TrimSpace(strings.ToLower(toolsSearchDetail))
-			if detail == "" {
-				detail = "summary"
-			}
-			switch detail {
-			case "name", "summary", "schema":
-			default:
-				return fmt.Errorf("--detail must be one of: name, summary, schema")
-			}
-			if toolsSearchLimit < 0 {
-				return fmt.Errorf("--limit must be >= 0")
+			query := strings.TrimSpace(args[0])
+			if query == "" {
+				return fmt.Errorf("query must be non-empty")
 			}
 
-			result, err := call(socketPath, "loom/tools/search", map[string]any{
-				"query":   query,
-				"servers": toolsSearchServers,
-				"limit":   toolsSearchLimit,
-				"cursor":  toolsSearchCursor,
-				"detail":  detail,
-			})
+			params, err := buildToolsSearchParams(query, toolsSearchServers, toolsSearchDetail, toolsSearchLimit, toolsSearchCursor)
+			if err != nil {
+				return err
+			}
+
+			result, err := call(socketPath, "loom/tools/search", params)
 			if err != nil {
 				return err
 			}
@@ -230,15 +220,16 @@ func newToolsCmd(socketPath string) *cobra.Command {
 		Short: "Get full schema/details for one tool",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := strings.TrimSpace(args[0])
-			if name == "" {
-				return fmt.Errorf("tool name is required")
+			params, err := buildToolsGetParams(args[0])
+			if err != nil {
+				return err
 			}
 
-			result, err := call(socketPath, "loom/tools/get", map[string]any{
-				"name":   name,
-				"server": strings.TrimSpace(toolsGetServer),
-			})
+			if server := strings.TrimSpace(toolsGetServer); server != "" {
+				params["server"] = server
+			}
+
+			result, err := call(socketPath, "loom/tools/get", params)
 			if err != nil {
 				return err
 			}
@@ -325,6 +316,58 @@ Examples:
 
 	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd, toolsGetCmd, toolsCallCmd)
 	return toolsCmd
+}
+
+func buildToolsSearchParams(query string, servers []string, detail string, limit int, cursor string) (map[string]any, error) {
+	normalizedDetail := strings.ToLower(strings.TrimSpace(detail))
+	if normalizedDetail == "" {
+		normalizedDetail = "summary"
+	}
+	switch normalizedDetail {
+	case "name", "summary", "schema":
+	default:
+		return nil, fmt.Errorf("invalid --detail %q (must be name, summary, or schema)", detail)
+	}
+
+	if limit < 0 {
+		return nil, fmt.Errorf("--limit must be >= 0")
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	filteredServers := make([]string, 0, len(servers))
+	for _, server := range servers {
+		s := strings.TrimSpace(server)
+		if s == "" {
+			continue
+		}
+		filteredServers = append(filteredServers, strings.TrimSuffix(s, "__"))
+	}
+
+	params := map[string]any{
+		"query":  query,
+		"detail": normalizedDetail,
+		"limit":  limit,
+	}
+	if len(filteredServers) > 0 {
+		params["servers"] = filteredServers
+	}
+	if trimmedCursor := strings.TrimSpace(cursor); trimmedCursor != "" {
+		params["cursor"] = trimmedCursor
+	}
+	return params, nil
+}
+
+func buildToolsGetParams(toolName string) (map[string]any, error) {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return nil, fmt.Errorf("tool name must be non-empty")
+	}
+	return map[string]any{"name": name}, nil
 }
 
 func newReplCmd(socketPath string) *cobra.Command {

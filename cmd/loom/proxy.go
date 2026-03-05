@@ -415,7 +415,7 @@ func negotiateProxyProtocolVersion(raw json.RawMessage) string {
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
-	if len(raw) == 0 {
+	if len(raw) == 0 || string(raw) == "null" {
 		return defaultVersion
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
