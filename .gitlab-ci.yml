@@ -218,7 +218,7 @@ lint:
         ls -la "$(go env GOPATH)/bin" || true
         exit 1
       fi
-    - $(go env GOPATH)/bin/golangci-lint run --timeout 10m ${GO_APP_PKGS}
+    - $(go env GOPATH)/bin/golangci-lint run --timeout 20m ${GO_APP_PKGS}
   allow_failure: true
 
 vet:
