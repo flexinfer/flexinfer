@@ -72,7 +72,8 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 				}
 			}
 			Expect(backendURL).To(Equal("http://flexinfer-proxy.flexinfer-system.svc:80"), "Benchmarker should call through the proxy")
-			Expect(benchContainer.Args).To(ContainElements("--backend", "ollama"))
+			Expect(benchContainer.Args).To(HaveLen(1), "Should have single shell script arg")
+			Expect(benchContainer.Args[0]).To(ContainSubstring("--backend ollama"))
 
 		})
 	})
@@ -116,8 +117,9 @@ var _ = Describe("ModelDeployment Controller Integration", func() {
 			Expect(createdJob.Spec.Template.Spec.Containers).To(HaveLen(1), "Benchmark Job should only run the benchmark client")
 			benchContainer := createdJob.Spec.Template.Spec.Containers[0]
 			Expect(benchContainer.Name).To(Equal("flexinfer-bench"))
-			Expect(benchContainer.Args).To(ContainElements("--backend", "vllm"))
-			Expect(benchContainer.Args).To(ContainElements("--model", "llama3:8b"))
+			Expect(benchContainer.Args).To(HaveLen(1), "Should have single shell script arg")
+			Expect(benchContainer.Args[0]).To(ContainSubstring("--backend vllm"))
+			Expect(benchContainer.Args[0]).To(ContainSubstring("--model llama3:8b"))
 		})
 	})
 })
