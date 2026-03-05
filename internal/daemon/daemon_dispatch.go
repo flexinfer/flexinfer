@@ -82,6 +82,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleCostStats(ctx, msg)
 	case "loom/rbac-config":
 		resp, err = d.handleRBACConfig(ctx, msg)
+	case "loom/rbac-simulate":
+		resp, err = d.handleRBACSimulate(ctx, msg)
 	case "loom/otel-status":
 		resp, err = d.handleOTelStatus(ctx, msg)
 	case "loom/session/open":
@@ -505,6 +507,50 @@ func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.M
 	result["recent_denied"] = d.recentDeniedSnapshot()
 
 	return mcp.NewResponse(msg.ID, result)
+}
+
+// handleRBACSimulate evaluates an RBAC decision for a provided request tuple.
+func (d *Daemon) handleRBACSimulate(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	var params struct {
+		AgentID   string `json:"agent_id,omitempty"`
+		AgentType string `json:"agent_type,omitempty"`
+		Server    string `json:"server"`
+		Tool      string `json:"tool"`
+		DryRun    bool   `json:"dry_run,omitempty"`
+	}
+	if len(msg.Params) > 0 {
+		_ = json.Unmarshal(msg.Params, &params)
+	}
+	if params.Server == "" || params.Tool == "" {
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "server and tool are required"), nil
+	}
+
+	if d.rbac == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"enabled": false,
+			"decision": AccessDecision{
+				Allowed:    true,
+				AgentID:    params.AgentID,
+				Server:     params.Server,
+				Tool:       params.Tool,
+				Reason:     "rbac disabled",
+				ReasonCode: "rbac_disabled",
+				DryRun:     params.DryRun,
+			},
+		})
+	}
+
+	var decision AccessDecision
+	if params.DryRun {
+		decision = d.rbac.Simulate(params.AgentID, params.AgentType, params.Server, params.Tool)
+	} else {
+		decision = d.rbac.Check(params.AgentID, params.AgentType, params.Server, params.Tool)
+	}
+
+	return mcp.NewResponse(msg.ID, map[string]any{
+		"enabled":  true,
+		"decision": decision,
+	})
 }
 
 // handleOTelStatus returns observability configuration status.

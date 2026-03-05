@@ -608,8 +608,24 @@ func TestRBAC_DryRunMatchesEnforceDecision(t *testing.T) {
 
 	gotDryRun := dryRun.CheckWithMode("agent-1", "", "git", "git_status", RBACEvaluationModeDryRun)
 	gotEnforce := enforce.CheckWithMode("agent-1", "", "git", "git_status", RBACEvaluationModeEnforce)
-	if gotDryRun != gotEnforce {
-		t.Fatalf("dry-run and enforce should match for equivalent inputs:\ndry-run=%+v\nenforce=%+v", gotDryRun, gotEnforce)
+	if gotDryRun.Allowed != gotEnforce.Allowed ||
+		gotDryRun.AgentID != gotEnforce.AgentID ||
+		gotDryRun.Server != gotEnforce.Server ||
+		gotDryRun.Tool != gotEnforce.Tool ||
+		gotDryRun.Role != gotEnforce.Role ||
+		gotDryRun.Reason != gotEnforce.Reason ||
+		gotDryRun.ReasonCode != gotEnforce.ReasonCode ||
+		gotDryRun.MatchedRule != gotEnforce.MatchedRule {
+		t.Fatalf("dry-run and enforce should match for equivalent policy results:\ndry-run=%+v\nenforce=%+v", gotDryRun, gotEnforce)
+	}
+	if !gotDryRun.DryRun || gotEnforce.DryRun {
+		t.Fatalf("unexpected dry_run flags: dry-run=%v enforce=%v", gotDryRun.DryRun, gotEnforce.DryRun)
+	}
+	if gotDryRun.MatchedBinding == nil || gotEnforce.MatchedBinding == nil {
+		t.Fatalf("expected matched bindings in both decisions: dry-run=%+v enforce=%+v", gotDryRun, gotEnforce)
+	}
+	if *gotDryRun.MatchedBinding != *gotEnforce.MatchedBinding {
+		t.Fatalf("matched binding mismatch: dry-run=%+v enforce=%+v", gotDryRun.MatchedBinding, gotEnforce.MatchedBinding)
 	}
 }
 
@@ -647,6 +663,104 @@ func TestRBAC_DryRunDoesNotConsumeRateLimit(t *testing.T) {
 	secondEnforce := e.CheckWithMode("agent-2", "", "github", "list_repos", RBACEvaluationModeEnforce)
 	if secondEnforce.Allowed {
 		t.Fatalf("second enforce call should be denied by rate limit: %+v", secondEnforce)
+	}
+}
+
+func TestRBAC_SimulateDoesNotConsumeRateLimitAndCarriesReasonCode(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles: map[string]RBACRole{
+			"developer": {
+				Allow: []string{"git__*"},
+			},
+		},
+		Bindings: []RBACBinding{
+			{AgentID: "agent-1", Role: "developer"},
+		},
+		RateLimits: []RBACRateLimit{
+			{
+				AgentID:           "agent-1",
+				Server:            "git",
+				Tool:              "git_status",
+				RequestsPerMinute: 1,
+			},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+	e.now = func() time.Time {
+		return time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
+	}
+
+	sim := e.Simulate("agent-1", "", "git", "git_status")
+	if !sim.Allowed {
+		t.Fatalf("simulate should allow first request: %s", sim.Reason)
+	}
+	if !sim.DryRun {
+		t.Fatal("expected dry_run=true on simulate result")
+	}
+	if sim.ReasonCode != "role_allow" {
+		t.Fatalf("simulate reason_code = %q, want role_allow", sim.ReasonCode)
+	}
+
+	enforce := e.Check("agent-1", "", "git", "git_status")
+	if !enforce.Allowed {
+		t.Fatalf("first enforced request should still allow: %s", enforce.Reason)
+	}
+
+	enforce2 := e.Check("agent-1", "", "git", "git_status")
+	if enforce2.Allowed {
+		t.Fatal("expected second enforced request to be rate-limited")
+	}
+	if enforce2.ReasonCode != "rate_limited" {
+		t.Fatalf("rate-limited reason_code = %q, want rate_limited", enforce2.ReasonCode)
+	}
+}
+
+func TestRBAC_SimulateMatchesDecisionTrace(t *testing.T) {
+	cfg := RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+		Roles: map[string]RBACRole{
+			"readonly": {
+				Allow: []string{"*__get_*"},
+				Deny:  []string{"*__get_secret"},
+			},
+		},
+		Bindings: []RBACBinding{
+			{AgentType: "codex", Role: "readonly"},
+		},
+	}
+
+	e := NewRBACEnforcer(cfg, slog.Default())
+	if e == nil {
+		t.Fatal("expected non-nil enforcer")
+	}
+
+	sim := e.Simulate("agent-a", "codex", "github", "get_repo")
+	enforced := e.Check("agent-a", "codex", "github", "get_repo")
+
+	if sim.Allowed != enforced.Allowed {
+		t.Fatalf("allowed mismatch simulate=%v enforced=%v", sim.Allowed, enforced.Allowed)
+	}
+	if sim.Role != enforced.Role {
+		t.Fatalf("role mismatch simulate=%q enforced=%q", sim.Role, enforced.Role)
+	}
+	if sim.ReasonCode != enforced.ReasonCode {
+		t.Fatalf("reason_code mismatch simulate=%q enforced=%q", sim.ReasonCode, enforced.ReasonCode)
+	}
+	if sim.MatchedRule != enforced.MatchedRule {
+		t.Fatalf("matched_rule mismatch simulate=%q enforced=%q", sim.MatchedRule, enforced.MatchedRule)
+	}
+	if sim.MatchedBinding == nil || enforced.MatchedBinding == nil {
+		t.Fatal("expected matched binding in both decisions")
+	}
+	if sim.MatchedBinding.Role != "readonly" || enforced.MatchedBinding.Role != "readonly" {
+		t.Fatalf("expected readonly role binding, got simulate=%q enforced=%q", sim.MatchedBinding.Role, enforced.MatchedBinding.Role)
 	}
 }
 

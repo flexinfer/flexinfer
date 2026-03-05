@@ -31,8 +31,27 @@ func TestSimulateRBACDecision_DryRunAndEnforce(t *testing.T) {
 		t.Fatalf("simulate enforce: %v", err)
 	}
 
-	if dryRun != enforce {
-		t.Fatalf("dry-run decision should match enforce for equivalent input: dry=%+v enforce=%+v", dryRun, enforce)
+	if dryRun.Allowed != enforce.Allowed ||
+		dryRun.AgentID != enforce.AgentID ||
+		dryRun.Server != enforce.Server ||
+		dryRun.Tool != enforce.Tool ||
+		dryRun.Role != enforce.Role ||
+		dryRun.Reason != enforce.Reason ||
+		dryRun.ReasonCode != enforce.ReasonCode ||
+		dryRun.MatchedRule != enforce.MatchedRule {
+		t.Fatalf("dry-run decision should match enforce semantics for equivalent input: dry=%+v enforce=%+v", dryRun, enforce)
+	}
+	if dryRun.MatchedBinding == nil || enforce.MatchedBinding == nil {
+		t.Fatalf("expected matched binding metadata: dry=%+v enforce=%+v", dryRun, enforce)
+	}
+	if *dryRun.MatchedBinding != *enforce.MatchedBinding {
+		t.Fatalf("expected equivalent matched binding metadata: dry=%+v enforce=%+v", dryRun, enforce)
+	}
+	if !dryRun.DryRun {
+		t.Fatalf("expected dry-run flag set on dry-run decision: %+v", dryRun)
+	}
+	if enforce.DryRun {
+		t.Fatalf("expected dry-run flag unset on enforce decision: %+v", enforce)
 	}
 }
 
