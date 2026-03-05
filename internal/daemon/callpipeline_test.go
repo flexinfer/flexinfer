@@ -2523,6 +2523,73 @@ func TestFetchServerResources_LockOrdering(t *testing.T) {
 	}
 }
 
+func TestFetchServerToolsViaPool_CallLockTimeout(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	defer func() { _ = d.pool.Close() }()
+
+	mu := d.callLock("lock_timeout_srv")
+	mu.Lock()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		mu.Unlock()
+	}()
+
+	t.Setenv("LOOM_DAEMON_CALL_LOCK_TIMEOUT", "50ms")
+
+	start := time.Now()
+	_, err := d.fetchServerToolsViaPool(context.Background(), "lock_timeout_srv")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected call lock timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "acquire call lock") {
+		t.Fatalf("expected acquire call lock error, got %v", err)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("lock timeout path took too long: %v", elapsed)
+	}
+}
+
+func TestCallPipelineConnectTarget_CallLockTimeout(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	defer func() { _ = d.pool.Close() }()
+
+	mu := d.callLock("lock_timeout_srv")
+	mu.Lock()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		mu.Unlock()
+	}()
+
+	t.Setenv("LOOM_DAEMON_CALL_LOCK_TIMEOUT", "50ms")
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "lock-timeout",
+	})
+	p.serverName = "lock_timeout_srv"
+
+	start := time.Now()
+	err := p.connectTarget(router.TargetLocal, "test lock timeout")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected call lock timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "acquire call lock") {
+		t.Fatalf("expected acquire call lock error, got %v", err)
+	}
+	if p.lockHeld {
+		t.Fatal("lock should not be marked as held when acquisition fails")
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("lock timeout path took too long: %v", elapsed)
+	}
+}
+
 // TestHandleCall_StageBoundaryAuditRegression verifies that every pipeline stage
 // that emits an audit entry populates the PipelineStage field with the correct
 // constant. Parse failures produce no audit entry (pre-audit), so they are only

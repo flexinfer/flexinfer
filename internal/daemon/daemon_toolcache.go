@@ -597,8 +597,10 @@ func (d *Daemon) fetchServerResources(ctx context.Context, serverName string) ([
 	// Acquire callLock BEFORE pool.Get to match callPipeline.routeAndConnect
 	// ordering. Reversed ordering (pool→lock) can deadlock against the
 	// callPipeline path (lock→pool) when the pool is at capacity.
-	mu := d.callLock(serverName)
-	mu.Lock()
+	mu, _, err := d.acquireCallLock(ctx, serverName)
+	if err != nil {
+		return nil, fmt.Errorf("acquire call lock: %w", err)
+	}
 	defer mu.Unlock()
 
 	conn, err := d.pool.Get(ctx, serverName)
@@ -915,8 +917,10 @@ func (d *Daemon) fetchServerToolsViaPool(ctx context.Context, serverName string)
 	// Acquire callLock BEFORE pool.Get to match callPipeline.routeAndConnect
 	// ordering. Reversed ordering (pool→lock) can deadlock against the
 	// callPipeline path (lock→pool) when the pool is at capacity.
-	mu := d.callLock(serverName)
-	mu.Lock()
+	mu, _, err := d.acquireCallLock(ctx, serverName)
+	if err != nil {
+		return nil, fmt.Errorf("acquire call lock: %w", err)
+	}
 	defer mu.Unlock()
 
 	conn, err := d.pool.Get(ctx, serverName)

@@ -401,17 +401,22 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 		return fmt.Errorf("unsupported routing target: %s", target)
 	}
 
-	p.callMu = p.daemon.callLock(p.serverName)
-	lockStart := time.Now()
-	p.callMu.Lock()
+	var (
+		err      error
+		lockWait time.Duration
+	)
+	p.callMu, lockWait, err = p.daemon.acquireCallLock(p.ctx, p.serverName)
+	if err != nil {
+		p.daemon.router.RecordFailure(p.serverName, p.target, err)
+		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "call_lock")
+		return err
+	}
 	p.lockHeld = true
-	lockWait := time.Since(lockStart)
 	if lockWait > 100*time.Millisecond {
 		p.daemon.metrics.CallLockWaitTotal.WithLabelValues(p.serverName).Inc()
 		p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
 	}
 
-	var err error
 	switch target {
 	case router.TargetLocal:
 		// Mark server active before dialing so idle reaper won't classify this call as idle.
