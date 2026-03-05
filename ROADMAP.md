@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: March 4, 2026
+> Last Updated: March 5, 2026
 
 ## Current Status
 
@@ -195,7 +195,7 @@ These address capabilities the market now expects from production MCP infrastruc
 
 - [x] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10)) ✅ Shipped
   - ~~Track token usage per agent session, per tool, per MCP server at the proxy layer.~~ ✅ Done
-  - Expose cost dashboard in HUD (new KPI on Overview panel) ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)).
+  - HUD baseline landed on `main`: CostMonitor polling, `GET /api/cost`, SSE `hud.cost`, and Overview KPI tile are now present; [Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52) remains open for backlog/status cleanup and any remaining telemetry parity gaps.
   - Export cost metrics via OTel ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)).
   - *Rationale: The proxy already sees all traffic. Adding token counting is incremental. No local tool provides this today.*
 
