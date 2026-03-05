@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: February 26, 2026
+> Last Updated: March 4, 2026
 
 ## Current Status
 
@@ -172,6 +172,14 @@ These address capabilities the market now expects from production MCP infrastruc
   - Expose OTel-compatible metrics in HUD health views.
   - *Rationale: Industry standard. Positions Loom alongside (not against) Langfuse, Datadog, Splunk.*
 
+- [ ] **OpenAI Responses orchestration (experimental track)** ([Plan](.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md))
+  - ✅ 2026-03-04 M0 slice landed: `pkg/openairesponses` contract scaffolding (`ContextStrategy`, tool/turn interfaces, validation) and environment-driven feature gate config (`LOOM_EXPERIMENTAL_OPENAI_RESPONSES`).
+  - ✅ 2026-03-04 CLI surface landed: `loom responses status` exposes gate/runtime loop settings without changing existing proxy behavior.
+  - ✅ 2026-03-04 M1 package slice landed: non-stream loop orchestrator in `pkg/openairesponses/orchestrator.go` with deterministic multi-turn tool execution tests.
+  - ✅ 2026-03-04 runtime entrypoint slice landed: `loom responses run` now invokes the orchestrator through a gated runtime dependency factory.
+  - Next: wire production Responses client timeout/retry semantics and daemon call-path tool execution for end-to-end gated execution.
+  - *Rationale: Adds policy/audit-compatible OpenAI Responses support without destabilizing existing MCP proxy paths.*
+
 - [x] **Remote MCP transport + auth** ✅ Shipped
   - ~~Add Streamable HTTP transport to `loomd` (MCP v1.0 spec compliance).~~ ✅ Done
   - ~~Add bearer token, OIDC, and mTLS authentication for remote access.~~ ✅ Done
@@ -187,8 +195,8 @@ These address capabilities the market now expects from production MCP infrastruc
 
 - [x] **Cost tracking and attribution** ([#10](https://gitlab.flexinfer.ai/services/loom-core/-/issues/10)) ✅ Shipped
   - ~~Track token usage per agent session, per tool, per MCP server at the proxy layer.~~ ✅ Done
-  - Expose cost dashboard in HUD (new KPI on Overview panel).
-  - Export cost metrics via OTel.
+  - Expose cost dashboard in HUD (new KPI on Overview panel) ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)).
+  - Export cost metrics via OTel ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)).
   - *Rationale: The proxy already sees all traffic. Adding token counting is incremental. No local tool provides this today.*
 
 - [x] **Structured audit trail** ([#9](https://gitlab.flexinfer.ai/services/loom-core/-/issues/9)) ✅ Shipped
@@ -220,6 +228,14 @@ These position Loom Core in ways competitors cannot easily replicate.
   - Add deny-list for blocking tool calls based on policy.
   - Note: prior umbrella issue `#15` is closed; active work is tracked in the concrete slice issues above.
   - *Rationale: MCP security is enterprise-critical. Lasso, MCP Manager, MCP Total are emerging competitors.*
+
+## Tier 4: Architecture Simplification (Planned)
+
+Derived from architectural review identifying tool surface bloat, visibility sprawl, and config complexity. Full backlog: `.loom/35-simplification-epics.md`.
+
+- [ ] **EPIC 1: Simplify Agent Context** — Reduce 80 MCP tools to ~45 via deprecation, facade unification, and service decomposition (12 issues: SIMP-1 through SIMP-12)
+- [ ] **EPIC 2: Unify Visibility** — Shared API contracts, embedded HUD, richer CLI/TUI (5 issues: UNIFY-1 through UNIFY-5)
+- [ ] **EPIC 3: Reduce Config Complexity** — Data-driven platform profiles replacing hardcoded generators (4 issues: CONFIG-1 through CONFIG-4)
 
 ## Ongoing Engineering Goals
 
