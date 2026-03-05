@@ -185,6 +185,10 @@ prepare:go-cache:
     - echo "Seeding shared Go cache/tooling"
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
     - go env GOPATH GOCACHE
+  artifacts:
+    paths:
+      - .go/bin/golangci-lint
+    expire_in: 1 week
 
 # =============================================================================
 # LINT STAGE
@@ -193,6 +197,8 @@ prepare:go-cache:
 lint:
   <<: *go-template
   stage: lint
+  needs:
+    - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
