@@ -198,6 +198,9 @@ lint:
   <<: *go-template
   stage: lint
   needs:
+    - job: prepare:go-cache
+      artifacts: true
+  dependencies:
     - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
