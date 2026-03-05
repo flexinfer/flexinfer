@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -10,6 +11,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/crb2nu/loom/pkg/registry"
 )
 
 func setupDaemonTracer(t *testing.T) (*Daemon, *tracetest.SpanRecorder) {
@@ -110,5 +113,115 @@ func TestHandleMessage_EmitsSpanForUnknownMethod(t *testing.T) {
 	}
 	if hasResponse, ok := attrBool(span.Attributes(), "loom.has_response"); !ok || !hasResponse {
 		t.Fatalf("loom.has_response = %v (present=%v), want true", hasResponse, ok)
+	}
+}
+
+func TestComputeTracedServerCoverage(t *testing.T) {
+	d := &Daemon{
+		cfg: Config{Target: "dev"},
+		registry: &registry.Registry{
+			Servers: []*registry.Server{
+				{
+					Name: "mcp-gitlab",
+					Common: &registry.TargetSpec{
+						Command: "./bin/mcp-gitlab",
+					},
+				},
+				{
+					Name: "wrapped",
+					Common: &registry.TargetSpec{
+						Command: "go",
+						Args:    []any{"run", "./cmd/mcp-custom"},
+					},
+				},
+				{
+					Name: "non-mcp",
+					Common: &registry.TargetSpec{
+						Command: "./bin/helper-service",
+					},
+				},
+			},
+		},
+	}
+
+	traced, total := d.computeTracedServerCoverage()
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if traced != 2 {
+		t.Fatalf("traced = %d, want 2", traced)
+	}
+}
+
+func TestHandleOTelStatus_IncludesRuntimeSurfaceCoverage(t *testing.T) {
+	d := &Daemon{
+		cfg: Config{Target: "dev"},
+		registry: &registry.Registry{
+			Servers: []*registry.Server{
+				{
+					Name: "mcp-gitlab",
+					Common: &registry.TargetSpec{
+						Command: "./bin/mcp-gitlab",
+					},
+				},
+				{
+					Name: "misc-service",
+					Common: &registry.TargetSpec{
+						Command: "./bin/misc-service",
+					},
+				},
+			},
+		},
+	}
+
+	msg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: 1}
+	resp, err := d.handleOTelStatus(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleOTelStatus error: %v", err)
+	}
+	if resp == nil || resp.Result == nil {
+		t.Fatal("expected result payload")
+	}
+
+	payload := string(resp.Result)
+	if !strings.Contains(payload, `"runtime_trace_surfaces"`) {
+		t.Fatalf("expected runtime_trace_surfaces in payload: %s", payload)
+	}
+	if !strings.Contains(payload, `"runtime_trace_coverage":"100%"`) {
+		t.Fatalf("expected runtime_trace_coverage in payload: %s", payload)
+	}
+	if !strings.Contains(payload, `"traced_servers":1`) || !strings.Contains(payload, `"total_servers":2`) {
+		t.Fatalf("expected traced/total server counts in payload: %s", payload)
+	}
+}
+
+func TestCallPipeline_RecordTransportSpanEvent(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "parent")
+	p := &callPipeline{ctx: ctx}
+	p.recordTransportSpanEvent("daemon.server.restart_triggered",
+		attribute.String("server.name", "mcp-gitlab"),
+		attribute.String("failure.stage", "recv"),
+	)
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Name != "daemon.server.restart_triggered" {
+		t.Fatalf("event name = %q, want daemon.server.restart_triggered", events[0].Name)
+	}
+	if got := attrString(events[0].Attributes, "server.name"); got != "mcp-gitlab" {
+		t.Fatalf("server.name event attr = %q, want mcp-gitlab", got)
 	}
 }

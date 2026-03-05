@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/router"
@@ -481,6 +483,14 @@ func (p *callPipeline) retryLocalAfterHubFailure(stage string, err error, req *m
 		"stage", stage,
 		"error", err,
 		"backoff_until", until)
+	p.recordTransportSpanEvent("daemon.proxy.local_retry_after_hub_failure",
+		attribute.String("server.name", p.serverName),
+		attribute.String("failure.stage", stage),
+		attribute.String("failure.error", err.Error()),
+		attribute.String("routing.from", router.TargetHub.String()),
+		attribute.String("routing.to", router.TargetLocal.String()),
+		attribute.String("retry.backoff_until", until.Format(time.RFC3339Nano)),
+	)
 
 	p.releaseConnection()
 
@@ -509,6 +519,12 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 		default:
 			p.daemon.logger.Warn("local server recv failed; restarting", "server", p.serverName, "error", err)
 		}
+		p.recordTransportSpanEvent("daemon.server.restart_triggered",
+			attribute.String("server.name", p.serverName),
+			attribute.String("failure.stage", stage),
+			attribute.String("failure.error", err.Error()),
+			attribute.String("target", p.targetStr),
+		)
 
 		p.daemon.pool.ClearServer(p.serverName)
 		_ = p.daemon.procMgr.Stop(p.serverName)
@@ -526,6 +542,12 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 	} else if p.target == router.TargetHub && p.daemon.hubPool != nil {
 		p.daemon.logger.Warn("hub transport failure; clearing pool",
 			"server", p.serverName, "stage", stage, "error", err)
+		p.recordTransportSpanEvent("daemon.proxy.hub_pool_cleared",
+			attribute.String("server.name", p.serverName),
+			attribute.String("failure.stage", stage),
+			attribute.String("failure.error", err.Error()),
+			attribute.String("target", p.targetStr),
+		)
 		p.daemon.hubPool.ClearServer(p.serverName)
 		if p.daemon.hubClient != nil {
 			p.daemon.hubClient.CloseConnection(p.serverName)
@@ -533,6 +555,14 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 	}
 
 	return p.internalError(err)
+}
+
+func (p *callPipeline) recordTransportSpanEvent(name string, attrs ...attribute.KeyValue) {
+	span := trace.SpanFromContext(p.ctx)
+	if !span.SpanContext().IsValid() {
+		return
+	}
+	span.AddEvent(name, trace.WithAttributes(attrs...))
 }
 
 // errorResponse builds a JSON-RPC error message for the current pipeline call.

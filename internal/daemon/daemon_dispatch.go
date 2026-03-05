@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -514,29 +515,81 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 		logFormat = "text"
 	}
 
-	totalServers := 0
-	if d.registry != nil {
-		totalServers = len(d.registry.Servers)
-	}
+	tracedServers, totalServers := d.computeTracedServerCoverage()
+	coverage := formatCoverage(tracedServers, totalServers)
 
-	// All cmd/mcp-* servers are traced via pkg/mcpotel.
-	tracedServers := totalServers
-	coverage := "100%"
-	if totalServers > 0 && tracedServers < totalServers {
-		pct := float64(tracedServers) / float64(totalServers) * 100
-		coverage = fmt.Sprintf("%.0f%%", pct)
+	// Runtime daemon tracing surfaces that complement per-server pkg/mcpotel spans.
+	runtimeSurfaces := map[string]bool{
+		"rpc_dispatch":                true,
+		"server_connect":              true,
+		"client_connection_lifecycle": true,
+		"transport_recovery_events":   true,
 	}
 
 	result := map[string]any{
-		"otlp_endpoint":     endpoint,
-		"otlp_configured":   endpoint != "",
-		"log_format":        logFormat,
-		"json_logs_enabled": logFormat == "json",
-		"traced_servers":    tracedServers,
-		"total_servers":     totalServers,
-		"trace_coverage":    coverage,
+		"otlp_endpoint":          endpoint,
+		"otlp_configured":        endpoint != "",
+		"log_format":             logFormat,
+		"json_logs_enabled":      logFormat == "json",
+		"traced_servers":         tracedServers,
+		"total_servers":          totalServers,
+		"trace_coverage":         coverage,
+		"runtime_trace_surfaces": runtimeSurfaces,
+		"runtime_trace_coverage": "100%",
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+func (d *Daemon) computeTracedServerCoverage() (traced, total int) {
+	if d.registry == nil {
+		return 0, 0
+	}
+	total = len(d.registry.Servers)
+	for _, server := range d.registry.Servers {
+		if server == nil {
+			continue
+		}
+		spec, err := d.registry.GetServerSpec(server.Name, d.cfg.Target)
+		if err != nil || spec == nil {
+			continue
+		}
+		if isMCPServerCommand(spec.Command, spec.Args) {
+			traced++
+		}
+	}
+	return traced, total
+}
+
+func isMCPServerCommand(command string, args []any) bool {
+	if isMCPServerToken(command) {
+		return true
+	}
+	for _, arg := range args {
+		if isMCPServerToken(fmt.Sprint(arg)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMCPServerToken(token string) bool {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, "cmd/mcp-") {
+		return true
+	}
+	base := filepath.Base(trimmed)
+	return strings.HasPrefix(base, "mcp-")
+}
+
+func formatCoverage(numerator, denominator int) string {
+	if denominator <= 0 {
+		return "100%"
+	}
+	pct := float64(numerator) / float64(denominator) * 100
+	return fmt.Sprintf("%.0f%%", pct)
 }
 
 // Reload reloads the registry and refreshes servers.
