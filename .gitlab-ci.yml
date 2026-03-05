@@ -471,7 +471,19 @@ test:race:
   <<: *go-template
   stage: test
   script:
-    - go test -race -short ./...
+    - |
+      mapfile -t PKGS < <(go list ./...)
+
+      # agentcontext-linked packages require fi-accel FFI. On runners where
+      # the native fi-accel library is unavailable, skip those packages so
+      # the rest of the race suite can still run.
+      if [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.so" ] && \
+         [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.a" ]; then
+        echo "fi-accel FFI library not found; excluding agentcontext-linked packages from race tests."
+        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/mcp-agent-context)')
+      fi
+
+      go test -race -short "${PKGS[@]}"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
