@@ -152,16 +152,21 @@ cache:
     - |
       if [ "${GO_WARM_MOD_CACHE:-true}" = "true" ]; then
         # Go module downloads are occasionally flaky on the homelab runner; retry a few times.
+        download_ok=0
         for i in 1 2 3; do
           if go mod download; then
-            exit 0
+            download_ok=1
+            break
           fi
           echo "go mod download failed (attempt ${i}/3); retrying..."
           sleep 3
         done
-        exit 1
+        if [ "$download_ok" -ne 1 ]; then
+          exit 1
+        fi
+      else
+        echo "Skipping eager go mod download (GO_WARM_MOD_CACHE=false); resolving modules on demand."
       fi
-      echo "Skipping eager go mod download (GO_WARM_MOD_CACHE=false); resolving modules on demand."
 
 # =============================================================================
 # PREPARE STAGE
