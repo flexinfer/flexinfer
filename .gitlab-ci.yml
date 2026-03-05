@@ -190,6 +190,8 @@ lint:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
     - $(go env GOPATH)/bin/golangci-lint run --timeout 10m ${GO_APP_PKGS}
@@ -368,6 +370,15 @@ test:unit:
       echo "Selecting packages with tests..."
       mapfile -t PKGS < <(go list -f '{{if or (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d')
       echo "Packages with tests: ${#PKGS[@]}"
+
+      # pkg/agentcontext links against fi-accel FFI. On runners where the
+      # native fi-accel library is unavailable, skip that package so the rest
+      # of the unit suite still runs.
+      if [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.so" ] && \
+         [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.a" ]; then
+        echo "fi-accel FFI library not found; excluding pkg/agentcontext from unit tests."
+        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -v '^github.com/crb2nu/loom/pkg/agentcontext$')
+      fi
 
       echo "Running unit tests with race detector..."
       go test -race -coverprofile=coverage.out -covermode=atomic "${PKGS[@]}"
