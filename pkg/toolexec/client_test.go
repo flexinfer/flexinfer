@@ -29,7 +29,7 @@ func TestExecute_Success(t *testing.T) {
 	sock := startMockDaemon(t, func(msg *mcp.Message) *mcp.Message {
 		if msg.Method == "initialize" {
 			resp, _ := mcp.NewResponse(msg.ID, mcp.InitializeResult{
-				ProtocolVersion: mcp.ProtocolVersion,
+				ProtocolVersion: mcp.ProtocolVersion20250618,
 				ServerInfo:      mcp.ServerInfo{Name: "mock", Version: "1.0"},
 			})
 			return resp
@@ -59,11 +59,47 @@ func TestExecute_Success(t *testing.T) {
 	}
 }
 
+func TestExecute_InitProtoModern(t *testing.T) {
+	var gotProtocol string
+	sock := startMockDaemon(t, func(msg *mcp.Message) *mcp.Message {
+		if msg.Method == "initialize" {
+			var p mcp.InitializeParams
+			if err := json.Unmarshal(msg.Params, &p); err != nil {
+				return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error())
+			}
+			gotProtocol = p.ProtocolVersion
+			resp, _ := mcp.NewResponse(msg.ID, mcp.InitializeResult{
+				ProtocolVersion: mcp.ProtocolVersion20250618,
+				ServerInfo:      mcp.ServerInfo{Name: "mock", Version: "1.0"},
+			})
+			return resp
+		}
+		if msg.Method == "tools/call" {
+			result := mcp.CallToolResult{
+				Content: []mcp.Content{{Type: "text", Text: `{"ok":true}`}},
+			}
+			resp, _ := mcp.NewResponse(msg.ID, result)
+			return resp
+		}
+		return mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, "unknown method")
+	})
+
+	c := New(Config{SocketPath: sock})
+	defer c.Close()
+
+	if _, err := c.Execute(context.Background(), "agent_context", "agent_session_list", map[string]any{"limit": 1}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotProtocol != mcp.ProtocolVersion20250618 {
+		t.Fatalf("initialize protocol = %q, want %q", gotProtocol, mcp.ProtocolVersion20250618)
+	}
+}
+
 func TestExecute_DaemonError(t *testing.T) {
 	sock := startMockDaemon(t, func(msg *mcp.Message) *mcp.Message {
 		if msg.Method == "initialize" {
 			resp, _ := mcp.NewResponse(msg.ID, mcp.InitializeResult{
-				ProtocolVersion: mcp.ProtocolVersion,
+				ProtocolVersion: mcp.ProtocolVersion20250618,
 				ServerInfo:      mcp.ServerInfo{Name: "mock", Version: "1.0"},
 			})
 			return resp
@@ -87,7 +123,7 @@ func TestExecute_ToolError(t *testing.T) {
 	sock := startMockDaemon(t, func(msg *mcp.Message) *mcp.Message {
 		if msg.Method == "initialize" {
 			resp, _ := mcp.NewResponse(msg.ID, mcp.InitializeResult{
-				ProtocolVersion: mcp.ProtocolVersion,
+				ProtocolVersion: mcp.ProtocolVersion20250618,
 				ServerInfo:      mcp.ServerInfo{Name: "mock", Version: "1.0"},
 			})
 			return resp
@@ -180,7 +216,7 @@ func TestExecute_Reconnect(t *testing.T) {
 	sock := startMockDaemon(t, func(msg *mcp.Message) *mcp.Message {
 		if msg.Method == "initialize" {
 			resp, _ := mcp.NewResponse(msg.ID, mcp.InitializeResult{
-				ProtocolVersion: mcp.ProtocolVersion,
+				ProtocolVersion: mcp.ProtocolVersion20250618,
 				ServerInfo:      mcp.ServerInfo{Name: "mock", Version: "1.0"},
 			})
 			return resp

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -56,6 +57,10 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleHealth(ctx, msg)
 	case "loom/tools":
 		resp, err = d.handleTools(ctx, msg)
+	case "loom/tools/search":
+		resp, err = d.handleToolsSearch(ctx, msg)
+	case "loom/tools/get":
+		resp, err = d.handleToolGet(ctx, msg)
 	case "loom/resources":
 		resp, err = d.handleResources(ctx, msg)
 	case "loom/call", "tools/call":
@@ -94,7 +99,7 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 
 func (d *Daemon) handleInitialize(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	result := mcp.InitializeResult{
-		ProtocolVersion: mcp.ProtocolVersion,
+		ProtocolVersion: negotiateProtocolVersion(msg.Params),
 		Capabilities:    mcp.Capabilities{},
 		ServerInfo: mcp.ServerInfo{
 			Name:    "loom",
@@ -103,6 +108,28 @@ func (d *Daemon) handleInitialize(ctx context.Context, msg *mcp.Message) (*mcp.M
 		Instructions: "Loom daemon - unified MCP hub management",
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+func negotiateProtocolVersion(raw json.RawMessage) string {
+	defaultVersion := mcp.ProtocolVersion20250618
+
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(raw) == 0 {
+		return defaultVersion
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return defaultVersion
+	}
+
+	requested := strings.TrimSpace(params.ProtocolVersion)
+	switch requested {
+	case mcp.ProtocolVersion20250618, mcp.ProtocolVersion:
+		return requested
+	default:
+		return defaultVersion
+	}
 }
 
 type statusResult struct {

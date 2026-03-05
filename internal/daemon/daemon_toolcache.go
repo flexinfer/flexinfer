@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	gosync "sync"
 	"time"
@@ -22,6 +23,58 @@ type toolsResult struct {
 	Tools       []mcp.Tool `json:"tools"`
 	CachedAt    time.Time  `json:"cachedAt"`
 	ServerCount int        `json:"serverCount"`
+}
+
+const (
+	toolSearchDetailName    = "name"
+	toolSearchDetailSummary = "summary"
+	toolSearchDetailSchema  = "schema"
+	defaultToolSearchLimit  = 50
+	maxToolSearchLimit      = 500
+)
+
+type toolsSearchParams struct {
+	Query   string   `json:"query,omitempty"`
+	Servers []string `json:"servers,omitempty"`
+	Limit   int      `json:"limit,omitempty"`
+	Cursor  string   `json:"cursor,omitempty"`
+	Detail  string   `json:"detail,omitempty"`
+}
+
+type toolGetParams struct {
+	Name   string `json:"name"`
+	Server string `json:"server,omitempty"`
+}
+
+type toolsSearchItem struct {
+	Name        string           `json:"name"`
+	Server      string           `json:"server,omitempty"`
+	Description string           `json:"description,omitempty"`
+	InputSchema *mcp.InputSchema `json:"inputSchema,omitempty"`
+}
+
+type toolsSearchResult struct {
+	Query       string            `json:"query,omitempty"`
+	Detail      string            `json:"detail"`
+	Servers     []string          `json:"servers,omitempty"`
+	Limit       int               `json:"limit"`
+	Cursor      string            `json:"cursor,omitempty"`
+	NextCursor  string            `json:"nextCursor,omitempty"`
+	Total       int               `json:"total"`
+	Count       int               `json:"count"`
+	Results     []toolsSearchItem `json:"results"`
+	CachedAt    time.Time         `json:"cachedAt"`
+	ServerCount int               `json:"serverCount"`
+}
+
+type toolGetResult struct {
+	Name        string    `json:"name"`
+	Server      string    `json:"server,omitempty"`
+	ToolName    string    `json:"toolName,omitempty"`
+	Tool        mcp.Tool  `json:"tool"`
+	CachedAt    time.Time `json:"cachedAt"`
+	ServerCount int       `json:"serverCount"`
+	Source      string    `json:"source,omitempty"`
 }
 
 // resourcesResult holds the aggregated resources response.
@@ -188,6 +241,182 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 	return mcp.NewResponse(msg.ID, result)
 }
 
+func (d *Daemon) handleToolsSearch(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	params := toolsSearchParams{}
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "invalid params: "+err.Error()), nil
+		}
+	}
+
+	detail := strings.ToLower(strings.TrimSpace(params.Detail))
+	if detail == "" {
+		detail = toolSearchDetailSummary
+	}
+	switch detail {
+	case toolSearchDetailName, toolSearchDetailSummary, toolSearchDetailSchema:
+	default:
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "detail must be one of: name, summary, schema"), nil
+	}
+
+	limit := params.Limit
+	if limit == 0 {
+		limit = defaultToolSearchLimit
+	}
+	if limit < 0 {
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "limit must be >= 0"), nil
+	}
+	if limit > maxToolSearchLimit {
+		limit = maxToolSearchLimit
+	}
+
+	offset := 0
+	cursor := strings.TrimSpace(params.Cursor)
+	if cursor != "" {
+		n, err := strconv.Atoi(cursor)
+		if err != nil || n < 0 {
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "cursor must be a non-negative integer string"), nil
+		}
+		offset = n
+	}
+
+	toolsResp, err := d.handleTools(ctx, &mcp.Message{ID: msg.ID})
+	if err != nil {
+		return nil, err
+	}
+	if toolsResp != nil && toolsResp.Error != nil {
+		return toolsResp, nil
+	}
+
+	var snapshot toolsResult
+	if err := json.Unmarshal(toolsResp.Result, &snapshot); err != nil {
+		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "unmarshal loom/tools response: "+err.Error()), nil
+	}
+
+	query := strings.ToLower(strings.TrimSpace(params.Query))
+	servers := normalizeServerFilters(params.Servers)
+
+	filtered := make([]mcp.Tool, 0, len(snapshot.Tools))
+	for _, tool := range snapshot.Tools {
+		server, shortName := splitNamespacedToolName(tool.Name)
+		if len(servers) > 0 && !containsServerFilter(servers, strings.ToLower(server)) {
+			continue
+		}
+		if query != "" {
+			searchTarget := strings.ToLower(strings.Join([]string{
+				tool.Name,
+				shortName,
+				server,
+				tool.Description,
+			}, " "))
+			if !strings.Contains(searchTarget, query) {
+				continue
+			}
+		}
+		filtered = append(filtered, tool)
+	}
+
+	total := len(filtered)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+
+	paged := filtered[offset:end]
+	items := make([]toolsSearchItem, 0, len(paged))
+	for _, tool := range paged {
+		server, _ := splitNamespacedToolName(tool.Name)
+		item := toolsSearchItem{
+			Name: tool.Name,
+		}
+		switch detail {
+		case toolSearchDetailName:
+			// Name-only response.
+		case toolSearchDetailSummary:
+			item.Server = server
+			item.Description = tool.Description
+		case toolSearchDetailSchema:
+			item.Server = server
+			item.Description = tool.Description
+			schema := tool.InputSchema
+			item.InputSchema = &schema
+		}
+		items = append(items, item)
+	}
+
+	nextCursor := ""
+	if end < total {
+		nextCursor = strconv.Itoa(end)
+	}
+
+	return mcp.NewResponse(msg.ID, toolsSearchResult{
+		Query:       strings.TrimSpace(params.Query),
+		Detail:      detail,
+		Servers:     servers,
+		Limit:       limit,
+		Cursor:      cursor,
+		NextCursor:  nextCursor,
+		Total:       total,
+		Count:       len(items),
+		Results:     items,
+		CachedAt:    snapshot.CachedAt,
+		ServerCount: snapshot.ServerCount,
+	})
+}
+
+func (d *Daemon) handleToolGet(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	params := toolGetParams{}
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "invalid params: "+err.Error()), nil
+		}
+	}
+
+	name := strings.TrimSpace(params.Name)
+	server := strings.TrimSpace(params.Server)
+	if name == "" {
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "name is required"), nil
+	}
+
+	if server != "" && !strings.Contains(name, "__") {
+		name = server + "__" + name
+	}
+
+	toolsResp, err := d.handleTools(ctx, &mcp.Message{ID: msg.ID})
+	if err != nil {
+		return nil, err
+	}
+	if toolsResp != nil && toolsResp.Error != nil {
+		return toolsResp, nil
+	}
+
+	var snapshot toolsResult
+	if err := json.Unmarshal(toolsResp.Result, &snapshot); err != nil {
+		return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "unmarshal loom/tools response: "+err.Error()), nil
+	}
+
+	for _, tool := range snapshot.Tools {
+		if tool.Name != name {
+			continue
+		}
+		toolServer, shortName := splitNamespacedToolName(tool.Name)
+		return mcp.NewResponse(msg.ID, toolGetResult{
+			Name:        tool.Name,
+			Server:      toolServer,
+			ToolName:    shortName,
+			Tool:        tool,
+			CachedAt:    snapshot.CachedAt,
+			ServerCount: snapshot.ServerCount,
+			Source:      "cache",
+		})
+	}
+
+	return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, "tool not found: "+name), nil
+}
+
 // getStaticToolsFromRegistry converts registry tool schemas to MCP tools.
 func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
 	staticSchemas := d.registry.GetStaticTools(d.cfg.Target)
@@ -208,6 +437,43 @@ func (d *Daemon) getStaticToolsFromRegistry() []mcp.Tool {
 		}
 	}
 	return tools
+}
+
+func normalizeServerFilters(servers []string) []string {
+	if len(servers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(servers))
+	out := make([]string, 0, len(servers))
+	for _, raw := range servers {
+		s := strings.ToLower(strings.TrimSpace(raw))
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func splitNamespacedToolName(name string) (server, tool string) {
+	parts := strings.SplitN(strings.TrimSpace(name), "__", 2)
+	if len(parts) != 2 {
+		return "", strings.TrimSpace(name)
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func containsServerFilter(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 // refreshResourcesCacheDeduplicated wraps refreshResourcesCache via singleflight to
@@ -686,23 +952,41 @@ func (d *Daemon) fetchServerToolsViaPool(ctx context.Context, serverName string)
 
 // initializeMCPTransport performs the MCP initialize handshake on a fresh transport.
 func initializeMCPTransport(ctx context.Context, transport mcp.Transport) error {
-	initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
-		ProtocolVersion: mcp.ProtocolVersion,
-		Capabilities:    mcp.Capabilities{},
-		ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
-	})
-	if err := transport.Send(ctx, initReq); err != nil {
-		return fmt.Errorf("send init: %w", err)
+	versions := []string{
+		mcp.ProtocolVersion20250618,
+		mcp.ProtocolVersion,
 	}
-	if _, err := transport.Recv(ctx); err != nil {
-		return fmt.Errorf("recv init: %w", err)
-	}
+	var lastErr error
+	for _, protocolVersion := range versions {
+		initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
+			ProtocolVersion: protocolVersion,
+			Capabilities:    mcp.Capabilities{},
+			ClientInfo:      mcp.ClientInfo{Name: "loom-daemon", Version: "0.1.0"},
+		})
+		if err := transport.Send(ctx, initReq); err != nil {
+			lastErr = fmt.Errorf("send init (%s): %w", protocolVersion, err)
+			continue
+		}
+		initResp, err := transport.Recv(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("recv init (%s): %w", protocolVersion, err)
+			continue
+		}
+		if initResp != nil && initResp.Error != nil {
+			lastErr = fmt.Errorf("init error (%s): %s", protocolVersion, initResp.Error.Message)
+			continue
+		}
 
-	initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
-	if err := transport.Send(ctx, initNotif); err != nil {
-		return fmt.Errorf("send initialized: %w", err)
+		initNotif := &mcp.Message{JSONRPC: "2.0", Method: "notifications/initialized"}
+		if err := transport.Send(ctx, initNotif); err != nil {
+			return fmt.Errorf("send initialized (%s): %w", protocolVersion, err)
+		}
+		return nil
 	}
-	return nil
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("initialize failed: no protocol versions attempted")
 }
 
 // expandVarsWithRegistry expands variable patterns with registry-based env aliases.

@@ -249,7 +249,7 @@ func runProxy(socketPath string) error {
 
 		// Must initialize the daemon connection
 		initReq, _ := mcp.NewRequest(1, "initialize", mcp.InitializeParams{
-			ProtocolVersion: mcp.ProtocolVersion,
+			ProtocolVersion: mcp.ProtocolVersion20250618,
 			Capabilities:    mcp.Capabilities{},
 			ClientInfo:      mcp.ClientInfo{Name: "loom-proxy", Version: version},
 		})
@@ -393,7 +393,7 @@ func startDaemonInBackground(socketPath string) error {
 
 func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
 	result := mcp.InitializeResult{
-		ProtocolVersion: mcp.ProtocolVersion,
+		ProtocolVersion: negotiateProxyProtocolVersion(msg.Params),
 		Capabilities: mcp.Capabilities{
 			Tools:     &mcp.ToolsCapability{},
 			Resources: &mcp.ResourcesCapability{},
@@ -407,6 +407,28 @@ func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
 	}
 	resp, _ := mcp.NewResponse(msg.ID, result)
 	return resp
+}
+
+func negotiateProxyProtocolVersion(raw json.RawMessage) string {
+	defaultVersion := mcp.ProtocolVersion20250618
+
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(raw) == 0 {
+		return defaultVersion
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return defaultVersion
+	}
+
+	requested := strings.TrimSpace(params.ProtocolVersion)
+	switch requested {
+	case mcp.ProtocolVersion20250618, mcp.ProtocolVersion:
+		return requested
+	default:
+		return defaultVersion
+	}
 }
 
 func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {

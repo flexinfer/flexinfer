@@ -120,7 +120,7 @@ func (c *Client) connectLocked(ctx context.Context) error {
 
 	// MCP initialize handshake.
 	initReq, err := mcp.NewRequest(c.reqID.Add(1), "initialize", mcp.InitializeParams{
-		ProtocolVersion: mcp.ProtocolVersion,
+		ProtocolVersion: mcp.ProtocolVersion20250618,
 		Capabilities:    mcp.Capabilities{},
 		ClientInfo:      mcp.ClientInfo{Name: "toolexec", Version: "1.0.0"},
 	})

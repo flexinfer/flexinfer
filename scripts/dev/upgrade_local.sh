@@ -164,7 +164,7 @@ fi
 echo "== Smoke (proxy initialize) =="
 python3 - "$RUN_LOOM" <<'PY'
 import json, subprocess, sys
-msg = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"upgrade-smoke","version":"0"}}}
+msg = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"upgrade-smoke","version":"0"}}}
 p = subprocess.Popen([sys.argv[1], "proxy"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 out, err = p.communicate(json.dumps(msg) + "\n", timeout=5)
 if p.returncode != 0:

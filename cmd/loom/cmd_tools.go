@@ -109,60 +109,164 @@ func newToolsCmd(socketPath string) *cobra.Command {
 	toolsListCmd.Flags().IntVar(&toolsListPage, "page", 1, "Page number for paginated output (1-based)")
 	toolsListCmd.Flags().IntVar(&toolsListLimit, "limit", 0, "Page size for paginated output (clamped to 10-500)")
 
+	var toolsSearchJSON bool
+	var toolsSearchDetail string
+	var toolsSearchServers []string
+	var toolsSearchLimit int
+	var toolsSearchCursor string
+
 	toolsSearchCmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search tools by name or description",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
-			result, err := call(socketPath, "loom/tools", nil)
+			detail := strings.TrimSpace(strings.ToLower(toolsSearchDetail))
+			if detail == "" {
+				detail = "summary"
+			}
+			switch detail {
+			case "name", "summary", "schema":
+			default:
+				return fmt.Errorf("--detail must be one of: name, summary, schema")
+			}
+			if toolsSearchLimit < 0 {
+				return fmt.Errorf("--limit must be >= 0")
+			}
+
+			result, err := call(socketPath, "loom/tools/search", map[string]any{
+				"query":   query,
+				"servers": toolsSearchServers,
+				"limit":   toolsSearchLimit,
+				"cursor":  toolsSearchCursor,
+				"detail":  detail,
+			})
 			if err != nil {
 				return err
 			}
 
-			var tools struct {
-				Tools []struct {
+			var search struct {
+				Query      string `json:"query"`
+				Detail     string `json:"detail"`
+				Total      int    `json:"total"`
+				Count      int    `json:"count"`
+				NextCursor string `json:"nextCursor,omitempty"`
+				Results    []struct {
 					Name        string `json:"name"`
+					Server      string `json:"server,omitempty"`
 					Description string `json:"description"`
-				} `json:"tools"`
+					InputSchema any    `json:"inputSchema,omitempty"`
+				} `json:"results"`
 			}
 
-			if err := json.Unmarshal(result, &tools); err != nil {
-				return fmt.Errorf("parse tools: %w", err)
+			if err := json.Unmarshal(result, &search); err != nil {
+				return fmt.Errorf("parse search result: %w", err)
 			}
 
-			// Case-insensitive search in name and description
-			var matches []struct {
-				Name        string
-				Description string
-			}
-			queryLower := strings.ToLower(query)
-			for _, t := range tools.Tools {
-				if strings.Contains(strings.ToLower(t.Name), queryLower) ||
-					strings.Contains(strings.ToLower(t.Description), queryLower) {
-					matches = append(matches, struct {
-						Name        string
-						Description string
-					}{t.Name, t.Description})
+			if toolsSearchJSON {
+				b, err := json.MarshalIndent(search, "", "  ")
+				if err != nil {
+					return err
 				}
+				fmt.Println(string(b))
+				return nil
 			}
 
-			if len(matches) == 0 {
+			if search.Count == 0 {
 				fmt.Printf("No tools found matching '%s'\n", query)
 				return nil
 			}
 
-			fmt.Printf("Found %d tools matching '%s':\n\n", len(matches), query)
-			for _, t := range matches {
+			fmt.Printf("Found %d tool(s) in this page (%d total) matching '%s' [detail=%s]\n\n", search.Count, search.Total, query, search.Detail)
+			for _, t := range search.Results {
 				desc := t.Description
 				if len(desc) > 60 {
 					desc = desc[:57] + "..."
 				}
-				fmt.Printf("  %-40s %s\n", t.Name, desc)
+
+				switch search.Detail {
+				case "name":
+					fmt.Printf("  %s\n", t.Name)
+				case "summary":
+					if t.Server != "" {
+						fmt.Printf("  %-40s (%s) %s\n", t.Name, t.Server, desc)
+					} else {
+						fmt.Printf("  %-40s %s\n", t.Name, desc)
+					}
+				case "schema":
+					if t.Server != "" {
+						fmt.Printf("  %-40s (%s)\n", t.Name, t.Server)
+					} else {
+						fmt.Printf("  %-40s\n", t.Name)
+					}
+					if desc != "" {
+						fmt.Printf("    %s\n", desc)
+					}
+					if t.InputSchema != nil {
+						schema, err := json.MarshalIndent(t.InputSchema, "    ", "  ")
+						if err == nil {
+							fmt.Printf("    schema: %s\n", strings.TrimSpace(string(schema)))
+						}
+					}
+				}
+			}
+
+			if search.NextCursor != "" {
+				fmt.Printf("\nNext cursor: %s\n", search.NextCursor)
 			}
 			return nil
 		},
 	}
+	toolsSearchCmd.Flags().BoolVar(&toolsSearchJSON, "json", false, "Output machine-readable JSON")
+	toolsSearchCmd.Flags().StringVar(&toolsSearchDetail, "detail", "summary", "Detail level: name|summary|schema")
+	toolsSearchCmd.Flags().StringSliceVar(&toolsSearchServers, "server", nil, "Restrict search to one or more server names")
+	toolsSearchCmd.Flags().IntVar(&toolsSearchLimit, "limit", 50, "Maximum results per page (0 uses daemon default)")
+	toolsSearchCmd.Flags().StringVar(&toolsSearchCursor, "cursor", "", "Pagination cursor from previous search response")
+
+	var toolsGetJSON bool
+	var toolsGetServer string
+	toolsGetCmd := &cobra.Command{
+		Use:   "get <tool-name>",
+		Short: "Get full schema/details for one tool",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			if name == "" {
+				return fmt.Errorf("tool name is required")
+			}
+
+			result, err := call(socketPath, "loom/tools/get", map[string]any{
+				"name":   name,
+				"server": strings.TrimSpace(toolsGetServer),
+			})
+			if err != nil {
+				return err
+			}
+
+			var out any
+			if err := json.Unmarshal(result, &out); err != nil {
+				return fmt.Errorf("parse tool details: %w", err)
+			}
+
+			if toolsGetJSON {
+				b, err := json.MarshalIndent(out, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(b))
+				return nil
+			}
+
+			b, err := json.MarshalIndent(out, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(b))
+			return nil
+		},
+	}
+	toolsGetCmd.Flags().BoolVar(&toolsGetJSON, "json", false, "Output machine-readable JSON")
+	toolsGetCmd.Flags().StringVar(&toolsGetServer, "server", "", "Optional server name when tool-name is not namespaced")
 
 	// Tools call subcommand
 	var toolsCallJSON bool
@@ -219,7 +323,7 @@ Examples:
 	toolsCallCmd.Flags().BoolVar(&toolsCallJSON, "json", false, "Output raw JSON")
 	toolsCallCmd.Flags().StringVar(&toolsCallArgs, "args", "", "Tool arguments as JSON")
 
-	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd, toolsCallCmd)
+	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd, toolsGetCmd, toolsCallCmd)
 	return toolsCmd
 }
 

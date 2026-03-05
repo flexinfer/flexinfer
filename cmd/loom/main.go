@@ -62,6 +62,7 @@ func main() {
 
 		// Config management
 		newGenerateCmd(),
+		newCodeAPICmd(socketPath),
 		newSyncCmd(),
 		newPullCmd(),
 		newBackupCmd(),
