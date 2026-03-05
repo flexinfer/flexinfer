@@ -211,6 +211,13 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 		}
 
+		// Prefill-Decode split attention: uses separate Triton kernels for prefill
+		// and a custom ROCm paged-attention kernel for decode. Can improve decode
+		// throughput on RDNA3 where AITER is not available.
+		if spec.ConfigBool("enablePrefillDecodeAttention", false) {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_V1_USE_PREFILL_DECODE_ATTENTION", Value: "1"})
+		}
+
 		env = append(env, vllmEnv...)
 
 		env = append(env, DeviceIsolationEnvVars(spec)...)

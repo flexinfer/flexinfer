@@ -92,6 +92,14 @@ func TestVLLMBackendEnv_NoInjectionWithDefaults(t *testing.T) {
 	if v, ok := envMap["HIP_FORCE_DEV_KERNARG"]; !ok || v != "1" {
 		t.Errorf("expected HIP_FORCE_DEV_KERNARG=1 for gfx1100, got %q (present=%v)", v, ok)
 	}
+	// TORCH_BLAS_PREFER_HIPBLASLT should be set for gfx1100
+	if v, ok := envMap["TORCH_BLAS_PREFER_HIPBLASLT"]; !ok || v != "1" {
+		t.Errorf("expected TORCH_BLAS_PREFER_HIPBLASLT=1 for gfx1100, got %q (present=%v)", v, ok)
+	}
+	// VLLM_V1_USE_PREFILL_DECODE_ATTENTION should NOT be set by default
+	if _, ok := envMap["VLLM_V1_USE_PREFILL_DECODE_ATTENTION"]; ok {
+		t.Error("expected VLLM_V1_USE_PREFILL_DECODE_ATTENTION to be absent by default")
+	}
 }
 
 func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
@@ -839,6 +847,28 @@ func TestVLLMBackendEnv_PytorchCudaAllocConf_NVIDIA(t *testing.T) {
 
 	if v, ok := envMap["PYTORCH_CUDA_ALLOC_CONF"]; !ok || v != "expandable_segments:True,max_split_size_mb:128" {
 		t.Errorf("expected PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128, got %q (present=%v)", v, ok)
+	}
+}
+
+func TestVLLMBackendEnv_PrefillDecodeAttention(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]interface{}{
+			"enablePrefillDecodeAttention": true,
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v, ok := envMap["VLLM_V1_USE_PREFILL_DECODE_ATTENTION"]; !ok || v != "1" {
+		t.Errorf("expected VLLM_V1_USE_PREFILL_DECODE_ATTENTION=1, got %q (present=%v)", v, ok)
 	}
 }
 
