@@ -79,6 +79,9 @@ variables:
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
+    # Cache Go-installed tooling (golangci-lint, etc.) to avoid reinstalling
+    # large toolchains on every job.
+    - .go/bin/
     # Cache the module download ZIP/index cache (not extracted modules).
     # This stays well under the runner's 512MB cache upload limit.
     - .go/pkg/mod/cache/download/
@@ -174,11 +177,13 @@ prepare:go-cache:
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
+      - .go/bin/
       - .go/pkg/mod/cache/download/
       - .go-build/
     policy: pull-push
   script:
-    - echo "Go module cache seeded via before_script"
+    - echo "Seeding shared Go cache/tooling"
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
     - go env GOPATH GOCACHE
 
 # =============================================================================
@@ -193,7 +198,10 @@ lint:
     KUBERNETES_MEMORY_REQUEST: "4Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
-    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+    - |
+      if [ ! -x "$(go env GOPATH)/bin/golangci-lint" ]; then
+        go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+      fi
     - $(go env GOPATH)/bin/golangci-lint run --timeout 10m ${GO_APP_PKGS}
   allow_failure: true
 
