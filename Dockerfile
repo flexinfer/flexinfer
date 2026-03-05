@@ -1,6 +1,6 @@
 # Build stage
 ARG RUNTIME_REGISTRY=registry.harbor.lan
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.25.7-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -30,14 +30,14 @@ COPY . .
 
 # Build all binaries
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
 
 # Build all MCP servers
 RUN mkdir -p /bin && \
     for d in cmd/mcp-*; do \
       name="$(basename "$d")"; \
-      CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "/bin/$name" "./$d"; \
+      CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o "/bin/$name" "./$d"; \
     done
 
 # Runtime stage - minimal image

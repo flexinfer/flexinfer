@@ -751,9 +751,9 @@ build:image:loom-core:
           rm -f "$LOG_FILE"
           SUCCESS=1
           break
+        else
+          LAST_RC=$?
         fi
-
-        LAST_RC=$?
         cat "$LOG_FILE"
         if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
           echo "Registry cache export failed; retrying without cache flags."
@@ -772,8 +772,9 @@ build:image:loom-core:
             rm -f "$LOG_FILE"
             SUCCESS=1
             break
+          else
+            LAST_RC=$?
           fi
-          LAST_RC=$?
           cat "$LOG_FILE"
         fi
 
@@ -902,9 +903,9 @@ build:image:custom-server:
           rm -f "$LOG_FILE"
           SUCCESS=1
           break
+        else
+          LAST_RC=$?
         fi
-
-        LAST_RC=$?
         cat "$LOG_FILE"
         if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
           echo "Registry cache export failed; retrying without cache flags."
@@ -922,8 +923,9 @@ build:image:custom-server:
             rm -f "$LOG_FILE"
             SUCCESS=1
             break
+          else
+            LAST_RC=$?
           fi
-          LAST_RC=$?
           cat "$LOG_FILE"
         fi
 

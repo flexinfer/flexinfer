@@ -1,6 +1,6 @@
 # Build stage
 ARG RUNTIME_REGISTRY=registry.harbor.lan
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.25.7-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -26,12 +26,12 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/custom-server ./cmd/custom-server
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/custom-server ./cmd/custom-server
 
 RUN mkdir -p /out/services/loom-core/bin && \
     for d in cmd/mcp-*; do \
       name="$(basename "$d")"; \
-      CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "/out/services/loom-core/bin/$name" "./$d"; \
+      CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o "/out/services/loom-core/bin/$name" "./$d"; \
     done
 
 # Runtime stage
