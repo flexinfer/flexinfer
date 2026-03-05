@@ -38,6 +38,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY <<'EOF' /app/server.py
 import base64
+import gc
 import io
 import os
 import sys
@@ -210,6 +211,12 @@ def images_generations(req: ImageGenerationRequest):
             image.save(buf, format="PNG")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             images.append({"b64_json": b64})
+            del out, image, buf  # break reference cycles
+
+    # Free leaked tensors from reference cycles before clearing GPU cache
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return {"created": int(time.time()), "data": images}
 

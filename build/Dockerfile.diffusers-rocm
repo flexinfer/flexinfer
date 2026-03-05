@@ -96,6 +96,7 @@ ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
 Supports text2image, inpainting, and InstructPix2Pix modes via PIPELINE_MODE env var.
 """
 import asyncio
+import gc
 import os
 import io
 import base64
@@ -827,6 +828,7 @@ def warmup_inference():
             print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
 
         # Free VRAM between resolutions to avoid OOM on the next size
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         sys.stdout.flush()
@@ -930,6 +932,11 @@ async def generate_images(request: ImageGenerationRequest):
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
+            del result, img, buffer  # break reference cycles
+        # Critical: gc.collect() BEFORE empty_cache() to free PyTorch tensors
+        # held by Python reference cycles from the diffusers pipeline + CPU offload hooks.
+        # Without this, consecutive generations leak ~10-20GB of host RAM.
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         return results
@@ -1034,6 +1041,9 @@ async def edit_images(
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
+            del result, img, buffer  # break reference cycles
+        # Critical: gc.collect() BEFORE empty_cache() — see _run_inference comment.
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         return results
