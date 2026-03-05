@@ -27,6 +27,16 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:      func(r *http.Request) bool { return true },
 }
 
+type wsMessageWriter interface {
+	WriteMessage(messageType int, data []byte) error
+}
+
+func writeWS(mu *sync.Mutex, conn wsMessageWriter, messageType int, data []byte) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return conn.WriteMessage(messageType, data)
+}
+
 type sseSession struct {
 	id        string
 	createdAt time.Time
@@ -399,13 +409,14 @@ func handleWS(w http.ResponseWriter, r *http.Request, serverName, command string
 		return
 	}
 	defer conn.Close()
+	var writeMu sync.Mutex
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	cmdName, cmdArgs, err := splitCommand(command)
 	if err != nil {
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, err.Error()))
+		_ = writeWS(&writeMu, conn, websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, err.Error()))
 		return
 	}
 
@@ -415,20 +426,20 @@ func handleWS(w http.ResponseWriter, r *http.Request, serverName, command string
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stdin pipe error"))
+		_ = writeWS(&writeMu, conn, websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stdin pipe error"))
 		return
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stdout pipe error"))
+		_ = writeWS(&writeMu, conn, websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stdout pipe error"))
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "start error"))
+		_ = writeWS(&writeMu, conn, websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "start error"))
 		return
 	}
 
@@ -469,7 +480,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, serverName, command string
 		for {
 			select {
 			case <-ticker.C:
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				if err := writeWS(&writeMu, conn, websocket.PingMessage, nil); err != nil {
 					closeAll()
 					return
 				}
@@ -480,7 +491,6 @@ func handleWS(w http.ResponseWriter, r *http.Request, serverName, command string
 	}()
 
 	var wg sync.WaitGroup
-	var writeMu sync.Mutex
 
 	wg.Add(1)
 	go func() {
@@ -495,9 +505,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, serverName, command string
 			if err != nil {
 				continue
 			}
-			writeMu.Lock()
-			err = conn.WriteMessage(websocket.TextMessage, b)
-			writeMu.Unlock()
+			err = writeWS(&writeMu, conn, websocket.TextMessage, b)
 			if err != nil {
 				closeAll()
 				return
