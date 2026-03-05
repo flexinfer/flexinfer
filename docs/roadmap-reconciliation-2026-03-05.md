@@ -19,6 +19,8 @@ Commits integrated to `main` from local backlog/worktree branches:
 - `d4df318` feat(rbac): add dry-run simulation mode and CLI tooling
 - `18e9596` hud: operationalize stale mobile push token cleanup
 - `8413fb8` feat(otel): derive traced server coverage and emit transport span events
+- `aa85978` docs: reconcile roadmap backlog against integrated implementation
+- `94c1a08` test(daemon): align OTel coverage fixture with traced server detection
 
 ## Worktree Cleanup Completed
 
@@ -37,37 +39,21 @@ Removed stale/merged worktrees:
 - `.worktrees/backlog-SIMP-11`
 - `.worktrees/backlog-SIMP-12`
 - `.worktrees/loom-core-simp-session-lifecycle-20260303`
+- `.worktrees/issue-12-20260303`
+- `.worktrees/issue-6-20260303`
+- `.worktrees/openai-hybrid-simplification-20260304`
+- `.worktrees/openai-responses-tool-context-20260304`
 
 Deleted corresponding fully-integrated local branches.
 
 ## Remaining Active Local Worktrees
 
-1. `issue-12-20260303` (`codex/otel-trace-export-12-20260303`)
-- Status: clean
-- Delta vs `origin/main`: `d8e9538` (now integrated as `8413fb8`)
-- Action: safe to remove after `main` push/CI success.
-
-2. `issue-6-20260303` (`codex/docs-entrypoint-6`)
-- Status: dirty (`docs/roadmap-reconciliation-2026-03-04.md` untracked)
-- Delta vs `origin/main`: one patch-equivalent commit integrated, one docs-patch not patch-identical (`5ec7d78`).
-- Action: retain for now; if needed, re-land doc-only deltas explicitly.
-
-3. `loom-core-26-20260302` (`codex/rbac-dry-run-sim-26-wip-20260303`)
+1. `loom-core-26-20260302` (`codex/rbac-dry-run-sim-26-wip-20260303`)
 - Status: dirty (mixed staged/unstaged edits on RBAC files)
 - Delta vs `origin/main`: base RBAC feature already integrated; this worktree has uncommitted WIP follow-ups.
 - Action: requires focused follow-up branch or explicit discard decision.
 
-4. `openai-hybrid-simplification-20260304` (`codex/openai-hybrid-simplification-20260304`)
-- Status: clean
-- Delta vs `origin/main`: commit `4c44537` is not patch-identical; key pieces were integrated via `996694e` and existing daemon/tool-search implementation.
-- Action: keep temporarily until we explicitly close/supersede this branch in backlog tracking.
-
-5. `openai-responses-tool-context-20260304` (`codex/openai-responses-tool-context-plan`)
-- Status: dirty (`.loom` planning/index/worklog edits)
-- Delta vs `origin/main`: no unique commits; local edits are planning metadata variants.
-- Action: preserve as planning scratch or fold selective docs into a fresh planning update.
-
-6. `mcp-tools-as-code-api-20260304` (`codex/integration-seq-main`)
+2. `mcp-tools-as-code-api-20260304` (`codex/integration-seq-main`)
 - Status: clean integration branch used for this reconciliation.
 
 ## Roadmap Issue Status Snapshot (from GitLab)
