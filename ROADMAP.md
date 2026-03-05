@@ -4,7 +4,7 @@
 - [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
 
 
-> Last Updated: 2026-02-20
+> Last Updated: 2026-03-05
 
 ## Current Status
 
@@ -24,7 +24,13 @@ Open roadmap scope is currently maintenance-focused:
 - Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)) — in progress, with Prometheus + golang-x minor/patch batches merged to `master` (`a16b2d1`)
 - Next roadmap slice selection and tracking updates ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
 
-Recently closed roadmap slices:
+Recently closed roadmap slices (Feb-Mar 2026):
+- FLUX.1 diffusers support with NF4 quantization for 24GB VRAM (three-layer dtype strategy, gc.collect OOM fix, PyTorch 2.3 polyfills) (`db4cfde`..`053a2d6`)
+- ROCm gfx1100 perf tuning: HipBLASLt, prefill-decode split attention (`45d311c`)
+- Configurable CRD tolerations ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24)), dedicated scheduler ClusterRole ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
+- Benchmark sidecar termination for service mesh ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23)), K8s allocatable GPU fallback ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
+- Multipart proxy support for image editing (`7892613`)
+- Quantization hardening: status preservation, idempotent completion, CompletedAt path redirect
 - Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
 - Quantization pipelines and quality validation gate ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
 - Cold-start reliability guardrails for long-loading models merged to `master` (Loading-phase idle timeout guard + proxy conflict retry + per-model GPUGroup timeout path) (`fad43a7`)
@@ -48,6 +54,13 @@ Recently closed roadmap slices:
 - ✅ **Flash-Loader Sidecar**: Parallel model preloading from PVC to tmpfs
 - ✅ **Spot-Instance Resilience**: Proactive draining on termination notice (AWS, Azure, GCP, Harvester)
 - ✅ **CNCF Sandbox Prep**: Governance, security policy, adopters, SBOM generation, license scanning
+- ✅ **FLUX.1 Image Generation**: Schnell (text-to-image) + Fill (inpainting) with NF4 quantization on ROCm gfx1100
+- ✅ **Multipart Proxy**: form-data model extraction for `/v1/images/edits`
+- ✅ **Configurable Tolerations**: User-specified tolerations in CRD spec ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24))
+- ✅ **Scheduler RBAC Hardening**: Dedicated `flexinfer-kube-scheduler` ClusterRole ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
+- ✅ **Benchmark Sidecar Termination**: Istio/Linkerd-compatible job cleanup ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23))
+- ✅ **GPU Detection Fallback**: K8s allocatable-based GPU detection when vendor tools unavailable ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
+- ✅ **gfx1100 Perf Tuning**: HipBLASLt preference, prefill-decode split attention for vLLM
 
 ## Completed Phases
 

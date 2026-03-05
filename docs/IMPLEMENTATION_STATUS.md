@@ -1,6 +1,6 @@
 # FlexInfer Implementation Status
 
-This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-02-20.
+This document provides a comprehensive overview of the current implementation state of FlexInfer, updated as of 2026-03-05.
 
 ## Executive Summary
 
@@ -10,6 +10,9 @@ This document provides a comprehensive overview of the current implementation st
 - KV-cache-aware routing with session affinity and least-loaded strategies
 - Comprehensive E2E testing and documentation
 - KV-Cache tiering, Dynamic Multi-LoRA, OCI Model Registry, Flash-Loader, Spot Resilience, CNCF Sandbox Prep
+- FLUX.1 image generation with NF4 quantization on ROCm gfx1100 (24GB VRAM)
+- Multipart proxy for image editing endpoints
+- Configurable CRD tolerations, dedicated scheduler RBAC, and GPU detection fallback
 
 The project has moved from code-complete to production-ready with the completion of Helm charts, real benchmarking integration, custom scheduler integration, observability dashboards, comprehensive user documentation, and 6 advanced features. CI/CD pipelines run on GitLab.
 
@@ -107,6 +110,18 @@ The project has moved from code-complete to production-ready with the completion
 - GPU/backend quirks runbook (`docs/user/operations.md`)
 - Documentation index (`docs/README.md`)
 
+### Recent Improvements (Feb-Mar 2026) ✅
+
+- **FLUX.1 Image Generation**: Schnell (text-to-image) and Fill (inpainting) pipelines via diffusers backend with NF4 quantization on ROCm gfx1100 (three-layer dtype strategy, bitsandbytes >= 0.49.2)
+- **Diffusers OOM Fix**: `gc.collect()` before `torch.cuda.empty_cache()` for consecutive image generations
+- **Multipart Proxy**: `multipart/form-data` model extraction for `/v1/images/edits` endpoint
+- **Configurable Tolerations**: User-specified `spec.tolerations` on v1alpha1/v1alpha2 CRDs ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24))
+- **Scheduler RBAC**: Dedicated `flexinfer-kube-scheduler` ClusterRole with least-privilege permissions ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
+- **Benchmark Sidecar Termination**: Shell wrapper with Istio `/quitquitquit` for service mesh compatibility ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23))
+- **GPU Detection Fallback**: K8s `node.status.allocatable` fallback for vendor/count when tools unavailable ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
+- **gfx1100 Perf Tuning**: `TORCH_BLAS_PREFER_HIPBLASLT=1` and prefill-decode split attention for vLLM
+- **Quantization Hardening**: Status preservation across cache rebuilds, idempotent completion status, `CompletedAt` path redirect
+
 ### Scale-to-Zero (Serverless) Infrastructure ✅
 
 - **Activator Pattern (Proxy)**:
@@ -125,7 +140,7 @@ The project has moved from code-complete to production-ready with the completion
 
 ### Backend Images
 
-- **ROCm GFX1100**: Build recipes exist (ROCm 6.4 source build + gfx1100-optimized images). Remaining gaps are mostly distribution ergonomics (publishing, digest pinning, and cluster-specific verification).
+- **ROCm GFX1100**: Build recipes exist (ROCm 6.4 source build + gfx1100-optimized images). FLUX.1 NF4 and vLLM perf tuning now shipped. Remaining gaps are distribution ergonomics (publishing, digest pinning) and user-facing docs for FLUX NF4 workflow.
 - **Maxwell**: Supported via CUDA 11.8 builds + FP32-only quantizations; docs exist but the “what models fit” list needs expansion.
 
 ## ❌ Known Gaps / Tech Debt
@@ -192,6 +207,8 @@ See `docs/design/multi-cluster.md` for full design.
 
 1. **Dependency refresh and validation cadence** — process scheduled Renovate batches and validate affected build/test paths ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
 2. **Roadmap tracking maintenance** — keep issue/document state synchronized as slices close ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
+3. **User-facing docs for FLUX NF4** — document three-layer dtype strategy, bitsandbytes version requirements, and memory analysis for gfx1100
+4. **GPU sharing operational docs** — document priority preemption semantics, demand window/swap cooldown timings, and hot-swap latency breakdown
 
 **What's Ready:**
 - ✅ Helm charts complete

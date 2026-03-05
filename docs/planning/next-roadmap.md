@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-02-20
+> Last updated: 2026-03-05
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
@@ -116,6 +116,45 @@ Progress note:
 - GlobalProxy CRD + global proxy binary + round-robin/failover/latency/weighted strategies are implemented (`api/v1alpha2/globalproxy_types.go`, `cmd/flexinfer-global-proxy/main.go`).
 - Dynamic weight adjustment and GPU-aware routing are complete in the delivered advanced-features slice.
 
+## FLUX.1 Diffusers + Image Generation Hardening ✅ COMPLETE
+
+Shipped across commits `db4cfde`..`053a2d6`.
+
+- [x] FLUX.1 Schnell (text-to-image) and FLUX.1 Fill (inpainting) pipeline support
+- [x] NF4 quantization via bitsandbytes for 24GB VRAM cards (three-layer dtype strategy)
+- [x] Diffusers `gc.collect()` fix for consecutive image generation OOM
+- [x] Auto-detect NF4 and force `cpu_offload` mode
+- [x] Startup timeout bumped to 900s for NF4+cpuOffload loading
+- [x] SDXL InpaintPipeline direct usage (bypass auto-pipeline detection)
+- [x] PyTorch 2.3 polyfills (RMSNorm, SDPA enable_gqa) for ROCm base images
+- [x] Apex removal (fused_rms_norm_affine incompatible with FP16)
+
+## ROCm gfx1100 Performance Tuning ✅ COMPLETE
+
+Shipped in commit `45d311c`.
+
+- [x] `TORCH_BLAS_PREFER_HIPBLASLT=1` and `HIPBLAS_OPERATION_TUNING=1` perf env vars for RDNA3
+- [x] Prefill-decode split attention (`VLLM_V1_USE_PREFILL_DECODE_ATTENTION=1`) config support
+
+## Controller & API Improvements (Feb-Mar 2026) ✅ COMPLETE
+
+Shipped across commits `9334ba3`..`017d46f`.
+
+- [x] Configurable tolerations in CRD spec — `spec.tolerations` on both v1alpha1 and v1alpha2 ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24))
+- [x] Dedicated `flexinfer-kube-scheduler` ClusterRole replacing overly-broad `system:kube-scheduler` ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
+- [x] Benchmark job sidecar termination for Istio/Linkerd compatibility ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23))
+- [x] K8s allocatable GPU detection fallback when vendor tools are unavailable ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
+- [x] Preserve quantization status across cache rebuilds
+- [x] Use `CompletedAt` for quantized model path redirect
+- [x] Idempotent quantize job completed status
+
+## Proxy: Multipart Image Editing ✅ COMPLETE
+
+Shipped in commit `7892613`.
+
+- [x] Multipart/form-data model extraction for `/v1/images/edits` endpoint
+- [x] JSON model rewriting guard (skips rewrite for non-JSON content types)
+
 ## Maintenance: Dependency Refresh 🚧 IN PROGRESS
 
 Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
@@ -123,7 +162,7 @@ Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
 - [x] Merge first minor/patch dependency batches (`prometheus`, `golang-x`) into `master` (`a16b2d1`)
 - [x] Merge `helm` Renovate batch: oras v1.3.0, busybox 1.37, kube-scheduler pinned to v1.33.4 (cluster-matched) (`32c4c74`)
 - [x] Merge safe `docker` minor/patch subset: alpine 3.23, golang 1.26.0, rocm 6.4.4, cuda 12.2.2 (`7a3f95a`)
-- [ ] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc)
+- [ ] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc) ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
 - [x] Keep roadmap tracking issue `#1` synchronized with dependency rollout status (updated 2026-02-26)
 
 ## Tech Debt (Ongoing)

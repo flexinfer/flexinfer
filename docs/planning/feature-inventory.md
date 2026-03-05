@@ -5,7 +5,7 @@ description: Current feature status (what's shipped, what's partial, what's miss
 
 # Feature Inventory
 
-> Last updated: 2026-02-10
+> Last updated: 2026-03-05
 
 This is a pragmatic inventory of "what works in practice" and "what's next". **Phases 1-4 plus 6 Advanced Features are now complete** — the project is at 95%+ production readiness. See phase planning docs for details.
 
@@ -17,7 +17,7 @@ This is a pragmatic inventory of "what works in practice" and "what's next". **P
 | Controller | `flexinfer-manager` | Reconcile CRDs into Deployments/Services/Jobs | Working (active iteration) |
 | Scheduler | `flexinfer-sched` | kube-scheduler extender scoring/filtering | Working |
 | Benchmarker | `flexinfer-bench` | Measure perf for scheduling inputs | Working (backend-dependent) |
-| Proxy | `flexinfer-proxy` | Request routing + "activator" for serverless | Working (Phase 2-3 hardened) |
+| Proxy | `flexinfer-proxy` | Request routing + "activator" for serverless | Working (Phase 2-3 hardened, multipart support) |
 | Flash-Loader | `flexinfer-flash-loader` | Parallel model preloading (PVC→tmpfs, P2P) | Working (init container) |
 
 ## CRDs / APIs
@@ -70,6 +70,11 @@ Docs: `docs/dev/backends.md`
 - **Flash-Loader sidecar** for parallel model preloading from PVC to tmpfs, reducing cold start I/O.
 - **Spot-instance resilience** with termination detectors for AWS, Azure, GCP, and Harvester.
 - **CNCF compliance artifacts**: GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning.
+- **FLUX.1 image generation** on ROCm gfx1100 with NF4 quantization (Schnell text-to-image + Fill inpainting).
+- **Multipart proxy** model extraction for `/v1/images/edits` multipart/form-data requests.
+- **Configurable tolerations** via `spec.tolerations` on CRD spec for scheduling on tainted nodes.
+- **GPU detection fallback** using K8s `node.status.allocatable` when vendor tools are unavailable.
+- **gfx1100 perf tuning**: HipBLASLt, prefill-decode split attention for vLLM v1.
 
 ## Recent operational learnings (k3s)
 
@@ -107,8 +112,16 @@ Docs: `docs/dev/backends.md`
 - ✅ **Spot-Instance Resilience** — Termination detectors for AWS, Azure, GCP, Harvester
 - ✅ **CNCF Sandbox Prep** — Governance, security, adopters, SBOM, license scanning
 
-### Future Phases
+### Delivered Phases (since inventory creation)
 
-- **Multi-cluster federation** - See `docs/design/multi-cluster.md`
-- **Multi-tenancy** - Namespace isolation features (no design doc yet)
-- **Context-aware router** - Full L7 prefix-caching router for "Chat with Doc" workloads
+- ✅ **Multi-cluster federation** — Cluster CRD, FederatedModel, GlobalProxy with weighted/latency routing. See `docs/design/multi-cluster.md`.
+- ✅ **Multi-tenancy** — Tenant baseline policy bundle, onboarding workflow, admission + fair-share follow-ups defined. See `docs/design/multi-tenancy.md`.
+- ✅ **Context-aware router** — Canonical prefix keying, safety/fallback controls, E2E validation. See `docs/user/routing.md`.
+- ✅ **FLUX.1 image generation** — NF4 on ROCm gfx1100, Schnell + Fill pipelines, diffusers OOM fix.
+- ✅ **Controller hardening** — Configurable tolerations, scheduler RBAC, benchmark sidecar termination, GPU detection fallback.
+
+### Future Work
+
+- **User-facing FLUX NF4 docs** — Three-layer dtype strategy, bitsandbytes requirements, memory analysis
+- **GPU sharing operational docs** — Priority preemption semantics, demand/swap timing, latency breakdown
+- **Backend distribution ergonomics** — Digest pinning, reproducible build/publish paths
