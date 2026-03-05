@@ -312,8 +312,8 @@ func TestHandleDockerInspect_HappyPath(t *testing.T) {
 		t.Fatalf("expected success, got error: %v", result.Content)
 	}
 	text := result.Content[0].Text
-	if !strings.Contains(text, "running") {
-		t.Errorf("expected running, got: %s", text)
+	if !strings.Contains(text, "abc123") {
+		t.Errorf("expected inspected container id, got: %s", text)
 	}
 }
 
