@@ -1037,8 +1037,8 @@ async def generate_images(request: ImageGenerationRequest):
 
 @app.post("/v1/images/edits")
 async def edit_images(
-    image: UploadFile = File(...),
     prompt: str = Form(...),
+    image: Optional[UploadFile] = File(None),
     mask: Optional[UploadFile] = File(None),
     model: Optional[str] = Form(None),
     n: int = Form(1),
@@ -1053,7 +1053,8 @@ async def edit_images(
     """OpenAI-compatible image editing endpoint.
 
     Supports inpainting (mask-based) and instruction-based editing
-    depending on PIPELINE_MODE.
+    depending on PIPELINE_MODE. When no image is provided, falls back
+    to text-to-image generation (blank canvas + full mask).
     """
     global pipeline
 
@@ -1071,7 +1072,7 @@ async def edit_images(
         )
 
     # Read uploaded files before entering the thread
-    image_bytes = await image.read()
+    image_bytes = await image.read() if image else None
     mask_bytes = await mask.read() if mask else None
 
     steps = (
@@ -1087,6 +1088,50 @@ async def edit_images(
     neg = negative_prompt or _default_negative_prompt()
 
     def _run_edit():
+        # No image provided: fall back to text-to-image generation
+        # using blank canvas + full mask (same as /v1/images/generations)
+        if image_bytes is None:
+            try:
+                w, h = map(int, size.lower().split("x")) if size else (1024, 1024)
+            except ValueError:
+                w, h = 1024, 1024
+            blank = Image.new("RGB", (w, h), (128, 128, 128))
+            full_mask = Image.new("L", (w, h), 255)
+            results = []
+            for _ in range(n):
+                with torch.inference_mode():
+                    if _is_flux(model_id):
+                        result = pipe(
+                            prompt=prompt,
+                            image=blank,
+                            mask_image=full_mask,
+                            num_inference_steps=steps,
+                            guidance_scale=cfg_scale,
+                            height=h,
+                            width=w,
+                        )
+                    else:
+                        s = strength if strength is not None else _default_strength()
+                        result = pipe(
+                            prompt=prompt,
+                            image=blank,
+                            mask_image=full_mask,
+                            strength=s,
+                            guidance_scale=cfg_scale,
+                            num_inference_steps=steps,
+                            negative_prompt=neg,
+                        )
+                img = result.images[0]
+                buffer = io.BytesIO()
+                img.save(buffer, format="PNG")
+                b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                results.append(ImageData(b64_json=b64_data))
+                del result, img, buffer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return results
+
         src_img = _decode_image(image_bytes)
         src_img = _resize_for_pipeline(src_img, size)
 
