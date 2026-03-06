@@ -2,7 +2,7 @@
 # Architecture-specific image for Radeon VII (gfx906)
 #
 # Key differences from gfx1100:
-# - No HSA_OVERRIDE_GFX_VERSION (gfx906 natively supported by ROCm)
+# - HSA_OVERRIDE_GFX_VERSION=9.0.6 (hardware reports gfx900, needs gfx906 ISA)
 # - No TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL (not applicable to GCN5)
 # - HSA_ENABLE_SDMA=0 for stability on Vega20
 # - HSA_USE_SVM=0 to work around hipMemGetInfo crash (ROCm/ROCm#2433)
@@ -21,6 +21,8 @@ ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
 
 # ROCm environment for gfx906 (Vega20 / Radeon VII)
+# Hardware reports gfx900; override to gfx906 so HIP kernels dispatch correctly.
+ENV HSA_OVERRIDE_GFX_VERSION=9.0.6
 ENV PYTORCH_ROCM_ARCH=gfx906
 ENV HSA_ENABLE_SDMA=0
 ENV HSA_USE_SVM=0
@@ -63,8 +65,21 @@ RUN pip uninstall -y torchvision apex && \
 
 RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 
-# Install bitsandbytes separately with --no-deps to prevent torch replacement.
-RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.49.2"
+# Build bitsandbytes from source for gfx906.
+# The pre-built pip wheel only ships HIP kernels for gfx90a/gfx942/gfx1100.
+# We build the HIP .so manually via cmake, then install the Python package
+# with BNB_SKIP_CMAKE=1 to avoid re-triggering cmake through scikit-build-core.
+# The conda compiler_compat linker is incompatible with the system compiler,
+# so we temporarily rename it during the build.
+RUN pip install --no-cache-dir cmake scikit-build-core && \
+    mv /opt/conda/envs/py_3.10/compiler_compat /opt/conda/envs/py_3.10/compiler_compat.bak && \
+    git clone --depth 1 --branch 0.49.2 https://github.com/bitsandbytes-foundation/bitsandbytes.git /tmp/bnb && \
+    cd /tmp/bnb && \
+    cmake -DCOMPUTE_BACKEND=hip -S . -B build && \
+    cmake --build build -j$(nproc) && \
+    BNB_SKIP_CMAKE=1 pip install --no-cache-dir --no-deps . && \
+    mv /opt/conda/envs/py_3.10/compiler_compat.bak /opt/conda/envs/py_3.10/compiler_compat && \
+    rm -rf /tmp/bnb
 
 # Copy the API server (shared across architectures)
 COPY build/server-diffusers.py /app/server.py
