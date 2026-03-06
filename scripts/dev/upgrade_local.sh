@@ -12,6 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 RESTART_DAEMON="${RESTART_DAEMON:-auto}" # auto|always|never
+HUD_URL_SCRIPT="$ROOT/scripts/dev/detect_hud_url.sh"
 
 cd "$ROOT"
 
@@ -137,7 +138,8 @@ if [ -f "$HUD_PLIST" ]; then
   launchctl start com.loom.hud
   sleep 2
   if lsof -ti :3333 >/dev/null 2>&1; then
-    echo "HUD restarted via launchctl — http://127.0.0.1:3333"
+    HUD_URL="$("$HUD_URL_SCRIPT" 3333)"
+    echo "HUD restarted via launchctl — $HUD_URL"
   else
     echo "WARNING: HUD failed to restart via launchctl. Check ~/.config/loom/logs/hud.log"
   fi
@@ -152,7 +154,8 @@ else
     nohup "$RUN_LOOM" hud --port 3333 > /tmp/loom-hud.log 2>&1 &
     sleep 2
     if lsof -ti :3333 >/dev/null 2>&1; then
-      echo "HUD restarted — http://127.0.0.1:3333"
+      HUD_URL="$("$HUD_URL_SCRIPT" 3333)"
+      echo "HUD restarted — $HUD_URL"
     else
       echo "WARNING: HUD failed to restart. Check /tmp/loom-hud.log"
     fi

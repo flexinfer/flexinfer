@@ -57,6 +57,7 @@ func loadHUDConfig() (hudURL, cfID, cfSecret string) {
 	}
 	var cfg struct {
 		Hub struct {
+			URL                  string `yaml:"url"`
 			CFAccessClientID     string `yaml:"cf_access_client_id"`
 			CFAccessClientSecret string `yaml:"cf_access_client_secret"`
 		} `yaml:"hub"`
@@ -72,6 +73,9 @@ func loadHUDConfig() (hudURL, cfID, cfSecret string) {
 	}
 
 	hudConfigOnce.url = cfg.HUD.URL
+	if hudConfigOnce.url == "" {
+		hudConfigOnce.url = deriveHUDURLFromHub(cfg.Hub.URL)
+	}
 	hudConfigOnce.host = cfg.HUD.Host
 	// HUD-specific CF Access creds take precedence, fallback to hub creds.
 	hudConfigOnce.cfID = cfg.HUD.CFAccessClientID
@@ -84,6 +88,33 @@ func loadHUDConfig() (hudURL, cfID, cfSecret string) {
 	}
 
 	return hudConfigOnce.url, hudConfigOnce.cfID, hudConfigOnce.cfSecret
+}
+
+func deriveHUDURLFromHub(hubURL string) string {
+	hubURL = strings.TrimSpace(hubURL)
+	if hubURL == "" {
+		return ""
+	}
+
+	u, err := url.Parse(hubURL)
+	if err != nil || strings.TrimSpace(u.Host) == "" {
+		return ""
+	}
+
+	scheme := "https"
+	switch strings.ToLower(u.Scheme) {
+	case "ws", "http":
+		scheme = "http"
+	case "wss", "https", "":
+		scheme = "https"
+	}
+
+	host := u.Host
+	if strings.HasPrefix(host, "mcp.") {
+		host = "hud." + strings.TrimPrefix(host, "mcp.")
+	}
+
+	return strings.TrimRight((&url.URL{Scheme: scheme, Host: host}).String(), "/")
 }
 
 // hudHostOverride returns the Host header override for internal ingress access.
@@ -149,56 +180,91 @@ func hudRequest(port, method, path string, body any, headers map[string]string, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var reqBody io.Reader
-	if payload != nil {
-		reqBody = bytes.NewReader(payload)
-	}
-
 	baseURL := hudBaseURL(port)
-	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, reqBody)
+	doRequest := func(currentBaseURL string) (json.RawMessage, int, error) {
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, currentBaseURL+path, bodyReader)
+		if err != nil {
+			return nil, 0, fmt.Errorf("create request: %w", err)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		if host := hudHostOverride(); host != "" {
+			req.Host = host
+		}
+
+		for k, v := range headers {
+			if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+				req.Header.Set(k, v)
+			}
+		}
+
+		if cfID, cfSecret := hudCFAccessHeaders(); cfID != "" && cfSecret != "" {
+			req.Header.Set("CF-Access-Client-Id", cfID)
+			req.Header.Set("CF-Access-Client-Secret", cfSecret)
+		}
+
+		client := http.DefaultClient
+		if strings.HasPrefix(currentBaseURL, "https://") {
+			client = hudHTTPClient
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, 0, fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
+		}
+		return data, resp.StatusCode, nil
+	}
+
+	data, statusCode, err := doRequest(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+		return nil, err
 	}
 
-	// Set Host header override for internal ingress access.
-	if host := hudHostOverride(); host != "" {
-		req.Host = host
-	}
-
-	for k, v := range headers {
-		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
-			req.Header.Set(k, v)
+	if shouldRetryHUDOverHTTPS(baseURL, statusCode, data) {
+		data, statusCode, err = doRequest("https://" + strings.TrimPrefix(baseURL, "http://"))
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	// Inject Cloudflare Access headers when connecting to a remote HUD.
-	if cfID, cfSecret := hudCFAccessHeaders(); cfID != "" && cfSecret != "" {
-		req.Header.Set("CF-Access-Client-Id", cfID)
-		req.Header.Set("CF-Access-Client-Secret", cfSecret)
+	if statusCode >= 400 {
+		return nil, fmt.Errorf("HUD returned %d: %s", statusCode, string(data))
 	}
-
-	// Use TLS-skip client for HTTPS URLs (internal ingress), default client for HTTP.
-	client := http.DefaultClient
-	if strings.HasPrefix(baseURL, "https://") {
-		client = hudHTTPClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HUD returned %d: %s", resp.StatusCode, string(data))
+	if looksLikeUnexpectedHUDHTML(data) {
+		return nil, fmt.Errorf("HUD returned unexpected HTML response, likely an auth challenge")
 	}
 	return data, nil
+}
+
+func shouldRetryHUDOverHTTPS(baseURL string, statusCode int, data []byte) bool {
+	return statusCode == http.StatusBadRequest &&
+		(strings.HasPrefix(baseURL, "http://127.0.0.1:") || strings.HasPrefix(baseURL, "http://localhost:")) &&
+		bytes.Contains(data, []byte("Client sent an HTTP request to an HTTPS server"))
+}
+
+func looksLikeUnexpectedHUDHTML(data []byte) bool {
+	body := bytes.TrimSpace(data)
+	if len(body) == 0 || body[0] != '<' {
+		return false
+	}
+
+	lower := bytes.ToLower(body)
+	return bytes.HasPrefix(lower, []byte("<!doctype html")) ||
+		bytes.HasPrefix(lower, []byte("<html")) ||
+		bytes.Contains(lower, []byte("<html")) ||
+		bytes.Contains(lower, []byte("cloudflare access"))
 }
 
 // hudPost sends a POST request with a JSON body to the HUD API.
@@ -385,6 +451,17 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status stri
 		return &heartbeatResponse{OK: true}, nil
 	}
 	return &resp, nil
+}
+
+func ensureDaemonSession(cmd *cobra.Command, p bridge.SessionStartParams) error {
+	_, err := withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+		result, err := agentBridge.StartSession(p)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(result)
+	})
+	return err
 }
 
 func updateTaskWithFallback(cmd *cobra.Command, port string, p bridge.UpdateTaskParams) (json.RawMessage, error) {
@@ -685,18 +762,28 @@ don't have native session-start hooks.`,
 				if startDescription == "" {
 					startDescription = "Heartbeat bootstrap session"
 				}
-
-				_, ensureErr := startSessionWithFallback(cmd, port, bridge.SessionStartParams{
+				sessionParams := bridge.SessionStartParams{
 					Namespace:   startNamespace,
 					AgentID:     agentID,
 					AgentType:   startAgentType,
 					Description: startDescription,
 					AutoRecall:  false,
-				})
+				}
+
+				_, ensureErr := startSessionWithFallback(cmd, port, sessionParams)
 				if ensureErr == nil {
+					if daemonEnsureErr := ensureDaemonSession(cmd, sessionParams); daemonEnsureErr != nil {
+						err = fmt.Errorf("%v (daemon ensure-session failed: %w)", err, daemonEnsureErr)
+					} else {
+						err = nil
+					}
+				}
+				if ensureErr == nil && err == nil {
 					resp, err = heartbeatWithFallback(cmd, port, agentID, status)
 				} else {
-					err = fmt.Errorf("%v (ensure-session failed: %w)", err, ensureErr)
+					if ensureErr != nil {
+						err = fmt.Errorf("%v (ensure-session failed: %w)", err, ensureErr)
+					}
 				}
 			}
 			if err != nil {

@@ -151,8 +151,8 @@ func (a *App) maybeAutoProvisionSandbox(namespace string) {
 	}
 
 	// Parse detect result to check if a fingerprint exists.
-	var detect map[string]any
-	if err := json.Unmarshal(detectResult, &detect); err != nil {
+	detect, err := bridge.ParseToolResultMap(detectResult)
+	if err != nil {
 		return
 	}
 	if detect["fingerprint_hash"] == nil || detect["fingerprint_hash"] == "" {

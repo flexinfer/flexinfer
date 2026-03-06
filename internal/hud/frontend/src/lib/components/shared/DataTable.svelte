@@ -48,7 +48,7 @@
   let colSpan = $derived((selectable ? 1 : 0) + columns.length);
 
   // Row pagination: show maxRows initially, expand on demand
-  let displayCount = $state(maxRows ?? Infinity);
+  let displayCount = $state(Infinity);
 
   // Reset display count when rows change
   $effect(() => {
@@ -253,7 +253,6 @@
   .data-table.stable-layout thead th,
   .data-table.stable-layout tbody td {
     min-width: 0;
-    max-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

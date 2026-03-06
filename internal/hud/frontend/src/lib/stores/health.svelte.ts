@@ -242,8 +242,9 @@ class HealthStore {
       };
     });
 
+    const keyFn = (s: MergedServer) => s.name;
     const hashFn = (s: MergedServer) => `${s.status}|${s.latency}|${s.tool_count}|${s.error_message}|${s.consec_fails}`;
-    if (!arraysEqualById(this.servers, merged, hashFn)) {
+    if (!arraysEqualByKey(this.servers, merged, keyFn, hashFn)) {
       this.servers = merged;
       this.lastUpdated = new Date();
     }

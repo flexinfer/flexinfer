@@ -1,9 +1,7 @@
 package monitor
 
 import (
-	"encoding/json"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -79,40 +77,11 @@ func (m *SandboxMonitor) Refresh() error {
 	if err != nil {
 		return err
 	}
-
-	// The daemon returns an MCP CallToolResult envelope.
-	// Extract the text payload from the first content item.
-	var envelope struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
+	snap, err := bridge.ParseToolResultMap(raw)
+	if err != nil {
+		return nil // Devbox unavailable or returned an error; skip silently.
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		// Try as raw JSON map (direct response).
-		var snap map[string]any
-		if err2 := json.Unmarshal(raw, &snap); err2 != nil {
-			return err
-		}
-		m.applySnapshot(snap)
-		return nil
-	}
-	if envelope.IsError {
-		return nil // Devbox not available — skip silently.
-	}
-
-	for _, c := range envelope.Content {
-		if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
-			var snap map[string]any
-			if err := json.Unmarshal([]byte(c.Text), &snap); err != nil {
-				continue
-			}
-			m.applySnapshot(snap)
-			return nil
-		}
-	}
-
+	m.applySnapshot(snap)
 	return nil
 }
 

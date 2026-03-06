@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	mcp "gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // AgentBridge wraps agent-context tool calls, routing them through the daemon's
@@ -19,6 +17,8 @@ type AgentBridge struct {
 	client *DaemonClient
 	cache  *Cache // session lookup cache (internal, always in-memory)
 }
+
+const defaultSessionListLimit = 1000
 
 // NewAgentBridge creates an AgentBridge backed by the given DaemonClient.
 func NewAgentBridge(client *DaemonClient) *AgentBridge {
@@ -262,18 +262,6 @@ func normalizeRelationInfo(r *RelationInfo) {
 
 // --- Helper to call an agent tool and unmarshal ---
 
-// mcpContent represents an item in an MCP CallToolResult's content array.
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// mcpCallToolResult is the MCP envelope returned by tools/call.
-type mcpCallToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError"`
-}
-
 // callAgentTool invokes an agent_context tool and unmarshals the response
 // into the provided target. It unwraps the MCP CallToolResult envelope and
 // supports both JSON and TOON (Token-Optimized Object Notation) text payloads.
@@ -283,53 +271,10 @@ func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
 
-	// Try to unwrap MCP content envelope first so tool-level errors are
-	// surfaced even when the caller does not expect a response payload.
-	var envelope mcpCallToolResult
-	if err := json.Unmarshal(raw, &envelope); err == nil {
-		if envelope.IsError {
-			errText := "tool returned error"
-			for _, c := range envelope.Content {
-				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
-					errText = strings.TrimSpace(c.Text)
-					break
-				}
-			}
-			return fmt.Errorf("agent tool %s: %s", toolName, errText)
-		}
-		if target == nil {
-			return nil
-		}
-
-		if len(envelope.Content) == 0 {
-			return fmt.Errorf("unmarshal %s result: empty content envelope", toolName)
-		}
-
-		// Extract the text payload from the first content item.
-		for _, c := range envelope.Content {
-			if c.Type == "text" && c.Text != "" {
-				// Try JSON first, fall back to TOON.
-				if err := json.Unmarshal([]byte(c.Text), target); err != nil {
-					jsonBytes, toonErr := mcp.DecodeTOONToJSON(c.Text)
-					if toonErr != nil {
-						return fmt.Errorf("unmarshal %s text (json: %v, toon: %v)", toolName, err, toonErr)
-					}
-					if err := json.Unmarshal(jsonBytes, target); err != nil {
-						return fmt.Errorf("unmarshal %s decoded toon: %w", toolName, err)
-					}
-				}
-				return nil
-			}
-		}
-		return fmt.Errorf("unmarshal %s result: no text content in envelope", toolName)
-	}
-
 	if target == nil {
 		return nil
 	}
-
-	// Fallback: try direct unmarshal (in case the daemon returns unwrapped JSON).
-	if err := json.Unmarshal(raw, target); err != nil {
+	if err := UnmarshalToolResult(raw, target); err != nil {
 		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
 	}
 	return nil
@@ -343,42 +288,10 @@ func (a *AgentBridge) callAgentToolTimeout(toolName string, args map[string]any,
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
 
-	var envelope mcpCallToolResult
-	if err := json.Unmarshal(raw, &envelope); err == nil {
-		if envelope.IsError {
-			errText := "tool returned error"
-			for _, c := range envelope.Content {
-				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
-					errText = strings.TrimSpace(c.Text)
-					break
-				}
-			}
-			return fmt.Errorf("agent tool %s: %s", toolName, errText)
-		}
-		if target == nil {
-			return nil
-		}
-		for _, c := range envelope.Content {
-			if c.Type == "text" && c.Text != "" {
-				if err := json.Unmarshal([]byte(c.Text), target); err != nil {
-					jsonBytes, toonErr := mcp.DecodeTOONToJSON(c.Text)
-					if toonErr != nil {
-						return fmt.Errorf("unmarshal %s text (json: %v, toon: %v)", toolName, err, toonErr)
-					}
-					if err := json.Unmarshal(jsonBytes, target); err != nil {
-						return fmt.Errorf("unmarshal %s decoded toon: %w", toolName, err)
-					}
-				}
-				return nil
-			}
-		}
-		return fmt.Errorf("unmarshal %s result: no text content in envelope", toolName)
-	}
-
 	if target == nil {
 		return nil
 	}
-	if err := json.Unmarshal(raw, target); err != nil {
+	if err := UnmarshalToolResult(raw, target); err != nil {
 		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
 	}
 	return nil
@@ -396,7 +309,9 @@ func (a *AgentBridge) Sessions() ([]SessionInfo, error) {
 	var result struct {
 		Sessions []SessionInfo `json:"sessions"`
 	}
-	if err := a.callAgentTool("agent_session_list", nil, &result); err != nil {
+	if err := a.callAgentTool("agent_session_list", map[string]any{
+		"limit": defaultSessionListLimit,
+	}, &result); err != nil {
 		return nil, err
 	}
 	return result.Sessions, nil

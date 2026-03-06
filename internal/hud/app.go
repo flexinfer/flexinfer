@@ -484,7 +484,7 @@ func Run(cfg Config) error {
 	}
 
 	actualAddr := ln.Addr().String()
-	url := scheme + "://" + actualAddr
+	url := browserURL(scheme, bindAddr, ln.Addr())
 
 	// Write the bound port to a file so CLI commands can discover it.
 	portFile := PortFilePath()
@@ -496,7 +496,7 @@ func Run(cfg Config) error {
 	}
 	defer os.Remove(portFile)
 
-	logger.Info("HUD server started", "url", url, "dev", cfg.Dev)
+	logger.Info("HUD server started", "url", url, "listen_addr", actualAddr, "dev", cfg.Dev)
 	fmt.Printf("Agent HUD running at %s\n", url)
 
 	if !cfg.TUI {
@@ -1736,9 +1736,8 @@ func (a *App) handleSandbox(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	// Parse the raw tool result and inject available=true.
-	var summary map[string]any
-	if err := json.Unmarshal(result, &summary); err != nil {
+	summary, err := bridge.ParseToolResultMap(result)
+	if err != nil {
 		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
 		fallback := map[string]any{"available": false}
 		a.writeJSON(w, http.StatusOK, fallback)
@@ -1815,8 +1814,8 @@ func (a *App) handleSandboxStart(w http.ResponseWriter, r *http.Request) {
 	// Invalidate summary cache so next poll picks up the new sandbox.
 	a.cache.Invalidate("sandbox_summary")
 
-	var parsed map[string]any
-	if err := json.Unmarshal(result, &parsed); err != nil {
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
 		a.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -2352,4 +2351,28 @@ func openBrowser(url string) {
 		defer cancel()
 		_ = cmd.Run()
 	}()
+}
+
+func browserURL(scheme, bindAddr string, addr net.Addr) string {
+	host, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return scheme + "://" + addr.String()
+	}
+	return scheme + "://" + net.JoinHostPort(browserHost(bindAddr, host), port)
+}
+
+func browserHost(bindAddr, listenHost string) string {
+	host := strings.Trim(strings.TrimSpace(bindAddr), "[]")
+	if host == "" {
+		host = strings.Trim(strings.TrimSpace(listenHost), "[]")
+	}
+
+	switch host {
+	case "", "0.0.0.0", "::", "*":
+		return "127.0.0.1"
+	case "localhost", "127.0.0.1", "::1":
+		return host
+	default:
+		return host
+	}
 }

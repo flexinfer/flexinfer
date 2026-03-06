@@ -721,7 +721,8 @@ hud-reload: hud-install
 	NEW_PID=$$!; \
 	sleep 2; \
 	if kill -0 $$NEW_PID 2>/dev/null; then \
-		echo "✓ HUD restarted (PID $$NEW_PID) — http://127.0.0.1:3333"; \
+		HUD_URL=$$(bash scripts/dev/detect_hud_url.sh 3333); \
+		echo "✓ HUD restarted (PID $$NEW_PID) — $$HUD_URL"; \
 	else \
 		echo "ERROR: HUD failed to start. Check /tmp/loom-hud.log"; \
 		exit 1; \

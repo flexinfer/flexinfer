@@ -409,8 +409,11 @@ func (a *App) handleMobileSessions(w http.ResponseWriter, r *http.Request) {
 
 	sessions, err := a.agent.Sessions()
 	if err != nil {
-		a.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list sessions")
-		return
+		// Graceful degradation: fall back to cached fleet snapshot sessions
+		// instead of returning a hard 502 to the mobile client.
+		a.logger.Warn("mobile: sessions upstream error, falling back to cache", "error", err)
+		snap := a.fleetMonitor.Snapshot()
+		sessions = snap.Sessions
 	}
 	if sessions == nil {
 		sessions = []bridge.SessionInfo{}
@@ -1654,8 +1657,8 @@ func (a *App) handleMobileSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var summary map[string]any
-	if err := json.Unmarshal(result, &summary); err != nil {
+	summary, err := bridge.ParseToolResultMap(result)
+	if err != nil {
 		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
 		a.writeMobileJSON(w, http.StatusOK, map[string]any{"available": false})
 		return
@@ -1697,8 +1700,8 @@ func (a *App) handleMobileSandboxStart(w http.ResponseWriter, r *http.Request) {
 
 	a.cache.Invalidate("sandbox_summary")
 
-	var parsed map[string]any
-	if err := json.Unmarshal(result, &parsed); err != nil {
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
 		a.writeMobileJSON(w, http.StatusOK, map[string]any{"started": true, "project": body.Project})
 		return
 	}
