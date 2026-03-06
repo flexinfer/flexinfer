@@ -3,6 +3,7 @@ bin/
 /mcp-*
 /loom
 /loomd
+/custom-server
 *.exe
 *.test
 
@@ -73,3 +74,16 @@ claude_desktop_config/
 # Frontend dependencies (HUD Svelte app)
 node_modules/
 .pnpm-store/
+
+# Xcode build artifacts (iOS companion)
+apps/loom-companion-ios/.build/
+apps/loom-companion-ios/.swiftpm/
+apps/loom-companion-ios/LoomCompanion.xcodeproj/project.xcworkspace/
+apps/loom-companion-ios/LoomCompanion.xcodeproj/xcuserdata/
+
+# Symlinks to external workspace dirs
+/libs
+
+# Stray paths / sandbox config
+/Users/
+.sandbox-policy.json
