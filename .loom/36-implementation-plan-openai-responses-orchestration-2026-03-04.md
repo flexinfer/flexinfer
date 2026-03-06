@@ -40,7 +40,7 @@ Build an isolated orchestration package first, then integrate via a new CLI surf
 - Architecture doc + interfaces agreed.
 - No behavior change to existing proxy path.
 
-### Current State (2026-03-04)
+### Current State (2026-03-06)
 
 - Landed `pkg/openairesponses` with:
   - context strategy contracts and validation (`chain|conversation|stateless`, mutual-exclusion guardrails),
@@ -93,7 +93,12 @@ Build an isolated orchestration package first, then integrate via a new CLI surf
   - validates feature gate + context mode,
   - invokes `Orchestrator` through injectable runtime dependencies,
   - returns structured JSON result for turn metadata.
-- M1 remains in progress until production Responses client timeout/retry semantics and daemon path integration are wired.
+- Added production runtime wiring for `loom responses run`:
+  - `pkg/openairesponses/client.go` issues `POST /v1/responses` with bounded retry semantics,
+  - `cmd/loom/cmd_responses_runtime.go` builds tool definitions from daemon `loom/tools`,
+  - tool calls route back through daemon `tools/call` with `agent_id` / `session_id` attribution.
+- Added targeted tests for request mapping, retry behavior, tool inventory wiring, and daemon-backed tool execution.
+- M1 is complete. Next slice is M2 token preflight + compaction policy controls.
 
 ## M2: Context Modes + Compaction + Token Preflight
 
@@ -193,7 +198,7 @@ Build an isolated orchestration package first, then integrate via a new CLI surf
 - [ ] Token preflight + compaction policy tests
 - [ ] Streaming event-loop tests
 - [ ] RBAC/policy/audit integration tests
-- [ ] CLI docs/examples for operator use
+- [x] CLI docs/examples for operator use
 
 ## Dependencies
 

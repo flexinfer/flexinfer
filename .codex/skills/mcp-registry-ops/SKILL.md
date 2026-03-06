@@ -41,6 +41,9 @@ Use `--dry-run` to preview and `--sort` to normalize.
   - `services/loom-core/bin/loom generate configs --registry platform/gitops/mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
 - Generate hub manifests:
   - `services/loom-core/bin/loom generate manifests --registry platform/gitops/mcp/context/registry.yaml --output-dir platform/gitops/k3s/loom-hub/servers`
+- Sync all platform configs (hub mode, all projects, skip nested worktrees):
+  - `for profile in vscode antigravity codex claude gemini kilocode; do services/loom-core/bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
+  - `services/loom-core/bin/loom sync skills all`
 
 If `services/loom-core/bin/loom` doesn't exist, build it:
 - `cd services/loom-core && go build -o bin/loom ./cmd/loom`

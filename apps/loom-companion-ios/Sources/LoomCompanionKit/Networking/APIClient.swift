@@ -14,12 +14,17 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
     private let cloudflareAccessClientID: String?
     private let cloudflareAccessClientSecret: String?
 
+    /// Delegate that accepts self-signed TLS certificates for LAN mode.
+    /// Must be retained for the lifetime of the URLSession.
+    private let sessionDelegate: InsecureTLSDelegate?
+
     public init(
         baseURL: URL,
         token: String,
         deviceId: String = "",
         cloudflareAccessClientID: String? = nil,
         cloudflareAccessClientSecret: String? = nil,
+        allowsInsecureTLS: Bool = false,
         session: URLSession? = nil
     ) {
         self.baseURL = baseURL
@@ -30,11 +35,19 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
 
         if let session {
             self.session = session
+            self.sessionDelegate = nil
         } else {
             let config = URLSessionConfiguration.default
             config.timeoutIntervalForRequest = 15
             config.timeoutIntervalForResource = 30
-            self.session = URLSession(configuration: config)
+            if allowsInsecureTLS {
+                let delegate = InsecureTLSDelegate()
+                self.sessionDelegate = delegate
+                self.session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+            } else {
+                self.sessionDelegate = nil
+                self.session = URLSession(configuration: config)
+            }
         }
     }
 
@@ -102,6 +115,18 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
         return request
     }
 
+    /// Build a URLSession suitable for SSE streaming (no request timeout).
+    /// Inherits TLS trust settings from this client.
+    public func sseSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 0
+        config.timeoutIntervalForResource = 0
+        if let delegate = sessionDelegate {
+            return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        }
+        return URLSession(configuration: config)
+    }
+
     private func applyAuthHeaders(to request: inout URLRequest) {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if !deviceId.isEmpty {
@@ -142,3 +167,21 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
 
 /// Empty decodable for error-only envelopes.
 private struct EmptyData: Decodable {}
+
+/// URLSession delegate that accepts self-signed TLS certificates.
+/// Used in LAN mode where the HUD serves HTTPS with a self-signed cert.
+final class InsecureTLSDelegate: NSObject, URLSessionDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let serverTrust = challenge.protectionSpace.serverTrust
+        else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: serverTrust))
+    }
+}

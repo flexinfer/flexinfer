@@ -87,8 +87,8 @@ else
 fi
 
 if check_tool golangci-lint "linting"; then
-  echo -n "Running golangci-lint (fast)... "
-  if ! "${WITH_CLEAN_GIT_ENV}" golangci-lint run --fast --timeout 1m ./... 2>&1; then
+  echo -n "Running golangci-lint... "
+  if ! "${WITH_CLEAN_GIT_ENV}" golangci-lint run --timeout 1m ./... 2>&1; then
     echo -e "${RED}FAILED${NC}"
     FAILED=1
   else
@@ -105,8 +105,8 @@ else
 fi
 
 echo -n "Checking for TODOs... "
-TODO_COUNT="$(grep -c -E 'TODO|FIXME|XXX|HACK' ${STAGED_GO_FILES} 2>/dev/null | awk -F: '{sum += $NF} END {print sum}' || echo "0")"
-if [[ "${TODO_COUNT}" -gt 0 ]]; then
+TODO_COUNT="$(grep -c -E 'TODO|FIXME|XXX|HACK' ${STAGED_GO_FILES} 2>/dev/null | awk -F: '{sum += $NF} END {print sum+0}' || echo "0")"
+if [[ "${TODO_COUNT}" -gt 0 ]] 2>/dev/null; then
   echo -e "${YELLOW}Found ${TODO_COUNT} TODO/FIXME comments${NC}"
 fi
 

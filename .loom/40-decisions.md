@@ -218,6 +218,40 @@
   - [S1] Research findings F1, F3, F7 (`10-research.md`)
   - [S2] `layout.css` — existing ad-hoc grid/component styles
 
+## 2026-03-06: Move private workspace libs out of CI bootstrap and into pinned modules plus go.work
+
+- Decision:
+  - Keep developer-local sibling library usage in a committed `go.work`.
+  - Pin `gitlab.flexinfer.ai/libs/mcp-go`, `gitlab.flexinfer.ai/libs/fi-mcp-kit`, and `gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel` in `go.mod`.
+  - In CI, force `GOWORK=off` and authenticate direct private module fetches with GitLab job-token URL rewrites instead of cloning sibling repos into `../../libs`.
+- Rationale:
+  - The previous pattern made every heavy CI job pay for manual repo bootstrap and three extra clones before any actual build or test work started.
+  - The repo still needs local workspace overlays for adjacent-lib development, but that concern belongs in `go.work`, not in CI job bootstrap.
+- Consequences:
+  - CI resolves reproducible pinned versions while local workspace builds still track sibling checkout heads.
+  - Private module auth is now an explicit CI concern.
+- Sources:
+  - [S1] `go.mod:35`
+  - [S2] `go.work:1`
+  - [S3] `.gitlab-ci.yml:61`
+  - [S4] `.gitlab-ci.yml:125`
+
+## 2026-03-06: Use named BuildKit context plus container-local replaces for custom-server local image builds
+
+- Decision:
+  - Build `Dockerfile.custom-server.local` from `services/loom-core` as the primary context and pass `libs/` as a named BuildKit context.
+  - Inside the builder, inject temporary `go mod edit -replace` mappings for the three private sibling modules before compiling.
+- Rationale:
+  - Using the whole workspace as Docker context pushed multiple gigabytes of unrelated artifacts into every image build.
+  - The container still needs sibling lib content, but that should be an explicit secondary context, not a workspace-root side effect.
+- Consequences:
+  - Local image builds are materially smaller and no longer depend on remote GitLab auth for the private sibling modules.
+  - This logic is intentionally local-only and remains isolated to `Dockerfile.custom-server.local`.
+- Sources:
+  - [S1] `Makefile:979`
+  - [S2] `Dockerfile.custom-server.local:21`
+  - [S3] `Dockerfile.custom-server.local:32`
+
 ## 2026-02-13: Use slide-over DetailDrawer for drill-down (not modal)
 
 - Decision:
@@ -254,3 +288,24 @@
   - [S1] `.codex/skills/plan-loom-core/SKILL.md:15`
   - [S2] Command: unset `CODEX_HOME` + raw command failure.
   - [S3] Command: unset `CODEX_HOME` + fallback command success.
+
+## 2026-03-04: Responses integration as isolated orchestration layer (not proxy-core change)
+
+- Decision:
+  - Implement OpenAI Responses support as a dedicated Loom orchestration package/command that executes tools through existing daemon `loom/call` paths, instead of embedding Responses logic directly into `loom proxy` transport handlers.
+- Rationale:
+  - `loom proxy` currently focuses on MCP transport aggregation and routing (`cmd/loom/proxy.go`), with strict concerns around transport reliability, timeout derivation, and payload truncation.
+  - Daemon call pipeline already centralizes RBAC, policy checks, caching, and audit (`internal/daemon/daemon_call.go`, `internal/daemon/callpipeline.go`).
+  - Reusing existing call paths minimizes security/regression risk while enabling Responses-specific orchestration in a separable layer.
+- Alternatives considered:
+  - Add Responses orchestration directly into proxy handlers: rejected due mixed concerns and higher blast radius.
+  - Keep loop orchestration entirely in clients: rejected due policy/audit fragmentation.
+- Consequences:
+  - New package/API surface required for Responses request/stream loop handling.
+  - Existing proxy/daemon behavior remains unchanged for non-Responses workflows.
+- Sources:
+  - [S1] `cmd/loom/proxy.go:412`
+  - [S2] `cmd/loom/proxy.go:438`
+  - [S3] `internal/daemon/daemon_call.go:24`
+  - [S4] `internal/daemon/callpipeline.go:126`
+  - [S5] `.loom/15-research-openai-responses-tool-context-2026-03-04.md`

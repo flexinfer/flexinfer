@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +197,41 @@ func TestHandleExecTimeout(t *testing.T) {
 	content := result.Content[0].Text
 	if !strings.Contains(content, "timed out after 1s") {
 		t.Errorf("Expected timeout message, got %s", content)
+	}
+}
+
+func TestFirstExistingPath(t *testing.T) {
+	tmp := t.TempDir()
+	existing := filepath.Join(tmp, "kubeconfig.yaml")
+	if err := os.WriteFile(existing, []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+
+	raw := filepath.Join(tmp, "missing.yaml") + string(os.PathListSeparator) + existing
+	got := firstExistingPath(raw)
+	if got != existing {
+		t.Fatalf("expected first existing path %q, got %q", existing, got)
+	}
+}
+
+func TestGetKubeConfigIgnoresMissingEnvPath(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	kubeDir := filepath.Join(home, ".kube")
+	if err := os.MkdirAll(kubeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .kube: %v", err)
+	}
+	k3sPath := filepath.Join(kubeDir, "k3s.yaml")
+	if err := os.WriteFile(k3sPath, []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatalf("write k3s kubeconfig: %v", err)
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("MCP_K8S_KUBECONFIG", filepath.Join(tmp, "does-not-exist.yaml"))
+	t.Setenv("KUBECONFIG", "")
+
+	got := getKubeConfig()
+	if got != k3sPath {
+		t.Fatalf("expected fallback kubeconfig %q, got %q", k3sPath, got)
 	}
 }

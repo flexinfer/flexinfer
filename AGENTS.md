@@ -47,10 +47,13 @@ The CLI and daemon typically run on developer machines:
 make build
 
 # Generate MCP configs for all targets
-./bin/loom generate configs --target all
+./bin/loom generate configs --target all --hub-mode
 
 # Sync configs to home directory
-./bin/loom sync all --regen
+for profile in vscode antigravity codex claude gemini kilocode; do
+  ./bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+done
+./bin/loom sync skills all
 
 # Start daemon (manages MCP server processes)
 ./bin/loomd
@@ -79,7 +82,7 @@ make dev-reload
 Both targets execute the same pipeline:
 1. Build `loom` + `loomd` binaries
 2. Atomic install to `~/.local/bin` (no window where binaries are missing)
-3. Regenerate + sync platform configs (`loom sync all --regen --loom-mode`)
+3. Regenerate + sync platform configs (hub mode + all projects, skipping `.worktrees/`)
 4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
 5. Restart HUD if running on port 3333
 6. Smoke test (proxy initialize round-trip)
@@ -104,11 +107,13 @@ make bootstrap-local    # Build + install + sync + environment check
 ### Individual platform config sync
 
 ```bash
-loom sync claude --regen      # Regenerate .claude/mcp.json + .claude/settings.json
-loom sync codex --regen       # Regenerate .codex/config.toml
-loom sync gemini --regen      # Regenerate .gemini/config.toml + .gemini/settings.json
-loom sync zed --regen         # Regenerate .zed/mcp.json
-loom sync all --regen         # All platforms at once
+loom sync claude --regen --hub-mode --all-projects --skip-worktrees
+loom sync codex --regen --hub-mode --all-projects --skip-worktrees
+loom sync gemini --regen --hub-mode --all-projects --skip-worktrees
+loom sync vscode --regen --hub-mode --all-projects --skip-worktrees
+loom sync antigravity --regen --hub-mode --all-projects --skip-worktrees
+loom sync kilocode --regen --hub-mode --all-projects --skip-worktrees
+loom sync skills all
 ```
 
 ### Platform permissions
@@ -269,7 +274,7 @@ Code Style
 
 - Run `golangci-lint run` before committing
 - Run `go test ./...` to verify changes
-- In restricted/sandboxed environments, prefer `make test-sandbox` to force `GOCACHE`/`GOMODCACHE` into `/tmp`.
+- In restricted/sandboxed environments, prefer `make test-sandbox`, then run `../../bin/workspace-clean --tmp-agent` to clear temporary Go caches.
 - Keep MCP server implementations in `cmd/mcp-*/main.go`
 - Shared non-server utilities live under `pkg/` (configs, registry, profiles, sync, validation)
 

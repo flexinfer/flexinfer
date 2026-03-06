@@ -229,7 +229,7 @@ struct ContentView: View {
         guard let apiClient = connectionVM.buildAPIClient(),
               let request = try? apiClient.sseRequest()
         else { return }
-        let client = SSEClient(request: request)
+        let client = SSEClient(request: request, session: apiClient.sseSession())
         client.onStateChange = { [weak healthMonitor] state in
             healthMonitor?.handleSSEStateChange(state)
         }

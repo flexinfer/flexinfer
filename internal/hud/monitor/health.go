@@ -375,8 +375,13 @@ func (m *HealthMonitor) Refresh() error {
 }
 
 func classifyHealthEntry(entry ServerHealthEntry) healthClass {
-	// Stopped local process with no usable health target is truly idle.
+	// Stopped local process with no usable health target.
+	// If the server has registered tools it is reachable through the hub
+	// and should be considered healthy rather than idle.
 	if !entry.Running && entry.Target == "unavailable" {
+		if entry.ToolCount > 0 {
+			return healthClassHealthy
+		}
 		return healthClassIdle
 	}
 

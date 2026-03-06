@@ -446,6 +446,7 @@ git-setup:
 	@chmod +x scripts/dev/with-clean-git-env.sh
 	@chmod +x scripts/dev/repair_git_setup.sh
 	@chmod +x scripts/hooks/run-pre-commit-hook.sh
+	@chmod +x scripts/hooks/with-stashed-worktree.sh
 	@chmod +x scripts/hooks/pre-commit
 	@chmod +x scripts/hooks/pre-commit-native.sh
 	@chmod +x scripts/hooks/pre-push

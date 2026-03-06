@@ -172,12 +172,13 @@ These address capabilities the market now expects from production MCP infrastruc
   - Expose OTel-compatible metrics in HUD health views.
   - *Rationale: Industry standard. Positions Loom alongside (not against) Langfuse, Datadog, Splunk.*
 
-- [ ] **OpenAI Responses orchestration (experimental track)** ([Plan](.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md))
+- [ ] **OpenAI Responses orchestration (experimental track)** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/63), [Plan](.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md))
   - ✅ 2026-03-04 M0 slice landed: `pkg/openairesponses` contract scaffolding (`ContextStrategy`, tool/turn interfaces, validation) and environment-driven feature gate config (`LOOM_EXPERIMENTAL_OPENAI_RESPONSES`).
   - ✅ 2026-03-04 CLI surface landed: `loom responses status` exposes gate/runtime loop settings without changing existing proxy behavior.
   - ✅ 2026-03-04 M1 package slice landed: non-stream loop orchestrator in `pkg/openairesponses/orchestrator.go` with deterministic multi-turn tool execution tests.
   - ✅ 2026-03-04 runtime entrypoint slice landed: `loom responses run` now invokes the orchestrator through a gated runtime dependency factory.
-  - Next: wire production Responses client timeout/retry semantics and daemon call-path tool execution for end-to-end gated execution.
+  - ✅ 2026-03-06 M1 runtime wiring landed: `pkg/openairesponses/client.go` adds a production Responses HTTP client with bounded retries, and `cmd/loom/cmd_responses_runtime.go` routes tool inventory + tool execution through the daemon socket with identity propagation.
+  - Next: add M2 token preflight and compaction controls, then cover RBAC/policy/audit behavior with end-to-end orchestration tests.
   - *Rationale: Adds policy/audit-compatible OpenAI Responses support without destabilizing existing MCP proxy paths.*
 
 - [x] **Remote MCP transport + auth** ✅ Shipped
@@ -233,9 +234,9 @@ These position Loom Core in ways competitors cannot easily replicate.
 
 Derived from architectural review identifying tool surface bloat, visibility sprawl, and config complexity. Full backlog: `.loom/35-simplification-epics.md`.
 
-- [ ] **EPIC 1: Simplify Agent Context** — Reduce 80 MCP tools to ~45 via deprecation, facade unification, and service decomposition (12 issues: SIMP-1 through SIMP-12)
-- [ ] **EPIC 2: Unify Visibility** — Shared API contracts, embedded HUD, richer CLI/TUI (5 issues: UNIFY-1 through UNIFY-5)
-- [ ] **EPIC 3: Reduce Config Complexity** — Data-driven platform profiles replacing hardcoded generators (4 issues: CONFIG-1 through CONFIG-4)
+- [ ] **EPIC 1: Simplify Agent Context** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/65)) — Reduce 80 MCP tools to ~45 via deprecation, facade unification, and service decomposition (12 issues: SIMP-1 through SIMP-12)
+- [ ] **EPIC 2: Unify Visibility** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/66)) — Shared API contracts, embedded HUD, richer CLI/TUI (5 issues: UNIFY-1 through UNIFY-5)
+- [ ] **EPIC 3: Reduce Config Complexity** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/67)) — Data-driven platform profiles replacing hardcoded generators (4 issues: CONFIG-1 through CONFIG-4)
 
 ## Ongoing Engineering Goals
 

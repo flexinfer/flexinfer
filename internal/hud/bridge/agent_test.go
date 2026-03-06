@@ -586,6 +586,47 @@ func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *test
 	}
 }
 
+func TestAgentBridge_SessionsUsesExpandedDefaultLimit(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_session_list" {
+			t.Fatalf("unexpected tool name: %s", req.Name)
+		}
+		if got, _ := req.Arguments["limit"].(float64); int(got) != defaultSessionListLimit {
+			t.Fatalf("expected limit=%d, got %#v", defaultSessionListLimit, req.Arguments["limit"])
+		}
+		return map[string]any{
+			"isError": false,
+			"content": []map[string]any{
+				{"type": "text", "text": `{"sessions":[{"id":"sess-1","agent_id":"agent-1","status":"active"}]}`},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	sessions, err := bridge.Sessions()
+	if err != nil {
+		t.Fatalf("Sessions() failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "sess-1" {
+		t.Fatalf("unexpected sessions: %#v", sessions)
+	}
+}
+
 func TestAgentBridge_MemoryAdd_UsesItemsArrayShape(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 

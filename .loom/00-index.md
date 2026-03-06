@@ -5,14 +5,18 @@
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
 - Research (mobile companion): `10-research.md`
+- Research (OpenAI Responses + Loom tool/context integration): `15-research-openai-responses-tool-context-2026-03-04.md`
 - Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
 - Product spec (mobile companion): `20-product-spec.md`
+- Product spec (OpenAI Responses orchestration): `21-product-spec-openai-responses-orchestration-2026-03-04.md`
 - Implementation plan (mobile companion): `30-implementation-plan.md`
 - Implementation plan (agent trace + telemetry dashboards): `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+- Implementation plan (OpenAI Responses orchestration): `36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
 - Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
 - Mobile security draft: `../docs/MOBILE_COMPANION_SECURITY.md`
 - Historical roadmap mapping: `31-gap-to-backlog-map.md`
 - Mobile backlog mapping: `32-mobile-gap-to-backlog-map.md`
+- Simplification EPICs (3 EPICs, 21 issues): `35-simplification-epics.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 - Tech debt inventory: `tech-debt-inventory.md` (all items resolved)

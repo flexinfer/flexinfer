@@ -236,6 +236,17 @@ Execution intent:
 3. Add TestFlight upload workflow.
 4. Add macOS-runner CI jobs for iOS packaging/publish gates.
 
+## OpenAI Responses Integration Addendum (2026-03-04)
+
+Parallel planning track (tool/context orchestration in loom-core):
+- Research: `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
+- Product spec: `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
+- Implementation plan: `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
+
+Codebase index readiness note:
+- Embeddings-enabled index job failed on backend API error; fallback `embeddings=false` index job is in progress.
+- Current details tracked in `.loom/00-mcp-inventory.md`.
+
 ## Sources
 
 - `internal/hud/app.go:317`

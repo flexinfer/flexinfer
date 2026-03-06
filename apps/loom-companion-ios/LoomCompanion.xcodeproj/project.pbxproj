@@ -57,6 +57,33 @@
 		F91AF5E5C440230EB88D369A /* PushNotificationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */; };
 		FA64F07EF16BF9A5CBA8759C /* DeviceInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D43F146F42E91DCCAA523D /* DeviceInfo.swift */; };
 		FEEC34A014B3BE76C909FA4C /* ConnectionHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30696986D90C9AC7E69B8AA2 /* ConnectionHealthMonitor.swift */; };
+		D0A1B2C3D4E5F6A7B8C9D0E1 /* OpsTaskDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD01A2B3C4D5E6F7A8B9C0D1 /* OpsTaskDetailView.swift */; };
+		D0B2C3D4E5F6A7B8C9D0E1F2 /* OpsWorkflowDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD02B3C4D5E6F7A8B9C0D1E2 /* OpsWorkflowDetailView.swift */; };
+		D0C3D4E5F6A7B8C9D0E1F2A3 /* OpsReasoningChainDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD03C4D5E6F7A8B9C0D1E2F3 /* OpsReasoningChainDetailView.swift */; };
+		D1E2F3A4B5C607E8F9A0B1C2 /* DeepLinkRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607B8C9D0E1F2 /* DeepLinkRouter.swift */; };
+		D2E3F4A5B6C708E9F0A1B2C3 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F708B9C0D1E2F3 /* HapticManager.swift */; };
+		D3E4F5A6B7C809E0F1A2B3C4 /* AnimatedCounter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B4C5D6E7F809B0C1D2E3F4 /* AnimatedCounter.swift */; };
+		D4E5F6A7B8C90AE1F2A3B4C5 /* LoomCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B5C6D7E8F90AB1C2D3E4F5 /* LoomCard.swift */; };
+		D5E6F7A8B9C00BE2F3A4B5C6 /* PulsingDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */; };
+		D6E7F8A9B0C10CE3F4A5B6C7 /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */; };
+		D7E8F9A0B1C20DE4F5A6B7C8 /* StatusAccentBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */; };
+		D8E9F0A1B2C30EE5F6A7B8C9 /* FleetCompositionChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B9C0D1E2F30EB5C6D7E8F9 /* FleetCompositionChart.swift */; };
+		D9E0F1A2B3C40FE6F7A8B9C0 /* HealthGaugeChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B0C1D2E3F40FB6C7D8E9F0 /* HealthGaugeChart.swift */; };
+		E0F1A2B3C4D510E7F8A9B0D1 /* MemoryTierChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0C1D2E3F4A510B7C8D9E0F1 /* MemoryTierChart.swift */; };
+		E1F2A3B4C5D611E8F9A0B1D2 /* SessionTimelineChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A611B8C9D0E1F2 /* SessionTimelineChart.swift */; };
+		E2F3A4B5C6D712E9F0A1B2D3 /* TaskStatusChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A712B9C0D1E2F3 /* TaskStatusChart.swift */; };
+		E3F4A5B6C7D813E0F1A2B3D4 /* LoomAnimations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C4D5E6F7A813B0C1D2E3F4 /* LoomAnimations.swift */; };
+		E4F5A6B7C8D914E1F2A3B4D5 /* LoomColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4C5D6E7F8A914B1C2D3E4F5 /* LoomColors.swift */; };
+		E5F6A7B8C9D015E2F3A4B5D6 /* LoomShadows.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C6D7E8F9A015B2C3D4E5F6 /* LoomShadows.swift */; };
+		E6F7A8B9C0D116E3F4A5B6D7 /* LoomSpacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6C7D8E9F0A116B3C4D5E6F7 /* LoomSpacing.swift */; };
+		E7F8A9B0C1D217E4F5A6B7D8 /* LoomTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C8D9E0F1A217B4C5D6E7F8 /* LoomTypography.swift */; };
+		E8F9A0B1C2D318E5F6A7B8D9 /* CheckFleetHealthIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C9D0E1F2A318B5C6D7E8F9 /* CheckFleetHealthIntent.swift */; };
+		E9F0A1B2C3D419E6F7A8B9D0 /* GetActiveSessionsIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9C0D1E2F3A419B6C7D8E9F0 /* GetActiveSessionsIntent.swift */; };
+		F0A1B2C3D4E51AE7F8A9B0E1 /* ListBlockedTasksIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1E2F3A4B51AC7D8E9F0A1 /* ListBlockedTasksIntent.swift */; };
+		F1A2B3C4D5E61BE8F9A0B1E2 /* LoomShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F4A5B61BD8E9F0A1B2 /* LoomShortcuts.swift */; };
+		F2A3B4C5D6E71CF9A0B1C2E3 /* WorkflowLiveActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B71CE9F0A1B2C3 /* WorkflowLiveActivityView.swift */; };
+		F3A4B5C6D7E81DA0B1C2D3E4 /* WidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B81DF0A1B2C3D4 /* WidgetData.swift */; };
+		F4A5B6C7D8E91EB1C2D3E4F5 /* WorkflowActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D5E6F7A8B91EA1B2C3D4E5 /* WorkflowActivity.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -134,6 +161,33 @@
 		E6EE71E2DE22C9A8E98B4698 /* LoomCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LoomCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationsViewModel.swift; sourceTree = "<group>"; };
 		FF1F234E71EBAD74BAF8F8FB /* ConnectionRemediation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRemediation.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F607B8C9D0E1F2 /* DeepLinkRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkRouter.swift; sourceTree = "<group>"; };
+		DD01A2B3C4D5E6F7A8B9C0D1 /* OpsTaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsTaskDetailView.swift; sourceTree = "<group>"; };
+		DD02B3C4D5E6F7A8B9C0D1E2 /* OpsWorkflowDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsWorkflowDetailView.swift; sourceTree = "<group>"; };
+		DD03C4D5E6F7A8B9C0D1E2F3 /* OpsReasoningChainDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsReasoningChainDetailView.swift; sourceTree = "<group>"; };
+		A2B3C4D5E6F708B9C0D1E2F3 /* HapticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManager.swift; sourceTree = "<group>"; };
+		A3B4C5D6E7F809B0C1D2E3F4 /* AnimatedCounter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedCounter.swift; sourceTree = "<group>"; };
+		A4B5C6D7E8F90AB1C2D3E4F5 /* LoomCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomCard.swift; sourceTree = "<group>"; };
+		A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulsingDot.swift; sourceTree = "<group>"; };
+		A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
+		A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusAccentBar.swift; sourceTree = "<group>"; };
+		A8B9C0D1E2F30EB5C6D7E8F9 /* FleetCompositionChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetCompositionChart.swift; sourceTree = "<group>"; };
+		A9B0C1D2E3F40FB6C7D8E9F0 /* HealthGaugeChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthGaugeChart.swift; sourceTree = "<group>"; };
+		B0C1D2E3F4A510B7C8D9E0F1 /* MemoryTierChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryTierChart.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A611B8C9D0E1F2 /* SessionTimelineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTimelineChart.swift; sourceTree = "<group>"; };
+		B2C3D4E5F6A712B9C0D1E2F3 /* TaskStatusChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskStatusChart.swift; sourceTree = "<group>"; };
+		B3C4D5E6F7A813B0C1D2E3F4 /* LoomAnimations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomAnimations.swift; sourceTree = "<group>"; };
+		B4C5D6E7F8A914B1C2D3E4F5 /* LoomColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomColors.swift; sourceTree = "<group>"; };
+		B5C6D7E8F9A015B2C3D4E5F6 /* LoomShadows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomShadows.swift; sourceTree = "<group>"; };
+		B6C7D8E9F0A116B3C4D5E6F7 /* LoomSpacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomSpacing.swift; sourceTree = "<group>"; };
+		B7C8D9E0F1A217B4C5D6E7F8 /* LoomTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomTypography.swift; sourceTree = "<group>"; };
+		B8C9D0E1F2A318B5C6D7E8F9 /* CheckFleetHealthIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckFleetHealthIntent.swift; sourceTree = "<group>"; };
+		B9C0D1E2F3A419B6C7D8E9F0 /* GetActiveSessionsIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetActiveSessionsIntent.swift; sourceTree = "<group>"; };
+		C0D1E2F3A4B51AC7D8E9F0A1 /* ListBlockedTasksIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListBlockedTasksIntent.swift; sourceTree = "<group>"; };
+		C1D2E3F4A5B61BD8E9F0A1B2 /* LoomShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomShortcuts.swift; sourceTree = "<group>"; };
+		C2D3E4F5A6B71CE9F0A1B2C3 /* WorkflowLiveActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowLiveActivityView.swift; sourceTree = "<group>"; };
+		C3D4E5F6A7B81DF0A1B2C3D4 /* WidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetData.swift; sourceTree = "<group>"; };
+		C4D5E6F7A8B91EA1B2C3D4E5 /* WorkflowActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowActivity.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -152,6 +206,7 @@
 			isa = PBXGroup;
 			children = (
 				B7D43F146F42E91DCCAA523D /* DeviceInfo.swift */,
+				A2B3C4D5E6F708B9C0D1E2F3 /* HapticManager.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -195,8 +250,13 @@
 		861221A809B8922F84197350 /* LoomCompanion */ = {
 			isa = PBXGroup;
 			children = (
+				AA02BB03CC0402D5EE06FF07 /* Components */,
 				678EE9DDABB8C2F74E417932 /* ContentView.swift */,
+				AA04BB05CC0604D7EE08FF09 /* DesignSystem */,
+				AA05BB06CC0705D8EE09FF0A /* Intents */,
+				AA06BB07CC0806D9EE0AFF0B /* LiveActivity */,
 				88F2FE450A41EBC1375D96E2 /* LoomCompanionApp.swift */,
+				AA01BB02CC0301D4EE05FF06 /* Navigation */,
 				093267C2E51E16FB5623E69D /* Utilities */,
 				8717CC413A4AEEB0AE0B2CB4 /* Views */,
 			);
@@ -220,7 +280,10 @@
 		94E138E964ADC74E7EBF3410 /* Ops */ = {
 			isa = PBXGroup;
 			children = (
+				DD03C4D5E6F7A8B9C0D1E2F3 /* OpsReasoningChainDetailView.swift */,
+				DD01A2B3C4D5E6F7A8B9C0D1 /* OpsTaskDetailView.swift */,
 				1C5E25ADF1909F821B3221D7 /* OpsView.swift */,
+				DD02B3C4D5E6F7A8B9C0D1E2 /* OpsWorkflowDetailView.swift */,
 			);
 			path = Ops;
 			sourceTree = "<group>";
@@ -271,6 +334,8 @@
 				7AD6F95E28AFA49A9FA77CF5 /* PushRegistration.swift */,
 				6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */,
 				D8E876D98B58CECC44EB5E5E /* TimelineEntry.swift */,
+				C3D4E5F6A7B81DF0A1B2C3D4 /* WidgetData.swift */,
+				C4D5E6F7A8B91EA1B2C3D4E5 /* WorkflowActivity.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -338,6 +403,70 @@
 				D147DBE9994E08EA6A1AF9C1 /* AlertsListView.swift */,
 			);
 			path = Alerts;
+			sourceTree = "<group>";
+		};
+		AA01BB02CC0301D4EE05FF06 /* Navigation */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F607B8C9D0E1F2 /* DeepLinkRouter.swift */,
+			);
+			path = Navigation;
+			sourceTree = "<group>";
+		};
+		AA02BB03CC0402D5EE06FF07 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				A3B4C5D6E7F809B0C1D2E3F4 /* AnimatedCounter.swift */,
+				AA03BB04CC0503D6EE07FF08 /* Charts */,
+				A4B5C6D7E8F90AB1C2D3E4F5 /* LoomCard.swift */,
+				A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */,
+				A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */,
+				A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		AA03BB04CC0503D6EE07FF08 /* Charts */ = {
+			isa = PBXGroup;
+			children = (
+				A8B9C0D1E2F30EB5C6D7E8F9 /* FleetCompositionChart.swift */,
+				A9B0C1D2E3F40FB6C7D8E9F0 /* HealthGaugeChart.swift */,
+				B0C1D2E3F4A510B7C8D9E0F1 /* MemoryTierChart.swift */,
+				B1C2D3E4F5A611B8C9D0E1F2 /* SessionTimelineChart.swift */,
+				B2C3D4E5F6A712B9C0D1E2F3 /* TaskStatusChart.swift */,
+			);
+			path = Charts;
+			sourceTree = "<group>";
+		};
+		AA04BB05CC0604D7EE08FF09 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				B3C4D5E6F7A813B0C1D2E3F4 /* LoomAnimations.swift */,
+				B4C5D6E7F8A914B1C2D3E4F5 /* LoomColors.swift */,
+				B5C6D7E8F9A015B2C3D4E5F6 /* LoomShadows.swift */,
+				B6C7D8E9F0A116B3C4D5E6F7 /* LoomSpacing.swift */,
+				B7C8D9E0F1A217B4C5D6E7F8 /* LoomTypography.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		AA05BB06CC0705D8EE09FF0A /* Intents */ = {
+			isa = PBXGroup;
+			children = (
+				B8C9D0E1F2A318B5C6D7E8F9 /* CheckFleetHealthIntent.swift */,
+				B9C0D1E2F3A419B6C7D8E9F0 /* GetActiveSessionsIntent.swift */,
+				C0D1E2F3A4B51AC7D8E9F0A1 /* ListBlockedTasksIntent.swift */,
+				C1D2E3F4A5B61BD8E9F0A1B2 /* LoomShortcuts.swift */,
+			);
+			path = Intents;
+			sourceTree = "<group>";
+		};
+		AA06BB07CC0806D9EE0AFF0B /* LiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				C2D3E4F5A6B71CE9F0A1B2C3 /* WorkflowLiveActivityView.swift */,
+			);
+			path = LiveActivity;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -441,6 +570,31 @@
 				58BE00777930FB0F87CC784E /* SessionsListView.swift in Sources */,
 				B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */,
 				529481AA1364F008AABB1D7A /* TimelineListView.swift in Sources */,
+				D0A1B2C3D4E5F6A7B8C9D0E1 /* OpsTaskDetailView.swift in Sources */,
+				D0B2C3D4E5F6A7B8C9D0E1F2 /* OpsWorkflowDetailView.swift in Sources */,
+				D0C3D4E5F6A7B8C9D0E1F2A3 /* OpsReasoningChainDetailView.swift in Sources */,
+				D1E2F3A4B5C607E8F9A0B1C2 /* DeepLinkRouter.swift in Sources */,
+				D2E3F4A5B6C708E9F0A1B2C3 /* HapticManager.swift in Sources */,
+				D3E4F5A6B7C809E0F1A2B3C4 /* AnimatedCounter.swift in Sources */,
+				D4E5F6A7B8C90AE1F2A3B4C5 /* LoomCard.swift in Sources */,
+				D5E6F7A8B9C00BE2F3A4B5C6 /* PulsingDot.swift in Sources */,
+				D6E7F8A9B0C10CE3F4A5B6C7 /* SkeletonView.swift in Sources */,
+				D7E8F9A0B1C20DE4F5A6B7C8 /* StatusAccentBar.swift in Sources */,
+				D8E9F0A1B2C30EE5F6A7B8C9 /* FleetCompositionChart.swift in Sources */,
+				D9E0F1A2B3C40FE6F7A8B9C0 /* HealthGaugeChart.swift in Sources */,
+				E0F1A2B3C4D510E7F8A9B0D1 /* MemoryTierChart.swift in Sources */,
+				E1F2A3B4C5D611E8F9A0B1D2 /* SessionTimelineChart.swift in Sources */,
+				E2F3A4B5C6D712E9F0A1B2D3 /* TaskStatusChart.swift in Sources */,
+				E3F4A5B6C7D813E0F1A2B3D4 /* LoomAnimations.swift in Sources */,
+				E4F5A6B7C8D914E1F2A3B4D5 /* LoomColors.swift in Sources */,
+				E5F6A7B8C9D015E2F3A4B5D6 /* LoomShadows.swift in Sources */,
+				E6F7A8B9C0D116E3F4A5B6D7 /* LoomSpacing.swift in Sources */,
+				E7F8A9B0C1D217E4F5A6B7D8 /* LoomTypography.swift in Sources */,
+				E8F9A0B1C2D318E5F6A7B8D9 /* CheckFleetHealthIntent.swift in Sources */,
+				E9F0A1B2C3D419E6F7A8B9D0 /* GetActiveSessionsIntent.swift in Sources */,
+				F0A1B2C3D4E51AE7F8A9B0E1 /* ListBlockedTasksIntent.swift in Sources */,
+				F1A2B3C4D5E61BE8F9A0B1E2 /* LoomShortcuts.swift in Sources */,
+				F2A3B4C5D6E71CF9A0B1C2E3 /* WorkflowLiveActivityView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -473,6 +627,8 @@
 				64D8DEEE394682735D328772 /* SessionsViewModel.swift in Sources */,
 				48B4E56980B5F596C1A51EE3 /* TimelineEntry.swift in Sources */,
 				AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */,
+				F3A4B5C6D7E81DA0B1C2D3E4 /* WidgetData.swift in Sources */,
+				F4A5B6C7D8E91EB1C2D3E4F5 /* WorkflowActivity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -554,7 +710,9 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Loom Companion needs local network access to connect to your local Loom HUD server.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -702,7 +860,9 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Loom Companion needs local network access to connect to your local Loom HUD server.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

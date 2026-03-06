@@ -1,49 +1,26 @@
 # Workspace Snapshot
 
-- Generated: 2026-02-27T18:27:31-05:00
+- Generated: 2026-03-06T07:56:53-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
-- Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
 - Python: `3.12.11`
 
 ## Git
-```
-## main...origin/main
- M Dockerfile.custom-server.local
- M Makefile
- M internal/daemon/callpipeline.go
- M internal/daemon/callpipeline_test.go
- M internal/daemon/daemon.go
- M internal/daemon/routing.go
- M internal/daemon/routing_test.go
- M pkg/generator/configs.go
- M pkg/generator/configs_test.go
- M scripts/dev/upgrade_local.sh
-?? .sandbox-policy.json
-?? apps/loom-companion-ios/.build/
-?? apps/loom-companion-ios/.swiftpm/
-?? apps/loom-companion-ios/LoomCompanion.xcodeproj/project.xcworkspace/
-?? apps/loom-companion-ios/LoomCompanion.xcodeproj/xcuserdata/
-?? cmd/mcp-hub-wrapper/
-?? docs/roadmap-reconciliation-2026-02-27.md
-?? scripts/mobile/archive_export.sh
-?? scripts/mobile/cleanup-signing.sh
-?? scripts/mobile/import-certificate.sh
-```
+- Not a git repo (or git error): `fatal: this operation must be run in a work tree`
 
 ### Remotes
 ```
 github	https://github.com/crb2nu/loom-core.git (fetch)
 github	https://github.com/crb2nu/loom-core.git (push)
-gitlab-vm	https://gitlab.flexinfer.ai/services/loom-core.git (fetch)
-gitlab-vm	https://gitlab.flexinfer.ai/services/loom-core.git (push)
-origin	https://gitlab.flexinfer.ai/services/loom-core.git (fetch)
-origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
+gitlab-vm	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/loom-core.git (fetch)
+gitlab-vm	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/loom-core.git (push)
+origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/loom-core.git (fetch)
+origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/loom-core.git (push)
 ```
 
 ### HEAD
 ```
-7ac4131 refactor(agentcontext): introduce QdrantRegistry, replace 14 individual client fields (#51)
+2060386 ci: fix custom-server image builds
 ```
 
 ## Top-Level Layout
@@ -75,11 +52,14 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `generated/`
 - `internal/`
 - `launchd/`
+- `libs/`
 - `pkg/`
 - `scripts/`
 - `tools/`
+- `Users/`
 
 ### Files
+- `.changelog-ai.yaml`
 - `.editorconfig`
 - `.gitattributes`
 - `.gitignore`
@@ -90,11 +70,13 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.sandbox-policy.json`
 - `.secrets.baseline`
 - `AGENTS.md`
+- `CHANGELOG.generated.md`
 - `CHANGELOG.md`
 - `coverage-internal.out`
 - `coverage.ci-sim.out`
 - `coverage.internal-pkg.out`
 - `coverage.tests-only.out`
+- `custom-server`
 - `Dockerfile`
 - `Dockerfile.custom-server`
 - `Dockerfile.custom-server.local`
@@ -168,6 +150,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.agents/workflows/feature-dev.yaml`
 - `.agents/workflows/long-context-analysis.yaml`
 - `.agents/workflows/recursive-context.yaml`
+- `.changelog-ai.yaml`
 - `.codex/skills/browserkit-screenshots/SKILL.md`
 - `.codex/skills/flux-gitops-operator/SKILL.md`
 - `.codex/skills/mcp-registry-ops/SKILL.md`
@@ -190,20 +173,31 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `.loom/13-research-agentic-workflows-openclaw.md`
 - `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
 - `.loom/14-research-mobile-signing-publish-2026-02-25.md`
+- `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
 - `.loom/20-product-spec.md`
+- `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
 - `.loom/30-implementation-plan.md`
 - `.loom/31-gap-to-backlog-map.md`
 - `.loom/32-mobile-gap-to-backlog-map.md`
 - `.loom/32-rfc-registry-env-consistency.md`
 - `.loom/33-mobile-signing-release-plan-2026-02-25.md`
 - `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
+- `.loom/35-simplification-epics.md`
+- `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
 - `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
 - `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
 - `.loom/54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
 - `.loom/55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
+- `.loom/56-ralph-iteration-plan-openai-responses-m0-2026-03-04.md`
+- `.loom/57-ralph-slice-handoff-openai-responses-m0-2026-03-04.md`
+- `.loom/58-ralph-iteration-plan-openai-responses-m1-2026-03-04.md`
+- `.loom/59-ralph-slice-handoff-openai-responses-m1-2026-03-04.md`
+- `.loom/60-ralph-iteration-plan-openai-responses-runtime-entrypoint-2026-03-04.md`
+- `.loom/61-ralph-slice-handoff-openai-responses-runtime-entrypoint-2026-03-04.md`
 - `.loom/arch-rules.yaml`
+- `.loom/research/mcp-code-execution-with-mcp.md`
 - `.loom/tech-debt-inventory.json`
 - `.loom/tech-debt-inventory.md`
 - `.loom/tech-debt-plan.md`
@@ -226,9 +220,31 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `ROADMAP.md`
 - `apps/loom-companion-ios/LoomCompanion.xcodeproj/project.pbxproj`
 - `apps/loom-companion-ios/Package.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/AnimatedCounter.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/FleetCompositionChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/HealthGaugeChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/MemoryTierChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/SessionTimelineChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/TaskStatusChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/LoomCard.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/PulsingDot.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/SkeletonView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/StatusAccentBar.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/ContentView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/DesignSystem/LoomAnimations.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/DesignSystem/LoomColors.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/DesignSystem/LoomShadows.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/DesignSystem/LoomSpacing.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/DesignSystem/LoomTypography.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Intents/CheckFleetHealthIntent.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Intents/GetActiveSessionsIntent.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Intents/ListBlockedTasksIntent.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Intents/LoomShortcuts.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/LiveActivity/WorkflowLiveActivityView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/LoomCompanionApp.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Navigation/DeepLinkRouter.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Utilities/DeviceInfo.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Utilities/HapticManager.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Alerts/AlertRowView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Alerts/AlertsListView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/ConnectionDiagnosticsView.swift`
@@ -252,6 +268,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIEnvelope.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIError.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertItem.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertPolicy.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AnyCodable.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionProfile.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionRemediation.swift`
@@ -261,6 +278,8 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PushRegistration.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionInfo.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/TimelineEntry.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WidgetData.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WorkflowActivity.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/APIClient.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/Endpoint.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/SSEClient.swift`
@@ -270,8 +289,14 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/DashboardViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/OpsViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/PushNotificationsViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionDetailViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionsViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/ActiveSessionsWidget.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/FleetHealthWidget.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/LockScreenWidgets.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/LoomWidgetBundle.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/TasksWidget.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/dashboard_response.json`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures/error_rate_limited.json`
@@ -282,6 +307,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/MockAPIClient.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/APIEnvelopeTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/AlertItemTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/AlertPolicyTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/ConnectionRemediationTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/DashboardDataTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/OpsModelsTests.swift`
@@ -297,6 +323,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/DashboardViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/OpsViewModelTests.swift`
+- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/PushNotificationsViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionDetailViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionsViewModelTests.swift`
 - `apps/loom-companion-ios/project.yml`
@@ -304,74 +331,281 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 - `assets/header.svg`
 - `assets/icon.png`
 - `cmd/custom-server/main.go`
+- `cmd/custom-server/main_test.go`
 - `cmd/loom/auth.go`
 - `cmd/loom/check.go`
 - `cmd/loom/cmd_agent.go`
 - `cmd/loom/cmd_agent_hook_status_test.go`
+- `cmd/loom/cmd_catalog.go`
+- `cmd/loom/cmd_catalog_test.go`
+- `cmd/loom/cmd_codeapi.go`
+- `cmd/loom/cmd_codeapi_test.go`
 - `cmd/loom/cmd_completion.go`
 - `cmd/loom/cmd_daemon.go`
 - `cmd/loom/cmd_doctor.go`
 - `cmd/loom/cmd_proxy.go`
-- `cmd/loom/cmd_secrets.go`
-- `cmd/loom/cmd_sync.go`
-- `cmd/loom/cmd_tools.go`
-- `cmd/loom/cmd_tunnel.go`
-- `cmd/loom/cmd_validate.go`
-- `cmd/loom/daemon.go`
-- `cmd/loom/daemon_control.go`
-- `cmd/loom/daemon_timeout_test.go`
-- `cmd/loom/hud.go`
-- `cmd/loom/hud_control.go`
-- `cmd/loom/hud_control_test.go`
-- `cmd/loom/main.go`
-- `cmd/loom/proxy.go`
-- `cmd/loom/proxy_autostart_test.go`
-- `cmd/loom/proxy_heartbeat_test.go`
-- `cmd/loom/proxy_lifecycle_test.go`
-- `cmd/loom/proxy_resources_test.go`
-- `cmd/loom/proxy_session_test.go`
-- `cmd/loom/proxy_templates_test.go`
-- `cmd/loom/proxy_timeout_test.go`
-- `cmd/loom/proxy_truncate.go`
-- `cmd/loom/proxy_truncate_test.go`
-- `cmd/loom/registry_diagnostics.go`
-- `cmd/loom/registry_diagnostics_test.go`
-- `cmd/loom/repl.go`
-- `cmd/loom/status.go`
-- `cmd/loom/tool_inventory.go`
-- `cmd/loom/tool_inventory_test.go`
-- `cmd/loomd/main.go`
-- `cmd/loomd/rlimit_unix.go`
-- `cmd/loomd/rlimit_windows.go`
-- `cmd/mcp-agent-context/main.go`
-- `cmd/mcp-agent-context/tools.go`
-- `cmd/mcp-agent-context/tools_annotations.go`
-- `cmd/mcp-agent-context/tools_compaction.go`
-- `cmd/mcp-agent-context/tools_context.go`
-- `cmd/mcp-agent-context/tools_fileclaims.go`
-- `cmd/mcp-agent-context/tools_graph.go`
-- `cmd/mcp-agent-context/tools_handoffs.go`
-- `cmd/mcp-agent-context/tools_memory.go`
-- `cmd/mcp-agent-context/tools_presence.go`
-- `cmd/mcp-agent-context/tools_session.go`
-- `cmd/mcp-agent-context/tools_tasks.go`
-- `cmd/mcp-agent-context/tools_templates.go`
-- `cmd/mcp-agent-context/tools_test.go`
-- `cmd/mcp-agent-context/tools_workflows.go`
-- `cmd/mcp-agent-context/tools_worktree.go`
-- `cmd/mcp-alertmanager/main.go`
-- `cmd/mcp-alertmanager/main_test.go`
-- `cmd/mcp-argocd/main.go`
-- `cmd/mcp-asus-router/main.go`
-- `cmd/mcp-aws/main.go`
+- `cmd/loom/cmd_rbac.go`
+- `cmd/loom/cmd_rbac_test.go`
 - `…`
 
 ## AGENTS.md Files
+- `.worktrees/mcp-tools-as-code-api-20260304/AGENTS.md`
 - `AGENTS.md`
+- `Users/cblevins/workspace/.worktrees/loom-core-21-20260303/AGENTS.md`
 
 ### AGENTS.md Contents (head)
 
+#### `.worktrees/mcp-tools-as-code-api-20260304/AGENTS.md`
+```
+Agent Working Notes (loom-core)
+
+Scope
+
+- This file applies to the `services/loom-core` repository.
+
+Repository Purpose
+
+Go backend for the loom ecosystem:
+
+- MCP server implementations (git, gitlab, github, k8s, prometheus, etc.)
+- `loom` CLI for config generation and sync
+- `loomd` daemon for MCP server lifecycle management
+
+Workspace Structure
+
+This repo is part of the `services/` GitLab group:
+
+```text
+gitlab.flexinfer.ai/
+├── platform/gitops    ← K8s manifests, Flux, CI infrastructure
+└── services/
+    ├── loom           ← VSCode extension (TypeScript)
+    └── loom-core      ← YOU ARE HERE (Go backend)
+```
+
+Deployment (GitOps)
+
+MCP servers can be deployed to Kubernetes via Flux. Manifests live in:
+
+- `platform/gitops/k3s/mcp-hub/servers/` - Individual MCP server deployments
+
+To deploy an MCP server:
+
+1. Build binaries: `make build`
+2. Build container: `docker build -t registry.harbor.lan/library/loom:TAG .`
+3. Push to Harbor
+4. Update image tag in `platform/gitops/k3s/mcp-hub/servers/<server>/`
+5. Commit and push to `platform/gitops`
+
+Local Usage
+
+The CLI and daemon typically run on developer machines:
+
+```bash
+# Build all binaries
+make build
+
+# Generate MCP configs for all targets
+./bin/loom generate configs --target all
+
+# Sync configs to home directory
+./bin/loom sync all --regen
+
+# Start daemon (manages MCP server processes)
+./bin/loomd
+
+# Check daemon health (includes per-server status)
+curl http://localhost:9876/health
+
+# Check SSH tunnel status
+./bin/loom tunnel status
+```
+
+## Development Workflow
+
+### Iterating on loom-core
+
+After making code changes, use one of these targets to rebuild, install, and reload:
+
+```bash
+# Safe reload — skips daemon restart if active proxy connections exist
+make dev-upgrade
+
+# Force reload — always restarts daemon; all proxy clients auto-reconnect
+make dev-reload
+```
+
+Both targets execute the same pipeline:
+1. Build `loom` + `loomd` binaries
+2. Atomic install to `~/.local/bin` (no window where binaries are missing)
+3. Regenerate + sync platform configs (`loom sync all --regen --loom-mode`)
+4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
+5. Restart HUD if running on port 3333
+6. Smoke test (proxy initialize round-trip)
+
+### How proxy reconnection works
+
+Each platform client (Claude Code, Codex, Zed, Gemini, etc.) spawns its own `loom proxy` process. The proxy connects to `loomd` via Unix socket. When the daemon restarts:
+
+1. The proxy detects a broken pipe or EOF on the next tool call
+2. It clears its daemon connection and calls `ensureDaemon()` on the next message
+3. `ensureDaemon()` re-dials the socket (with autostart fallback)
+4. The client sees no interruption — the tool call succeeds after a brief reconnect
+
+No manual action is needed from any connected agent or IDE.
+
+### First-time setup
+
+```bash
+make bootstrap-local    # Build + install + sync + environment check
+```
+
+### Individual platform config sync
+
+```bash
+loom sync claude --regen      # Regenerate .claude/mcp.json + .claude/settings.json
+loom sync codex --regen       # Regenerate .codex/config.toml
+loom sync gemini --regen      # Regenerate .gemini/config.toml + .gemini/settings.json
+loom sync zed --regen         # Regenerate .zed/mcp.json
+loom sync all --regen         # All platforms at once
+```
+
+### Platform permissions
+
+Platform-specific allow/deny lists and settings are defined in the registry YAML under `platform_permissions`. Changes to permissions take effect after `loom sync` (no daemon restart required — only the platform config files change).
+
+Registry location: `platform/gitops/mcp/context/registry.yaml`
+
+## Daemon Features
+…
+```
+
 #### `AGENTS.md`
+```
+Agent Working Notes (loom-core)
+
+Scope
+
+- This file applies to the `services/loom-core` repository.
+
+Repository Purpose
+
+Go backend for the loom ecosystem:
+
+- MCP server implementations (git, gitlab, github, k8s, prometheus, etc.)
+- `loom` CLI for config generation and sync
+- `loomd` daemon for MCP server lifecycle management
+
+Workspace Structure
+
+This repo is part of the `services/` GitLab group:
+
+```text
+gitlab.flexinfer.ai/
+├── platform/gitops    ← K8s manifests, Flux, CI infrastructure
+└── services/
+    ├── loom           ← VSCode extension (TypeScript)
+    └── loom-core      ← YOU ARE HERE (Go backend)
+```
+
+Deployment (GitOps)
+
+MCP servers can be deployed to Kubernetes via Flux. Manifests live in:
+
+- `platform/gitops/k3s/mcp-hub/servers/` - Individual MCP server deployments
+
+To deploy an MCP server:
+
+1. Build binaries: `make build`
+2. Build container: `docker build -t registry.harbor.lan/library/loom:TAG .`
+3. Push to Harbor
+4. Update image tag in `platform/gitops/k3s/mcp-hub/servers/<server>/`
+5. Commit and push to `platform/gitops`
+
+Local Usage
+
+The CLI and daemon typically run on developer machines:
+
+```bash
+# Build all binaries
+make build
+
+# Generate MCP configs for all targets
+./bin/loom generate configs --target all --hub-mode
+
+# Sync configs to home directory
+for profile in vscode antigravity codex claude gemini kilocode; do
+  ./bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+done
+./bin/loom sync skills all
+
+# Start daemon (manages MCP server processes)
+./bin/loomd
+
+# Check daemon health (includes per-server status)
+curl http://localhost:9876/health
+
+# Check SSH tunnel status
+./bin/loom tunnel status
+```
+
+## Development Workflow
+
+### Iterating on loom-core
+
+After making code changes, use one of these targets to rebuild, install, and reload:
+
+```bash
+# Safe reload — skips daemon restart if active proxy connections exist
+make dev-upgrade
+
+# Force reload — always restarts daemon; all proxy clients auto-reconnect
+make dev-reload
+```
+
+Both targets execute the same pipeline:
+1. Build `loom` + `loomd` binaries
+2. Atomic install to `~/.local/bin` (no window where binaries are missing)
+3. Regenerate + sync platform configs (hub mode + all projects, skipping `.worktrees/`)
+4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
+5. Restart HUD if running on port 3333
+6. Smoke test (proxy initialize round-trip)
+
+### How proxy reconnection works
+
+Each platform client (Claude Code, Codex, Zed, Gemini, etc.) spawns its own `loom proxy` process. The proxy connects to `loomd` via Unix socket. When the daemon restarts:
+
+1. The proxy detects a broken pipe or EOF on the next tool call
+2. It clears its daemon connection and calls `ensureDaemon()` on the next message
+3. `ensureDaemon()` re-dials the socket (with autostart fallback)
+4. The client sees no interruption — the tool call succeeds after a brief reconnect
+
+No manual action is needed from any connected agent or IDE.
+
+### First-time setup
+
+```bash
+make bootstrap-local    # Build + install + sync + environment check
+```
+
+### Individual platform config sync
+
+```bash
+loom sync claude --regen --hub-mode --all-projects --skip-worktrees
+loom sync codex --regen --hub-mode --all-projects --skip-worktrees
+loom sync gemini --regen --hub-mode --all-projects --skip-worktrees
+loom sync vscode --regen --hub-mode --all-projects --skip-worktrees
+loom sync antigravity --regen --hub-mode --all-projects --skip-worktrees
+loom sync kilocode --regen --hub-mode --all-projects --skip-worktrees
+loom sync skills all
+```
+
+### Platform permissions
+
+…
+```
+
+#### `Users/cblevins/workspace/.worktrees/loom-core-21-20260303/AGENTS.md`
 ```
 Agent Working Notes (loom-core)
 

@@ -218,6 +218,48 @@
   - [S5] `internal/hud/bridge/agent.go:30-41`
   - [S6] `internal/hud/monitor/fleet.go:18-63`
   - [S7] `internal/hud/monitor/health.go:98-105`
+
+## 2026-03-06 (session 22) — CI bottleneck reduction + local/k3s rollout
+
+- What changed:
+  - Replaced local-only private module assumptions in `go.mod` with pinned versions for:
+    - `gitlab.flexinfer.ai/libs/mcp-go`
+    - `gitlab.flexinfer.ai/libs/fi-mcp-kit`
+    - `gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel`
+  - Added `go.work` so local workspace builds still use sibling checkouts.
+  - Simplified `.gitlab-ci.yml`:
+    - forced `GOWORK=off` in CI
+    - removed sibling-repo clone bootstrap
+    - added GitLab job-token URL rewrites for private module fetches
+    - reused cached `golangci-lint`
+    - increased CPU/memory requests for heavy jobs
+    - parallelized MCP binary fan-out in `build:binaries`
+    - changed `test:unit` to coverage-only, leaving race checks to `test:race`
+  - Reworked local custom-server image build path:
+    - `Makefile` now builds from repo context with named `libs` BuildKit context
+    - `Dockerfile.custom-server.local` now uses Go `1.25.7` and container-local `go mod edit -replace` overrides
+  - Rebuilt and reloaded loom locally, then built/pushed `registry.harbor.lan/mcp/custom-server:20260306-ci-fix`.
+  - Updated `/Users/cblevins/workspace/platform/gitops/k3s/loom-hub/servers/kustomization.yaml` and applied the updated `loom-hub` kustomization to k3s.
+- Verification:
+  - `GOWORK=off GOPRIVATE=gitlab.flexinfer.ai/* GONOSUMDB=gitlab.flexinfer.ai/* GOSUMDB=off GOPROXY=direct go build -buildvcs=false ./cmd/loom ./cmd/loomd ./cmd/custom-server`
+  - `GOPRIVATE=gitlab.flexinfer.ai/* GONOSUMDB=gitlab.flexinfer.ai/* GOSUMDB=off go build -buildvcs=false ./cmd/loom ./cmd/loomd ./cmd/custom-server`
+  - `GOFLAGS=-buildvcs=false GOWORK=off GOPRIVATE=gitlab.flexinfer.ai/* GONOSUMDB=gitlab.flexinfer.ai/* GOSUMDB=off GOPROXY=direct go test ./cmd/loom/... ./cmd/loomd/...`
+  - `GOFLAGS=-buildvcs=false GOPRIVATE=gitlab.flexinfer.ai/* GONOSUMDB=gitlab.flexinfer.ai/* GOSUMDB=off go test ./internal/integration/...`
+  - `GOFLAGS=-buildvcs=false GOPRIVATE=gitlab.flexinfer.ai/* GONOSUMDB=gitlab.flexinfer.ai/* GOSUMDB=off make dev-reload`
+  - `IMAGE_TAG=20260306-ci-fix make docker-push-custom-server`
+  - `kubectl apply -k /Users/cblevins/workspace/platform/gitops/k3s/loom-hub/servers`
+  - `kubectl -n loom-hub rollout status deployment/k8s-apps-k3s --timeout=120s`
+- Outcome:
+  - Local reload completed successfully.
+  - `loom-hub` custom-server-backed deployments converged on `registry.harbor.lan/mcp/custom-server:20260306-ci-fix`.
+- Sources:
+  - [S1] `go.mod:35`
+  - [S2] `go.work:1`
+  - [S3] `.gitlab-ci.yml:61`
+  - [S4] `.gitlab-ci.yml:340`
+  - [S5] `Dockerfile.custom-server.local:10`
+  - [S6] `Makefile:979`
+  - [S7] `/Users/cblevins/workspace/platform/gitops/k3s/loom-hub/servers/kustomization.yaml:215`
   - [S8] `internal/hud/eventlog.go:10-16`
 
 ## 2026-02-19 (session 14)
@@ -623,3 +665,32 @@
   - [S1] `.codex/skills/plan-loom-core/SKILL.md:15`
   - [S2] `.codex/skills/mcp-registry-ops/SKILL.md:13`
   - [S3] Command: `printenv CODEX_HOME`.
+
+## 2026-03-04
+
+- What changed:
+  - Refreshed plan context artifacts for an OpenAI Responses integration track in loom-core.
+  - Updated `.loom/00-mcp-inventory.md` with current loom-mode runtime evidence (`loom://config`, `loom://servers`, `loom://tools/index`) and paged inventory strategy.
+  - Captured current index status:
+    - embeddings-enabled index job failed (`3131f65d0181762d`) with Morph backend error,
+    - fallback index job started with `embeddings=false` (`8141921e222489e6`) and is in progress.
+  - Added new docs:
+    - `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
+    - `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
+    - `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
+  - Updated `.loom/00-index.md` quick links for the new Responses track docs.
+  - Recorded architecture decision to keep Responses support in an isolated orchestration layer (reusing daemon `loom/call`) instead of changing proxy-core transport handling.
+- Why:
+  - User request was to research OpenAI Responses and produce a concrete Loom Core plan for tool/context management.
+  - Existing mobile-focused 10/20/30 docs were preserved; Responses work is tracked as separate, source-backed planning artifacts.
+- What's next:
+  - Finish/fix codebase index readiness (resolve embed backend error or complete non-embedding fallback).
+  - Convert the implementation plan into a first coding slice (M0 package scaffolding + command wiring).
+  - Decide default context strategy policy (`previous_response_id` vs `conversation` vs stateless+compact) for v1.
+- Sources:
+  - [S1] `.loom/00-mcp-inventory.md`
+  - [S2] `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
+  - [S3] `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
+  - [S4] `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
+  - [S5] `codebase_index_poll(job_id="3131f65d0181762d")` (2026-03-04)
+  - [S6] `codebase_index_poll(job_id="8141921e222489e6")` (2026-03-04)

@@ -17,6 +17,7 @@ WORKDIR /src
 RUN mkdir -p /src/libs
 COPY libs/mcp-go /src/libs/mcp-go
 COPY libs/fi-mcp-kit /src/libs/fi-mcp-kit
+COPY libs/fi-accel /src/libs/fi-accel
 
 WORKDIR /src/services/loom-core
 
@@ -27,14 +28,14 @@ COPY services/loom-core/ ./
 
 # Build all binaries
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
 
 # Build all MCP servers
 RUN mkdir -p /bin && \
     for d in cmd/mcp-*; do \
       name="$(basename "$d")"; \
-      CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "/bin/$name" "./$d"; \
+      CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o "/bin/$name" "./$d"; \
     done
 
 # Runtime stage - minimal image

@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-02-27_
+_Last verified: 2026-03-04_
 
 ## Why
 
@@ -8,25 +8,52 @@ Capture the active MCP/runtime baseline for planning and context continuity.
 
 ## Runtime Mode Detection
 
-Loom-mode resource endpoints are not available in this runtime (Claude Code uses deferred tool loading via `ToolSearch`).
+Loom-mode is active in this runtime.
 
 Evidence:
-- `list_mcp_resources` returned an empty set (2026-02-27).
+- `list_mcp_resources` returned top-level loom resources: `loom://config`, `loom://servers`, `loom://tools/index`, `loom://health`.
+- `list_mcp_resource_templates` returned paginated templates: `loom://tools/page/{page}` and `loom://tools/server/{server}/page/{page}`.
 
-## Fallback Inventory Strategy
+## Loom-Mode Inventory Strategy
 
-Used CLI fallback per `plan-loom-core` workflow:
+Used loom proxy resources directly:
 
-- `~/.local/bin/loom tools list --json`
+- `read_mcp_resource(server="loom", uri="loom://config")`
+- `read_mcp_resource(server="loom", uri="loom://servers")`
+- `read_mcp_resource(server="loom", uri="loom://tools/index")`
+- `read_mcp_resource(server="loom", uri="loom://tools/page/1")`
+- `read_mcp_resource(server="loom", uri="loom://tools/server/agent_context/page/1")`
+
+CLI cross-check:
+- `./loom tools list --json --page 1 --limit 500`
 
 ## Tool Inventory Snapshot
+
+From `loom://tools/index`:
 
 | Field | Value |
 |---|---|
 | server | `all` |
 | totalTools | `472` |
+| totalPages | `5` |
+| pageSize | `100` |
+
+From `loom://config`:
+
+| Field | Value |
+|---|---|
+| active profile | `full` |
+| configured servers | `44` |
+| tool count | `472` |
+
+CLI cross-check (`--limit 500`):
+
+| Field | Value |
+|---|---|
+| totalTools | `472` |
 | totalPages | `1` |
-| pageSize | `472` |
+| pageSize | `500` |
+| serverCount | `44` |
 
 ## Tool Distribution by Server Prefix (Top 20)
 
@@ -53,24 +80,39 @@ Used CLI fallback per `plan-loom-core` workflow:
 
 ## Codebase Index Readiness
 
-Codebase-memory MCP is reachable. Index state at session start:
-- `codebase_stats(repo_id="loom-core")` returned `total_chunks: 0` (empty index).
-- Full re-index initiated: job `607b05b6df3422a9`, 590 Go files, embeddings enabled.
-- Index is building asynchronously; semantic search will be available after completion.
+Current status:
+- `codebase_stats(repo_id="loom-core")` initially returned `total_chunks: 0`.
+- Embeddings-enabled full refresh failed with backend error:
+  - job `3131f65d0181762d`
+  - error: `morph API HTTP 400: The decoder prompt cannot be empty`
+- Fallback index started with `embeddings=false`:
+  - job `8141921e222489e6`
+  - status at latest poll during planning: `running` (partial progress; poll for current counters).
 
 Planning implication:
-- Use `Grep`/`Glob` tools for immediate code discovery while index builds.
-- Semantic search (`codebase_search`) will become available once indexing completes.
+- Proceed with `rg` + direct file reads while fallback indexing completes.
+- Use semantic search only after index finishes successfully.
 
 ## Constraints
 
-- Loom-mode resource/template discovery is not available in Claude Code runtime.
-- CLI inventory is sufficient for tool availability counting.
-- Codebase index is rebuilding (was empty).
+- Loom-mode inventory is available and preferred over CLI.
+- Tool index pagination differs by endpoint:
+  - `loom://tools/index` defaults to 100/page.
+  - CLI can be forced to larger page size.
+- Codebase semantic embeddings are currently unavailable due upstream embed error; lexical index fallback is in progress.
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-02-27, empty)
-- Tool call: `codebase_stats(repo_id="loom-core")` (2026-02-27, 0 chunks)
-- Tool call: `codebase_index_start(repo_id="loom-core", full_refresh=true, languages=["go"])` (2026-02-27, job 607b05b6df3422a9)
-- Command: `~/.local/bin/loom tools list --json` piped through python prefix counter
+- Tool call: `list_mcp_resources` (2026-03-04)
+- Tool call: `list_mcp_resource_templates` (2026-03-04)
+- Tool call: `read_mcp_resource("loom://config")` (2026-03-04)
+- Tool call: `read_mcp_resource("loom://servers")` (2026-03-04)
+- Tool call: `read_mcp_resource("loom://tools/index")` (2026-03-04)
+- Tool call: `read_mcp_resource("loom://tools/page/1")` (2026-03-04)
+- Tool call: `read_mcp_resource("loom://tools/server/agent_context/page/1")` (2026-03-04)
+- Command: `./loom tools list --json --page 1 --limit 500` (2026-03-04)
+- Tool call: `codebase_stats(repo_id="loom-core")` (2026-03-04)
+- Tool call: `codebase_index_start(repo_id="loom-core", full_refresh=true)` job `3131f65d0181762d` (2026-03-04)
+- Tool call: `codebase_index_poll(job_id="3131f65d0181762d")` (failed, 2026-03-04)
+- Tool call: `codebase_index_start(repo_id="loom-core", full_refresh=true, embeddings=false)` job `8141921e222489e6` (2026-03-04)
+- Tool call: `codebase_index_poll(job_id="8141921e222489e6")` (running, 2026-03-04)

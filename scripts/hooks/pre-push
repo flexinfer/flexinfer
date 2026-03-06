@@ -16,9 +16,10 @@ resolve_repo_root() {
 
 REPO_ROOT="$(resolve_repo_root)"
 HOOK_SCRIPT_DIR="${REPO_ROOT}/scripts/hooks"
+STASH_WRAPPER="${HOOK_SCRIPT_DIR}/with-stashed-worktree.sh"
 
-if "${HOOK_SCRIPT_DIR}/run-pre-commit-hook.sh" pre-push "$@"; then
+if "${STASH_WRAPPER}" "${HOOK_SCRIPT_DIR}/run-pre-commit-hook.sh" pre-push "$@"; then
   exit 0
 fi
 
-exec "${HOOK_SCRIPT_DIR}/pre-push-native.sh" "$@"
+exec "${STASH_WRAPPER}" "${HOOK_SCRIPT_DIR}/pre-push-native.sh" "$@"

@@ -1,6 +1,6 @@
 # Loom Core Implementation Status
 
-> Last Updated: March 1, 2026
+> Last Updated: March 2, 2026
 > Canonical status source for shipped vs in-progress work.
 
 ## Current State
@@ -45,20 +45,20 @@ Shipped and actively used:
 
 These are active priorities and should be treated as implementation gaps until complete:
 
-1. Coverage growth from ~30% toward 40%+, focused on daemon lifecycle and devbox integration paths.
-2. Daemon call pipeline hardening after extraction into `internal/daemon/callpipeline.go`.
-3. Agent contract convergence across CLI, HUD API, and bridge layers.
-4. Refactor decomposition of large surfaces (`PresencePanel.svelte`, `internal/devbox/backend/k8s.go`).
-5. Daemon/runtime telemetry expansion (tool routing, server spawn/restart, proxy connection lifecycle) and OTLP export hardening.
+1. Coverage growth from ~30% toward 40%+, focused on daemon lifecycle and devbox integration paths ([Issue #2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2)).
+2. Daemon call pipeline hardening after extraction into `internal/daemon/callpipeline.go` ([Issue #20](https://gitlab.flexinfer.ai/services/loom-core/-/issues/20)).
+3. Agent contract convergence across CLI, HUD API, and bridge layers ([Issue #21](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21)).
+4. Refactor decomposition of large surfaces (`PresencePanel.svelte`, `internal/devbox/backend/k8s.go`) ([Issue #23](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23)).
+5. Daemon/runtime telemetry expansion (tool routing, server spawn/restart, proxy connection lifecycle) and OTLP export hardening ([Issue #12](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12)).
 6. HUD cost dashboard integration ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)): expose `loom/cost-stats` via HUD bridge, CostMonitor (10s poll), SSE `hud.cost` event, and OverviewPanel KPI tile.
 7. RBAC/audit visibility in HUD ([Issue #53](https://gitlab.flexinfer.ai/services/loom-core/-/issues/53)): `loom/rbac-config` RPC, denied-calls ring buffer, ServersPanel RBAC sub-tab, OverviewPanel badge.
 8. OTel settings visibility in HUD ([Issue #54](https://gitlab.flexinfer.ai/services/loom-core/-/issues/54)): `loom/otel-status` RPC, ServersPanel observability section, OverviewPanel badge.
 
 ## Next After Current Focus
 
-- Fleet orchestration UX for multi-agent coordination.
-- MCP server catalog/discovery workflows.
-- Additional proxy-layer security hardening (input/output policy controls).
+- Fleet orchestration UX for multi-agent coordination ([Issue #13](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
+- MCP server catalog/discovery workflows ([Issue #14](https://gitlab.flexinfer.ai/services/loom-core/-/issues/14)).
+- Additional proxy-layer security hardening (input/output policy controls) ([#25](https://gitlab.flexinfer.ai/services/loom-core/-/issues/25), [#26](https://gitlab.flexinfer.ai/services/loom-core/-/issues/26), [#27](https://gitlab.flexinfer.ai/services/loom-core/-/issues/27), [#29](https://gitlab.flexinfer.ai/services/loom-core/-/issues/29)).
 
 ## Where to Verify Status
 

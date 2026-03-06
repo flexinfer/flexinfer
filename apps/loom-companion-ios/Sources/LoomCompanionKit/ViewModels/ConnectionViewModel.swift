@@ -25,7 +25,19 @@ public final class ConnectionViewModel {
         self.tokenStore = tokenStore
 
         // Restore saved profile
-        if let profile = tokenStore.loadProfile(), tokenStore.hasToken {
+        if var profile = tokenStore.loadProfile(), tokenStore.hasToken {
+            // Migrate LAN profiles from http:// to https:// (HUD serves HTTPS only).
+            if profile.mode == .lan, profile.baseURL.hasPrefix("http://") {
+                let migrated = ConnectionProfile(
+                    name: profile.name,
+                    baseURL: profile.baseURL.replacingOccurrences(of: "http://", with: "https://"),
+                    mode: profile.mode,
+                    cloudflareAccessClientID: profile.cloudflareAccessClientID,
+                    cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret
+                )
+                try? tokenStore.saveProfile(migrated)
+                profile = migrated
+            }
             baseURLInput = profile.baseURL
             connectionMode = profile.mode
             cloudflareAccessClientIDInput = profile.cloudflareAccessClientID ?? ""
@@ -71,7 +83,8 @@ public final class ConnectionViewModel {
             baseURL: url,
             token: tokenInput,
             cloudflareAccessClientID: connectionMode == .gateway ? cloudflareAccessClientID : nil,
-            cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil
+            cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil,
+            allowsInsecureTLS: connectionMode == .lan
         )
 
         // Probe /ping to validate connection
@@ -144,7 +157,8 @@ public final class ConnectionViewModel {
             baseURL: url,
             token: token,
             cloudflareAccessClientID: profile.cloudflareAccessClientID,
-            cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret
+            cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret,
+            allowsInsecureTLS: profile.mode == .lan
         )
     }
 
@@ -158,12 +172,9 @@ public final class ConnectionViewModel {
         if trimmed.contains("://") {
             withScheme = trimmed
         } else {
-            switch mode {
-            case .lan:
-                withScheme = "http://\(trimmed)"
-            case .gateway:
-                withScheme = "https://\(trimmed)"
-            }
+            // Both modes default to HTTPS. The HUD serves HTTPS even locally
+            // (with a self-signed cert handled by InsecureTLSDelegate in LAN mode).
+            withScheme = "https://\(trimmed)"
         }
 
         guard var components = URLComponents(string: withScheme),
