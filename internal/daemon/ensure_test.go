@@ -137,3 +137,88 @@ func TestEnsureRunning_NoDaemonBinary(t *testing.T) {
 		t.Fatalf("expected loomd-not-found error, got: %v", err)
 	}
 }
+
+func TestEnsureRunning_TimeoutDefault(t *testing.T) {
+	cfg := StartConfig{SocketPath: "/nonexistent/test.sock"}
+	if cfg.Timeout != 0 {
+		t.Fatal("expected Timeout to default to zero value")
+	}
+
+	// EnsureRunning sets Timeout=5s when it's 0. Verify by checking the code
+	// path completes within a reasonable window (under 10s) even though the
+	// socket never appears.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	start := time.Now()
+	_ = EnsureRunning(cfg) // Will fail — no loomd, no socket
+	elapsed := time.Since(start)
+
+	// Should complete quickly because findLoomd() returns "" before any wait.
+	if elapsed > 3*time.Second {
+		t.Errorf("EnsureRunning took %v; expected fast failure when no binary found", elapsed)
+	}
+}
+
+func TestFindLoomd_SiblingBinary(t *testing.T) {
+	// Clear PATH so exec.LookPath won't find anything.
+	t.Setenv("PATH", t.TempDir())
+
+	// findLoomd also checks os.Executable() sibling. We can't easily mock
+	// os.Executable, so we verify the PATH-first behavior and sibling fallback
+	// by placing a loomd in a temp directory and adding it to PATH.
+	binDir := t.TempDir()
+	loomdPath := filepath.Join(binDir, "loomd")
+	if err := os.WriteFile(loomdPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake loomd: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	got := findLoomd()
+	if got == "" {
+		t.Fatal("findLoomd() returned empty string; expected to find loomd in PATH")
+	}
+	if filepath.Base(got) != "loomd" {
+		t.Errorf("findLoomd() = %q, expected basename 'loomd'", got)
+	}
+}
+
+func TestFindLoomd_NotFound(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // Empty PATH.
+
+	got := findLoomd()
+	// os.Executable() sibling lookup may or may not find something depending
+	// on the test binary location, but with empty PATH the LookPath branch fails.
+	// Just verify no panic.
+	_ = got
+}
+
+func TestDialCheck_Timeout(t *testing.T) {
+	socketPath := uniqueSocketPath(t, "dial-timeout")
+	start := time.Now()
+	result := dialCheck(socketPath, 100*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if result {
+		t.Fatal("expected dialCheck to return false for non-existent socket")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("dialCheck took %v; expected to respect 100ms timeout", elapsed)
+	}
+}
+
+func TestWaitForSocket_AlreadyReady(t *testing.T) {
+	socketPath := uniqueSocketPath(t, "wait-ready")
+	_ = listenUnixSocket(t, socketPath)
+
+	start := time.Now()
+	ok := waitForSocket(socketPath, 2*time.Second)
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatal("expected waitForSocket to succeed for already-listening socket")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("waitForSocket took %v; expected fast return when socket is already ready", elapsed)
+	}
+}

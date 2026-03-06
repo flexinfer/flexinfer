@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +12,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/internal/pool"
+	"github.com/crb2nu/loom/internal/process"
 )
 
 // acquireLockAt acquires an flock on a lock file in the given directory,
@@ -171,5 +179,314 @@ func TestStaleSocket_DialFails(t *testing.T) {
 	if err == nil {
 		conn.Close()
 		t.Fatal("expected dial to fail on non-socket file")
+	}
+}
+
+// --- Accept loop and connection lifecycle tests ---
+
+func newLifecycleTestPool() *pool.Pool {
+	return pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Second,
+		DialFunc: func(context.Context, string) (mcp.Transport, error) {
+			return nil, fmt.Errorf("dial not implemented in lifecycle test")
+		},
+	})
+}
+
+func TestAcceptLoop_StopsAcceptingOnDone(t *testing.T) {
+	socketPath := shortSocketPath("accept-stop")
+	t.Cleanup(func() { os.Remove(socketPath) })
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	d := &Daemon{
+		cfg:      Config{SocketPath: socketPath},
+		done:     make(chan struct{}),
+		listener: listener,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pool:     newLifecycleTestPool(),
+		procMgr:  process.NewManager(nil, "test"),
+	}
+	t.Cleanup(func() { d.pool.Close() })
+
+	// Start the accept loop.
+	d.wg.Add(1)
+	go d.acceptLoop(context.Background())
+
+	// Verify a client can connect.
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial before stop: %v", err)
+	}
+	conn.Close()
+
+	// Signal the daemon to stop and close the listener.
+	close(d.done)
+	_ = listener.Close()
+
+	// Wait for the accept loop goroutine to exit via WaitGroup.
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Accept loop exited cleanly.
+	case <-time.After(2 * time.Second):
+		t.Fatal("acceptLoop did not exit within 2s after done channel closed")
+	}
+
+	// New connections should fail now.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	if dialErr == nil {
+		t.Fatal("expected dial to fail after listener closed")
+	}
+}
+
+func TestHandleConnection_ExitsOnDone(t *testing.T) {
+	// Create a socket pair to simulate a client connection.
+	server, client, err := socketPair()
+	if err != nil {
+		t.Fatalf("socketpair: %v", err)
+	}
+	defer client.Close()
+
+	d := &Daemon{
+		done:   make(chan struct{}),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	d.wg.Add(1)
+	go d.handleConnection(context.Background(), server)
+
+	// Close done to signal shutdown.
+	close(d.done)
+	// Close the client side so transport.Recv returns EOF.
+	client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// handleConnection exited and decremented WaitGroup.
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleConnection did not exit within 2s after done channel closed")
+	}
+}
+
+// socketPair creates a connected pair of Unix-domain stream sockets.
+func socketPair() (net.Conn, net.Conn, error) {
+	dir, err := os.MkdirTemp("", "loom-sockpair-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	sockPath := filepath.Join(dir, "pair.sock")
+	lc := net.ListenConfig{}
+	l, err := lc.Listen(context.Background(), "unix", sockPath)
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
+
+	accepted := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		accepted <- c
+	}()
+
+	client, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sockPath)
+	if err != nil {
+		l.Close()
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
+
+	select {
+	case server := <-accepted:
+		l.Close()
+		os.RemoveAll(dir)
+		return server, client, nil
+	case err := <-errCh:
+		client.Close()
+		l.Close()
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
+}
+
+func TestDaemonStop_WaitGroupDrainsConnections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	socketPath := shortSocketPath("drain")
+	t.Cleanup(func() { os.Remove(socketPath) })
+
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	manifest := NewManifestManager()
+	manifest.path = filepath.Join(t.TempDir(), "manifest.yaml")
+
+	d := &Daemon{
+		cfg:      Config{SocketPath: socketPath},
+		done:     make(chan struct{}),
+		pool:     newLifecycleTestPool(),
+		manifest: manifest,
+		procMgr:  process.NewManager(nil, "test"),
+		listener: listener,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	t.Cleanup(func() { d.pool.Close() })
+
+	if err := d.acquireLock(); err != nil {
+		t.Fatalf("acquireLock: %v", err)
+	}
+
+	// Start accept loop.
+	d.wg.Add(1)
+	go d.acceptLoop(context.Background())
+
+	// Connect a client so the daemon spawns a handleConnection goroutine.
+	client, err := (&net.Dialer{}).DialContext(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	// Give accept loop time to spawn handleConnection.
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop the daemon — should wait for connections to drain.
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- d.Stop() }()
+
+	// Close the client so handleConnection's Recv returns EOF.
+	client.Close()
+
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return within 5s — WaitGroup likely leaked")
+	}
+}
+
+func TestSignalLoop_ExitsOnDone(t *testing.T) {
+	d := &Daemon{
+		done:   make(chan struct{}),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	exited := make(chan struct{})
+	go func() {
+		d.signalLoop(context.Background())
+		close(exited)
+	}()
+
+	close(d.done)
+
+	select {
+	case <-exited:
+		// signalLoop exited cleanly.
+	case <-time.After(2 * time.Second):
+		t.Fatal("signalLoop did not exit within 2s after done channel closed")
+	}
+}
+
+func TestSignalLoop_ExitsOnContextCancel(t *testing.T) {
+	d := &Daemon{
+		done:   make(chan struct{}),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	exited := make(chan struct{})
+	go func() {
+		d.signalLoop(ctx)
+		close(exited)
+	}()
+
+	cancel()
+
+	select {
+	case <-exited:
+		// signalLoop exited cleanly via context cancellation.
+	case <-time.After(2 * time.Second):
+		t.Fatal("signalLoop did not exit within 2s after context cancelled")
+	}
+}
+
+// --- Socket directory creation tests ---
+
+func TestSocketDirectoryCreation(t *testing.T) {
+	base := t.TempDir()
+	nested := filepath.Join(base, "a", "b", "c")
+	socketPath := filepath.Join(nested, "loom.sock")
+
+	// MkdirAll should create all intermediate directories.
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	info, err := os.Stat(nested)
+	if err != nil {
+		t.Fatalf("stat on nested dir failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected nested path to be a directory")
+	}
+}
+
+func TestSocketDirectoryPermissions(t *testing.T) {
+	base := t.TempDir()
+	socketDir := filepath.Join(base, "daemon-sock")
+	socketPath := filepath.Join(socketDir, "loom.sock")
+
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	info, err := os.Stat(socketDir)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+
+	perm := info.Mode().Perm()
+	if perm != 0700 {
+		t.Errorf("socket dir permissions = %o, want 0700", perm)
+	}
+}
+
+func TestSocketDirectoryPreexisting(t *testing.T) {
+	base := t.TempDir()
+	socketDir := filepath.Join(base, "existing")
+	if err := os.Mkdir(socketDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// MkdirAll on pre-existing directory should succeed without error.
+	socketPath := filepath.Join(socketDir, "loom.sock")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+		t.Fatalf("MkdirAll on existing dir should succeed: %v", err)
 	}
 }
