@@ -534,13 +534,11 @@ def load_pipeline(model_id: str):
                     from diffusers import BitsAndBytesConfig as DiffusersBnBConfig
                     from diffusers.quantizers import PipelineQuantizationConfig
 
-                    # BNB NF4 compute dtype: default float32 for numerical stability.
-                    # BNB stores linear biases as float32; compute_dtype must match
-                    # to avoid "Input type and bias type should be the same" errors.
-                    # Override via BNB_COMPUTE_DTYPE=bfloat16 for ~2x speedup on gfx1100
-                    # (123 vs 61 TFLOPS) — needs empirical validation per model.
+                    # BNB NF4 compute dtype — controls dequantization precision.
+                    # bfloat16: ~2x speedup on gfx1100 (123 vs 61 TFLOPS).
+                    # float32: safe fallback if bf16 produces artifacts.
                     _bnb_dtype_name = os.environ.get(
-                        "BNB_COMPUTE_DTYPE", "float32"
+                        "BNB_COMPUTE_DTYPE", "bfloat16"
                     ).lower()
                     _bnb_dtype_map = {
                         "float32": torch.float32,
@@ -561,14 +559,21 @@ def load_pipeline(model_id: str):
                     flux_kwargs["quantization_config"] = PipelineQuantizationConfig(
                         quant_mapping={"transformer": bnb_config}
                     )
-                    # Load as float32 so BNB biases and transformer norms are float32.
-                    # After loading, text encoders are downcast to bfloat16 to prevent
-                    # T5-XXL overflow (float16 max ~65504 is too small for T5 attention).
-                    # Memory: T5 bf16 (~9.4 GB) + NF4 transformer (~6 GB) = ~15.4 GB.
-                    flux_kwargs["torch_dtype"] = torch.float32
+                    # Match torch_dtype to compute_dtype so all non-quantized layers
+                    # (norms, projections, embeddings) have matching dtypes.
+                    # bfloat16 is safe for T5-XXL (same exponent range as float32,
+                    # max ~3.4e38 — only float16 overflows at ~65504).
+                    # float32 fallback: load everything as float32, then downcast
+                    # text encoders to bfloat16 post-load to save VRAM.
+                    if _bnb_compute_dtype == torch.bfloat16:
+                        flux_kwargs["torch_dtype"] = torch.bfloat16
+                    else:
+                        flux_kwargs["torch_dtype"] = torch.float32
                     _flux_nf4 = True
                     print(
-                        f"NF4 quantization enabled for FLUX pipeline (compute dtype: {_bnb_dtype_name})"
+                        f"NF4 quantization enabled for FLUX pipeline "
+                        f"(compute dtype: {_bnb_dtype_name}, "
+                        f"load dtype: {flux_kwargs['torch_dtype']})"
                     )
                 except (ImportError, Exception) as e:
                     print(
@@ -588,11 +593,12 @@ def load_pipeline(model_id: str):
                     resolved_path,
                     **flux_kwargs,
                 )
-            # NF4: downcast text encoders to bfloat16 to prevent T5-XXL overflow
-            # (float16 max ~65504 is too small) and save VRAM.
-            # VAE stays float32 (prevents NaN in decode).
-            # Patch encode_prompt to cast output to match compute dtype.
-            if _flux_nf4:
+            # NF4 post-load dtype fixups (only needed for float32 loading path).
+            # When torch_dtype matches compute_dtype (e.g. both bfloat16),
+            # all layers already have consistent dtypes — no fixup needed.
+            if _flux_nf4 and flux_kwargs.get("torch_dtype") == torch.float32:
+                # Downcast text encoders to bfloat16 to save VRAM and prevent
+                # T5-XXL overflow (float16 max ~65504 is too small).
                 for enc_attr in ("text_encoder", "text_encoder_2"):
                     enc = getattr(pipeline, enc_attr, None)
                     if enc is not None:
