@@ -2,12 +2,25 @@
 package daemon
 
 import (
+	"bytes"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// validAuthTypes lists accepted values for HTTP.Auth.Type.
+var validAuthTypes = map[string]bool{
+	"":       true, // none / localhost-only
+	"token":  true,
+	"oidc":   true,
+	"mtls":   true,
+	"oauth2": true,
+}
 
 // FileConfig represents the daemon configuration file structure.
 // This file can be updated by the VS Code extension to control daemon behavior.
@@ -444,22 +457,63 @@ func (c *ResourceConfig) GetManifestTTL() time.Duration {
 // LoadConfigFile loads configuration from ~/.config/loom/config.yaml.
 // If the file doesn't exist, it returns the default configuration.
 func LoadConfigFile() (FileConfig, error) {
+	cfg, warnings, err := LoadConfigFileWithWarnings()
+	for _, w := range warnings {
+		slog.Warn(w)
+	}
+	return cfg, err
+}
+
+// LoadConfigFileWithWarnings loads configuration and returns any validation
+// warnings separately (useful for testing without slog side-effects).
+func LoadConfigFileWithWarnings() (FileConfig, []string, error) {
 	configPath := getConfigPath()
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultFileConfig(), nil
+			return DefaultFileConfig(), nil, nil
 		}
-		return FileConfig{}, err
+		return FileConfig{}, nil, err
 	}
 
+	return parseAndValidateConfig(data)
+}
+
+// parseAndValidateConfig decodes YAML data into FileConfig and returns
+// validation warnings for unknown keys and invalid field values.
+func parseAndValidateConfig(data []byte) (FileConfig, []string, error) {
+	var warnings []string
+
+	// First pass: strict decode to detect unknown keys.
+	var strict FileConfig
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&strict); err != nil {
+		// If the error is about unknown fields, collect it as a warning
+		// and fall through to a lenient parse so the daemon still starts.
+		if strings.Contains(err.Error(), "not found") ||
+			strings.Contains(err.Error(), "unknown") {
+			warnings = append(warnings,
+				fmt.Sprintf("config: unknown key in config.yaml: %v", err))
+		} else {
+			// True syntax error — hard fail.
+			return FileConfig{}, nil, err
+		}
+	}
+
+	// Second pass (or reuse strict result): lenient decode so unknown
+	// keys don't block startup.
 	var cfg FileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return FileConfig{}, err
+	if len(warnings) == 0 {
+		cfg = strict
+	} else {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return FileConfig{}, warnings, err
+		}
 	}
 
-	// Apply defaults for missing values
+	// Apply defaults for missing values.
 	if cfg.Hub.URL == "" {
 		cfg.Hub.URL = "wss://mcp.flexinfer.ai/ws"
 	}
@@ -467,7 +521,14 @@ func LoadConfigFile() (FileConfig, error) {
 		cfg.Hub.Profile = "codex"
 	}
 
-	return cfg, nil
+	// Validate HTTP auth type.
+	if !validAuthTypes[cfg.HTTP.Auth.Type] {
+		warnings = append(warnings,
+			fmt.Sprintf("config: unknown http.auth.type %q (valid: token, oidc, mtls, oauth2, or empty)",
+				cfg.HTTP.Auth.Type))
+	}
+
+	return cfg, warnings, nil
 }
 
 // SaveConfigFile saves configuration to ~/.config/loom/config.yaml.
@@ -488,6 +549,9 @@ func SaveConfigFile(cfg FileConfig) error {
 }
 
 func getConfigPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("config: unable to determine home directory, using current directory", "error", err)
+	}
 	return filepath.Join(home, ".config", "loom", "config.yaml")
 }

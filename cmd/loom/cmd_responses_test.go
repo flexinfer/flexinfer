@@ -32,8 +32,11 @@ func (f *fakeRunResponsesClient) Create(_ context.Context, req openairesponses.T
 
 func TestResponsesStatus_DefaultDisabled(t *testing.T) {
 	t.Setenv("LOOM_EXPERIMENTAL_OPENAI_RESPONSES", "")
+	t.Setenv("LOOM_RESPONSES_API_KEY", "")
+	t.Setenv("LOOM_RESPONSES_BASE_URL", "")
 	t.Setenv("LOOM_RESPONSES_REQUEST_TIMEOUT", "")
 	t.Setenv("LOOM_RESPONSES_MAX_LOOP_ITERATIONS", "")
+	t.Setenv("LOOM_RESPONSES_MAX_RETRIES", "")
 
 	cmd := newResponsesStatusCmd()
 	var out bytes.Buffer
@@ -51,12 +54,21 @@ func TestResponsesStatus_DefaultDisabled(t *testing.T) {
 	if !strings.Contains(text, "feature_gate_env: LOOM_EXPERIMENTAL_OPENAI_RESPONSES") {
 		t.Fatalf("expected feature gate env output, got: %s", text)
 	}
+	if !strings.Contains(text, "api_key_configured: false") {
+		t.Fatalf("expected api key status output, got: %s", text)
+	}
+	if !strings.Contains(text, "max_retries: 2") {
+		t.Fatalf("expected default max_retries output, got: %s", text)
+	}
 }
 
 func TestResponsesStatus_EnabledWithOverrides(t *testing.T) {
 	t.Setenv("LOOM_EXPERIMENTAL_OPENAI_RESPONSES", "1")
+	t.Setenv("LOOM_RESPONSES_API_KEY", "test-key")
+	t.Setenv("LOOM_RESPONSES_BASE_URL", "https://example.test/v1")
 	t.Setenv("LOOM_RESPONSES_REQUEST_TIMEOUT", "45s")
 	t.Setenv("LOOM_RESPONSES_MAX_LOOP_ITERATIONS", "20")
+	t.Setenv("LOOM_RESPONSES_MAX_RETRIES", "5")
 
 	cmd := newResponsesStatusCmd()
 	var out bytes.Buffer
@@ -77,6 +89,15 @@ func TestResponsesStatus_EnabledWithOverrides(t *testing.T) {
 	if !strings.Contains(text, "max_loop_iterations: 20") {
 		t.Fatalf("expected max-loop override output, got: %s", text)
 	}
+	if !strings.Contains(text, "api_key_configured: true") {
+		t.Fatalf("expected api key configured output, got: %s", text)
+	}
+	if !strings.Contains(text, "base_url: https://example.test/v1") {
+		t.Fatalf("expected base url output, got: %s", text)
+	}
+	if !strings.Contains(text, "max_retries: 5") {
+		t.Fatalf("expected max_retries output, got: %s", text)
+	}
 }
 
 func TestResponsesRun_RequiresFeatureGateBeforeFactory(t *testing.T) {
@@ -91,7 +112,7 @@ func TestResponsesRun_RequiresFeatureGateBeforeFactory(t *testing.T) {
 		return responsesRuntimeDependencies{}, nil
 	}
 
-	cmd := newResponsesRunCmd()
+	cmd := newResponsesRunCmd("")
 	cmd.SetArgs([]string{"--model", "gpt-5", "--input", "hello"})
 
 	err := cmd.Execute()
@@ -128,7 +149,7 @@ func TestResponsesRun_SuccessOutputsJSONAndPassesContext(t *testing.T) {
 		return responsesRuntimeDependencies{Client: client}, nil
 	}
 
-	cmd := newResponsesRunCmd()
+	cmd := newResponsesRunCmd("")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -171,7 +192,7 @@ func TestResponsesRun_PropagatesFactoryError(t *testing.T) {
 		return responsesRuntimeDependencies{}, errors.New("runtime unavailable")
 	}
 
-	cmd := newResponsesRunCmd()
+	cmd := newResponsesRunCmd("")
 	cmd.SetArgs([]string{"--model", "gpt-5"})
 	err := cmd.Execute()
 	if err == nil {

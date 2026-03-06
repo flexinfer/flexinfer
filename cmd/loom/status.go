@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // platformStatus aggregates daemon, agent, and HUD status into one struct.
@@ -137,7 +139,68 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		}
 	}
 
+	if !ps.HUD.Reachable {
+		if agents, sessions, err := collectPlatformStatusFromDaemon(socketPath); err == nil {
+			ps.Agents = agents
+			ps.Sessions = sessions
+		}
+	}
+
 	return ps
+}
+
+func collectPlatformStatusFromDaemon(socketPath string) (agentStatus, sessionCount, error) {
+	client := bridge.NewDaemonClient(socketPath, nil)
+	if err := client.Connect(); err != nil {
+		return agentStatus{}, sessionCount{}, err
+	}
+	defer client.Close()
+
+	agentBridge := bridge.NewAgentBridge(client)
+
+	agents, err := agentBridge.PresenceList(true)
+	if err != nil {
+		return agentStatus{}, sessionCount{}, err
+	}
+
+	sessionsRaw, err := agentBridge.ListSessions(map[string]any{"limit": 1000})
+	if err != nil {
+		return agentStatus{}, sessionCount{}, err
+	}
+
+	var sessionEnvelope struct {
+		Sessions []bridge.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(sessionsRaw, &sessionEnvelope); err != nil {
+		return agentStatus{}, sessionCount{}, err
+	}
+
+	return countPresenceStatuses(agents), countSessionStatuses(sessionEnvelope.Sessions), nil
+}
+
+func countPresenceStatuses(agents []bridge.PresenceInfo) agentStatus {
+	counts := agentStatus{Total: len(agents)}
+	for _, agent := range agents {
+		switch agent.Status {
+		case "active":
+			counts.Active++
+		case "idle":
+			counts.Idle++
+		default:
+			counts.Offline++
+		}
+	}
+	return counts
+}
+
+func countSessionStatuses(sessions []bridge.SessionInfo) sessionCount {
+	counts := sessionCount{Total: len(sessions)}
+	for _, session := range sessions {
+		if session.Status == "active" || session.EndedAt == "" {
+			counts.Active++
+		}
+	}
+	return counts
 }
 
 func printPlatformStatus(ps platformStatus, socketPath string) {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -197,7 +196,8 @@ func startMCPProcess(ctx context.Context, serverName, command string) (*exec.Cmd
 func main() {
 	command := strings.TrimSpace(os.Getenv("MCP_SERVER_COMMAND"))
 	if command == "" {
-		log.Fatal("MCP_SERVER_COMMAND is required")
+		fmt.Fprintln(os.Stderr, "MCP_SERVER_COMMAND is required")
+		os.Exit(1)
 	}
 
 	wsPort := strings.TrimSpace(os.Getenv("MCP_WS_PORT"))
@@ -380,18 +380,25 @@ func main() {
 	srv := &http.Server{
 		Addr:              addr,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
+	listenErr := make(chan error, 1)
 	go func() {
-		log.Printf("custom-server listening on %s (ws=%s, server=%s)", addr, wsPath, serverName)
+		fmt.Fprintf(os.Stderr, "custom-server listening on %s (ws=%s, server=%s)\n", addr, wsPath, serverName)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("ListenAndServe: %v", err)
+			listenErr <- err
 		}
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+
+	select {
+	case <-stop:
+	case err := <-listenErr:
+		fmt.Fprintf(os.Stderr, "ListenAndServe: %v\n", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

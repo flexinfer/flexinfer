@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 func TestCollectPlatformStatus_DaemonDown(t *testing.T) {
@@ -137,5 +139,34 @@ func TestShowStatus_DaemonDown_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "daemon not running") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCountPresenceStatuses(t *testing.T) {
+	t.Parallel()
+
+	got := countPresenceStatuses([]bridge.PresenceInfo{
+		{Status: "active"},
+		{Status: "idle"},
+		{Status: "offline"},
+		{Status: "unknown"},
+	})
+
+	if got.Active != 1 || got.Idle != 1 || got.Offline != 2 || got.Total != 4 {
+		t.Fatalf("countPresenceStatuses() = %+v", got)
+	}
+}
+
+func TestCountSessionStatuses(t *testing.T) {
+	t.Parallel()
+
+	got := countSessionStatuses([]bridge.SessionInfo{
+		{Status: "active", EndedAt: ""},
+		{Status: "summarized", EndedAt: "2026-03-06T00:00:00Z"},
+		{Status: "", EndedAt: ""},
+	})
+
+	if got.Active != 2 || got.Total != 3 {
+		t.Fatalf("countSessionStatuses() = %+v", got)
 	}
 }

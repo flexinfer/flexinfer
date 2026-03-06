@@ -22,12 +22,10 @@ type responsesRuntimeDependencies struct {
 type responsesRuntimeFactoryFunc func(ctx context.Context) (responsesRuntimeDependencies, error)
 
 var responsesRuntimeFactory responsesRuntimeFactoryFunc = defaultResponsesRuntimeFactory
+var responsesRuntimeSocketPath string
 
-func defaultResponsesRuntimeFactory(_ context.Context) (responsesRuntimeDependencies, error) {
-	return responsesRuntimeDependencies{}, fmt.Errorf("responses runtime integration is not configured yet")
-}
-
-func newResponsesCmd() *cobra.Command {
+func newResponsesCmd(socketPath string) *cobra.Command {
+	responsesRuntimeSocketPath = socketPath
 	cmd := &cobra.Command{
 		Use:   "responses",
 		Short: "OpenAI Responses orchestration (experimental)",
@@ -36,7 +34,7 @@ func newResponsesCmd() *cobra.Command {
 This command surfaces feature-gate and loop safety settings for the
 opt-in Responses orchestration path planned for Loom Core.`,
 	}
-	cmd.AddCommand(newResponsesStatusCmd(), newResponsesRunCmd())
+	cmd.AddCommand(newResponsesStatusCmd(), newResponsesRunCmd(socketPath))
 	return cmd
 }
 
@@ -53,8 +51,11 @@ func newResponsesStatusCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "enabled: %t\n", cfg.Enabled)
 			fmt.Fprintf(out, "feature_gate_env: %s\n", openairesponses.FeatureGateEnvVar)
+			fmt.Fprintf(out, "api_key_configured: %t\n", strings.TrimSpace(openairesponses.APIKeyFromEnv()) != "")
+			fmt.Fprintf(out, "base_url: %s\n", openairesponses.BaseURLFromEnv())
 			fmt.Fprintf(out, "request_timeout: %s\n", cfg.RequestTimeout)
 			fmt.Fprintf(out, "max_loop_iterations: %d\n", cfg.MaxLoopIterations)
+			fmt.Fprintf(out, "max_retries: %d\n", cfg.MaxRetries)
 			if !cfg.Enabled {
 				fmt.Fprintf(out, "note: set %s=1 to enable the experimental orchestration path\n", openairesponses.FeatureGateEnvVar)
 			}
@@ -63,7 +64,7 @@ func newResponsesStatusCmd() *cobra.Command {
 	}
 }
 
-func newResponsesRunCmd() *cobra.Command {
+func newResponsesRunCmd(socketPath string) *cobra.Command {
 	var (
 		model              string
 		input              string
@@ -166,5 +167,6 @@ func newResponsesRunCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeoutOverride, "timeout", 0, "Override request timeout (e.g., 30s)")
 	cmd.Flags().IntVar(&maxLoopOverride, "max-loop-iterations", 0, "Override max loop iterations (>0)")
 	_ = cmd.MarkFlagRequired("model")
+	responsesRuntimeSocketPath = socketPath
 	return cmd
 }

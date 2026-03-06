@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -242,34 +243,67 @@ func statusHudService() error {
 
 	// Try to reach the health endpoint.
 	healthURL := hudBaseURL("3333") + "/api/health"
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
-	if err != nil {
-		fmt.Println("  HTTP:    error creating request")
-		return nil
-	}
-	resp, err := http.DefaultClient.Do(req)
+	statusCode, body, usedURL, err := hudHealthRequest(healthURL)
 	if err != nil {
 		fmt.Printf("  HTTP:    not reachable (%s)\n", healthURL)
 		return nil
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("  HTTP:    unhealthy (status %d)\n", resp.StatusCode)
+	// Local HUD can run with TLS enabled. If a plaintext probe hits it, the server
+	// returns HTTP 400 with a TLS handshake error message. Retry using HTTPS.
+	if statusCode == http.StatusBadRequest &&
+		strings.HasPrefix(healthURL, "http://127.0.0.1:") &&
+		strings.Contains(string(body), "Client sent an HTTP request to an HTTPS server") {
+		httpsURL := "https://" + strings.TrimPrefix(healthURL, "http://")
+		if retryStatus, retryBody, retryUsedURL, retryErr := hudHealthRequest(httpsURL); retryErr == nil {
+			statusCode = retryStatus
+			body = retryBody
+			usedURL = retryUsedURL
+		}
+	}
+
+	if statusCode != http.StatusOK {
+		fmt.Printf("  HTTP:    unhealthy (status %d)\n", statusCode)
 		return nil
 	}
 
 	var health struct {
 		CacheBackend string `json:"cache_backend"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&health); err == nil && health.CacheBackend != "" {
-		fmt.Printf("  HTTP:    healthy (%s)\n", healthURL)
+	if err := json.Unmarshal(body, &health); err == nil && health.CacheBackend != "" {
+		fmt.Printf("  HTTP:    healthy (%s)\n", usedURL)
 		fmt.Printf("  Cache:   %s\n", health.CacheBackend)
 	} else {
-		fmt.Printf("  HTTP:    healthy (%s)\n", healthURL)
+		fmt.Printf("  HTTP:    healthy (%s)\n", usedURL)
 	}
 
 	return nil
+}
+
+func hudHealthRequest(healthURL string) (statusCode int, body []byte, usedURL string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return 0, nil, "", err
+	}
+
+	client := http.DefaultClient
+	if strings.HasPrefix(healthURL, "https://") {
+		client = hudHTTPClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	defer resp.Body.Close()
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, "", err
+	}
+
+	return resp.StatusCode, body, healthURL, nil
 }

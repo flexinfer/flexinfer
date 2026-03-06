@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/poll"
 )
 
 // Config holds HTTP client configuration options.
@@ -106,12 +108,17 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		if attempt > 0 {
+			if req.GetBody != nil {
+				body, err := req.GetBody()
+				if err != nil {
+					return nil, fmt.Errorf("reset request body: %w", err)
+				}
+				req.Body = body
+			}
 			// Calculate exponential backoff delay
 			delay := c.backoffDelay(attempt)
-			select {
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			case <-time.After(delay):
+			if err := poll.WaitWithContext(req.Context(), delay); err != nil {
+				return nil, err
 			}
 		}
 

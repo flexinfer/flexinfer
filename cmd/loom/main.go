@@ -58,7 +58,7 @@ func main() {
 
 		// Proxy
 		newProxyCmd(socketPath),
-		newResponsesCmd(),
+		newResponsesCmd(socketPath),
 
 		// Config management
 		newGenerateCmd(),

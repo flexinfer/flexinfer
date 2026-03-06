@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -163,6 +164,43 @@ func TestClient_Do(t *testing.T) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("StatusCode = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("retry on 5xx rewinds request body", func(t *testing.T) {
+		attempts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			if string(body) != `{"hello":"world"}` {
+				t.Fatalf("body = %q", string(body))
+			}
+			if attempts == 1 {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		client := New(Config{
+			Timeout:        5 * time.Second,
+			MaxRetries:     1,
+			RetryBaseDelay: 1 * time.Millisecond,
+			RetryMaxDelay:  10 * time.Millisecond,
+		})
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, bytes.NewBufferString(`{"hello":"world"}`))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		defer resp.Body.Close()
+
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
 		}
 	})
 
