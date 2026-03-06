@@ -34,6 +34,16 @@ make bootstrap-local
 ./bin/loom status
 ```
 
+If you use linked Git worktrees or agent shells that invoke nested Git/Go commands,
+run this once after cloning and again after creating a new main checkout:
+
+```bash
+make git-setup
+```
+
+That repairs the main worktree Git config, installs shared `pre-commit`/`pre-push`
+hooks into the common Git dir, and makes local hooks safe for Codex, Claude, and Gemini.
+
 Manual path:
 
 ```bash

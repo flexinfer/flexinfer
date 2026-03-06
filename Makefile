@@ -1,4 +1,4 @@
-.PHONY: all build clean test install servers lint fmt vet check setup hooks dev help \
+.PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd \
 		install-core install-all bootstrap-local dev-upgrade dev-reload \
 		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
@@ -59,6 +59,7 @@ help:
 	@echo "Development:"
 	@echo "  make setup      - Install dev dependencies and git hooks"
 	@echo "  make hooks      - Install git pre-commit hooks"
+	@echo "  make git-setup  - Repair worktree-aware git config and install shared hooks"
 	@echo "  make dev        - Build and run daemon in debug mode"
 	@echo "  make dev-upgrade - Build, install, sync, restart daemon (safe: skips if active connections)"
 	@echo "  make dev-reload  - Build, install, sync, force-restart daemon (all proxies auto-reconnect)"
@@ -391,7 +392,7 @@ dev-reload:
 # - build + atomic install loom/loomd
 # - regenerate and sync loom-mode configs
 # - run environment checks
-bootstrap-local: install-core
+bootstrap-local: git-setup install-core
 	@./bin/loom sync all --regen --loom-mode
 	@./bin/loom check
 	@echo ""
@@ -426,7 +427,7 @@ check-quick: fmt-check vet
 	go build ./...
 
 # Setup development environment
-setup: tools hooks
+setup: tools git-setup
 	@echo "\nDevelopment environment ready!"
 	@echo "Run 'make help' to see available commands"
 
@@ -440,25 +441,31 @@ tools:
 	go install github.com/boumenot/gocover-cobertura@v1.4.0
 	@echo "Tools installed to $(GOPATH)/bin"
 
-# Install git hooks
-hooks:
-	@echo "Installing git hooks..."
+# Repair worktree-aware git config and install hooks into the shared git dir.
+git-setup:
+	@chmod +x scripts/dev/with-clean-git-env.sh
+	@chmod +x scripts/dev/repair_git_setup.sh
+	@chmod +x scripts/hooks/run-pre-commit-hook.sh
+	@chmod +x scripts/hooks/pre-commit
+	@chmod +x scripts/hooks/pre-commit-native.sh
+	@chmod +x scripts/hooks/pre-push
+	@chmod +x scripts/hooks/pre-push-native.sh
+	@./scripts/dev/repair_git_setup.sh
 	@if command -v pre-commit >/dev/null 2>&1; then \
-		pre-commit install; \
-		echo "pre-commit hooks installed"; \
+		echo "git-setup: pre-commit detected"; \
 	else \
-		cp scripts/hooks/pre-commit .git/hooks/pre-commit; \
-		chmod +x .git/hooks/pre-commit; \
-		echo "Native pre-commit hook installed"; \
-		echo "Tip: Install pre-commit for more features: pip install pre-commit"; \
+		echo "git-setup: pre-commit not installed; native hook fallback will be used"; \
 	fi
+
+hooks: git-setup
+	@echo "Hooks installed via git-setup"
 
 # Pre-commit (run manually)
 pre-commit:
 	@if command -v pre-commit >/dev/null 2>&1; then \
-		pre-commit run --all-files; \
+		bash scripts/dev/with-clean-git-env.sh pre-commit run --all-files; \
 	else \
-		./scripts/hooks/pre-commit; \
+		./scripts/hooks/pre-commit-native.sh; \
 	fi
 
 # =============================================================================

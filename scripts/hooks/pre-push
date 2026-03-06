@@ -10,15 +10,15 @@ resolve_repo_root() {
     printf '%s\n' "${root}"
     return 0
   fi
-  echo "pre-commit hook: unable to resolve repo root" >&2
+  echo "pre-push hook: unable to resolve repo root" >&2
   exit 1
 }
 
 REPO_ROOT="$(resolve_repo_root)"
 HOOK_SCRIPT_DIR="${REPO_ROOT}/scripts/hooks"
 
-if "${HOOK_SCRIPT_DIR}/run-pre-commit-hook.sh" pre-commit "$@"; then
+if "${HOOK_SCRIPT_DIR}/run-pre-commit-hook.sh" pre-push "$@"; then
   exit 0
 fi
 
-exec "${HOOK_SCRIPT_DIR}/pre-commit-native.sh" "$@"
+exec "${HOOK_SCRIPT_DIR}/pre-push-native.sh" "$@"

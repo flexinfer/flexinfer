@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+WITH_CLEAN_GIT_ENV="${REPO_ROOT}/scripts/dev/with-clean-git-env.sh"
+
+cd "${REPO_ROOT}"
+
 # Hook helper for go-build:
 # - skip pre-push runs when no Go files changed in the push range
 # - avoid repeated no-space linker failures by proactively cleaning Go caches
@@ -37,7 +43,7 @@ has_go_changes_in_range() {
   if [[ -z "$range" ]]; then
     return 0
   fi
-  git diff --name-only "$range" -- '*.go' | grep -q .
+  "${WITH_CLEAN_GIT_ENV}" git diff --name-only "$range" -- '*.go' | grep -q .
 }
 
 push_range() {
@@ -50,24 +56,24 @@ push_range() {
     return 0
   fi
 
-  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+  upstream="$("${WITH_CLEAN_GIT_ENV}" git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
   if [[ -n "$upstream" ]]; then
-    base="$(git merge-base HEAD "$upstream" 2>/dev/null || true)"
+    base="$("${WITH_CLEAN_GIT_ENV}" git merge-base HEAD "$upstream" 2>/dev/null || true)"
     if [[ -n "$base" ]]; then
       echo "${base}..HEAD"
       return 0
     fi
   fi
 
-  if git rev-parse --verify origin/main >/dev/null 2>&1; then
-    base="$(git merge-base HEAD origin/main 2>/dev/null || true)"
+  if "${WITH_CLEAN_GIT_ENV}" git rev-parse --verify origin/main >/dev/null 2>&1; then
+    base="$("${WITH_CLEAN_GIT_ENV}" git merge-base HEAD origin/main 2>/dev/null || true)"
     if [[ -n "$base" ]]; then
       echo "${base}..HEAD"
       return 0
     fi
   fi
 
-  if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+  if "${WITH_CLEAN_GIT_ENV}" git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
     echo "HEAD~1..HEAD"
     return 0
   fi
@@ -90,4 +96,4 @@ fi
 
 cleanup_go_caches_if_low_space
 echo "go-build: running go build ./..."
-go build ./...
+"${WITH_CLEAN_GIT_ENV}" go build ./...

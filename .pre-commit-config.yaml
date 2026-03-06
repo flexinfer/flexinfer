@@ -43,7 +43,7 @@ repos:
 
       - id: go-vet
         name: go vet
-        entry: go vet ./...
+        entry: bash scripts/dev/with-clean-git-env.sh go vet ./...
         language: system
         types: [go]
         pass_filenames: false
@@ -51,7 +51,7 @@ repos:
 
       - id: go-mod-tidy
         name: go mod tidy
-        entry: go mod tidy -diff
+        entry: bash scripts/dev/with-clean-git-env.sh go mod tidy -diff
         language: system
         types: [go]
         pass_filenames: false
@@ -59,7 +59,7 @@ repos:
 
       - id: golangci-lint
         name: golangci-lint
-        entry: bash -c '$HOME/go/bin/golangci-lint run'
+        entry: bash scripts/dev/with-clean-git-env.sh bash -c '$HOME/go/bin/golangci-lint run'
         language: system
         types: [go]
         pass_filenames: false
@@ -76,7 +76,7 @@ repos:
 
       - id: go-test
         name: go test (fast)
-        entry: go test -short ./...
+        entry: bash scripts/dev/with-clean-git-env.sh go test -short ./...
         language: system
         types: [go]
         pass_filenames: false
