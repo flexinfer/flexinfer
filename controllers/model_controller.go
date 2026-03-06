@@ -2177,6 +2177,16 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		job := &batchv1.Job{}
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
 		if errors.IsNotFound(err) {
+			// If cache was already verified (job succeeded and was GC'd by TTL),
+			// don't re-create the job — this prevents a scale-down/up cycle
+			// every TTLSecondsAfterFinished interval.
+			// Check original (pre-reconcile) status to avoid the fresh Ready=true
+			// set at the top of ensureCache.
+			if original.Status.Cache != nil && original.Status.Cache.Ready {
+				setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheCheck", "local cache previously verified")
+				return true, nil
+			}
+
 			newJob, err := r.jobForLocalCacheCheck(model)
 			if err != nil {
 				return false, fmt.Errorf("build local cache check job: %w", err)
