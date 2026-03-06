@@ -32,9 +32,9 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
-	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0
-	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.0.0
-	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260116221656-df35197c2d46
+	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260303164519-48d2ecf11f45
+	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.2.1-0.20260303153932-be44e44e9c2d
+	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260303153918-d2e5fba8ab13
 	go.mongodb.org/mongo-driver v1.17.8
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.40.0
@@ -49,12 +49,6 @@ require (
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
-)
-
-replace (
-	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel => ../../libs/fi-accel/go/fiaccel
-	gitlab.flexinfer.ai/libs/fi-mcp-kit => ../../libs/fi-mcp-kit
-	gitlab.flexinfer.ai/libs/mcp-go => ../../libs/mcp-go
 )
 
 require (

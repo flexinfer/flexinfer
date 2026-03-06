@@ -58,6 +58,9 @@ variables:
   # Work around occasional runner fetch failures for ephemeral pipeline refs by
   # disabling shallow clones (fetch full history).
   GIT_DEPTH: "0"
+  # CI should resolve pinned module versions, not the local workspace overlays
+  # used on developer machines.
+  GOWORK: "off"
   # GitLab Runner intermittently attempts to fetch `refs/pipelines/<id>`, which
   # is not reliably available on this GitLab instance. Skip the built-in
   # checkout and fetch sources explicitly inside jobs instead.
@@ -120,22 +123,10 @@ cache:
         git checkout -q -f "${CI_COMMIT_SHA}"
       fi
     - |
-      # This repo uses local `replace` directives to `../../libs/*`.
-      # In CI, ensure those sibling repos exist so `go mod download` and builds work.
-      LIBS_DIR="$(realpath "${CI_PROJECT_DIR}/../../libs")"
-      mkdir -p "${LIBS_DIR}"
-      if [ ! -d "${LIBS_DIR}/mcp-go/.git" ]; then
-        rm -rf "${LIBS_DIR}/mcp-go"
-        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/mcp-go.git" "${LIBS_DIR}/mcp-go"
-      fi
-      if [ ! -d "${LIBS_DIR}/fi-mcp-kit/.git" ]; then
-        rm -rf "${LIBS_DIR}/fi-mcp-kit"
-        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-mcp-kit.git" "${LIBS_DIR}/fi-mcp-kit"
-      fi
-      if [ ! -d "${LIBS_DIR}/fi-accel/.git" ]; then
-        rm -rf "${LIBS_DIR}/fi-accel"
-        git clone --depth 1 --single-branch "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/libs/fi-accel.git" "${LIBS_DIR}/fi-accel"
-      fi
+      # Authenticate direct Git module fetches for private libs/* modules without
+      # recloning sibling repositories into the workspace.
+      git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
+      git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"
     - export GOPATH="$CI_PROJECT_DIR/.go"
     - export GOCACHE="$CI_PROJECT_DIR/.go-build"
     - mkdir -p "$GOPATH" "$GOCACHE"
@@ -179,6 +170,8 @@ prepare:go-cache:
   stage: prepare
   variables:
     GO_WARM_MOD_CACHE: "true"
+    KUBERNETES_CPU_REQUEST: "1"
+    KUBERNETES_CPU_LIMIT: "2"
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
@@ -188,7 +181,13 @@ prepare:go-cache:
     policy: pull-push
   script:
     - echo "Seeding shared Go cache/tooling"
-    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+    - |
+      LINT_BIN="$(go env GOPATH)/bin/golangci-lint"
+      if [ -x "$LINT_BIN" ] && "$LINT_BIN" version 2>/dev/null | grep -q 'version v2.8.0'; then
+        echo "Using cached golangci-lint v2.8.0"
+      else
+        go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+      fi
     - go env GOPATH GOCACHE
   artifacts:
     paths:
@@ -209,6 +208,8 @@ lint:
     - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "1"
+    KUBERNETES_CPU_LIMIT: "2"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
@@ -339,6 +340,12 @@ lint:mcp-godot:
 build:binaries:
   <<: *go-template
   stage: build
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     # Keep Go module/build caches shared per-branch, but keep compiled binaries
     # scoped per-commit to avoid stale/incorrect reuse.
@@ -357,6 +364,7 @@ build:binaries:
     - |
       VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
       LDFLAGS="-s -w -X main.version=${VERSION}"
+      export LDFLAGS
 
       echo "Building all binaries..."
       mkdir -p bin
@@ -365,17 +373,16 @@ build:binaries:
       CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
       CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
 
-      # Build MCP servers for integration tests
-      failures=0
-      for pkg in $(ls cmd/ | grep '^mcp-'); do
-        echo "Building $pkg..."
-        if ! CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/$pkg" "./cmd/$pkg"; then
-          echo "ERROR: Failed to build $pkg"
-          failures=$((failures + 1))
-        fi
-      done
-      if [ "$failures" -ne 0 ]; then
-        echo "ERROR: $failures MCP server(s) failed to build"
+      # Build MCP servers for integration tests in parallel to reduce wall time.
+      mapfile -t MCP_PKGS < <(find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | sort)
+      MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+      echo "Building ${#MCP_PKGS[@]} MCP servers with ${MCP_BUILD_JOBS} parallel jobs..."
+      if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -lc '
+        pkg="$1"
+        echo "Building ${pkg}..."
+        CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
+      ' _ {}; then
+        echo "ERROR: one or more MCP server builds failed"
         exit 1
       fi
 
@@ -391,6 +398,12 @@ build:binaries:
 test:unit:
   <<: *go-template
   stage: test
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |
       echo "Selecting packages with tests..."
@@ -406,8 +419,8 @@ test:unit:
         mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/mcp-agent-context)')
       fi
 
-      echo "Running unit tests with race detector..."
-      go test -race -coverprofile=coverage.out -covermode=atomic "${PKGS[@]}"
+      echo "Running unit tests with coverage..."
+      go test -coverprofile=coverage.out -covermode=count "${PKGS[@]}"
 
       # Convert Go coverprofile to Cobertura XML for GitLab coverage reports
       go install github.com/boumenot/gocover-cobertura@v1.4.0
@@ -447,6 +460,12 @@ test:integration:
   stage: test
   needs:
     - build:binaries
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     - key: ${CI_COMMIT_SHA}-bin
       paths:
@@ -476,6 +495,12 @@ test:enterprise-smoke:
 test:race:
   <<: *go-template
   stage: test
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |
       mapfile -t PKGS < <(go list ./...)

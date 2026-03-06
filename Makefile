@@ -980,11 +980,13 @@ docker-build-loom-core:
 docker-build-custom-server:
 	@echo "Building custom-server image..."
 	@echo "Image: $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
-	@echo "Context: $(WORKSPACE_ROOT)"
-	cd $(WORKSPACE_ROOT) && docker build \
+	@echo "Context: $(CURDIR)"
+	@echo "Named libs context: $(WORKSPACE_ROOT)/libs"
+	cd $(CURDIR) && docker build \
+		--build-context libs=$(WORKSPACE_ROOT)/libs \
 		-t $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG) \
 		-t $(CUSTOM_SERVER_IMAGE):latest \
-		-f services/loom-core/Dockerfile.custom-server.local .
+		-f Dockerfile.custom-server.local .
 	@echo "✓ custom-server image built"
 
 # Push all images

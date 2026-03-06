@@ -1,4 +1,5 @@
-# Local-only Dockerfile for building `custom-server` without cloning deps over the network.
+# Local-only Dockerfile for building `custom-server` from the current workspace
+# without fetching private sibling modules over the network.
 # Build context must be the workspace root (so `libs/*` is available).
 #
 # Example:
@@ -6,25 +7,32 @@
 #
 # CI should continue to use `services/loom-core/Dockerfile.custom-server`.
 
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.25.7-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
+ENV GOPRIVATE=gitlab.flexinfer.ai/* \
+    GONOSUMDB=gitlab.flexinfer.ai/* \
+    GOSUMDB=off \
+    GOFLAGS=-buildvcs=false \
+    GOWORK=off
 
 WORKDIR /src
 
-# This repo uses local `replace` directives to `../../libs/*`.
-# When building from the workspace root, ensure those are present at /src/libs/*.
+# Local workspace modules come from the named BuildKit context `libs` and are
+# wired in via go.work.
 RUN mkdir -p /src/libs
-COPY libs/mcp-go /src/libs/mcp-go
-COPY libs/fi-mcp-kit /src/libs/fi-mcp-kit
-COPY libs/fi-accel/go/fiaccel /src/libs/fi-accel/go/fiaccel
+COPY --from=libs mcp-go /src/libs/mcp-go
+COPY --from=libs fi-mcp-kit /src/libs/fi-mcp-kit
+COPY --from=libs fi-accel/go/fiaccel /src/libs/fi-accel/go/fiaccel
 
 WORKDIR /src/services/loom-core
 
-COPY services/loom-core/go.mod services/loom-core/go.sum ./
-RUN go mod download
+COPY . ./
 
-COPY services/loom-core/ ./
+RUN go mod edit -replace=gitlab.flexinfer.ai/libs/mcp-go=/src/libs/mcp-go && \
+    go mod edit -replace=gitlab.flexinfer.ai/libs/fi-mcp-kit=/src/libs/fi-mcp-kit && \
+    go mod edit -replace=gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel=/src/libs/fi-accel/go/fiaccel && \
+    go mod download
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/custom-server ./cmd/custom-server
 

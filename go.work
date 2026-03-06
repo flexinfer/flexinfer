@@ -1,0 +1,8 @@
+go 1.25.7
+
+use (
+	.
+	../../libs/fi-accel/go/fiaccel
+	../../libs/fi-mcp-kit
+	../../libs/mcp-go
+)
