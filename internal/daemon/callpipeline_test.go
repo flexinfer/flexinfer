@@ -1306,14 +1306,21 @@ func TestHandleCall_RequestPolicyDeniedEmitsAuditAndCost(t *testing.T) {
 	if !strings.Contains(resp.Error.Message, "policy denied") {
 		t.Fatalf("unexpected denial message: %q", resp.Error.Message)
 	}
-	data, ok := resp.Error.Data.(map[string]any)
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
 	if !ok {
-		t.Fatalf("expected error data map, got %T", resp.Error.Data)
+		t.Fatalf("expected *PipelineErrorData, got %T", resp.Error.Data)
 	}
-	if got := data["policy_rule_id"]; got != "deny-force-delete" {
+	if ped.Code != "POLICY_DENIED" {
+		t.Fatalf("PipelineErrorData.Code = %q, want POLICY_DENIED", ped.Code)
+	}
+	details, ok := ped.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Details map, got %T", ped.Details)
+	}
+	if got := details["policy_rule_id"]; got != "deny-force-delete" {
 		t.Fatalf("policy_rule_id = %v, want %q", got, "deny-force-delete")
 	}
-	if got := data["policy_reason_code"]; got != "POLICY_FORCE_DELETE_BLOCKED" {
+	if got := details["policy_reason_code"]; got != "POLICY_FORCE_DELETE_BLOCKED" {
 		t.Fatalf("policy_reason_code = %v, want %q", got, "POLICY_FORCE_DELETE_BLOCKED")
 	}
 
@@ -1604,8 +1611,8 @@ func TestHandleCall_RBACDenialEmitsAuditAndCost(t *testing.T) {
 }
 
 // TestCallPipeline_ErrorResponseEnvelopeStructure validates that the unified
-// errorResponse helper produces correct JSON-RPC error envelopes with and
-// without the optional Data field.
+// errorResponse helper produces correct JSON-RPC error envelopes with
+// PipelineErrorData in the Data field.
 func TestCallPipeline_ErrorResponseEnvelopeStructure(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	p := newCallPipeline(d, context.Background(), &mcp.Message{
@@ -1613,7 +1620,7 @@ func TestCallPipeline_ErrorResponseEnvelopeStructure(t *testing.T) {
 		ID:      "envelope-test",
 	})
 
-	// Error without Data.
+	// invalidParamsError now carries PipelineErrorData.
 	resp := p.invalidParamsError("bad input")
 	if resp.JSONRPC != mcp.JSONRPCVersion {
 		t.Fatalf("JSONRPC = %q, want %q", resp.JSONRPC, mcp.JSONRPCVersion)
@@ -1624,8 +1631,12 @@ func TestCallPipeline_ErrorResponseEnvelopeStructure(t *testing.T) {
 	if resp.Error.Code != mcp.InvalidParams {
 		t.Fatalf("Code = %d, want %d", resp.Error.Code, mcp.InvalidParams)
 	}
-	if resp.Error.Data != nil {
-		t.Fatalf("expected nil Data for plain error, got %v", resp.Error.Data)
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("expected *PipelineErrorData, got %T", resp.Error.Data)
+	}
+	if ped.Code != "INVALID_INPUT" {
+		t.Fatalf("PipelineErrorData.Code = %q, want INVALID_INPUT", ped.Code)
 	}
 
 	// Error with Data (policy denial).
@@ -1639,21 +1650,28 @@ func TestCallPipeline_ErrorResponseEnvelopeStructure(t *testing.T) {
 	if policyResp.Error.Code != mcp.InvalidRequest {
 		t.Fatalf("Code = %d, want %d", policyResp.Error.Code, mcp.InvalidRequest)
 	}
-	data, ok := policyResp.Error.Data.(map[string]any)
+	policyPED, ok := policyResp.Error.Data.(*PipelineErrorData)
 	if !ok {
-		t.Fatalf("expected Data map, got %T", policyResp.Error.Data)
+		t.Fatalf("expected *PipelineErrorData, got %T", policyResp.Error.Data)
 	}
-	if data["policy_rule_id"] != "rule-1" {
-		t.Fatalf("policy_rule_id = %v, want rule-1", data["policy_rule_id"])
+	if policyPED.Code != "POLICY_DENIED" {
+		t.Fatalf("PipelineErrorData.Code = %q, want POLICY_DENIED", policyPED.Code)
 	}
-	if data["policy_reason_code"] != "BLOCKED" {
-		t.Fatalf("policy_reason_code = %v, want BLOCKED", data["policy_reason_code"])
+	details, ok := policyPED.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Details map, got %T", policyPED.Details)
 	}
-	if data["policy_stage"] != "request" {
-		t.Fatalf("policy_stage = %v, want request", data["policy_stage"])
+	if details["policy_rule_id"] != "rule-1" {
+		t.Fatalf("policy_rule_id = %v, want rule-1", details["policy_rule_id"])
 	}
-	if data["policy_action"] != "deny" {
-		t.Fatalf("policy_action = %v, want deny", data["policy_action"])
+	if details["policy_reason_code"] != "BLOCKED" {
+		t.Fatalf("policy_reason_code = %v, want BLOCKED", details["policy_reason_code"])
+	}
+	if details["policy_stage"] != "request" {
+		t.Fatalf("policy_stage = %v, want request", details["policy_stage"])
+	}
+	if details["policy_action"] != "deny" {
+		t.Fatalf("policy_action = %v, want deny", details["policy_action"])
 	}
 }
 
@@ -3166,16 +3184,27 @@ func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
 	t.Run("invalidParamsError", func(t *testing.T) {
 		resp := p.invalidParamsError("bad")
 		assertEnvelope(t, resp, mcp.InvalidParams)
-		if resp.Error.Data != nil {
-			t.Errorf("expected nil Data, got %v", resp.Error.Data)
+		ped, ok := resp.Error.Data.(*PipelineErrorData)
+		if !ok {
+			t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+		}
+		if ped.Code != "INVALID_INPUT" {
+			t.Errorf("Code = %q, want INVALID_INPUT", ped.Code)
+		}
+		if ped.Retryable {
+			t.Error("expected Retryable=false for invalid params")
 		}
 	})
 
 	t.Run("internalError", func(t *testing.T) {
 		resp := p.internalError(errors.New("boom"))
 		assertEnvelope(t, resp, mcp.InternalError)
-		if resp.Error.Data != nil {
-			t.Errorf("expected nil Data, got %v", resp.Error.Data)
+		ped, ok := resp.Error.Data.(*PipelineErrorData)
+		if !ok {
+			t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+		}
+		if ped.Code != "SERVER_ERROR" {
+			t.Errorf("Code = %q, want SERVER_ERROR", ped.Code)
 		}
 	})
 
@@ -3188,8 +3217,15 @@ func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
 			Reason:  "not allowed",
 		})
 		assertEnvelope(t, resp, mcp.InvalidRequest)
-		if resp.Error.Data != nil {
-			t.Errorf("expected nil Data for RBAC error, got %v", resp.Error.Data)
+		ped, ok := resp.Error.Data.(*PipelineErrorData)
+		if !ok {
+			t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+		}
+		if ped.Code != "RBAC_DENIED" {
+			t.Errorf("Code = %q, want RBAC_DENIED", ped.Code)
+		}
+		if ped.Stage != "authorize" {
+			t.Errorf("Stage = %q, want authorize", ped.Stage)
 		}
 		if !strings.Contains(resp.Error.Message, "agent-1") {
 			t.Errorf("message should contain agent_id, got %q", resp.Error.Message)
@@ -3211,14 +3247,24 @@ func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
 			Action:     "deny",
 		})
 		assertEnvelope(t, resp, mcp.InvalidRequest)
-		data, ok := resp.Error.Data.(map[string]any)
+		ped, ok := resp.Error.Data.(*PipelineErrorData)
 		if !ok {
-			t.Fatalf("Data type = %T, want map[string]any", resp.Error.Data)
+			t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
 		}
-		// All four fields must be present.
+		if ped.Code != "POLICY_DENIED" {
+			t.Errorf("Code = %q, want POLICY_DENIED", ped.Code)
+		}
+		if ped.Stage != "policy" {
+			t.Errorf("Stage = %q, want policy", ped.Stage)
+		}
+		details, ok := ped.Details.(map[string]any)
+		if !ok {
+			t.Fatalf("Details type = %T, want map[string]any", ped.Details)
+		}
+		// All four policy detail fields must be present.
 		for _, key := range []string{"policy_rule_id", "policy_reason_code", "policy_stage", "policy_action"} {
-			if _, exists := data[key]; !exists {
-				t.Errorf("Data missing key %q", key)
+			if _, exists := details[key]; !exists {
+				t.Errorf("Details missing key %q", key)
 			}
 		}
 	})
@@ -3242,6 +3288,191 @@ func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
 			t.Errorf("audit status = %q, want error", last.Status)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Error envelope focused tests: specific error scenarios
+// ---------------------------------------------------------------------------
+
+func TestCallPipeline_ErrorEnvelope_RBACDenied(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "rbac-denied-envelope",
+	})
+	p.serverName = "github"
+	p.toolName = "delete_repo"
+	p.stage = stageAuth
+
+	resp := p.rbacDeniedError(AccessDecision{
+		AgentID:    "agent-1",
+		Role:       "viewer",
+		Server:     "github",
+		Tool:       "delete_repo",
+		Reason:     "denied by pattern",
+		ReasonCode: "role_deny",
+	})
+
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != mcp.InvalidRequest {
+		t.Fatalf("Error.Code = %d, want %d", resp.Error.Code, mcp.InvalidRequest)
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "RBAC_DENIED" {
+		t.Errorf("Code = %q, want RBAC_DENIED", ped.Code)
+	}
+	if ped.Server != "github" {
+		t.Errorf("Server = %q, want github", ped.Server)
+	}
+	if ped.Tool != "delete_repo" {
+		t.Errorf("Tool = %q, want delete_repo", ped.Tool)
+	}
+	if ped.Stage != "authorize" {
+		t.Errorf("Stage = %q, want authorize", ped.Stage)
+	}
+	if ped.Retryable {
+		t.Error("expected Retryable=false for RBAC denial")
+	}
+	details, ok := ped.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("Details type = %T, want map[string]any", ped.Details)
+	}
+	if details["reason_code"] != "role_deny" {
+		t.Errorf("details.reason_code = %v, want role_deny", details["reason_code"])
+	}
+	if details["agent_id"] != "agent-1" {
+		t.Errorf("details.agent_id = %v, want agent-1", details["agent_id"])
+	}
+}
+
+func TestCallPipeline_ErrorEnvelope_RateLimited(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "rate-limited-envelope",
+	})
+	p.serverName = "github"
+	p.toolName = "search"
+	p.stage = stageAuth
+
+	resp := p.rbacDeniedError(AccessDecision{
+		AgentID:    "agent-1",
+		Role:       "user",
+		Server:     "github",
+		Tool:       "search",
+		Reason:     "rate limit exceeded",
+		ReasonCode: "rate_limited",
+	})
+
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "RATE_LIMITED" {
+		t.Errorf("Code = %q, want RATE_LIMITED", ped.Code)
+	}
+	if !ped.Retryable {
+		t.Error("expected Retryable=true for rate limit")
+	}
+	if ped.RetryAfter == "" {
+		t.Error("expected non-empty RetryAfter for rate limit")
+	}
+	if ped.RetryAfter != "60s" {
+		t.Errorf("RetryAfter = %q, want 60s", ped.RetryAfter)
+	}
+}
+
+func TestCallPipeline_ErrorEnvelope_TransportTimeout(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.pool = newTestPool(t)
+	defer func() { _ = d.pool.Close() }()
+	d.procMgr = process.NewManager(nil, "codex")
+
+	d.pool.Put(&pool.Conn{
+		ServerName: "slow-server",
+		Transport:  &fakeTransport{},
+		Healthy:    true,
+	})
+
+	p := &callPipeline{
+		daemon:     d,
+		msg:        &mcp.Message{ID: "timeout-envelope"},
+		serverName: "slow-server",
+		toolName:   "query",
+		method:     "tools/call",
+		target:     router.TargetLocal,
+		targetStr:  router.TargetLocal.String(),
+		stage:      stageExecute,
+		conn: &pool.Conn{
+			ServerName: "slow-server",
+			Transport:  &fakeTransport{},
+			Healthy:    true,
+		},
+	}
+
+	resp := p.transportFailure("recv", context.DeadlineExceeded, time.Now())
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "TIMEOUT" {
+		t.Errorf("Code = %q, want TIMEOUT", ped.Code)
+	}
+	if !ped.Retryable {
+		t.Error("expected Retryable=true for timeout")
+	}
+	if ped.Stage != "execute" {
+		t.Errorf("Stage = %q, want execute", ped.Stage)
+	}
+	if ped.Server != "slow-server" {
+		t.Errorf("Server = %q, want slow-server", ped.Server)
+	}
+}
+
+func TestCallPipeline_ErrorEnvelope_ToolNotFound(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "tool-not-found-envelope",
+	})
+	p.stage = stageParse
+	p.toolName = "nonexistent_tool"
+
+	resp := p.invalidParamsError("could not resolve server for tool: nonexistent_tool")
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != mcp.InvalidParams {
+		t.Fatalf("Error.Code = %d, want %d", resp.Error.Code, mcp.InvalidParams)
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "TOOL_NOT_FOUND" {
+		t.Errorf("Code = %q, want TOOL_NOT_FOUND", ped.Code)
+	}
+	if ped.Stage != "parse" {
+		t.Errorf("Stage = %q, want parse", ped.Stage)
+	}
+	if ped.Retryable {
+		t.Error("expected Retryable=false for tool not found")
+	}
 }
 
 // ---------------------------------------------------------------------------

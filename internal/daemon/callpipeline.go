@@ -581,32 +581,100 @@ func (p *callPipeline) errorResponse(code int, message string, data any) *mcp.Me
 }
 
 func (p *callPipeline) invalidParamsError(message string) *mcp.Message {
-	return p.errorResponse(mcp.InvalidParams, message, nil)
+	code := "INVALID_INPUT"
+	if strings.Contains(message, "could not resolve server for tool") {
+		code = "TOOL_NOT_FOUND"
+	} else if strings.Contains(message, "missing server") {
+		code = "SERVER_NOT_FOUND"
+	}
+	return p.errorResponse(mcp.InvalidParams, message, &PipelineErrorData{
+		Code:      code,
+		Server:    p.serverName,
+		Tool:      p.toolName,
+		Stage:     p.stage,
+		Retryable: false,
+	})
 }
 
 func (p *callPipeline) internalError(err error) *mcp.Message {
-	return p.errorResponse(mcp.InternalError, err.Error(), nil)
+	code, retryable := classifyInternalError(err, p.stage)
+	return p.errorResponse(mcp.InternalError, err.Error(), &PipelineErrorData{
+		Code:      code,
+		Server:    p.serverName,
+		Tool:      p.toolName,
+		Stage:     p.stage,
+		Retryable: retryable,
+	})
 }
 
 func (p *callPipeline) internalErrorWithAudit(target, message string) *mcp.Message {
 	p.emitErrorAudit(target, message)
-	return p.errorResponse(mcp.InternalError, message, nil)
+	code := "SERVER_ERROR"
+	retryable := false
+	switch p.stage {
+	case stageRoute:
+		if strings.Contains(message, "server unavailable") {
+			code = "SERVER_UNAVAILABLE"
+		} else if strings.Contains(message, "call lock") || strings.Contains(message, "lock") {
+			code = "LOCK_TIMEOUT"
+			retryable = true
+		} else {
+			code = "CONNECTION_ERROR"
+			retryable = true
+		}
+	case stageExecute:
+		code, retryable = classifyTransportError(fmt.Errorf("%s", message))
+	}
+	return p.errorResponse(mcp.InternalError, message, &PipelineErrorData{
+		Code:      code,
+		Server:    p.serverName,
+		Tool:      p.toolName,
+		Stage:     p.stage,
+		Retryable: retryable,
+	})
 }
 
 func (p *callPipeline) rbacDeniedError(decision AccessDecision) *mcp.Message {
 	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
 		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
-	return p.errorResponse(mcp.InvalidRequest, reason, nil)
+	code := "RBAC_DENIED"
+	retryable := false
+	retryAfter := ""
+	if decision.ReasonCode == "rate_limited" {
+		code = "RATE_LIMITED"
+		retryable = true
+		retryAfter = "60s"
+	}
+	return p.errorResponse(mcp.InvalidRequest, reason, &PipelineErrorData{
+		Code:       code,
+		Server:     p.serverName,
+		Tool:       p.toolName,
+		Stage:      stageAuth,
+		Retryable:  retryable,
+		RetryAfter: retryAfter,
+		Details: map[string]any{
+			"reason_code": decision.ReasonCode,
+			"agent_id":    decision.AgentID,
+			"role":        decision.Role,
+		},
+	})
 }
 
 func (p *callPipeline) policyDeniedError(decision GatewayPolicyDecision) *mcp.Message {
 	return p.errorResponse(mcp.InvalidRequest,
 		fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason),
-		map[string]any{
-			"policy_rule_id":     decision.RuleID,
-			"policy_reason_code": decision.ReasonCode,
-			"policy_stage":       decision.Stage,
-			"policy_action":      decision.Action,
+		&PipelineErrorData{
+			Code:      "POLICY_DENIED",
+			Server:    p.serverName,
+			Tool:      p.toolName,
+			Stage:     stagePolicy,
+			Retryable: false,
+			Details: map[string]any{
+				"policy_rule_id":     decision.RuleID,
+				"policy_reason_code": decision.ReasonCode,
+				"policy_stage":       decision.Stage,
+				"policy_action":      decision.Action,
+			},
 		})
 }
 
