@@ -2836,9 +2836,9 @@ func TestGetBackendEnv_MLCLLMOnGFX906_NoVLLMVars(t *testing.T) {
 		}
 	}
 
-	// Must NOT have gfx1100-specific vars
-	if _, ok := got["HSA_OVERRIDE_GFX_VERSION"]; ok {
-		t.Errorf("unexpected HSA_OVERRIDE_GFX_VERSION for gfx906")
+	// gfx906 should have HSA_OVERRIDE_GFX_VERSION=9.0.6 (hardware reports gfx900)
+	if v, ok := got["HSA_OVERRIDE_GFX_VERSION"]; !ok || v != "9.0.6" {
+		t.Errorf("expected HSA_OVERRIDE_GFX_VERSION=9.0.6, got %q (present=%v)", v, ok)
 	}
 }
 

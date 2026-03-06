@@ -33,10 +33,12 @@ func TestROCmEnvVars(t *testing.T) {
 			name: "gfx906 returns Vega20 config",
 			arch: "gfx906",
 			wantVars: map[string]string{
-				"HSA_ENABLE_SDMA":   "0",
-				"PYTORCH_ROCM_ARCH": "gfx906",
+				"HSA_OVERRIDE_GFX_VERSION": "9.0.6",
+				"HSA_ENABLE_SDMA":          "0",
+				"HSA_USE_SVM":              "0",
+				"PYTORCH_ROCM_ARCH":        "gfx906",
 			},
-			dontWant: []string{"HSA_OVERRIDE_GFX_VERSION", "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"},
+			dontWant: []string{"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"},
 		},
 		{
 			name: "gfx90a returns MI250 config",

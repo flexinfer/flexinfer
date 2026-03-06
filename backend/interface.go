@@ -327,11 +327,14 @@ func ROCmEnvVars(arch string) []corev1.EnvVar {
 			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx942"},
 		)
 	case strings.HasPrefix(arch, "gfx906"):
-		// Vega20 (Radeon VII): natively supported by ROCm, no HSA override needed.
+		// Vega20 (Radeon VII): hardware reports as gfx900 but images compile for
+		// gfx906. HSA override ensures gfx906 ISA is used at runtime (required
+		// by bitsandbytes NF4 HIP kernels which are compiled for gfx906).
 		// Disable SDMA for stability on Vega20.
 		// Disable SVM to work around hipMemGetInfo "invalid argument" crash in
 		// ROCm 6.x containers where VMM is not supported (ROCm/ROCm#2433).
 		env = append(env,
+			corev1.EnvVar{Name: "HSA_OVERRIDE_GFX_VERSION", Value: "9.0.6"},
 			corev1.EnvVar{Name: "HSA_ENABLE_SDMA", Value: "0"},
 			corev1.EnvVar{Name: "HSA_USE_SVM", Value: "0"},
 			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx906"},
