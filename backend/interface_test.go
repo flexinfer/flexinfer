@@ -17,8 +17,6 @@ func TestROCmEnvVars(t *testing.T) {
 			wantVars: map[string]string{
 				"HSA_OVERRIDE_GFX_VERSION":                "11.0.0",
 				"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1",
-				"PYTORCH_TUNABLEOP_ENABLED":               "1",
-				"PYTORCH_TUNABLEOP_TUNING":                "1",
 				"PYTORCH_ROCM_ARCH":                       "gfx1100",
 			},
 			dontWant: []string{"HSA_ENABLE_SDMA"},
