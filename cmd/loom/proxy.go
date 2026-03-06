@@ -63,6 +63,15 @@ var (
 	proxySessionDisabled bool
 )
 
+// proxyStdioWriteMu serializes writes to the client stdio transport.
+// Both the main loop (writing responses) and notification forwarding
+// (from proxyDaemonRoundTrip) share the same stdout.
+var proxyStdioWriteMu sync.Mutex
+
+// proxyStdioTransport is the client-facing stdio transport, stored at package
+// level so notification forwarding in proxyDaemonRoundTrip can write to it.
+var proxyStdioTransport *mcp.StdioTransport
+
 const (
 	defaultProxyControlRPCTimeout = 30 * time.Second
 	defaultProxyToolRPCTimeout    = 60 * time.Second
@@ -145,6 +154,7 @@ func runProxy(socketPath string) error {
 
 	// Create stdio transport for client communication
 	stdio := mcp.NewStdioTransport(os.Stdin, os.Stdout)
+	proxyStdioTransport = stdio
 
 	var daemon mcp.Transport
 	var daemonConn net.Conn
@@ -374,8 +384,11 @@ func runProxy(socketPath string) error {
 		}
 
 		if resp != nil {
-			if err := stdio.Send(ctx, resp); err != nil {
-				return fmt.Errorf("send response: %w", err)
+			proxyStdioWriteMu.Lock()
+			sendErr := stdio.Send(ctx, resp)
+			proxyStdioWriteMu.Unlock()
+			if sendErr != nil {
+				return fmt.Errorf("send response: %w", sendErr)
 			}
 		}
 	}
@@ -395,8 +408,8 @@ func handleProxyInitialize(msg *mcp.Message) *mcp.Message {
 	result := mcp.InitializeResult{
 		ProtocolVersion: negotiateProxyProtocolVersion(msg.Params),
 		Capabilities: mcp.Capabilities{
-			Tools:     &mcp.ToolsCapability{},
-			Resources: &mcp.ResourcesCapability{},
+			Tools:     &mcp.ToolsCapability{ListChanged: true},
+			Resources: &mcp.ResourcesCapability{ListChanged: true},
 			Prompts:   &mcp.PromptsCapability{},
 		},
 		ServerInfo: mcp.ServerInfo{
@@ -986,7 +999,39 @@ func proxyDaemonRoundTrip(ctx context.Context, daemon mcp.Transport, req *mcp.Me
 	if err := proxyRPCSend(ctx, daemon, req, operation); err != nil {
 		return nil, err
 	}
-	return proxyRPCRecv(ctx, daemon, operation)
+	return proxyRPCRecvSkipNotifications(ctx, daemon, operation)
+}
+
+// proxyRPCRecvSkipNotifications reads from the daemon transport, forwarding any
+// interleaved notifications to the client stdout, until a response (message with
+// ID or no Method) is received.
+func proxyRPCRecvSkipNotifications(ctx context.Context, daemon mcp.Transport, operation string) (*mcp.Message, error) {
+	timeout := proxyRPCTimeoutForOperation(operation)
+	recvCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		resp, err := daemon.Recv(recvCtx)
+		if err != nil {
+			return nil, proxyRPCPhaseError(operation, "recv", timeout, err)
+		}
+		// A notification has no ID but has a Method.
+		if resp.ID == nil && resp.Method != "" {
+			proxyForwardNotification(ctx, resp)
+			continue
+		}
+		return resp, nil
+	}
+}
+
+// proxyForwardNotification writes a daemon notification to the client stdio transport.
+func proxyForwardNotification(ctx context.Context, notif *mcp.Message) {
+	if proxyStdioTransport == nil {
+		return
+	}
+	proxyStdioWriteMu.Lock()
+	_ = proxyStdioTransport.Send(ctx, notif)
+	proxyStdioWriteMu.Unlock()
 }
 
 // proxyDaemonRoundTripWithTimeout is like proxyDaemonRoundTrip but uses an
@@ -1015,12 +1060,19 @@ func proxyDaemonRoundTripWithTimeout(ctx context.Context, daemon mcp.Transport, 
 	}
 
 	recvCtx, recvCancel := context.WithTimeout(ctx, timeout)
-	resp, recvErr := daemon.Recv(recvCtx)
-	recvCancel()
-	if recvErr != nil {
-		return nil, proxyRPCPhaseError(operation, "recv", timeout, recvErr)
+	defer recvCancel()
+	for {
+		resp, recvErr := daemon.Recv(recvCtx)
+		if recvErr != nil {
+			return nil, proxyRPCPhaseError(operation, "recv", timeout, recvErr)
+		}
+		// Forward interleaved notifications to client.
+		if resp.ID == nil && resp.Method != "" {
+			proxyForwardNotification(ctx, resp)
+			continue
+		}
+		return resp, nil
 	}
-	return resp, nil
 }
 
 // proxyDeriveTimeoutFromArguments inspects well-known argument fields to infer

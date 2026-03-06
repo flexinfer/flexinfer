@@ -36,6 +36,11 @@ const (
 	// EventDecompHint is emitted when a tool response exceeds a token threshold,
 	// suggesting the agent consider the recursive-context workflow for analysis.
 	EventDecompHint EventType = "decomp.hint"
+	// EventToolsChanged is emitted when the aggregated tool list changes
+	// (e.g. after a cache refresh that adds or removes tools).
+	EventToolsChanged EventType = "tools.list_changed"
+	// EventResourcesChanged is emitted when the aggregated resource list changes.
+	EventResourcesChanged EventType = "resources.list_changed"
 )
 
 // Event is a daemon event that can be broadcast to subscribers.

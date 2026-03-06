@@ -880,6 +880,18 @@ func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
 
 	transport := mcp.NewStdioTransport(conn, conn)
 
+	// Subscribe to EventBus for tool/resource change notifications.
+	var writeMu gosync.Mutex
+	connCtx, connCancel := context.WithCancel(ctx)
+	defer connCancel()
+
+	if d.eventBus != nil {
+		subID, events := d.eventBus.Subscribe()
+		defer d.eventBus.Unsubscribe(subID)
+
+		go d.forwardNotifications(connCtx, events, transport, &writeMu, remoteAddr)
+	}
+
 	for {
 		select {
 		case <-d.done:
@@ -905,13 +917,57 @@ func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
 		}
 
 		if resp != nil {
-			if err := transport.Send(ctx, resp); err != nil {
-				d.logger.Error("send response error", "error", err)
-				connSpan.RecordError(err)
-				connSpan.SetStatus(codes.Error, err.Error())
+			writeMu.Lock()
+			sendErr := transport.Send(ctx, resp)
+			writeMu.Unlock()
+			if sendErr != nil {
+				d.logger.Error("send response error", "error", sendErr)
+				connSpan.RecordError(sendErr)
+				connSpan.SetStatus(codes.Error, sendErr.Error())
 				return
 			}
 		}
+	}
+}
+
+// forwardNotifications reads events from the EventBus subscription and writes
+// MCP notifications to the transport. It exits when ctx is cancelled or the
+// events channel is closed.
+func (d *Daemon) forwardNotifications(ctx context.Context, events <-chan Event, transport mcp.Transport, writeMu *gosync.Mutex, remoteAddr string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			notif := eventToMCPNotification(event)
+			if notif == nil {
+				continue
+			}
+			writeMu.Lock()
+			err := transport.Send(ctx, notif)
+			writeMu.Unlock()
+			if err != nil {
+				d.logger.Debug("failed to send notification to client",
+					"addr", remoteAddr, "event", event.Type, "error", err)
+				return
+			}
+		}
+	}
+}
+
+// eventToMCPNotification converts a daemon event to an MCP notification message.
+// Returns nil for event types that do not map to MCP notifications.
+func eventToMCPNotification(event Event) *mcp.Message {
+	switch event.Type {
+	case EventToolsChanged:
+		return &mcp.Message{JSONRPC: "2.0", Method: "notifications/tools/list_changed"}
+	case EventResourcesChanged:
+		return &mcp.Message{JSONRPC: "2.0", Method: "notifications/resources/list_changed"}
+	default:
+		return nil
 	}
 }
 

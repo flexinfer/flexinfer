@@ -582,9 +582,17 @@ func (d *Daemon) refreshResourcesCache(ctx context.Context) ([]mcp.Resource, err
 	}
 
 	d.resourceCache.mu.Lock()
+	oldResources := d.resourceCache.resources
 	d.resourceCache.resources = allResources
 	d.resourceCache.updatedAt = time.Now()
 	d.resourceCache.mu.Unlock()
+
+	if resourceNamesChanged(oldResources, allResources) && d.eventBus != nil {
+		d.eventBus.Publish(EventResourcesChanged, map[string]any{
+			"old_count": len(oldResources),
+			"new_count": len(allResources),
+		})
+	}
 
 	return allResources, nil
 }
@@ -803,11 +811,19 @@ func (d *Daemon) refreshToolCache(ctx context.Context) ([]mcp.Tool, error) {
 		"servers_succeeded", successCount,
 		"servers_total", len(d.registry.Servers))
 
-	// Update cache
+	// Update cache, detecting changes for notification.
 	d.toolCache.mu.Lock()
+	oldTools := d.toolCache.tools
 	d.toolCache.tools = allTools
 	d.toolCache.updatedAt = time.Now()
 	d.toolCache.mu.Unlock()
+
+	if toolNamesChanged(oldTools, allTools) && d.eventBus != nil {
+		d.eventBus.Publish(EventToolsChanged, map[string]any{
+			"old_count": len(oldTools),
+			"new_count": len(allTools),
+		})
+	}
 
 	// Update metrics
 	d.metrics.RecordToolCacheRefresh()
@@ -991,6 +1007,40 @@ func initializeMCPTransport(ctx context.Context, transport mcp.Transport) error 
 		return lastErr
 	}
 	return fmt.Errorf("initialize failed: no protocol versions attempted")
+}
+
+// toolNamesChanged reports whether the set of tool names differs between old and new.
+func toolNamesChanged(oldTools, newTools []mcp.Tool) bool {
+	if len(oldTools) != len(newTools) {
+		return true
+	}
+	old := make(map[string]bool, len(oldTools))
+	for _, t := range oldTools {
+		old[t.Name] = true
+	}
+	for _, t := range newTools {
+		if !old[t.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// resourceNamesChanged reports whether the set of resource URIs differs between old and new.
+func resourceNamesChanged(oldRes, newRes []mcp.Resource) bool {
+	if len(oldRes) != len(newRes) {
+		return true
+	}
+	old := make(map[string]bool, len(oldRes))
+	for _, r := range oldRes {
+		old[r.URI] = true
+	}
+	for _, r := range newRes {
+		if !old[r.URI] {
+			return true
+		}
+	}
+	return false
 }
 
 // expandVarsWithRegistry expands variable patterns with registry-based env aliases.
