@@ -309,11 +309,15 @@ def _decode_mask(data: bytes, target_size: tuple) -> Image.Image:
         mask = Image.open(io.BytesIO(data))
     except Exception:
         mask = Image.open(io.BytesIO(base64.b64decode(data)))
-    mask = mask.convert("L").resize(target_size, Image.LANCZOS)
+    mask = mask.convert("L").resize(target_size, Image.NEAREST)
     return mask
 
 def _resize_for_pipeline(img: Image.Image, target_size: Optional[str] = None) -> Image.Image:
-    """Resize image so both dimensions are multiples of 8."""
+    """Resize image so both dimensions are properly aligned.
+
+    FLUX uses 16x16 patch tokenization with 4x VAE compression = 64px alignment.
+    Other pipelines (SDXL, etc.) need 8px alignment.
+    """
     if target_size:
         try:
             w, h = map(int, target_size.split("x"))
@@ -321,8 +325,10 @@ def _resize_for_pipeline(img: Image.Image, target_size: Optional[str] = None) ->
         except ValueError:
             pass
     w, h = img.size
-    w = (w // 8) * 8
-    h = (h // 8) * 8
+    # FLUX needs 64px alignment (16x16 patches * 4x VAE); others need 8px.
+    align = 64 if _is_flux(current_model) else 8
+    w = (w // align) * align
+    h = (h // align) * align
     if (w, h) != img.size:
         img = img.resize((w, h), Image.LANCZOS)
     return img
@@ -548,6 +554,10 @@ def load_pipeline(model_id: str):
 
         print(f"Pipeline mode: {PIPELINE_MODE}")
 
+        # Quantization mode — read early so it's available for all pipeline paths.
+        # Prevents NameError when non-FLUX pipelines check quant_mode for offload decisions.
+        quant_mode = os.environ.get("QUANTIZATION", "").lower()
+
         # FLUX pipelines: detect from model_id and use explicit pipeline classes.
         # FLUX doesn't use safety_checker or custom VAE overrides.
         if _is_flux(model_id):
@@ -555,19 +565,24 @@ def load_pipeline(model_id: str):
                           if k not in ("safety_checker", "vae", "variant")}
             # Optional NF4 quantization via bitsandbytes (reduces ~24GB FP16 to ~6GB NF4)
             _flux_nf4 = False
-            quant_mode = os.environ.get("QUANTIZATION", "").lower()
             if quant_mode == "nf4":
                 try:
                     from diffusers import BitsAndBytesConfig as DiffusersBnBConfig
                     from diffusers.quantizers import PipelineQuantizationConfig
-                    # BNB NF4: float32 compute dtype for numerical stability.
+                    # BNB NF4 compute dtype: default float32 for numerical stability.
                     # BNB stores linear biases as float32; compute_dtype must match
                     # to avoid "Input type and bias type should be the same" errors.
+                    # Override via BNB_COMPUTE_DTYPE=bfloat16 for ~2x speedup on gfx1100
+                    # (123 vs 61 TFLOPS) — needs empirical validation per model.
+                    _bnb_dtype_name = os.environ.get("BNB_COMPUTE_DTYPE", "float32").lower()
+                    _bnb_dtype_map = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+                    _bnb_compute_dtype = _bnb_dtype_map.get(_bnb_dtype_name, torch.float32)
                     bnb_config = DiffusersBnBConfig(
                         load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.float32,
+                        bnb_4bit_compute_dtype=_bnb_compute_dtype,
                         bnb_4bit_quant_type="nf4",
                     )
+                    print(f"NF4 BNB compute dtype: {_bnb_dtype_name} → {_bnb_compute_dtype}")
                     flux_kwargs["quantization_config"] = PipelineQuantizationConfig(
                         quant_mapping={"transformer": bnb_config}
                     )
@@ -577,7 +592,7 @@ def load_pipeline(model_id: str):
                     # Memory: T5 bf16 (~9.4 GB) + NF4 transformer (~6 GB) = ~15.4 GB.
                     flux_kwargs["torch_dtype"] = torch.float32
                     _flux_nf4 = True
-                    print("NF4 quantization enabled for FLUX pipeline (float32 compute)")
+                    print(f"NF4 quantization enabled for FLUX pipeline (compute dtype: {_bnb_dtype_name})")
                 except (ImportError, Exception) as e:
                     print(f"WARNING: NF4 quantization not available ({e}), loading without quantization")
             if PIPELINE_MODE == "inpainting":
@@ -594,11 +609,10 @@ def load_pipeline(model_id: str):
                     resolved_path,
                     **flux_kwargs,
                 )
-            # NF4 + float32: downcast text encoders to bfloat16 to prevent
-            # T5-XXL overflow (float16 max ~65504 is too small) and save VRAM.
-            # Transformer stays float32 (matching BNB bias dtypes).
+            # NF4: downcast text encoders to bfloat16 to prevent T5-XXL overflow
+            # (float16 max ~65504 is too small) and save VRAM.
             # VAE stays float32 (prevents NaN in decode).
-            # Patch encode_prompt to cast output to float32 (transformer expects float32).
+            # Patch encode_prompt to cast output to match compute dtype.
             if _flux_nf4:
                 for enc_attr in ("text_encoder", "text_encoder_2"):
                     enc = getattr(pipeline, enc_attr, None)
@@ -606,17 +620,18 @@ def load_pipeline(model_id: str):
                         enc.to(torch.bfloat16)
                         param_mb = sum(p.numel() * p.element_size() for p in enc.parameters()) / 1024**2
                         print(f"Downcast {enc_attr} to bfloat16 ({param_mb:.0f} MB)")
-                # Wrap encode_prompt to cast bfloat16 text embeddings → float32
-                # so the float32 transformer receives matching dtypes for Q/K/V.
+                # Wrap encode_prompt to cast bfloat16 text embeddings → compute dtype
+                # so the transformer receives matching dtypes for Q/K/V projections.
+                _target_dtype = _bnb_compute_dtype
                 _orig_encode = pipeline.encode_prompt
-                def _encode_prompt_fp32(*args, **kwargs):
+                def _encode_prompt_cast(*args, _target=_target_dtype, **kwargs):
                     result = _orig_encode(*args, **kwargs)
                     return tuple(
-                        r.to(torch.float32) if isinstance(r, torch.Tensor) and r.dtype == torch.bfloat16
+                        r.to(_target) if isinstance(r, torch.Tensor) and r.dtype == torch.bfloat16
                         else r for r in result
                     )
-                pipeline.encode_prompt = _encode_prompt_fp32
-                print("Wrapped encode_prompt to cast bfloat16 → float32")
+                pipeline.encode_prompt = _encode_prompt_cast
+                print(f"Wrapped encode_prompt to cast bfloat16 → {_bnb_dtype_name}")
         elif PIPELINE_MODE == "inpainting":
             print("Loading StableDiffusionXLInpaintPipeline (loading to CPU, local files only)...")
             sys.stdout.flush()
@@ -682,12 +697,13 @@ def load_pipeline(model_id: str):
         if use_cpu_offload:
             print(f"Auto-detected {type(pipeline).__name__} on ROCm, enabling CPU offload")
 
-    # Force CPU offload for NF4/bitsandbytes quantized models regardless of user setting.
-    # bitsandbytes quantized models cannot use .to('cuda') — accelerate handles device
-    # placement through dispatch hooks via enable_model_cpu_offload().
+    # NF4/bitsandbytes: CPU offload is no longer forced. BNB dispatch hooks handle
+    # per-layer GPU placement even without enable_model_cpu_offload(). With NF4 FLUX
+    # at ~15.4GB, the model fits in 24GB VRAM without offload, avoiding the ~20-30%
+    # step overhead from CPU↔GPU transfers. Set cpuOffload: "true" in the model CR
+    # to re-enable if OOM occurs on smaller GPUs.
     if quant_mode == "nf4" and not use_cpu_offload:
-        print("NF4 quantization detected: forcing CPU offload (bitsandbytes requires accelerate dispatch)")
-        use_cpu_offload = True
+        print("NF4 quantization detected: skipping forced CPU offload (model fits in VRAM)")
 
     if use_cpu_offload and torch.cuda.is_available():
         try:
@@ -817,7 +833,7 @@ def warmup_inference():
                     kw["strength"] = 0.5
             elif PIPELINE_MODE == "instruct":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-            with torch.no_grad():
+            with torch.inference_mode():
                 pipeline(**kw)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()

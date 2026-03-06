@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -152,11 +153,19 @@ func TestDiffusersSkipWarmupEnv(t *testing.T) {
 func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 	b := &DiffusersBackend{}
 
+	// findEnv returns the last matching env var (matches K8s behavior where
+	// the last value wins when duplicate names exist in the env list).
 	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		found := false
+		var val string
 		for _, e := range envs {
 			if e.Name == name {
-				return e.Value, true
+				val = e.Value
+				found = true
 			}
+		}
+		if found {
+			return val, true
 		}
 		return "", false
 	}
@@ -200,6 +209,20 @@ func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 		t.Error("expected MIOPEN_FIND_MODE for gfx1100 (ROCm/ROCm#4729 workaround)")
 	} else if v != "2" {
 		t.Errorf("MIOPEN_FIND_MODE = %q, want 2", v)
+	}
+
+	// gfx1100 should get expandable_segments in PYTORCH_HIP_ALLOC_CONF
+	if v, ok := findEnv(envs1100, "PYTORCH_HIP_ALLOC_CONF"); !ok {
+		t.Error("expected PYTORCH_HIP_ALLOC_CONF for gfx1100")
+	} else if !strings.Contains(v, "expandable_segments:True") {
+		t.Errorf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", v)
+	}
+
+	// gfx1100 should override HIPBLASLT=0 for diffusers stability
+	if v, ok := findEnv(envs1100, "TORCH_BLAS_PREFER_HIPBLASLT"); !ok {
+		t.Error("expected TORCH_BLAS_PREFER_HIPBLASLT override for gfx1100 diffusers")
+	} else if v != "0" {
+		t.Errorf("TORCH_BLAS_PREFER_HIPBLASLT = %q, want 0", v)
 	}
 
 	// gfx906 should NOT get MIOPEN_FIND_MODE (not affected by #4729)
@@ -337,6 +360,34 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDiffusersBackendEnv_ComputeDtype(t *testing.T) {
+	b := &DiffusersBackend{}
+	findEnv := func(envs []corev1.EnvVar, name string) (string, bool) {
+		for _, e := range envs {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+
+	// With computeDtype set
+	spec := &ModelSpec{Model: "test", Config: map[string]interface{}{"computeDtype": "bfloat16"}}
+	envs := b.Env(spec)
+	if v, ok := findEnv(envs, "BNB_COMPUTE_DTYPE"); !ok {
+		t.Error("expected BNB_COMPUTE_DTYPE when computeDtype config is set")
+	} else if v != "bfloat16" {
+		t.Errorf("BNB_COMPUTE_DTYPE = %q, want bfloat16", v)
+	}
+
+	// Without computeDtype
+	spec2 := &ModelSpec{Model: "test", Config: map[string]interface{}{}}
+	envs2 := b.Env(spec2)
+	if _, ok := findEnv(envs2, "BNB_COMPUTE_DTYPE"); ok {
+		t.Error("expected BNB_COMPUTE_DTYPE to be absent when computeDtype is not configured")
 	}
 }
 

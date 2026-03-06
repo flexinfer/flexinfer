@@ -119,6 +119,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "QUANTIZATION", Value: quant})
 	}
 
+	// BNB compute dtype override (e.g. "bfloat16" for 2x speedup on gfx1100).
+	// Default is "float32" for numerical stability; bfloat16 needs empirical validation.
+	if dtype := spec.ConfigString("computeDtype", ""); dtype != "" {
+		env = append(env, corev1.EnvVar{Name: "BNB_COMPUTE_DTYPE", Value: dtype})
+	}
+
 	// Image editing pipeline mode (inpainting, instruct, or default text2image)
 	if mode := spec.ConfigString("pipelineMode", ""); mode != "" {
 		env = append(env, corev1.EnvVar{Name: "PIPELINE_MODE", Value: mode})
@@ -163,6 +169,13 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 		env = append(env, DeviceIsolationEnvVars(spec)...)
+
+		// Override HIPBLASLT for diffusers: ROCmEnvVars sets =1 for vLLM GEMM
+		// perf on gfx110x, but hipBLASLt causes stability issues with diffusers
+		// pipelines (matches Dockerfile ENV TORCH_BLAS_PREFER_HIPBLASLT=0).
+		if strings.HasPrefix(spec.GPUArch, "gfx110") {
+			env = append(env, corev1.EnvVar{Name: "TORCH_BLAS_PREFER_HIPBLASLT", Value: "0"})
+		}
 		// CPU offload: moves pipeline components to GPU one at a time instead
 		// of bulk .to("cuda"). Avoids ROCm memory access faults with large
 		// models (e.g. full SDXL) on gfx1100. ~20-30% slower but stable.
@@ -184,6 +197,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			env = append(env, corev1.EnvVar{
 				Name:  "MIOPEN_FIND_MODE",
 				Value: findMode,
+			})
+			// expandable_segments prevents reserved-but-fragmented memory OOM
+			// on consecutive generations (same fix used for quantization jobs).
+			env = append(env, corev1.EnvVar{
+				Name:  "PYTORCH_HIP_ALLOC_CONF",
+				Value: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:True",
 			})
 		}
 
