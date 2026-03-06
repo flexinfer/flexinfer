@@ -466,8 +466,8 @@ publish_mlcllm_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-rocm" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:rocm-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/mlc-llm:rocm-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:rocm" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/mlc-llm:rocm,${REGISTRY}/mlc-llm:rocm-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -498,8 +498,8 @@ publish_mlcllm_rocm64:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-rocm64-full" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=registry.harbor.lan/library/mlc-llm:rocm64-src-cache" \
-        --export-cache "type=registry,ref=registry.harbor.lan/library/mlc-llm:rocm64-src-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=registry.harbor.lan/library/mlc-llm:rocm64-src" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/mlc-llm:rocm64-src,registry.harbor.lan/library/mlc-llm:rocm64-src-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -527,8 +527,8 @@ publish_mlcllm_cuda:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-cuda" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/mlc-llm:cuda,${REGISTRY}/mlc-llm:cuda-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -560,8 +560,8 @@ publish_mlcllm_maxwell:
         --local dockerfile=build \
         --opt filename="Dockerfile.mlc-cuda-maxwell" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda-maxwell-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda-maxwell-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/mlc-llm:cuda-maxwell-v7" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/mlc-llm:cuda-maxwell-v7,${REGISTRY}/mlc-llm:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -592,8 +592,8 @@ publish_ollama_maxwell:
         --local dockerfile=build \
         --opt filename="Dockerfile.ollama-cuda-maxwell" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/ollama:cuda-maxwell-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/ollama:cuda-maxwell-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/ollama:cuda-maxwell" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/ollama:cuda-maxwell,${REGISTRY}/ollama:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
@@ -626,8 +626,8 @@ build_quantizer_gguf:
           --local dockerfile=build \
           --opt filename="Dockerfile.quantizer-gguf" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/quantizer:gguf-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/quantizer:gguf-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/quantizer:gguf" \
+          --export-cache "type=inline" \
           --output "type=image,name=${REGISTRY}/quantizer:gguf,push=true"; then
           break
         fi
@@ -672,8 +672,8 @@ build_quantizer_awq:
           --local dockerfile=build \
           --opt filename="Dockerfile.quantizer-awq" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/quantizer:awq-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/quantizer:awq-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/quantizer:awq" \
+          --export-cache "type=inline" \
           --output "type=image,name=${REGISTRY}/quantizer:awq,push=true"; then
           break
         fi
@@ -718,8 +718,8 @@ build_quantizer_gptq:
           --local dockerfile=build \
           --opt filename="Dockerfile.quantizer-gptq" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/quantizer:gptq-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/quantizer:gptq-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/quantizer:gptq" \
+          --export-cache "type=inline" \
           --output "type=image,name=${REGISTRY}/quantizer:gptq,push=true"; then
           break
         fi
@@ -763,8 +763,8 @@ publish_diffusers_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=registry.harbor.lan/library/diffusers-api:rocm-cache" \
-        --export-cache "type=registry,ref=registry.harbor.lan/library/diffusers-api:rocm-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=registry.harbor.lan/library/diffusers-api:rocm-latest" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/diffusers-api:rocm-latest,registry.harbor.lan/library/diffusers-api:rocm-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
@@ -797,8 +797,8 @@ publish_diffusers_rocm_gfx1100:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm-gfx1100" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx1100,${REGISTRY}/diffusers:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -837,8 +837,8 @@ publish_diffusers_rocm_gfx906:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm-gfx906" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx906-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx906-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx906" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx906,${REGISTRY}/diffusers:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -877,8 +877,8 @@ publish_diffusers_cuda:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-cuda" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/diffusers:cuda-maxwell-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/diffusers:cuda-maxwell-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:cuda-maxwell" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/diffusers:cuda-maxwell,${REGISTRY}/diffusers:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -916,8 +916,8 @@ publish_comfyui_rocm_gfx1100:
         --local dockerfile=build \
         --opt filename="Dockerfile.comfyui-rocm-gfx1100" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx1100-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx1100-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx1100" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/comfyui:rocm-gfx1100,${REGISTRY}/comfyui:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -953,8 +953,8 @@ publish_comfyui_rocm_gfx906:
         --local dockerfile=build \
         --opt filename="Dockerfile.comfyui-rocm-gfx906" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx906-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx906-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/comfyui:rocm-gfx906" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/comfyui:rocm-gfx906,${REGISTRY}/comfyui:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -996,8 +996,8 @@ publish_llamacpp_rocm_gfx1100:
           --local dockerfile=build \
           --opt filename="Dockerfile.llamacpp-rocm-gfx1100" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx1100-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx1100-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx1100" \
+          --export-cache "type=inline" \
           --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx1100,${REGISTRY}/llamacpp:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
@@ -1048,8 +1048,8 @@ publish_llamacpp_rocm_gfx906:
           --local dockerfile=build \
           --opt filename="Dockerfile.llamacpp-rocm-gfx906" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx906-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx906-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:rocm-gfx906" \
+          --export-cache "type=inline" \
           --output "type=image,\"name=${REGISTRY}/llamacpp:rocm-gfx906,${REGISTRY}/llamacpp:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
@@ -1101,8 +1101,8 @@ publish_llamacpp_cuda_maxwell:
           --local dockerfile=build \
           --opt filename="Dockerfile.llamacpp-cuda-maxwell" \
           --opt platform=linux/amd64 \
-          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:cuda-maxwell-cache" \
-          --export-cache "type=registry,ref=${REGISTRY}/llamacpp:cuda-maxwell-cache,mode=max,ignore-error=true" \
+          --import-cache "type=registry,ref=${REGISTRY}/llamacpp:cuda-maxwell" \
+          --export-cache "type=inline" \
           --output "type=image,\"name=${REGISTRY}/llamacpp:cuda-maxwell,${REGISTRY}/llamacpp:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
@@ -1145,8 +1145,8 @@ publish_vllm_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-navi-cache" \
-        --export-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-navi-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-navi" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/vllm-api:rocm-navi,registry.harbor.lan/library/vllm-api:rocm-navi-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
@@ -1177,8 +1177,8 @@ publish_vllm_rocm_gfx1100:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm-gfx1100" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-gfx1100-cache" \
-        --export-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-gfx1100-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=registry.harbor.lan/library/vllm-api:rocm-gfx1100" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/vllm-api:rocm-gfx1100,registry.harbor.lan/library/vllm-api:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -1208,8 +1208,8 @@ publish_vllm_rocm_gfx1100_fa:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm-gfx1100-fa" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-fa-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-fa-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-fa" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-fa,${REGISTRY}/vllm:rocm-gfx1100-fa-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -1239,8 +1239,8 @@ publish_vllm_rocm_gfx906_fa:
         --local dockerfile=build \
         --opt filename="Dockerfile.vllm-rocm-gfx906-fa" \
         --opt platform=linux/amd64 \
-        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx906-fa-cache" \
-        --export-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx906-fa-cache,mode=max,ignore-error=true" \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx906-fa" \
+        --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx906-fa,${REGISTRY}/vllm:rocm-gfx906-fa-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
