@@ -63,6 +63,9 @@ type Metrics struct {
 	// EventBus metrics
 	EventsDropped prometheus.Counter
 
+	// Concurrency metrics
+	ConcurrentCalls prometheus.Gauge
+
 	// Contention metrics
 	CallLockWaitTotal *prometheus.CounterVec
 
@@ -387,6 +390,16 @@ func NewMetrics() *Metrics {
 		},
 	)
 
+	// Concurrency metrics
+	m.ConcurrentCalls = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "concurrent_calls",
+			Help:      "Current number of in-flight tool calls across all servers",
+		},
+	)
+
 	// Contention metrics
 	m.CallLockWaitTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -432,6 +445,7 @@ func NewMetrics() *Metrics {
 		m.MemSysBytes,
 		m.GCPauseNs,
 		m.EventsDropped,
+		m.ConcurrentCalls,
 		m.CallLockWaitTotal,
 	)
 

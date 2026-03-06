@@ -227,6 +227,9 @@ type ResourceConfig struct {
 
 	// RefreshConcurrency is the max parallel server refreshes during tool cache updates (default: 6)
 	RefreshConcurrency int `yaml:"refresh_concurrency,omitempty"`
+
+	// MaxConcurrentCalls is the daemon-wide cap on simultaneous in-flight tool calls (0 = unlimited)
+	MaxConcurrentCalls int `yaml:"max_concurrent_calls,omitempty"`
 }
 
 // ContextConfig controls tool filtering and profile selection.
@@ -401,6 +404,15 @@ func (c *ResourceConfig) GetRefreshConcurrency() int {
 		return c.RefreshConcurrency
 	}
 	return 6
+}
+
+// GetMaxConcurrentCalls returns the daemon-wide concurrent call limit.
+// Returns 0 for unlimited (the default).
+func (c *ResourceConfig) GetMaxConcurrentCalls() int {
+	if c.MaxConcurrentCalls < 0 {
+		return 0
+	}
+	return c.MaxConcurrentCalls
 }
 
 // DefaultFileConfig returns the default configuration.

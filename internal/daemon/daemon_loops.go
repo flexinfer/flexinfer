@@ -162,6 +162,9 @@ func (d *Daemon) collectMetrics() {
 		d.metrics.UpdateHubConnection(connected, latency)
 	}
 
+	// Concurrent call gauge (from activeRPCs atomic counter)
+	d.metrics.ConcurrentCalls.Set(float64(d.activeRPCs.Load()))
+
 	// Runtime stats
 	d.metrics.GoroutineCount.Set(float64(runtime.NumGoroutine()))
 	var memStats runtime.MemStats

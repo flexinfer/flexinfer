@@ -15,6 +15,7 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/pool"
@@ -74,9 +75,27 @@ func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipe
 	}
 }
 
+// startStageSpan begins a tracing span for the named pipeline stage.
+// It safely handles a nil p.ctx (which occurs in unit tests that construct
+// a callPipeline directly) and updates p.ctx so downstream stages nest.
+func (p *callPipeline) startStageSpan(name string) trace.Span {
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var span trace.Span
+	p.ctx, span = p.daemon.daemonTracer().Start(ctx, name)
+	return span
+}
+
 func (p *callPipeline) parseAndResolve() *mcp.Message {
 	p.stage = stageParse
+	span := p.startStageSpan("daemon.pipeline.parse")
+	defer span.End()
+
 	if err := json.Unmarshal(p.msg.Params, &p.params); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.invalidParamsError(err.Error())
 	}
 
@@ -109,17 +128,28 @@ func (p *callPipeline) parseAndResolve() *mcp.Message {
 
 		resolved, err := p.daemon.router.ResolveServer(p.daemon.cfg.Target, p.toolName, args)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return p.internalError(err)
 		}
 		if resolved == "" {
-			return p.invalidParamsError(fmt.Sprintf("could not resolve server for tool: %s", p.toolName))
+			errMsg := fmt.Sprintf("could not resolve server for tool: %s", p.toolName)
+			span.SetStatus(codes.Error, errMsg)
+			return p.invalidParamsError(errMsg)
 		}
 		p.serverName = resolved
 	}
 
 	if p.serverName == "" {
-		return p.invalidParamsError("missing server or tool for call")
+		errMsg := "missing server or tool for call"
+		span.SetStatus(codes.Error, errMsg)
+		return p.invalidParamsError(errMsg)
 	}
+
+	span.SetAttributes(
+		attribute.String("mcp.tool", p.toolName),
+		attribute.String("mcp.server", p.serverName),
+	)
 
 	p.auditStart = time.Now()
 	return nil
@@ -127,28 +157,52 @@ func (p *callPipeline) parseAndResolve() *mcp.Message {
 
 func (p *callPipeline) authorize() *mcp.Message {
 	p.stage = stageAuth
+	span := p.startStageSpan("daemon.pipeline.authorize")
+	defer span.End()
+
 	if p.daemon.rbac == nil {
+		span.SetAttributes(attribute.String("rbac.decision", "skipped"))
 		return nil
 	}
 	decision := p.daemon.rbac.Check(p.params.AgentID, p.params.AgentType, p.serverName, p.toolName)
 	p.daemon.logAccessDecision(decision)
+
+	span.SetAttributes(
+		attribute.String("mcp.agent_id", p.params.AgentID),
+		attribute.Bool("rbac.allowed", decision.Allowed),
+		attribute.String("rbac.role", decision.Role),
+	)
+
 	if decision.Allowed {
 		return nil
 	}
+	span.SetStatus(codes.Error, decision.Reason)
 	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage)
 	return p.rbacDeniedError(decision)
 }
 
 func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 	p.stage = stagePolicy
+	span := p.startStageSpan("daemon.pipeline.policy")
+	defer span.End()
+
 	if p.daemon.policy == nil {
+		span.SetAttributes(attribute.String("policy.decision", "skipped"))
 		return nil
 	}
 
 	decision := p.daemon.policy.CheckRequest(p.serverName, p.toolName, p.params)
+	span.SetAttributes(attribute.Bool("policy.allowed", decision.Allowed))
+
 	if decision.Allowed {
 		return nil
 	}
+
+	span.SetAttributes(
+		attribute.String("policy.reason_code", decision.ReasonCode),
+		attribute.String("policy.rule_id", decision.RuleID),
+	)
+	span.SetStatus(codes.Error, decision.Reason)
 
 	p.daemon.emitAudit(
 		p.params,
@@ -167,7 +221,12 @@ func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 
 func (p *callPipeline) tryCachedResponse() *mcp.Message {
 	p.stage = stageCache
+	span := p.startStageSpan("daemon.pipeline.cache")
+	defer span.End()
+
 	if p.daemon.respCache == nil || !p.daemon.respCache.IsCacheable(p.serverName, p.toolName) {
+		span.SetAttributes(attribute.Bool("cache.hit", false))
+		span.AddEvent("daemon.pipeline.cache.skipped")
 		return nil
 	}
 
@@ -178,6 +237,11 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 	p.cacheKey = p.daemon.respCache.Key(p.serverName, p.toolName, cacheParams)
 
 	if cached, ok := p.daemon.respCache.Get(p.cacheKey); ok {
+		span.SetAttributes(attribute.Bool("cache.hit", true))
+		span.AddEvent("daemon.pipeline.cache.hit", trace.WithAttributes(
+			attribute.String("mcp.server", p.serverName),
+			attribute.String("mcp.tool", p.toolName),
+		))
 		p.daemon.metrics.RecordResponseCacheHit(p.serverName, p.toolName)
 		p.daemon.logger.Debug("response cache hit", "server", p.serverName, "tool", p.toolName)
 		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage)
@@ -185,14 +249,24 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 		return resp
 	}
 
+	span.SetAttributes(attribute.Bool("cache.hit", false))
+	span.AddEvent("daemon.pipeline.cache.miss", trace.WithAttributes(
+		attribute.String("mcp.server", p.serverName),
+		attribute.String("mcp.tool", p.toolName),
+	))
 	p.daemon.metrics.RecordResponseCacheMiss(p.serverName, p.toolName)
 	return nil
 }
 
 func (p *callPipeline) routeAndConnect() *mcp.Message {
 	p.stage = stageRoute
+	span := p.startStageSpan("daemon.pipeline.route")
+	defer span.End()
+
 	decision, err := p.daemon.router.Route(p.ctx, p.serverName)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.internalErrorWithAudit("", err.Error())
 	}
 
@@ -227,6 +301,16 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 		decision.Target = newTarget
 	}
 
+	span.SetAttributes(
+		attribute.String("routing.target", decision.Target.String()),
+		attribute.String("mcp.server", p.serverName),
+	)
+	span.AddEvent("daemon.pipeline.route.decision", trace.WithAttributes(
+		attribute.String("routing.target", decision.Target.String()),
+		attribute.String("routing.reason", decision.Reason),
+		attribute.String("mcp.server", p.serverName),
+	))
+
 	p.daemon.logger.Debug("routing decision", "server", p.serverName, "target", decision.Target, "reason", decision.Reason)
 
 	if err := p.connectTarget(decision.Target, decision.Reason); err != nil {
@@ -245,6 +329,8 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 				err = fmt.Errorf("hub connect failed: %v; local retry failed: %w", hubErr, localErr)
 			}
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.internalErrorWithAudit(p.targetStr, err.Error())
 	}
 
@@ -274,6 +360,9 @@ func (p *callPipeline) releaseConnection() {
 
 func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 	p.stage = stageBuild
+	span := p.startStageSpan("daemon.pipeline.build")
+	defer span.End()
+
 	var forwardParams json.RawMessage
 	if len(p.params.Params) > 0 {
 		forwardParams = p.params.Params
@@ -293,6 +382,8 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 
 	req, err := mcp.NewRequest(p.msg.ID, p.method, forwardParams)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, p.internalError(err)
 	}
 	return req, nil
@@ -300,6 +391,14 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 
 func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	p.stage = stageExecute
+	span := p.startStageSpan("daemon.pipeline.execute")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("mcp.server", p.serverName),
+		attribute.String("mcp.tool", p.toolName),
+	)
+
 	start := time.Now()
 	callTimeout := resolveToolCallTimeout(p.params)
 
@@ -312,11 +411,20 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	if sendErr != nil {
 		err := daemonRPCPhaseError(p.method, "send", callTimeout, sendErr)
 		if resp, retried := p.retryLocalAfterLocalSendFailure(err, req, start); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "local_after_local_send_failure"),
+			))
 			return resp
 		}
 		if resp, retried := p.retryLocalAfterHubFailure("send", err, req, start); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "local_after_hub_failure"),
+				attribute.String("retry.phase", "send"),
+			))
 			return resp
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.transportFailure("send", err, start)
 	}
 
@@ -326,20 +434,32 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	if recvErr != nil {
 		err := daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr)
 		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "local_after_hub_failure"),
+				attribute.String("retry.phase", "recv"),
+			))
 			return retryResp
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.transportFailure("recv", err, start)
 	}
 
 	// Validate response ID matches request ID. A mismatch indicates transport
-	// corruption—typically a stale response from an interleaved request on a
+	// corruption--typically a stale response from an interleaved request on a
 	// shared stdio transport. Treat as a transport failure so the connection
 	// is recycled and the caller gets a clear error instead of wrong data.
 	if resp.ID != nil && req.ID != nil && fmt.Sprint(resp.ID) != fmt.Sprint(req.ID) {
 		err := fmt.Errorf("response ID mismatch: sent %v, got %v (possible transport corruption)", req.ID, resp.ID)
 		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "local_after_hub_failure"),
+				attribute.String("retry.phase", "recv"),
+			))
 			return retryResp
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return p.transportFailure("recv", err, start)
 	}
 

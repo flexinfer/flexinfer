@@ -125,6 +125,10 @@ type Daemon struct {
 	deniedMu     gosync.RWMutex
 	recentDenied []deniedEntry
 
+	// callSem is a daemon-wide semaphore limiting concurrent tool calls.
+	// nil when MaxConcurrentCalls is 0 (unlimited).
+	callSem chan struct{}
+
 	// activeRPCs tracks in-flight RPC call count for drain-readiness checks.
 	activeRPCs atomic.Int64
 
@@ -438,6 +442,12 @@ func New(cfg Config) (*Daemon, error) {
 		routingPreferences: routingPrefs,
 		done:               make(chan struct{}),
 		tracer:             otel.Tracer("loomd"),
+	}
+
+	// Initialize daemon-wide call concurrency semaphore
+	if maxCalls := fileCfg.Resources.GetMaxConcurrentCalls(); maxCalls > 0 {
+		d.callSem = make(chan struct{}, maxCalls)
+		logger.Info("daemon-wide call concurrency limit enabled", "max_concurrent_calls", maxCalls)
 	}
 
 	// Initialize event bus for SSE streaming

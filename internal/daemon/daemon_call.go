@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type callParams struct {
@@ -25,10 +27,37 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	d.activeRPCs.Add(1)
 	defer d.activeRPCs.Add(-1)
 
+	// Acquire daemon-wide concurrency semaphore (before per-server lock).
+	if d.callSem != nil {
+		select {
+		case d.callSem <- struct{}{}:
+			defer func() { <-d.callSem }()
+		case <-ctx.Done():
+			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "call concurrency limit reached"), nil
+		}
+	}
+
 	pipeline := newCallPipeline(d, ctx, msg)
 
 	if resp := pipeline.parseAndResolve(); resp != nil {
 		return resp, nil
+	}
+
+	// Enrich the parent RPC span with resolved call metadata.
+	// Use the original ctx (not pipeline.ctx) because pipeline stages update
+	// p.ctx to carry their own child spans.
+	if parentSpan := trace.SpanFromContext(ctx); parentSpan.SpanContext().IsValid() {
+		attrs := []attribute.KeyValue{
+			attribute.String("mcp.tool", pipeline.toolName),
+			attribute.String("mcp.server", pipeline.serverName),
+		}
+		if pipeline.params.AgentID != "" {
+			attrs = append(attrs, attribute.String("mcp.agent_id", pipeline.params.AgentID))
+		}
+		if pipeline.params.SessionID != "" {
+			attrs = append(attrs, attribute.String("mcp.session_id", pipeline.params.SessionID))
+		}
+		parentSpan.SetAttributes(attrs...)
 	}
 
 	// Implicitly touch session lease on every call that carries a session_id.
