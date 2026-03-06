@@ -314,6 +314,9 @@ func ROCmEnvVars(arch string) []corev1.EnvVar {
 			corev1.EnvVar{Name: "HIP_FORCE_DEV_KERNARG", Value: "1"},
 			// Prefer hipBLASLt over hipBLAS for GEMM — better linear layer perf on RDNA3.
 			corev1.EnvVar{Name: "TORCH_BLAS_PREFER_HIPBLASLT", Value: "1"},
+			// TunableOp: benchmarks GEMM algorithms at startup for optimal selection.
+			corev1.EnvVar{Name: "PYTORCH_TUNABLEOP_ENABLED", Value: "1"},
+			corev1.EnvVar{Name: "PYTORCH_TUNABLEOP_TUNING", Value: "1"},
 			corev1.EnvVar{Name: "PYTORCH_ROCM_ARCH", Value: "gfx1100"},
 		)
 	case strings.HasPrefix(arch, "gfx90a"):
