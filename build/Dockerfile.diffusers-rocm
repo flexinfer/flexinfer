@@ -726,6 +726,23 @@ def load_pipeline(model_id: str):
                 except Exception as e3:
                     print(f"GPU transfer failed: {e3}, using CPU only")
                     pipeline = pipeline.to("cpu")
+    elif quant_mode == "nf4" and torch.cuda.is_available():
+        # BNB-quantized models can't use pipeline.to("cuda") — the accelerate
+        # dispatch hooks on the transformer conflict with bulk .to(). Move
+        # non-quantized components (text encoders, VAE) to GPU individually.
+        # The BNB transformer's dispatch hooks handle GPU placement on forward pass.
+        print("NF4 model: moving non-quantized components to GPU individually...")
+        sys.stdout.flush()
+        for comp_name in ["text_encoder", "text_encoder_2", "vae"]:
+            comp = getattr(pipeline, comp_name, None)
+            if comp is not None:
+                try:
+                    comp.to("cuda")
+                    print(f"  Moved {comp_name} to GPU")
+                except Exception as e:
+                    print(f"  Warning: could not move {comp_name} to GPU: {e}")
+        torch.cuda.synchronize()
+        print(f"GPU memory after component transfer: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     else:
         # Move to GPU with explicit synchronization
         try:
