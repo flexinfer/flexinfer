@@ -747,6 +747,8 @@ publish_diffusers_rocm:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm" \
         --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=registry.harbor.lan/library/diffusers-api:rocm-cache" \
+        --export-cache "type=registry,ref=registry.harbor.lan/library/diffusers-api:rocm-cache,mode=max" \
         --output "type=image,\"name=registry.harbor.lan/library/diffusers-api:rocm-latest,registry.harbor.lan/library/diffusers-api:rocm-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
@@ -779,10 +781,15 @@ publish_diffusers_rocm_gfx1100:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm-gfx1100" \
         --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100-cache" \
+        --export-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100-cache,mode=max" \
         --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx1100,${REGISTRY}/diffusers:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
-      changes: [build/Dockerfile.diffusers-rocm-gfx1100]
+      changes:
+        - build/Dockerfile.diffusers-rocm-gfx1100
+        - build/server-diffusers.py
+        - build/requirements-diffusers-rocm.txt
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
@@ -814,10 +821,15 @@ publish_diffusers_rocm_gfx906:
         --local dockerfile=build \
         --opt filename="Dockerfile.diffusers-rocm-gfx906" \
         --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx906-cache" \
+        --export-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx906-cache,mode=max" \
         --output "type=image,\"name=${REGISTRY}/diffusers:rocm-gfx906,${REGISTRY}/diffusers:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
-      changes: [build/Dockerfile.diffusers-rocm-gfx906]
+      changes:
+        - build/Dockerfile.diffusers-rocm-gfx906
+        - build/server-diffusers.py
+        - build/requirements-diffusers-rocm.txt
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
