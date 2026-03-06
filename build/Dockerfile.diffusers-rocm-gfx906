@@ -51,18 +51,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY build/requirements-diffusers-rocm.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+# Remove pre-installed torchvision — its _meta_registrations.py crashes on this
+# base image (torchvision::nms operator conflict). The server doesn't use it.
+# Remove Apex — its fused_rms_norm_affine doesn't support FP16 input.
+RUN pip uninstall -y torchvision apex && \
+    pip install --no-cache-dir --upgrade pip && \
+    # Freeze the ROCm PyTorch to prevent pip from overwriting it with CUDA PyTorch.
+    python -c "import torch; print('torch==' + torch.__version__)" > /tmp/constraints.txt && \
+    pip install --no-cache-dir -c /tmp/constraints.txt -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt /tmp/constraints.txt
 
 RUN pip install --no-cache-dir --force-reinstall "numpy<2"
 
-COPY build/Dockerfile.diffusers-rocm /tmp/_ref
-COPY <<'SERVEREOF' /app/extract-server.sh
-#!/bin/bash
-sed -n "/^COPY <<'EOF' \/app\/server.py/,/^EOF/{/^COPY <<'EOF'/d;/^EOF/d;p}" /tmp/_ref > /app/server.py
-SERVEREOF
-RUN bash /app/extract-server.sh && rm /app/extract-server.sh /tmp/_ref
+# Install bitsandbytes separately with --no-deps to prevent torch replacement.
+RUN pip install --no-cache-dir --no-deps "bitsandbytes>=0.49.2"
+
+# Copy the API server (shared across architectures)
+COPY build/server-diffusers.py /app/server.py
 
 RUN mkdir -p /models
 EXPOSE 8000

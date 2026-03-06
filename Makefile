@@ -204,6 +204,7 @@ LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 DIFFUSERS_ROCM_IMAGE ?= $(HARBOR_REGISTRY)/library/diffusers-api:rocm-$(shell git rev-parse --short HEAD)
 DIFFUSERS_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx1100
+DIFFUSERS_CUDA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:cuda-maxwell
 
 # Docker context for GPU builds (requires remote builder with GPU access)
 DOCKER_CONTEXT_GPU ?= 7900xtx
@@ -327,6 +328,14 @@ build-diffusers-gfx1100: ## Build Diffusers ROCm image for gfx1100 (architecture
 .PHONY: push-diffusers-gfx1100
 push-diffusers-gfx1100: ## Push Diffusers ROCm gfx1100 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_GFX1100_IMAGE)
+
+.PHONY: build-diffusers-cuda
+build-diffusers-cuda: ## Build Diffusers CUDA image for Maxwell (sm_52, CUDA 11.8)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-cuda -t $(DIFFUSERS_CUDA_IMAGE) .
+
+.PHONY: push-diffusers-cuda
+push-diffusers-cuda: ## Push Diffusers CUDA Maxwell image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_CUDA_IMAGE)
 
 .PHONY: verify-images
 verify-images: ## Verify all backend images exist in Harbor registry

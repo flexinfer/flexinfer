@@ -834,6 +834,45 @@ publish_diffusers_rocm_gfx906:
       when: manual
     - when: never
 
+# Diffusers API CUDA - Maxwell (sm_52, CUDA 11.8) image
+publish_diffusers_cuda:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 30m
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Diffusers API CUDA image (Maxwell / sm_52)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.diffusers-cuda" \
+        --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers:cuda-maxwell-cache" \
+        --export-cache "type=registry,ref=${REGISTRY}/diffusers:cuda-maxwell-cache,mode=max" \
+        --output "type=image,\"name=${REGISTRY}/diffusers:cuda-maxwell,${REGISTRY}/diffusers:cuda-maxwell-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.diffusers-cuda
+        - build/server-diffusers-cuda.py
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # ComfyUI ROCm - gfx1100 (RDNA3) architecture-specific image
 publish_comfyui_rocm_gfx1100:
   stage: publish
