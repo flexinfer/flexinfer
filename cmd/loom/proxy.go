@@ -305,9 +305,36 @@ func runProxy(socketPath string) error {
 	// Cleanup daemon state on exit (signal, idle timeout, or client disconnect).
 	defer resetTransport()
 
+	// proxyMainLoopIdle tracks whether the main loop is blocked on stdio.Recv().
+	// The session keepalive goroutine uses this to avoid concurrent daemon access.
+	var proxyMainLoopIdle atomic.Bool
+
+	// Session keepalive: periodically sends heartbeat to daemon to prevent
+	// silent session expiry during long idle periods (e.g., Codex sessions).
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if daemon == nil || proxySessionDisabled || proxySessionID == "" {
+					continue
+				}
+				if !proxyMainLoopIdle.Load() {
+					continue // main loop is actively processing; skip to avoid race
+				}
+				proxySessionHeartbeat(ctx, daemon)
+			}
+		}
+	}()
+
 	// Main message loop
 	for {
+		proxyMainLoopIdle.Store(true)
 		msg, err := stdio.Recv(ctx)
+		proxyMainLoopIdle.Store(false)
 		if err != nil {
 			return nil // Client disconnected or shutdown signal
 		}
@@ -379,8 +406,44 @@ func runProxy(socketPath string) error {
 			var transportErr *proxyTransportError
 			if errors.As(err, &transportErr) {
 				resetTransport()
+				// Retry once: reconnect and re-dispatch the original message.
+				if reconnErr := ensureDaemon(); reconnErr == nil {
+					var retryResp *mcp.Message
+					var retryErr error
+					switch msg.Method {
+					case "tools/list":
+						retryResp, retryErr = handleProxyToolsList(ctx, daemon, msg)
+					case "tools/call":
+						retryResp, retryErr = handleProxyToolsCall(ctx, daemon, msg)
+					case "resources/list":
+						retryResp, retryErr = handleProxyResourcesList(ctx, daemon, msg)
+					case "resources/read":
+						retryResp, retryErr = handleProxyResourcesRead(ctx, daemon, msg)
+					case "prompts/list":
+						retryResp, retryErr = handleProxyPromptsList(ctx, daemon, msg)
+					case "prompts/get":
+						retryResp, retryErr = handleProxyPromptsGet(ctx, daemon, msg)
+					default:
+						retryResp, retryErr = forwardToDaemon(ctx, daemon, msg)
+					}
+					if retryErr != nil {
+						var retryTransportErr *proxyTransportError
+						if errors.As(retryErr, &retryTransportErr) {
+							resetTransport()
+						}
+						resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, retryErr.Error())
+					} else {
+						resp = retryResp
+						err = nil
+					}
+				} else {
+					resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError,
+						fmt.Sprintf("%v (reconnect failed: %v)", err, reconnErr))
+				}
 			}
-			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
+			if err != nil && resp == nil {
+				resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
+			}
 		}
 
 		if resp != nil {
@@ -1263,6 +1326,44 @@ func proxyOpenSession(ctx context.Context, transport mcp.Transport) {
 
 	proxySessionID = result.SessionID
 	proxyDaemonEpoch = result.DaemonEpoch
+}
+
+// proxySessionHeartbeat sends a keepalive heartbeat to the daemon to extend the
+// session lease. On rejection (expired session or epoch mismatch), the session ID
+// is cleared so the next ensureDaemon() re-opens a fresh session.
+func proxySessionHeartbeat(ctx context.Context, transport mcp.Transport) {
+	if proxySessionID == "" || proxySessionDisabled {
+		return
+	}
+
+	req, _ := mcp.NewRequest(97, "loom/session/heartbeat", map[string]any{
+		"session_id":   proxySessionID,
+		"daemon_epoch": proxyDaemonEpoch,
+	})
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
+	err := transport.Send(sendCtx, req)
+	sendCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat send failed: %v\n", err)
+		return
+	}
+
+	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
+	resp, err := transport.Recv(recvCtx)
+	recvCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat recv failed: %v\n", err)
+		return
+	}
+
+	// On error response (expired session, epoch mismatch, method_not_found),
+	// clear session so the next request re-opens.
+	if resp.Error != nil {
+		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat rejected: %s\n", resp.Error.Message)
+		proxySessionID = ""
+		return
+	}
 }
 
 // proxyCloseSession sends a graceful session close to the daemon with a short timeout.

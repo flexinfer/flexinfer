@@ -549,12 +549,24 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 			err = fmt.Errorf("local pool not configured")
 		} else {
 			p.conn, err = p.daemon.pool.Get(p.ctx, p.serverName)
+			if err == nil {
+				p.conn = p.discardIfStale(p.conn, p.daemon.pool)
+				if p.conn == nil {
+					err = fmt.Errorf("stale connection discarded and fresh dial failed for %s", p.serverName)
+				}
+			}
 		}
 	case router.TargetHub:
 		if p.daemon.hubPool == nil {
 			err = fmt.Errorf("hub fallback not configured")
 		} else {
 			p.conn, err = p.daemon.hubPool.Get(p.ctx, p.serverName)
+			if err == nil {
+				p.conn = p.discardIfStale(p.conn, p.daemon.hubPool)
+				if p.conn == nil {
+					err = fmt.Errorf("stale connection discarded and fresh dial failed for %s", p.serverName)
+				}
+			}
 		}
 	}
 
@@ -569,6 +581,37 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 	}
 
 	return nil
+}
+
+// discardIfStale checks whether a pooled connection has been idle longer than
+// the configured stale threshold. If so, it marks the connection unhealthy,
+// returns it to the pool (which closes it), and dials a fresh connection.
+// Returns the original connection if not stale or if the threshold is disabled.
+func (p *callPipeline) discardIfStale(conn *pool.Conn, pl *pool.Pool) *pool.Conn {
+	threshold := p.daemon.poolStaleThreshold()
+	if threshold <= 0 || conn == nil {
+		return conn
+	}
+	idle := time.Since(conn.LastUsed)
+	if idle <= threshold {
+		return conn
+	}
+
+	p.daemon.logger.Debug("discarding stale pool connection",
+		"server", p.serverName,
+		"idle", idle.Round(time.Second),
+		"threshold", threshold)
+
+	conn.Healthy = false
+	pl.Put(conn)
+
+	fresh, err := pl.Get(p.ctx, p.serverName)
+	if err != nil {
+		p.daemon.logger.Warn("failed to dial fresh connection after discarding stale",
+			"server", p.serverName, "error", err)
+		return nil
+	}
+	return fresh
 }
 
 func (p *callPipeline) shouldRetryLocalAfterHubFailure() bool {

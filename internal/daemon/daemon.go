@@ -159,6 +159,11 @@ func (d *Daemon) daemonTracer() trace.Tracer {
 	return otel.Tracer("loomd")
 }
 
+// poolStaleThreshold returns the configured stale pool connection threshold.
+func (d *Daemon) poolStaleThreshold() time.Duration {
+	return d.fileCfg.Resources.GetPoolStaleThreshold()
+}
+
 func (d *Daemon) acquireLock() error {
 	home, _ := os.UserHomeDir()
 	lockDir := filepath.Join(home, ".config", "loom")
@@ -615,6 +620,14 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 	if d.healthMonitor != nil {
 		d.healthMonitor.Start()
 		d.logger.Info("health monitor started")
+	}
+
+	// Start hub WebSocket keepalive if hub is configured
+	if d.hubClient != nil && d.hubPool != nil {
+		d.wg.Add(1)
+		go d.hubKeepaliveLoop()
+		d.logger.Info("hub keepalive started",
+			"interval_seconds", d.fileCfg.Hub.PingIntervalSeconds)
 	}
 
 	// Start tunnel manager and establish tunnels for servers with SSH config

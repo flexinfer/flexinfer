@@ -157,6 +157,126 @@ func TestProxyOpenSession_SendTimeout(t *testing.T) {
 	}
 }
 
+// --- Session heartbeat tests ---
+
+func TestProxySessionHeartbeat_ExtendsLease(t *testing.T) {
+	oldSessionID := proxySessionID
+	oldEpoch := proxyDaemonEpoch
+	oldDisabled := proxySessionDisabled
+	defer func() {
+		proxySessionID = oldSessionID
+		proxyDaemonEpoch = oldEpoch
+		proxySessionDisabled = oldDisabled
+	}()
+
+	proxySessionID = "sess-heartbeat-1"
+	proxyDaemonEpoch = 1
+	proxySessionDisabled = false
+
+	// Daemon responds with success (no error).
+	resp, _ := mcp.NewResponse(json.RawMessage(`97`), json.RawMessage(`{"ok":true}`))
+	transport := &sessionStubTransport{
+		recvQueue: []*mcp.Message{resp},
+	}
+
+	proxySessionHeartbeat(context.Background(), transport)
+
+	// Session ID should be preserved after successful heartbeat.
+	if proxySessionID != "sess-heartbeat-1" {
+		t.Fatalf("expected proxySessionID preserved, got %q", proxySessionID)
+	}
+
+	// Verify the heartbeat request was sent with correct params.
+	if len(transport.sentMessages) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(transport.sentMessages))
+	}
+	if transport.sentMessages[0].Method != "loom/session/heartbeat" {
+		t.Fatalf("expected method loom/session/heartbeat, got %q", transport.sentMessages[0].Method)
+	}
+	var params map[string]any
+	json.Unmarshal(transport.sentMessages[0].Params, &params)
+	if params["session_id"] != "sess-heartbeat-1" {
+		t.Fatalf("expected session_id 'sess-heartbeat-1', got %v", params["session_id"])
+	}
+}
+
+func TestProxySessionHeartbeat_Rejected(t *testing.T) {
+	oldSessionID := proxySessionID
+	oldEpoch := proxyDaemonEpoch
+	oldDisabled := proxySessionDisabled
+	defer func() {
+		proxySessionID = oldSessionID
+		proxyDaemonEpoch = oldEpoch
+		proxySessionDisabled = oldDisabled
+	}()
+
+	proxySessionID = "sess-expired"
+	proxyDaemonEpoch = 1
+	proxySessionDisabled = false
+
+	// Daemon responds with error (expired session).
+	errResp := &mcp.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`97`),
+		Error: &mcp.Error{
+			Code:    mcp.InvalidRequest,
+			Message: "session not found or expired",
+		},
+	}
+	transport := &sessionStubTransport{
+		recvQueue: []*mcp.Message{errResp},
+	}
+
+	proxySessionHeartbeat(context.Background(), transport)
+
+	// Session ID should be cleared so next request re-opens.
+	if proxySessionID != "" {
+		t.Fatalf("expected proxySessionID cleared on rejection, got %q", proxySessionID)
+	}
+}
+
+func TestProxySessionHeartbeat_Disabled(t *testing.T) {
+	oldSessionID := proxySessionID
+	oldDisabled := proxySessionDisabled
+	defer func() {
+		proxySessionID = oldSessionID
+		proxySessionDisabled = oldDisabled
+	}()
+
+	proxySessionID = "sess-123"
+	proxySessionDisabled = true
+
+	transport := &sessionStubTransport{}
+
+	proxySessionHeartbeat(context.Background(), transport)
+
+	// No messages should be sent when disabled.
+	if len(transport.sentMessages) != 0 {
+		t.Fatalf("expected 0 sent messages when disabled, got %d", len(transport.sentMessages))
+	}
+}
+
+func TestProxySessionHeartbeat_NoSession(t *testing.T) {
+	oldSessionID := proxySessionID
+	oldDisabled := proxySessionDisabled
+	defer func() {
+		proxySessionID = oldSessionID
+		proxySessionDisabled = oldDisabled
+	}()
+
+	proxySessionID = ""
+	proxySessionDisabled = false
+
+	transport := &sessionStubTransport{}
+
+	proxySessionHeartbeat(context.Background(), transport)
+
+	// No messages should be sent when no session is active.
+	if len(transport.sentMessages) != 0 {
+		t.Fatalf("expected 0 sent messages with no session, got %d", len(transport.sentMessages))
+	}
+}
+
 func TestProxyOpenSession_PreservesPriorID(t *testing.T) {
 	// When proxySessionID is already set, it should be sent as prior_session_id.
 	oldSessionID := proxySessionID

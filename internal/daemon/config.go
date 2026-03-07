@@ -230,6 +230,10 @@ type ResourceConfig struct {
 
 	// MaxConcurrentCalls is the daemon-wide cap on simultaneous in-flight tool calls (0 = unlimited)
 	MaxConcurrentCalls int `yaml:"max_concurrent_calls,omitempty"`
+
+	// PoolStaleThresholdSeconds is how long an idle pool connection can sit before
+	// being discarded on next Get. Default 120 (2 min). Set to -1 to disable.
+	PoolStaleThresholdSeconds int `yaml:"pool_stale_threshold_seconds,omitempty"`
 }
 
 // ContextConfig controls tool filtering and profile selection.
@@ -413,6 +417,19 @@ func (c *ResourceConfig) GetMaxConcurrentCalls() int {
 		return 0
 	}
 	return c.MaxConcurrentCalls
+}
+
+// GetPoolStaleThreshold returns the duration after which an idle pool connection
+// is considered stale and discarded before use. Default is 2 minutes.
+// Returns 0 (disabled) when explicitly set to -1.
+func (c *ResourceConfig) GetPoolStaleThreshold() time.Duration {
+	if c.PoolStaleThresholdSeconds < 0 {
+		return 0
+	}
+	if c.PoolStaleThresholdSeconds == 0 {
+		return 2 * time.Minute
+	}
+	return time.Duration(c.PoolStaleThresholdSeconds) * time.Second
 }
 
 // DefaultFileConfig returns the default configuration.

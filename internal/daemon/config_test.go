@@ -305,6 +305,27 @@ hub:
 	}
 }
 
+func TestGetPoolStaleThreshold_Default(t *testing.T) {
+	cfg := ResourceConfig{}
+	if got := cfg.GetPoolStaleThreshold(); got != 2*time.Minute {
+		t.Errorf("GetPoolStaleThreshold() = %v, want 2m", got)
+	}
+}
+
+func TestGetPoolStaleThreshold_Explicit(t *testing.T) {
+	cfg := ResourceConfig{PoolStaleThresholdSeconds: 60}
+	if got := cfg.GetPoolStaleThreshold(); got != 60*time.Second {
+		t.Errorf("GetPoolStaleThreshold() = %v, want 60s", got)
+	}
+}
+
+func TestGetPoolStaleThreshold_Disabled(t *testing.T) {
+	cfg := ResourceConfig{PoolStaleThresholdSeconds: -1}
+	if got := cfg.GetPoolStaleThreshold(); got != 0 {
+		t.Errorf("GetPoolStaleThreshold() = %v, want 0 (disabled)", got)
+	}
+}
+
 func TestGetConfigPath_ReturnsValidPath(t *testing.T) {
 	// getConfigPath should return a non-empty path even if HOME is not set.
 	// We don't manipulate env vars here to avoid test pollution; we just
