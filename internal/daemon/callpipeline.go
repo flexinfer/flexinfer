@@ -772,22 +772,7 @@ func (p *callPipeline) internalError(err error) *mcp.Message {
 
 func (p *callPipeline) internalErrorWithAudit(target, message string) *mcp.Message {
 	p.emitErrorAudit(target, message)
-	code := "SERVER_ERROR"
-	retryable := false
-	switch p.stage {
-	case stageRoute:
-		if strings.Contains(message, "server unavailable") {
-			code = "SERVER_UNAVAILABLE"
-		} else if strings.Contains(message, "call lock") || strings.Contains(message, "lock") {
-			code = "LOCK_TIMEOUT"
-			retryable = true
-		} else {
-			code = "CONNECTION_ERROR"
-			retryable = true
-		}
-	case stageExecute:
-		code, retryable = classifyTransportError(fmt.Errorf("%s", message))
-	}
+	code, retryable := classifyInternalError(fmt.Errorf("%s", message), p.stage)
 	return p.errorResponse(mcp.InternalError, message, &PipelineErrorData{
 		Code:      code,
 		Server:    p.serverName,

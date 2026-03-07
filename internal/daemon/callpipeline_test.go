@@ -3723,6 +3723,319 @@ func TestCacheSuccessResponse_Guards(t *testing.T) {
 // resolveToolCallTimeout: negative _timeout
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// DEBT-016: classifyInternalError consistency
+// ---------------------------------------------------------------------------
+
+func TestClassifyInternalError_StageRouteErrorCodes(t *testing.T) {
+	tests := []struct {
+		name          string
+		errMsg        string
+		wantCode      string
+		wantRetryable bool
+	}{
+		{"server unavailable", "server unavailable for myserver", "SERVER_UNAVAILABLE", false},
+		{"lock timeout", "acquire call lock for server: context deadline exceeded", "LOCK_TIMEOUT", true},
+		{"generic route", "connection refused", "CONNECTION_ERROR", true},
+		{"transport corruption", "response id mismatch on recv", "TRANSPORT_CORRUPTION", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code, retryable := classifyInternalError(fmt.Errorf("%s", tc.errMsg), stageRoute)
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %q", code, tc.wantCode)
+			}
+			if retryable != tc.wantRetryable {
+				t.Errorf("retryable = %v, want %v", retryable, tc.wantRetryable)
+			}
+		})
+	}
+}
+
+func TestClassifyInternalError_StageExecute(t *testing.T) {
+	code, retryable := classifyInternalError(fmt.Errorf("send failed"), stageExecute)
+	if code != "TRANSPORT_FAILURE" {
+		t.Errorf("code = %q, want TRANSPORT_FAILURE", code)
+	}
+	if !retryable {
+		t.Error("expected retryable=true for execute stage")
+	}
+}
+
+func TestClassifyInternalError_StageBuild(t *testing.T) {
+	code, retryable := classifyInternalError(fmt.Errorf("marshal error"), stageBuild)
+	if code != "SERVER_ERROR" {
+		t.Errorf("code = %q, want SERVER_ERROR", code)
+	}
+	if retryable {
+		t.Error("expected retryable=false for build stage")
+	}
+}
+
+func TestClassifyInternalError_TimeoutOverridesStage(t *testing.T) {
+	for _, stage := range []string{stageRoute, stageExecute, stageBuild, stagePolicy} {
+		t.Run(stage, func(t *testing.T) {
+			code, retryable := classifyInternalError(context.DeadlineExceeded, stage)
+			if code != "TIMEOUT" {
+				t.Errorf("code = %q, want TIMEOUT for stage %s", code, stage)
+			}
+			if !retryable {
+				t.Error("expected retryable=true for timeout")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-016: internalError and internalErrorWithAudit produce identical codes
+// ---------------------------------------------------------------------------
+
+func TestInternalError_AndWithAudit_ProduceSameCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		errMsg string
+		stage  string
+	}{
+		{"route lock timeout", "acquire call lock: context deadline exceeded", stageRoute},
+		{"route connection error", "dial tcp: connection refused", stageRoute},
+		{"route server unavailable", "server unavailable for myserver", stageRoute},
+		{"execute transport failure", "send failed: broken pipe", stageExecute},
+		{"build marshal error", "json: unsupported type", stageBuild},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newCallPipelineTestDaemon()
+			auditPath := enableAuditAndCostForTest(t, d)
+
+			p := newCallPipeline(d, context.Background(), &mcp.Message{
+				JSONRPC: mcp.JSONRPCVersion,
+				ID:      "code-match",
+			})
+			p.serverName = "test-server"
+			p.toolName = "test-tool"
+			p.stage = tc.stage
+			p.auditStart = time.Now()
+
+			resp1 := p.internalError(fmt.Errorf("%s", tc.errMsg))
+			resp2 := p.internalErrorWithAudit("local", tc.errMsg)
+
+			ped1 := resp1.Error.Data.(*PipelineErrorData)
+			ped2 := resp2.Error.Data.(*PipelineErrorData)
+
+			if ped1.Code != ped2.Code {
+				t.Errorf("code mismatch: internalError=%q, internalErrorWithAudit=%q",
+					ped1.Code, ped2.Code)
+			}
+			if ped1.Retryable != ped2.Retryable {
+				t.Errorf("retryable mismatch: internalError=%v, internalErrorWithAudit=%v",
+					ped1.Retryable, ped2.Retryable)
+			}
+			if ped1.Stage != ped2.Stage {
+				t.Errorf("stage mismatch: internalError=%q, internalErrorWithAudit=%q",
+					ped1.Stage, ped2.Stage)
+			}
+
+			// internalErrorWithAudit should have emitted an audit entry.
+			entries := readAuditEntries(t, auditPath)
+			if len(entries) == 0 {
+				t.Error("internalErrorWithAudit should emit an audit entry")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-016: handleCall stage short-circuit with error code verification
+// ---------------------------------------------------------------------------
+
+func TestHandleCall_ParseErrorCodeAndShortCircuit(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+
+	// Set up RBAC to catch if auth stage runs (it shouldn't).
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+	}, d.logger)
+
+	msg := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "parse-sc",
+		Method:  "loom/call",
+		Params:  json.RawMessage(`{`), // Invalid JSON.
+	}
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be a parse-stage error.
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Stage != stageParse {
+		t.Errorf("Stage = %q, want %q", ped.Stage, stageParse)
+	}
+	if ped.Code != "INVALID_INPUT" {
+		t.Errorf("Code = %q, want INVALID_INPUT", ped.Code)
+	}
+
+	// No audit means auth/route/execute never ran.
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 0 {
+		t.Fatalf("parse failure short-circuit broken: got %d audit entries", len(entries))
+	}
+}
+
+func TestHandleCall_AuthDenialShortCircuitsRouteAndExecute(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+
+	// RBAC deny-all.
+	d.rbac = NewRBACEnforcer(RBACConfig{
+		Enabled:       true,
+		DefaultPolicy: "deny",
+	}, d.logger)
+
+	// Set up a pool that would fail loudly if route/execute ran.
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			t.Fatal("pool dial should not be called after auth denial")
+			return nil, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server":   "github",
+		"tool":     "push",
+		"agent_id": "restricted-agent",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected RBAC denial")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "RBAC_DENIED" {
+		t.Errorf("Code = %q, want RBAC_DENIED", ped.Code)
+	}
+	if ped.Stage != stageAuth {
+		t.Errorf("Stage = %q, want %q", ped.Stage, stageAuth)
+	}
+
+	// Only 1 audit entry from auth stage, none from route/execute.
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].PipelineStage != stageAuth {
+		t.Errorf("audit pipeline_stage = %q, want %q", entries[0].PipelineStage, stageAuth)
+	}
+}
+
+func TestHandleCall_CacheHitShortCircuitsBuildAndExecute(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+	d.respCache = NewResponseCache(CacheConfig{Enabled: true})
+
+	args := json.RawMessage(`{"q":"test"}`)
+	key := d.respCache.Key("prometheus", "query", args)
+	d.respCache.Set(key, json.RawMessage(`{"cached":true}`), "prometheus", "query")
+
+	// Set up pools that would fail loudly if route/build/execute ran.
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			t.Fatal("pool dial should not be called after cache hit")
+			return nil, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server":    "prometheus",
+		"tool":      "query",
+		"arguments": json.RawMessage(`{"q":"test"}`),
+		"agent_id":  "agent-cache-sc",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+	if string(resp.Result) != `{"cached":true}` {
+		t.Errorf("result = %s, want cached response", string(resp.Result))
+	}
+
+	// Cache hit audit at cache stage, no route/execute audit.
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].PipelineStage != stageCache {
+		t.Errorf("audit pipeline_stage = %q, want %q", entries[0].PipelineStage, stageCache)
+	}
+	if !entries[0].Cached {
+		t.Error("expected cached=true")
+	}
+}
+
+func TestHandleCall_RouteFailureErrorCodeFromClassifyInternalError(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: false})
+
+	msg := newCallMessage(t, map[string]any{
+		"server":   "nonexistent",
+		"tool":     "query",
+		"agent_id": "agent-route-code",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected route failure")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Stage != stageRoute {
+		t.Errorf("Stage = %q, want %q", ped.Stage, stageRoute)
+	}
+
+	// Verify the code matches what classifyInternalError would produce.
+	expectedCode, expectedRetryable := classifyInternalError(
+		fmt.Errorf("%s", resp.Error.Message), stageRoute)
+	if ped.Code != expectedCode {
+		t.Errorf("Code = %q, want %q (from classifyInternalError)", ped.Code, expectedCode)
+	}
+	if ped.Retryable != expectedRetryable {
+		t.Errorf("Retryable = %v, want %v", ped.Retryable, expectedRetryable)
+	}
+}
+
 func TestResolveToolCallTimeout_NegativeExplicit(t *testing.T) {
 	t.Setenv("LOOM_DAEMON_TOOL_TIMEOUT", "")
 

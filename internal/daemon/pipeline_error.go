@@ -18,20 +18,6 @@ type PipelineErrorData struct {
 	Details    any    `json:"details,omitempty"`     // stage-specific data
 }
 
-// classifyTransportError returns a pipeline error code based on the nature of
-// the transport failure.
-func classifyTransportError(err error) (code string, retryable bool) {
-	if isRPCTimeout(err) {
-		return "TIMEOUT", true
-	}
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "transport corruption") ||
-		strings.Contains(lower, "response id mismatch") {
-		return "TRANSPORT_CORRUPTION", true
-	}
-	return "TRANSPORT_FAILURE", true
-}
-
 // classifyInternalError returns a pipeline error code based on the error and
 // current pipeline stage.
 func classifyInternalError(err error, stage string) (code string, retryable bool) {
@@ -49,6 +35,9 @@ func classifyInternalError(err error, stage string) (code string, retryable bool
 	case stageRoute:
 		if strings.Contains(lower, "server unavailable") {
 			return "SERVER_UNAVAILABLE", false
+		}
+		if strings.Contains(lower, "lock") {
+			return "LOCK_TIMEOUT", true
 		}
 		return "CONNECTION_ERROR", true
 	case stageExecute:
