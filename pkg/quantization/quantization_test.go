@@ -507,11 +507,130 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQImage)
 	}
 	script := container.Args[0]
-	if !contains(script, "AutoGPTQForCausalLM") {
-		t.Fatal("expected GPTQ script to reference AutoGPTQForCausalLM")
+	if !contains(script, "GPTQModel") {
+		t.Fatal("expected GPTQ script to reference GPTQModel")
+	}
+	if !contains(script, "QuantizeConfig") {
+		t.Fatal("expected GPTQ script to reference QuantizeConfig")
 	}
 	if !contains(script, "W${BITS}_G${GROUP_SIZE}") {
 		t.Fatal("expected GPTQ script type marker")
+	}
+	// Default sym=True, descAct=False
+	if !contains(script, "sym=True") {
+		t.Fatal("expected GPTQ script to have sym=True by default")
+	}
+	if !contains(script, "desc_act=False") {
+		t.Fatal("expected GPTQ script to have desc_act=False by default")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_SymFalse(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	sym := false
+	descAct := true
+	params := JobParams{
+		Name:      "qwen3-gptq",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen3-gptq",
+		ModelPath: "qwen3-gptq",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			Sym:       &sym,
+			DescAct:   &descAct,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "sym=False") {
+		t.Fatal("expected GPTQ script to have sym=False when spec.Sym=false")
+	}
+	if !contains(script, "desc_act=True") {
+		t.Fatal("expected GPTQ script to have desc_act=True when spec.DescAct=true")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "qwen3-gptq-amd",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen3-gptq-amd",
+		ModelPath: "qwen3-gptq-amd",
+		GPUVendor: "amd",
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "gpu-node",
+		},
+		Tolerations: []corev1.Toleration{
+			{
+				Key:      "dedicated",
+				Operator: corev1.TolerationOpEqual,
+				Value:    "gpu",
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		},
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+
+	// ROCm image should be selected for AMD vendor
+	if container.Image != DefaultGPTQROCmImage {
+		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQROCmImage)
+	}
+
+	// amd.com/gpu should be set
+	amdGPU := corev1.ResourceName("amd.com/gpu")
+	gpuLimit, ok := container.Resources.Limits[amdGPU]
+	if !ok {
+		t.Fatal("expected amd.com/gpu limit to be set")
+	}
+	if gpuLimit.Cmp(resource.MustParse("1")) != 0 {
+		t.Fatalf("GPU limit = %q, want 1", gpuLimit.String())
+	}
+
+	// nvidia.com/gpu should NOT be present
+	nvidiaGPU := corev1.ResourceName("nvidia.com/gpu")
+	if _, ok := container.Resources.Limits[nvidiaGPU]; ok {
+		t.Fatal("nvidia.com/gpu should not be set for AMD vendor")
+	}
+
+	// PYTORCH_HIP_ALLOC_CONF should be set for AMD GPUs
+	var hipAllocConf string
+	for _, e := range container.Env {
+		if e.Name == "PYTORCH_HIP_ALLOC_CONF" {
+			hipAllocConf = e.Value
+		}
+	}
+	if hipAllocConf != "expandable_segments:True" {
+		t.Fatalf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", hipAllocConf)
+	}
+
+	script := container.Args[0]
+	if !contains(script, "GPTQModel") {
+		t.Fatal("expected GPTQ script to reference GPTQModel")
 	}
 }
 
@@ -917,6 +1036,12 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	}
 	if !contains(script, "load_dataset") {
 		t.Error("expected GPTQ script to load calibration dataset")
+	}
+	if !contains(script, "GPTQModel") {
+		t.Error("expected GPTQ script to use GPTQModel API")
+	}
+	if !contains(script, "input_ids") {
+		t.Error("expected GPTQ script to format examples with input_ids")
 	}
 }
 

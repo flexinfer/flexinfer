@@ -214,8 +214,12 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 }
 
 func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) (*corev1.PersistentVolumeClaim, error) {
-	// Use ReadWriteMany for shared access across nodes
+	// Use ReadWriteOnce for node-local storage classes (e.g. local-path),
+	// ReadWriteMany for network-backed storage (e.g. NFS, Longhorn).
 	modes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	if m.Spec.ClusterStorageClassName != nil && *m.Spec.ClusterStorageClassName == "local-path" {
+		modes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+	}
 
 	// Use configured storage size or default to 50Gi
 	storageSize := "50Gi"
@@ -433,6 +437,18 @@ echo "Download complete."
 `, modelID, modelPath)
 	}
 
+	// Tolerate dedicated GPU nodes so the downloader can schedule on tainted GPU nodes
+	// where the local-path PVC will be created.
+	var tolerations []corev1.Toleration
+	if len(m.Spec.NodeSelector) > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-downloader",
@@ -442,6 +458,8 @@ echo "Download complete."
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
+					NodeSelector:  m.Spec.NodeSelector,
+					Tolerations:   tolerations,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
 						Image:   image,
@@ -1866,12 +1884,14 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 
 		params := quantization.JobParams{
-			Name:        modelCache.Name,
-			Namespace:   modelCache.Namespace,
-			PVCName:     pvcName,
-			ModelPath:   modelPath,
-			Spec:        modelCache.Spec.Quantization,
-			Tolerations: tolerations,
+			Name:         modelCache.Name,
+			Namespace:    modelCache.Namespace,
+			PVCName:      pvcName,
+			ModelPath:    modelPath,
+			Spec:         modelCache.Spec.Quantization,
+			Tolerations:  tolerations,
+			NodeSelector: modelCache.Spec.NodeSelector,
+			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
 		}
 
 		newJob, buildErr := builder.BuildJob(params)
@@ -2170,6 +2190,34 @@ func quantizedPathFromMetadata(basePath string, meta *quantizationJobMetadata) (
 	}
 
 	return filepath.Clean(filepath.Join(basePath, cleanArtifact)), true
+}
+
+// gpuVendorFromNodeSelector infers the GPU vendor from well-known label keys
+// in the ModelCache's nodeSelector. Returns "amd" or "nvidia" when detectable,
+// or empty string for auto-detection by the job builder.
+func gpuVendorFromNodeSelector(sel map[string]string) string {
+	for k := range sel {
+		switch {
+		case strings.HasPrefix(k, "amd.com/gpu") ||
+			strings.Contains(k, "gpu.arch") && (sel[k] == "gfx1100" || strings.HasPrefix(sel[k], "gfx")):
+			return "amd"
+		case strings.HasPrefix(k, "nvidia.com/gpu"):
+			return "nvidia"
+		}
+	}
+	// Heuristic: known AMD GPU hostnames in this cluster.
+	if hostname, ok := sel["kubernetes.io/hostname"]; ok {
+		switch {
+		case strings.Contains(hostname, "7900xtx") ||
+			strings.Contains(hostname, "radeonvii") ||
+			strings.Contains(hostname, "5930k"):
+			return "amd"
+		case strings.Contains(hostname, "gtx") ||
+			strings.Contains(hostname, "rtx"):
+			return "nvidia"
+		}
+	}
+	return ""
 }
 
 func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {

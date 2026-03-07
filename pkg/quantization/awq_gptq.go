@@ -15,8 +15,11 @@ const (
 	// DefaultAWQImage is the default image used for AWQ quantization jobs.
 	DefaultAWQImage = "ghcr.io/flexinfer/quantizer:awq"
 
-	// DefaultGPTQImage is the default image used for GPTQ quantization jobs.
+	// DefaultGPTQImage is the default image used for GPTQ quantization jobs (CUDA).
 	DefaultGPTQImage = "ghcr.io/flexinfer/quantizer:gptq"
+
+	// DefaultGPTQROCmImage is the default image used for GPTQ quantization on ROCm.
+	DefaultGPTQROCmImage = "registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100"
 
 	// DefaultGPUQuantizationMemoryGB is the default memory limit for AWQ/GPTQ jobs.
 	DefaultGPUQuantizationMemoryGB = 48
@@ -276,16 +279,30 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		groupSize = int(*params.Spec.GroupSize)
 	}
 
+	sym := true
+	if params.Spec.Sym != nil {
+		sym = *params.Spec.Sym
+	}
+	descAct := false
+	if params.Spec.DescAct != nil {
+		descAct = *params.Spec.DescAct
+	}
+
+	image := gptqQuantizerImage()
+	if params.GPUVendor == "amd" {
+		image = gptqQuantizerROCmImage()
+	}
+
 	return buildGPUQuantizationJob(
 		params,
-		gptqQuantizerImage(),
-		b.buildScript(params.ModelPath, bits, groupSize, params.Spec.Calibration),
+		image,
+		b.buildScript(params.ModelPath, bits, groupSize, sym, descAct, params.Spec.Calibration),
 		memoryGB,
 	)
 }
 
-// buildScript generates the shell script for GPTQ quantization.
-func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) string {
+// buildScript generates the shell script for GPTQ quantization using GPTQModel.
+func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym, descAct bool, calib *aiv1alpha1.CalibrationSpec) string {
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
 	if calib != nil {
@@ -295,6 +312,15 @@ func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, cali
 		if calib.MaxSamples != nil {
 			maxSamples = *calib.MaxSamples
 		}
+	}
+
+	symPy := "True"
+	if !sym {
+		symPy = "False"
+	}
+	descActPy := "False"
+	if descAct {
+		descActPy = "True"
 	}
 
 	return fmt.Sprintf(`set -euo pipefail
@@ -309,10 +335,10 @@ START_TS=$(date +%%s)
 cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
 trap cleanup EXIT
 
-echo "=== GPTQ Quantization ==="
+echo "=== GPTQ Quantization (GPTQModel) ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
-echo "Calibration: maxSeqLen=%d maxSamples=%d"
+echo "Calibration: maxSeqLen=%d maxSamples=%d sym=%s descAct=%s"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -325,7 +351,7 @@ export MODEL_DIR OUT_DIR BITS GROUP_SIZE
 python3 - <<'PY'
 import os
 from datasets import load_dataset
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+from gptqmodel import GPTQModel, QuantizeConfig
 from transformers import AutoTokenizer
 
 model_dir = os.environ["MODEL_DIR"]
@@ -336,8 +362,8 @@ max_seq_len = %d
 max_samples = %d
 
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-quantize_config = BaseQuantizeConfig(bits=bits, group_size=group_size, desc_act=False)
-model = AutoGPTQForCausalLM.from_pretrained(
+quantize_config = QuantizeConfig(bits=bits, group_size=group_size, sym=%s, desc_act=%s)
+model = GPTQModel.load(
     model_dir,
     quantize_config=quantize_config,
     trust_remote_code=True,
@@ -347,10 +373,10 @@ dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
 examples = []
 for sample in dataset.select(range(min(max_samples, len(dataset)))):
     tok = tokenizer(sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True)
-    examples.append(tok)
+    examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
 
 model.quantize(examples)
-model.save_quantized(out_dir)
+model.save(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
 
@@ -384,7 +410,9 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize, maxSeqLen, maxSamples, maxSeqLen, maxSamples)
+`, modelPath, bits, groupSize,
+		maxSeqLen, maxSamples, symPy, descActPy,
+		maxSeqLen, maxSamples, symPy, descActPy)
 }
 
 func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB int32) (*batchv1.Job, error) {
@@ -472,4 +500,11 @@ func gptqQuantizerImage() string {
 		return img
 	}
 	return DefaultGPTQImage
+}
+
+func gptqQuantizerROCmImage() string {
+	if img := os.Getenv("FLEXINFER_QUANTIZER_GPTQ_ROCM_IMAGE"); img != "" {
+		return img
+	}
+	return DefaultGPTQROCmImage
 }

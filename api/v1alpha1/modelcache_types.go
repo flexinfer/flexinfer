@@ -144,6 +144,18 @@ type QuantizationSpec struct {
 	// +optional
 	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
 
+	// Sym enables symmetric quantization for GPTQ (default true).
+	// sym=true is required for ExLlama kernels (best ROCm performance).
+	// Ignored for non-GPTQ formats.
+	// +optional
+	Sym *bool `json:"sym,omitempty"`
+
+	// DescAct enables activation reordering (desc_act) for GPTQ (default false).
+	// desc_act=false gives faster inference; true gives slightly better quality.
+	// Ignored for non-GPTQ formats.
+	// +optional
+	DescAct *bool `json:"descAct,omitempty"`
+
 	// Calibration configures calibration parameters for AWQ/GPTQ quantization.
 	// Ignored for GGUF and EXL2 formats.
 	// +optional

@@ -1,0 +1,38 @@
+# Dockerfile.quantizer-gptq-rocm
+# GPTQ quantization runtime image for FlexInfer on AMD ROCm GPUs.
+# Uses GPTQModel (actively maintained successor to auto-gptq) which has
+# native ROCm/HIP support via auto-detected pip install.
+#
+# Build:
+#   docker --context 7900xtx build -f build/Dockerfile.quantizer-gptq-rocm \
+#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100 .
+#
+# The resulting image is ~12 GB (ROCm base + PyTorch + GPTQModel).
+
+FROM rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTORCH_ROCM_ARCH=gfx1100
+
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# The ROCm PyTorch base image ships a broken editable Triton install
+# (/var/lib/jenkins/triton/python) that lacks the jit API. Replace it
+# with the PyPI wheel which includes full ROCm/HIP support.
+RUN python3 -m pip install --force-reinstall triton==3.2.0
+
+# GPTQModel auto-detects ROCm and builds HIP kernels via --no-build-isolation.
+# Pin transformers to 4.51.3 — the last version tested with GPTQModel on ROCm.
+# Newer 4.x versions removed PytorchGELUTanh from activations, and 5.x
+# introduces an incompatible attention_type API for Qwen3.
+RUN python3 -m pip install -v gptqmodel --no-build-isolation && \
+    python3 -m pip install \
+    transformers==4.51.3 \
+    safetensors \
+    accelerate \
+    datasets \
+    sentencepiece
+
+ENTRYPOINT ["/bin/bash"]

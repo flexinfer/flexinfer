@@ -206,6 +206,12 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
+                  descAct:
+                    description: |-
+                      DescAct enables activation reordering (desc_act) for GPTQ (default false).
+                      desc_act=false gives faster inference; true gives slightly better quality.
+                      Ignored for non-GPTQ formats.
+                    type: boolean
                   format:
                     description: Format is the target quantization format.
                     enum:
@@ -231,6 +237,12 @@ spec:
                       Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
                     format: int32
                     type: integer
+                  sym:
+                    description: |-
+                      Sym enables symmetric quantization for GPTQ (default true).
+                      sym=true is required for ExLlama kernels (best ROCm performance).
+                      Ignored for non-GPTQ formats.
+                    type: boolean
                   timeoutSeconds:
                     description: TimeoutSeconds overrides the default 2-hour deadline
                       for quantization jobs.

@@ -1040,6 +1040,16 @@ func (in *QuantizationSpec) DeepCopyInto(out *QuantizationSpec) {
 		*out = new(int64)
 		**out = **in
 	}
+	if in.Sym != nil {
+		in, out := &in.Sym, &out.Sym
+		*out = new(bool)
+		**out = **in
+	}
+	if in.DescAct != nil {
+		in, out := &in.DescAct, &out.DescAct
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Calibration != nil {
 		in, out := &in.Calibration, &out.Calibration
 		*out = new(CalibrationSpec)

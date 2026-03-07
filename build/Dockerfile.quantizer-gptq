@@ -1,6 +1,6 @@
 # Dockerfile.quantizer-gptq
 # GPTQ quantization runtime image for FlexInfer ModelCache quantization jobs.
-# Uses CUDA userspace + AutoGPTQ tooling.
+# Uses CUDA userspace + GPTQModel (actively maintained successor to auto-gptq).
 
 FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
 
@@ -23,14 +23,15 @@ RUN python3 -m pip install \
     --index-url https://download.pytorch.org/whl/cu121 \
     torch==2.3.1 torchvision==0.18.1
 
-# AutoGPTQ publishes CUDA wheels via the project index.
-RUN python3 -m pip install \
-    --extra-index-url https://huggingface.github.io/autogptq-index/whl/cu121/ \
-    auto-gptq==0.7.1 \
-    transformers==4.46.3 \
-    accelerate==1.1.1 \
-    safetensors==0.4.5 \
-    sentencepiece==0.2.0 \
-    huggingface_hub==0.26.2
+# GPTQModel auto-detects CUDA and builds kernels via --no-build-isolation.
+# Pin transformers to 4.51.3 for stability.
+RUN python3 -m pip install -v gptqmodel --no-build-isolation && \
+    python3 -m pip install \
+    transformers==4.51.3 \
+    accelerate \
+    safetensors \
+    datasets \
+    sentencepiece \
+    huggingface_hub
 
 ENTRYPOINT ["/bin/bash"]

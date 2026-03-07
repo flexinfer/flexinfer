@@ -299,6 +299,7 @@ quantization:
     gguf: ghcr.io/flexinfer/quantizer:gguf
     awq: ghcr.io/flexinfer/quantizer:awq
     gptq: ghcr.io/flexinfer/quantizer:gptq
+    gptqRocm: ""  # ROCm variant for AMD GPUs (e.g., registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100)
     exl2: ghcr.io/flexinfer/quantizer:exl2
     fp8: ghcr.io/flexinfer/quantizer:fp8
 
