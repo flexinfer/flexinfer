@@ -20,11 +20,11 @@ func TestDurabilityConstants(t *testing.T) {
 
 func TestRouteToMemory_NilHierarchy(t *testing.T) {
 	t.Parallel()
-	svc := &Service{}
+	cs := &ContextSvc{cfg: Config{}}
 	session := &Session{ID: "s1", AgentID: "a1", Namespace: "ns"}
 	m := map[string]any{"entry_type": "finding"}
 
-	_, err := svc.routeToMemory(context.Background(), session, m, "title", "content")
+	_, err := cs.routeToMemory(context.Background(), session, m, "title", "content")
 	if err == nil {
 		t.Error("expected error for nil memory hierarchy")
 	}
@@ -33,9 +33,10 @@ func TestRouteToMemory_NilHierarchy(t *testing.T) {
 func TestRouteToMemory_CreatesItem(t *testing.T) {
 	t.Parallel()
 	mh := NewMemoryHierarchy()
-	svc := &Service{
+	cs := &ContextSvc{
 		persistedMemoryHierarchy: mh.SetPersistence(nil),
 		metrics:                  &Metrics{},
+		cfg:                      Config{},
 	}
 	session := &Session{ID: "s1", AgentID: "a1", Namespace: "test/ns"}
 	m := map[string]any{
@@ -44,7 +45,7 @@ func TestRouteToMemory_CreatesItem(t *testing.T) {
 		"metadata":   map[string]any{"key": "val"},
 	}
 
-	id, err := svc.routeToMemory(context.Background(), session, m, "My Decision", "Chose approach A")
+	id, err := cs.routeToMemory(context.Background(), session, m, "My Decision", "Chose approach A")
 	if err != nil {
 		t.Fatalf("routeToMemory: %v", err)
 	}
@@ -79,11 +80,11 @@ func TestRouteToMemory_CreatesItem(t *testing.T) {
 
 func TestRouteToGraph_NilGraph(t *testing.T) {
 	t.Parallel()
-	svc := &Service{}
+	cs := &ContextSvc{cfg: Config{}}
 	session := &Session{ID: "s1", AgentID: "a1", Namespace: "ns"}
 	m := map[string]any{"entry_type": "concept"}
 
-	_, err := svc.routeToGraph(session, m, "title", "content")
+	_, err := cs.routeToGraph(session, m, "title", "content")
 	if err == nil {
 		t.Error("expected error for nil knowledge graph")
 	}
@@ -92,9 +93,10 @@ func TestRouteToGraph_NilGraph(t *testing.T) {
 func TestRouteToGraph_CreatesEntity(t *testing.T) {
 	t.Parallel()
 	kg := NewKnowledgeGraph()
-	svc := &Service{
+	cs := &ContextSvc{
 		knowledgeGraph: kg,
 		metrics:        &Metrics{},
+		cfg:            Config{},
 	}
 	session := &Session{ID: "s1", AgentID: "a1", Namespace: "test/ns"}
 	m := map[string]any{
@@ -104,7 +106,7 @@ func TestRouteToGraph_CreatesEntity(t *testing.T) {
 		"metadata":   map[string]any{"layer": "domain"},
 	}
 
-	id, err := svc.routeToGraph(session, m, "DDD Pattern", "Domain-driven design pattern for services")
+	id, err := cs.routeToGraph(session, m, "DDD Pattern", "Domain-driven design pattern for services")
 	if err != nil {
 		t.Fatalf("routeToGraph: %v", err)
 	}
@@ -132,15 +134,16 @@ func TestRouteToGraph_CreatesEntity(t *testing.T) {
 func TestRouteToGraph_DefaultEntityType(t *testing.T) {
 	t.Parallel()
 	kg := NewKnowledgeGraph()
-	svc := &Service{
+	cs := &ContextSvc{
 		knowledgeGraph: kg,
 		metrics:        &Metrics{},
+		cfg:            Config{},
 	}
 	session := &Session{ID: "s1", AgentID: "a1", Namespace: "ns"}
 	// No entry_type specified — should default to "concept".
 	m := map[string]any{}
 
-	_, err := svc.routeToGraph(session, m, "Untitled", "Some content")
+	_, err := cs.routeToGraph(session, m, "Untitled", "Some content")
 	if err != nil {
 		t.Fatalf("routeToGraph: %v", err)
 	}
@@ -153,7 +156,7 @@ func TestRouteToGraph_DefaultEntityType(t *testing.T) {
 
 func TestBuildContextEntry_Fields(t *testing.T) {
 	t.Parallel()
-	svc := &Service{cfg: Config{DefaultVisibility: VisibilityPrivate}}
+	cs := &ContextSvc{cfg: Config{DefaultVisibility: VisibilityPrivate}}
 	session := &Session{ID: "sess-1", AgentID: "agent-1", Namespace: "test/ns"}
 	m := map[string]any{
 		"entry_type": "decision",
@@ -164,7 +167,7 @@ func TestBuildContextEntry_Fields(t *testing.T) {
 		"metadata":   map[string]any{"k": "v"},
 	}
 
-	entry := svc.buildContextEntry(session, m, "Title", "Content")
+	entry := cs.buildContextEntry(session, m, "Title", "Content")
 
 	if entry.ID == "" {
 		t.Error("expected non-empty ID")
