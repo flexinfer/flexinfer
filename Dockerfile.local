@@ -22,9 +22,21 @@ COPY libs/fi-accel /src/libs/fi-accel
 WORKDIR /src/services/loom-core
 
 COPY services/loom-core/go.mod services/loom-core/go.sum ./
+
+# Add replace directives so go mod download uses local copies instead of
+# trying to fetch from private GitLab (no credentials available here).
+RUN go mod edit \
+      -replace gitlab.flexinfer.ai/libs/mcp-go=/src/libs/mcp-go \
+      -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=/src/libs/fi-mcp-kit \
+      -replace gitlab.flexinfer.ai/libs/fi-accel=/src/libs/fi-accel
 RUN go mod download
 
 COPY services/loom-core/ ./
+# Re-apply replace directives so the build uses local copies.
+RUN go mod edit \
+      -replace gitlab.flexinfer.ai/libs/mcp-go=/src/libs/mcp-go \
+      -replace gitlab.flexinfer.ai/libs/fi-mcp-kit=/src/libs/fi-mcp-kit \
+      -replace gitlab.flexinfer.ai/libs/fi-accel=/src/libs/fi-accel
 
 # Build all binaries
 ARG VERSION=dev
