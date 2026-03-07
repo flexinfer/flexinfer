@@ -1039,7 +1039,8 @@ deploy-update-images:
 	@echo "Updating deployments to use $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
 	@for f in $(LOOM_HUB_DIR)/servers/*/deployment.yaml; do \
 		if [ -f "$$f" ]; then \
-			sed -i '' 's|$(REGISTRY)/mcp/custom-server:[a-zA-Z0-9._-]*|$(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
+			sed -i '' 's|$(REGISTRY)/mcp/custom-server:[a-zA-Z0-9._"]*|$(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
+			sed -i '' 's|$(REGISTRY)/mcp/loom-core:[a-zA-Z0-9._"]*|$(LOOM_CORE_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
 		fi; \
 	done
 	@echo "✓ Image tags updated"
@@ -1051,10 +1052,13 @@ deploy-update-images:
 deploy-reconcile:
 	@echo "Reconciling Flux..."
 	@if command -v flux >/dev/null 2>&1; then \
-		flux reconcile kustomization loom-hub -n flux-system --with-source; \
+		flux reconcile source git gitops-gitlab -n flux-system && \
+		flux reconcile kustomization apps -n flux-system; \
 	else \
 		echo "Warning: flux CLI not found, skipping reconcile"; \
-		echo "Run manually: flux reconcile kustomization loom-hub -n flux-system --with-source"; \
+		echo "Run manually:"; \
+		echo "  flux reconcile source git gitops-gitlab -n flux-system"; \
+		echo "  flux reconcile kustomization apps -n flux-system"; \
 	fi
 
 # Commit gitops changes
@@ -1062,7 +1066,7 @@ deploy-commit:
 	@echo "Committing gitops changes..."
 	@cd $(GITOPS_DIR) && \
 		git add k3s/loom-hub && \
-		git commit -m "chore(loom-hub): update custom-server to $(IMAGE_TAG)" && \
+		git commit -m "chore(loom-hub): update images to $(IMAGE_TAG)" && \
 		git push
 	@echo "✓ GitOps changes committed and pushed"
 
@@ -1078,8 +1082,8 @@ deploy-status:
 	@echo "GitOps ($(LOOM_HUB_DIR)):"
 	@if [ -d "$(LOOM_HUB_DIR)" ]; then \
 		echo "  Current image tags:"; \
-		grep -r "$(REGISTRY)/mcp/custom-server:" $(LOOM_HUB_DIR)/servers/*/deployment.yaml 2>/dev/null | \
-			sed 's|.*/servers/||' | sed 's|/deployment.yaml:.*image: | -> |' | sort -u | head -10; \
+		grep -r "$(REGISTRY)/mcp/\(custom-server\|loom-core\):" $(LOOM_HUB_DIR)/servers/*/deployment.yaml 2>/dev/null | \
+			sed 's|.*/servers/||' | sed 's|/deployment.yaml:.*image: | -> |' | sort -u | head -20; \
 	else \
 		echo "  Directory not found"; \
 	fi

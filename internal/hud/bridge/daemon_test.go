@@ -539,3 +539,148 @@ func TestDaemonClient_DoesNotReconnectOnDaemonErrorContainingBrokenPipe(t *testi
 		t.Fatalf("expected exactly one RPC attempt on daemon error, got %d", callCount)
 	}
 }
+
+// mockDaemonWithNotifications creates a mock daemon that injects a
+// notifications/tools/list_changed notification before each response.
+// This exercises the callLocked notification-skipping logic.
+func mockDaemonWithNotifications(t *testing.T) (string, *mockHandlers) {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "loom-test-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	sockPath := filepath.Join(dir, "d.sock")
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(context.Background(), "unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	handlers := &mockHandlers{
+		methods: make(map[string]func(json.RawMessage) (any, error)),
+	}
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleConnWithNotifications(conn, handlers)
+		}
+	}()
+
+	t.Cleanup(func() { ln.Close() })
+	return sockPath, handlers
+}
+
+func handleConnWithNotifications(conn net.Conn, m *mockHandlers) {
+	defer conn.Close()
+
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+
+		var req struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      any             `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(buf[:n], &req); err != nil {
+			continue
+		}
+
+		// Inject a notification before the response.
+		notif, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "notifications/tools/list_changed",
+		})
+		notif = append(notif, '\n')
+		conn.Write(notif) //nolint:errcheck
+
+		m.mu.RLock()
+		fn, ok := m.methods[req.Method]
+		m.mu.RUnlock()
+
+		var resp []byte
+		if !ok {
+			resp, _ = json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"error": map[string]any{
+					"code":    -32601,
+					"message": fmt.Sprintf("unknown method: %s", req.Method),
+				},
+			})
+		} else {
+			result, fnErr := fn(req.Params)
+			if fnErr != nil {
+				resp, _ = json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"error": map[string]any{
+						"code":    -32603,
+						"message": fnErr.Error(),
+					},
+				})
+			} else {
+				resultBytes, _ := json.Marshal(result)
+				resp, _ = json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"result":  json.RawMessage(resultBytes),
+				})
+			}
+		}
+		resp = append(resp, '\n')
+		conn.Write(resp) //nolint:errcheck
+	}
+}
+
+func TestDaemonClient_SkipsNotifications(t *testing.T) {
+	sockPath, handlers := mockDaemonWithNotifications(t)
+
+	handlers.handle("loom/servers", func(_ json.RawMessage) (any, error) {
+		return &ServersResult{
+			Servers: []ServerInfo{
+				{Name: "git", Running: true},
+				{Name: "time", Running: false},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	// Despite a notification arriving before the response, Servers()
+	// should skip it and return the correct result.
+	result, err := client.Servers()
+	if err != nil {
+		t.Fatalf("servers: %v", err)
+	}
+	if len(result.Servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(result.Servers))
+	}
+	if result.Servers[0].Name != "git" {
+		t.Errorf("expected first server 'git', got %s", result.Servers[0].Name)
+	}
+
+	// Call again to verify repeated notification skipping works.
+	result, err = client.Servers()
+	if err != nil {
+		t.Fatalf("servers (2nd call): %v", err)
+	}
+	if len(result.Servers) != 2 {
+		t.Fatalf("expected 2 servers on 2nd call, got %d", len(result.Servers))
+	}
+}

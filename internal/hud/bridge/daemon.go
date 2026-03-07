@@ -330,6 +330,10 @@ func (c *DaemonClient) CircuitOpen() bool {
 }
 
 // callLocked performs the actual send/recv. Caller must hold c.mu.
+// It skips any interleaved notifications from the daemon (e.g.
+// notifications/tools/list_changed) and matches the response ID to
+// prevent response-ordering bugs when notifications arrive between
+// a request and its response.
 func (c *DaemonClient) callLocked(method string, params any) (json.RawMessage, error) {
 	if c.transport == nil {
 		return nil, fmt.Errorf("not connected")
@@ -353,16 +357,34 @@ func (c *DaemonClient) callLocked(method string, params any) (json.RawMessage, e
 		return nil, fmt.Errorf("send: %w", err)
 	}
 
-	resp, err := c.transport.Recv(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("recv: %w", err)
-	}
+	// Read messages until we get the response matching our request ID.
+	// The daemon may send async notifications (e.g. tools/list_changed)
+	// on the same transport; skip those to avoid response mismatches.
+	idStr := fmt.Sprint(id)
+	for {
+		resp, err := c.transport.Recv(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("recv %s (id %s): %w", method, idStr, err)
+		}
 
-	if resp.Error != nil {
-		return nil, fmt.Errorf("daemon error (%d): %s", resp.Error.Code, resp.Error.Message)
-	}
+		// Skip notifications (no ID, has Method).
+		if resp.ID == nil && resp.Method != "" {
+			continue
+		}
 
-	return resp.Result, nil
+		// Match response ID to our request.
+		if fmt.Sprint(resp.ID) != idStr {
+			c.logger.Debug("skipping mismatched response",
+				"method", method, "expected_id", idStr, "got_id", fmt.Sprint(resp.ID))
+			continue
+		}
+
+		if resp.Error != nil {
+			return nil, fmt.Errorf("daemon error (%d): %s", resp.Error.Code, resp.Error.Message)
+		}
+
+		return resp.Result, nil
+	}
 }
 
 // --- Typed RPC result structs ---
