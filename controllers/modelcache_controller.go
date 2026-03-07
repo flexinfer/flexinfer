@@ -407,14 +407,18 @@ ls -la "$DEST_DIR"
 set -ex
 MODEL_ID="%s"
 DEST_DIR="/models/%s"
+MARKER="$DEST_DIR/.download_complete"
 
-# Skip if already downloaded
-if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
+# Skip only if marker exists (indicates previous successful download).
+# Checking just "directory non-empty" is unreliable: an interrupted download
+# leaves metadata files but no weight files (.safetensors/.bin).
+if [ -f "$MARKER" ]; then
     echo "Model already cached at $DEST_DIR"
     exit 0
 fi
 
-pip install --no-cache-dir huggingface_hub
+pip install --no-cache-dir huggingface_hub hf_transfer
+export HF_HUB_ENABLE_HF_TRANSFER=1
 echo "Downloading $MODEL_ID to $DEST_DIR..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
@@ -433,12 +437,12 @@ snapshot_download(
     token=token,
 )
 PY
+touch "$MARKER"
 echo "Download complete."
 `, modelID, modelPath)
 	}
 
-	// Tolerate dedicated GPU nodes so the downloader can schedule on tainted GPU nodes
-	// where the local-path PVC will be created.
+	// Tolerate dedicated GPU nodes so the downloader can schedule on tainted GPU nodes.
 	var tolerations []corev1.Toleration
 	if len(m.Spec.NodeSelector) > 0 {
 		tolerations = append(tolerations, corev1.Toleration{
@@ -473,10 +477,10 @@ echo "Download complete."
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("512Mi"),
+								corev1.ResourceMemory: resource.MustParse("1Gi"),
 							},
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("2Gi"),
+								corev1.ResourceMemory: resource.MustParse("8Gi"),
 							},
 						},
 					}},
@@ -870,12 +874,13 @@ DEST_DIR="%s"
 MODEL_ID="%s"
 MARKER="$DEST_DIR/.synced"
 
-if [ -f "$MARKER" ] || { [ -d "$DEST_DIR" ] && [ "$(ls -A "$DEST_DIR" 2>/dev/null)" ]; }; then
+if [ -f "$MARKER" ]; then
     echo "Model already synced at $DEST_DIR"
     while true; do sleep 3600; done
 fi
 
-pip install --no-cache-dir huggingface_hub
+pip install --no-cache-dir huggingface_hub hf_transfer
+export HF_HUB_ENABLE_HF_TRANSFER=1
 echo "Downloading $MODEL_ID to $DEST_DIR..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
@@ -891,7 +896,7 @@ snapshot_download(
     repo_id=repo_id,
     local_dir=local_dir,
     local_dir_use_symlinks=False,
-token=token,
+    token=token,
 )
 PY
 touch "$MARKER"

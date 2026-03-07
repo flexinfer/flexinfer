@@ -18,20 +18,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# Pin to known-compatible CUDA 12.1 wheels for stability in CI/build environments.
+# Pin to CUDA 12.1 PyTorch wheels.
 RUN python3 -m pip install \
     --index-url https://download.pytorch.org/whl/cu121 \
     torch==2.3.1 torchvision==0.18.1
 
 # GPTQModel auto-detects CUDA and builds kernels via --no-build-isolation.
-# Pin transformers to 4.51.3 for stability.
-RUN python3 -m pip install -v gptqmodel --no-build-isolation && \
-    python3 -m pip install \
-    transformers==4.51.3 \
+# Use --no-deps to prevent torch upgrade (gptqmodel 5.7.0 wants torch>=2.8.0
+# but we keep the pinned CUDA 12.1 torch for stability).
+RUN python3 -m pip install -v gptqmodel --no-build-isolation --no-deps
+
+# Install gptqmodel runtime dependencies separately.
+RUN python3 -m pip install \
+    "transformers>=4.57.1,<5" \
     accelerate \
     safetensors \
     datasets \
     sentencepiece \
-    huggingface_hub
+    huggingface_hub \
+    "numpy>=2.0,<2.3" \
+    protobuf \
+    pillow \
+    hf_transfer \
+    device-smi \
+    tokenicer \
+    logbar \
+    maturin \
+    pyarrow \
+    dill \
+    pypcre \
+    zstandard
 
 ENTRYPOINT ["/bin/bash"]
