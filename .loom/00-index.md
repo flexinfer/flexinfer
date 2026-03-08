@@ -4,6 +4,7 @@
 
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
+- Roadmap review + task carve-out (2026-03-07): `39-roadmap-review-and-task-carveout-2026-03-07.md`
 - Research (mobile companion): `10-research.md`
 - Research (OpenAI Responses + Loom tool/context integration): `15-research-openai-responses-tool-context-2026-03-04.md`
 - Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
@@ -23,46 +24,43 @@
 - Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
 - Tech debt priority: `tech-debt-priority.md`
 
-## Current State (2026-02-27)
+## Current State (2026-03-07)
 
-**Branch**: `main` at `7ac4131` (QdrantRegistry refactor)
+**Branch**: `main` at `4e57746`
 
-**Active dirty workstream**: Hub-failover resilience + mcp-hub-wrapper integration
-- `internal/daemon/callpipeline.go` — prefer-hub routing with automatic local fallback and backoff
-- `internal/daemon/routing.go` — backoff suppression methods for hub routing
-- `pkg/generator/configs.go` — hub wrapper binary resolution with multi-source candidate discovery
-- `Makefile` — adds `mcp-hub-wrapper` to build/install targets
-- Comprehensive test coverage for all new paths
-- Appears commit-ready
+**Planning baseline**:
+- Workspace snapshot was regenerated on 2026-03-07.
+- This session did not expose loom-mode MCP resources; inventory used CLI fallback via `loom tools list --json`.
+- `codebase_memory__codebase_stats` was unavailable in-session (`Transport closed`), so this review used `rg`, direct file reads, and local test commands.
 
-**Recently shipped (last 5 commits on main)**:
-1. QdrantRegistry refactor for agent-context (#51)
-2. Workflow deep-copy fixes + decomp hints for HUD
-3. Call pipeline unit tests (DEBT-016)
-4. Workflow false-condition gating + recursive item injection
-5. Decomp hints for large responses + map_reduce clone
+**Most important current review outcome**:
+- The biggest remaining architecture gap is agent lifecycle contract/surface decomposition, not the old `PresencePanel.svelte` or `internal/devbox/backend/k8s.go` split targets.
+- HUD cost/RBAC/OTel visibility is already implemented on `main`; those items need backlog/status cleanup more than feature delivery.
+- Total repo statement coverage is now `39.7%`, so the coverage goal is a finish-line push rather than a large gap-fill program.
 
 ## Active Workstreams
 
 | Track | Status | Key Docs |
 |-------|--------|----------|
-| Hub-failover resilience | In progress (dirty) | `callpipeline.go`, `routing.go` |
-| Call pipeline hardening (DEBT-016) | Stage 2 complete | ROADMAP.md, Issue #20 |
-| Agent trace/telemetry dashboards | Phase 1-2 complete (59/59 traced, JSON logs) | `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md` |
-| Mobile companion (iOS) | M2 in progress, M0-M4 backend done | `30-implementation-plan.md`, `20-product-spec.md` |
-| Test coverage push | 30.4%, target 40% | ROADMAP.md, Issue #2 |
-| Agent contract convergence | Stage 1 complete | ROADMAP.md, Issue #21 |
+| Agent lifecycle contract convergence | Still open, highest-value refactor target | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#21` |
+| Daemon pipeline hardening | Narrow finish pass remains | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#20` |
+| Coverage push | Finish-line state: `39.7%` toward `40%+` | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#2` |
+| Daemon telemetry completion | Still open on daemon-side export/instrumentation | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#12` |
+| OpenAI Responses M2 | Foundation shipped, bounded follow-up remains | `36-implementation-plan-openai-responses-orchestration-2026-03-04.md`, `39-roadmap-review-and-task-carveout-2026-03-07.md` |
+| Mobile companion | Historical parallel track; not the active repo-alignment focus for this pass | `30-implementation-plan.md`, `20-product-spec.md` |
 
 ## Risks
 
-- Hub-failover dirty changes need to land before further daemon work to avoid conflicts.
-- Codebase index was empty at session start (rebuilding now); semantic search unavailable until complete.
-- Telemetry dashboard Phase 3 (Grafana packs) spans repos (`loom-core` + `platform/gitops`).
+- Planning docs have drifted far enough from `main` to mis-prioritize work unless reconciled soon.
+- Codebase-memory MCP transport was unavailable in this session, so future planning still needs an index-health follow-up.
+- The agent lifecycle surface (`cmd/loom/cmd_agent.go`, `internal/hud/api_agent.go`, `internal/hud/bridge/agent.go`) remains large and high-churn.
 
 ## Sources
 
-- `git log --oneline -15` (2026-02-27)
-- `git diff --stat HEAD` (2026-02-27)
-- `ROADMAP.md` (2026-02-27)
-- `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
-- Subagent exploration of dirty changes (2026-02-27)
+- `39-roadmap-review-and-task-carveout-2026-03-07.md`
+- `ROADMAP.md` (2026-03-07 review)
+- `docs/IMPLEMENTATION_STATUS.md` (2026-03-07 review)
+- Command: `loom tools list --json`
+- Command: `go test ./...`
+- Command: `go test ./... -coverprofile=/tmp/loom-cover.out`
+- Command: `go tool cover -func=/tmp/loom-cover.out | tail -1`

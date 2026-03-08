@@ -8,7 +8,7 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 |---:|---|---|---|---:|---:|---:|---:|---:|
 | 1 | DEBT-018 | Close test coverage gaps in untested packages toward 40% | internal/hud/window, daemon, devbox | 3 | 3 | 2 | 3 | 56 |
 | ~~2~~ | ~~DEBT-013~~ | ~~Split codebase service.go monolith (2,140 LOC)~~ | ~~pkg/codebase/service.go~~ | 3 | 2 | 3 | 3 | 54 |
-| 3 | DEBT-022 | Introduce Qdrant client registry to replace 15+ client fields | pkg/agentcontext/service.go, qdrant.go | 2 | 2 | 3 | 4 | 50 |
+| ~~3~~ | ~~DEBT-022~~ | ~~Introduce Qdrant client registry to replace 15+ client fields~~ | ~~pkg/agentcontext/service.go, qdrant.go~~ | 2 | 2 | 3 | 4 | 50 |
 | 4 | DEBT-019 | Extract hardcoded config values to constants/env vars | codebase, agentcontext, main | 2 | 2 | 2 | 5 | 49 |
 | 5 | DEBT-020 | Extract repeated type-assertion patterns to pkg/validate | pkg/codebase, pkg/agentcontext | 2 | 1 | 3 | 5 | 47 |
 | 6 | DEBT-021 | Split large MCP server main.go files into per-tool modules | cmd/mcp-gitlab, mcp-linkedin, mcp-k8s | 2 | 1 | 2 | 4 | 40 |
@@ -38,9 +38,10 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-020~~ | done | Added StringFromArgs/Float64FromArgs to pkg/validate, replaced 30+ type assertions |
 | ~~DEBT-021~~ | done | Split mcp-k8s (1,089→8 files) and mcp-linkedin (1,424→8 files); mcp-gitlab already split |
 | ~~DEBT-013~~ | done | Split service.go (1,246→7 files): index_handlers, index_pipeline, index_state, search_handlers, symbol_handlers, repo_handlers |
+| ~~DEBT-022~~ | done | Already implemented: QdrantRegistry in qdrant_registry.go with 13 collections, full test coverage |
 
 ## Suggested Cut Lines
 
 - Wave 1 (done): DEBT-016, DEBT-014, DEBT-017, DEBT-012, DEBT-015
 - Wave 2 (done): DEBT-018, DEBT-019, DEBT-020 (coverage + quick wins)
-- Wave 3: DEBT-013 (done), DEBT-022, DEBT-021 (done)
+- Wave 3 (done): DEBT-013, DEBT-022 (already implemented), DEBT-021

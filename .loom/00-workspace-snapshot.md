@@ -1,12 +1,16 @@
 # Workspace Snapshot
 
-- Generated: 2026-03-06T07:56:53-05:00
+- Generated: 2026-03-07T09:33:01-05:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
+- Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
 - Python: `3.12.11`
 
 ## Git
-- Not a git repo (or git error): `fatal: this operation must be run in a work tree`
+```
+## main...origin/main
+?? docs/roadmap-reconciliation-2026-03-07.md
+```
 
 ### Remotes
 ```
@@ -20,7 +24,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 
 ### HEAD
 ```
-2060386 ci: fix custom-server image builds
+4e57746 test(daemon): expand lifecycle test coverage — accept loop, signals, socket dirs, ensure
 ```
 
 ## Top-Level Layout
@@ -60,6 +64,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 
 ### Files
 - `.changelog-ai.yaml`
+- `.dockerignore`
 - `.editorconfig`
 - `.gitattributes`
 - `.gitignore`
@@ -77,12 +82,15 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `coverage.internal-pkg.out`
 - `coverage.tests-only.out`
 - `custom-server`
+- `daemon.test`
 - `Dockerfile`
 - `Dockerfile.custom-server`
 - `Dockerfile.custom-server.local`
 - `Dockerfile.local`
 - `go.mod`
 - `go.sum`
+- `go.work`
+- `go.work.sum`
 - `gosec-report.json`
 - `loom`
 - `loomd`
@@ -135,8 +143,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `mcp-zep`
 - `MCP_CONVERSION_PLAN.md`
 - `README.md`
-- `ROADMAP.md`
-- `test-coverage.out`
+- `…`
 
 ## Key Files Detected
 - `README.md`
@@ -157,6 +164,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `.codex/skills/plan-loom-core/SKILL.md`
 - `.codex/skills/polyglot-release-bumper/SKILL.md`
 - `.codex/skills/workspace-branding-maintenance/SKILL.md`
+- `.dockerignore`
 - `.editorconfig`
 - `.gitattributes`
 - `.github/workflows/ci.yml`
@@ -174,6 +182,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `.loom/13-research-mobile-roadmap-features-2026-02-19.md`
 - `.loom/14-research-mobile-signing-publish-2026-02-25.md`
 - `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
+- `.loom/16-research-ci-pipeline-and-k3s-rollout-2026-03-06.md`
 - `.loom/20-product-spec.md`
 - `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
 - `.loom/30-implementation-plan.md`
@@ -184,6 +193,8 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `.loom/34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
 - `.loom/35-simplification-epics.md`
 - `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
+- `.loom/37-iteration-plan-openai-responses-m1-runtime-2026-03-06.md`
+- `.loom/38-implementation-plan-ci-pipeline-and-k3s-rollout-2026-03-06.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
 - `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
@@ -255,7 +266,10 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/FleetSummaryCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/HealthStatusCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/TimelineListView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Ops/OpsReasoningChainDetailView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Ops/OpsTaskDetailView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Ops/OpsView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Ops/OpsWorkflowDetailView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionDetailView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionEventsView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/SessionDetail/SessionMetadataView.swift`
@@ -336,16 +350,9 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `cmd/loom/check.go`
 - `cmd/loom/cmd_agent.go`
 - `cmd/loom/cmd_agent_hook_status_test.go`
+- `cmd/loom/cmd_agent_test.go`
 - `cmd/loom/cmd_catalog.go`
 - `cmd/loom/cmd_catalog_test.go`
-- `cmd/loom/cmd_codeapi.go`
-- `cmd/loom/cmd_codeapi_test.go`
-- `cmd/loom/cmd_completion.go`
-- `cmd/loom/cmd_daemon.go`
-- `cmd/loom/cmd_doctor.go`
-- `cmd/loom/cmd_proxy.go`
-- `cmd/loom/cmd_rbac.go`
-- `cmd/loom/cmd_rbac_test.go`
 - `…`
 
 ## AGENTS.md Files

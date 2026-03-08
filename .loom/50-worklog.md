@@ -1,5 +1,49 @@
 # Worklog
 
+## 2026-03-07 (session 23) — Repo alignment review and task carve-out
+
+- What changed:
+  - Refreshed the planning baseline for the repo review pass:
+    - regenerated `.loom/00-workspace-snapshot.md`
+    - corrected `.loom/00-mcp-inventory.md` to reflect this session's actual runtime behavior
+    - added `.loom/39-roadmap-review-and-task-carveout-2026-03-07.md`
+    - refreshed `.loom/00-index.md` so the current review is discoverable
+  - Verified current code against roadmap/status claims instead of relying on existing docs.
+  - Confirmed several roadmap/status items are stale:
+    - HUD cost/RBAC/OTel visibility is already implemented on `main`
+    - `PresencePanel.svelte` is already decomposed
+    - `internal/devbox/backend/k8s.go` is no longer a large refactor target
+  - Identified the real remaining architecture focus:
+    - agent lifecycle surface decomposition across `cmd/loom/cmd_agent.go`, `internal/hud/api_agent.go`, and `internal/hud/bridge/agent.go`
+    - finish-line daemon call-pipeline hardening
+    - final coverage push from `39.7%` to `40%+`
+- Why:
+  - Planning docs had drifted enough from `main` that they were no longer reliable for prioritization.
+  - The next task selection should follow current code shape and test state, not stale in-progress bullets.
+- Verification:
+  - `git status --short --branch`
+  - `python /Users/cblevins/workspace/services/loom-core/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+  - `loom tools list --json`
+  - `go test ./...`
+  - `go test ./... -coverprofile=/tmp/loom-cover.out`
+  - `go tool cover -func=/tmp/loom-cover.out | tail -1`
+- Sources:
+  - [S1] `ROADMAP.md`
+  - [S2] `docs/IMPLEMENTATION_STATUS.md`
+  - [S3] `internal/hud/bridge/daemon.go`
+  - [S4] `internal/hud/monitor/cost.go`
+  - [S5] `internal/hud/app.go`
+  - [S6] `internal/hud/frontend/src/lib/components/OverviewPanel.svelte`
+  - [S7] `internal/hud/frontend/src/lib/components/ServersPanel.svelte`
+  - [S8] `internal/hud/frontend/src/lib/components/PresencePanel.svelte`
+  - [S9] `internal/devbox/backend/k8s.go`
+  - [S10] `cmd/loom/cmd_agent.go`
+  - [S11] `internal/hud/bridge/agent.go`
+  - [S12] `internal/daemon/callpipeline.go`
+  - [S13] `internal/daemon/callpipeline_test.go`
+  - [S14] `pkg/openairesponses/config.go`
+  - [S15] `cmd/loom/cmd_responses_runtime.go`
+
 ## 2026-02-26 (session 21) — ROADMAP #12 slice (GitHub/Jira/Slack + structured logs)
 
 - What changed:

@@ -11,7 +11,6 @@
   import { costStore } from '../stores/cost.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
-  import Gauge from '../widgets/Gauge.svelte';
 
   /**
    * OverviewPanel renders a KPI strip at the top followed by all panels
@@ -264,6 +263,11 @@
             <SparkLine data={healthHistory} width={60} height={24} color="var(--success)" />
           {/if}
         </div>
+        {#if serverCount > 0}
+          <div class="tile-progress-track">
+            <div class="tile-progress-fill" class:health-warn={downCount > 0} style="width: {(healthyCount / serverCount * 100).toFixed(0)}%"></div>
+          </div>
+        {/if}
         <div class="tile-detail" class:tile-alert={downCount > 0}>
           {downCount > 0 ? `${downCount} down` : 'all healthy'}
         </div>
@@ -329,6 +333,7 @@
         <div class="tile-metric">{sandboxStore.runningCount} <span class="tile-unit">running</span></div>
         <div class="tile-detail">{sandboxStore.available ? `${sandboxStore.totalExecs} execs · ${sandboxStore.totalBuilds} builds` : 'offline'}</div>
       </div>
+      {#if agoText(sandboxStore.lastUpdated)}<div class="tile-footer">{agoText(sandboxStore.lastUpdated)}</div>{/if}
     </button>
 
     <!-- Workflows tile -->
@@ -409,12 +414,14 @@
   /* KPI Strip */
   .kpi-strip {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     width: 100%;
   }
 
   .kpi-tile {
     flex: 1;
+    min-width: 90px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -587,6 +594,10 @@
     background: var(--success);
     border-radius: 2px;
     transition: width 0.3s ease;
+  }
+
+  .tile-progress-fill.health-warn {
+    background: var(--warning);
   }
 
   .tile-alert-bg {
