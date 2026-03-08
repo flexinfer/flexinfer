@@ -36,9 +36,10 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-018~~ | done | 895b9d8 (test coverage 39.4%, 12 test files) |
 | ~~DEBT-019~~ | done | Consolidated env helpers to pkg/env, deleted duplicate helpers |
 | ~~DEBT-020~~ | done | Added StringFromArgs/Float64FromArgs to pkg/validate, replaced 30+ type assertions |
+| ~~DEBT-021~~ | done | Split mcp-k8s (1,089→8 files) and mcp-linkedin (1,424→8 files); mcp-gitlab already split |
 
 ## Suggested Cut Lines
 
 - Wave 1 (done): DEBT-016, DEBT-014, DEBT-017, DEBT-012, DEBT-015
-- Wave 2: DEBT-018, DEBT-019, DEBT-020 (coverage + quick wins)
+- Wave 2 (done): DEBT-018, DEBT-019, DEBT-020 (coverage + quick wins)
 - Wave 3: DEBT-013, DEBT-022, DEBT-021 (strategic refactors)
