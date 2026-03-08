@@ -546,6 +546,8 @@ test:benchmark:
   needs:
     - build:binaries
   allow_failure: true
+  variables:
+    CGO_ENABLED: "0"
   script:
     - |
       export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
