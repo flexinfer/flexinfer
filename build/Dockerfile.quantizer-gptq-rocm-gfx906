@@ -1,0 +1,76 @@
+# Dockerfile.quantizer-gptq-rocm-gfx906
+# GPTQ quantization runtime image for FlexInfer on AMD Radeon VII (gfx906).
+# Uses GPTQModel (successor to auto-gptq) with ROCm 6.2.3 + PyTorch 2.3,
+# which is the last ROCm/PyTorch combination with full gfx906 kernel support.
+#
+# Key differences from gfx1100 variant:
+# - ROCm 6.2.3 base (gfx906 deprecated in ROCm 6.4+)
+# - HSA_OVERRIDE_GFX_VERSION=9.0.6 (hardware reports gfx900)
+# - HSA_ENABLE_SDMA=0 for DMA stability on Vega20
+# - HSA_USE_SVM=0 for hipMemGetInfo workaround (ROCm/ROCm#2433)
+# - TORCH_BLAS_PREFER_HIPBLASLT=0 (not available on GCN5)
+#
+# Build:
+#   docker --context 7900xtx build -f build/Dockerfile.quantizer-gptq-rocm-gfx906 \
+#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906 .
+
+FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+# ROCm environment for gfx906 (Vega20 / Radeon VII)
+ENV PYTORCH_ROCM_ARCH=gfx906
+ENV HSA_OVERRIDE_GFX_VERSION=9.0.6
+ENV HSA_ENABLE_SDMA=0
+ENV HSA_USE_SVM=0
+ENV TORCH_BLAS_PREFER_HIPBLASLT=0
+ENV MIOPEN_FIND_MODE=2
+
+RUN python3 -m pip install --upgrade pip "setuptools>=77" wheel "packaging>=24.2"
+
+# The ROCm PyTorch base image ships a broken editable Triton install
+# (/var/lib/jenkins/triton/python) that lacks the jit API. Replace it
+# with the PyPI wheel which includes full ROCm/HIP support.
+RUN python3 -m pip install --force-reinstall triton==3.2.0
+
+# GPTQModel auto-detects ROCm and builds HIP kernels via --no-build-isolation.
+# CRITICAL: Use --no-deps to prevent gptqmodel from pulling CUDA torch>=2.8.0
+# from PyPI, which would overwrite the ROCm PyTorch 2.3.0 from the base image.
+# On ROCm, ext_modules=[] (no native extensions), so the build is pure Python.
+RUN python3 -m pip install -v gptqmodel --no-build-isolation --no-deps
+
+# Install gptqmodel's runtime dependencies separately, keeping ROCm torch intact.
+# GPTQModel 5.7.0 requires transformers>=4.57.1 (handles Qwen3 attention_type API).
+# Qwen3.5 model_type support requires transformers>=5.0.
+RUN python3 -m pip install \
+    "transformers>=5.0" \
+    safetensors \
+    accelerate \
+    datasets \
+    sentencepiece \
+    huggingface_hub \
+    protobuf \
+    pillow \
+    hf_transfer \
+    device-smi \
+    tokenicer \
+    logbar \
+    maturin \
+    pyarrow \
+    dill \
+    pypcre \
+    zstandard
+
+# Fix numpy ABI mismatch (same issue as gfx1100 variant).
+# ROCm 6.2.3 base has numpy 1.22.x, numba 0.55.x — incompatible with
+# newer scipy/sklearn pulled by pyarrow/datasets.
+RUN python3 -m pip uninstall -y numba llvmlite && \
+    python3 -m pip install --force-reinstall \
+    "numpy>=1.26,<2" \
+    pandas \
+    scipy \
+    scikit-learn
+
+ENTRYPOINT ["/bin/bash"]

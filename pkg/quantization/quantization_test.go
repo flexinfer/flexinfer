@@ -634,6 +634,90 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 	}
 }
 
+func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "qwen35-27b-gptq-gfx906",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen35-27b-gptq-gfx906",
+		ModelPath: "qwen35-27b-gptq-gfx906",
+		GPUVendor: "amd",
+		GPUArch:   "gfx906",
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "cblevins-radeonvii",
+		},
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+
+	// gfx906 image should be selected
+	if container.Image != DefaultGPTQROCmGFX906Image {
+		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQROCmGFX906Image)
+	}
+
+	// amd.com/gpu should be set
+	amdGPU := corev1.ResourceName("amd.com/gpu")
+	if _, ok := container.Resources.Limits[amdGPU]; !ok {
+		t.Fatal("expected amd.com/gpu limit to be set")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_MultimodalConfigPatch(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "qwen35-27b-gptq",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen35-27b-gptq",
+		ModelPath: "qwen35-27b-gptq",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "text_config") {
+		t.Fatal("expected GPTQ script to contain multimodal config.json patch for text_config")
+	}
+	if !contains(script, "VLM text_config") {
+		t.Fatal("expected GPTQ script to handle VLM text_config extraction")
+	}
+	if !contains(script, "import json") {
+		t.Fatal("expected GPTQ script to import json for config patching")
+	}
+	if !contains(script, "set_per_process_memory_fraction") {
+		t.Fatal("expected GPTQ script to contain GPU memory fraction cap")
+	}
+	if !contains(script, "MAX_MEMORY_GB=48") {
+		t.Fatal("expected GPTQ script to export MAX_MEMORY_GB matching default")
+	}
+	if !contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {
+		t.Fatal("expected GPTQ script to auto-detect gfx900 and set HSA_OVERRIDE_GFX_VERSION")
+	}
+}
+
 func TestEXL2JobBuilder_Validate(t *testing.T) {
 	builder := &EXL2JobBuilder{}
 	bits := int32(4)

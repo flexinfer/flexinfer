@@ -2429,6 +2429,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		ModelPath:    model.Name,
 		Spec:         spec,
 		GPUVendor:    gpuVendor,
+		GPUArch:      gpuArchFromNodeSelector(model.Spec.NodeSelector),
 		NodeSelector: model.Spec.NodeSelector,
 		Tolerations:  tolerations,
 	}

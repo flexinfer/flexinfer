@@ -46,6 +46,10 @@ type JobParams struct {
 	// GPUVendor selects the GPU resource name: "nvidia" (default) or "amd".
 	GPUVendor string
 
+	// GPUArch is the GPU microarchitecture (e.g. "gfx1100", "gfx906", "sm_80").
+	// Used to select architecture-specific quantizer images on ROCm.
+	GPUArch string
+
 	// NodeSelector constrains which nodes the quantization job runs on.
 	NodeSelector map[string]string
 

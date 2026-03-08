@@ -1897,6 +1897,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			Tolerations:  tolerations,
 			NodeSelector: modelCache.Spec.NodeSelector,
 			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
+			GPUArch:      gpuArchFromNodeSelector(modelCache.Spec.NodeSelector),
 		}
 
 		newJob, buildErr := builder.BuildJob(params)
@@ -2220,6 +2221,27 @@ func gpuVendorFromNodeSelector(sel map[string]string) string {
 		case strings.Contains(hostname, "gtx") ||
 			strings.Contains(hostname, "rtx"):
 			return "nvidia"
+		}
+	}
+	return ""
+}
+
+// gpuArchFromNodeSelector infers the GPU microarchitecture from the node selector.
+// Returns e.g. "gfx1100", "gfx906", or "" if unknown.
+func gpuArchFromNodeSelector(sel map[string]string) string {
+	// Explicit label takes priority.
+	for k, v := range sel {
+		if strings.Contains(k, "gpu.arch") && v != "" {
+			return v
+		}
+	}
+	// Heuristic: known GPU hostnames in this cluster.
+	if hostname, ok := sel["kubernetes.io/hostname"]; ok {
+		switch {
+		case strings.Contains(hostname, "7900xtx") || strings.Contains(hostname, "5930k"):
+			return "gfx1100"
+		case strings.Contains(hostname, "radeonvii"):
+			return "gfx906"
 		}
 	}
 	return ""

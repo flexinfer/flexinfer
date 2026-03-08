@@ -3,6 +3,7 @@ package quantization
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,8 +19,12 @@ const (
 	// DefaultGPTQImage is the default image used for GPTQ quantization jobs (CUDA).
 	DefaultGPTQImage = "ghcr.io/flexinfer/quantizer:gptq"
 
-	// DefaultGPTQROCmImage is the default image used for GPTQ quantization on ROCm.
+	// DefaultGPTQROCmImage is the default image used for GPTQ quantization on ROCm (gfx1100).
 	DefaultGPTQROCmImage = "registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100"
+
+	// DefaultGPTQROCmGFX906Image is the GPTQ quantizer image for Radeon VII (gfx906).
+	// Uses ROCm 6.2.3 + PyTorch 2.3 (last version with full gfx906 kernel support).
+	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906"
 
 	// DefaultGPUQuantizationMemoryGB is the default memory limit for AWQ/GPTQ jobs.
 	DefaultGPUQuantizationMemoryGB = 48
@@ -290,19 +295,19 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 
 	image := gptqQuantizerImage()
 	if params.GPUVendor == "amd" {
-		image = gptqQuantizerROCmImage()
+		image = gptqQuantizerROCmImage(params.GPUArch)
 	}
 
 	return buildGPUQuantizationJob(
 		params,
 		image,
-		b.buildScript(params.ModelPath, bits, groupSize, sym, descAct, params.Spec.Calibration),
+		b.buildScript(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, params.Spec.Calibration),
 		memoryGB,
 	)
 }
 
 // buildScript generates the shell script for GPTQ quantization using GPTQModel.
-func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym, descAct bool, calib *aiv1alpha1.CalibrationSpec) string {
+func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, calib *aiv1alpha1.CalibrationSpec) string {
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
 	if calib != nil {
@@ -328,6 +333,7 @@ func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym,
 MODEL_DIR="/cache/%s"
 BITS=%d
 GROUP_SIZE=%d
+MAX_MEMORY_GB=%d
 TYPE="W${BITS}_G${GROUP_SIZE}"
 OUT_DIR="${MODEL_DIR}/gptq-w${BITS}-g${GROUP_SIZE}"
 START_TS=$(date +%%s)
@@ -335,10 +341,23 @@ START_TS=$(date +%%s)
 cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
 trap cleanup EXIT
 
+# Auto-detect gfx900 (Radeon VII reports as gfx900, needs gfx906 ISA override).
+# Must be set BEFORE any HIP/PyTorch call so the driver loads correct ISA.
+if command -v rocminfo &>/dev/null; then
+    GPU_GFX=$(rocminfo 2>/dev/null | grep -oP 'gfx\d+' | head -1 || true)
+    if [ "${GPU_GFX}" = "gfx900" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=9.0.6
+        echo "Detected ${GPU_GFX} (Radeon VII), set HSA_OVERRIDE_GFX_VERSION=9.0.6"
+    else
+        echo "Detected GPU: ${GPU_GFX:-unknown}"
+    fi
+fi
+
 echo "=== GPTQ Quantization (GPTQModel) ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
 echo "Calibration: maxSeqLen=%d maxSamples=%d sym=%s descAct=%s"
+echo "Container memory limit: ${MAX_MEMORY_GB}Gi"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -346,10 +365,13 @@ echo "Original size: ${ORIGINAL_SIZE} bytes"
 
 rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
+mkdir -p /workspace/offload
 
-export MODEL_DIR OUT_DIR BITS GROUP_SIZE
+export MODEL_DIR OUT_DIR BITS GROUP_SIZE MAX_MEMORY_GB
 python3 - <<'PY'
+import json
 import os
+import torch
 from datasets import load_dataset
 from gptqmodel import GPTQModel, QuantizeConfig
 from transformers import AutoTokenizer
@@ -358,8 +380,53 @@ model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
 bits = int(os.environ["BITS"])
 group_size = int(os.environ["GROUP_SIZE"])
+max_memory_gb = int(os.environ["MAX_MEMORY_GB"])
 max_seq_len = %d
 max_samples = %d
+
+# Fix multimodal model configs (e.g. Qwen3.5 VLM): transformers 5.x wraps
+# text model fields inside text_config with a composite config class (e.g.
+# Qwen3_5Config). GPTQModel quantizes only the text backbone, so extract
+# text_config and set model_type to the base text model (e.g. "qwen3") so
+# transformers loads Qwen3ForCausalLM instead of the VLM composite wrapper.
+cfg_path = os.path.join(model_dir, "config.json")
+with open(cfg_path) as f:
+    cfg = json.load(f)
+type_map = {"qwen3_5_text": "qwen3"}
+if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
+    text_cfg = cfg["text_config"]
+    # Map VLM text model_type to the standalone text model_type.
+    # e.g. qwen3_5_text -> qwen3, so AutoModelForCausalLM loads Qwen3ForCausalLM.
+    orig_type = text_cfg.get("model_type", "")
+    if orig_type in type_map:
+        text_cfg["model_type"] = type_map[orig_type]
+        text_cfg["architectures"] = [type_map[orig_type].title().replace("_","") + "ForCausalLM"]
+    # Preserve top-level token IDs not in text_config
+    for key in ["bos_token_id", "eos_token_id", "pad_token_id"]:
+        if key in cfg and key not in text_cfg:
+            text_cfg[key] = cfg[key]
+    with open(cfg_path, "w") as f:
+        json.dump(text_cfg, f, indent=2)
+    print(f"Patched config.json: VLM text_config -> model_type={text_cfg['model_type']}")
+elif cfg.get("model_type") in type_map:
+    # Already flattened from a previous run but model_type not remapped.
+    new_type = type_map[cfg["model_type"]]
+    cfg["model_type"] = new_type
+    cfg["architectures"] = [new_type.title().replace("_", "") + "ForCausalLM"]
+    with open(cfg_path, "w") as f:
+        json.dump(cfg, f, indent=2)
+    print(f"Patched config.json: remapped model_type to {new_type}")
+
+# Memory management: cap GPU VRAM to leave headroom for quantization workspace.
+# ROCm GPU driver also allocates GTT/system RAM outside the container cgroup,
+# so reduced calibration samples (controlled via CR) is the main guard.
+total_vram = torch.cuda.get_device_properties(0).total_memory
+gpu_fraction = 0.80
+try:
+    torch.cuda.set_per_process_memory_fraction(gpu_fraction)
+except RuntimeError:
+    pass  # Not supported on all ROCm versions
+print(f"Memory: GPU fraction={gpu_fraction} ({int(total_vram * gpu_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi")
 
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
 quantize_config = QuantizeConfig(bits=bits, group_size=group_size, sym=%s, desc_act=%s)
@@ -410,7 +477,7 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize,
+`, modelPath, bits, groupSize, memoryGB,
 		maxSeqLen, maxSamples, symPy, descActPy,
 		maxSeqLen, maxSamples, symPy, descActPy)
 }
@@ -502,7 +569,18 @@ func gptqQuantizerImage() string {
 	return DefaultGPTQImage
 }
 
-func gptqQuantizerROCmImage() string {
+func gptqQuantizerROCmImage(gpuArch string) string {
+	// Check arch-specific env var first (e.g. FLEXINFER_QUANTIZER_GPTQ_ROCM_GFX906_IMAGE).
+	if gpuArch != "" {
+		envKey := "FLEXINFER_QUANTIZER_GPTQ_ROCM_" + strings.ToUpper(gpuArch) + "_IMAGE"
+		if img := os.Getenv(envKey); img != "" {
+			return img
+		}
+	}
+	if gpuArch == "gfx906" {
+		return DefaultGPTQROCmGFX906Image
+	}
+	// Generic ROCm override.
 	if img := os.Getenv("FLEXINFER_QUANTIZER_GPTQ_ROCM_IMAGE"); img != "" {
 		return img
 	}
