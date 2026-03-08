@@ -27,6 +27,8 @@ Thumbs.db
 
 # Go
 .go/
+.go-tmp/
+.go-build/
 vendor/
 
 # Temporary files

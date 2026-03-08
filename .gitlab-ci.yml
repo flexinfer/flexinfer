@@ -389,8 +389,13 @@ build:binaries:
       CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
 
       # Build MCP servers for integration tests in parallel to reduce wall time.
+      # Cap parallelism to avoid exhausting /tmp with per-process Go build caches
+      # when building 60+ servers. Also redirect GOTMPDIR to the workspace volume
+      # which has more space than the runner's tmpfs.
       mapfile -t MCP_PKGS < <(find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | sort)
-      MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+      MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-2}"
+      export GOTMPDIR="${CI_PROJECT_DIR:-.}/.go-tmp"
+      mkdir -p "$GOTMPDIR"
       echo "Building ${#MCP_PKGS[@]} MCP servers with ${MCP_BUILD_JOBS} parallel jobs..."
       if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -c '
         pkg="$1"
