@@ -381,10 +381,13 @@ func TestBuildBuildahPodSpec_EmptyDirAndRegistryCache(t *testing.T) {
 		t.Fatal("buildah-storage volume not found")
 	}
 
-	// Verify build command includes --cache-from for registry-based layer cache
+	// Verify build command includes --cache-from with bare repo (no tag/digest).
 	buildCmd := pod.Spec.Containers[0].Command[2] // sh -c "<cmd>"
-	if !strings.Contains(buildCmd, "--cache-from=") {
-		t.Fatalf("expected --cache-from in build command, got: %s", buildCmd)
+	if !strings.Contains(buildCmd, "--cache-from=registry.harbor.lan/devbox") {
+		t.Fatalf("expected --cache-from with bare repo in build command, got: %s", buildCmd)
+	}
+	if strings.Contains(buildCmd, "--cache-from=registry.harbor.lan/devbox:") {
+		t.Fatalf("--cache-from must not include a tag (buildah v1.29+ rejects it), got: %s", buildCmd)
 	}
 
 	// Verify build command pushes cache tag

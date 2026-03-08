@@ -123,14 +123,14 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 	runAsUser := int64(0)
 	runAsGroup := int64(0)
 
-	// Cache tag: same image path with a ":cache" tag for layer caching.
-	// Split off the existing tag and replace it (e.g., ":a3b9c1d" → ":cache").
-	cacheTag := destination
-	if idx := strings.LastIndex(cacheTag, ":"); idx > 0 {
-		cacheTag = cacheTag[:idx] + ":cache"
-	} else {
-		cacheTag = cacheTag + ":cache"
+	// Cache repo: repository path without tag for --cache-from (buildah v1.29+
+	// requires a bare repository reference, no tag or digest).
+	// Cache tag: full image:cache reference for tagging and pushing cache layers.
+	cacheRepo := destination
+	if idx := strings.LastIndex(cacheRepo, ":"); idx > 0 {
+		cacheRepo = cacheRepo[:idx]
 	}
+	cacheTag := cacheRepo + ":cache"
 
 	buildAndPush := strings.Join([]string{
 		// Configure registries for short-name resolution (non-interactive builds)
@@ -143,7 +143,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 		"--isolation=chroot",
 		"--tls-verify=false",
 		"--layers",
-		"--cache-from=" + cacheTag,
+		"--cache-from=" + cacheRepo,
 		"-f /buildah-dockerfile/Dockerfile",
 		"-t " + destination,
 		buildContext,
