@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -34,9 +35,7 @@ func LoadTrustedSourcesFromEnv() []TrustedSource {
 
 		priority := 0.5
 		if len(parts) >= 2 {
-			// Try to parse priority
-			parsed := floatEnv(parts[1], 0.5)
-			if parsed > 0 && parsed <= 1 {
+			if parsed, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && parsed > 0 && parsed <= 1 {
 				priority = parsed
 			}
 		}

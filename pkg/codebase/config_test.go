@@ -4,126 +4,6 @@ import (
 	"testing"
 )
 
-func TestFirstNonEmptyEnv(t *testing.T) {
-	t.Setenv("TEST_KEY_A", "")
-	t.Setenv("TEST_KEY_B", "value_b")
-
-	got := firstNonEmptyEnv([]string{"TEST_KEY_A", "TEST_KEY_B"}, "default")
-	if got != "value_b" {
-		t.Errorf("expected value_b, got %q", got)
-	}
-}
-
-func TestFirstNonEmptyEnv_AllEmpty(t *testing.T) {
-	got := firstNonEmptyEnv([]string{"TEST_NONEXISTENT_1", "TEST_NONEXISTENT_2"}, "fallback")
-	if got != "fallback" {
-		t.Errorf("expected fallback, got %q", got)
-	}
-}
-
-func TestFirstNonEmptyEnv_FirstSet(t *testing.T) {
-	t.Setenv("TEST_FIRST", "first_val")
-	got := firstNonEmptyEnv([]string{"TEST_FIRST", "TEST_SECOND"}, "default")
-	if got != "first_val" {
-		t.Errorf("expected first_val, got %q", got)
-	}
-}
-
-func TestIntEnv(t *testing.T) {
-	t.Setenv("TEST_INT", "42")
-	if got := intEnv("TEST_INT", 10); got != 42 {
-		t.Errorf("expected 42, got %d", got)
-	}
-}
-
-func TestIntEnv_Default(t *testing.T) {
-	if got := intEnv("TEST_INT_MISSING", 10); got != 10 {
-		t.Errorf("expected default 10, got %d", got)
-	}
-}
-
-func TestIntEnv_Invalid(t *testing.T) {
-	t.Setenv("TEST_INT_BAD", "not_a_number")
-	if got := intEnv("TEST_INT_BAD", 5); got != 5 {
-		t.Errorf("expected default 5 for invalid input, got %d", got)
-	}
-}
-
-func TestInt64Env(t *testing.T) {
-	t.Setenv("TEST_INT64", "4194304")
-	if got := int64Env("TEST_INT64", 100); got != 4194304 {
-		t.Errorf("expected 4194304, got %d", got)
-	}
-}
-
-func TestInt64Env_Default(t *testing.T) {
-	if got := int64Env("TEST_INT64_MISSING", 2097152); got != 2097152 {
-		t.Errorf("expected default 2097152, got %d", got)
-	}
-}
-
-func TestInt64Env_Invalid(t *testing.T) {
-	t.Setenv("TEST_INT64_BAD", "xyz")
-	if got := int64Env("TEST_INT64_BAD", 99); got != 99 {
-		t.Errorf("expected default 99 for invalid input, got %d", got)
-	}
-}
-
-func TestBoolEnv(t *testing.T) {
-	tests := []struct {
-		value    string
-		expected bool
-	}{
-		{"true", true},
-		{"TRUE", true},
-		{"1", true},
-		{"yes", true},
-		{"y", true},
-		{"on", true},
-		{"t", true},
-		{"false", false},
-		{"FALSE", false},
-		{"0", false},
-		{"no", false},
-		{"n", false},
-		{"off", false},
-		{"f", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.value, func(t *testing.T) {
-			t.Setenv("TEST_BOOL", tc.value)
-			got := boolEnv("TEST_BOOL", !tc.expected)
-			if got != tc.expected {
-				t.Errorf("boolEnv(%q) = %v, want %v", tc.value, got, tc.expected)
-			}
-		})
-	}
-}
-
-func TestBoolEnv_Default(t *testing.T) {
-	if got := boolEnv("TEST_BOOL_MISSING", true); got != true {
-		t.Errorf("expected default true, got %v", got)
-	}
-	if got := boolEnv("TEST_BOOL_MISSING", false); got != false {
-		t.Errorf("expected default false, got %v", got)
-	}
-}
-
-func TestBoolEnv_UnrecognizedValue(t *testing.T) {
-	t.Setenv("TEST_BOOL_WEIRD", "maybe")
-	if got := boolEnv("TEST_BOOL_WEIRD", true); got != true {
-		t.Errorf("expected default true for unrecognized value, got %v", got)
-	}
-}
-
-func TestBoolEnv_Whitespace(t *testing.T) {
-	t.Setenv("TEST_BOOL_WS", "  true  ")
-	if got := boolEnv("TEST_BOOL_WS", false); got != true {
-		t.Errorf("expected true with whitespace trimmed, got %v", got)
-	}
-}
-
 func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -205,6 +85,20 @@ func TestLoadConfigFromEnv_NegativeValuesClamped(t *testing.T) {
 	}
 	if cfg.MaxFileBytes != 2*1024*1024 {
 		t.Errorf("expected clamped MaxFileBytes 2MiB, got %d", cfg.MaxFileBytes)
+	}
+}
+
+func TestLoadConfigFromEnv_EnvChaining(t *testing.T) {
+	// Test that fallback env vars work (QDRANT_URL falls back from CODEBASE_QDRANT_URL)
+	t.Setenv("QDRANT_URL", "http://shared-qdrant:6333")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.QdrantURL != "http://shared-qdrant:6333" {
+		t.Errorf("expected QDRANT_URL fallback, got %q", cfg.QdrantURL)
 	}
 }
 

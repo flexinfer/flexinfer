@@ -33,6 +33,8 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-015~~ | done | 432ffeb (contract convergence + monolith splits) |
 | ~~DEBT-016~~ | done | b231a5a (pipeline error classification + stage-boundary tests) |
 | ~~DEBT-017~~ | done | Already split (k8s.go = 135 LOC, 4-way split complete) |
+| ~~DEBT-018~~ | done | 895b9d8 (test coverage 39.4%, 12 test files) |
+| ~~DEBT-019~~ | done | Consolidated env helpers to pkg/env, deleted duplicate helpers |
 
 ## Suggested Cut Lines
 

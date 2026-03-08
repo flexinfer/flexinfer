@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/pkg/codebase/embed"
+	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 
 	"go.opentelemetry.io/otel/trace"
@@ -94,7 +95,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	case "flexinfer":
 		baseURL := cfg.EmbedBaseURL
 		if baseURL == "" || baseURL == "https://api.morphllm.com/v1" {
-			baseURL = firstNonEmptyEnv([]string{"FLEXINFER_URL"}, "http://localhost:8080") + "/v1"
+			baseURL = env.StringChain([]string{"FLEXINFER_URL"}, "http://localhost:8080") + "/v1"
 		}
 		model := cfg.EmbedModel
 		if model == "" || model == "morph-embedding-v3" {

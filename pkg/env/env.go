@@ -54,11 +54,19 @@ func Float(key string, fallback float64) float64 {
 }
 
 // Bool returns the boolean value of the environment variable or the fallback.
-// Accepts "1", "true", "yes", "on" (case-insensitive) as true.
+// Accepts "1", "true", "t", "yes", "y", "on" (case-insensitive) as true.
+// Accepts "0", "false", "f", "no", "n", "off" (case-insensitive) as false.
+// Unrecognized non-empty values return the fallback.
 func Bool(key string, fallback bool) bool {
-	if v := os.Getenv(key); v != "" {
-		v = strings.ToLower(v)
-		return v == "1" || v == "true" || v == "yes" || v == "on"
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "t", "yes", "y", "on":
+			return true
+		case "0", "false", "f", "no", "n", "off":
+			return false
+		default:
+			return fallback
+		}
 	}
 	return fallback
 }
@@ -70,6 +78,29 @@ func Duration(key string, fallback time.Duration) time.Duration {
 		d, err := time.ParseDuration(v)
 		if err == nil {
 			return d
+		}
+	}
+	return fallback
+}
+
+// StringChain returns the first non-empty environment variable value from keys,
+// falling back to the default if all are empty.
+func StringChain(keys []string, fallback string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return fallback
+}
+
+// Int64 returns the int64 value of the environment variable or the fallback.
+// Only positive values are accepted; zero or negative values return the fallback.
+func Int64(key string, fallback int64) int64 {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err == nil && n > 0 {
+			return n
 		}
 	}
 	return fallback

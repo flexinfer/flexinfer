@@ -108,10 +108,17 @@ func TestBool(t *testing.T) {
 		{"returns true for 'TRUE'", "TEST_BOOL", "TRUE", false, true},
 		{"returns true for 'yes'", "TEST_BOOL", "yes", false, true},
 		{"returns true for 'on'", "TEST_BOOL", "on", false, true},
+		{"returns true for 't'", "TEST_BOOL", "t", false, true},
+		{"returns true for 'y'", "TEST_BOOL", "y", false, true},
 		{"returns false for '0'", "TEST_BOOL", "0", true, false},
 		{"returns false for 'false'", "TEST_BOOL", "false", true, false},
+		{"returns false for 'f'", "TEST_BOOL", "f", true, false},
+		{"returns false for 'no'", "TEST_BOOL", "no", true, false},
+		{"returns false for 'n'", "TEST_BOOL", "n", true, false},
+		{"returns false for 'off'", "TEST_BOOL", "off", true, false},
 		{"returns fallback when empty", "TEST_BOOL", "", true, true},
-		{"returns false for other values", "TEST_BOOL", "maybe", true, false},
+		{"returns fallback for unrecognized", "TEST_BOOL", "maybe", true, true},
+		{"trims whitespace", "TEST_BOOL", "  true  ", false, true},
 	}
 
 	for _, tt := range tests {
@@ -225,6 +232,72 @@ func TestStringWithFallbacks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStringChain(t *testing.T) {
+	t.Run("returns first set value", func(t *testing.T) {
+		t.Setenv("SC_A", "")
+		t.Setenv("SC_B", "value_b")
+		got := StringChain([]string{"SC_A", "SC_B"}, "default")
+		if got != "value_b" {
+			t.Errorf("StringChain = %q, want %q", got, "value_b")
+		}
+	})
+
+	t.Run("returns fallback when all empty", func(t *testing.T) {
+		got := StringChain([]string{"SC_NONE_1", "SC_NONE_2"}, "fallback")
+		if got != "fallback" {
+			t.Errorf("StringChain = %q, want %q", got, "fallback")
+		}
+	})
+
+	t.Run("returns first non-empty", func(t *testing.T) {
+		t.Setenv("SC_FIRST", "first_val")
+		got := StringChain([]string{"SC_FIRST", "SC_SECOND"}, "default")
+		if got != "first_val" {
+			t.Errorf("StringChain = %q, want %q", got, "first_val")
+		}
+	})
+
+	t.Run("empty keys returns fallback", func(t *testing.T) {
+		got := StringChain(nil, "fb")
+		if got != "fb" {
+			t.Errorf("StringChain(nil) = %q, want %q", got, "fb")
+		}
+	})
+}
+
+func TestInt64(t *testing.T) {
+	t.Run("returns env value", func(t *testing.T) {
+		t.Setenv("TEST_I64", "4194304")
+		got := Int64("TEST_I64", 100)
+		if got != 4194304 {
+			t.Errorf("Int64 = %d, want 4194304", got)
+		}
+	})
+
+	t.Run("returns fallback when missing", func(t *testing.T) {
+		got := Int64("TEST_I64_MISSING", 2097152)
+		if got != 2097152 {
+			t.Errorf("Int64 = %d, want 2097152", got)
+		}
+	})
+
+	t.Run("returns fallback for invalid", func(t *testing.T) {
+		t.Setenv("TEST_I64_BAD", "xyz")
+		got := Int64("TEST_I64_BAD", 99)
+		if got != 99 {
+			t.Errorf("Int64 = %d, want 99", got)
+		}
+	})
+
+	t.Run("returns fallback for zero", func(t *testing.T) {
+		t.Setenv("TEST_I64_ZERO", "0")
+		got := Int64("TEST_I64_ZERO", 42)
+		if got != 42 {
+			t.Errorf("Int64 = %d, want 42", got)
+		}
+	})
 }
 
 func TestMissingEnvError(t *testing.T) {
