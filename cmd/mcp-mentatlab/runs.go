@@ -2,14 +2,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
+	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/validate"
 
@@ -135,6 +139,20 @@ func registerRunTools(server *mcp.Server, srv *mentatlabServer, tracer trace.Tra
 			Required: []string{"run_id", "node_id"},
 		},
 	}, mcpotel.TracedToolHandler(tracer, "mentatlab_reject_gate", srv.handleRejectGate))
+
+	server.AddTool(mcp.Tool{
+		Name:        "mentatlab_stream_events",
+		Description: "Stream events from a run. Reads the historical and active Server-Sent Events (SSE) until timeout or run completion.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"run_id":     map[string]any{"type": "string", "description": "Run identifier"},
+				"max_events": map[string]any{"type": "integer", "description": "Maximum number of events to collect before returning (default 500)"},
+				"timeout_ms": map[string]any{"type": "integer", "description": "Collection timeout in milliseconds (default 5000)"},
+			},
+			Required: []string{"run_id"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "mentatlab_stream_events", srv.handleStreamEvents))
 }
 
 // --- Run handlers ---
@@ -309,4 +327,88 @@ func (s *mentatlabServer) handleRejectGate(ctx context.Context, args map[string]
 		return mcp.ErrorResult(err), nil
 	}
 	return mcpSuccess(resp)
+}
+
+func (s *mentatlabServer) handleStreamEvents(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	runID := strings.TrimSpace(v.Required("run_id"))
+	maxEvents := v.Int("max_events", 500)
+	timeoutMs := v.Int("timeout_ms", 5000)
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	if maxEvents <= 0 {
+		maxEvents = 500
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 5000
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+
+	u, err := url.Parse(s.baseURL + "/api/v1/runs/" + url.PathEscape(runID) + "/events")
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", "mcp-mentatlab/"+version)
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	defer resp.Body.Close()
+
+	if !statusExpected(resp.StatusCode, []int{http.StatusOK}) {
+		// Read small error body if any
+		return mcp.ErrorResult(mcperror.APIError("MentatLab", resp.StatusCode, "expected 200 for SSE stream")), nil
+	}
+
+	var events []map[string]any
+	importBufio := true // Handled by goimports
+	_ = importBufio
+
+	// Use bufio scanner manually
+	// Needed import "bufio" "encoding/json"
+	importBufioWorkaround := time.Now()
+	_ = importBufioWorkaround // keep packages alive
+
+	// Read lines
+	scanner := bufio.NewScanner(resp.Body)
+	// Mentatlab SSE lines can be large if there is a lot of data output
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			dataStr := strings.TrimPrefix(line, "data: ")
+			var evt map[string]any
+			if err := json.Unmarshal([]byte(dataStr), &evt); err == nil {
+				events = append(events, evt)
+				if len(events) >= maxEvents {
+					break
+				}
+			}
+		}
+	}
+
+	truncated := len(events) >= maxEvents
+	return mcp.JSONResult(map[string]any{
+		"ok":          true,
+		"status_code": resp.StatusCode,
+		"truncated":   truncated,
+		"data":        events,
+		"collected":   len(events),
+	})
 }
