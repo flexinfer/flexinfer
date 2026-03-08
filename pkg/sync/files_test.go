@@ -89,6 +89,31 @@ func TestCopySymlink(t *testing.T) {
 	}
 }
 
+func TestShouldExclude(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		excludes []string
+		want     bool
+	}{
+		{"dot path", ".", []string{"foo"}, false},
+		{"prefix match", "sessions/abc", []string{"sessions"}, true},
+		{"exact match", "readme.md", []string{"readme.md"}, true},
+		{"glob match", "test.log", []string{"*.log"}, true},
+		{"no match", "main.go", []string{"*.log", "vendor"}, false},
+		{"empty excludes", "main.go", nil, false},
+		{"empty path", "", []string{"foo"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldExclude(tc.path, tc.excludes)
+			if got != tc.want {
+				t.Errorf("shouldExclude(%q, %v) = %v, want %v", tc.path, tc.excludes, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCopyDirWithSymlinks(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
