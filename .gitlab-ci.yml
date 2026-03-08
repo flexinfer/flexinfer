@@ -208,6 +208,9 @@ lint:
     - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
+    # Disable CGo so packages importing fi-accel use the pure-Go fallback
+    # (the fi-accel C header is not installed on CI runners).
+    CGO_ENABLED: "0"
     KUBERNETES_CPU_REQUEST: "1"
     KUBERNETES_CPU_LIMIT: "2"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -227,6 +230,7 @@ vet:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "0"
   script:
     - go vet ./...
 
@@ -281,6 +285,7 @@ security:gosec:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "0"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
     - $(go env GOPATH)/bin/gosec -concurrency=2 -exclude-dir=.go -exclude-dir=vendor -fmt json -out gosec-report.json ${GO_APP_PKGS}
@@ -300,6 +305,7 @@ security:govulncheck:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "0"
     GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
