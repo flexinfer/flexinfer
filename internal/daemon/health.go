@@ -192,13 +192,29 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 	if !deep {
 		_, err = h.daemon.fetchServerToolsViaPool(ctx, serverName)
 		if err != nil {
-			// Pool probe failed; escalate to deep probe.
-			h.logger.Debug("pool probe failed, escalating to deep probe",
-				"server", serverName, "error", err)
-			deep = true
-			_, err = h.daemon.fetchServerTools(ctx, serverName)
+			// Pool probe failed. Only escalate to a deep (process-spawning) probe
+			// if the server process is currently running. Servers that have been
+			// reaped for idleness are not "unhealthy" — they just aren't running.
+			// Starting them speculatively to health-check wastes resources and
+			// triggers false-unhealthy alerts for slow-starting servers (e.g. devbox).
+			_, running := h.daemon.runningServers.Load(serverName)
+			if running {
+				h.logger.Debug("pool probe failed, escalating to deep probe",
+					"server", serverName, "error", err)
+				deep = true
+				_, err = h.daemon.fetchServerTools(ctx, serverName)
+			} else {
+				h.logger.Debug("pool probe failed, server not running, skipping deep probe",
+					"server", serverName)
+				return // Not running → not unhealthy, just idle.
+			}
 		}
 	} else {
+		// For scheduled deep probes, also skip if the server isn't running.
+		_, running := h.daemon.runningServers.Load(serverName)
+		if !running {
+			return
+		}
 		_, err = h.daemon.fetchServerTools(ctx, serverName)
 	}
 

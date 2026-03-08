@@ -402,6 +402,15 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	start := time.Now()
 	callTimeout := resolveToolCallTimeout(p.params)
 
+	// Per-server timeout override from config (routing.timeouts).
+	if p.daemon != nil && p.daemon.fileCfg.Routing.Timeouts != nil {
+		if serverTimeout, ok := p.daemon.fileCfg.Routing.Timeouts[p.serverName]; ok {
+			if d, err := time.ParseDuration(serverTimeout); err == nil && d > callTimeout {
+				callTimeout = d
+			}
+		}
+	}
+
 	p.daemon.metrics.RecordRequestStart(p.serverName)
 	defer p.daemon.metrics.RecordRequestEnd(p.serverName)
 

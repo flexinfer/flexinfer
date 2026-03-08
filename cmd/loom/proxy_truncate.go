@@ -33,6 +33,10 @@ const (
 // It is loaded once at proxy startup.
 var proxyConfigGlobal daemon.ProxyConfig
 
+// proxyRoutingTimeouts holds per-server timeout overrides from
+// routing.timeouts in config.yaml. Loaded once at proxy startup.
+var proxyRoutingTimeouts map[string]string
+
 func proxyMaxToolResultBytes() int {
 	return resolveProxyLimit(
 		loomProxyMaxToolResultBytesEnv,

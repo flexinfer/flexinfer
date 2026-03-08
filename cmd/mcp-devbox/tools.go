@@ -65,6 +65,10 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 					"type":        "string",
 					"description": "Owning agent ID (used as pod label in K8s backend)",
 				},
+				"timeout": map[string]any{
+					"type":        "string",
+					"description": "Build timeout as Go duration (default: '5m')",
+				},
 			},
 			Required: []string{"project"},
 		},

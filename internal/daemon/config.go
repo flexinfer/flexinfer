@@ -366,6 +366,11 @@ type RoutingConfig struct {
 	// Preferences maps server names to routing preference strings.
 	// Valid values: "local-only", "hub-only", "prefer-local", "prefer-hub", "health-based"
 	Preferences map[string]string `yaml:"preferences,omitempty"`
+
+	// Timeouts maps server names to tool-call timeout durations.
+	// Overrides the default 60s daemon RPC timeout for long-running servers.
+	// Values are Go duration strings (e.g., "5m", "300s").
+	Timeouts map[string]string `yaml:"timeouts,omitempty"`
 }
 
 // GetPoolConfig returns a pool.Config for the local connection pool.

@@ -144,6 +144,7 @@ func runProxy(socketPath string) error {
 	// Load file config once for proxy-side settings.
 	if fileCfg, err := daemon.LoadConfigFile(); err == nil {
 		proxyConfigGlobal = fileCfg.Proxy
+		proxyRoutingTimeouts = fileCfg.Routing.Timeouts
 		if fileCfg.Proxy.HeartbeatIntervalMs > 0 {
 			heartbeatIntervalNanos = int64(time.Duration(fileCfg.Proxy.HeartbeatIntervalMs) * time.Millisecond)
 		}
@@ -583,6 +584,15 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 
 	// Derive tool-level timeout from arguments for long-running tools.
 	toolTimeout := proxyDeriveTimeoutFromArguments(params.Arguments)
+
+	// Per-server timeout override from routing.timeouts config.
+	if serverName != "" && proxyRoutingTimeouts != nil {
+		if raw, ok := proxyRoutingTimeouts[serverName]; ok {
+			if d, err := time.ParseDuration(raw); err == nil && d > toolTimeout {
+				toolTimeout = d
+			}
+		}
+	}
 
 	callPayload := map[string]any{
 		"server":    serverName,
