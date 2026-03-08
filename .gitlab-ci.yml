@@ -392,7 +392,7 @@ build:binaries:
       mapfile -t MCP_PKGS < <(find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | sort)
       MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
       echo "Building ${#MCP_PKGS[@]} MCP servers with ${MCP_BUILD_JOBS} parallel jobs..."
-      if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -lc '
+      if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -c '
         pkg="$1"
         echo "Building ${pkg}..."
         CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
