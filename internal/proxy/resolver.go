@@ -232,18 +232,48 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 		}
 	}
 
-	// Clear the cache
+	// Clear the caches
 	p.serviceLabelCache = sync.Map{}
+	p.labelGroupCache = sync.Map{}
+	p.labelGroupModels = sync.Map{}
 
-	// Second pass: build cache and warn on conflicts
+	// Second pass: build caches
+	// - serviceLabelCache: first claimant per label (backward compat for resolveServiceLabel)
+	// - labelGroupCache: all claimants per label (for multi-model routing)
+	// - labelGroupModels: reverse index from model name to all group members
+	groupMembers := make(map[string]map[string]bool) // modelName -> set of related models
+
 	for label, claimants := range labelClaims {
 		if len(claimants) > 1 {
-			slog.Warn("serviceLabel claimed by multiple services",
-				"label", label, "services", claimants, "using", claimants[0])
+			slog.Info("serviceLabel shared by multiple models",
+				"label", label, "models", claimants)
 		}
-		// Use first claimant (deterministic based on k8s list order)
+		// First claimant for backward-compat single-model resolution
 		p.serviceLabelCache.Store(label, claimants[0])
+		// All claimants for group routing
+		p.labelGroupCache.Store(label, claimants)
 		slog.Debug("service label cache updated", "label", label, "model", claimants[0])
+
+		// Build reverse index for labels with 2+ claimants
+		if len(claimants) >= 2 {
+			for _, member := range claimants {
+				if groupMembers[member] == nil {
+					groupMembers[member] = make(map[string]bool)
+				}
+				for _, other := range claimants {
+					groupMembers[member][other] = true
+				}
+			}
+		}
+	}
+
+	// Store reverse index: each model -> all group members (including itself)
+	for model, memberSet := range groupMembers {
+		members := make([]string, 0, len(memberSet))
+		for m := range memberSet {
+			members = append(members, m)
+		}
+		p.labelGroupModels.Store(model, members)
 	}
 
 	p.lastCacheRefresh = time.Now()

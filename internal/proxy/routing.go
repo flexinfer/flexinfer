@@ -91,10 +91,11 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		}
 		endpointCount.WithLabelValues(modelName).Set(float64(readyCount))
 
-		// Check if this model has routing annotation enabled
-		// Only models with explicit routing strategy will get direct pod routing
+		// Check if this model has routing annotation or is in a label group
+		// Models with explicit routing strategy or shared service labels get direct pod routing
 		hasRoutingAnnotation := p.modelHasRoutingAnnotation(ctx, modelName)
-		if !hasRoutingAnnotation {
+		isInLabelGroup := p.isModelInLabelGroup(modelName)
+		if !hasRoutingAnnotation && !isInLabelGroup {
 			// Remove from router if previously added, so it falls back to Service DNS
 			p.router.RemoveModel(modelName)
 			// Clear endpoint routing cache for this model
@@ -129,6 +130,34 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 			slog.Debug("updated routing endpoints", "model", modelName, "endpoints", len(podAddresses))
 		}
 	}
+
+	// Aggregation pass: for models in label groups, combine endpoints from all group members.
+	// This overwrites each model's router ring with the union of all group members' endpoints,
+	// enabling cross-node load balancing for models sharing service labels.
+	p.labelGroupModels.Range(func(key, value any) bool {
+		modelName := key.(string)
+		groupMembers := value.([]string)
+
+		seen := make(map[string]bool)
+		var aggregated []string
+		for _, member := range groupMembers {
+			if cached, ok := p.endpointCache.Load(member); ok {
+				for _, ep := range cached.([]string) {
+					if !seen[ep] {
+						seen[ep] = true
+						aggregated = append(aggregated, ep)
+					}
+				}
+			}
+		}
+
+		if len(aggregated) > 0 {
+			p.router.UpdateEndpoints(modelName, aggregated)
+			slog.Debug("updated label group routing endpoints",
+				"model", modelName, "group_members", groupMembers, "endpoints", len(aggregated))
+		}
+		return true
+	})
 }
 
 // isNodeTerminating checks if a node is marked for spot instance termination.
@@ -194,6 +223,12 @@ func (p *Proxy) trackEndpointChanges(modelName string, newEndpoints []string) {
 	p.endpointCache.Store(modelName, newEndpoints)
 }
 
+// isModelInLabelGroup checks if a model is part of a label group (shares service labels with other models).
+func (p *Proxy) isModelInLabelGroup(modelName string) bool {
+	_, ok := p.labelGroupModels.Load(modelName)
+	return ok
+}
+
 // modelHasRoutingAnnotation checks if a model has the flexinfer.ai/routing annotation set.
 func (p *Proxy) modelHasRoutingAnnotation(ctx context.Context, modelName string) bool {
 	// Check v1alpha1 ModelDeployment
@@ -245,6 +280,11 @@ func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routin
 				return routing.Strategy(strategy)
 			}
 		}
+	}
+
+	// Models in a label group default to least-loaded routing
+	if p.isModelInLabelGroup(modelName) {
+		return routing.StrategyLeastLoaded
 	}
 
 	return routing.StrategyDefault

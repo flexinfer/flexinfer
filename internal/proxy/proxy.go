@@ -141,6 +141,10 @@ type Proxy struct {
 	serviceLabelCacheMu sync.Mutex
 	lastCacheRefresh    time.Time
 
+	// Label group routing: labels shared by multiple models
+	labelGroupCache  sync.Map // map[string][]string: label -> []modelName (all claimants)
+	labelGroupModels sync.Map // map[string][]string: modelName -> []relatedModelNames (reverse index)
+
 	// Model alias cache: servedModelName/aliases -> K8s resource name
 	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
 	modelAliasCacheMu sync.Mutex
