@@ -210,23 +210,7 @@ func (a *App) handleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
 // handleAgentHeartbeat updates an agent's presence heartbeat.
 // POST /api/agent/heartbeat
 func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		AgentID     string `json:"agent_id"`
-		SessionID   string `json:"session_id,omitempty"`
-		Status      string `json:"status,omitempty"`
-		AgentType   string `json:"agent_type,omitempty"`
-		Description string `json:"description,omitempty"`
-		Namespace   string `json:"namespace,omitempty"`
-		// EnsureSession auto-bootstraps a session when heartbeat clients lack
-		// dedicated session-start hooks (for example proxy-only integrations).
-		EnsureSession bool `json:"ensure_session,omitempty"`
-
-		ActiveFiles []string `json:"active_files,omitempty"`
-		CurrentTask string   `json:"current_task,omitempty"`
-		Branch      string   `json:"branch,omitempty"`
-
-		HeartbeatTTLSeconds int `json:"heartbeat_ttl_seconds,omitempty"`
-	}
+	var body bridge.HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
@@ -270,24 +254,14 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := a.agent.PresenceHeartbeat(body.AgentID, bridge.PresenceHeartbeatParams{
-		Status:      body.Status,
-		ActiveFiles: body.ActiveFiles,
-		CurrentTask: body.CurrentTask,
-		Branch:      body.Branch,
-	})
+	result, err := a.agent.PresenceHeartbeat(body.AgentID, body.HeartbeatParams())
 	if err != nil {
 		// Some clients send heartbeats without ever calling session-start or
 		// presence-register. Make this endpoint resilient by self-registering
 		// presence once, then retrying the heartbeat.
 		if isPresenceNotRegisteredErr(err) {
 			_ = a.agent.PresenceRegister(body.AgentID, body.SessionID, body.AgentType, body.Description, body.HeartbeatTTLSeconds)
-			result, err = a.agent.PresenceHeartbeat(body.AgentID, bridge.PresenceHeartbeatParams{
-				Status:      body.Status,
-				ActiveFiles: body.ActiveFiles,
-				CurrentTask: body.CurrentTask,
-				Branch:      body.Branch,
-			})
+			result, err = a.agent.PresenceHeartbeat(body.AgentID, body.HeartbeatParams())
 			if err == nil {
 				a.cache.Set(cacheKey, fp, 10*time.Second)
 				a.broadcastAgentEvent("agent.heartbeat", map[string]any{

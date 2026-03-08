@@ -1,11 +1,17 @@
+// agent.go defines the AgentBridge struct, its constructor, internal helpers,
+// and shared DTO types used across domain files.
+//
+// Domain files:
+//   - agent_session.go    — Session lifecycle (Start/End/Get/List/Prune) + presence
+//   - agent_task.go       — Task CRUD + dispatch
+//   - agent_context.go    — Context inspect/stream/knowledge + budget helpers
+//   - agent_graph.go      — Knowledge graph: entities, relations, annotations
+//   - agent_ops.go        — Workflows, memory, handoffs, templates, coordination
+//   - agent_contracts.go  — Shared HTTP request/response contracts
 package bridge
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -102,6 +108,25 @@ type WorkflowEvent struct {
 	Details   map[string]any `json:"details,omitempty"`
 }
 
+// WorkflowDefineResult holds the result of defining a workflow.
+type WorkflowDefineResult struct {
+	OK           bool   `json:"ok"`
+	DefinitionID string `json:"definition_id"`
+	Name         string `json:"name"`
+	StepCount    int    `json:"step_count"`
+}
+
+// WorkflowDefinitionInfo describes a registered workflow definition.
+type WorkflowDefinitionInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Namespace   string `json:"namespace"`
+	StepCount   int    `json:"step_count"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+}
+
 // MemoryTierStats describes statistics for a single memory tier.
 type MemoryTierStats struct {
 	Items  int `json:"item_count"`
@@ -154,6 +179,29 @@ type EntityInfo struct {
 	Description string         `json:"description,omitempty"`
 	Namespace   string         `json:"namespace,omitempty"`
 	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// EntityDetail describes a single entity with its relations.
+type EntityDetail struct {
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	Type              string         `json:"type,omitempty"`
+	EntityType        string         `json:"entity_type,omitempty"`
+	Namespace         string         `json:"namespace,omitempty"`
+	Properties        map[string]any `json:"properties,omitempty"`
+	InboundRelations  []RelationInfo `json:"inbound_relations,omitempty"`
+	OutboundRelations []RelationInfo `json:"outbound_relations,omitempty"`
+}
+
+// RelationInfo describes a relation in the knowledge graph.
+type RelationInfo struct {
+	ID           string `json:"id"`
+	Source       string `json:"source_id"`
+	SourceName   string `json:"source_name,omitempty"`
+	Target       string `json:"target_id"`
+	TargetName   string `json:"target_name,omitempty"`
+	Type         string `json:"type,omitempty"`
+	RelationType string `json:"relation_type,omitempty"`
 }
 
 // ContextEntryInfo describes a context stream entry.
@@ -236,309 +284,6 @@ const (
 	contextInspectResponseBudgetTokensDefault = 2048
 )
 
-func normalizeEntityInfo(e *EntityInfo) {
-	if e == nil {
-		return
-	}
-	if e.EntityType == "" {
-		e.EntityType = e.Type
-	}
-	if e.Type == "" {
-		e.Type = e.EntityType
-	}
-}
-
-func normalizeRelationInfo(r *RelationInfo) {
-	if r == nil {
-		return
-	}
-	if r.RelationType == "" {
-		r.RelationType = r.Type
-	}
-	if r.Type == "" {
-		r.Type = r.RelationType
-	}
-}
-
-// --- Helper to call an agent tool and unmarshal ---
-
-// callAgentTool invokes an agent_context tool and unmarshals the response
-// into the provided target. It unwraps the MCP CallToolResult envelope and
-// supports both JSON and TOON (Token-Optimized Object Notation) text payloads.
-func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target any) error {
-	raw, err := a.client.CallTool("agent_context__"+toolName, args)
-	if err != nil {
-		return fmt.Errorf("agent tool %s: %w", toolName, err)
-	}
-
-	if target == nil {
-		return nil
-	}
-	if err := UnmarshalToolResult(raw, target); err != nil {
-		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
-	}
-	return nil
-}
-
-// callAgentToolTimeout is like callAgentTool but uses a per-call timeout
-// override on the underlying DaemonClient RPC.
-func (a *AgentBridge) callAgentToolTimeout(toolName string, args map[string]any, target any, timeout time.Duration) error {
-	raw, err := a.client.CallToolWithTimeout("agent_context__"+toolName, args, timeout)
-	if err != nil {
-		return fmt.Errorf("agent tool %s: %w", toolName, err)
-	}
-
-	if target == nil {
-		return nil
-	}
-	if err := UnmarshalToolResult(raw, target); err != nil {
-		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
-	}
-	return nil
-}
-
-// invalidateSessionCache removes the cached active-session entry for an agent.
-func (a *AgentBridge) invalidateSessionCache(agentID string) {
-	a.cache.Invalidate("active_session:" + agentID)
-}
-
-// --- Public methods ---
-
-// Sessions returns all agent sessions.
-func (a *AgentBridge) Sessions() ([]SessionInfo, error) {
-	var result struct {
-		Sessions []SessionInfo `json:"sessions"`
-	}
-	if err := a.callAgentTool("agent_session_list", map[string]any{
-		"limit": defaultSessionListLimit,
-	}, &result); err != nil {
-		return nil, err
-	}
-	return result.Sessions, nil
-}
-
-// ListSessions calls agent_session_list with arbitrary parameters and returns raw JSON.
-func (a *AgentBridge) ListSessions(params map[string]any) (json.RawMessage, error) {
-	var result json.RawMessage
-	if err := a.callAgentTool("agent_session_list", params, &result); err != nil {
-		return nil, err
-	}
-	raw, _ := json.Marshal(result)
-	return raw, nil
-}
-
-// PruneSessions calls agent_session_prune with arbitrary parameters and returns raw JSON.
-func (a *AgentBridge) PruneSessions(params map[string]any) (json.RawMessage, error) {
-	var result json.RawMessage
-	if err := a.callAgentTool("agent_session_prune", params, &result); err != nil {
-		return nil, err
-	}
-	raw, _ := json.Marshal(result)
-	return raw, nil
-}
-
-// DeleteSession calls agent_session_delete for a single session.
-func (a *AgentBridge) DeleteSession(sessionID string) error {
-	return a.callAgentTool("agent_session_delete", map[string]any{
-		"session_id": sessionID,
-	}, nil)
-}
-
-// Tasks returns tasks for a specific session.
-func (a *AgentBridge) Tasks(sessionID string) ([]TaskInfo, error) {
-	args := map[string]any{}
-	if sessionID != "" {
-		args["session_id"] = sessionID
-	}
-	var result struct {
-		Tasks []TaskInfo `json:"tasks"`
-	}
-	if err := a.callAgentTool("agent_task_list", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Tasks, nil
-}
-
-// AllTasks returns all tasks across all sessions.
-func (a *AgentBridge) AllTasks() ([]TaskInfo, error) {
-	return a.Tasks("")
-}
-
-// WorkflowDefineResult holds the result of defining a workflow.
-type WorkflowDefineResult struct {
-	OK           bool   `json:"ok"`
-	DefinitionID string `json:"definition_id"`
-	Name         string `json:"name"`
-	StepCount    int    `json:"step_count"`
-}
-
-// WorkflowDefinitionInfo describes a registered workflow definition.
-type WorkflowDefinitionInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Namespace   string `json:"namespace"`
-	StepCount   int    `json:"step_count"`
-	CreatedBy   string `json:"created_by"`
-	CreatedAt   string `json:"created_at"`
-}
-
-// WorkflowDefine registers a new workflow definition.
-func (a *AgentBridge) WorkflowDefine(args map[string]any) (*WorkflowDefineResult, error) {
-	var result WorkflowDefineResult
-	if err := a.callAgentTool("agent_workflow_define", args, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// WorkflowDefinitions lists registered workflow definitions.
-func (a *AgentBridge) WorkflowDefinitions(namespace string) ([]WorkflowDefinitionInfo, error) {
-	args := map[string]any{}
-	if namespace != "" {
-		args["namespace"] = namespace
-	}
-	var result struct {
-		Definitions []WorkflowDefinitionInfo `json:"definitions"`
-	}
-	if err := a.callAgentTool("agent_workflow_definitions", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Definitions, nil
-}
-
-// WorkflowList returns all workflows.
-func (a *AgentBridge) WorkflowList() ([]WorkflowInfo, error) {
-	var result struct {
-		Workflows []WorkflowInfo `json:"workflows"`
-	}
-	if err := a.callAgentTool("agent_workflow_list", nil, &result); err != nil {
-		return nil, err
-	}
-	return result.Workflows, nil
-}
-
-// WorkflowStatus returns the full detail for a single workflow.
-func (a *AgentBridge) WorkflowStatus(id string) (*WorkflowDetail, error) {
-	args := map[string]any{"workflow_id": id}
-	var result WorkflowDetail
-	if err := a.callAgentTool("agent_workflow_status", args, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// WorkflowEvents returns workflow execution events for a single workflow.
-func (a *AgentBridge) WorkflowEvents(id string) ([]WorkflowEvent, error) {
-	args := map[string]any{"workflow_id": id}
-	var result struct {
-		Events []WorkflowEvent `json:"events"`
-	}
-	if err := a.callAgentTool("agent_workflow_events", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Events, nil
-}
-
-// ApproveStep approves a pending step in a workflow.
-func (a *AgentBridge) ApproveStep(workflowID, stepID string) error {
-	args := map[string]any{
-		"workflow_id": workflowID,
-		"step_id":     stepID,
-	}
-	return a.callAgentTool("agent_workflow_approve", args, nil)
-}
-
-// RejectStep rejects a pending step in a workflow.
-func (a *AgentBridge) RejectStep(workflowID, stepID string) error {
-	args := map[string]any{
-		"workflow_id": workflowID,
-		"step_id":     stepID,
-	}
-	return a.callAgentTool("agent_workflow_reject", args, nil)
-}
-
-// CancelWorkflow cancels a running workflow.
-func (a *AgentBridge) CancelWorkflow(workflowID string) error {
-	args := map[string]any{"workflow_id": workflowID}
-	return a.callAgentTool("agent_workflow_cancel", args, nil)
-}
-
-// MemoryStats returns the memory hierarchy statistics.
-func (a *AgentBridge) MemoryStats() (*MemoryStatsResult, error) {
-	var result MemoryStatsResult
-	if err := a.callAgentTool("agent_memory_stats", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// MemoryRecall retrieves memory items by tier and/or query.
-func (a *AgentBridge) MemoryRecall(tier, query string, limit int) ([]MemoryItem, error) {
-	args := map[string]any{}
-	if tier != "" {
-		args["tiers"] = []string{tier}
-	}
-	if query != "" {
-		args["query"] = query
-	}
-	if limit > 0 {
-		args["limit"] = limit
-	}
-	var result struct {
-		Items []MemoryItem `json:"items"`
-	}
-	if err := a.callAgentTool("agent_memory_recall", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Items, nil
-}
-
-// MemoryPromote promotes a memory item to a higher tier.
-func (a *AgentBridge) MemoryPromote(id string) error {
-	args := map[string]any{"item_ids": []string{id}}
-	return a.callAgentTool("agent_memory_promote", args, nil)
-}
-
-// MemoryDemote demotes a memory item to a lower tier.
-func (a *AgentBridge) MemoryDemote(id string) error {
-	args := map[string]any{"item_ids": []string{id}}
-	return a.callAgentTool("agent_memory_demote", args, nil)
-}
-
-// GraphStats returns knowledge graph statistics.
-func (a *AgentBridge) GraphStats() (*GraphStatsResult, error) {
-	var result GraphStatsResult
-	if err := a.callAgentTool("agent_graph_stats", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// EntityFind searches for entities in the knowledge graph.
-func (a *AgentBridge) EntityFind(query string, entityType string, limit int) ([]EntityInfo, error) {
-	args := map[string]any{}
-	if query != "" {
-		args["name_pattern"] = query
-	}
-	if entityType != "" {
-		args["type"] = entityType
-	}
-	if limit > 0 {
-		args["limit"] = limit
-	}
-	var result struct {
-		Entities []EntityInfo `json:"entities"`
-	}
-	if err := a.callAgentTool("agent_entity_find", args, &result); err != nil {
-		return nil, err
-	}
-	for i := range result.Entities {
-		normalizeEntityInfo(&result.Entities[i])
-	}
-	return result.Entities, nil
-}
-
 // --- Presence / Coordination DTOs ---
 
 // PresenceInfo describes an agent in the presence registry.
@@ -603,660 +348,6 @@ type CompactionInfo struct {
 	ItemsExpired   int    `json:"items_expired"`
 }
 
-// --- Presence / Coordination methods ---
-
-// PresenceList returns all active agents in the presence registry.
-func (a *AgentBridge) PresenceList(includeOffline bool) ([]PresenceInfo, error) {
-	args := map[string]any{}
-	if includeOffline {
-		args["include_offline"] = true
-	}
-	var result struct {
-		Agents []PresenceInfo `json:"agents"`
-	}
-	if err := a.callAgentTool("agent_presence_list", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Agents, nil
-}
-
-// FileClaimList returns file claims, optionally filtered by agent.
-func (a *AgentBridge) FileClaimList(agentID string) ([]FileClaimInfo, error) {
-	args := map[string]any{}
-	if agentID != "" {
-		args["agent_id"] = agentID
-	}
-	var result struct {
-		Claims []FileClaimInfo `json:"claims"`
-	}
-	if err := a.callAgentTool("agent_file_claim_list", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Claims, nil
-}
-
-// WorktreeList returns worktree assignments, optionally filtered by agent and status.
-func (a *AgentBridge) WorktreeList(agentID, status string) ([]WorktreeInfo, error) {
-	args := map[string]any{}
-	if agentID != "" {
-		args["agent_id"] = agentID
-	}
-	if status != "" {
-		args["status"] = status
-	}
-	var result struct {
-		Assignments []WorktreeInfo `json:"assignments"`
-	}
-	if err := a.callAgentTool("agent_worktree_list", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Assignments, nil
-}
-
-// CompactionStatus returns the compaction scheduler status.
-func (a *AgentBridge) CompactionStatus() (*CompactionInfo, error) {
-	var result CompactionInfo
-	if err := a.callAgentTool("agent_compaction_status", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// --- CRUD methods (v2) ---
-
-// CreateTaskParams holds all fields for task creation.
-type CreateTaskParams struct {
-	SessionID  string
-	Title      string
-	Priority   string
-	Tags       []string
-	Context    string   // Description of what needs to be done
-	FilePath   string   // Related file
-	LineNumber int      // Related line
-	BlockedBy  []string // Task IDs this is blocked by
-}
-
-// CreateTask creates a new task in a session.
-func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
-	if p.SessionID == "" {
-		return fmt.Errorf("session_id is required")
-	}
-	task := map[string]any{
-		"title": p.Title,
-	}
-	if p.Priority != "" {
-		task["priority"] = p.Priority
-	}
-	if len(p.Tags) > 0 {
-		task["tags"] = p.Tags
-	}
-	if p.Context != "" {
-		task["context"] = p.Context
-	}
-	if p.FilePath != "" {
-		task["file_path"] = p.FilePath
-	}
-	if p.LineNumber > 0 {
-		task["line_number"] = p.LineNumber
-	}
-	if len(p.BlockedBy) > 0 {
-		task["blocked_by"] = p.BlockedBy
-	}
-	args := map[string]any{
-		"session_id": p.SessionID,
-		"tasks":      []map[string]any{task},
-	}
-	return a.callAgentTool("agent_task_add", args, nil)
-}
-
-// UpdateTaskParams holds all fields for task updates.
-type UpdateTaskParams struct {
-	ID         string `json:"task_id"`
-	Status     string `json:"status"`
-	Priority   string `json:"priority,omitempty"`
-	Resolution string `json:"resolution,omitempty"`
-}
-
-// UpdateTask updates a task's status, priority, and/or resolution.
-func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
-	args := map[string]any{"task_id": p.ID}
-	if p.Status != "" {
-		args["status"] = p.Status
-	}
-	if p.Priority != "" {
-		args["priority"] = p.Priority
-	}
-	if p.Resolution != "" {
-		args["resolution"] = p.Resolution
-	}
-	return a.callAgentTool("agent_task_update", args, nil)
-}
-
-// ContextAdd adds context entries (findings, decisions, etc.) via agent_context_add.
-// The entries parameter should be a slice of maps with entry_type, title, content, etc.
-func (a *AgentBridge) ContextAdd(sessionID string, entries []map[string]any) error {
-	args := map[string]any{
-		"entries": entries,
-	}
-	if sessionID != "" {
-		args["session_id"] = sessionID
-	}
-	return a.callAgentTool("agent_context_add", args, nil)
-}
-
-// MemoryAdd adds a new memory item.
-func (a *AgentBridge) MemoryAdd(title, content, tier, importance, category string) error {
-	item := map[string]any{
-		"title":   title,
-		"content": content,
-	}
-	if tier != "" {
-		item["tier"] = tier
-	}
-	if importance != "" {
-		item["importance"] = importance
-	}
-	if category != "" {
-		item["category"] = category
-	}
-	args := map[string]any{
-		"items": []map[string]any{item},
-	}
-	return a.callAgentTool("agent_memory_add", args, nil)
-}
-
-// MemoryDelete deletes a memory item by ID.
-func (a *AgentBridge) MemoryDelete(id string) error {
-	args := map[string]any{
-		"item_ids": []string{id},
-		"confirm":  true,
-	}
-	return a.callAgentTool("agent_memory_delete", args, nil)
-}
-
-// EntityAdd creates a new entity in the knowledge graph.
-func (a *AgentBridge) EntityAdd(name, entityType, namespace string, props map[string]any) error {
-	entity := map[string]any{
-		"name": name,
-		"type": entityType,
-	}
-	if namespace != "" {
-		entity["namespace"] = namespace
-	}
-	if len(props) > 0 {
-		entity["properties"] = props
-	}
-	args := map[string]any{
-		"entities": []map[string]any{entity},
-	}
-	return a.callAgentTool("agent_entity_add", args, nil)
-}
-
-// EntityDelete deletes an entity by ID.
-func (a *AgentBridge) EntityDelete(id string) error {
-	args := map[string]any{
-		"entity_ids": []string{id},
-		"confirm":    true,
-	}
-	return a.callAgentTool("agent_entity_delete", args, nil)
-}
-
-// EntityDetail describes a single entity with its relations.
-type EntityDetail struct {
-	ID                string         `json:"id"`
-	Name              string         `json:"name"`
-	Type              string         `json:"type,omitempty"`
-	EntityType        string         `json:"entity_type,omitempty"`
-	Namespace         string         `json:"namespace,omitempty"`
-	Properties        map[string]any `json:"properties,omitempty"`
-	InboundRelations  []RelationInfo `json:"inbound_relations,omitempty"`
-	OutboundRelations []RelationInfo `json:"outbound_relations,omitempty"`
-}
-
-// RelationInfo describes a relation in the knowledge graph.
-type RelationInfo struct {
-	ID           string `json:"id"`
-	Source       string `json:"source_id"`
-	SourceName   string `json:"source_name,omitempty"`
-	Target       string `json:"target_id"`
-	TargetName   string `json:"target_name,omitempty"`
-	Type         string `json:"type,omitempty"`
-	RelationType string `json:"relation_type,omitempty"`
-}
-
-// EntityGet retrieves a single entity with its relations.
-func (a *AgentBridge) EntityGet(id string) (*EntityDetail, error) {
-	args := map[string]any{"entity_ids": []string{id}}
-	var result struct {
-		Entities []EntityDetail `json:"entities"`
-	}
-	if err := a.callAgentTool("agent_entity_get", args, &result); err != nil {
-		return nil, err
-	}
-	if len(result.Entities) == 0 {
-		return nil, fmt.Errorf("entity not found: %s", id)
-	}
-	entity := result.Entities[0]
-	if entity.EntityType == "" {
-		entity.EntityType = entity.Type
-	}
-	if entity.Type == "" {
-		entity.Type = entity.EntityType
-	}
-
-	var relResult struct {
-		Relations []RelationInfo `json:"relations"`
-	}
-	if err := a.callAgentTool("agent_relation_get", map[string]any{"entity_id": id}, &relResult); err == nil {
-		for i := range relResult.Relations {
-			normalizeRelationInfo(&relResult.Relations[i])
-			if relResult.Relations[i].Source == id {
-				entity.OutboundRelations = append(entity.OutboundRelations, relResult.Relations[i])
-			}
-			if relResult.Relations[i].Target == id {
-				entity.InboundRelations = append(entity.InboundRelations, relResult.Relations[i])
-			}
-		}
-	}
-
-	return &entity, nil
-}
-
-// RelationAdd creates a relation between two entities.
-func (a *AgentBridge) RelationAdd(sourceID, targetID, relationType string) error {
-	args := map[string]any{
-		"relations": []map[string]any{
-			{
-				"source_id": sourceID,
-				"target_id": targetID,
-				"type":      relationType,
-			},
-		},
-	}
-	return a.callAgentTool("agent_relation_add", args, nil)
-}
-
-// RelationDelete deletes a relation by ID.
-func (a *AgentBridge) RelationDelete(id string) error {
-	args := map[string]any{
-		"relation_ids": []string{id},
-		"confirm":      true,
-	}
-	return a.callAgentTool("agent_relation_delete", args, nil)
-}
-
-// GraphFindPath finds the shortest path between two entities.
-func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]EntityInfo, error) {
-	args := map[string]any{
-		"source_id": fromID,
-		"target_id": toID,
-	}
-	if maxDepth > 0 {
-		args["max_depth"] = maxDepth
-	}
-	var result struct {
-		Path []string `json:"path"`
-	}
-	if err := a.callAgentTool("agent_graph_find_path", args, &result); err != nil {
-		return nil, err
-	}
-	if len(result.Path) == 0 {
-		return nil, nil
-	}
-
-	var entitiesResult struct {
-		Entities []EntityInfo `json:"entities"`
-	}
-	if err := a.callAgentTool("agent_entity_get", map[string]any{"entity_ids": result.Path}, &entitiesResult); err != nil {
-		fallback := make([]EntityInfo, 0, len(result.Path))
-		for _, id := range result.Path {
-			fallback = append(fallback, EntityInfo{
-				ID:         id,
-				Name:       id,
-				Type:       "entity",
-				EntityType: "entity",
-			})
-		}
-		return fallback, nil
-	}
-
-	byID := make(map[string]EntityInfo, len(entitiesResult.Entities))
-	for i := range entitiesResult.Entities {
-		normalizeEntityInfo(&entitiesResult.Entities[i])
-		byID[entitiesResult.Entities[i].ID] = entitiesResult.Entities[i]
-	}
-
-	path := make([]EntityInfo, 0, len(result.Path))
-	for _, id := range result.Path {
-		if e, ok := byID[id]; ok {
-			path = append(path, e)
-			continue
-		}
-		path = append(path, EntityInfo{
-			ID:         id,
-			Name:       id,
-			Type:       "entity",
-			EntityType: "entity",
-		})
-	}
-	return path, nil
-}
-
-// SessionEntries returns context entries for a specific session.
-func (a *AgentBridge) SessionEntries(sessionID string, limit int) ([]ContextEntryInfo, error) {
-	args := map[string]any{
-		"session_id": sessionID,
-		// agent_context_search requires a non-empty query string.
-		// Session filter does the heavy lifting; keep query generic.
-		"query": "session context entries",
-	}
-	if limit > 0 {
-		args["limit"] = limit
-	}
-	var result struct {
-		Results []ContextEntryInfo `json:"results"`
-	}
-	if err := a.callAgentTool("agent_context_search", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Results, nil
-}
-
-// ContextInspect builds a context budget breakdown for a session.
-//
-// Resolution order:
-//   - If sessionID is empty, uses the active session for agentID.
-//   - If sessionID is set, uses that session (and backfills metadata when available).
-func (a *AgentBridge) ContextInspect(agentID, sessionID string, detail bool, limit int) (*ContextInspectResult, error) {
-	if sessionID == "" && agentID == "" {
-		return nil, fmt.Errorf("agent_id or session_id is required")
-	}
-	if limit <= 0 {
-		limit = 200
-	}
-
-	var sessionMeta *SessionInfo
-	if sessionID == "" {
-		active, err := a.GetActiveSession(agentID)
-		if err != nil {
-			return nil, fmt.Errorf("get active session: %w", err)
-		}
-		if active == nil {
-			return nil, fmt.Errorf("no active session found for agent %s", agentID)
-		}
-		sessionMeta = active
-		sessionID = active.ID
-	} else {
-		if sessions, err := a.Sessions(); err == nil {
-			for i := range sessions {
-				if sessions[i].ID == sessionID {
-					sessionMeta = &sessions[i]
-					break
-				}
-			}
-		}
-	}
-
-	entries, err := a.SessionEntries(sessionID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("session entries: %w", err)
-	}
-
-	byType := make(map[string]*ContextInspectBucket)
-	top := make([]ContextInspectTopEntry, 0, len(entries))
-	totalContextChars := 0
-	totalContextTokens := 0
-	contextEntryChars := 0
-	contextEntryTokens := 0
-	fileInjectionChars := 0
-	fileInjectionTokens := 0
-
-	for _, wrapped := range entries {
-		entry := wrapped.Entry
-		entryType := strings.TrimSpace(entry.EntryType)
-		if entryType == "" {
-			entryType = "note"
-		}
-		chars := estimateContextChars(entry)
-		tokens := entry.TokenCount
-		if tokens <= 0 {
-			tokens = estimateContextTokens(chars)
-		}
-		totalContextChars += chars
-		totalContextTokens += tokens
-		if isFileInjectionEntry(entry, entryType) {
-			fileInjectionChars += chars
-			fileInjectionTokens += tokens
-		} else {
-			contextEntryChars += chars
-			contextEntryTokens += tokens
-		}
-
-		b := byType[entryType]
-		if b == nil {
-			b = &ContextInspectBucket{EntryType: entryType}
-			byType[entryType] = b
-		}
-		b.Count++
-		b.Chars += chars
-		b.EstimatedTokens += tokens
-
-		if detail {
-			top = append(top, ContextInspectTopEntry{
-				ID:              entry.ID,
-				EntryType:       entryType,
-				Title:           entry.Title,
-				Timestamp:       entry.Timestamp,
-				Chars:           chars,
-				EstimatedTokens: tokens,
-			})
-		}
-	}
-
-	buckets := make([]ContextInspectBucket, 0, len(byType))
-	for _, b := range byType {
-		buckets = append(buckets, *b)
-	}
-	sort.SliceStable(buckets, func(i, j int) bool {
-		if buckets[i].EstimatedTokens == buckets[j].EstimatedTokens {
-			return buckets[i].EntryType < buckets[j].EntryType
-		}
-		return buckets[i].EstimatedTokens > buckets[j].EstimatedTokens
-	})
-
-	if detail {
-		sort.SliceStable(top, func(i, j int) bool {
-			if top[i].EstimatedTokens == top[j].EstimatedTokens {
-				return top[i].Timestamp > top[j].Timestamp
-			}
-			return top[i].EstimatedTokens > top[j].EstimatedTokens
-		})
-		if len(top) > 20 {
-			top = top[:20]
-		}
-	}
-
-	systemPromptTokens, responseBudgetTokens, promptBudgetSource := contextInspectPromptBudget(agentID)
-	systemPromptChars := systemPromptTokens * 4
-	toolSchemaChars, toolSchemaTokens := a.estimateToolSchemaBudget()
-	responseBudgetChars := responseBudgetTokens * 4
-
-	sections := []ContextInspectSection{
-		{
-			Section:         "system_prompt",
-			Chars:           systemPromptChars,
-			EstimatedTokens: systemPromptTokens,
-			Source:          promptBudgetSource,
-		},
-		{
-			Section:         "tools_schema",
-			Chars:           toolSchemaChars,
-			EstimatedTokens: toolSchemaTokens,
-			Source:          "measured",
-		},
-		{
-			Section:         "context_entries",
-			Chars:           contextEntryChars,
-			EstimatedTokens: contextEntryTokens,
-			Source:          "measured",
-		},
-		{
-			Section:         "file_injections",
-			Chars:           fileInjectionChars,
-			EstimatedTokens: fileInjectionTokens,
-			Source:          "measured",
-		},
-		{
-			Section:         "response_budget",
-			Chars:           responseBudgetChars,
-			EstimatedTokens: responseBudgetTokens,
-			Source:          promptBudgetSource,
-		},
-	}
-	promptEstimatedTokens := 0
-	for _, s := range sections {
-		promptEstimatedTokens += s.EstimatedTokens
-	}
-
-	tasksSummary := ContextInspectTasks{}
-	if tasks, err := a.Tasks(sessionID); err == nil {
-		tasksSummary.Total = len(tasks)
-		for _, t := range tasks {
-			switch strings.ToLower(strings.TrimSpace(t.Status)) {
-			case "completed":
-				tasksSummary.Completed++
-			case "in_progress":
-				tasksSummary.InProgress++
-			default:
-				tasksSummary.Pending++
-			}
-		}
-	}
-
-	var memory *MemoryStatsResult
-	if stats, err := a.MemoryStats(); err == nil {
-		memory = stats
-	}
-
-	result := &ContextInspectResult{
-		SessionID:              sessionID,
-		Limit:                  limit,
-		EntryCount:             len(entries),
-		ContextChars:           totalContextChars,
-		ContextEstimatedTokens: totalContextTokens,
-		EstimatedTokens:        promptEstimatedTokens,
-		Truncated:              len(entries) >= limit,
-		ByEntryType:            buckets,
-		TopEntries:             top,
-		Sections:               sections,
-		Tasks:                  tasksSummary,
-		Memory:                 memory,
-		RetrievedAt:            time.Now().UTC().Format(time.RFC3339),
-	}
-	if sessionMeta != nil {
-		result.AgentID = sessionMeta.AgentID
-		result.Namespace = sessionMeta.Namespace
-		result.SessionStatus = sessionMeta.Status
-		if agentID == "" {
-			agentID = sessionMeta.AgentID
-		}
-	}
-	if result.AgentID == "" {
-		result.AgentID = agentID
-	}
-	return result, nil
-}
-
-func estimateContextChars(entry ContextEntry) int {
-	chars := len(entry.Title) + len(entry.Content) + len(entry.FilePath)
-	// Include minimal metadata overhead so very short entries are still represented.
-	chars += len(entry.EntryType) + len(entry.Timestamp)
-	if entry.LineStart > 0 || entry.LineEnd > 0 {
-		chars += 12
-	}
-	return chars
-}
-
-func estimateContextTokens(chars int) int {
-	if chars <= 0 {
-		return 0
-	}
-	// Simple approximation used elsewhere in HUD docs: ~4 chars/token.
-	return (chars + 3) / 4
-}
-
-func contextInspectPromptBudget(agentID string) (systemPromptTokens int, responseBudgetTokens int, source string) {
-	systemPromptTokens = contextInspectSystemPromptTokensDefault
-	responseBudgetTokens = contextInspectResponseBudgetTokensDefault
-	source = "heuristic:default"
-
-	lowerAgentID := strings.ToLower(strings.TrimSpace(agentID))
-	switch {
-	case strings.Contains(lowerAgentID, "claude"):
-		systemPromptTokens = 1024
-		responseBudgetTokens = 4096
-		source = "heuristic:claude"
-	case strings.Contains(lowerAgentID, "gemini"):
-		systemPromptTokens = 900
-		responseBudgetTokens = 3072
-		source = "heuristic:gemini"
-	case strings.Contains(lowerAgentID, "codex"), strings.Contains(lowerAgentID, "openai"):
-		systemPromptTokens = 896
-		responseBudgetTokens = 2048
-		source = "heuristic:codex"
-	}
-
-	if v, ok := parsePositiveIntEnv("LOOM_HUD_CONTEXT_SYSTEM_PROMPT_TOKENS"); ok {
-		systemPromptTokens = v
-		source = "configured:env"
-	}
-	if v, ok := parsePositiveIntEnv("LOOM_HUD_CONTEXT_RESPONSE_BUDGET_TOKENS"); ok {
-		responseBudgetTokens = v
-		source = "configured:env"
-	}
-
-	return systemPromptTokens, responseBudgetTokens, source
-}
-
-func parsePositiveIntEnv(key string) (int, bool) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return 0, false
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		return 0, false
-	}
-	return v, true
-}
-
-func isFileInjectionEntry(entry ContextEntry, entryType string) bool {
-	t := strings.ToLower(strings.TrimSpace(entryType))
-	if t == "file_read" || t == "code_context" {
-		return true
-	}
-	return strings.TrimSpace(entry.FilePath) != ""
-}
-
-func (a *AgentBridge) estimateToolSchemaBudget() (chars int, tokens int) {
-	if a == nil || a.client == nil {
-		return 0, 0
-	}
-	toolsResult, err := a.client.Tools()
-	if err != nil || toolsResult == nil {
-		return 0, 0
-	}
-	for _, tool := range toolsResult.Tools {
-		chars += len(tool.Name) + len(tool.Description)
-		if schemaJSON, err := json.Marshal(tool.InputSchema); err == nil {
-			chars += len(schemaJSON)
-		}
-	}
-	return chars, estimateContextTokens(chars)
-}
-
-// --- Reasoning chain methods ---
-
 // ReasoningChainInfo describes a reasoning chain.
 type ReasoningChainInfo struct {
 	ID          string  `json:"id"`
@@ -1283,38 +374,6 @@ type ReasoningChainDetail struct {
 	Steps []ReasoningStepInfo `json:"steps"`
 }
 
-// ReasoningChainList returns all reasoning chains.
-func (a *AgentBridge) ReasoningChainList() ([]ReasoningChainInfo, error) {
-	var result struct {
-		Chains []ReasoningChainInfo `json:"chains"`
-	}
-	if err := a.callAgentTool("agent_reasoning_chain_list", nil, &result); err != nil {
-		return nil, err
-	}
-	return result.Chains, nil
-}
-
-// ReasoningChainGet returns a chain with its steps.
-func (a *AgentBridge) ReasoningChainGet(id string) (*ReasoningChainDetail, error) {
-	args := map[string]any{"chain_id": id}
-	var result ReasoningChainDetail
-	if err := a.callAgentTool("agent_reasoning_chain_get", args, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ReasoningChainAdd creates a new reasoning chain.
-func (a *AgentBridge) ReasoningChainAdd(title, description string) error {
-	args := map[string]any{
-		"title":       title,
-		"description": description,
-	}
-	return a.callAgentTool("agent_reasoning_chain_add", args, nil)
-}
-
-// --- Handoff methods ---
-
 // HandoffInfo describes a handoff between agents.
 type HandoffInfo struct {
 	ID         string `json:"id"`
@@ -1336,110 +395,6 @@ type handoffInboxEntry struct {
 	CreatedAt    string `json:"created_at"`
 }
 
-func isUnknownToolErr(err error, toolName string) bool {
-	if err == nil || strings.TrimSpace(toolName) == "" {
-		return false
-	}
-	return strings.Contains(err.Error(), "unknown tool: "+toolName)
-}
-
-func (a *AgentBridge) handoffInbox(agentID string, includeViewed bool) ([]HandoffInfo, error) {
-	args := map[string]any{
-		"agent_id": agentID,
-	}
-	if includeViewed {
-		args["include_viewed"] = true
-	}
-
-	var result struct {
-		Handoffs []handoffInboxEntry `json:"handoffs"`
-	}
-	if err := a.callAgentTool("agent_handoff_inbox", args, &result); err != nil {
-		return nil, err
-	}
-
-	out := make([]HandoffInfo, 0, len(result.Handoffs))
-	for _, h := range result.Handoffs {
-		out = append(out, HandoffInfo{
-			ID:        h.HandoffID,
-			FromAgent: h.SourceAgent,
-			ToAgent:   agentID,
-			Status:    h.Status,
-			Summary:   h.Summary,
-			Context:   h.Instructions,
-			CreatedAt: h.CreatedAt,
-		})
-	}
-	return out, nil
-}
-
-// HandoffList returns pending/viewed handoffs across active/offline agents
-// by querying each agent's inbox via agent_handoff_inbox.
-func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
-	agents, err := a.PresenceList(true)
-	if err != nil {
-		return nil, err
-	}
-
-	seen := make(map[string]struct{})
-	combined := make([]HandoffInfo, 0)
-	var inboxErr error
-
-	for _, agent := range agents {
-		agentID := strings.TrimSpace(agent.AgentID)
-		if agentID == "" {
-			continue
-		}
-		handoffs, err := a.handoffInbox(agentID, true)
-		if err != nil {
-			if isUnknownToolErr(err, "agent_handoff_inbox") {
-				return nil, nil // tool unavailable, return empty
-			}
-			if inboxErr == nil {
-				inboxErr = err
-			}
-			continue
-		}
-		for _, h := range handoffs {
-			if strings.TrimSpace(h.ID) == "" {
-				continue
-			}
-			if _, ok := seen[h.ID]; ok {
-				continue
-			}
-			seen[h.ID] = struct{}{}
-			combined = append(combined, h)
-		}
-	}
-
-	if inboxErr != nil && len(combined) == 0 {
-		return nil, inboxErr
-	}
-	return combined, nil
-}
-
-// HandoffCreate creates a new handoff.
-func (a *AgentBridge) HandoffCreate(toAgent, summary, context string) error {
-	args := map[string]any{
-		"summary": summary,
-	}
-	if toAgent != "" {
-		args["to_agent"] = toAgent
-	}
-	if context != "" {
-		args["context"] = context
-	}
-	return a.callAgentTool("agent_handoff_create", args, nil)
-}
-
-// HandoffAccept accepts a handoff.
-func (a *AgentBridge) HandoffAccept(id string) error {
-	args := map[string]any{"handoff_id": id}
-	return a.callAgentTool("agent_handoff_accept", args, nil)
-}
-
-// --- Template methods ---
-
 // TemplateInfo describes a session template.
 type TemplateInfo struct {
 	ID          string `json:"id"`
@@ -1447,19 +402,6 @@ type TemplateInfo struct {
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at"`
 }
-
-// TemplateList returns all session templates.
-func (a *AgentBridge) TemplateList() ([]TemplateInfo, error) {
-	var result struct {
-		Templates []TemplateInfo `json:"templates"`
-	}
-	if err := a.callAgentTool("agent_template_list", nil, &result); err != nil {
-		return nil, err
-	}
-	return result.Templates, nil
-}
-
-// --- Annotation methods ---
 
 // AnnotationInfo describes a code annotation.
 type AnnotationInfo struct {
@@ -1470,486 +412,6 @@ type AnnotationInfo struct {
 	Content  string `json:"content"`
 	Category string `json:"category,omitempty"`
 }
-
-// AnnotationGet retrieves code annotations, optionally filtered by file.
-func (a *AgentBridge) AnnotationGet(filePath string) ([]AnnotationInfo, error) {
-	args := map[string]any{}
-	if filePath != "" {
-		args["file_path"] = filePath
-	}
-	var result struct {
-		Annotations []AnnotationInfo `json:"annotations"`
-	}
-	if err := a.callAgentTool("agent_code_annotations_get", args, &result); err != nil {
-		return nil, err
-	}
-	return result.Annotations, nil
-}
-
-// AnnotationAdd creates a code annotation.
-func (a *AgentBridge) AnnotationAdd(filePath, content, category string, line int) error {
-	args := map[string]any{
-		"file_path": filePath,
-		"content":   content,
-	}
-	if category != "" {
-		args["category"] = category
-	}
-	if line > 0 {
-		args["line"] = line
-	}
-	return a.callAgentTool("agent_code_annotate", args, nil)
-}
-
-// --- Agent lifecycle methods ---
-
-// SessionStartParams holds parameters for starting an agent session.
-type SessionStartParams struct {
-	Namespace             string `json:"namespace"`
-	AgentID               string `json:"agent_id"`
-	AgentType             string `json:"agent_type"`
-	Description           string `json:"description"`
-	AutoRecall            bool   `json:"auto_recall"`
-	AutoRecallStrategy    string `json:"auto_recall_strategy,omitempty"`
-	AutoRecallQuery       string `json:"auto_recall_query,omitempty"`
-	AutoRecallTokenBudget int    `json:"auto_recall_token_budget,omitempty"`
-}
-
-// SessionStartResult holds the result of starting a session.
-type SessionStartResult struct {
-	SessionID       string `json:"session_id"`
-	RecalledContext string `json:"recalled_context,omitempty"`
-	AlreadyExisted  bool   `json:"already_existed"`
-}
-
-const sessionStartActiveLookupTimeout = 1500 * time.Millisecond
-
-const (
-	autoRecallStrategyFast     = "fast"
-	autoRecallStrategyBalanced = "balanced"
-	autoRecallStrategyDeep     = "deep"
-	autoRecallBudgetMin        = 256
-	autoRecallBudgetMax        = 32000
-)
-
-type autoRecallProfile struct {
-	TokenBudget   int
-	IncludeTasks  bool
-	RecencyWeight float64
-}
-
-var autoRecallProfiles = map[string]autoRecallProfile{
-	autoRecallStrategyFast: {
-		TokenBudget:   1500,
-		IncludeTasks:  false,
-		RecencyWeight: 0.45,
-	},
-	autoRecallStrategyBalanced: {
-		TokenBudget:   4000,
-		IncludeTasks:  true,
-		RecencyWeight: 0.20,
-	},
-	autoRecallStrategyDeep: {
-		TokenBudget:   8000,
-		IncludeTasks:  true,
-		RecencyWeight: 0.10,
-	},
-}
-
-func normalizeAutoRecallStrategy(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case autoRecallStrategyFast:
-		return autoRecallStrategyFast
-	case autoRecallStrategyDeep:
-		return autoRecallStrategyDeep
-	default:
-		return autoRecallStrategyBalanced
-	}
-}
-
-func clampAutoRecallBudget(budget int) int {
-	switch {
-	case budget < autoRecallBudgetMin:
-		return autoRecallBudgetMin
-	case budget > autoRecallBudgetMax:
-		return autoRecallBudgetMax
-	default:
-		return budget
-	}
-}
-
-func defaultAutoRecallQuery(p SessionStartParams) string {
-	if q := strings.TrimSpace(p.Description); q != "" {
-		return q
-	}
-	if q := strings.TrimSpace(p.Namespace); q != "" {
-		return q
-	}
-	return "recent implementation context and open tasks"
-}
-
-func buildSessionStartRecallArgs(p SessionStartParams) map[string]any {
-	strategy := normalizeAutoRecallStrategy(p.AutoRecallStrategy)
-	profile := autoRecallProfiles[strategy]
-
-	query := strings.TrimSpace(p.AutoRecallQuery)
-	if query == "" {
-		query = defaultAutoRecallQuery(p)
-	}
-
-	tokenBudget := profile.TokenBudget
-	if p.AutoRecallTokenBudget > 0 {
-		tokenBudget = clampAutoRecallBudget(p.AutoRecallTokenBudget)
-	}
-
-	args := map[string]any{
-		"query":             query,
-		"token_budget":      tokenBudget,
-		"include_decisions": true,
-		"include_summaries": true,
-		"include_tasks":     profile.IncludeTasks,
-		"recency_weight":    profile.RecencyWeight,
-	}
-	if id := strings.TrimSpace(p.AgentID); id != "" {
-		args["agent_id"] = id
-	}
-	if ns := strings.TrimSpace(p.Namespace); ns != "" {
-		args["file_context"] = ns
-	}
-
-	return args
-}
-
-// StartSession creates a session, registers presence, and optionally recalls context.
-// It is idempotent: if the agent already has an active session in the same namespace,
-// it returns the existing session ID instead of creating a new one.
-//
-// Presence registration and context recall are fire-and-forget: they run in
-// background goroutines so the caller is not blocked by non-critical MCP calls.
-func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, error) {
-	// Check for existing active session in the same namespace (cached, fast path).
-	// Bound this lookup to avoid delaying startup if agent-context is slow.
-	if existing, err := a.getActiveSession(p.AgentID, sessionStartActiveLookupTimeout); err == nil && existing != nil {
-		if existing.Namespace == p.Namespace && existing.Status == "active" {
-			return &SessionStartResult{
-				SessionID:      existing.ID,
-				AlreadyExisted: true,
-			}, nil
-		}
-	}
-
-	// Start a new session (blocking, required, 8s timeout).
-	args := map[string]any{
-		"namespace":   p.Namespace,
-		"description": p.Description,
-	}
-	if p.AgentID != "" {
-		args["agent_id"] = p.AgentID
-	}
-	var sessionResult struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := a.callAgentToolTimeout("agent_session_start", args, &sessionResult, 8*time.Second); err != nil {
-		return nil, fmt.Errorf("start session: %w", err)
-	}
-
-	// Invalidate the session cache so subsequent GetActiveSession picks up
-	// the newly created session.
-	a.invalidateSessionCache(p.AgentID)
-
-	result := &SessionStartResult{
-		SessionID: sessionResult.SessionID,
-	}
-
-	// Fire-and-forget: register presence (non-critical, error already ignored).
-	presenceArgs := map[string]any{
-		"agent_id":   p.AgentID,
-		"session_id": sessionResult.SessionID,
-	}
-	if p.AgentType != "" {
-		presenceArgs["agent_type"] = p.AgentType
-	}
-	if p.Description != "" {
-		presenceArgs["description"] = p.Description
-	}
-	go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
-
-	// Fire-and-forget: recall context (best-effort, not returned to caller).
-	if p.AutoRecall {
-		recallArgs := buildSessionStartRecallArgs(p)
-		go func() { _ = a.callAgentTool("agent_recall", recallArgs, nil) }()
-	}
-
-	return result, nil
-}
-
-// SessionEndParams holds parameters for ending an agent session.
-type SessionEndParams struct {
-	SessionID    string `json:"session_id"`
-	AgentID      string `json:"agent_id"`
-	Summarize    *bool  `json:"summarize,omitempty"`
-	SummaryAsync bool   `json:"summary_async,omitempty"`
-}
-
-func (p SessionEndParams) summarizeEnabled() bool {
-	if p.Summarize == nil {
-		return true
-	}
-	return *p.Summarize
-}
-
-// EndSession ends a session, optionally summarizes context, and deregisters presence.
-// If SessionID is empty, it finds the active session by AgentID.
-// Returns (true, nil) when a session was ended, (false, nil) when no session was
-// found (not an error — hooks may fire against a restarted HUD), or (false, err)
-// on actual failures.
-func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
-	sessionID := p.SessionID
-	if sessionID == "" && p.AgentID != "" {
-		if active, err := a.GetActiveSession(p.AgentID); err == nil && active != nil {
-			sessionID = active.ID
-		}
-	}
-	if sessionID == "" {
-		return false, nil
-	}
-
-	args := map[string]any{
-		"session_id": sessionID,
-		"summarize":  p.summarizeEnabled(),
-	}
-	if p.SummaryAsync {
-		args["summary_async"] = true
-	}
-	if err := a.callAgentTool("agent_session_end", args, nil); err != nil {
-		return false, fmt.Errorf("end session: %w", err)
-	}
-
-	// Invalidate the session cache so subsequent lookups reflect the ended session.
-	if p.AgentID != "" {
-		a.invalidateSessionCache(p.AgentID)
-	}
-
-	// Deregister presence (best-effort).
-	if p.AgentID != "" {
-		_ = a.callAgentTool("agent_presence_deregister", map[string]any{
-			"agent_id": p.AgentID,
-		}, nil)
-	}
-
-	return true, nil
-}
-
-// PresenceHeartbeat updates the heartbeat timestamp for an agent.
-type PresenceHeartbeatParams struct {
-	Status      string
-	ActiveFiles []string
-	CurrentTask string
-	Branch      string
-}
-
-func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParams) (*PresenceHeartbeatResult, error) {
-	args := map[string]any{
-		"agent_id": agentID,
-	}
-	if p.Status != "" {
-		args["status"] = p.Status
-	}
-	if len(p.ActiveFiles) > 0 {
-		args["active_files"] = p.ActiveFiles
-	}
-	if p.CurrentTask != "" {
-		args["current_task"] = p.CurrentTask
-	}
-	if p.Branch != "" {
-		args["branch"] = p.Branch
-	}
-
-	var result PresenceHeartbeatResult
-	if err := a.callAgentTool("agent_presence_heartbeat", args, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// PresenceRegister registers an agent's presence without starting a session.
-// This is useful for clients that only want heartbeat-style liveness tracking.
-func (a *AgentBridge) PresenceRegister(agentID, sessionID, agentType, description string, heartbeatTTLSeconds int) error {
-	args := map[string]any{
-		"agent_id": agentID,
-	}
-	if sessionID != "" {
-		args["session_id"] = sessionID
-	}
-	if agentType != "" {
-		args["agent_type"] = agentType
-	}
-	if description != "" {
-		args["description"] = description
-	}
-	if heartbeatTTLSeconds > 0 {
-		args["heartbeat_ttl_seconds"] = heartbeatTTLSeconds
-	}
-	return a.callAgentTool("agent_presence_register", args, nil)
-}
-
-// GetActiveSession finds the currently active session for an agent.
-// Results are cached for 30 seconds to avoid repeated full session list
-// fetches from the MCP server. Returns nil if no active session exists.
-func (a *AgentBridge) GetActiveSession(agentID string) (*SessionInfo, error) {
-	return a.getActiveSession(agentID, 0)
-}
-
-func (a *AgentBridge) getActiveSession(agentID string, timeout time.Duration) (*SessionInfo, error) {
-	if strings.TrimSpace(agentID) == "" {
-		return nil, nil
-	}
-
-	cacheKey := "active_session:" + agentID
-	if cached, ok := a.cache.Get(cacheKey); ok {
-		// Cache hit — may be nil (*SessionInfo) for "no active session".
-		s, _ := cached.(*SessionInfo)
-		return s, nil
-	}
-
-	// Query with agent_id + status filter to avoid hitting the default 20-item
-	// limit when the agent's sessions fall outside the unfiltered window.
-	var listResult struct {
-		Sessions []SessionInfo `json:"sessions"`
-	}
-	args := map[string]any{
-		"agent_id": agentID,
-		"status":   "active",
-		"limit":    1,
-	}
-	var err error
-	if timeout > 0 {
-		err = a.callAgentToolTimeout("agent_session_list", args, &listResult, timeout)
-	} else {
-		err = a.callAgentTool("agent_session_list", args, &listResult)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var result *SessionInfo
-	if len(listResult.Sessions) > 0 {
-		result = &listResult.Sessions[0]
-	}
-
-	// Cache both hits and misses to avoid redundant fetches.
-	a.cache.Set(cacheKey, result, 30*time.Second)
-	return result, nil
-}
-
-// --- Dispatch + Claim methods ---
-
-// DispatchTaskParams holds parameters for dispatching a task to an agent.
-type DispatchTaskParams struct {
-	TargetAgentID string
-	Title         string
-	Context       string
-	Priority      string
-	Tags          []string
-	FilePath      string
-	LineNumber    int
-	BlockedBy     []string
-}
-
-// DispatchTask creates a task and a handoff targeting a specific agent.
-// This enables the HUD or CLI to push work to an active agent.
-func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error) {
-	// Find target agent's active session for task creation.
-	session, err := a.GetActiveSession(p.TargetAgentID)
-	if err != nil {
-		return nil, fmt.Errorf("find target session: %w", err)
-	}
-
-	sessionID := ""
-	if session != nil {
-		sessionID = session.ID
-	}
-
-	taskCreated := false
-
-	// Create the task.
-	if sessionID != "" {
-		if err := a.CreateTask(CreateTaskParams{
-			SessionID:  sessionID,
-			Title:      p.Title,
-			Context:    p.Context,
-			Priority:   p.Priority,
-			Tags:       mergeDispatchTags(p.Tags),
-			FilePath:   p.FilePath,
-			LineNumber: p.LineNumber,
-			BlockedBy:  p.BlockedBy,
-		}); err != nil {
-			return nil, fmt.Errorf("create task: %w", err)
-		}
-		taskCreated = true
-	}
-
-	// Create a handoff targeting the agent.
-	handoffSummary := fmt.Sprintf("[Dispatched] %s", p.Title)
-	if err := a.HandoffCreate(p.TargetAgentID, handoffSummary, p.Context); err != nil {
-		return nil, fmt.Errorf("create handoff: %w", err)
-	}
-
-	return map[string]any{
-		"ok":              true,
-		"target_agent_id": p.TargetAgentID,
-		"session_id":      sessionID,
-		"title":           p.Title,
-		"priority":        p.Priority,
-		"task_created":    taskCreated,
-		"handoff_created": true,
-	}, nil
-}
-
-func mergeDispatchTags(tags []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(tags)+1)
-
-	for _, tag := range append([]string{"dispatched"}, tags...) {
-		normalized := strings.TrimSpace(tag)
-		if normalized == "" {
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		out = append(out, normalized)
-	}
-	return out
-}
-
-// ReleaseFileClaim releases a specific file claim for an agent.
-func (a *AgentBridge) ReleaseFileClaim(agentID, filePath string) error {
-	args := map[string]any{
-		"agent_id":  agentID,
-		"file_path": filePath,
-	}
-	return a.callAgentTool("agent_file_claim_release", args, nil)
-}
-
-// HandoffListForAgent returns pending handoffs targeted at a specific agent.
-func (a *AgentBridge) HandoffListForAgent(agentID string) ([]HandoffInfo, error) {
-	if strings.TrimSpace(agentID) == "" {
-		return []HandoffInfo{}, nil
-	}
-
-	handoffs, err := a.handoffInbox(agentID, false)
-	if err != nil {
-		if isUnknownToolErr(err, "agent_handoff_inbox") {
-			return nil, nil // tool unavailable, return empty
-		}
-		return nil, err
-	}
-	return handoffs, nil
-}
-
-// --- Tunnel/cache methods ---
 
 // TunnelInfo describes an SSH tunnel status.
 type TunnelInfo struct {
@@ -1965,23 +427,6 @@ type CacheStatsInfo struct {
 	Entries int     `json:"entries"`
 	Size    string  `json:"size"`
 	HitRate float64 `json:"hit_rate"`
-}
-
-// KnowledgeRecall performs a cross-agent enhanced recall, searching across all
-// sessions and agents. It returns entries with source agent_id attribution.
-func (a *AgentBridge) KnowledgeRecall(query string, category string, tokenBudget int) (*KnowledgeResult, error) {
-	args := map[string]any{
-		"query":       query,
-		"cross_agent": true,
-	}
-	if tokenBudget > 0 {
-		args["token_budget"] = tokenBudget
-	}
-	var result KnowledgeResult
-	if err := a.callAgentTool("agent_recall", args, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
 }
 
 // KnowledgeResult is the response from cross-agent enhanced recall.
@@ -2009,24 +454,75 @@ type KnowledgeEntry struct {
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
-// ContextStream returns context entries since a given time, up to limit.
-func (a *AgentBridge) ContextStream(since time.Time, limit int) ([]ContextEntryInfo, error) {
-	args := map[string]any{
-		// agent_context_search requires a non-empty query string.
-		// Keep the existing since: marker used by HUD stream callers.
-		"query": "since:1970-01-01T00:00:00Z",
+// --- Internal helpers ---
+
+func normalizeEntityInfo(e *EntityInfo) {
+	if e == nil {
+		return
 	}
-	if !since.IsZero() {
-		args["query"] = fmt.Sprintf("since:%s", since.UTC().Format(time.RFC3339))
+	if e.EntityType == "" {
+		e.EntityType = e.Type
 	}
-	if limit > 0 {
-		args["limit"] = limit
+	if e.Type == "" {
+		e.Type = e.EntityType
 	}
-	var result struct {
-		Results []ContextEntryInfo `json:"results"`
+}
+
+func normalizeRelationInfo(r *RelationInfo) {
+	if r == nil {
+		return
 	}
-	if err := a.callAgentTool("agent_context_search", args, &result); err != nil {
-		return nil, err
+	if r.RelationType == "" {
+		r.RelationType = r.Type
 	}
-	return result.Results, nil
+	if r.Type == "" {
+		r.Type = r.RelationType
+	}
+}
+
+func isUnknownToolErr(err error, toolName string) bool {
+	if err == nil || strings.TrimSpace(toolName) == "" {
+		return false
+	}
+	return strings.Contains(err.Error(), "unknown tool: "+toolName)
+}
+
+// callAgentTool invokes an agent_context tool and unmarshals the response
+// into the provided target. It unwraps the MCP CallToolResult envelope and
+// supports both JSON and TOON (Token-Optimized Object Notation) text payloads.
+func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target any) error {
+	raw, err := a.client.CallTool("agent_context__"+toolName, args)
+	if err != nil {
+		return fmt.Errorf("agent tool %s: %w", toolName, err)
+	}
+
+	if target == nil {
+		return nil
+	}
+	if err := UnmarshalToolResult(raw, target); err != nil {
+		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
+	}
+	return nil
+}
+
+// callAgentToolTimeout is like callAgentTool but uses a per-call timeout
+// override on the underlying DaemonClient RPC.
+func (a *AgentBridge) callAgentToolTimeout(toolName string, args map[string]any, target any, timeout time.Duration) error {
+	raw, err := a.client.CallToolWithTimeout("agent_context__"+toolName, args, timeout)
+	if err != nil {
+		return fmt.Errorf("agent tool %s: %w", toolName, err)
+	}
+
+	if target == nil {
+		return nil
+	}
+	if err := UnmarshalToolResult(raw, target); err != nil {
+		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
+	}
+	return nil
+}
+
+// invalidateSessionCache removes the cached active-session entry for an agent.
+func (a *AgentBridge) invalidateSessionCache(agentID string) {
+	a.cache.Invalidate("active_session:" + agentID)
 }

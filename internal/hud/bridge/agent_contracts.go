@@ -207,3 +207,30 @@ type NudgeQueuePolicyResponse struct {
 	OK     bool             `json:"ok"`
 	Policy NudgeQueuePolicy `json:"policy"`
 }
+
+// HeartbeatRequest is the shared HTTP body for POST /api/agent/heartbeat.
+type HeartbeatRequest struct {
+	AgentID     string `json:"agent_id"`
+	SessionID   string `json:"session_id,omitempty"`
+	Status      string `json:"status,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Description string `json:"description,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+	// EnsureSession auto-bootstraps a session when heartbeat clients lack
+	// dedicated session-start hooks (for example proxy-only integrations).
+	EnsureSession       bool     `json:"ensure_session,omitempty"`
+	ActiveFiles         []string `json:"active_files,omitempty"`
+	CurrentTask         string   `json:"current_task,omitempty"`
+	Branch              string   `json:"branch,omitempty"`
+	HeartbeatTTLSeconds int      `json:"heartbeat_ttl_seconds,omitempty"`
+}
+
+// HeartbeatParams extracts bridge-level heartbeat params from the request.
+func (r HeartbeatRequest) HeartbeatParams() PresenceHeartbeatParams {
+	return PresenceHeartbeatParams{
+		Status:      r.Status,
+		ActiveFiles: r.ActiveFiles,
+		CurrentTask: r.CurrentTask,
+		Branch:      r.Branch,
+	}
+}
