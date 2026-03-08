@@ -96,6 +96,11 @@ cache:
 # Base template for Go jobs
 .go-template: &go-template
   image: registry.harbor.lan/dockerhub-cache/library/golang:${GO_VERSION}
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
   variables:
     GO_WARM_MOD_CACHE: "false"
   before_script:
