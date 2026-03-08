@@ -365,9 +365,15 @@ rules:
   - apiGroups: ["ai.flexinfer"]
     resources: ["models/status"]
     verbs: ["get", "update", "patch"]
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["loraadapters"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "endpoints"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
