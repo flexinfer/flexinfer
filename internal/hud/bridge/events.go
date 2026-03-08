@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 )
 
 // SSEEvent represents a single event received from the daemon's SSE stream.
@@ -176,33 +179,22 @@ func (ec *EventConsumer) stream(ctx context.Context) error {
 	// Increase scanner buffer for large events.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	var currentData strings.Builder
+	var currentBlock strings.Builder
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSuffix(scanner.Text(), "\r")
 
 		// Empty line signals end of an event.
 		if line == "" {
-			if currentData.Len() > 0 {
-				ec.handleRawEvent(currentData.String())
-				currentData.Reset()
+			if currentBlock.Len() > 0 {
+				ec.handleSSEBlock(currentBlock.String())
+				currentBlock.Reset()
 			}
 			continue
 		}
 
-		// Parse SSE fields.
-		if strings.HasPrefix(line, "data: ") {
-			if currentData.Len() > 0 {
-				currentData.WriteByte('\n')
-			}
-			currentData.WriteString(strings.TrimPrefix(line, "data: "))
-		} else if strings.HasPrefix(line, "data:") {
-			if currentData.Len() > 0 {
-				currentData.WriteByte('\n')
-			}
-			currentData.WriteString(strings.TrimPrefix(line, "data:"))
-		}
-		// Ignore "id:", "event:", "retry:" fields -- we parse from the JSON payload.
+		currentBlock.WriteString(line)
+		currentBlock.WriteByte('\n')
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -212,14 +204,107 @@ func (ec *EventConsumer) stream(ctx context.Context) error {
 	return fmt.Errorf("stream ended")
 }
 
-// handleRawEvent parses JSON data and dispatches to handlers.
-func (ec *EventConsumer) handleRawEvent(data string) {
-	var event SSEEvent
-	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		ec.logger.Debug("failed to unmarshal SSE event", "error", err, "data", data)
+// handleSSEBlock parses a complete SSE event block and dispatches it.
+func (ec *EventConsumer) handleSSEBlock(block string) {
+	event, err := parseSSEEventBlock(block)
+	if err != nil {
+		ec.logger.Debug("failed to parse SSE event", "error", err, "block", block)
 		return
 	}
+	if event == nil {
+		return
+	}
+	ec.dispatchEvent(*event)
+}
 
+func parseSSEEventBlock(block string) (*SSEEvent, error) {
+	if fiaccel.RuntimeCapabilities().Transport {
+		return parseSSEEventBlockNative(block)
+	}
+	return parseSSEEventBlockLegacy(block)
+}
+
+func parseSSEEventBlockNative(block string) (*SSEEvent, error) {
+	events, err := fiaccel.ParseSSEEvents([]byte(block + "\n"))
+	if err != nil {
+		if errors.Is(err, fiaccel.ErrNotAvailable) || err == fiaccel.ErrNotAvailable {
+			return parseSSEEventBlockLegacy(block)
+		}
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+
+	var event SSEEvent
+	if err := json.Unmarshal([]byte(events[0].Data), &event); err != nil {
+		return nil, err
+	}
+	if event.ID == "" && events[0].ID != nil {
+		event.ID = *events[0].ID
+	}
+	if event.Type == "" && events[0].Event != nil {
+		event.Type = *events[0].Event
+	}
+	return &event, nil
+}
+
+func parseSSEEventBlockLegacy(block string) (*SSEEvent, error) {
+	var currentData strings.Builder
+	var eventID string
+	var eventType string
+	for _, line := range strings.Split(block, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "id: ") {
+			eventID = strings.TrimPrefix(line, "id: ")
+			continue
+		}
+		if strings.HasPrefix(line, "id:") {
+			eventID = strings.TrimPrefix(line, "id:")
+			continue
+		}
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimPrefix(line, "event:")
+			continue
+		}
+		if strings.HasPrefix(line, "data: ") {
+			if currentData.Len() > 0 {
+				currentData.WriteByte('\n')
+			}
+			currentData.WriteString(strings.TrimPrefix(line, "data: "))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if currentData.Len() > 0 {
+				currentData.WriteByte('\n')
+			}
+			currentData.WriteString(strings.TrimPrefix(line, "data:"))
+		}
+	}
+	if currentData.Len() == 0 {
+		return nil, nil
+	}
+
+	var event SSEEvent
+	if err := json.Unmarshal([]byte(currentData.String()), &event); err != nil {
+		return nil, err
+	}
+	if event.ID == "" {
+		event.ID = eventID
+	}
+	if event.Type == "" {
+		event.Type = eventType
+	}
+	return &event, nil
+}
+
+func (ec *EventConsumer) dispatchEvent(event SSEEvent) {
 	ec.mu.RLock()
 	// Copy both handler slices under lock to avoid data races.
 	typeHandlers := make([]EventHandler, len(ec.handlers[event.Type]))
