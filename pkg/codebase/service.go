@@ -139,15 +139,8 @@ func NewServiceWithEmbedder(cfg Config, embedder embed.Embedder) (*Service, erro
 }
 
 func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	root := "."
-	if v, ok := args["root"].(string); ok && strings.TrimSpace(v) != "" {
-		root = v
-	}
-
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	root := validate.StringFromArgs(args, "root", ".")
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if repoID == "" {
 		derived, derr := deriveRepoID(root)
 		if derr != nil {
@@ -196,10 +189,7 @@ func (s *Service) HandleIndexStart(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleStats(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
@@ -249,7 +239,7 @@ func (s *Service) HandleStats(ctx context.Context, args map[string]any) (*mcp.Ca
 }
 
 func (s *Service) HandleDeleteRepo(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID, _ := args["repo_id"].(string)
+	repoID := validate.StringFromArgs(args, "repo_id", "")
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required")
 	}
@@ -281,7 +271,7 @@ func (s *Service) HandleDeleteRepo(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleIndexPoll(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	jobID, _ := args["job_id"].(string)
+	jobID := validate.StringFromArgs(args, "job_id", "")
 	if strings.TrimSpace(jobID) == "" {
 		return nil, fmt.Errorf("job_id is required")
 	}
@@ -306,7 +296,7 @@ func (s *Service) HandleIndexPoll(ctx context.Context, args map[string]any) (*mc
 }
 
 func (s *Service) HandleIndexCancel(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	jobID, _ := args["job_id"].(string)
+	jobID := validate.StringFromArgs(args, "job_id", "")
 	if strings.TrimSpace(jobID) == "" {
 		return nil, fmt.Errorf("job_id is required")
 	}
@@ -323,15 +313,12 @@ func (s *Service) HandleIndexCancel(ctx context.Context, args map[string]any) (*
 }
 
 func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	query, _ := args["query"].(string)
+	query := validate.StringFromArgs(args, "query", "")
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query is required")
 	}
@@ -343,17 +330,8 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 
 	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
-	rerank := "none"
-	if v, ok := args["rerank"].(string); ok && strings.TrimSpace(v) != "" {
-		rerank = strings.ToLower(strings.TrimSpace(v))
-	}
-	lexicalWeight := 0.15
-	switch v := args["lexical_weight"].(type) {
-	case float64:
-		lexicalWeight = v
-	case int:
-		lexicalWeight = float64(v)
-	}
+	rerank := strings.ToLower(validate.StringFromArgs(args, "rerank", "none"))
+	lexicalWeight := validate.Float64FromArgs(args, "lexical_weight", 0.15)
 	if lexicalWeight < 0 {
 		lexicalWeight = 0
 	}
@@ -420,20 +398,17 @@ func (s *Service) HandleSearch(ctx context.Context, args map[string]any) (*mcp.C
 }
 
 func (s *Service) HandleGetDefinition(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	symbol, _ := args["symbol"].(string)
+	symbol := validate.StringFromArgs(args, "symbol", "")
 	if strings.TrimSpace(symbol) == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
 	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
 	if limit <= 0 {
@@ -471,20 +446,17 @@ func (s *Service) HandleGetDefinition(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleGetReferences(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	symbol, _ := args["symbol"].(string)
+	symbol := validate.StringFromArgs(args, "symbol", "")
 	if strings.TrimSpace(symbol) == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
 	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
 	if limit <= 0 {
@@ -543,15 +515,12 @@ func (s *Service) HandleGetReferences(ctx context.Context, args map[string]any) 
 }
 
 func (s *Service) HandleGetContext(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 	if strings.TrimSpace(filePath) == "" {
 		return nil, fmt.Errorf("file_path is required")
 	}
@@ -615,20 +584,17 @@ func (s *Service) HandleGetContext(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleFindCallers(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	symbol, _ := args["symbol"].(string)
+	symbol := validate.StringFromArgs(args, "symbol", "")
 	if strings.TrimSpace(symbol) == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
 	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
 	if limit <= 0 {
@@ -655,20 +621,17 @@ func (s *Service) HandleFindCallers(ctx context.Context, args map[string]any) (*
 }
 
 func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	symbol, _ := args["symbol"].(string)
+	symbol := validate.StringFromArgs(args, "symbol", "")
 	if strings.TrimSpace(symbol) == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
 	limit := validate.IntFromArgs(args, "limit", s.cfg.ScrollLimit)
 	if limit <= 0 {
@@ -706,15 +669,12 @@ func (s *Service) HandleFindCallees(ctx context.Context, args map[string]any) (*
 }
 
 func (s *Service) HandleTextSearch(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if strings.TrimSpace(repoID) == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	query, _ := args["query"].(string)
+	query := validate.StringFromArgs(args, "query", "")
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
@@ -739,7 +699,7 @@ func (s *Service) HandleTextSearch(ctx context.Context, args map[string]any) (*m
 	caseSensitive := validate.BoolFromArgs(args, "case_sensitive", false)
 	includeContent := validate.BoolFromArgs(args, "include_content", false)
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
 	languages := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages"))
 	chunkTypes := normalizeStringSlice(validate.StringSliceFromArgs(args, "chunk_types"))

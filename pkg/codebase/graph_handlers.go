@@ -114,25 +114,19 @@ func renderCallGraph(render string, nodes []graphNode, edges []graphEdge) string
 }
 
 func (s *Service) HandleCallGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
-	if strings.TrimSpace(repoID) == "" {
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
+	if repoID == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 
-	symbol, _ := args["symbol"].(string)
-	if strings.TrimSpace(symbol) == "" {
+	symbol := validate.StringFromArgs(args, "symbol", "")
+	if symbol == "" {
 		return nil, fmt.Errorf("symbol is required")
 	}
 
-	filePath, _ := args["file_path"].(string)
+	filePath := validate.StringFromArgs(args, "file_path", "")
 
-	direction := "out"
-	if v, ok := args["direction"].(string); ok && strings.TrimSpace(v) != "" {
-		direction = strings.ToLower(strings.TrimSpace(v))
-	}
+	direction := strings.ToLower(validate.StringFromArgs(args, "direction", "out"))
 	if direction != "out" && direction != "in" && direction != "both" {
 		return nil, fmt.Errorf("direction must be one of: out, in, both")
 	}
@@ -382,11 +376,8 @@ func renderModuleGraph(render string, nodes []moduleGraphNode, edges []moduleGra
 }
 
 func (s *Service) HandleModuleGraph(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
-	if strings.TrimSpace(repoID) == "" {
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
+	if repoID == "" {
 		return nil, fmt.Errorf("repo_id is required (or set CODEBASE_REPO_ID)")
 	}
 

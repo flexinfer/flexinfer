@@ -35,6 +35,7 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-017~~ | done | Already split (k8s.go = 135 LOC, 4-way split complete) |
 | ~~DEBT-018~~ | done | 895b9d8 (test coverage 39.4%, 12 test files) |
 | ~~DEBT-019~~ | done | Consolidated env helpers to pkg/env, deleted duplicate helpers |
+| ~~DEBT-020~~ | done | Added StringFromArgs/Float64FromArgs to pkg/validate, replaced 30+ type assertions |
 
 ## Suggested Cut Lines
 

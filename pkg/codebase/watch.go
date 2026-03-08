@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/pkg/codebase/index"
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
 	"github.com/crb2nu/loom/pkg/codebase/schema"
+	"github.com/crb2nu/loom/pkg/validate"
 )
 
 type watchJob struct {
@@ -36,15 +37,8 @@ type watchTask struct {
 }
 
 func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	root := "."
-	if v, ok := args["root"].(string); ok && strings.TrimSpace(v) != "" {
-		root = v
-	}
-
-	repoID := s.cfg.RepoIDDefault
-	if v, ok := args["repo_id"].(string); ok && strings.TrimSpace(v) != "" {
-		repoID = v
-	}
+	root := validate.StringFromArgs(args, "root", ".")
+	repoID := validate.StringFromArgs(args, "repo_id", s.cfg.RepoIDDefault)
 	if repoID == "" {
 		derived, derr := deriveRepoID(root)
 		if derr != nil {
@@ -54,51 +48,21 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 	}
 
 	langs := s.indexers.SupportedLanguages()
-	if raw, ok := args["languages"].([]any); ok && len(raw) > 0 {
-		var out []string
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, strings.ToLower(strings.TrimSpace(s)))
-			}
-		}
-		if len(out) > 0 {
-			langs = out
-		}
+	if normalized := normalizeStringSlice(validate.StringSliceFromArgs(args, "languages")); len(normalized) > 0 {
+		langs = normalized
 	}
-
-	var exclude []string
-	if raw, ok := args["exclude"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				exclude = append(exclude, s)
-			}
-		}
-	}
+	exclude := validate.StringSliceFromArgs(args, "exclude")
 
 	debounce := 750 * time.Millisecond
-	switch v := args["debounce_ms"].(type) {
-	case float64:
-		if int(v) > 0 {
-			debounce = time.Duration(int(v)) * time.Millisecond
-		}
-	case int:
-		if v > 0 {
-			debounce = time.Duration(v) * time.Millisecond
-		}
+	if ms := validate.IntFromArgs(args, "debounce_ms", 0); ms > 0 {
+		debounce = time.Duration(ms) * time.Millisecond
 	}
 	if debounce < 100*time.Millisecond {
 		debounce = 100 * time.Millisecond
 	}
 
-	gitMetadata := s.cfg.GitMetadataDefault
-	if v, ok := args["git_metadata"].(bool); ok {
-		gitMetadata = v
-	}
-
-	embeddings := !s.cfg.DisableEmbeddingsDefault
-	if v, ok := args["embeddings"].(bool); ok {
-		embeddings = v
-	}
+	gitMetadata := validate.BoolFromArgs(args, "git_metadata", s.cfg.GitMetadataDefault)
+	embeddings := validate.BoolFromArgs(args, "embeddings", !s.cfg.DisableEmbeddingsDefault)
 
 	watchID := schema.ShortSHA256Hex(fmt.Sprintf("%s:%d", repoID, time.Now().UnixNano()))
 	jobCtx, cancel := context.WithCancel(ctx)
@@ -129,8 +93,8 @@ func (s *Service) HandleWatchStart(ctx context.Context, args map[string]any) (*m
 }
 
 func (s *Service) HandleWatchPoll(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	watchID, _ := args["watch_id"].(string)
-	if strings.TrimSpace(watchID) == "" {
+	watchID := validate.StringFromArgs(args, "watch_id", "")
+	if watchID == "" {
 		return nil, fmt.Errorf("watch_id is required")
 	}
 
@@ -154,8 +118,8 @@ func (s *Service) HandleWatchPoll(ctx context.Context, args map[string]any) (*mc
 }
 
 func (s *Service) HandleWatchStop(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	watchID, _ := args["watch_id"].(string)
-	if strings.TrimSpace(watchID) == "" {
+	watchID := validate.StringFromArgs(args, "watch_id", "")
+	if watchID == "" {
 		return nil, fmt.Errorf("watch_id is required")
 	}
 

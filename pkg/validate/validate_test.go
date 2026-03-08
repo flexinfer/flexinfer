@@ -915,6 +915,61 @@ func TestIntFromArgs(t *testing.T) {
 	}
 }
 
+func TestStringFromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		args       map[string]any
+		key        string
+		defaultVal string
+		want       string
+	}{
+		{"present", map[string]any{"name": "hello"}, "name", "", "hello"},
+		{"whitespace trimmed", map[string]any{"name": "  hello  "}, "name", "", "hello"},
+		{"empty after trim returns default", map[string]any{"name": "   "}, "name", "fallback", "fallback"},
+		{"missing uses default", map[string]any{}, "name", "default", "default"},
+		{"nil map", nil, "name", "default", "default"},
+		{"wrong type", map[string]any{"name": 42}, "name", "default", "default"},
+		{"empty string returns default", map[string]any{"name": ""}, "name", "fb", "fb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StringFromArgs(tt.args, tt.key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFloat64FromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		args       map[string]any
+		key        string
+		defaultVal float64
+		want       float64
+	}{
+		{"present", map[string]any{"weight": 0.75}, "weight", 0.5, 0.75},
+		{"zero value", map[string]any{"weight": 0.0}, "weight", 0.5, 0.0},
+		{"missing uses default", map[string]any{}, "weight", 0.5, 0.5},
+		{"nil map", nil, "weight", 0.5, 0.5},
+		{"wrong type", map[string]any{"weight": "high"}, "weight", 0.5, 0.5},
+		{"int type returns default", map[string]any{"weight": 1}, "weight", 0.5, 0.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Float64FromArgs(tt.args, tt.key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPatternConstants(t *testing.T) {
 	t.Parallel()
 	patterns := map[string]string{

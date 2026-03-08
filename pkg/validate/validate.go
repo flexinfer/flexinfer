@@ -276,6 +276,26 @@ func (a *Args) Validate() error {
 // Standalone helpers (operate on raw map[string]any without Args wrapper)
 // ---------------------------------------------------------------------------
 
+// StringFromArgs extracts a trimmed string from a map[string]any field.
+// Returns defaultVal if the field is absent, not a string, or empty after trimming.
+func StringFromArgs(args map[string]any, key string, defaultVal string) string {
+	if v, ok := args[key].(string); ok {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return defaultVal
+}
+
+// Float64FromArgs extracts a float64 from a map[string]any field.
+// Returns defaultVal if the field is absent or not a float64.
+func Float64FromArgs(args map[string]any, key string, defaultVal float64) float64 {
+	if v, ok := args[key].(float64); ok {
+		return v
+	}
+	return defaultVal
+}
+
 // StringSliceFromArgs extracts a string slice from a map[string]any field.
 // JSON arrays arrive as []any; each element is converted to string.
 // Non-string elements are silently skipped. Returns nil if the field is
