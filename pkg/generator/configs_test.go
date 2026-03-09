@@ -1203,6 +1203,9 @@ func TestProfileDrivenJSONConfig_AllJSONPlatforms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read output: %v", err)
 			}
+			if !strings.HasSuffix(string(data), "\n") {
+				t.Fatalf("expected trailing newline in %s output", name)
+			}
 
 			var parsed map[string]any
 			if err := json.Unmarshal(data, &parsed); err != nil {

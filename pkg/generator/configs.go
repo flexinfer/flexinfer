@@ -517,7 +517,7 @@ func generateJSONConfig(p *GenerateParams) error {
 	if configFile == "" {
 		configFile = "mcp.json"
 	}
-	return os.WriteFile(filepath.Join(destDir, configFile), data, p.filePerm())
+	return os.WriteFile(filepath.Join(destDir, configFile), append(data, '\n'), p.filePerm())
 }
 
 // generateOpenCodeJSONConfig handles OpenCode's unique JSON format:
@@ -576,7 +576,7 @@ func generateOpenCodeJSONConfig(p *GenerateParams, targets map[string]*registry.
 	if configFile == "" {
 		configFile = "opencode.json"
 	}
-	return os.WriteFile(filepath.Join(destDir, configFile), data, p.filePerm())
+	return os.WriteFile(filepath.Join(destDir, configFile), append(data, '\n'), p.filePerm())
 }
 
 // generateTomlConfig generates a TOML MCP configuration file.
