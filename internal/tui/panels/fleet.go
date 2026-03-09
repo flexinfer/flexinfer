@@ -30,6 +30,8 @@ type MsgFleetData struct {
 	Sessions               []SessionData
 	ActiveSessions         int
 	Agents                 []AgentData
+	AgentCoordination      []FleetAgentCoordination
+	NamespaceCoordination  []FleetNamespaceCoordination
 	TotalTokens            int
 	NamespacesAtRisk       int
 	AgentsNeedingAttention int
@@ -63,6 +65,30 @@ type AgentData struct {
 	LastHeartbeat string
 }
 
+// FleetAgentCoordination carries attention metadata for a session agent.
+type FleetAgentCoordination struct {
+	AgentID          string
+	ClaimCount       int
+	ConflictFiles    int
+	BlockingOthers   int
+	BlockedByOthers  int
+	AttentionReasons []string
+	NeedsAttention   bool
+}
+
+// FleetNamespaceCoordination carries risk metadata for a namespace.
+type FleetNamespaceCoordination struct {
+	Namespace          string
+	BlockedTasks       int
+	OrphanTasks        int
+	ConflictFiles      int
+	SharedBranches     int
+	CrossAgentBlockers int
+	AttentionScore     int
+	AttentionReasons   []string
+	NeedsAttention     bool
+}
+
 type fleetSortMode string
 
 const (
@@ -94,6 +120,8 @@ type FleetPanel struct {
 	sessions               []SessionData
 	activeSessions         int
 	agents                 []AgentData
+	agentCoordination      map[string]FleetAgentCoordination
+	namespaceCoordination  map[string]FleetNamespaceCoordination
 	totalTokens            int
 	namespacesAtRisk       int
 	agentsNeedingAttention int
@@ -148,6 +176,14 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 		p.sessions = msg.Sessions
 		p.activeSessions = msg.ActiveSessions
 		p.agents = msg.Agents
+		p.agentCoordination = make(map[string]FleetAgentCoordination, len(msg.AgentCoordination))
+		for _, coord := range msg.AgentCoordination {
+			p.agentCoordination[coord.AgentID] = coord
+		}
+		p.namespaceCoordination = make(map[string]FleetNamespaceCoordination, len(msg.NamespaceCoordination))
+		for _, coord := range msg.NamespaceCoordination {
+			p.namespaceCoordination[coord.Namespace] = coord
+		}
 		p.totalTokens = msg.TotalTokens
 		p.namespacesAtRisk = msg.NamespacesAtRisk
 		p.agentsNeedingAttention = msg.AgentsNeedingAttention
@@ -454,6 +490,39 @@ func (p FleetPanel) renderSessionTable() string {
 				if agentInfo.Branch != "" {
 					b.WriteString(detailStyle.Render(truncate("branch: "+agentInfo.Branch, detailMax)))
 					b.WriteString("\n")
+				}
+				if coord, ok := p.namespaceCoordination[sessionNamespace(s)]; ok && coord.NeedsAttention {
+					nsParts := []string{
+						fmt.Sprintf("ns-risk:%d", coord.AttentionScore),
+						fmt.Sprintf("blocked:%d", coord.BlockedTasks),
+						fmt.Sprintf("x-agent:%d", coord.CrossAgentBlockers),
+						fmt.Sprintf("files:%d", coord.ConflictFiles),
+					}
+					if coord.OrphanTasks > 0 {
+						nsParts = append(nsParts, fmt.Sprintf("orphans:%d", coord.OrphanTasks))
+					}
+					b.WriteString(detailStyle.Render(truncate(strings.Join(nsParts, "  "), detailMax)))
+					b.WriteString("\n")
+					if len(coord.AttentionReasons) > 0 {
+						b.WriteString(detailStyle.Render(truncate("ns-notes: "+strings.Join(coord.AttentionReasons, ", "), detailMax)))
+						b.WriteString("\n")
+					}
+				}
+				if agentID != "" {
+					if coord, ok := p.agentCoordination[agentID]; ok && coord.NeedsAttention {
+						agentParts := []string{
+							fmt.Sprintf("claims:%d", coord.ClaimCount),
+							fmt.Sprintf("conflicts:%d", coord.ConflictFiles),
+							fmt.Sprintf("blocking:%d", coord.BlockingOthers),
+							fmt.Sprintf("waiting:%d", coord.BlockedByOthers),
+						}
+						b.WriteString(detailStyle.Render(truncate(strings.Join(agentParts, "  "), detailMax)))
+						b.WriteString("\n")
+						if len(coord.AttentionReasons) > 0 {
+							b.WriteString(detailStyle.Render(truncate("agent-notes: "+strings.Join(coord.AttentionReasons, ", "), detailMax)))
+							b.WriteString("\n")
+						}
+					}
 				}
 				if s.Description != "" {
 					b.WriteString(detailStyle.Render(truncate("note: "+s.Description, detailMax)))

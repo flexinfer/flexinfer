@@ -27,6 +27,7 @@
   let activeCount = $derived(lanes.filter((l) => l.current_status === 'active').length);
   let attentionAgents = $derived(coordinationStore.topAttentionAgents);
   let riskyNamespaces = $derived(coordinationStore.riskyNamespaces);
+  let relationWatchlist = $derived(coordinationStore.relations.slice(0, 4));
 
   let containerEl = $state(null);
   let containerWidth = $state(900);
@@ -90,6 +91,20 @@
           <div class="rail-empty">No namespaces are under coordination pressure.</div>
         {/if}
       </div>
+      <div class="rail-section">
+        <div class="rail-title">Relation Watchlist</div>
+        {#if relationWatchlist.length > 0}
+          {#each relationWatchlist as relation}
+            <div class="rail-card" class:rail-card-critical={relation.severity === 'critical'}>
+              <div class="rail-card-title">{relation.source_label} ↔ {relation.target_label}</div>
+              <div class="rail-card-meta">{relation.kind.replaceAll('_', ' ')} · {relation.namespace || 'global'}</div>
+              <div class="rail-card-detail">{relation.detail || 'active coordination hotspot'}</div>
+            </div>
+          {/each}
+        {:else}
+          <div class="rail-empty">No hot relations to watch.</div>
+        {/if}
+      </div>
     </aside>
   </div>
   <footer class="lifecycle-footer">
@@ -114,6 +129,7 @@
   .rail-section { display: flex; flex-direction: column; gap: 8px; }
   .rail-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-secondary); font-weight: 700; }
   .rail-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .rail-card-critical { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
   .rail-card-title { font-size: 13px; color: var(--fg-primary); font-weight: 600; font-family: var(--font-mono); }
   .rail-card-meta { font-size: 11px; color: var(--accent); font-family: var(--font-mono); }
   .rail-card-detail { font-size: 11px; color: var(--fg-muted); line-height: 1.4; }

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -251,6 +252,7 @@ func (a *App) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 			"risky_namespaces": limitMobileSlice(fleetSnap.Coordination.Namespaces, 5),
 			"active_blockers":  limitMobileSlice(filterMobileBlockers(fleetSnap.Coordination.Blockers, true), 6),
 			"top_relations":    limitMobileSlice(filterMobileRelations(fleetSnap.Coordination.Relations, ""), 6),
+			"attention_lanes":  buildMobileAttentionLanes(fleetSnap.Coordination),
 		},
 		"recent_timeline": recentTimeline,
 	})
@@ -2022,6 +2024,41 @@ func filterMobileNamespaces(namespaces []coordination.NamespaceSummary, tasks []
 		}
 	}
 	return filtered
+}
+
+func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any {
+	lanes := make([]map[string]any, 0, 6)
+	for _, agent := range limitMobileSlice(snapshot.Agents, 3) {
+		if !agent.NeedsAttention {
+			continue
+		}
+		lanes = append(lanes, map[string]any{
+			"type":    "agent",
+			"id":      agent.AgentID,
+			"scope":   preferMobileValue(agent.Namespace, "unscoped"),
+			"summary": strings.Join(limitMobileSlice(agent.AttentionReasons, 2), " · "),
+		})
+	}
+	for _, namespace := range limitMobileSlice(snapshot.Namespaces, 3) {
+		if !namespace.NeedsAttention {
+			continue
+		}
+		lanes = append(lanes, map[string]any{
+			"type":    "namespace",
+			"id":      namespace.Namespace,
+			"scope":   fmt.Sprintf("%d tasks", namespace.TaskCount),
+			"summary": strings.Join(limitMobileSlice(namespace.AttentionReasons, 2), " · "),
+		})
+	}
+	return limitMobileSlice(lanes, 6)
+}
+
+func preferMobileValue(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func limitMobileSlice[T any](items []T, limit int) []T {

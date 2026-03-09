@@ -396,6 +396,44 @@ func (m Model) fetchAll() tea.Cmd {
 				LastHeartbeat: a.LastHeartbeat,
 			}
 		}
+		fleetAgentCoordination := make([]panels.FleetAgentCoordination, len(snap.Coordination.Agents))
+		presenceAgentCoordination := make([]panels.PresenceAgentCoordination, len(snap.Coordination.Agents))
+		for i, coord := range snap.Coordination.Agents {
+			fleetAgentCoordination[i] = panels.FleetAgentCoordination{
+				AgentID:          coord.AgentID,
+				ClaimCount:       coord.ClaimCount,
+				ConflictFiles:    coord.ConflictFiles,
+				BlockingOthers:   coord.BlockingOthers,
+				BlockedByOthers:  coord.BlockedByOthers,
+				AttentionReasons: coord.AttentionReasons,
+				NeedsAttention:   coord.NeedsAttention,
+			}
+			presenceAgentCoordination[i] = panels.PresenceAgentCoordination{
+				AgentID:          coord.AgentID,
+				TaskCount:        coord.TaskCount,
+				BlockedTasks:     coord.BlockedTasks,
+				ClaimCount:       coord.ClaimCount,
+				ConflictFiles:    coord.ConflictFiles,
+				BlockingOthers:   coord.BlockingOthers,
+				BlockedByOthers:  coord.BlockedByOthers,
+				AttentionReasons: coord.AttentionReasons,
+				NeedsAttention:   coord.NeedsAttention,
+			}
+		}
+		namespaceCoordination := make([]panels.FleetNamespaceCoordination, len(snap.Coordination.Namespaces))
+		for i, coord := range snap.Coordination.Namespaces {
+			namespaceCoordination[i] = panels.FleetNamespaceCoordination{
+				Namespace:          coord.Namespace,
+				BlockedTasks:       coord.BlockedTasks,
+				OrphanTasks:        coord.OrphanTasks,
+				ConflictFiles:      coord.ConflictFiles,
+				SharedBranches:     coord.SharedBranches,
+				CrossAgentBlockers: coord.CrossAgentBlockers,
+				AttentionScore:     coord.AttentionScore,
+				AttentionReasons:   coord.AttentionReasons,
+				NeedsAttention:     coord.NeedsAttention,
+			}
+		}
 
 		// Build health data.
 		healthServers := make([]panels.ServerData, len(servers))
@@ -511,6 +549,8 @@ func (m Model) fetchAll() tea.Cmd {
 				Sessions:               fleetSessions,
 				ActiveSessions:         snap.ActiveSessions,
 				Agents:                 fleetAgents,
+				AgentCoordination:      fleetAgentCoordination,
+				NamespaceCoordination:  namespaceCoordination,
 				TotalTokens:            snap.TotalTokens,
 				NamespacesAtRisk:       snap.Coordination.Summary.NamespacesAtRisk,
 				AgentsNeedingAttention: snap.Coordination.Summary.AgentsNeedingAttention,
@@ -532,14 +572,15 @@ func (m Model) fetchAll() tea.Cmd {
 			memory: memData,
 			stream: panels.MsgStreamData{Entries: streamEntries},
 			presence: panels.MsgPresenceData{
-				Agents:           presenceAgents,
-				Claims:           presenceClaims,
-				Worktrees:        presenceWorktrees,
-				ActiveAgents:     snap.ActiveAgents,
-				IdleAgents:       snap.IdleAgents,
-				TotalClaims:      len(snap.FileClaims),
-				SharedBranches:   snap.Coordination.Summary.SharedBranches,
-				IdleClaimHolders: snap.Coordination.Summary.IdleClaimHolders,
+				Agents:            presenceAgents,
+				AgentCoordination: presenceAgentCoordination,
+				Claims:            presenceClaims,
+				Worktrees:         presenceWorktrees,
+				ActiveAgents:      snap.ActiveAgents,
+				IdleAgents:        snap.IdleAgents,
+				TotalClaims:       len(snap.FileClaims),
+				SharedBranches:    snap.Coordination.Summary.SharedBranches,
+				IdleClaimHolders:  snap.Coordination.Summary.IdleClaimHolders,
 			},
 		}
 	}
