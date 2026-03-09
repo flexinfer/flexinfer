@@ -3,6 +3,7 @@ package benchmarker
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -11,6 +12,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // PostgresStore saves benchmark results to a PostgreSQL database.
 type PostgresStore struct {
@@ -27,6 +31,11 @@ func NewPostgresStore(dsn string, client kubernetes.Interface) (*PostgresStore, 
 	// Ping to ensure connection is valid
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping postgres: %w", err)
+	}
+
+	// Auto-create schema (idempotent: CREATE IF NOT EXISTS)
+	if _, err := db.Exec(schemaSQL); err != nil {
+		return nil, fmt.Errorf("failed to initialize benchmarks schema: %w", err)
 	}
 
 	return &PostgresStore{
