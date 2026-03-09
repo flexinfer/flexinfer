@@ -675,7 +675,7 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	}
 }
 
-func TestGPTQJobBuilder_BuildJob_NoConfigRewrite(t *testing.T) {
+func TestGPTQJobBuilder_BuildJob_VLMConfigExtraction(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(4)
 	groupSize := int32(128)
@@ -698,12 +698,16 @@ func TestGPTQJobBuilder_BuildJob_NoConfigRewrite(t *testing.T) {
 	}
 
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	// GPTQModel handles VLM configs natively — no config.json rewrite needed.
-	if contains(script, "text_config") {
-		t.Fatal("GPTQ script should NOT contain config.json rewrite for text_config")
+	// VLM text_config extraction: extracts text_config but preserves native model_type.
+	if !contains(script, "text_config") {
+		t.Fatal("expected GPTQ script to contain VLM text_config extraction")
 	}
-	if contains(script, "import json") {
-		t.Fatal("GPTQ script should NOT import json (config rewrite removed)")
+	if !contains(script, "import json") {
+		t.Fatal("expected GPTQ script to import json for config extraction")
+	}
+	// Must NOT remap model_type to a different architecture.
+	if contains(script, "type_map") {
+		t.Fatal("GPTQ script should NOT remap model_type (native type must be preserved)")
 	}
 	if !contains(script, "set_per_process_memory_fraction") {
 		t.Fatal("expected GPTQ script to contain GPU memory fraction cap")

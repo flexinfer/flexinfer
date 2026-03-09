@@ -369,6 +369,7 @@ mkdir -p /workspace/offload
 
 export MODEL_DIR OUT_DIR BITS GROUP_SIZE MAX_MEMORY_GB
 python3 - <<'PY'
+import json
 import os
 import torch
 from datasets import load_dataset
@@ -382,6 +383,27 @@ group_size = int(os.environ["GROUP_SIZE"])
 max_memory_gb = int(os.environ["MAX_MEMORY_GB"])
 max_seq_len = %d
 max_samples = %d
+
+# VLM config extraction: models like Qwen3.5 have a composite VLM config
+# (model_type=qwen3_5) wrapping text_config (model_type=qwen3_5_text).
+# Loading the VLM fails because Qwen3_5ForConditionalGeneration expects
+# vocab_size at the top level, but it lives inside text_config.
+# Fix: extract text_config to top level so transformers loads the text-only
+# model (Qwen3_5TextForCausalLM) directly. Preserve the native model_type
+# — do NOT remap to a different architecture (Qwen3.5 text backbone uses
+# hybrid GatedDeltaNet + full-attention, incompatible with Qwen3).
+cfg_path = os.path.join(model_dir, "config.json")
+with open(cfg_path) as f:
+    cfg = json.load(f)
+if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
+    text_cfg = cfg["text_config"]
+    # Preserve top-level token IDs not in text_config.
+    for key in ["bos_token_id", "eos_token_id", "pad_token_id"]:
+        if key in cfg and key not in text_cfg:
+            text_cfg[key] = cfg[key]
+    with open(cfg_path, "w") as f:
+        json.dump(text_cfg, f, indent=2)
+    print(f"Extracted text_config: model_type={text_cfg.get('model_type')}")
 
 # Memory management: cap GPU VRAM to leave headroom for quantization workspace.
 # ROCm GPU driver also allocates GTT/system RAM outside the container cgroup,
