@@ -101,8 +101,8 @@ func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmNa
 		_ = k.deletePod(context.Background(), podName)
 	}()
 
-	// Wait for the build to complete
-	if err := k.waitForPodDone(ctx, podName, 10*time.Minute); err != nil {
+	// Wait for the build to complete (must match the 15-minute build context timeout)
+	if err := k.waitForPodDone(ctx, podName, 15*time.Minute); err != nil {
 		logs, _ := k.getPodLogs(ctx, podName)
 		return nil, fmt.Errorf("buildah build failed: %w\n%s", err, logs)
 	}
@@ -269,7 +269,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 					Name: "buildah-storage",
 					VolumeSource: corev1.VolumeSource{
 						EmptyDir: &corev1.EmptyDirVolumeSource{
-							SizeLimit: resourcePtr(resource.MustParse("10Gi")),
+							SizeLimit: resourcePtr(resource.MustParse("20Gi")),
 						},
 					},
 				},
