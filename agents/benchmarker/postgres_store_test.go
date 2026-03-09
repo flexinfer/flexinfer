@@ -38,7 +38,7 @@ func TestPostgresStore_Save_InsertsRecord(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := &PostgresStore{db: db, kubeClient: nil}
 
@@ -66,7 +66,7 @@ func TestPostgresStore_Save_DeviceClassFallback(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// No kubeClient → device_class should be "unknown"
 	store := &PostgresStore{db: db, kubeClient: nil}
@@ -95,7 +95,7 @@ func TestPostgresStore_Save_DeviceClassFromNode(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	clientset := fake.NewSimpleClientset()
 	node := &corev1.Node{
@@ -141,7 +141,7 @@ func TestPostgresStore_Save_DBError(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	store := &PostgresStore{db: db, kubeClient: nil}
 
