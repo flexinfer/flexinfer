@@ -896,6 +896,11 @@ func TestHandler_MobileDashboard_EnrichedWithHealthAndTimeline(t *testing.T) {
 				TotalServers   int `json:"total_servers"`
 				HealthyServers int `json:"healthy_servers"`
 			} `json:"health"`
+			Coordination struct {
+				Summary struct {
+					SharedBranches int `json:"shared_branches"`
+				} `json:"summary"`
+			} `json:"coordination"`
 			RecentTimeline []json.RawMessage `json:"recent_timeline"`
 		} `json:"data"`
 		Meta mobMeta `json:"meta"`
@@ -915,6 +920,9 @@ func TestHandler_MobileDashboard_EnrichedWithHealthAndTimeline(t *testing.T) {
 	}
 	if len(env.Data.RecentTimeline) < 1 {
 		t.Fatal("expected at least 1 recent_timeline entry")
+	}
+	if env.Data.Coordination.Summary.SharedBranches != 0 {
+		t.Fatalf("expected empty mock coordination summary, got shared_branches=%d", env.Data.Coordination.Summary.SharedBranches)
 	}
 }
 

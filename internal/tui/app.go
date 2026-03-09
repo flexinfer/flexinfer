@@ -434,7 +434,25 @@ func (m Model) fetchAll() tea.Cmd {
 				Title:     t.Title,
 				Status:    t.Status,
 				Priority:  t.Priority,
+				AgentID:   t.AgentID,
+				Namespace: t.Namespace,
 				BlockedBy: t.BlockedBy,
+			}
+		}
+		taskBlockers := make([]panels.TaskBlockerData, len(snap.Coordination.Blockers))
+		for i, blocker := range snap.Coordination.Blockers {
+			taskBlockers[i] = panels.TaskBlockerData{
+				TaskID:             blocker.TaskID,
+				TaskTitle:          blocker.TaskTitle,
+				TaskAgentID:        blocker.TaskAgentID,
+				TaskNamespace:      blocker.TaskNamespace,
+				BlockedByTaskID:    blocker.BlockedByTaskID,
+				BlockedByTaskTitle: blocker.BlockedByTaskTitle,
+				BlockedByStatus:    blocker.BlockedByStatus,
+				BlockedByAgentID:   blocker.BlockedByAgentID,
+				BlockedByNamespace: blocker.BlockedByNamespace,
+				CrossAgent:         blocker.CrossAgent,
+				Resolved:           blocker.Resolved,
 			}
 		}
 
@@ -488,30 +506,40 @@ func (m Model) fetchAll() tea.Cmd {
 		// Return a batch message. We use a wrapper to send multiple messages.
 		return batchDataMsg{
 			fleet: panels.MsgFleetData{
-				DaemonRunning:  snap.DaemonRunning,
-				ServerCount:    snap.ServerCount,
-				Sessions:       fleetSessions,
-				ActiveSessions: snap.ActiveSessions,
-				Agents:         fleetAgents,
-				TotalTokens:    snap.TotalTokens,
-				UpdatedAt:      snap.UpdatedAt,
+				DaemonRunning:          snap.DaemonRunning,
+				ServerCount:            snap.ServerCount,
+				Sessions:               fleetSessions,
+				ActiveSessions:         snap.ActiveSessions,
+				Agents:                 fleetAgents,
+				TotalTokens:            snap.TotalTokens,
+				NamespacesAtRisk:       snap.Coordination.Summary.NamespacesAtRisk,
+				AgentsNeedingAttention: snap.Coordination.Summary.AgentsNeedingAttention,
+				SharedBranches:         snap.Coordination.Summary.SharedBranches,
+				ConflictFiles:          snap.Coordination.Summary.ConflictFiles,
+				OrphanTasks:            snap.Coordination.Summary.OrphanTasks,
+				UpdatedAt:              snap.UpdatedAt,
 			},
 			health: panels.MsgHealthData{Servers: healthServers},
 			tasks: panels.MsgTasksData{
-				Tasks:        tasksList,
-				PendingCount: snap.PendingTasks,
-				ActiveCount:  snap.ActiveTasks,
-				BlockedCount: snap.BlockedTasks,
+				Tasks:              tasksList,
+				PendingCount:       snap.PendingTasks,
+				ActiveCount:        snap.ActiveTasks,
+				BlockedCount:       snap.BlockedTasks,
+				CrossAgentBlockers: snap.Coordination.Summary.CrossAgentBlockers,
+				OrphanTasks:        snap.Coordination.Summary.OrphanTasks,
+				Blockers:           taskBlockers,
 			},
 			memory: memData,
 			stream: panels.MsgStreamData{Entries: streamEntries},
 			presence: panels.MsgPresenceData{
-				Agents:       presenceAgents,
-				Claims:       presenceClaims,
-				Worktrees:    presenceWorktrees,
-				ActiveAgents: snap.ActiveAgents,
-				IdleAgents:   snap.IdleAgents,
-				TotalClaims:  len(snap.FileClaims),
+				Agents:           presenceAgents,
+				Claims:           presenceClaims,
+				Worktrees:        presenceWorktrees,
+				ActiveAgents:     snap.ActiveAgents,
+				IdleAgents:       snap.IdleAgents,
+				TotalClaims:      len(snap.FileClaims),
+				SharedBranches:   snap.Coordination.Summary.SharedBranches,
+				IdleClaimHolders: snap.Coordination.Summary.IdleClaimHolders,
 			},
 		}
 	}

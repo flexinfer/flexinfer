@@ -16,10 +16,13 @@ import (
 
 // MsgTasksData is sent by the app when new task data arrives.
 type MsgTasksData struct {
-	Tasks        []TaskData
-	PendingCount int
-	ActiveCount  int
-	BlockedCount int
+	Tasks              []TaskData
+	PendingCount       int
+	ActiveCount        int
+	BlockedCount       int
+	CrossAgentBlockers int
+	OrphanTasks        int
+	Blockers           []TaskBlockerData
 }
 
 // MsgTaskStatusCycled signals that a task status was toggled via the TUI.
@@ -34,7 +37,24 @@ type TaskData struct {
 	Title     string
 	Status    string
 	Priority  string
+	AgentID   string
+	Namespace string
 	BlockedBy []string
+}
+
+// TaskBlockerData holds resolved blocker relationship metadata.
+type TaskBlockerData struct {
+	TaskID             string
+	TaskTitle          string
+	TaskAgentID        string
+	TaskNamespace      string
+	BlockedByTaskID    string
+	BlockedByTaskTitle string
+	BlockedByStatus    string
+	BlockedByAgentID   string
+	BlockedByNamespace string
+	CrossAgent         bool
+	Resolved           bool
 }
 
 // ---------------------------------------------------------------------------
@@ -43,11 +63,14 @@ type TaskData struct {
 
 // TasksPanel renders a task board with status columns.
 type TasksPanel struct {
-	width, height int
-	tasks         []TaskData
-	pendingCount  int
-	activeCount   int
-	blockedCount  int
+	width, height      int
+	tasks              []TaskData
+	pendingCount       int
+	activeCount        int
+	blockedCount       int
+	crossAgentBlockers int
+	orphanTasks        int
+	blockers           []TaskBlockerData
 
 	// Interactive state
 	selectedIdx int
@@ -82,6 +105,9 @@ func (p TasksPanel) Update(msg tea.Msg) (TasksPanel, tea.Cmd) {
 		p.pendingCount = msg.PendingCount
 		p.activeCount = msg.ActiveCount
 		p.blockedCount = msg.BlockedCount
+		p.crossAgentBlockers = msg.CrossAgentBlockers
+		p.orphanTasks = msg.OrphanTasks
+		p.blockers = msg.Blockers
 		p.rebuildFlatTasks()
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -158,6 +184,12 @@ func (p TasksPanel) View() string {
 	}
 
 	b.WriteString(p.renderColumns())
+	if selected := p.SelectedTask(); selected != nil {
+		if detail := p.renderSelectedTaskDetails(*selected); detail != "" {
+			b.WriteString("\n")
+			b.WriteString(detail)
+		}
+	}
 
 	// Navigation hint
 	hintStyle := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
@@ -172,6 +204,8 @@ func (p TasksPanel) renderSummary() string {
 		theme.Styles.StatusWarn.Render(fmt.Sprintf("%d pending", p.pendingCount)),
 		theme.Styles.StatusOK.Render(fmt.Sprintf("%d active", p.activeCount)),
 		theme.Styles.StatusError.Render(fmt.Sprintf("%d blocked", p.blockedCount)),
+		theme.Styles.Label.Render("x-agent: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.crossAgentBlockers)),
+		theme.Styles.Label.Render("orphans: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.orphanTasks)),
 	}
 	return strings.Join(parts, "  ")
 }
@@ -271,6 +305,63 @@ func (p TasksPanel) isTaskSelected(id string) bool {
 		return false
 	}
 	return p.flatTasks[p.selectedIdx].ID == id
+}
+
+func (p TasksPanel) renderSelectedTaskDetails(task TaskData) string {
+	var related []TaskBlockerData
+	for _, blocker := range p.blockers {
+		if blocker.TaskID == task.ID {
+			related = append(related, blocker)
+		}
+	}
+	if len(related) == 0 {
+		return ""
+	}
+
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.ColorBorder).
+		Padding(0, 1)
+	headerStyle := lipgloss.NewStyle().Foreground(theme.ColorFgSecondary).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
+	warn := lipgloss.NewStyle().Foreground(theme.ColorWarning)
+	info := lipgloss.NewStyle().Foreground(theme.ColorInfo)
+
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("DEPENDENCY RELATIONS"))
+	b.WriteString("\n")
+	for _, blocker := range related {
+		badge := info.Render("local")
+		if blocker.CrossAgent {
+			badge = warn.Render("cross-agent")
+		}
+		status := blocker.BlockedByStatus
+		if status == "" {
+			status = "---"
+		}
+		targetTitle := blocker.BlockedByTaskTitle
+		if targetTitle == "" {
+			targetTitle = blocker.BlockedByTaskID
+		}
+		line := fmt.Sprintf("%s  %s  %s", truncate(targetTitle, max(20, p.width-28)), status, badge)
+		if blocker.Resolved {
+			line += "  resolved"
+		}
+		b.WriteString(cardStyle.Render(line))
+		b.WriteString("\n")
+		metaParts := []string{}
+		if blocker.BlockedByAgentID != "" {
+			metaParts = append(metaParts, "owner:"+blocker.BlockedByAgentID)
+		}
+		if blocker.BlockedByNamespace != "" {
+			metaParts = append(metaParts, "ns:"+blocker.BlockedByNamespace)
+		}
+		if len(metaParts) > 0 {
+			b.WriteString(muted.Render("  " + strings.Join(metaParts, "  ")))
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // priorityBadge returns a colored single-character priority indicator.

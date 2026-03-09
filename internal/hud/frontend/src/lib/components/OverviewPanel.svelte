@@ -10,6 +10,7 @@
   import { graphStore } from '../stores/graph.svelte.ts';
   import { costStore } from '../stores/cost.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
+  import { coordinationStore } from '../stores/coordination.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
 
   /**
@@ -44,6 +45,11 @@
   let pendingTasks = $derived(taskStore.pendingCount);
   let activeTasks = $derived(taskStore.inProgressCount);
   let blockedTasks = $derived(taskStore.blockedCount);
+  let coordinationSummary = $derived(coordinationStore.summary);
+  let attentionAgents = $derived(coordinationStore.topAttentionAgents);
+  let riskyNamespaces = $derived(coordinationStore.riskyNamespaces);
+  let activeBlockers = $derived(coordinationStore.activeBlockers);
+  let topRelations = $derived(coordinationStore.relations.slice(0, 4));
 
   let workingItems = $derived(memoryStore.stats.working_memory?.items ?? 0);
   let shortItems = $derived(memoryStore.stats.short_term_memory?.items ?? 0);
@@ -106,11 +112,13 @@
     fetchOTelStatus();
     costStore.startPolling(30000);
     rbacStore.startPolling(30000);
+    coordinationStore.startPolling(30000);
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
       costStore.stopPolling();
       rbacStore.stopPolling();
+      coordinationStore.stopPolling();
     };
   });
 
@@ -236,6 +244,53 @@
     </div>
   </div>
 
+  <div class="coordination-strip">
+    <div class="coord-card">
+      <div class="coord-label">Coordination</div>
+      <div class="coord-value">{coordinationSummary.shared_branches} shared / {coordinationSummary.conflict_files} conflicted</div>
+      <div class="coord-meta">{coordinationSummary.agents_needing_attention} attention agents · {coordinationSummary.idle_claim_holders} idle holders</div>
+    </div>
+    <div class="coord-card">
+      <div class="coord-label">Delivery Lanes</div>
+      <div class="coord-value">{coordinationSummary.active_namespaces} active namespaces</div>
+      <div class="coord-meta">{coordinationSummary.namespaces_at_risk} at risk · {coordinationSummary.orphan_tasks} orphan tasks</div>
+      {#if riskyNamespaces.length > 0}
+        <div class="coord-list-item">{riskyNamespaces[0].namespace}: {riskyNamespaces[0].attention_reasons?.[0] ?? 'attention required'}</div>
+      {/if}
+    </div>
+    <div class="coord-card">
+      <div class="coord-label">Attention Agents</div>
+      {#if attentionAgents.length > 0}
+        <div class="coord-list">
+          {#each attentionAgents.slice(0, 3) as agent}
+            <div class="coord-list-item">{agent.agent_id}: {(agent.attention_reasons?.[0] ?? 'attention')}</div>
+          {/each}
+        </div>
+      {:else}
+        <div class="coord-meta">No active coordination pressure</div>
+      {/if}
+    </div>
+    <div class="coord-card">
+      <div class="coord-label">Dependency Radar</div>
+      <div class="coord-value">{coordinationSummary.cross_agent_blockers} cross-agent blockers</div>
+      {#if activeBlockers.length > 0}
+        <div class="coord-list">
+          {#each activeBlockers.slice(0, 2) as blocker}
+            <div class="coord-list-item">{blocker.task_title} → {blocker.blocked_by_task_title || blocker.blocked_by_task_id}</div>
+          {/each}
+        </div>
+      {:else if topRelations.length > 0}
+        <div class="coord-list">
+          {#each topRelations.slice(0, 2) as relation}
+            <div class="coord-list-item">{relation.source_label} ↔ {relation.target_label}</div>
+          {/each}
+        </div>
+      {:else}
+        <div class="coord-meta">No active relation hotspots</div>
+      {/if}
+    </div>
+  </div>
+
   <div class="overview-grid">
     <!-- Fleet tile -->
     <button class="tile" onclick={() => navigate('fleet')}>
@@ -245,7 +300,7 @@
       </div>
       <div class="tile-body">
         <div class="tile-metric">{sessionCount} <span class="tile-unit">sessions</span></div>
-        <div class="tile-detail">{agentCount} agents · {namespaceCount} ns</div>
+        <div class="tile-detail">{agentCount} agents · {namespaceCount} ns · {coordinationSummary.namespaces_at_risk} at risk</div>
       </div>
       {#if agoText(fleetStore.lastUpdated)}<div class="tile-footer">{agoText(fleetStore.lastUpdated)}</div>{/if}
     </button>
@@ -283,7 +338,7 @@
       </div>
       <div class="tile-body">
         <div class="tile-metric">{pendingTasks} <span class="tile-unit">pending</span></div>
-        <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked</div>
+        <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked · {coordinationSummary.cross_agent_blockers} x-agent</div>
       </div>
       {#if agoText(taskStore.lastUpdated)}<div class="tile-footer">{agoText(taskStore.lastUpdated)}</div>{/if}
     </button>
@@ -459,6 +514,58 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
     width: 100%;
+  }
+
+  .coordination-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+
+  .coord-card {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 12%), var(--bg-secondary));
+    border: 1px solid color-mix(in srgb, var(--border) 75%, var(--accent) 25%);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 92px;
+  }
+
+  .coord-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    font-weight: 700;
+  }
+
+  .coord-value {
+    font-size: 16px;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+  }
+
+  .coord-meta {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .coord-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .coord-list-item {
+    font-size: 11px;
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .tile {

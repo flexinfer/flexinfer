@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/coordination"
 	"github.com/crb2nu/loom/internal/hud/notify"
 )
 
@@ -57,6 +58,7 @@ type FleetSnapshot struct {
 	FileClaims      []bridge.FileClaimInfo `json:"file_claims"`
 	ActiveWorktrees int                    `json:"active_worktrees"`
 	Worktrees       []bridge.WorktreeInfo  `json:"worktrees"`
+	Coordination    coordination.Snapshot  `json:"coordination"`
 
 	// Metadata
 	UpdatedAt time.Time `json:"updated_at"`
@@ -326,6 +328,14 @@ func (m *FleetMonitor) Refresh() error {
 		snap.Worktrees = worktrees
 		snap.ActiveWorktrees = len(worktrees)
 	}
+
+	snap.Coordination = coordination.Build(
+		snap.Sessions,
+		snap.Tasks,
+		snap.Agents,
+		snap.FileClaims,
+		snap.Worktrees,
+	)
 
 	// --- KPI daily counter reset ---
 	m.mu.Lock()

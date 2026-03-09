@@ -18,12 +18,14 @@ import (
 
 // MsgPresenceData is sent by the app when new presence data arrives.
 type MsgPresenceData struct {
-	Agents       []PresenceAgentData
-	Claims       []ClaimData
-	Worktrees    []WorktreeData
-	ActiveAgents int
-	IdleAgents   int
-	TotalClaims  int
+	Agents           []PresenceAgentData
+	Claims           []ClaimData
+	Worktrees        []WorktreeData
+	ActiveAgents     int
+	IdleAgents       int
+	TotalClaims      int
+	SharedBranches   int
+	IdleClaimHolders int
 }
 
 // PresenceAgentData holds agent presence data for the presence panel.
@@ -75,13 +77,15 @@ var presenceTabNames = []string{"Agents", "Claims", "Worktrees"}
 
 // PresencePanel renders agent presence, file claims, and worktree assignments.
 type PresencePanel struct {
-	width, height int
-	agents        []PresenceAgentData
-	claims        []ClaimData
-	worktrees     []WorktreeData
-	activeAgents  int
-	idleAgents    int
-	totalClaims   int
+	width, height    int
+	agents           []PresenceAgentData
+	claims           []ClaimData
+	worktrees        []WorktreeData
+	activeAgents     int
+	idleAgents       int
+	totalClaims      int
+	sharedBranches   int
+	idleClaimHolders int
 
 	// Interactive state
 	activeTab   presenceTab
@@ -109,6 +113,8 @@ func (p PresencePanel) Update(msg tea.Msg) (PresencePanel, tea.Cmd) {
 		p.activeAgents = msg.ActiveAgents
 		p.idleAgents = msg.IdleAgents
 		p.totalClaims = msg.TotalClaims
+		p.sharedBranches = msg.SharedBranches
+		p.idleClaimHolders = msg.IdleClaimHolders
 		// Clamp cursor after data update.
 		p.clampCursor()
 	case tea.KeyMsg:
@@ -206,6 +212,8 @@ func (p PresencePanel) renderSummary() string {
 		theme.Styles.StatusMuted.Render(fmt.Sprintf("%d offline", offlineCount)),
 		theme.Styles.Label.Render("Claims: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.totalClaims)),
 		conflictsText,
+		theme.Styles.Label.Render("Shared Branches: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.sharedBranches)),
+		theme.Styles.Label.Render("Idle Holders: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.idleClaimHolders)),
 		theme.Styles.Label.Render("Worktrees: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", len(p.worktrees))),
 	}
 	return strings.Join(parts, "  ")

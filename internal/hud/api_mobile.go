@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/coordination"
 )
 
 const maxDeviceIDLen = 128
@@ -243,6 +244,13 @@ func (a *App) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 			"degraded_servers": healthSum.DegradedServers,
 			"down_servers":     healthSum.DownServers,
 			"idle_servers":     healthSum.IdleServers,
+		},
+		"coordination": map[string]any{
+			"summary":          fleetSnap.Coordination.Summary,
+			"attention_agents": limitMobileSlice(fleetSnap.Coordination.Agents, 5),
+			"risky_namespaces": limitMobileSlice(fleetSnap.Coordination.Namespaces, 5),
+			"active_blockers":  limitMobileSlice(filterMobileBlockers(fleetSnap.Coordination.Blockers, true), 6),
+			"top_relations":    limitMobileSlice(filterMobileRelations(fleetSnap.Coordination.Relations, ""), 6),
 		},
 		"recent_timeline": recentTimeline,
 	})
@@ -590,6 +598,11 @@ func (a *App) handleMobileTasks(w http.ResponseWriter, r *http.Request) {
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"tasks":  result,
 		"counts": counts,
+		"coordination": map[string]any{
+			"summary":          a.fleetMonitor.Snapshot().Coordination.Summary,
+			"blockers":         limitMobileSlice(filterMobileTaskBlockers(a.fleetMonitor.Snapshot().Coordination.Blockers, result, agentFilter, sessionFilter), 10),
+			"risky_namespaces": limitMobileSlice(filterMobileNamespaces(a.fleetMonitor.Snapshot().Coordination.Namespaces, result), 6),
+		},
 	})
 }
 
@@ -829,6 +842,11 @@ func (a *App) handleMobilePresence(w http.ResponseWriter, r *http.Request) {
 		"claims":    claims,
 		"worktrees": worktrees,
 		"summary":   summary,
+		"coordination": map[string]any{
+			"summary":          snap.Coordination.Summary,
+			"attention_agents": limitMobileSlice(filterMobileCoordinationAgents(snap.Coordination.Agents, agentFilter, statusFilter), 8),
+			"relations":        limitMobileSlice(filterMobileRelations(snap.Coordination.Relations, agentFilter), 10),
+		},
 	})
 }
 
@@ -1914,6 +1932,103 @@ func normalizeMobilePresenceStatus(status string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func filterMobileCoordinationAgents(agents []coordination.AgentSummary, agentFilter, statusFilter string) []coordination.AgentSummary {
+	filtered := make([]coordination.AgentSummary, 0, len(agents))
+	for _, agent := range agents {
+		if agentFilter != "" && !strings.EqualFold(agent.AgentID, agentFilter) {
+			continue
+		}
+		if statusFilter != "" && !strings.EqualFold(agent.Status, statusFilter) {
+			continue
+		}
+		filtered = append(filtered, agent)
+	}
+	return filtered
+}
+
+func filterMobileRelations(relations []coordination.RelationEdge, agentFilter string) []coordination.RelationEdge {
+	if agentFilter == "" {
+		return relations
+	}
+	filtered := make([]coordination.RelationEdge, 0, len(relations))
+	for _, relation := range relations {
+		if strings.EqualFold(relation.Source, agentFilter) || strings.EqualFold(relation.Target, agentFilter) ||
+			strings.EqualFold(relation.SourceLabel, agentFilter) || strings.EqualFold(relation.TargetLabel, agentFilter) {
+			filtered = append(filtered, relation)
+		}
+	}
+	return filtered
+}
+
+func filterMobileBlockers(blockers []coordination.BlockerRelation, activeOnly bool) []coordination.BlockerRelation {
+	filtered := make([]coordination.BlockerRelation, 0, len(blockers))
+	for _, blocker := range blockers {
+		if activeOnly && blocker.Resolved {
+			continue
+		}
+		filtered = append(filtered, blocker)
+	}
+	return filtered
+}
+
+func filterMobileTaskBlockers(blockers []coordination.BlockerRelation, tasks []mobileTaskDTO, agentFilter, sessionFilter string) []coordination.BlockerRelation {
+	taskIDs := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		taskIDs[task.ID] = struct{}{}
+	}
+	filtered := make([]coordination.BlockerRelation, 0, len(blockers))
+	for _, blocker := range blockers {
+		if len(taskIDs) > 0 {
+			if _, ok := taskIDs[blocker.TaskID]; !ok {
+				continue
+			}
+		}
+		if agentFilter != "" && !strings.EqualFold(blocker.TaskAgentID, agentFilter) && !strings.EqualFold(blocker.BlockedByAgentID, agentFilter) {
+			continue
+		}
+		if sessionFilter != "" {
+			matched := false
+			for _, task := range tasks {
+				if task.ID == blocker.TaskID && strings.EqualFold(task.SessionID, sessionFilter) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		filtered = append(filtered, blocker)
+	}
+	return filtered
+}
+
+func filterMobileNamespaces(namespaces []coordination.NamespaceSummary, tasks []mobileTaskDTO) []coordination.NamespaceSummary {
+	taskNamespaces := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		if strings.TrimSpace(task.Namespace) != "" {
+			taskNamespaces[task.Namespace] = struct{}{}
+		}
+	}
+	if len(taskNamespaces) == 0 {
+		return namespaces
+	}
+	filtered := make([]coordination.NamespaceSummary, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		if _, ok := taskNamespaces[namespace.Namespace]; ok {
+			filtered = append(filtered, namespace)
+		}
+	}
+	return filtered
+}
+
+func limitMobileSlice[T any](items []T, limit int) []T {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	return items[:limit]
 }
 
 func normalizeMobileMemoryTier(raw string) (string, bool) {

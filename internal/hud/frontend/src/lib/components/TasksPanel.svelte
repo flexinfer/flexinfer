@@ -1,6 +1,7 @@
 <script>
   import { taskStore } from '../stores/tasks.svelte.ts';
   import { agentStore } from '../stores/agents.svelte.ts';
+  import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { toastStore } from '../stores/toasts.svelte.ts';
   import { relativeTime, statusVariant, priorityVariant } from '../utils/format.ts';
   import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
@@ -48,14 +49,19 @@
   $effect(() => {
     taskStore.startPolling(5000);
     agentStore.startPolling(30000);
+    coordinationStore.startPolling(30000);
     return () => {
       taskStore.stopPolling();
       agentStore.stopPolling();
+      coordinationStore.stopPolling();
     };
   });
 
   let tasks = $derived(taskStore.tasks ?? []);
   let availableAgents = $derived(agentStore.agents ?? []);
+  let coordinationSummary = $derived(coordinationStore.summary);
+  let coordinationBlockers = $derived(coordinationStore.blockers ?? []);
+  let riskyNamespaces = $derived(coordinationStore.riskyNamespaces);
 
   let searchQuery = $state('');
   let priorityFilter = $state('');
@@ -414,6 +420,10 @@
 
   // Detail drawer
   let selectedTask = $state(null);
+  let selectedTaskRelations = $derived.by(() => {
+    if (!selectedTask?.id) return [];
+    return coordinationBlockers.filter((blocker) => blocker.task_id === selectedTask.id);
+  });
 
   function selectTask(task) {
     selectedTask = selectedTask?.id === task.id ? null : task;
@@ -461,6 +471,24 @@
     onSearch={handleSearch}
     onFilter={handleFilter}
   />
+
+  <div class="dependency-radar">
+    <div class="radar-card">
+      <div class="radar-label">Dependency Radar</div>
+      <div class="radar-value">{coordinationSummary.cross_agent_blockers} cross-agent blockers</div>
+      <div class="radar-meta">{coordinationSummary.orphan_tasks} orphan tasks · {coordinationSummary.shared_branches} shared branches</div>
+    </div>
+    <div class="radar-card radar-list-card">
+      <div class="radar-label">Risky Namespaces</div>
+      {#if riskyNamespaces.length > 0}
+        {#each riskyNamespaces.slice(0, 3) as namespace}
+          <div class="radar-list-item">{namespace.namespace}: {namespace.blocked_tasks} blocked / {namespace.cross_agent_blockers} x-agent</div>
+        {/each}
+      {:else}
+        <div class="radar-meta">No risky namespaces</div>
+      {/if}
+    </div>
+  </div>
 
   <!-- Content -->
   <div class="task-content">
@@ -820,6 +848,25 @@
         </div>
       </div>
     {/if}
+    {#if selectedTaskRelations.length > 0}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Dependency Relations</div>
+        <div class="relation-cards">
+          {#each selectedTaskRelations as relation}
+            <div class="relation-card" class:relation-card-cross={relation.cross_agent}>
+              <div class="relation-card-title">{relation.blocked_by_task_title || relation.blocked_by_task_id}</div>
+              <div class="relation-card-meta">
+                {relation.blocked_by_status || 'unknown'} · {relation.cross_agent ? 'cross-agent' : 'local'}
+                {#if relation.resolved} · resolved{/if}
+              </div>
+              <div class="relation-card-detail">
+                {relation.blocked_by_agent_id || 'unassigned'} · {relation.blocked_by_namespace || 'unscoped'}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
     {#if selectedTask.resolution}
       <div class="section">
         <div class="section-title text-xs uppercase text-muted">Resolution</div>
@@ -892,6 +939,82 @@
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
     margin-top: 8px;
+  }
+
+  .dependency-radar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .radar-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .radar-list-card {
+    justify-content: center;
+  }
+
+  .radar-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    font-weight: 700;
+  }
+
+  .radar-value {
+    font-size: 16px;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+  }
+
+  .radar-meta,
+  .radar-list-item {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .relation-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .relation-card {
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 10px;
+    background: var(--bg-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .relation-card-cross {
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 20%, transparent);
+  }
+
+  .relation-card-title {
+    font-size: 13px;
+    color: var(--fg-primary);
+    font-weight: 600;
+  }
+
+  .relation-card-meta,
+  .relation-card-detail {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
   }
 
   .task-title {

@@ -25,13 +25,18 @@ type MsgSessionEntries struct {
 
 // MsgFleetData is sent by the app when new fleet data arrives.
 type MsgFleetData struct {
-	DaemonRunning  bool
-	ServerCount    int
-	Sessions       []SessionData
-	ActiveSessions int
-	Agents         []AgentData
-	TotalTokens    int
-	UpdatedAt      time.Time
+	DaemonRunning          bool
+	ServerCount            int
+	Sessions               []SessionData
+	ActiveSessions         int
+	Agents                 []AgentData
+	TotalTokens            int
+	NamespacesAtRisk       int
+	AgentsNeedingAttention int
+	SharedBranches         int
+	ConflictFiles          int
+	OrphanTasks            int
+	UpdatedAt              time.Time
 }
 
 // SessionData holds session data for the fleet panel.
@@ -83,14 +88,19 @@ func (m fleetSortMode) Next() fleetSortMode {
 
 // FleetPanel renders an overview of the active agent fleet.
 type FleetPanel struct {
-	width, height  int
-	daemonRunning  bool
-	serverCount    int
-	sessions       []SessionData
-	activeSessions int
-	agents         []AgentData
-	totalTokens    int
-	updatedAt      time.Time
+	width, height          int
+	daemonRunning          bool
+	serverCount            int
+	sessions               []SessionData
+	activeSessions         int
+	agents                 []AgentData
+	totalTokens            int
+	namespacesAtRisk       int
+	agentsNeedingAttention int
+	sharedBranches         int
+	conflictFiles          int
+	orphanTasks            int
+	updatedAt              time.Time
 
 	// Interactive state
 	selectedIdx     int
@@ -139,6 +149,11 @@ func (p FleetPanel) Update(msg tea.Msg) (FleetPanel, tea.Cmd) {
 		p.activeSessions = msg.ActiveSessions
 		p.agents = msg.Agents
 		p.totalTokens = msg.TotalTokens
+		p.namespacesAtRisk = msg.NamespacesAtRisk
+		p.agentsNeedingAttention = msg.AgentsNeedingAttention
+		p.sharedBranches = msg.SharedBranches
+		p.conflictFiles = msg.ConflictFiles
+		p.orphanTasks = msg.OrphanTasks
 		p.updatedAt = msg.UpdatedAt
 		p.rebuildFlatRows()
 	case MsgSessionEntries:
@@ -255,6 +270,8 @@ func (p FleetPanel) renderSummary() string {
 		theme.Styles.Label.Render("Servers: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.serverCount)),
 		theme.Styles.Label.Render("Sessions: ") + theme.Styles.Value.Render(fmt.Sprintf("%d", p.activeSessions)),
 		theme.Styles.Label.Render("Tokens: ") + theme.Styles.Value.Render(formatNumber(p.totalTokens)),
+		theme.Styles.Label.Render("Risk: ") + theme.Styles.Value.Render(fmt.Sprintf("%d ns / %d agents", p.namespacesAtRisk, p.agentsNeedingAttention)),
+		theme.Styles.Label.Render("Relations: ") + theme.Styles.Value.Render(fmt.Sprintf("%d branches · %d files · %d orphans", p.sharedBranches, p.conflictFiles, p.orphanTasks)),
 		theme.Styles.Label.Render("Sort: ") + theme.Styles.Value.Render(string(p.sortMode)),
 	}
 	return strings.Join(parts, "  ")
