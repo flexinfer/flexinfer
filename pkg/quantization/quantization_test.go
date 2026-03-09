@@ -675,7 +675,7 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	}
 }
 
-func TestGPTQJobBuilder_BuildJob_MultimodalConfigPatch(t *testing.T) {
+func TestGPTQJobBuilder_BuildJob_NoConfigRewrite(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(4)
 	groupSize := int32(128)
@@ -698,14 +698,12 @@ func TestGPTQJobBuilder_BuildJob_MultimodalConfigPatch(t *testing.T) {
 	}
 
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "text_config") {
-		t.Fatal("expected GPTQ script to contain multimodal config.json patch for text_config")
+	// GPTQModel handles VLM configs natively — no config.json rewrite needed.
+	if contains(script, "text_config") {
+		t.Fatal("GPTQ script should NOT contain config.json rewrite for text_config")
 	}
-	if !contains(script, "VLM text_config") {
-		t.Fatal("expected GPTQ script to handle VLM text_config extraction")
-	}
-	if !contains(script, "import json") {
-		t.Fatal("expected GPTQ script to import json for config patching")
+	if contains(script, "import json") {
+		t.Fatal("GPTQ script should NOT import json (config rewrite removed)")
 	}
 	if !contains(script, "set_per_process_memory_fraction") {
 		t.Fatal("expected GPTQ script to contain GPU memory fraction cap")

@@ -369,7 +369,6 @@ mkdir -p /workspace/offload
 
 export MODEL_DIR OUT_DIR BITS GROUP_SIZE MAX_MEMORY_GB
 python3 - <<'PY'
-import json
 import os
 import torch
 from datasets import load_dataset
@@ -383,39 +382,6 @@ group_size = int(os.environ["GROUP_SIZE"])
 max_memory_gb = int(os.environ["MAX_MEMORY_GB"])
 max_seq_len = %d
 max_samples = %d
-
-# Fix multimodal model configs (e.g. Qwen3.5 VLM): transformers 5.x wraps
-# text model fields inside text_config with a composite config class (e.g.
-# Qwen3_5Config). GPTQModel quantizes only the text backbone, so extract
-# text_config and set model_type to the base text model (e.g. "qwen3") so
-# transformers loads Qwen3ForCausalLM instead of the VLM composite wrapper.
-cfg_path = os.path.join(model_dir, "config.json")
-with open(cfg_path) as f:
-    cfg = json.load(f)
-type_map = {"qwen3_5_text": "qwen3"}
-if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
-    text_cfg = cfg["text_config"]
-    # Map VLM text model_type to the standalone text model_type.
-    # e.g. qwen3_5_text -> qwen3, so AutoModelForCausalLM loads Qwen3ForCausalLM.
-    orig_type = text_cfg.get("model_type", "")
-    if orig_type in type_map:
-        text_cfg["model_type"] = type_map[orig_type]
-        text_cfg["architectures"] = [type_map[orig_type].title().replace("_","") + "ForCausalLM"]
-    # Preserve top-level token IDs not in text_config
-    for key in ["bos_token_id", "eos_token_id", "pad_token_id"]:
-        if key in cfg and key not in text_cfg:
-            text_cfg[key] = cfg[key]
-    with open(cfg_path, "w") as f:
-        json.dump(text_cfg, f, indent=2)
-    print(f"Patched config.json: VLM text_config -> model_type={text_cfg['model_type']}")
-elif cfg.get("model_type") in type_map:
-    # Already flattened from a previous run but model_type not remapped.
-    new_type = type_map[cfg["model_type"]]
-    cfg["model_type"] = new_type
-    cfg["architectures"] = [new_type.title().replace("_", "") + "ForCausalLM"]
-    with open(cfg_path, "w") as f:
-        json.dump(cfg, f, indent=2)
-    print(f"Patched config.json: remapped model_type to {new_type}")
 
 # Memory management: cap GPU VRAM to leave headroom for quantization workspace.
 # ROCm GPU driver also allocates GTT/system RAM outside the container cgroup,
