@@ -74,7 +74,9 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 
 	handlers.handle("loom/rbac-config", func(_ json.RawMessage) (any, error) {
 		return &bridge.RBACConfigResult{
-			Enabled: true,
+			Enabled:      true,
+			AuditEnabled: true,
+			DeniedCount:  7,
 			Roles: []bridge.RBACRoleInfo{
 				{Name: "viewer", Allow: []string{"time/get"}, Deny: []string{"git/delete_*"}},
 			},
@@ -250,6 +252,12 @@ func TestHandler_RBAC(t *testing.T) {
 	}
 	if len(result.Roles) != 1 || result.Roles[0].Name != "viewer" {
 		t.Fatalf("unexpected roles payload: %+v", result.Roles)
+	}
+	if !result.AuditEnabled {
+		t.Fatal("expected audit_enabled=true")
+	}
+	if result.DeniedCount != 7 {
+		t.Fatalf("expected denied_count=7, got %d", result.DeniedCount)
 	}
 	if len(result.RecentDenied) != 1 || result.RecentDenied[0].Tool != "delete_branch" {
 		t.Fatalf("unexpected recent_denied payload: %+v", result.RecentDenied)

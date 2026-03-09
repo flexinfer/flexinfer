@@ -24,11 +24,13 @@ export interface RBACDenied {
 
 export interface RBACConfig {
   enabled: boolean;
+  audit_enabled?: boolean;
   default_policy?: string;
   roles?: RBACRole[];
   bindings?: RBACBinding[];
   global_deny?: string[];
   rate_limits?: { agent_id?: string; tool?: string; requests_per_minute: number }[];
+  denied_count?: number;
   recent_denied?: RBACDenied[];
 }
 
@@ -58,7 +60,11 @@ class RBACStore {
   }
 
   get deniedCount(): number {
-    return this.recentDenied.length;
+    return this.config?.denied_count ?? this.recentDenied.length;
+  }
+
+  get auditEnabled(): boolean {
+    return this.config?.audit_enabled ?? false;
   }
 
   async fetch(): Promise<void> {

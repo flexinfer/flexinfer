@@ -99,6 +99,7 @@
   // RBAC
   let rbacEnabled = $derived(rbacStore.enabled);
   let rbacDeniedCount = $derived(rbacStore.deniedCount);
+  let auditEnabled = $derived(rbacStore.auditEnabled);
 
   // OTel status (fetched inline)
   let otelStatus = $state({ otlp_configured: false, traced_servers: 0, total_servers: 0 });
@@ -437,6 +438,7 @@
         <div class="tile-detail">{processCount} processes · {fleetStore.status?.servers ?? 0} servers</div>
         <div class="tile-badges">
           <span class="tile-badge" class:badge-active={rbacEnabled} class:badge-off={!rbacEnabled}>RBAC: {rbacEnabled ? 'active' : 'off'}{#if rbacEnabled && rbacDeniedCount > 0} ({rbacDeniedCount}){/if}</span>
+          <span class="tile-badge" class:badge-active={auditEnabled} class:badge-off={!auditEnabled}>Audit: {auditEnabled ? 'active' : 'off'}</span>
           <span class="tile-badge" class:badge-active={otelStatus.otlp_configured} class:badge-off={!otelStatus.otlp_configured}>OTel: {otelStatus.otlp_configured ? 'active' : 'off'}</span>
           <span class="tile-badge" class:badge-active={costEnabled} class:badge-off={!costEnabled}>Cost: {costEnabled ? 'active' : 'off'}</span>
         </div>

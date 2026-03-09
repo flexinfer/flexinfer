@@ -610,11 +610,13 @@ func (c *DaemonClient) CostStats() (*CostStatsResult, error) {
 // RBACConfigResult holds the response from loom/rbac-config.
 type RBACConfigResult struct {
 	Enabled       bool                `json:"enabled"`
+	AuditEnabled  bool                `json:"audit_enabled"`
 	DefaultPolicy string              `json:"default_policy,omitempty"`
 	Roles         []RBACRoleInfo      `json:"roles,omitempty"`
 	Bindings      []RBACBindingInfo   `json:"bindings,omitempty"`
 	GlobalDeny    []string            `json:"global_deny,omitempty"`
 	RateLimits    []RBACRateLimitInfo `json:"rate_limits,omitempty"`
+	DeniedCount   int                 `json:"denied_count,omitempty"`
 	RecentDenied  []RBACDeniedEntry   `json:"recent_denied,omitempty"`
 }
 
