@@ -33,7 +33,22 @@ WORKDIR /src
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=secret,id=ci_job_token,required=false \
+    --mount=type=secret,id=gitlab_token,required=false \
+    set -eu; \
+    token=""; \
+    token_user=""; \
+    if [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
+    elif [ -s /run/secrets/gitlab_token ]; then \
+      token="$(cat /run/secrets/gitlab_token)"; \
+      token_user="oauth2"; \
+    fi; \
+    if [ -n "$token" ]; then \
+      git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
+    fi; \
+    go mod download
 
 # Copy source
 COPY . .
