@@ -393,7 +393,7 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 				},
 				"timeout_seconds": map[string]any{
 					"type":        "integer",
-					"description": "Maximum time to wait (default: 300, max: 600)",
+					"description": "Maximum time to wait (default: 55, max: 600). When omitted, the handler also trims to the caller's remaining deadline budget.",
 				},
 				"poll_interval_seconds": map[string]any{
 					"type":        "integer",

@@ -4,12 +4,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/mcperror"
 	"github.com/crb2nu/loom/pkg/validate"
+)
+
+const (
+	defaultPollPipelineTimeoutSeconds = 55
+	maxPollPipelineTimeoutSeconds     = 600
+	pollPipelineDeadlineBufferSeconds = 2
 )
 
 func (g *gitlabServer) handlePipelineSummary(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -200,7 +207,6 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	pipelineID := v.RequiredInt("pipeline_id")
-	timeoutSeconds := v.Int("timeout_seconds", 300)
 	pollIntervalSeconds := v.Int("poll_interval_seconds", 5)
 	includeJobLogs := v.Bool("include_job_logs", false)
 
@@ -211,12 +217,7 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 		return errResult, nil
 	}
 
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 300
-	}
-	if timeoutSeconds > 600 {
-		timeoutSeconds = 600
-	}
+	timeoutSeconds := resolvePollPipelineTimeoutSeconds(ctx, args, v)
 	if pollIntervalSeconds < 2 {
 		pollIntervalSeconds = 2
 	}
@@ -284,6 +285,35 @@ func (g *gitlabServer) handlePollPipeline(ctx context.Context, args map[string]a
 		case <-pollTimer.C:
 		}
 	}
+}
+
+func resolvePollPipelineTimeoutSeconds(ctx context.Context, args map[string]any, v *validate.Args) int {
+	timeoutSeconds := v.Int("timeout_seconds", defaultPollPipelineTimeoutSeconds)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = defaultPollPipelineTimeoutSeconds
+	}
+	if timeoutSeconds > maxPollPipelineTimeoutSeconds {
+		timeoutSeconds = maxPollPipelineTimeoutSeconds
+	}
+
+	if _, ok := args["timeout_seconds"]; ok {
+		return timeoutSeconds
+	}
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return timeoutSeconds
+	}
+
+	remainingSeconds := int(math.Ceil(time.Until(deadline).Seconds())) - pollPipelineDeadlineBufferSeconds
+	if remainingSeconds < 1 {
+		remainingSeconds = 1
+	}
+	if remainingSeconds < timeoutSeconds {
+		timeoutSeconds = remainingSeconds
+	}
+
+	return timeoutSeconds
 }
 
 func (g *gitlabServer) summarizeJobs(jobs []any, includeFailedLogs bool, ctx context.Context, project string) map[string]any {
