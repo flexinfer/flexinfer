@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-03-07_
+_Last verified: 2026-03-10_
 
 ## Why
 
@@ -8,54 +8,67 @@ Capture the MCP/runtime baseline used for planning so later decisions are ground
 
 ## Runtime Mode Detection
 
-This session is not exposing top-level loom-mode MCP resources.
+This session is exposing top-level loom-mode MCP resources.
 
 Observed behavior:
-- `list_mcp_resources` returned no resources.
-- `list_mcp_resource_templates` returned no templates.
+- `list_mcp_resources` returned `loom://config`, `loom://servers`, `loom://tools/index`, `loom://tools`, and `loom://health`.
+- `list_mcp_resource_templates` returned paged loom templates including `loom://tools/page/{page}` and `loom://tools/server/{server}/page/{page}`.
 
 Planning implication:
-- Use CLI fallback for tool inventory.
-- Treat codebase-memory status as unknown when the MCP transport is unavailable in-session.
+- Prefer loom resource pagination over CLI fallback for inventory.
+- Treat loom daemon state and tool counts as directly inspectable in-session.
 
-## CLI Fallback Inventory
+## Loom Inventory Snapshot
 
-Inventory command used:
+Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
 
-```bash
-loom tools list --json
-```
+| Field | Value |
+|---|---|
+| active profile | `full` |
+| serverCount | `45` |
+| toolCount | `468` |
+| activeProxySessions | `4` |
+| running local servers | `agent_context`, `youtube`, `codebase_memory`, `devbox` |
 
-Snapshot from the returned JSON:
+Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
 
 | Field | Value |
 |---|---|
 | server | `all` |
-| totalTools | `472` |
-| totalPages | `1` |
-| page | `1` |
+| totalTools | `468` |
+| totalPages | `5` |
+| pageSize | `100` |
 
-This confirms the repo/runtime still has the same broad MCP surface area noted in prior planning, but the current session requires CLI inspection instead of loom resource pagination.
+Relevant planning tools confirmed available in this session:
+- `gitlab`
+- `codebase_memory`
+- `agent_context`
+- `k8s_apps_k3s`
+- `flux`
+- `quality`
+- `devbox`
 
 ## Codebase Index Readiness
 
 Current session status:
-- `codebase_memory__codebase_stats(repo_id="loom-core")` failed twice with `Transport closed`.
-- No repo-index freshness could be verified from MCP in this session.
+- `codebase_memory__codebase_stats(repo_id="loom-core")` returned `7861` indexed chunks.
+- Indexed chunk counts were `4533` functions, `1880` methods, `790` classes, and `626` modules.
+- The current index is Go-only (`7861` Go chunks, `0` TypeScript/JavaScript/Python/Rust chunks), which matches the primary backend scope of this repo.
 
 Planning implication:
-- Use `rg`, direct file reads, and local test commands as the primary evidence path.
-- Do not assume semantic search/index-backed lookups are reliable until the codebase-memory transport is healthy again.
+- Semantic code search is available and healthy for Go backend work.
+- HUD frontend artifacts under `internal/hud/frontend/dist` should still be inspected with direct file reads and repo commands because the current index is not carrying TypeScript chunks.
 
 ## Constraints
 
-- MCP inventory is available only through CLI fallback in this session.
-- Codebase-memory MCP transport is degraded or unavailable in this session.
-- Planning outputs for this pass should cite local files and commands directly.
+- Some servers are registered but idle until first use; `running: false` in `loom://servers` does not imply unavailable.
+- Deployment verification still requires live GitLab/Kubernetes calls because loom inventory only reports tool availability, not repo pipeline state.
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-03-07, returned empty)
-- Tool call: `list_mcp_resource_templates` (2026-03-07, returned empty)
-- Command: `loom tools list --json` (2026-03-07)
-- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-07, `Transport closed`)
+- Tool call: `list_mcp_resources` (2026-03-10)
+- Tool call: `list_mcp_resource_templates` (2026-03-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-10)
+- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-10)
