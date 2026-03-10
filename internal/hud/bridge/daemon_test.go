@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 )
 
 // mockDaemon creates a mock daemon that speaks newline-delimited JSON-RPC
@@ -57,6 +61,27 @@ type mockHandlers struct {
 	methods map[string]func(json.RawMessage) (any, error)
 }
 
+func parseJSONRPCLinesCompat(data []byte) ([]fiaccel.JSONRPCMessage, error) {
+	if fiaccel.RuntimeCapabilities().Transport {
+		return fiaccel.ParseJSONRPCLines(data)
+	}
+
+	lines := bytes.Split(data, []byte{'\n'})
+	messages := make([]fiaccel.JSONRPCMessage, 0, len(lines))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var msg fiaccel.JSONRPCMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	return messages, nil
+}
+
 func (m *mockHandlers) handle(method string, fn func(json.RawMessage) (any, error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -67,59 +92,126 @@ func (m *mockHandlers) handleConn(conn net.Conn) {
 	defer conn.Close()
 
 	buf := make([]byte, 64*1024)
+	pending := make([]byte, 0, 64*1024)
+
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
 			return
 		}
+		pending = append(pending, buf[:n]...)
 
-		var req struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      any             `json:"id"`
-			Method  string          `json:"method"`
-			Params  json.RawMessage `json:"params"`
+		lastNewline := bytes.LastIndexByte(pending, '\n')
+		if lastNewline < 0 {
+			continue
 		}
-		if err := json.Unmarshal(buf[:n], &req); err != nil {
+		completed := pending[:lastNewline+1]
+		rest := append([]byte(nil), pending[lastNewline+1:]...)
+
+		requests, err := parseJSONRPCLinesCompat(completed)
+		pending = rest
+		if err != nil {
 			continue
 		}
 
-		m.mu.RLock()
-		fn, ok := m.methods[req.Method]
-		m.mu.RUnlock()
+		for _, req := range requests {
+			if req.Method == nil || *req.Method == "" {
+				continue
+			}
 
-		var resp []byte
-		if !ok {
-			resp, _ = json.Marshal(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"error": map[string]any{
-					"code":    -32601,
-					"message": fmt.Sprintf("unknown method: %s", req.Method),
-				},
-			})
-		} else {
-			result, err := fn(req.Params)
-			if err != nil {
+			reqID := any(nil)
+			if len(req.ID) > 0 {
+				reqID = json.RawMessage(req.ID)
+			}
+
+			m.mu.RLock()
+			fn, ok := m.methods[*req.Method]
+			m.mu.RUnlock()
+
+			var resp []byte
+			if !ok {
 				resp, _ = json.Marshal(map[string]any{
 					"jsonrpc": "2.0",
-					"id":      req.ID,
+					"id":      reqID,
 					"error": map[string]any{
-						"code":    -32603,
-						"message": err.Error(),
+						"code":    -32601,
+						"message": fmt.Sprintf("unknown method: %s", *req.Method),
 					},
 				})
 			} else {
-				resultBytes, _ := json.Marshal(result)
-				resp, _ = json.Marshal(map[string]any{
-					"jsonrpc": "2.0",
-					"id":      req.ID,
-					"result":  json.RawMessage(resultBytes),
-				})
+				result, err := fn(req.Params)
+				if err != nil {
+					resp, _ = json.Marshal(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      reqID,
+						"error": map[string]any{
+							"code":    -32603,
+							"message": err.Error(),
+						},
+					})
+				} else {
+					resultBytes, _ := json.Marshal(result)
+					resp, _ = json.Marshal(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      reqID,
+						"result":  json.RawMessage(resultBytes),
+					})
+				}
+			}
+
+			resp = append(resp, '\n')
+			if _, err := conn.Write(resp); err != nil {
+				return
 			}
 		}
+	}
+}
 
-		resp = append(resp, '\n')
-		conn.Write(resp)
+func TestMockDaemon_ParsesMultipleRequestsFromSingleWrite(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		return map[string]any{"running": true}, nil
+	})
+
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sockPath)
+	if err != nil {
+		t.Fatalf("dial mock daemon: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+
+	payload := []byte(
+		`{"jsonrpc":"2.0","id":1,"method":"loom/status","params":{}}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"loom/status","params":{}}` + "\n",
+	)
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	readResp := func() map[string]any {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(bytes.TrimSpace(line), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		return resp
+	}
+
+	resp1 := readResp()
+	resp2 := readResp()
+
+	if resp1["id"] == nil || resp2["id"] == nil {
+		t.Fatalf("expected both responses to include ids, got resp1=%v resp2=%v", resp1, resp2)
+	}
+	if _, ok := resp1["result"]; !ok {
+		t.Fatalf("expected result in first response: %v", resp1)
+	}
+	if _, ok := resp2["result"]; !ok {
+		t.Fatalf("expected result in second response: %v", resp2)
 	}
 }
 
