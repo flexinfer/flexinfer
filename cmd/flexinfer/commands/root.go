@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 var (
@@ -60,6 +61,7 @@ func init() {
 	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(aiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(aiv1alpha2.AddToScheme(scheme))
 }
 
 var rootCmd = &cobra.Command{
@@ -96,6 +98,7 @@ func init() {
 	rootCmd.AddCommand(catalogCmd)
 	rootCmd.AddCommand(quantizeCmd)
 	rootCmd.AddCommand(benchmarkCmd)
+	rootCmd.AddCommand(autotuneCmd)
 }
 
 // Execute runs the root command

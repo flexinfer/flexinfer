@@ -138,6 +138,30 @@ func NewBenchmarker(backendType string, opts Options, dsn string) (*Benchmarker,
 	}, nil
 }
 
+// NewBenchmarkerWithClient creates a Benchmarker with an injected kubernetes client and explicit config.
+// This is useful for callers that already have a K8s client (e.g., CLI commands, autotune).
+func NewBenchmarkerWithClient(kubeClient kubernetes.Interface, namespace, proxyURL, modelName, backendType string, opts Options) *Benchmarker {
+	if backendType == "" {
+		backendType = "ollama"
+	}
+	if backendType == "llama.cpp" {
+		backendType = "llamacpp"
+	}
+	if backendType == "mlc" {
+		backendType = "mlc-llm"
+	}
+	return &Benchmarker{
+		kubeClient:  kubeClient,
+		namespace:   namespace,
+		proxyURL:    proxyURL,
+		modelName:   modelName,
+		backendType: backendType,
+		opts:        opts.withDefaults(),
+		httpClient:  &http.Client{},
+		now:         time.Now,
+	}
+}
+
 // buildModelURL returns the URL for a specific path routed through the proxy.
 // Format: {proxyURL}/model/{modelName}/{path}
 func (b *Benchmarker) buildModelURL(path string) string {
@@ -146,8 +170,9 @@ func (b *Benchmarker) buildModelURL(path string) string {
 	return fmt.Sprintf("%s/model/%s/%s", b.proxyURL, b.modelName, path)
 }
 
-// Run executes the benchmark and stores the result in a ConfigMap.
-func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) error {
+// RunAndReturn executes the benchmark and returns the result without persisting it.
+// This is useful for callers that need the result for further processing (e.g., autotune).
+func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*BenchmarkRecord, error) {
 	log := log.FromContext(ctx)
 	log.Info("Running benchmark",
 		"model", model,
@@ -155,19 +180,13 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		"proxyURL", b.proxyURL,
 		"backend", b.backendType)
 
-	// Wait for the model to be ready through the proxy.
-	// This triggers cold start (GPUGroup model swap, scale-up) if needed.
 	if err := b.waitForBackend(ctx); err != nil {
-		return fmt.Errorf("model failed to become ready: %w", err)
+		return nil, fmt.Errorf("model failed to become ready: %w", err)
 	}
-
-	// Note: pullModel is no longer needed since benchmarks now run through
-	// the proxy which routes to actual ModelDeployments. The model is loaded
-	// when the deployment starts.
 
 	result, err := b.runBenchmark(ctx, model)
 	if err != nil {
-		return fmt.Errorf("benchmark failed: %w", err)
+		return nil, fmt.Errorf("benchmark failed: %w", err)
 	}
 
 	log.Info(
@@ -178,13 +197,11 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		"samples", result.Samples,
 	)
 
-	record := BenchmarkRecord{
+	record := &BenchmarkRecord{
 		ModelName:        model,
 		Backend:          b.backendType,
 		NodeName:         b.nodeName,
 		Namespace:        b.namespace,
-		ConfigMapName:    configMapName,
-		GlobalConfigMap:  b.resultsCM,
 		TokensPerSecond:  result.TokensPerSecond,
 		CompletionTokens: result.CompletionTokens,
 		Duration:         result.Duration,
@@ -196,8 +213,21 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		Timestamp:        b.now(),
 	}
 
+	return record, nil
+}
+
+// Run executes the benchmark and stores the result in a ConfigMap.
+func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) error {
+	record, err := b.RunAndReturn(ctx, model)
+	if err != nil {
+		return err
+	}
+
+	record.ConfigMapName = configMapName
+	record.GlobalConfigMap = b.resultsCM
+
 	if b.store != nil {
-		if err := b.store.Save(ctx, record); err != nil {
+		if err := b.store.Save(ctx, *record); err != nil {
 			return fmt.Errorf("failed to save benchmark result: %w", err)
 		}
 	}
