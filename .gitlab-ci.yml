@@ -261,6 +261,7 @@ guardrails:docs-cli:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "0"
   script:
     - |
       # The shared template may fetch sources via archive (no .git metadata).
