@@ -562,15 +562,20 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 		}
 	}
 
+	// Some MCP clients prefix tool names with the connected server name
+	// (for example "loom/agent_context__agent_session_start"). Strip that
+	// transport-level namespace before resolving the underlying tool.
+	normalizedToolName := stripProxyToolNamespace(params.Name)
+
 	// Parse server__toolname format
-	parts := splitToolName(params.Name)
+	parts := splitToolName(normalizedToolName)
 	var serverName, toolName string
 
 	if len(parts) == 2 {
 		serverName, toolName = parts[0], parts[1]
 	} else {
 		// Smart Routing: Let the daemon resolve it
-		toolName = params.Name
+		toolName = normalizedToolName
 	}
 
 	// Forward to appropriate server via daemon
@@ -1294,6 +1299,17 @@ func splitToolName(name string) []string {
 		}
 	}
 	return []string{name}
+}
+
+func stripProxyToolNamespace(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	if prefix, suffix, ok := strings.Cut(trimmed, "/"); ok && prefix != "" && suffix != "" {
+		return suffix
+	}
+	return trimmed
 }
 
 // proxyOpenSession opens a session with the daemon after a successful initialize.

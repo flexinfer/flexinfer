@@ -50,6 +50,25 @@ func TestSplitToolName(t *testing.T) {
 	}
 }
 
+func TestStripProxyToolNamespace(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"agent_context__agent_session_start", "agent_context__agent_session_start"},
+		{"loom/agent_context__agent_session_start", "agent_context__agent_session_start"},
+		{" loom/agent_context__agent_presence_register ", "agent_context__agent_presence_register"},
+		{"loom/", "loom/"},
+		{"", ""},
+	}
+
+	for _, tc := range tests {
+		if got := stripProxyToolNamespace(tc.input); got != tc.want {
+			t.Errorf("stripProxyToolNamespace(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestFormatCheck(t *testing.T) {
 	tests := []struct {
 		input    string
