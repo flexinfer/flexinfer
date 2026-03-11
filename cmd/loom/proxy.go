@@ -68,6 +68,12 @@ var (
 // (from proxyDaemonRoundTrip) share the same stdout.
 var proxyStdioWriteMu sync.Mutex
 
+// proxyDaemonRPCMu serializes daemon request/response exchanges. The proxy uses
+// a single daemon transport for both foreground tool calls and background
+// session lifecycle RPCs, so concurrent send/recv pairs can steal each other's
+// responses unless they are serialized.
+var proxyDaemonRPCMu sync.Mutex
+
 // proxyStdioTransport is the client-facing stdio transport, stored at package
 // level so notification forwarding in proxyDaemonRoundTrip can write to it.
 var proxyStdioTransport *mcp.StdioTransport
@@ -1069,6 +1075,9 @@ func forwardToDaemon(ctx context.Context, daemon mcp.Transport, msg *mcp.Message
 }
 
 func proxyDaemonRoundTrip(ctx context.Context, daemon mcp.Transport, req *mcp.Message, operation string) (*mcp.Message, error) {
+	proxyDaemonRPCMu.Lock()
+	defer proxyDaemonRPCMu.Unlock()
+
 	if err := proxyRPCSend(ctx, daemon, req, operation); err != nil {
 		return nil, err
 	}
@@ -1124,6 +1133,9 @@ func proxyDaemonRoundTripWithTimeout(ctx context.Context, daemon mcp.Transport, 
 	if timeout > maxProxyToolRPCTimeout {
 		timeout = maxProxyToolRPCTimeout
 	}
+
+	proxyDaemonRPCMu.Lock()
+	defer proxyDaemonRPCMu.Unlock()
 
 	sendCtx, sendCancel := context.WithTimeout(ctx, timeout)
 	err := daemon.Send(sendCtx, req)
@@ -1304,20 +1316,9 @@ func proxyOpenSession(ctx context.Context, transport mcp.Transport) {
 	}
 
 	req, _ := mcp.NewRequest(99, "loom/session/open", openParams)
-
-	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
-	err := transport.Send(sendCtx, req)
-	sendCancel()
+	resp, err := proxyDaemonRoundTrip(ctx, transport, req, "loom/session/open")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "loom proxy: session open send failed: %v\n", err)
-		return
-	}
-
-	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
-	resp, err := transport.Recv(recvCtx)
-	recvCancel()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "loom proxy: session open recv failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "loom proxy: session open failed: %v\n", err)
 		return
 	}
 
@@ -1351,19 +1352,9 @@ func proxySessionHeartbeat(ctx context.Context, transport mcp.Transport) {
 		"daemon_epoch": proxyDaemonEpoch,
 	})
 
-	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
-	err := transport.Send(sendCtx, req)
-	sendCancel()
+	resp, err := proxyDaemonRoundTrip(ctx, transport, req, "loom/session/heartbeat")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat send failed: %v\n", err)
-		return
-	}
-
-	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
-	resp, err := transport.Recv(recvCtx)
-	recvCancel()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat recv failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "loom proxy: session heartbeat failed: %v\n", err)
 		return
 	}
 
@@ -1390,9 +1381,9 @@ func proxyCloseSession(ctx context.Context, transport mcp.Transport) {
 	closeCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
-	_ = transport.Send(closeCtx, req)
-	// Best-effort recv; ignore errors (transport may already be broken).
-	_, _ = transport.Recv(closeCtx)
+	// Best-effort close; ignore errors because shutdown may already be tearing
+	// down either side of the transport.
+	_, _ = proxyDaemonRoundTrip(closeCtx, transport, req, "loom/session/close")
 
 	// proxySessionID is preserved as prior_session_id for the next open call.
 }
