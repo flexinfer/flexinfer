@@ -195,6 +195,13 @@ PY
 
 trap - EXIT
 
+# Remove FP16 source weight files to reclaim disk space.
+# Quantized output is already saved in OUT_DIR; source weights are no longer needed.
+# Re-quantization requires a fresh download (delete .flexinfer_cached + prefetch job).
+echo "Cleaning up FP16 source weight files..."
+find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) -delete
+echo "FP16 source files removed"
+
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
 END_TS=$(date +%%s)
@@ -405,6 +412,25 @@ if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
         json.dump(text_cfg, f, indent=2)
     print(f"Extracted text_config: model_type={text_cfg.get('model_type')}")
 
+# Detect hybrid architecture (e.g. Qwen3.5 with mixed linear_attention/full_attention).
+# When heterogeneous layer types are present, use dynamic exclusion to skip attention
+# modules and quantize only MLP/FFN — matching the official Qwen GPTQ-Int4 approach.
+with open(cfg_path) as f:
+    cfg_recheck = json.load(f)
+dynamic_config = None
+if "layer_types" in cfg_recheck:
+    layer_types = cfg_recheck["layer_types"]
+    unique_types = set(layer_types)
+    if len(unique_types) > 1:
+        print(f"Hybrid architecture detected: {dict((t, layer_types.count(t)) for t in unique_types)}")
+        dynamic_config = {
+            "-:.*attn.*": {},
+            "-:.*shared_expert.*": {},
+            "-:.*visual.*": {},
+            "-:.*mtp.*": {},
+        }
+        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+
 # Memory management: cap GPU VRAM to leave headroom for quantization workspace.
 # ROCm GPU driver also allocates GTT/system RAM outside the container cgroup,
 # so reduced calibration samples (controlled via CR) is the main guard.
@@ -417,7 +443,10 @@ except RuntimeError:
 print(f"Memory: GPU fraction={gpu_fraction} ({int(total_vram * gpu_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi")
 
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-quantize_config = QuantizeConfig(bits=bits, group_size=group_size, sym=%s, desc_act=%s)
+qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=%s, desc_act=%s)
+if dynamic_config is not None:
+    qcfg_kwargs["dynamic"] = dynamic_config
+quantize_config = QuantizeConfig(**qcfg_kwargs)
 model = GPTQModel.load(
     model_dir,
     quantize_config=quantize_config,
@@ -436,6 +465,13 @@ tokenizer.save_pretrained(out_dir)
 PY
 
 trap - EXIT
+
+# Remove FP16 source weight files to reclaim disk space.
+# Quantized output is already saved in OUT_DIR; source weights are no longer needed.
+# Re-quantization requires a fresh download (delete .flexinfer_cached + prefetch job).
+echo "Cleaning up FP16 source weight files..."
+find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) -delete
+echo "FP16 source files removed"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
