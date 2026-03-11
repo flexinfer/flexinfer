@@ -1,0 +1,190 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-inference
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-inference-performance.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Time to First Token (TTFT)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket{namespace=\"flexinfer-system\"}[5m])) by (le, model_name))",
+              "legendFormat": "{{`{{model_name}}`}} P50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket{namespace=\"flexinfer-system\"}[5m])) by (le, model_name))",
+              "legendFormat": "{{`{{model_name}}`}} P95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket{namespace=\"flexinfer-system\"}[5m])) by (le, model_name))",
+              "legendFormat": "{{`{{model_name}}`}} P99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Generation Throughput (tok/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "vllm:avg_generation_throughput_toks_per_s{namespace=\"flexinfer-system\"}",
+              "legendFormat": "{{`{{model_name}}`}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "tok/s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "KV Cache Utilization",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "vllm:gpu_cache_usage_perc{namespace=\"flexinfer-system\"}",
+              "legendFormat": "{{`{{model_name}}`}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.8 },
+                  { "color": "red", "value": 0.95 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Active vs Waiting Requests",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+          "targets": [
+            {
+              "expr": "vllm:num_requests_running{namespace=\"flexinfer-system\"}",
+              "legendFormat": "{{`{{model_name}}`}} running"
+            },
+            {
+              "expr": "vllm:num_requests_waiting{namespace=\"flexinfer-system\"}",
+              "legendFormat": "{{`{{model_name}}`}} waiting"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+            }
+          }
+        },
+        {
+          "title": "Model Phase",
+          "type": "state-timeline",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_model_phase{namespace=\"flexinfer-system\", phase=\"Ready\"} == 1",
+              "legendFormat": "{{`{{model}}`}} Ready"
+            },
+            {
+              "expr": "flexinfer_model_phase{namespace=\"flexinfer-system\", phase=\"Loading\"} == 1",
+              "legendFormat": "{{`{{model}}`}} Loading"
+            },
+            {
+              "expr": "flexinfer_model_phase{namespace=\"flexinfer-system\", phase=\"Idle\"} == 1",
+              "legendFormat": "{{`{{model}}`}} Idle"
+            }
+          ]
+        },
+        {
+          "title": "Proxy Queue Depth",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "flexinfer_proxy_queue_depth{namespace=\"flexinfer-system\"}",
+              "legendFormat": "{{`{{model}}`}} queue"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "GPU VRAM Utilization (%)",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            {
+              "expr": "flexinfer_gpu_vram_utilization_percent",
+              "legendFormat": "{{`{{node}}`}} {{`{{gpu}}`}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 80 },
+                  { "color": "red", "value": 95 }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["flexinfer", "inference", "vllm"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer: Inference Performance",
+      "uid": "flexinfer-inference-perf"
+    }
+{{- end }}

@@ -264,6 +264,36 @@ var (
 		},
 		[]string{"cluster", "reason"},
 	)
+
+	// === Model Lifecycle Metrics ===
+
+	// ModelPhase reports the current phase for each model (1 for current phase, 0 otherwise).
+	ModelPhase = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_model_phase",
+			Help: "Current phase of a model (1 for current phase, 0 otherwise).",
+		},
+		[]string{"model", "namespace", "phase"},
+	)
+
+	// ModelTransitionsTotal counts phase transitions by model.
+	ModelTransitionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_transitions_total",
+			Help: "Total number of model phase transitions.",
+		},
+		[]string{"model", "namespace", "from", "to", "reason"},
+	)
+
+	// ModelReadyLatencySeconds tracks the time from model creation to Ready.
+	ModelReadyLatencySeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_model_ready_latency_seconds",
+			Help:    "Time from model creation to Ready phase.",
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600, 900, 1800},
+		},
+		[]string{"model", "namespace", "backend"},
+	)
 )
 
 func init() {
@@ -304,6 +334,11 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterModelWatchReady)
 	ctrlmetrics.Registry.MustRegister(ClusterModelWatchRestarts)
 	ctrlmetrics.Registry.MustRegister(ClusterModelWatchRestartTotal)
+
+	// Model lifecycle metrics
+	ctrlmetrics.Registry.MustRegister(ModelPhase)
+	ctrlmetrics.Registry.MustRegister(ModelTransitionsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelReadyLatencySeconds)
 }
 
 // Exporter handles serving the Prometheus metrics.

@@ -169,6 +169,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--disable-log-stats")
 	}
 
+	// Speculative decoding — passed as opaque JSON to --speculative-config.
+	// Supports draft_model, eagle, eagle3, mtp, ngram, suffix, mlp_speculator.
+	if specConfig := spec.ConfigString("speculativeConfig", ""); specConfig != "" {
+		args = append(args, "--speculative-config", specConfig)
+	}
+
 	return args
 }
 

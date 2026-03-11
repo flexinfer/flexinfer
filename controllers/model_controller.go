@@ -2990,13 +2990,51 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Waiting for deployment to be ready")
 	}
 
+	// Emit model lifecycle metrics for phase changes computed above.
+	r.recordPhaseMetrics(model, prevPhase, model.Status.Phase)
+
 	return r.Status().Update(ctx, model)
 }
 
-// updatePhase updates just the phase field in status.
+// updatePhase updates just the phase field in status and emits lifecycle metrics.
 func (r *ModelReconciler) updatePhase(ctx context.Context, model *aiv1alpha2.Model, phase aiv1alpha2.ModelPhase) error {
+	oldPhase := model.Status.Phase
 	model.Status.Phase = phase
+	r.recordPhaseMetrics(model, oldPhase, phase)
 	return r.Status().Update(ctx, model)
+}
+
+// recordPhaseMetrics emits Prometheus metrics for a model phase transition.
+func (r *ModelReconciler) recordPhaseMetrics(model *aiv1alpha2.Model, from, to aiv1alpha2.ModelPhase) {
+	ns := model.Namespace
+	name := model.Name
+
+	// Update the phase gauge: set current phase to 1, clear all others.
+	allPhases := []aiv1alpha2.ModelPhase{
+		aiv1alpha2.ModelPhaseIdle, aiv1alpha2.ModelPhasePending,
+		aiv1alpha2.ModelPhaseLoading, aiv1alpha2.ModelPhaseReady,
+		aiv1alpha2.ModelPhasePreempted, aiv1alpha2.ModelPhaseFailed,
+	}
+	for _, p := range allPhases {
+		val := float64(0)
+		if p == to {
+			val = 1
+		}
+		metrics.ModelPhase.WithLabelValues(name, ns, string(p)).Set(val)
+	}
+
+	// Count the transition.
+	if from != "" && from != to {
+		metrics.ModelTransitionsTotal.WithLabelValues(name, ns, string(from), string(to), "reconcile").Inc()
+	}
+
+	// Record ready latency when transitioning to Ready for the first time.
+	if to == aiv1alpha2.ModelPhaseReady && from != aiv1alpha2.ModelPhaseReady {
+		if !model.CreationTimestamp.IsZero() {
+			latency := time.Since(model.CreationTimestamp.Time).Seconds()
+			metrics.ModelReadyLatencySeconds.WithLabelValues(name, ns, model.Spec.Backend).Observe(latency)
+		}
+	}
 }
 
 // detectGPU detects the GPU vendor and architecture from nodes.

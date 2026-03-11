@@ -872,6 +872,83 @@ func TestVLLMBackendEnv_PrefillDecodeAttention(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
+	b := &VLLMBackend{}
+
+	tests := []struct {
+		name      string
+		config    map[string]interface{}
+		wantFlag  bool
+		wantValue string
+	}{
+		{
+			name: "ngram speculation",
+			config: map[string]interface{}{
+				"speculativeConfig": `{"method": "ngram", "num_speculative_tokens": 3}`,
+			},
+			wantFlag:  true,
+			wantValue: `{"method": "ngram", "num_speculative_tokens": 3}`,
+		},
+		{
+			name: "draft model speculation",
+			config: map[string]interface{}{
+				"speculativeConfig": `{"model": "Qwen/Qwen3-0.6B", "num_speculative_tokens": 5, "method": "draft_model"}`,
+			},
+			wantFlag:  true,
+			wantValue: `{"model": "Qwen/Qwen3-0.6B", "num_speculative_tokens": 5, "method": "draft_model"}`,
+		},
+		{
+			name: "mtp speculation",
+			config: map[string]interface{}{
+				"speculativeConfig": `{"method": "mtp", "num_speculative_tokens": 1}`,
+			},
+			wantFlag:  true,
+			wantValue: `{"method": "mtp", "num_speculative_tokens": 1}`,
+		},
+		{
+			name:     "not set by default",
+			config:   map[string]interface{}{},
+			wantFlag: false,
+		},
+		{
+			name: "empty string ignored",
+			config: map[string]interface{}{
+				"speculativeConfig": "",
+			},
+			wantFlag: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{
+				Model:  "test-model",
+				Config: tt.config,
+			}
+			args := b.Args(spec)
+
+			argMap := make(map[string]string)
+			for i := 0; i < len(args)-1; i++ {
+				if args[i][0] == '-' {
+					argMap[args[i]] = args[i+1]
+				}
+			}
+
+			if tt.wantFlag {
+				if v, ok := argMap["--speculative-config"]; !ok {
+					t.Error("expected --speculative-config to be present")
+				} else if v != tt.wantValue {
+					t.Errorf("expected --speculative-config=%q, got %q", tt.wantValue, v)
+				}
+			} else {
+				if _, ok := argMap["--speculative-config"]; ok {
+					t.Error("expected --speculative-config to be absent")
+				}
+			}
+		})
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 
