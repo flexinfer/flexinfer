@@ -1709,7 +1709,11 @@ func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
 	result, err := a.client.RBACConfig()
 	if err != nil {
 		a.logger.Debug("rbac-config call failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":       false,
+			"audit_enabled": false,
+			"denied_count":  0,
+		})
 		return
 	}
 	a.writeJSON(w, http.StatusOK, result)

@@ -468,10 +468,13 @@ func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.M
 	}
 
 	cfg := d.rbac.Config()
+	recentDenied := d.recentDeniedSnapshot()
 	result := map[string]any{
 		"enabled":        true,
+		"audit_enabled":  d.audit != nil,
 		"default_policy": cfg.DefaultPolicy,
 		"global_deny":    cfg.GlobalDeny,
+		"denied_count":   len(recentDenied),
 	}
 
 	var roles []map[string]any
@@ -504,7 +507,7 @@ func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.M
 	}
 	result["rate_limits"] = rateLimits
 
-	result["recent_denied"] = d.recentDeniedSnapshot()
+	result["recent_denied"] = recentDenied
 
 	return mcp.NewResponse(msg.ID, result)
 }

@@ -72,6 +72,28 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 		}, nil
 	})
 
+	handlers.handle("loom/rbac-config", func(_ json.RawMessage) (any, error) {
+		return &bridge.RBACConfigResult{
+			Enabled:      true,
+			AuditEnabled: true,
+			DeniedCount:  7,
+			Roles: []bridge.RBACRoleInfo{
+				{Name: "viewer", Allow: []string{"time/get"}, Deny: []string{"git/delete_*"}},
+			},
+			Bindings: []bridge.RBACBindingInfo{
+				{AgentID: "agent-1", Role: "viewer"},
+			},
+			RecentDenied: []bridge.RBACDeniedEntry{
+				{
+					AgentID: "agent-2",
+					Server:  "git",
+					Tool:    "delete_branch",
+					Reason:  "denied by pattern \"git/delete_*\"",
+				},
+			},
+		}, nil
+	})
+
 	// Agent bridge tool calls — return empty results.
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var p struct {
@@ -207,6 +229,61 @@ func TestHandler_Fleet(t *testing.T) {
 	}
 	if _, ok := result["server_count"]; !ok {
 		t.Error("expected server_count field in fleet snapshot")
+	}
+}
+
+func TestHandler_RBAC(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	req := httptest.NewRequest("GET", "/api/rbac", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result bridge.RBACConfigResult
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !result.Enabled {
+		t.Fatal("expected enabled=true")
+	}
+	if len(result.Roles) != 1 || result.Roles[0].Name != "viewer" {
+		t.Fatalf("unexpected roles payload: %+v", result.Roles)
+	}
+	if !result.AuditEnabled {
+		t.Fatal("expected audit_enabled=true")
+	}
+	if result.DeniedCount != 7 {
+		t.Fatalf("expected denied_count=7, got %d", result.DeniedCount)
+	}
+	if len(result.RecentDenied) != 1 || result.RecentDenied[0].Tool != "delete_branch" {
+		t.Fatalf("unexpected recent_denied payload: %+v", result.RecentDenied)
+	}
+}
+
+func TestHandler_RBACFallbackWhenDaemonFails(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+	handlers.handle("loom/rbac-config", func(_ json.RawMessage) (any, error) {
+		return nil, fmt.Errorf("rbac unavailable")
+	})
+
+	req := httptest.NewRequest("GET", "/api/rbac", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if enabled, ok := result["enabled"].(bool); !ok || enabled {
+		t.Fatalf("expected fallback enabled=false, got: %#v", result["enabled"])
 	}
 }
 

@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
+	"time"
 
 	mcp "gitlab.flexinfer.ai/libs/mcp-go"
 )
@@ -86,5 +88,63 @@ func TestHandleMessage_RBACSimulate_RequiresServerAndTool(t *testing.T) {
 	}
 	if resp.Error.Code != mcp.InvalidParams {
 		t.Fatalf("error code=%d want %d", resp.Error.Code, mcp.InvalidParams)
+	}
+}
+
+func TestHandleRBACConfig_IncludesAuditAndDeniedCount(t *testing.T) {
+	d := &Daemon{
+		rbac: NewRBACEnforcer(RBACConfig{
+			Enabled:       true,
+			DefaultPolicy: "deny",
+			Roles: map[string]RBACRole{
+				"viewer": {Allow: []string{"time/*"}},
+			},
+			Bindings: []RBACBinding{
+				{AgentID: "agent-1", Role: "viewer"},
+			},
+		}, slog.Default()),
+		audit: &AuditLogger{},
+		recentDenied: []deniedEntry{
+			{
+				AgentID:   "agent-2",
+				Server:    "git",
+				Tool:      "delete_branch",
+				Role:      "viewer",
+				Reason:    "denied by policy",
+				Timestamp: time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	msg, err := mcp.NewRequest(1, "loom/rbac-config", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := d.handleRBACConfig(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleRBACConfig: %v", err)
+	}
+
+	var result struct {
+		Enabled      bool          `json:"enabled"`
+		AuditEnabled bool          `json:"audit_enabled"`
+		DeniedCount  int           `json:"denied_count"`
+		RecentDenied []deniedEntry `json:"recent_denied"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if !result.Enabled {
+		t.Fatal("expected enabled=true")
+	}
+	if !result.AuditEnabled {
+		t.Fatal("expected audit_enabled=true")
+	}
+	if result.DeniedCount != 1 {
+		t.Fatalf("expected denied_count=1, got %d", result.DeniedCount)
+	}
+	if len(result.RecentDenied) != 1 || result.RecentDenied[0].Tool != "delete_branch" {
+		t.Fatalf("unexpected recent_denied payload: %+v", result.RecentDenied)
 	}
 }

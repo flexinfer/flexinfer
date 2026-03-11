@@ -434,6 +434,15 @@
               </div>
             </div>
           {/if}
+          <div class="rbac-section">
+            <span class="text-xs uppercase text-muted">Audit</span>
+            <div class="rbac-list">
+              <div class="rbac-row">
+                <span class="text-mono rbac-name">status</span>
+                <span class="text-muted text-xs">{rbacStore.auditEnabled ? 'active' : 'off'}</span>
+              </div>
+            </div>
+          </div>
         {:else}
           <span class="text-muted text-xs">RBAC is disabled</span>
         {/if}
