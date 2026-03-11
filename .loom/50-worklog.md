@@ -1,5 +1,24 @@
 # Worklog
 
+## 2026-03-11 (session 24) — Worktree reconciliation and branch cleanup
+
+- What changed:
+  - Audited all 43 git worktrees against `main` merge status, commit age, and ahead/behind counts.
+  - Removed 7 already-merged worktrees: `feat/ios-premium-ux`, `ci-fix-proxies`, `codex/mobile-hub-daemon-*`, `codex/agent-trace-telemetry`, `codex/context-registry-expansion`, `codex/int-009-mcp-mentatlab`, `codex/integration-seq-main`.
+  - Removed 2 malformed-path worktrees (nested `loom-core/Users/cblevins/...` structure) and cleaned up the leftover directory tree.
+  - Removed 26 stale worktrees (100-335 commits behind main, 1-9 ahead) covering old RBAC, OTel, devbox, skills, and fleet branches.
+  - Deleted 39 merged local branches and 34 orphaned stale unmerged branches.
+  - Pruned remote tracking refs via `git fetch --prune`.
+  - Final state: 6 worktrees (main checkout + codex-tmp + 4 active), 7 local branches.
+  - Updated `.loom/00-index.md` with current worktree inventory, active workstreams, and reconciled risk assessment.
+- Why:
+  - Worktree sprawl had accumulated to 43 entries over weeks of Codex deliveries. Most were superseded by work already on `main`. The cleanup aligns the local state with reality and reduces confusion for multi-agent coordination.
+- Verification:
+  - `git worktree list` (6 entries)
+  - `git branch` (7 branches)
+  - `git merge-base --is-ancestor <branch> main` (confirmed 7 merged)
+  - `git rev-list --left-right --count main...<branch>` (confirmed all removed branches were 100+ behind)
+
 ## 2026-03-07 (session 23) — Repo alignment review and task carve-out
 
 - What changed:

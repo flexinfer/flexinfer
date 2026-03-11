@@ -24,43 +24,57 @@
 - Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
 - Tech debt priority: `tech-debt-priority.md`
 
-## Current State (2026-03-07)
+## Current State (2026-03-11)
 
-**Branch**: `main` at `4e57746`
+**Branch**: `codex/google-workspace-finish` at `b220ba9` (main at latest)
 
-**Planning baseline**:
-- Workspace snapshot was regenerated on 2026-03-07.
-- This session did not expose loom-mode MCP resources; inventory used CLI fallback via `loom tools list --json`.
-- `codebase_memory__codebase_stats` was unavailable in-session (`Transport closed`), so this review used `rg`, direct file reads, and local test commands.
+**Worktree reconciliation (2026-03-11)**:
+- Cleaned 43 worktrees down to 6 (including main checkout and codex-tmp).
+- Removed 7 already-merged worktrees, 2 malformed-path worktrees, and 26 stale worktrees (100-335 commits behind main).
+- Deleted 39 merged local branches and 34 orphaned stale branches.
+- Pruned remote tracking refs.
 
-**Most important current review outcome**:
-- The biggest remaining architecture gap is agent lifecycle contract/surface decomposition, not the old `PresencePanel.svelte` or `internal/devbox/backend/k8s.go` split targets.
-- HUD cost/RBAC/OTel visibility is already implemented on `main`; those items need backlog/status cleanup more than feature delivery.
-- Total repo statement coverage is now `39.7%`, so the coverage goal is a finish-line push rather than a large gap-fill program.
+**Active worktrees**:
+
+| Worktree | Branch | Ahead/Behind | Purpose |
+|----------|--------|-------------|---------|
+| `services/loom-core` | `codex/google-workspace-finish` | +2/−0 | Google Workspace MCP auth (current) |
+| `.worktrees/loom-core-53-rollout-20260309b` | `codex/backlog/53-rbac-audit-rollout2` | +5/−3 | RBAC audit rollout |
+| `.worktrees/loom-core-60` | `codex/backlog/21` | +3/−39 | Agent contract convergence |
+| `services/loom-core-codex-fi-accel-adoption` | `codex/fi-accel-adoption` | +2/−12 | FI accel adoption (original) |
+| `services/loom-core-codex-fi-accel-adoption-clean` | `codex/fi-accel-adoption-rebase` | +1/−0 | FI accel adoption (clean rebase) |
+| `.codex-tmp/loom-core-main` | detached HEAD | — | Codex working copy |
+
+**Local branch** `codex/agent-context-consistency` (+3/−0) preserved but not checked out.
+
+**Planning baseline** (carried from 2026-03-07):
+- HUD cost/RBAC/OTel visibility already implemented on `main`; stale worktrees for those items are now cleaned up.
+- Agent lifecycle contract/surface decomposition remains the highest-value refactor target.
+- Coverage at `39.7%` toward `40%+` goal.
 
 ## Active Workstreams
 
 | Track | Status | Key Docs |
 |-------|--------|----------|
-| Agent lifecycle contract convergence | Still open, highest-value refactor target | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#21` |
-| Daemon pipeline hardening | Narrow finish pass remains | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#20` |
-| Coverage push | Finish-line state: `39.7%` toward `40%+` | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#2` |
-| Daemon telemetry completion | Still open on daemon-side export/instrumentation | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP Issue `#12` |
-| OpenAI Responses M2 | Foundation shipped, bounded follow-up remains | `36-implementation-plan-openai-responses-orchestration-2026-03-04.md`, `39-roadmap-review-and-task-carveout-2026-03-07.md` |
-| Mobile companion | Historical parallel track; not the active repo-alignment focus for this pass | `30-implementation-plan.md`, `20-product-spec.md` |
+| Google Workspace MCP auth | In progress (current branch) | `codex/google-workspace-finish` |
+| Agent lifecycle contract convergence | Open, highest-value refactor | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP `#21`, `codex/backlog/21` |
+| RBAC audit rollout | Near-main, review pending | `codex/backlog/53-rbac-audit-rollout2` |
+| FI accel adoption | Clean rebase ready | `codex/fi-accel-adoption-rebase` |
+| Agent context consistency | Fresh branch, not checked out | `codex/agent-context-consistency` |
+| Daemon pipeline hardening | Narrow finish pass remains | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP `#20` |
+| Coverage push | Finish-line: `39.7%` toward `40%+` | ROADMAP `#2` |
+| OpenAI Responses M2 | Foundation shipped, bounded follow-up | `36-implementation-plan-openai-responses-orchestration-2026-03-04.md` |
 
 ## Risks
 
-- Planning docs have drifted far enough from `main` to mis-prioritize work unless reconciled soon.
-- Codebase-memory MCP transport was unavailable in this session, so future planning still needs an index-health follow-up.
-- The agent lifecycle surface (`cmd/loom/cmd_agent.go`, `internal/hud/api_agent.go`, `internal/hud/bridge/agent.go`) remains large and high-churn.
+- `codex/backlog/21` is 39 commits behind main — needs rebase before merge.
+- `codex/fi-accel-adoption` (original) is 12 behind; prefer the clean rebase copy.
+- Codebase-memory MCP transport availability still needs follow-up.
+- Agent lifecycle surface (`cmd/loom/cmd_agent.go`, `internal/hud/api_agent.go`, `internal/hud/bridge/agent.go`) remains large and high-churn.
 
 ## Sources
 
+- Worktree reconciliation: `git worktree list`, `git branch --merged/--no-merged main`, `git rev-list --left-right --count`
 - `39-roadmap-review-and-task-carveout-2026-03-07.md`
-- `ROADMAP.md` (2026-03-07 review)
-- `docs/IMPLEMENTATION_STATUS.md` (2026-03-07 review)
-- Command: `loom tools list --json`
-- Command: `go test ./...`
-- Command: `go test ./... -coverprofile=/tmp/loom-cover.out`
-- Command: `go tool cover -func=/tmp/loom-cover.out | tail -1`
+- `ROADMAP.md`
+- `docs/IMPLEMENTATION_STATUS.md`
