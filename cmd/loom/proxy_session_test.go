@@ -120,6 +120,53 @@ func TestProxyOpenSession_Success(t *testing.T) {
 	}
 }
 
+func TestHandleProxyToolsCall_StripsProxyNamespace(t *testing.T) {
+	oldAgentHint := agentHintGlobal
+	oldSessionID := proxySessionID
+	oldSessionDisabled := proxySessionDisabled
+	defer func() {
+		agentHintGlobal = oldAgentHint
+		proxySessionID = oldSessionID
+		proxySessionDisabled = oldSessionDisabled
+	}()
+
+	agentHintGlobal = ""
+	proxySessionID = ""
+	proxySessionDisabled = false
+
+	resp, _ := mcp.NewResponse(json.RawMessage(`1`), json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`))
+	transport := &sessionStubTransport{
+		recvQueue: []*mcp.Message{resp},
+	}
+
+	msg, _ := mcp.NewRequest(1, "tools/call", map[string]any{
+		"name":      "loom/agent_context__agent_session_start",
+		"arguments": map[string]any{"agent_id": "codex-test"},
+	})
+
+	_, err := handleProxyToolsCall(context.Background(), transport, msg)
+	if err != nil {
+		t.Fatalf("handleProxyToolsCall returned error: %v", err)
+	}
+	if len(transport.sentMessages) != 1 {
+		t.Fatalf("expected 1 daemon request, got %d", len(transport.sentMessages))
+	}
+	if transport.sentMessages[0].Method != "loom/call" {
+		t.Fatalf("daemon method = %q, want loom/call", transport.sentMessages[0].Method)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(transport.sentMessages[0].Params, &payload); err != nil {
+		t.Fatalf("unmarshal daemon payload: %v", err)
+	}
+	if got := payload["server"]; got != "agent_context" {
+		t.Fatalf("server = %#v, want agent_context", got)
+	}
+	if got := payload["tool"]; got != "agent_session_start" {
+		t.Fatalf("tool = %#v, want agent_session_start", got)
+	}
+}
+
 func TestProxyOpenSession_MethodNotFound(t *testing.T) {
 	// Older daemon returns method_not_found -- should be silently ignored.
 	oldSessionID := proxySessionID
