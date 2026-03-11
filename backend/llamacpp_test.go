@@ -105,6 +105,36 @@ func TestLlamaCppBackendArgs_JinjaFlag(t *testing.T) {
 	})
 }
 
+func TestLlamaCppBackendArgs_EmbeddingFlag(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	t.Run("enabled", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/bge/model.gguf",
+			Config: map[string]interface{}{
+				"embedding": true,
+			},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--embeddings") {
+			t.Fatalf("expected args to contain --embeddings, got %#v", args)
+		}
+	})
+
+	t.Run("not set by default", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/test/model.gguf",
+			Config:    map[string]interface{}{},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--embeddings") {
+			t.Fatalf("expected args to NOT contain --embeddings, got %#v", args)
+		}
+	})
+}
+
 func TestLlamaCppBackendImage(t *testing.T) {
 	b := &LlamaCppBackend{}
 

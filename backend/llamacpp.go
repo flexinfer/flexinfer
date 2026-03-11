@@ -173,6 +173,11 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--reasoning-budget", fmt.Sprintf("%d", reasoningBudget))
 	}
 
+	// Embedding mode (required for /v1/embeddings endpoint)
+	if spec.ConfigBool("embedding", false) {
+		args = append(args, "--embeddings")
+	}
+
 	// Enable metrics endpoint
 	if spec.ConfigBool("metrics", false) {
 		args = append(args, "--metrics")
