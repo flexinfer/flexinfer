@@ -1,4 +1,5 @@
 FROM alpine:3.23
+RUN apk upgrade --no-cache
 WORKDIR /
 COPY bin/flash-loader /usr/local/bin/flash-loader
 ENTRYPOINT ["/usr/local/bin/flash-loader"]

@@ -1,5 +1,5 @@
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates procps
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates procps
 WORKDIR /
 COPY bin/benchmarker /flexinfer-bench
 USER 65532:65532
