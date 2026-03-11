@@ -644,6 +644,7 @@ func (d *Daemon) Reload(ctx context.Context) error {
 
 	// Reload registry
 	if d.cfg.RegistryPath != "" {
+		oldReg := d.registry
 		newReg, err := registry.LoadWithDefaults(d.cfg.RegistryPath)
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
@@ -679,6 +680,11 @@ func (d *Daemon) Reload(ctx context.Context) error {
 		d.router.SetRegistry(newReg)
 		d.registry = newReg
 		d.logger.Info("registry reloaded", "servers", len(newReg.Servers))
+
+		invalidated := d.invalidateServersForReload(oldReg, newReg)
+		if len(invalidated) > 0 {
+			d.logger.Info("invalidated running servers after reload", "count", len(invalidated), "servers", invalidated)
+		}
 	}
 
 	// Refresh tool cache
