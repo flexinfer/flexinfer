@@ -66,6 +66,19 @@ func firstToolText(envelope mcp.CallToolResult) (string, error) {
 	return "", fmt.Errorf("tool result did not contain text content")
 }
 
+// checkToolError parses raw JSON just enough to detect an MCP error envelope.
+// Use when target is nil and full unmarshal is unnecessary.
+func checkToolError(raw json.RawMessage) error {
+	if raw == nil {
+		return nil
+	}
+	var envelope mcp.CallToolResult
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.IsError {
+		return toolEnvelopeError(envelope)
+	}
+	return nil
+}
+
 func toolEnvelopeError(envelope mcp.CallToolResult) error {
 	for _, content := range envelope.Content {
 		if content.Type == "text" && strings.TrimSpace(content.Text) != "" {
