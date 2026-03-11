@@ -189,18 +189,23 @@ model.quantize(
     max_calib_seq_len=%d,
     max_calib_samples=%d,
 %s)
+
+# Remove FP16 source weight files BEFORE save to reclaim disk space.
+import glob as _glob
+for _f in sorted(
+    _glob.glob(os.path.join(model_dir, "*.safetensors"))
+    + _glob.glob(os.path.join(model_dir, "*.bin"))
+    + _glob.glob(os.path.join(model_dir, "*.pt"))
+):
+    os.remove(_f)
+    print(f"Removed source file: {os.path.basename(_f)}")
+print("FP16 source files removed — disk reclaimed for save")
+
 model.save_quantized(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
 
 trap - EXIT
-
-# Remove FP16 source weight files to reclaim disk space.
-# Quantized output is already saved in OUT_DIR; source weights are no longer needed.
-# Re-quantization requires a fresh download (delete .flexinfer_cached + prefetch job).
-echo "Cleaning up FP16 source weight files..."
-find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) -delete
-echo "FP16 source files removed"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
@@ -460,18 +465,27 @@ for sample in dataset.select(range(min(max_samples, len(dataset)))):
     examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
 
 model.quantize(examples)
+
+# Remove FP16 source weight files BEFORE save to reclaim disk space for
+# the quantized output.  After quantize(), all layers are in memory or
+# in GPTQModel's turtle offload dir — the original HF download files
+# are no longer needed.  Re-quantization requires a fresh download
+# (delete .flexinfer_cached + prefetch job).
+import glob as _glob
+for _f in sorted(
+    _glob.glob(os.path.join(model_dir, "*.safetensors"))
+    + _glob.glob(os.path.join(model_dir, "*.bin"))
+    + _glob.glob(os.path.join(model_dir, "*.pt"))
+):
+    os.remove(_f)
+    print(f"Removed source file: {os.path.basename(_f)}")
+print("FP16 source files removed — disk reclaimed for save")
+
 model.save(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
 
 trap - EXIT
-
-# Remove FP16 source weight files to reclaim disk space.
-# Quantized output is already saved in OUT_DIR; source weights are no longer needed.
-# Re-quantization requires a fresh download (delete .flexinfer_cached + prefetch job).
-echo "Cleaning up FP16 source weight files..."
-find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) -delete
-echo "FP16 source files removed"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
