@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-03-07T09:33:01-05:00
+- Generated: 2026-03-10T19:32:22-04:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -9,7 +9,17 @@
 ## Git
 ```
 ## main...origin/main
-?? docs/roadmap-reconciliation-2026-03-07.md
+ M Makefile
+ M cmd/loom/auth.go
+ M cmd/loom/cmd_secrets.go
+ M cmd/loom/main.go
+ M internal/daemon/daemon_dispatch.go
+?? cmd/loom/auth_google.go
+?? cmd/loom/daemon_reload_notify.go
+?? cmd/mcp-google-workspace/
+?? internal/daemon/reload_runtime.go
+?? internal/daemon/reload_runtime_test.go
+?? pkg/googleworkspace/
 ```
 
 ### Remotes
@@ -24,7 +34,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 
 ### HEAD
 ```
-4e57746 test(daemon): expand lifecycle test coverage — accept loop, signals, socket dirs, ensure
+baecbe2 fix(gitlab): bound poll pipeline defaults
 ```
 
 ## Top-Level Layout
@@ -122,6 +132,7 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `mcp-k8s`
 - `mcp-k8s-ops`
 - `mcp-linear`
+- `mcp-linkedin`
 - `mcp-loki`
 - `mcp-memory`
 - `mcp-minio`
@@ -142,7 +153,6 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `mcp-youtube`
 - `mcp-zep`
 - `MCP_CONVERSION_PLAN.md`
-- `README.md`
 - `…`
 
 ## Key Files Detected
@@ -348,17 +358,18 @@ origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab
 - `cmd/custom-server/main_test.go`
 - `cmd/loom/auth.go`
 - `cmd/loom/check.go`
+- `cmd/loom/check_helpers_test.go`
 - `cmd/loom/cmd_agent.go`
+- `cmd/loom/cmd_agent_context.go`
+- `cmd/loom/cmd_agent_dispatch.go`
 - `cmd/loom/cmd_agent_hook_status_test.go`
-- `cmd/loom/cmd_agent_test.go`
-- `cmd/loom/cmd_catalog.go`
-- `cmd/loom/cmd_catalog_test.go`
 - `…`
 
 ## AGENTS.md Files
 - `.worktrees/mcp-tools-as-code-api-20260304/AGENTS.md`
 - `AGENTS.md`
 - `Users/cblevins/workspace/.worktrees/loom-core-21-20260303/AGENTS.md`
+- `Users/cblevins/workspace/.worktrees/loom-core-53-rollout-20260309/AGENTS.md`
 
 ### AGENTS.md Contents (head)
 
@@ -734,6 +745,131 @@ Platform-specific allow/deny lists and settings are defined in the registry YAML
 Registry location: `platform/gitops/mcp/context/registry.yaml`
 
 ## Daemon Features
+…
+```
+
+#### `Users/cblevins/workspace/.worktrees/loom-core-53-rollout-20260309/AGENTS.md`
+```
+Agent Working Notes (loom-core)
+
+Scope
+
+- This file applies to the `services/loom-core` repository.
+
+Repository Purpose
+
+Go backend for the loom ecosystem:
+
+- MCP server implementations (git, gitlab, github, k8s, prometheus, etc.)
+- `loom` CLI for config generation and sync
+- `loomd` daemon for MCP server lifecycle management
+
+Workspace Structure
+
+This repo is part of the `services/` GitLab group:
+
+```text
+gitlab.flexinfer.ai/
+├── platform/gitops    ← K8s manifests, Flux, CI infrastructure
+└── services/
+    ├── loom           ← VSCode extension (TypeScript)
+    └── loom-core      ← YOU ARE HERE (Go backend)
+```
+
+Deployment (GitOps)
+
+MCP servers can be deployed to Kubernetes via Flux. Manifests live in:
+
+- `platform/gitops/k3s/mcp-hub/servers/` - Individual MCP server deployments
+
+To deploy an MCP server:
+
+1. Build binaries: `make build`
+2. Build container: `docker build -t registry.harbor.lan/library/loom:TAG .`
+3. Push to Harbor
+4. Update image tag in `platform/gitops/k3s/mcp-hub/servers/<server>/`
+5. Commit and push to `platform/gitops`
+
+Local Usage
+
+The CLI and daemon typically run on developer machines:
+
+```bash
+# Build all binaries
+make build
+
+# Generate MCP configs for all targets
+./bin/loom generate configs --target all --hub-mode
+
+# Sync configs to home directory
+for profile in vscode antigravity codex claude gemini kilocode; do
+  ./bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+done
+./bin/loom sync skills all
+
+# Start daemon (manages MCP server processes)
+./bin/loomd
+
+# Check daemon health (includes per-server status)
+curl http://localhost:9876/health
+
+# Check SSH tunnel status
+./bin/loom tunnel status
+```
+
+## Development Workflow
+
+### Iterating on loom-core
+
+After making code changes, use one of these targets to rebuild, install, and reload:
+
+```bash
+# Safe reload — skips daemon restart if active proxy connections exist
+make dev-upgrade
+
+# Force reload — always restarts daemon; all proxy clients auto-reconnect
+make dev-reload
+```
+
+Both targets execute the same pipeline:
+1. Build `loom` + `loomd` binaries
+2. Atomic install to `~/.local/bin` (no window where binaries are missing)
+3. Regenerate + sync platform configs (hub mode + all projects, skipping `.worktrees/`)
+4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
+5. Restart HUD if running on port 3333
+6. Smoke test (proxy initialize round-trip)
+
+### How proxy reconnection works
+
+Each platform client (Claude Code, Codex, Zed, Gemini, etc.) spawns its own `loom proxy` process. The proxy connects to `loomd` via Unix socket. When the daemon restarts:
+
+1. The proxy detects a broken pipe or EOF on the next tool call
+2. It clears its daemon connection and calls `ensureDaemon()` on the next message
+3. `ensureDaemon()` re-dials the socket (with autostart fallback)
+4. The client sees no interruption — the tool call succeeds after a brief reconnect
+
+No manual action is needed from any connected agent or IDE.
+
+### First-time setup
+
+```bash
+make bootstrap-local    # Build + install + sync + environment check
+```
+
+### Individual platform config sync
+
+```bash
+loom sync claude --regen --hub-mode --all-projects --skip-worktrees
+loom sync codex --regen --hub-mode --all-projects --skip-worktrees
+loom sync gemini --regen --hub-mode --all-projects --skip-worktrees
+loom sync vscode --regen --hub-mode --all-projects --skip-worktrees
+loom sync antigravity --regen --hub-mode --all-projects --skip-worktrees
+loom sync kilocode --regen --hub-mode --all-projects --skip-worktrees
+loom sync skills all
+```
+
+### Platform permissions
+
 …
 ```
 

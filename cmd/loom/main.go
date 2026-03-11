@@ -3,7 +3,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -26,11 +25,7 @@ var version = "0.9.7"
 
 func main() {
 	var socketPath string
-	home, _ := os.UserHomeDir()
-	defaultSocket := filepath.Join(home, ".config", "loom", "loom.sock")
-	if envSocket := os.Getenv("LOOM_SOCKET"); envSocket != "" {
-		defaultSocket = envSocket
-	}
+	defaultSocket := defaultSocketPath()
 
 	rootCmd := &cobra.Command{
 		Use:     "loom",
@@ -78,7 +73,7 @@ func main() {
 		newReplCmd(socketPath),
 
 		// Secrets
-		newSecretsCmd(),
+		newSecretsCmd(socketPath),
 
 		// Operational
 		newTunnelCmd(socketPath),
@@ -88,7 +83,7 @@ func main() {
 		newAgentCmd(),
 
 		// Auth
-		newAuthCmd(),
+		newAuthCmd(socketPath),
 
 		// HUD
 		newHudCmd(socketPath),

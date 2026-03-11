@@ -12,7 +12,7 @@ import (
 
 const defaultHTTPTokenKey = "LOOM_HTTP_TOKEN"
 
-func newAuthCmd() *cobra.Command {
+func newAuthCmd(socketPath string) *cobra.Command {
 	authCmd := &cobra.Command{
 		Use:   "auth",
 		Short: "Manage authentication for Streamable HTTP",
@@ -59,6 +59,7 @@ Example:
 			fmt.Println("    auth:")
 			fmt.Println("      type: token")
 			fmt.Printf("      token_secret_key: %s\n", key)
+			reloadDaemonAfterSecretChange(socketPath, "HTTP auth token update")
 			return nil
 		},
 	}
@@ -109,11 +110,12 @@ Example:
 			}
 
 			fmt.Printf("Token '%s' revoked\n", key)
+			reloadDaemonAfterSecretChange(socketPath, "HTTP auth token revoke")
 			return nil
 		},
 	}
 	tokenRevokeCmd.Flags().String("key", defaultHTTPTokenKey, "Secret store key for the token")
 
-	authCmd.AddCommand(tokenGenerateCmd, tokenShowCmd, tokenRevokeCmd)
+	authCmd.AddCommand(tokenGenerateCmd, tokenShowCmd, tokenRevokeCmd, newGoogleAuthCmd(socketPath))
 	return authCmd
 }

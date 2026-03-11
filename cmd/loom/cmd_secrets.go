@@ -15,7 +15,7 @@ import (
 )
 
 // newSecretsCmd creates the secrets command and its subcommands.
-func newSecretsCmd() *cobra.Command {
+func newSecretsCmd(socketPath string) *cobra.Command {
 	secretsCmd := &cobra.Command{
 		Use:   "secrets",
 		Short: "Manage secrets for MCP servers",
@@ -74,6 +74,7 @@ Examples:
 			}
 
 			fmt.Printf("Secret '%s' stored in %s\n", key, mgr.PrimaryBackend().Name())
+			reloadDaemonAfterSecretChange(socketPath, "secret update")
 			return nil
 		},
 	}
@@ -170,6 +171,7 @@ Examples:
 			}
 
 			fmt.Printf("Secret '%s' deleted\n", key)
+			reloadDaemonAfterSecretChange(socketPath, "secret delete")
 			return nil
 		},
 	}
@@ -265,6 +267,9 @@ Example:
 				fmt.Printf("\nWould import %d secrets (dry-run)\n", imported)
 			} else {
 				fmt.Printf("\nImported %d secrets to %s\n", imported, mgr.PrimaryBackend().Name())
+				if imported > 0 {
+					reloadDaemonAfterSecretChange(socketPath, "secret import")
+				}
 			}
 			return nil
 		},
