@@ -16,6 +16,11 @@ func ContentHash(s string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
+func ContentHashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:32]
+}
+
 func ChunkID(repoID, filePath string, startLine, endLine int, contentHash string) string {
 	return ShortSHA256Hex(fmt.Sprintf("%s:%s:%d:%d:%s", repoID, filePath, startLine, endLine, contentHash))
 }

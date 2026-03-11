@@ -149,8 +149,35 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		// Sync extra generated files (e.g. settings.json for hooks).
 		for _, extra := range p.ExtraGeneratedFiles {
 			extraSrc := filepath.Join(repoPath, extra)
-			if Exists(extraSrc) {
-				extraDst := filepath.Join(homePath, extra)
+			if !Exists(extraSrc) {
+				continue
+			}
+			extraDst := filepath.Join(homePath, extra)
+
+			if extra == "settings.json" {
+				// Smart merge: hooks should only live at the user/home level.
+				// Take non-hook keys (permissions) from repo, preserve home hooks
+				// if repo copy has none (non-regen case).
+				repoData, err := os.ReadFile(extraSrc)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not read %s: %v\n", extra, err)
+					continue
+				}
+				homeData, _ := os.ReadFile(extraDst)
+				merged, _, err := MergeSettingsForHome(homeData, repoData)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not merge %s: %v\n", extra, err)
+					continue
+				}
+				if err := writeFileAtomic(extraDst, merged, 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write %s: %v\n", extra, err)
+				}
+				// Strip hooks from repo copy to prevent duplicate execution.
+				// Claude Code runs hooks from all ancestor settings.json files.
+				if _, err := StripHooksFromFile(extraSrc); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not strip hooks from %s: %v\n", extraSrc, err)
+				}
+			} else {
 				if err := CopyFile(extraSrc, extraDst); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: could not sync %s: %v\n", extra, err)
 				}
@@ -787,10 +814,11 @@ func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, 
 	return nil
 }
 
-// SyncAllProjects propagates the canonical hooks from the current repo's
-// settings.json into all other workspace projects that have a matching
-// <profileRepoDir>/settings.json. Only the "hooks" key is replaced; other
-// top-level keys (permissions, mcpServers, etc.) are preserved.
+// SyncAllProjects strips hooks from all workspace projects that have a matching
+// <profileRepoDir>/settings.json. Hooks should only live at the user level
+// (~/.claude/settings.json) to prevent duplicate execution — Claude Code runs
+// hooks from all ancestor .claude/settings.json files in the directory hierarchy.
+// Other top-level keys (permissions, mcpServers, etc.) are preserved.
 func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktrees, dryRun bool) (int, error) {
 	p, err := m.GetProfile(profileName)
 	if err != nil {
@@ -809,21 +837,6 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 		return 0, fmt.Errorf("profile %s does not generate settings.json", profileName)
 	}
 
-	// Read canonical settings.json from the current repo
-	canonicalPath := filepath.Join(m.ResolveRepoPath(p), "settings.json")
-	canonicalData, err := os.ReadFile(canonicalPath)
-	if err != nil {
-		return 0, fmt.Errorf("read canonical settings: %w", err)
-	}
-
-	canonicalHooks, err := ExtractHooksFromSettings(canonicalData)
-	if err != nil {
-		return 0, fmt.Errorf("extract hooks from canonical settings: %w", err)
-	}
-	if canonicalHooks == nil {
-		return 0, fmt.Errorf("canonical settings.json has no hooks key")
-	}
-
 	// Discover projects
 	projects, err := DiscoverProjects(workspaceRoot, p.RepoDir, skipWorktrees)
 	if err != nil {
@@ -832,15 +845,14 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 
 	updated := 0
 	for _, projRoot := range projects {
-		// Skip the current repo
-		if filepath.Clean(projRoot) == filepath.Clean(m.RepoRoot) {
-			continue
-		}
-
 		settingsPath := filepath.Join(projRoot, p.RepoDir, "settings.json")
 		existing, _ := os.ReadFile(settingsPath)
+		if len(existing) == 0 {
+			continue // No settings file — nothing to strip
+		}
 
-		merged, changed, err := MergeHooksIntoSettings(existing, canonicalHooks)
+		// Strip hooks (pass nil to remove the hooks key)
+		merged, changed, err := MergeHooksIntoSettings(existing, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v\n", settingsPath, err)
 			continue
@@ -853,11 +865,7 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 		}
 
 		if dryRun {
-			action := "would update"
-			if len(existing) == 0 {
-				action = "would create"
-			}
-			fmt.Printf("  %-40s %s\n", rel, action)
+			fmt.Printf("  %-40s would strip hooks\n", rel)
 			updated++
 			continue
 		}
@@ -867,11 +875,7 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 			continue
 		}
 
-		action := "updated"
-		if len(existing) == 0 {
-			action = "created"
-		}
-		fmt.Printf("  %-40s %s\n", rel, action)
+		fmt.Printf("  %-40s stripped hooks\n", rel)
 		updated++
 	}
 

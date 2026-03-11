@@ -399,7 +399,7 @@ func newSyncCmd() *cobra.Command {
 					if !hasSettings {
 						return nil
 					}
-					fmt.Printf("\nPropagating %s hooks to workspace projects:\n", pName)
+					fmt.Printf("\nStripping %s hooks from workspace projects (hooks live at user level only):\n", pName)
 					n, err := mgr.SyncAllProjects(pName, wsRoot, skipWorktrees, dryRun)
 					if err != nil {
 						return fmt.Errorf("propagate %s: %w", pName, err)

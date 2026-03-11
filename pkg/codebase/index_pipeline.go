@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/codebase/chunker"
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
@@ -57,11 +58,13 @@ func (s *Service) runIndexJob(
 		}
 	}
 
+	collectStart := time.Now()
 	files, err := s.indexers.CollectFiles(absRoot, languages, exclude)
 	if err != nil {
 		s.setJobFailed(jobID, fmt.Sprintf("collect files: %v", err))
 		return
 	}
+	s.addIndexStageStat(jobID, indexStageFileCollect, time.Since(collectStart), len(files))
 
 	s.jobsMu.Lock()
 	if job := s.jobs[jobID]; job != nil {
@@ -79,6 +82,7 @@ func (s *Service) runIndexJob(
 		chunks    []schema.Chunk
 		fileCache map[string][]float64
 		skipped   bool
+		stages    schema.IndexStageStats
 		err       error
 	}
 
@@ -144,10 +148,12 @@ func (s *Service) runIndexJob(
 			}
 
 			if len(texts) > 0 {
+				embedStart := time.Now()
 				vectors, embedErr := s.embed.EmbedDocuments(ctx, texts)
 				if embedErr != nil {
 					return embedErr
 				}
+				s.addIndexStageStat(jobID, indexStageEmbedding, time.Since(embedStart), len(texts))
 				if len(vectors) != len(texts) {
 					return fmt.Errorf("embedding returned %d vectors for %d texts", len(vectors), len(texts))
 				}
@@ -188,6 +194,8 @@ func (s *Service) runIndexJob(
 				Payload: qdrant.ChunkToPayload(p.chunk, true, embedModel),
 			})
 		}
+
+		upsertStart := time.Now()
 		for i := 0; i < len(points); i += upsertBatch {
 			end := i + upsertBatch
 			if end > len(points) {
@@ -197,6 +205,7 @@ func (s *Service) runIndexJob(
 				return upsertErr
 			}
 		}
+		s.addIndexStageStat(jobID, indexStageQdrantUpsert, time.Since(upsertStart), len(points))
 		pending = pending[:0]
 		return nil
 	}
@@ -231,67 +240,83 @@ func (s *Service) runIndexJob(
 				continue
 			}
 			relSlash := filepath.ToSlash(rel)
+
+			stages := schema.IndexStageStats{}
+			readStart := time.Now()
 			content, err := os.ReadFile(absPath)
 			if err != nil {
-				sendResult(indexedFile{rel: relSlash, err: fmt.Errorf("read file %s: %v", relSlash, err)})
+				stages.FileRead = stageSample(time.Since(readStart), 1)
+				sendResult(indexedFile{rel: relSlash, stages: stages, err: fmt.Errorf("read file %s: %v", relSlash, err)})
 				continue
 			}
-
-			if !fullRefresh {
-				hash := schema.ContentHash(string(content))
-				prev, ok, hashErr := s.qdrant.GetModuleContentHash(ctx, repoID, relSlash)
-				if hashErr != nil {
-					s.incrementJobError(jobID, fmt.Sprintf("module hash lookup %s: %v", relSlash, hashErr))
-				} else if ok && prev == hash {
-					sendResult(indexedFile{rel: relSlash, skipped: true})
-					continue
-				}
-			}
+			stages.FileRead = stageSample(time.Since(readStart), 1)
 
 			var fileCache map[string][]float64
-			if embeddings && !fullRefresh {
-				cache, cacheErr := s.qdrant.GetFileEmbeddingCache(ctx, repoID, relSlash, s.embed.Model(), 4096)
-				if cacheErr != nil {
-					s.incrementJobError(jobID, fmt.Sprintf("embedding cache %s: %v", relSlash, cacheErr))
+			if !fullRefresh {
+				fileHash := schema.ContentHashBytes(content)
+				preflightStart := time.Now()
+				preflight, preflightErr := s.qdrant.GetFilePreflight(ctx, repoID, relSlash, embedModel, 4096)
+				stages.PreflightLookup = stageSample(time.Since(preflightStart), 1)
+				stages.UnchangedHashLookup = stageSample(0, 1)
+				if embeddings {
+					stages.EmbeddingCacheLookup = stageSample(0, 1)
+				}
+				if preflightErr != nil {
+					s.incrementJobError(jobID, fmt.Sprintf("preflight %s: %v", relSlash, preflightErr))
 				} else {
-					fileCache = cache
+					if preflight.ModuleFound && preflight.ModuleContentHash == fileHash {
+						sendResult(indexedFile{rel: relSlash, skipped: true, stages: stages})
+						continue
+					}
+					if embeddings {
+						fileCache = preflight.EmbeddingCache
+					}
 				}
 			}
 
+			deleteStart := time.Now()
 			if deleteFileErr := s.qdrant.DeleteFile(ctx, repoID, relSlash); deleteFileErr != nil {
 				if !ensured && errors.Is(deleteFileErr, qdrant.ErrCollectionNotFound) {
 					// ignore
 				} else {
-					s.incrementJobError(jobID, fmt.Sprintf("delete file: %v", deleteFileErr))
+					s.incrementJobError(jobID, fmt.Sprintf("delete file %s: %v", relSlash, deleteFileErr))
 				}
 			}
+			stages.DeleteBeforeUpsert = stageSample(time.Since(deleteStart), 1)
 
+			parseStart := time.Now()
 			chunks, indexErr := s.indexers.IndexFileFromContent(ctx, absRoot, absPath, repoID, content)
 			if indexErr != nil {
-				sendResult(indexedFile{rel: relSlash, err: fmt.Errorf("index %s: %v", relSlash, indexErr)})
+				stages.ParseIndex = stageSample(time.Since(parseStart), 1)
+				sendResult(indexedFile{rel: relSlash, stages: stages, err: fmt.Errorf("index %s: %v", relSlash, indexErr)})
 				continue
 			}
+			stages.ParseIndex = stageSample(time.Since(parseStart), 1)
+
 			if gitMetadata {
+				gitStart := time.Now()
 				if err := annotateChunksWithGitMetadata(ctx, gitRoot, absPath, chunks); err != nil {
 					s.incrementJobError(jobID, fmt.Sprintf("git metadata %s: %v", relSlash, err))
 				}
+				stages.GitMetadata = stageSample(time.Since(gitStart), len(chunks))
 			}
 
-			// Split large chunks into overlapping windows
+			chunkStart := time.Now()
 			chunks = chunker.SplitLargeChunks(chunks, chunker.Config{
 				MaxTokens:     s.cfg.ChunkMaxTokens,
 				OverlapTokens: s.cfg.ChunkOverlapTokens,
 				MinTokens:     s.cfg.ChunkMinTokens,
 			})
-
 			for i := range chunks {
 				chunker.EnrichChunkIdentifiers(&chunks[i])
 			}
+			stages.ChunkSplitEnrich = stageSample(time.Since(chunkStart), len(chunks))
 
 			sendResult(indexedFile{
 				rel:       relSlash,
 				chunks:    chunks,
 				fileCache: fileCache,
+				stages:    stages,
 			})
 		}
 	}
@@ -319,15 +344,18 @@ func (s *Service) runIndexJob(
 
 	for r := range results {
 		if r.err != nil {
+			s.mergeIndexStageStats(jobID, r.stages)
 			s.incrementJobError(jobID, r.err.Error())
 			s.incrementFilesDone(jobID, 0)
 			continue
 		}
 		if r.skipped {
+			s.mergeIndexStageStats(jobID, r.stages)
 			s.incrementFilesSkipped(jobID)
 			continue
 		}
 
+		s.mergeIndexStageStats(jobID, r.stages)
 		for _, ch := range r.chunks {
 			text := ch.Content
 			if ch.Docstring != "" {

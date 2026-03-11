@@ -13,6 +13,13 @@ platforms:
       enabled: true
       file: "settings.json"
       events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse"]
+      agent_id: "claude-code"
+      agent_type: "claude-code"
+      description: "Claude Code session"
+      session_end_event: "Stop"
+      heartbeat_event: "PostToolUse"
+      heartbeat_matcher: "Bash|Task"
+      extras: ["preToolUse_guardrails", "postToolUse_formatters"]
     capabilities:
       mcp_servers: true
       permissions: true
@@ -57,6 +64,12 @@ platforms:
       enabled: true
       file: "settings.json"
       events: ["sessionStart", "sessionEnd", "postToolUse"]
+      agent_id: "gemini-cli"
+      agent_type: "gemini-cli"
+      description: "Gemini CLI session"
+      session_end_event: "SessionEnd"
+      heartbeat_event: "AfterTool"
+      heartbeat_matcher: "run_shell_command"
     capabilities:
       mcp_servers: true
       permissions: false
@@ -148,6 +161,10 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+    loom_proxy:
+      agent_hint: "antigravity"
+      tool_profile: "antigravity-core"
+      max_tools: 100
     capabilities:
       mcp_servers: true
       permissions: false
@@ -169,6 +186,8 @@ platforms:
     config_file: "config.toml"
     hooks:
       enabled: false
+    loom_proxy:
+      agent_hint: "kilocode"
     capabilities:
       mcp_servers: true
       permissions: false
@@ -190,6 +209,8 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+    loom_proxy:
+      agent_hint: "zed"
     capabilities:
       mcp_servers: true
       permissions: false

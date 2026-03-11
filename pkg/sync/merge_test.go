@@ -2,6 +2,7 @@ package sync
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -172,6 +173,131 @@ func TestMergeHooksKeyOrdering(t *testing.T) {
 	}
 	if alphaIdx > zebraIdx {
 		t.Error("alpha should come before zebra")
+	}
+}
+
+func TestMergeSettingsForHome_RepoHasHooks(t *testing.T) {
+	// When repo has hooks (regen case), use repo hooks at home.
+	homeData := []byte(`{"hooks": {"old": true}, "permissions": {"allow": ["Bash"]}}`)
+	repoData := []byte(`{"hooks": {"new": true}, "permissions": {"allow": ["Bash", "Read"]}}`)
+
+	merged, changed, err := MergeSettingsForHome(homeData, repoData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true")
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &result); err != nil {
+		t.Fatalf("parse merged: %v", err)
+	}
+
+	// Hooks should come from repo (fresh from regen)
+	var hooks map[string]any
+	json.Unmarshal(result["hooks"], &hooks)
+	if _, ok := hooks["new"]; !ok {
+		t.Error("expected new hooks from repo")
+	}
+	if _, ok := hooks["old"]; ok {
+		t.Error("old hooks should have been replaced")
+	}
+}
+
+func TestMergeSettingsForHome_RepoNoHooks_PreservesHomeHooks(t *testing.T) {
+	// When repo has no hooks (stripped previously), preserve home hooks.
+	homeData := []byte(`{"hooks": {"session": true}, "permissions": {"allow": ["Bash"]}}`)
+	repoData := []byte(`{"permissions": {"allow": ["Bash", "Read"]}}`)
+
+	merged, _, err := MergeSettingsForHome(homeData, repoData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &result); err != nil {
+		t.Fatalf("parse merged: %v", err)
+	}
+
+	// Hooks should be preserved from home
+	var hooks map[string]any
+	json.Unmarshal(result["hooks"], &hooks)
+	if _, ok := hooks["session"]; !ok {
+		t.Error("expected home hooks to be preserved")
+	}
+
+	// Permissions should come from repo
+	var perms map[string]any
+	json.Unmarshal(result["permissions"], &perms)
+	allow, _ := perms["allow"].([]any)
+	if len(allow) != 2 {
+		t.Errorf("expected 2 permissions from repo, got %d", len(allow))
+	}
+}
+
+func TestMergeSettingsForHome_EmptyHome(t *testing.T) {
+	repoData := []byte(`{"hooks": {"new": true}, "permissions": {"allow": ["Bash"]}}`)
+
+	merged, changed, err := MergeSettingsForHome(nil, repoData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true")
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &result); err != nil {
+		t.Fatalf("parse merged: %v", err)
+	}
+	if _, ok := result["hooks"]; !ok {
+		t.Error("expected hooks in output")
+	}
+}
+
+func TestStripHooksFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/settings.json"
+	data := []byte(`{"hooks": {"session": true}, "permissions": {"allow": ["Bash"]}}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := StripHooksFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true")
+	}
+
+	// Verify hooks are gone
+	result, _ := os.ReadFile(path)
+	var m map[string]json.RawMessage
+	json.Unmarshal(result, &m)
+	if _, ok := m["hooks"]; ok {
+		t.Error("hooks should have been stripped")
+	}
+	if _, ok := m["permissions"]; !ok {
+		t.Error("permissions should be preserved")
+	}
+}
+
+func TestStripHooksFromFile_NoHooks(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/settings.json"
+	data := []byte(`{"permissions": {"allow": ["Bash"]}}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := StripHooksFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("expected changed=false when no hooks to strip")
 	}
 }
 

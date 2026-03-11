@@ -19,6 +19,8 @@
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
+  import CatalogPanel from './lib/components/CatalogPanel.svelte';
+  import DispatchPanel from './lib/components/DispatchPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
   import EmptyState from './lib/components/shared/EmptyState.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
@@ -223,8 +225,12 @@
               >
                 {#if router.subView === 'fleet'}
                   <FleetPanel />
+                {:else if router.subView === 'dispatch'}
+                  <DispatchPanel />
                 {:else if router.subView === 'servers'}
                   <ServersPanel />
+                {:else if router.subView === 'catalog'}
+                  <CatalogPanel />
                 {:else if router.subView === 'tasks'}
                   <TasksPanel />
                 {:else if router.subView === 'workflows'}

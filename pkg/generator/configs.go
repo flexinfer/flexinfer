@@ -147,7 +147,7 @@ type GenerateParams struct {
 
 // buildTargets resolves the MCP server specs for this target.
 func (p *GenerateParams) buildTargets() (map[string]*registry.TargetSpec, error) {
-	return buildTargetMap(p.Reg, p.Target, p.HubMode, p.HubURL, p.Target, p.LoomMode, p.LoomBinary, p.WorkspaceRoot, p.RegistryRoot, p.ResolveSecrets)
+	return buildTargetMap(p.Reg, p.Target, p.Profile, p.HubMode, p.HubURL, p.LoomMode, p.LoomBinary, p.WorkspaceRoot, p.RegistryRoot, p.ResolveSecrets)
 }
 
 // destDir returns the platform-specific output directory.
@@ -211,7 +211,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		}
 
 		// Generate lifecycle hook configs for platforms that support them.
-		if err := generateHooksConfig(reg, outputDir, target); err != nil {
+		if err := generateHooksConfig(reg, outputDir, target, profile); err != nil {
 			return fmt.Errorf("generate hooks for %s: %w", target, err)
 		}
 	}
@@ -250,27 +250,25 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 	return nil
 }
 
-func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL string, profile string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) (map[string]*registry.TargetSpec, error) {
+func buildTargetMap(reg *registry.Registry, target string, profile *PlatformProfile, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) (map[string]*registry.TargetSpec, error) {
 	if loomMode {
 		cmd := preferWorkspaceLoomBinary(loomBinary, workspaceRoot)
 		if cmd == "" {
 			cmd = "loom"
 		}
 		args := []any{"proxy"}
-		// For platforms with no native hook support, add --agent-hint so the
-		// proxy fires heartbeats on each tool call, providing universal presence.
-		switch target {
-		case "kilocode", "zed":
-			args = append(args, "--agent-hint", target)
-		case "antigravity":
-			// Antigravity currently hard-limits MCP registrations to ~100 tools.
-			// Apply a proxy-local core profile so Antigravity gets a stable
-			// high-value subset without affecting other clients sharing loomd.
-			args = append(args,
-				"--agent-hint", "antigravity",
-				"--tool-profile", "antigravity-core",
-				"--max-tools", "100",
-			)
+		// Apply proxy args from profile (agent-hint, tool-profile, max-tools).
+		if profile != nil {
+			lp := profile.LoomProxy
+			if lp.AgentHint != "" {
+				args = append(args, "--agent-hint", lp.AgentHint)
+			}
+			if lp.ToolProfile != "" {
+				args = append(args, "--tool-profile", lp.ToolProfile)
+			}
+			if lp.MaxTools > 0 {
+				args = append(args, "--max-tools", fmt.Sprintf("%d", lp.MaxTools))
+			}
 		}
 		return map[string]*registry.TargetSpec{
 			"loom": {
@@ -306,7 +304,14 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 		)
 	}
 
+	// Load catalog state to filter disabled servers
+	catalogState, _ := registry.LoadCatalogState()
+
 	for _, server := range reg.Servers {
+		if catalogState != nil && catalogState.IsDisabled(server.Name) {
+			continue
+		}
+
 		spec, err := reg.GetServerSpec(server.Name, target)
 		if err != nil {
 			continue // Skip if not found (shouldn't happen with GetServerSpec logic)
@@ -337,7 +342,7 @@ func buildTargetMap(reg *registry.Registry, target string, hubMode bool, hubURL 
 
 		if hubMode && !server.IsLocalOnly() {
 			// Convert to hub mode
-			spec = convertToHubMode(spec, server.Name, hubURL, profile, hubWrapper)
+			spec = convertToHubMode(spec, server.Name, hubURL, target, hubWrapper)
 		}
 
 		if spec.Command != "" {
@@ -705,28 +710,34 @@ func sortStrings(s []string) {
 // --- Agent lifecycle hook generation ---
 
 // generateHooksConfig writes a settings.json with lifecycle hooks for platforms
-// that support them (Claude Code and Gemini CLI). The hooks call `loom agent`
-// subcommands to ensure consistent session tracking and presence management.
-func generateHooksConfig(reg *registry.Registry, outputDir, target string) error {
-	var config map[string]any
+// that support them. The hooks call `loom agent` subcommands to ensure
+// consistent session tracking and presence management.
+func generateHooksConfig(reg *registry.Registry, outputDir, target string, profile *PlatformProfile) error {
+	if profile == nil || !profile.Hooks.Enabled {
+		return nil // Platform doesn't support hooks.
+	}
 
+	// TypeScript plugin-based hooks (e.g. OpenCode).
+	if profile.Hooks.Type == "typescript" {
+		return generateOpenCodeHooksPlugin(outputDir)
+	}
+
+	// Skip platforms whose hooks are embedded in their main config file
+	// rather than a separate settings.json (e.g. Codex notify in config.toml).
+	if profile.Hooks.File != "settings.json" && profile.Hooks.File != "" {
+		return nil
+	}
+
+	var config map[string]any
 	switch target {
 	case "claude":
-		config = claudeHooksConfig(reg)
+		config = claudeHooksConfig(reg, profile)
 	case "gemini":
-		config = geminiHooksConfigFromRegistry(reg)
-	case "antigravity":
-		// Antigravity has no native hook support, but benefits from a
-		// settings.json stub for consistency with the sync architecture.
-		// The --agent-hint flag in mcp.json handles session tracking.
-		config = map[string]any{
-			"hooks": map[string]any{},
-		}
-	case "opencode":
-		// OpenCode uses JS/TS plugins for hooks, not a JSON settings file.
-		return generateOpenCodeHooksPlugin(outputDir)
+		config = geminiHooksConfigFromRegistry(reg, profile)
 	default:
-		return nil // Platform doesn't support hooks.
+		// Generic JSON hooks stub for platforms with hooks.enabled but no
+		// platform-specific wrapper (future platforms).
+		config = hooksConfigFromProfile(reg, profile)
 	}
 
 	destDir := filepath.Join(outputDir, target)
@@ -790,32 +801,20 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 // guardrail hooks, and default-allow permissions. Permissions are read from the
 // registry's platform_permissions.claude section; hooks remain in Go because
 // they are structural (event names, matcher groups) rather than data.
-func claudeHooksConfig(reg *registry.Registry) map[string]any {
+func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile) map[string]any {
 	return map[string]any{
 		"permissions": claudePermissions(reg),
-		"hooks":       claudeHooks(reg),
+		"hooks":       claudeHooks(reg, profile),
 	}
-}
-
-// hookPlatformConfig defines the platform-specific parameters needed to
-// generate lifecycle hooks (SessionStart, session-end, heartbeat).
-// Claude and Gemini share the same hook structure but differ in event names
-// and tool matchers.
-type hookPlatformConfig struct {
-	AgentID          string // "claude-code" or "gemini-cli"
-	AgentType        string // same as AgentID for now
-	Description      string // "Claude Code session" or "Gemini CLI session"
-	SessionEndEvent  string // "Stop" (Claude) or "SessionEnd" (Gemini)
-	HeartbeatEvent   string // "PostToolUse" (Claude) or "AfterTool" (Gemini)
-	HeartbeatMatcher string // "Bash|Task" (Claude) or "run_shell_command" (Gemini)
 }
 
 // buildPlatformHooks generates the shared SessionStart / session-end / heartbeat
 // hooks for any platform that supports lifecycle hooks. Platform-specific extras
 // (e.g. Claude's PreToolUse guardrails) are appended by the caller.
-func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[string]any {
+// Hook parameters are read from the platform profile's HookProfile.
+func buildPlatformHooks(reg *registry.Registry, hp HookProfile) map[string]any {
 	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
-	bootstrap := hookAgentIDBootstrap(cfg.AgentID)
+	bootstrap := hookAgentIDBootstrap(hp.AgentID)
 	staleCleanup := hookStaleCleanup()
 	policy := agentSafetyPolicyFromRegistry(reg)
 
@@ -824,13 +823,13 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 			"type": "command",
 			"command": fmt.Sprintf(
 				`%s; %s; loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast --quiet %s || true`,
-				bootstrap, staleCleanup, cfg.AgentType, cfg.Description, log),
+				bootstrap, staleCleanup, hp.AgentType, hp.Description, log),
 		},
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
 				`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; loom agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet %s & printf '%%s' "$!" > "${PID_FILE}.tmp" && mv "${PID_FILE}.tmp" "$PID_FILE"`,
-				bootstrap, cfg.AgentType, log),
+				bootstrap, hp.AgentType, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -851,7 +850,7 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 				"hooks": sessionStartHooks,
 			},
 		},
-		cfg.SessionEndEvent: []map[string]any{
+		hp.SessionEndEvent: []map[string]any{
 			{
 				"hooks": []map[string]any{
 					{
@@ -863,15 +862,15 @@ func buildPlatformHooks(reg *registry.Registry, cfg hookPlatformConfig) map[stri
 				},
 			},
 		},
-		cfg.HeartbeatEvent: []map[string]any{
+		hp.HeartbeatEvent: []map[string]any{
 			{
-				"matcher": cfg.HeartbeatMatcher,
+				"matcher": hp.HeartbeatMatcher,
 				"hooks": []map[string]any{
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
 							`%s; loom agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --agent-type %s --quiet %s || true`,
-							bootstrap, cfg.AgentType, log),
+							bootstrap, hp.AgentType, log),
 					},
 				},
 			},
@@ -922,25 +921,28 @@ func claudePostToolUseExtras() []map[string]any {
 }
 
 // claudeHooks returns the hooks block for Claude Code settings.json.
-func claudeHooks(reg *registry.Registry) map[string]any {
-	hooks := buildPlatformHooks(reg, hookPlatformConfig{
-		AgentID:          "claude-code",
-		AgentType:        "claude-code",
-		Description:      "Claude Code session",
-		SessionEndEvent:  "Stop",
-		HeartbeatEvent:   "PostToolUse",
-		HeartbeatMatcher: "Bash|Task",
-	})
+func claudeHooks(reg *registry.Registry, profile *PlatformProfile) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks)
 
-	// Append Claude-specific PreToolUse guardrails.
-	hooks["PreToolUse"] = claudePreToolUseHooks()
-
-	// Append Claude-specific Write/Edit formatters to PostToolUse.
-	postToolUse := hooks["PostToolUse"].([]map[string]any)
-	postToolUse = append(postToolUse, claudePostToolUseExtras()...)
-	hooks["PostToolUse"] = postToolUse
+	// Append extras defined in the profile (e.g. preToolUse_guardrails, postToolUse_formatters).
+	appendHookExtras(hooks, profile.Hooks.Extras)
 
 	return hooks
+}
+
+// appendHookExtras dispatches profile-defined extras to their hook implementations.
+func appendHookExtras(hooks map[string]any, extras []string) {
+	for _, extra := range extras {
+		switch extra {
+		case "preToolUse_guardrails":
+			hooks["PreToolUse"] = claudePreToolUseHooks()
+		case "postToolUse_formatters":
+			event := "PostToolUse"
+			if existing, ok := hooks[event].([]map[string]any); ok {
+				hooks[event] = append(existing, claudePostToolUseExtras()...)
+			}
+		}
+	}
 }
 
 // claudePermissions builds the permissions block for Claude Code settings.json.
@@ -1235,15 +1237,16 @@ func mainBranchWorktreeNudgeCommand() string {
 //
 // Gemini tool names also differ (run_shell_command vs Bash).
 func geminiHooksConfig() map[string]any {
-	return geminiHooksConfigFromRegistry(nil)
+	profile, _ := GetPlatformProfile("gemini")
+	return geminiHooksConfigFromRegistry(nil, profile)
 }
 
 // geminiHooksConfigFromRegistry builds Gemini CLI settings.json, merging
 // lifecycle hooks with auto-approve settings from the registry's
 // platform_permissions.gemini section.
-func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
+func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProfile) map[string]any {
 	config := map[string]any{
-		"hooks": geminiHooks(reg),
+		"hooks": geminiHooks(reg, profile),
 	}
 
 	// Merge auto-approve and tool settings from registry.
@@ -1270,15 +1273,18 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry) map[string]any {
 }
 
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
-func geminiHooks(reg *registry.Registry) map[string]any {
-	return buildPlatformHooks(reg, hookPlatformConfig{
-		AgentID:          "gemini-cli",
-		AgentType:        "gemini-cli",
-		Description:      "Gemini CLI session",
-		SessionEndEvent:  "SessionEnd",
-		HeartbeatEvent:   "AfterTool",
-		HeartbeatMatcher: "run_shell_command",
-	})
+func geminiHooks(reg *registry.Registry, profile *PlatformProfile) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks)
+	appendHookExtras(hooks, profile.Hooks.Extras)
+	return hooks
+}
+
+// hooksConfigFromProfile builds a generic hooks config from the platform profile.
+// Used for platforms that have hooks.enabled but no platform-specific wrapper.
+func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks)
+	appendHookExtras(hooks, profile.Hooks.Extras)
+	return map[string]any{"hooks": hooks}
 }
 
 func hookAgentIDBootstrap(agentID string) string {

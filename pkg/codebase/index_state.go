@@ -13,6 +13,7 @@ func (s *Service) setJobFailed(jobID, msg string) {
 		job.status = "failed"
 		job.err = msg
 		job.stats.FinishedAt = time.Now()
+		job.stats.Stages.Total = stageSample(job.stats.FinishedAt.Sub(job.stats.StartedAt), job.stats.FilesDone)
 	}
 }
 
@@ -22,6 +23,7 @@ func (s *Service) setJobDone(jobID string) {
 	if job := s.jobs[jobID]; job != nil {
 		job.status = "done"
 		job.stats.FinishedAt = time.Now()
+		job.stats.Stages.Total = stageSample(job.stats.FinishedAt.Sub(job.stats.StartedAt), job.stats.FilesDone)
 	}
 }
 
@@ -31,6 +33,7 @@ func (s *Service) setJobCanceled(jobID string) {
 	if job := s.jobs[jobID]; job != nil {
 		job.status = "canceled"
 		job.stats.FinishedAt = time.Now()
+		job.stats.Stages.Total = stageSample(job.stats.FinishedAt.Sub(job.stats.StartedAt), job.stats.FilesDone)
 	}
 }
 

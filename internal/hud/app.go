@@ -693,6 +693,12 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sandbox/stop", a.withCORS(a.handleSandboxStop))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
+	// API routes — catalog (enable/disable servers).
+	mux.HandleFunc("GET /api/daemon-metrics", a.withCORS(a.handleDaemonMetrics))
+	mux.HandleFunc("GET /api/catalog", a.withCORS(a.handleCatalogList))
+	mux.HandleFunc("POST /api/catalog/{name}/enable", a.withCORS(a.handleCatalogEnable))
+	mux.HandleFunc("POST /api/catalog/{name}/disable", a.withCORS(a.handleCatalogDisable))
+
 	// API routes — mobile companion v1.
 	mux.HandleFunc("GET /api/mobile/v1/ping", a.withCORS(a.handleMobilePing))
 	mux.HandleFunc("GET /api/mobile/v1/dashboard", a.withCORS(a.handleMobileDashboard))

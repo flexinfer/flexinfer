@@ -28,9 +28,10 @@ export const views: ViewDef[] = [
     default: 'fleet',
     subViews: [
       { id: 'fleet',     label: 'Fleet',     key: 'a' },
-      { id: 'presence',  label: 'Presence',  key: 'b' },
-      { id: 'topology',  label: 'Topology',  key: 'c' },
-      { id: 'lifecycle', label: 'Lifecycle',  key: 'd' },
+      { id: 'dispatch',  label: 'Dispatch',  key: 'b' },
+      { id: 'presence',  label: 'Presence',  key: 'c' },
+      { id: 'topology',  label: 'Topology',  key: 'd' },
+      { id: 'lifecycle', label: 'Lifecycle',  key: 'e' },
     ],
   },
   {
@@ -41,6 +42,7 @@ export const views: ViewDef[] = [
     default: 'servers',
     subViews: [
       { id: 'servers', label: 'Servers', key: 'a' },
+      { id: 'catalog', label: 'Catalog', key: 'b' },
     ],
   },
   {
@@ -103,10 +105,12 @@ for (const v of views) {
 }
 // Additional aliases
 legacyRedirects['fleet'] = { view: 'agents', subView: 'fleet' };
+legacyRedirects['dispatch'] = { view: 'agents', subView: 'dispatch' };
 legacyRedirects['presence'] = { view: 'agents', subView: 'presence' };
 legacyRedirects['topology'] = { view: 'agents', subView: 'topology' };
 legacyRedirects['lifecycle'] = { view: 'agents', subView: 'lifecycle' };
 legacyRedirects['servers'] = { view: 'infra', subView: 'servers' };
+legacyRedirects['catalog'] = { view: 'infra', subView: 'catalog' };
 legacyRedirects['workflows'] = { view: 'tasks', subView: 'workflows' };
 legacyRedirects['feed'] = { view: 'knowledge', subView: 'feed' };
 legacyRedirects['memory'] = { view: 'knowledge', subView: 'memory' };

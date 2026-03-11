@@ -59,6 +59,15 @@ func (o *Orchestrator) Run(ctx context.Context, req TurnRequest, identity Execut
 	allToolResults := make([]ToolResult, 0, 8)
 
 	for iteration := 1; iteration <= o.Config.MaxLoopIterations; iteration++ {
+		// Token preflight: check budget and compact if needed.
+		if o.Config.TokenBudget > 0 {
+			compacted, _, compactErr := CompactRequest(current, o.Config.TokenBudget, o.Config.Compaction)
+			if compactErr != nil {
+				return LoopResult{}, fmt.Errorf("token preflight iteration %d: %w", iteration, compactErr)
+			}
+			current = compacted
+		}
+
 		o.recordTurnStart(ctx, current, identity)
 		resp, err := o.Client.Create(ctx, current)
 		o.recordTurnEnd(ctx, resp, err, identity)

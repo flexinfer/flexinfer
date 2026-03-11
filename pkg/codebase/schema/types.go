@@ -63,15 +63,16 @@ type ContextInfo struct {
 }
 
 type IndexStats struct {
-	RepoID       string    `json:"repo_id"`
-	Root         string    `json:"root"`
-	FilesTotal   int       `json:"files_total"`
-	FilesDone    int       `json:"files_done"`
-	FilesSkipped int       `json:"files_skipped"`
-	ChunksTotal  int       `json:"chunks_total"`
-	Errors       int       `json:"errors"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at,omitempty"`
+	RepoID       string          `json:"repo_id"`
+	Root         string          `json:"root"`
+	FilesTotal   int             `json:"files_total"`
+	FilesDone    int             `json:"files_done"`
+	FilesSkipped int             `json:"files_skipped"`
+	ChunksTotal  int             `json:"chunks_total"`
+	Errors       int             `json:"errors"`
+	StartedAt    time.Time       `json:"started_at"`
+	FinishedAt   time.Time       `json:"finished_at,omitempty"`
+	Stages       IndexStageStats `json:"stages,omitempty"`
 }
 
 type WatchStats struct {
@@ -88,7 +89,43 @@ type WatchStats struct {
 
 	Errors int `json:"errors"`
 
-	StartedAt   time.Time `json:"started_at"`
-	StoppedAt   time.Time `json:"stopped_at,omitempty"`
-	LastEventAt time.Time `json:"last_event_at,omitempty"`
+	StartedAt   time.Time       `json:"started_at"`
+	StoppedAt   time.Time       `json:"stopped_at,omitempty"`
+	LastEventAt time.Time       `json:"last_event_at,omitempty"`
+	Stages      WatchStageStats `json:"stages,omitempty"`
+}
+
+type StageStat struct {
+	Runs          int   `json:"runs,omitempty"`
+	Items         int   `json:"items,omitempty"`
+	DurationNanos int64 `json:"duration_nanos,omitempty"`
+}
+
+type IndexStageStats struct {
+	FileCollect          StageStat `json:"file_collect,omitempty"`
+	FileRead             StageStat `json:"file_read,omitempty"`
+	PreflightLookup      StageStat `json:"preflight_lookup,omitempty"`
+	UnchangedHashLookup  StageStat `json:"unchanged_hash_lookup,omitempty"`
+	EmbeddingCacheLookup StageStat `json:"embedding_cache_lookup,omitempty"`
+	DeleteBeforeUpsert   StageStat `json:"delete_before_upsert,omitempty"`
+	ParseIndex           StageStat `json:"parse_index,omitempty"`
+	GitMetadata          StageStat `json:"git_metadata,omitempty"`
+	ChunkSplitEnrich     StageStat `json:"chunk_split_enrich,omitempty"`
+	Embedding            StageStat `json:"embedding,omitempty"`
+	QdrantUpsert         StageStat `json:"qdrant_upsert,omitempty"`
+	Total                StageStat `json:"total,omitempty"`
+}
+
+type WatchStageStats struct {
+	FileRead             StageStat `json:"file_read,omitempty"`
+	PreflightLookup      StageStat `json:"preflight_lookup,omitempty"`
+	UnchangedHashLookup  StageStat `json:"unchanged_hash_lookup,omitempty"`
+	EmbeddingCacheLookup StageStat `json:"embedding_cache_lookup,omitempty"`
+	DeleteBeforeUpsert   StageStat `json:"delete_before_upsert,omitempty"`
+	ParseIndex           StageStat `json:"parse_index,omitempty"`
+	GitMetadata          StageStat `json:"git_metadata,omitempty"`
+	ChunkSplitEnrich     StageStat `json:"chunk_split_enrich,omitempty"`
+	Embedding            StageStat `json:"embedding,omitempty"`
+	QdrantUpsert         StageStat `json:"qdrant_upsert,omitempty"`
+	Total                StageStat `json:"total,omitempty"`
 }

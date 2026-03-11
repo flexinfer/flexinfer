@@ -589,7 +589,7 @@ func (c *Client) GetFileEmbeddingCache(
 		match("embed_model", embedModel),
 	)
 
-	points, err := c.scrollPointsWithVectors(ctx, filter, max)
+	points, err := c.scrollPoints(ctx, filter, max, true)
 	if err != nil {
 		if errors.Is(err, ErrCollectionNotFound) {
 			return map[string][]float64{}, nil
@@ -616,7 +616,56 @@ type scrolledPoint struct {
 	Vector  []float64
 }
 
-func (c *Client) scrollPointsWithVectors(ctx context.Context, filter map[string]any, max int) ([]scrolledPoint, error) {
+type FilePreflight struct {
+	ModuleContentHash string
+	ModuleFound       bool
+	EmbeddingCache    map[string][]float64
+}
+
+func (c *Client) GetFilePreflight(
+	ctx context.Context,
+	repoID string,
+	filePath string,
+	embedModel string,
+	max int,
+) (FilePreflight, error) {
+	if max <= 0 {
+		max = 4096
+	}
+
+	points, err := c.scrollPoints(ctx, filterMust(
+		match("repo_id", repoID),
+		match("file_path", filePath),
+	), max, strings.TrimSpace(embedModel) != "")
+	if err != nil {
+		if errors.Is(err, ErrCollectionNotFound) {
+			return FilePreflight{EmbeddingCache: map[string][]float64{}}, nil
+		}
+		return FilePreflight{}, err
+	}
+
+	out := FilePreflight{EmbeddingCache: make(map[string][]float64)}
+	for _, p := range points {
+		hash := toString(p.Payload["content_hash"])
+		if !out.ModuleFound && toString(p.Payload["chunk_type"]) == "module" && hash != "" {
+			out.ModuleContentHash = hash
+			out.ModuleFound = true
+		}
+		if strings.TrimSpace(embedModel) == "" || toString(p.Payload["embed_model"]) != embedModel {
+			continue
+		}
+		if hash == "" || len(p.Vector) == 0 {
+			continue
+		}
+		if _, ok := out.EmbeddingCache[hash]; ok {
+			continue
+		}
+		out.EmbeddingCache[hash] = p.Vector
+	}
+	return out, nil
+}
+
+func (c *Client) scrollPoints(ctx context.Context, filter map[string]any, max int, withVector bool) ([]scrolledPoint, error) {
 	var out []scrolledPoint
 	var offset any
 
@@ -634,7 +683,7 @@ func (c *Client) scrollPointsWithVectors(ctx context.Context, filter map[string]
 			"filter":       filter,
 			"limit":        limit,
 			"with_payload": true,
-			"with_vector":  true,
+			"with_vector":  withVector,
 		}
 		if offset != nil {
 			body["offset"] = offset
@@ -657,9 +706,6 @@ func (c *Client) scrollPointsWithVectors(ctx context.Context, filter map[string]
 
 		for _, p := range resp.Result.Points {
 			vec := vectorFromAny(p.Vector)
-			if vec == nil {
-				continue
-			}
 			out = append(out, scrolledPoint{Payload: p.Payload, Vector: vec})
 		}
 

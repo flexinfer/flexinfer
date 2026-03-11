@@ -9,6 +9,7 @@ func (s *Service) setWatchFailed(watchID, msg string) {
 		job.status = "failed"
 		job.err = msg
 		job.stats.StoppedAt = time.Now()
+		job.stats.Stages.Total = stageSample(job.stats.StoppedAt.Sub(job.stats.StartedAt), job.stats.FilesIndexed+job.stats.FilesSkipped+job.stats.FilesDeleted)
 	}
 }
 
@@ -21,6 +22,7 @@ func (s *Service) setWatchStopped(watchID string) {
 		}
 		job.status = "stopped"
 		job.stats.StoppedAt = time.Now()
+		job.stats.Stages.Total = stageSample(job.stats.StoppedAt.Sub(job.stats.StartedAt), job.stats.FilesIndexed+job.stats.FilesSkipped+job.stats.FilesDeleted)
 	}
 }
 

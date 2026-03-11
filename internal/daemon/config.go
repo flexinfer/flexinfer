@@ -71,8 +71,37 @@ type FileConfig struct {
 	// HUD configures agent HUD connectivity for CLI commands
 	HUD HUDConfig `yaml:"hud,omitempty"`
 
+	// SchemaValidation controls input schema validation for tool calls.
+	SchemaValidation SchemaValidationConfig `yaml:"schema_validation,omitempty"`
+
+	// OutputScanning controls PII/secret scanning of tool responses.
+	OutputScanning OutputScanningConfig `yaml:"output_scanning,omitempty"`
+
+	// OTel configures OpenTelemetry trace export for daemon lifecycle and call pipeline.
+	OTel OTelConfig `yaml:"otel,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// OTelConfig controls OpenTelemetry trace export.
+// Environment variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS)
+// take precedence over file-based settings when set.
+type OTelConfig struct {
+	// Endpoint is the OTLP collector endpoint (e.g., "https://cloud.langfuse.com/api/public/otel").
+	Endpoint string `yaml:"endpoint,omitempty"`
+
+	// Protocol selects the OTLP transport: "http" (default) or "grpc".
+	Protocol string `yaml:"protocol,omitempty"`
+
+	// Headers are additional HTTP headers sent with each export (e.g., "Authorization=Basic ...").
+	Headers map[string]string `yaml:"headers,omitempty"`
+
+	// SampleRate is the trace sampling ratio (0.0–1.0). Default: 1.0 (sample all).
+	SampleRate *float64 `yaml:"sample_rate,omitempty"`
+
+	// ServiceName overrides the default service name ("loomd").
+	ServiceName string `yaml:"service_name,omitempty"`
 }
 
 // HUDConfig controls how `loom agent` CLI commands connect to the HUD.

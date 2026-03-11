@@ -19,16 +19,31 @@ type PlatformProfile struct {
 	ConfigFile   string            `yaml:"config_file"`   // e.g. "mcp.json", "config.toml"
 	ConfigRoot   string            `yaml:"config_root"`   // JSON root key (e.g. "mcpServers")
 	Hooks        HookProfile       `yaml:"hooks"`
+	LoomProxy    LoomProxyProfile  `yaml:"loom_proxy"`
 	Capabilities CapabilityProfile `yaml:"capabilities"`
 	Features     FeatureProfile    `yaml:"features"`
 }
 
 // HookProfile describes lifecycle hook support for a platform.
 type HookProfile struct {
-	Enabled bool     `yaml:"enabled"`
-	File    string   `yaml:"file"`
-	Type    string   `yaml:"type"` // "json" (default) or "typescript"
-	Events  []string `yaml:"events"`
+	Enabled          bool     `yaml:"enabled"`
+	File             string   `yaml:"file"`
+	Type             string   `yaml:"type"` // "json" (default) or "typescript"
+	Events           []string `yaml:"events"`
+	AgentID          string   `yaml:"agent_id"`
+	AgentType        string   `yaml:"agent_type"`
+	Description      string   `yaml:"description"`
+	SessionEndEvent  string   `yaml:"session_end_event"`
+	HeartbeatEvent   string   `yaml:"heartbeat_event"`
+	HeartbeatMatcher string   `yaml:"heartbeat_matcher"`
+	Extras           []string `yaml:"extras"` // e.g. ["preToolUse_guardrails", "postToolUse_formatters"]
+}
+
+// LoomProxyProfile configures the loom proxy command arguments for a platform.
+type LoomProxyProfile struct {
+	AgentHint   string `yaml:"agent_hint,omitempty"`
+	ToolProfile string `yaml:"tool_profile,omitempty"`
+	MaxTools    int    `yaml:"max_tools,omitempty"`
 }
 
 // CapabilityProfile captures what a platform supports.

@@ -32,13 +32,14 @@ const (
 
 // Pipeline stage constants for audit traceability.
 const (
-	stageParse   = "parse"
-	stageAuth    = "authorize"
-	stagePolicy  = "policy"
-	stageCache   = "cache"
-	stageRoute   = "route"
-	stageBuild   = "build"
-	stageExecute = "execute"
+	stageParse      = "parse"
+	stageAuth       = "authorize"
+	stagePolicy     = "policy"
+	stageCache      = "cache"
+	stageRoute      = "route"
+	stageBuild      = "build"
+	stageExecute    = "execute"
+	stageOutputScan = "output_scan"
 )
 
 // callPipeline executes the daemon tool-call flow in ordered stages.

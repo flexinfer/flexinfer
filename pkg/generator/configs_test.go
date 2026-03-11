@@ -54,7 +54,8 @@ func testRegistry() *registry.Registry {
 }
 
 func TestGeneratedClaudeSettingsValid(t *testing.T) {
-	config := claudeHooksConfig(testRegistry())
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(testRegistry(), claudeProfile)
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -76,7 +77,8 @@ func TestGeneratedClaudeSettingsValid(t *testing.T) {
 
 func TestGeneratedClaudeSettingsNilRegistry(t *testing.T) {
 	// Ensure nil registry produces valid settings with fallback permissions.
-	config := claudeHooksConfig(nil)
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(nil, claudeProfile)
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -230,7 +232,8 @@ func TestGenerateHooksConfig_WritesAndValidates(t *testing.T) {
 	reg := testRegistry()
 
 	// Generate Claude hooks config
-	if err := generateHooksConfig(reg, tmpDir, "claude"); err != nil {
+	claudeProfile, _ := GetPlatformProfile("claude")
+	if err := generateHooksConfig(reg, tmpDir, "claude", claudeProfile); err != nil {
 		t.Fatalf("generateHooksConfig(claude) failed: %v", err)
 	}
 
@@ -264,7 +267,8 @@ func TestGenerateHooksConfig_WritesAndValidates(t *testing.T) {
 func TestGenerateHooksConfig_Gemini(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := generateHooksConfig(nil, tmpDir, "gemini"); err != nil {
+	geminiProfile, _ := GetPlatformProfile("gemini")
+	if err := generateHooksConfig(nil, tmpDir, "gemini", geminiProfile); err != nil {
 		t.Fatalf("generateHooksConfig(gemini) failed: %v", err)
 	}
 
@@ -284,7 +288,8 @@ func TestGenerateHooksConfig_NoHooksPlatform(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Platforms without hooks should return nil and not write any file
-	if err := generateHooksConfig(nil, tmpDir, "codex"); err != nil {
+	codexProfile, _ := GetPlatformProfile("codex")
+	if err := generateHooksConfig(nil, tmpDir, "codex", codexProfile); err != nil {
 		t.Fatalf("generateHooksConfig(codex) failed: %v", err)
 	}
 
@@ -593,7 +598,8 @@ func TestGeneratedClaudeSettings_WithInvalidRulesStillValid(t *testing.T) {
 		},
 	}
 
-	config := claudeHooksConfig(reg)
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(reg, claudeProfile)
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -607,7 +613,8 @@ func TestGeneratedClaudeSettings_WithInvalidRulesStillValid(t *testing.T) {
 }
 
 func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
-	config := claudeHooksConfig(testRegistry())
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(testRegistry(), claudeProfile)
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in claude config")
@@ -636,7 +643,8 @@ func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 }
 
 func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
-	config := claudeHooksConfig(testRegistry())
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(testRegistry(), claudeProfile)
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in claude config")
@@ -674,7 +682,8 @@ func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 }
 
 func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
-	config := geminiHooksConfigFromRegistry(testRegistry())
+	geminiProfile, _ := GetPlatformProfile("gemini")
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile)
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in gemini config")
@@ -712,7 +721,8 @@ func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 }
 
 func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
-	config := geminiHooksConfigFromRegistry(testRegistry())
+	geminiProfile, _ := GetPlatformProfile("gemini")
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile)
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in gemini config")
@@ -827,7 +837,8 @@ func TestHookStaleCleanup_ChecksProcessLiveness(t *testing.T) {
 // --- Shared builder tests ---
 
 func TestBuildPlatformHooks_ClaudeEventNames(t *testing.T) {
-	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
 		AgentID:          "claude-code",
 		AgentType:        "claude-code",
 		Description:      "Claude Code session",
@@ -851,7 +862,8 @@ func TestBuildPlatformHooks_ClaudeEventNames(t *testing.T) {
 }
 
 func TestBuildPlatformHooks_GeminiEventNames(t *testing.T) {
-	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
 		AgentID:          "gemini-cli",
 		AgentType:        "gemini-cli",
 		Description:      "Gemini CLI session",
@@ -875,7 +887,8 @@ func TestBuildPlatformHooks_GeminiEventNames(t *testing.T) {
 }
 
 func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
-	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
 		AgentID:          "claude-code",
 		AgentType:        "claude-code",
 		Description:      "test",
@@ -902,7 +915,8 @@ func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
 }
 
 func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
-	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
 		AgentID:          "claude-code",
 		AgentType:        "claude-code",
 		Description:      "test",
@@ -934,7 +948,8 @@ func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 }
 
 func TestBuildPlatformHooks_StopHookUsesSummaryAsync(t *testing.T) {
-	hooks := buildPlatformHooks(testRegistry(), hookPlatformConfig{
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
 		AgentID:          "claude-code",
 		AgentType:        "claude-code",
 		Description:      "test",
@@ -1056,7 +1071,8 @@ func TestBuildTargetMap_HubModeFailsWithoutHealthyWrapper(t *testing.T) {
 		},
 	}
 
-	_, err := buildTargetMap(reg, "codex", true, "wss://example.test/ws", "codex", false, "", tmp, filepath.Join(tmp, "registry-root"), false)
+	codexProfile, _ := GetPlatformProfile("codex")
+	_, err := buildTargetMap(reg, "codex", codexProfile, true, "wss://example.test/ws", false, "", tmp, filepath.Join(tmp, "registry-root"), false)
 	if err == nil {
 		t.Fatal("expected hub mode generation to fail when no healthy wrapper is available")
 	}
@@ -1083,7 +1099,8 @@ func TestBuildTargetMap_HubModeUsesResolvedWrapper(t *testing.T) {
 		},
 	}
 
-	targets, err := buildTargetMap(reg, "codex", true, "wss://example.test/ws", "codex", false, "", filepath.Join(tmp, "workspace"), filepath.Join(tmp, "registry-root"), false)
+	codexProfile, _ := GetPlatformProfile("codex")
+	targets, err := buildTargetMap(reg, "codex", codexProfile, true, "wss://example.test/ws", false, "", filepath.Join(tmp, "workspace"), filepath.Join(tmp, "registry-root"), false)
 	if err != nil {
 		t.Fatalf("buildTargetMap: %v", err)
 	}
@@ -1108,7 +1125,8 @@ func TestBuildTargetMap_HubModeUsesResolvedWrapper(t *testing.T) {
 func TestBuildTargetMap_LoomModeAntigravityAddsToolFilterArgs(t *testing.T) {
 	reg := &registry.Registry{}
 
-	targets, err := buildTargetMap(reg, "antigravity", false, "", "antigravity", true, "", "", "", false)
+	agProfile, _ := GetPlatformProfile("antigravity")
+	targets, err := buildTargetMap(reg, "antigravity", agProfile, false, "", true, "", "", "", false)
 	if err != nil {
 		t.Fatalf("buildTargetMap: %v", err)
 	}

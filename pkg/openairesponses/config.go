@@ -21,6 +21,10 @@ const (
 	MaxLoopIterationsEnvVar = "LOOM_RESPONSES_MAX_LOOP_ITERATIONS"
 	// MaxRetriesEnvVar limits retries for upstream Responses calls.
 	MaxRetriesEnvVar = "LOOM_RESPONSES_MAX_RETRIES"
+	// TokenBudgetEnvVar sets the per-turn token budget (0 = unlimited).
+	TokenBudgetEnvVar = "LOOM_RESPONSES_TOKEN_BUDGET"
+	// CompactionStrategyEnvVar sets the compaction strategy: "none", "truncate", "summarize".
+	CompactionStrategyEnvVar = "LOOM_RESPONSES_COMPACTION_STRATEGY"
 )
 
 const (
@@ -36,6 +40,11 @@ type Config struct {
 	RequestTimeout    time.Duration
 	MaxLoopIterations int
 	MaxRetries        int
+
+	// TokenBudget is the estimated per-turn token limit. 0 = unlimited.
+	TokenBudget int
+	// Compaction controls how context is reduced when approaching token limits.
+	Compaction CompactionStrategy
 }
 
 // LoadConfigFromEnv reads configuration from environment variables.
@@ -45,6 +54,8 @@ func LoadConfigFromEnv() Config {
 		RequestTimeout:    env.Duration(RequestTimeoutEnvVar, DefaultRequestTimeout),
 		MaxLoopIterations: env.Int(MaxLoopIterationsEnvVar, DefaultMaxLoopIterations),
 		MaxRetries:        env.IntWithZero(MaxRetriesEnvVar, DefaultMaxRetries),
+		TokenBudget:       env.IntWithZero(TokenBudgetEnvVar, 0),
+		Compaction:        CompactionStrategy(env.String(CompactionStrategyEnvVar, string(CompactTruncate))),
 	}
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = DefaultRequestTimeout

@@ -1,6 +1,7 @@
 <script>
   import { healthStore } from '../stores/health.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
+  import { daemonMetricsStore } from '../stores/daemonMetrics.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -34,6 +35,14 @@
     healthStore.startPolling(5000);
     return () => { healthStore.stopPolling(); };
   });
+
+  // --- Daemon metrics (latency percentiles, error rates) ---
+  $effect(() => {
+    daemonMetricsStore.startPolling(15000);
+    return () => daemonMetricsStore.stopPolling();
+  });
+
+  let metricsMap = $derived(daemonMetricsStore.byName);
 
   let servers = $derived(healthStore.servers ?? []);
 
@@ -477,6 +486,51 @@
     </div>
   </div>
 
+  <!-- Request Metrics card (from daemon prometheus) -->
+  {#if daemonMetricsStore.servers.length > 0}
+    <div class="infra-cards">
+      <div class="infra-card infra-card-wide">
+        <div class="infra-card-header">
+          <span class="infra-card-title">Request Metrics</span>
+          <Badge text="{daemonMetricsStore.totalRequests} reqs" variant="info" />
+          {#if daemonMetricsStore.overallErrorRate > 0.01}
+            <Badge text="{(daemonMetricsStore.overallErrorRate * 100).toFixed(1)}% errors" variant="error" />
+          {/if}
+        </div>
+        <div class="infra-card-body">
+          <div class="metrics-table-wrap">
+            <table class="metrics-table">
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Requests</th>
+                  <th>Errors</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                  <th>In-Flight</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each daemonMetricsStore.servers as m (m.name)}
+                  <tr class:has-errors={m.error_count > 0}>
+                    <td class="text-mono">{m.name}</td>
+                    <td class="text-mono">{m.request_count}</td>
+                    <td class="text-mono" class:text-error={m.error_count > 0}>{m.error_count || '\u2014'}</td>
+                    <td class="text-mono">{formatLatency(m.p50_ms)}</td>
+                    <td class="text-mono">{formatLatency(m.p95_ms)}</td>
+                    <td class="text-mono" class:text-warning={m.p99_ms > 5000}>{formatLatency(m.p99_ms)}</td>
+                    <td class="text-mono">{m.in_flight || '\u2014'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
 </div>
 
 <!-- Server Detail Drawer -->
@@ -537,6 +591,19 @@
           <span class="percentile-chip">p50: {formatLatency(percentile(selectedServer.latencyHistory, 50))}</span>
           <span class="percentile-chip">p95: {formatLatency(percentile(selectedServer.latencyHistory, 95))}</span>
           <span class="percentile-chip">p99: {formatLatency(percentile(selectedServer.latencyHistory, 99))}</span>
+        </div>
+      </div>
+    {/if}
+    {#if metricsMap.get(selectedServer.name)}
+      {@const sm = metricsMap.get(selectedServer.name)}
+      <div class="section">
+        <div class="section-title text-xs uppercase text-muted">Daemon Metrics</div>
+        <div class="percentile-row">
+          <span class="percentile-chip">reqs: {sm.request_count}</span>
+          <span class="percentile-chip" class:text-error={sm.error_count > 0}>errors: {sm.error_count}</span>
+          <span class="percentile-chip">p50: {formatLatency(sm.p50_ms)}</span>
+          <span class="percentile-chip">p95: {formatLatency(sm.p95_ms)}</span>
+          <span class="percentile-chip">p99: {formatLatency(sm.p99_ms)}</span>
         </div>
       </div>
     {/if}
@@ -832,5 +899,55 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* --- Request Metrics table --- */
+
+  .infra-card-wide {
+    flex: 1 1 100%;
+  }
+
+  .metrics-table-wrap {
+    overflow-x: auto;
+  }
+
+  .metrics-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-xs);
+  }
+
+  .metrics-table th {
+    text-align: left;
+    padding: 4px 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .metrics-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-secondary);
+    white-space: nowrap;
+  }
+
+  .metrics-table tr:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .metrics-table tr.has-errors {
+    border-left: 2px solid var(--error);
+  }
+
+  .text-error {
+    color: var(--error);
+  }
+
+  .text-warning {
+    color: var(--warning);
   }
 </style>

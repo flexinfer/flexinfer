@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 )
 
@@ -113,6 +114,56 @@ func marshalOrderedSettings(m map[string]json.RawMessage) ([]byte, error) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// MergeSettingsForHome merges repo settings into existing home settings.
+// Non-hook keys (permissions, etc.) are taken from the repo copy.
+// Hooks are taken from the repo copy if present, otherwise preserved from home.
+// This prevents losing hooks when syncing without --regen (repo copy has no hooks
+// because they were stripped to avoid duplicate execution at multiple hierarchy levels).
+func MergeSettingsForHome(homeData, repoData []byte) ([]byte, bool, error) {
+	var repoMap map[string]json.RawMessage
+	if err := json.Unmarshal(repoData, &repoMap); err != nil {
+		return nil, false, fmt.Errorf("parse repo settings: %w", err)
+	}
+
+	// Start with repo settings (latest permissions, etc.)
+	result := repoMap
+
+	// If repo has no hooks but home does, preserve home hooks.
+	if _, hasRepoHooks := repoMap["hooks"]; !hasRepoHooks && len(homeData) > 0 {
+		var homeMap map[string]json.RawMessage
+		if err := json.Unmarshal(homeData, &homeMap); err == nil {
+			if homeHooks, ok := homeMap["hooks"]; ok {
+				result["hooks"] = homeHooks
+			}
+		}
+	}
+
+	out, err := marshalOrderedSettings(result)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal settings: %w", err)
+	}
+
+	changed := !bytes.Equal(normalizeJSON(homeData), normalizeJSON(out))
+	return out, changed, nil
+}
+
+// StripHooksFromFile reads a settings.json file, removes the hooks key,
+// and writes it back. Returns true if the file was modified.
+func StripHooksFromFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	stripped, changed, err := MergeHooksIntoSettings(data, nil)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, writeFileAtomic(path, stripped, 0o644)
 }
 
 // normalizeJSON compacts JSON for comparison. Returns nil on error.

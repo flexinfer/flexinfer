@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/crb2nu/loom/pkg/codebase/chunker"
 	"github.com/crb2nu/loom/pkg/codebase/index"
 	"github.com/crb2nu/loom/pkg/codebase/qdrant"
 	"github.com/crb2nu/loom/pkg/codebase/schema"
@@ -384,65 +385,96 @@ func (s *Service) runWatchJob(
 }
 
 func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, gitRoot string, gitMetadata bool, embeddings bool, vectorSize int, t watchTask) error {
+	stages := schema.WatchStageStats{}
 	switch t.op {
 	case "delete":
+		deleteStart := time.Now()
 		if err := s.qdrant.DeleteFile(ctx, repoID, t.relPath); err != nil && !errors.Is(err, qdrant.ErrCollectionNotFound) {
 			return fmt.Errorf("delete %s: %v", t.relPath, err)
 		}
+		stages.DeleteBeforeUpsert = stageSample(time.Since(deleteStart), 1)
+		s.mergeWatchStageStats(watchID, stages)
 		s.incrementWatchDeleted(watchID)
 		return nil
 	default:
-		// Best-effort: if file doesn't exist anymore, treat as delete.
 		if _, err := os.Stat(t.absPath); err != nil {
+			deleteStart := time.Now()
 			if err := s.qdrant.DeleteFile(ctx, repoID, t.relPath); err != nil && !errors.Is(err, qdrant.ErrCollectionNotFound) {
 				return fmt.Errorf("delete missing %s: %v", t.relPath, err)
 			}
+			stages.DeleteBeforeUpsert = stageSample(time.Since(deleteStart), 1)
+			s.mergeWatchStageStats(watchID, stages)
 			s.incrementWatchDeleted(watchID)
 			return nil
 		}
 
+		readStart := time.Now()
 		b, err := os.ReadFile(t.absPath)
 		if err != nil {
 			return fmt.Errorf("read %s: %v", t.relPath, err)
 		}
+		stages.FileRead = stageSample(time.Since(readStart), 1)
 		if s.cfg.MaxFileBytes > 0 && int64(len(b)) > s.cfg.MaxFileBytes {
+			s.mergeWatchStageStats(watchID, stages)
 			return nil
 		}
-		fileHash := schema.ContentHash(string(b))
-		prev, ok, err := s.qdrant.GetModuleContentHash(ctx, repoID, t.relPath)
-		if err == nil && ok && prev == fileHash {
+
+		fileHash := schema.ContentHashBytes(b)
+		preflightStart := time.Now()
+		preflight, preflightErr := s.qdrant.GetFilePreflight(ctx, repoID, t.relPath, s.cfg.EmbedModel, 4096)
+		stages.PreflightLookup = stageSample(time.Since(preflightStart), 1)
+		stages.UnchangedHashLookup = stageSample(0, 1)
+		if embeddings {
+			stages.EmbeddingCacheLookup = stageSample(0, 1)
+		}
+		if preflightErr == nil && preflight.ModuleFound && preflight.ModuleContentHash == fileHash {
+			s.mergeWatchStageStats(watchID, stages)
 			s.incrementWatchSkipped(watchID)
 			return nil
 		}
 
 		var fileCache map[string][]float64
-		if embeddings {
-			cache, err := s.qdrant.GetFileEmbeddingCache(ctx, repoID, t.relPath, s.cfg.EmbedModel, 4096)
-			if err != nil {
-				s.incrementWatchError(watchID, fmt.Sprintf("embedding cache %s: %v", t.relPath, err))
-			} else {
-				fileCache = cache
-			}
+		if preflightErr != nil {
+			s.incrementWatchError(watchID, fmt.Sprintf("preflight %s: %v", t.relPath, preflightErr))
+		} else if embeddings {
+			fileCache = preflight.EmbeddingCache
 		}
 
+		deleteStart := time.Now()
 		if delErr := s.qdrant.DeleteFile(ctx, repoID, t.relPath); delErr != nil && !errors.Is(delErr, qdrant.ErrCollectionNotFound) {
 			return fmt.Errorf("delete before upsert %s: %v", t.relPath, delErr)
 		}
+		stages.DeleteBeforeUpsert = stageSample(time.Since(deleteStart), 1)
 
+		parseStart := time.Now()
 		chunks, err := s.indexers.IndexFileFromContent(ctx, absRoot, t.absPath, repoID, b)
 		if err != nil {
 			return fmt.Errorf("index %s: %v", t.relPath, err)
 		}
+		stages.ParseIndex = stageSample(time.Since(parseStart), 1)
 		if len(chunks) == 0 {
+			s.mergeWatchStageStats(watchID, stages)
 			return nil
 		}
 
 		if gitMetadata {
+			gitStart := time.Now()
 			if err := annotateChunksWithGitMetadata(ctx, gitRoot, t.absPath, chunks); err != nil {
-				// Non-fatal; index results remain useful without git info.
 				s.incrementWatchError(watchID, fmt.Sprintf("git metadata %s: %v", t.relPath, err))
 			}
+			stages.GitMetadata = stageSample(time.Since(gitStart), len(chunks))
 		}
+
+		chunkStart := time.Now()
+		chunks = chunker.SplitLargeChunks(chunks, chunker.Config{
+			MaxTokens:     s.cfg.ChunkMaxTokens,
+			OverlapTokens: s.cfg.ChunkOverlapTokens,
+			MinTokens:     s.cfg.ChunkMinTokens,
+		})
+		for i := range chunks {
+			chunker.EnrichChunkIdentifiers(&chunks[i])
+		}
+		stages.ChunkSplitEnrich = stageSample(time.Since(chunkStart), len(chunks))
 
 		points := make([]qdrant.Point, 0, len(chunks))
 		embedModel := ""
@@ -471,10 +503,12 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			}
 
 			if len(texts) > 0 {
+				embedStart := time.Now()
 				embedded, err := s.embed.EmbedDocuments(ctx, texts)
 				if err != nil {
 					return fmt.Errorf("embed %s: %v", t.relPath, err)
 				}
+				stages.Embedding = stageSample(time.Since(embedStart), len(texts))
 				if len(embedded) != len(texts) {
 					return fmt.Errorf("embed %s: returned %d vectors for %d texts", t.relPath, len(embedded), len(texts))
 				}
@@ -521,6 +555,8 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 				})
 			}
 		}
+
+		upsertStart := time.Now()
 		for i := 0; i < len(points); i += s.cfg.UpsertBatchSize {
 			end := i + s.cfg.UpsertBatchSize
 			if end > len(points) {
@@ -530,7 +566,9 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 				return fmt.Errorf("upsert %s: %v", t.relPath, err)
 			}
 		}
+		stages.QdrantUpsert = stageSample(time.Since(upsertStart), len(points))
 
+		s.mergeWatchStageStats(watchID, stages)
 		s.incrementWatchIndexed(watchID, len(chunks))
 		return nil
 	}

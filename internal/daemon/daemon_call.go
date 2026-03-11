@@ -65,6 +65,10 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		d.sessions.Touch(pipeline.params.SessionID)
 	}
 
+	if resp := pipeline.validateInputSchema(); resp != nil {
+		return resp, nil
+	}
+
 	if resp := pipeline.authorize(); resp != nil {
 		return resp, nil
 	}
@@ -87,7 +91,14 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 		return resp, nil
 	}
 
-	return pipeline.execute(req), nil
+	execResp := pipeline.execute(req)
+
+	// Post-execute output scanning for PII/secrets.
+	if scanned := pipeline.scanOutputForPII(execResp); scanned != nil {
+		return scanned, nil
+	}
+
+	return execResp, nil
 }
 
 // emitAudit writes a structured audit entry and cost record if enabled.

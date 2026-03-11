@@ -4,7 +4,6 @@ package chunker
 import (
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/crb2nu/loom/pkg/codebase/schema"
 )
@@ -67,6 +66,17 @@ func splitChunk(chunk schema.Chunk, cfg Config) []schema.Chunk {
 		return []schema.Chunk{chunk}
 	}
 
+	lineOffsets := make([]int, len(lines)+1)
+	offset := 0
+	for i, line := range lines {
+		lineOffsets[i] = offset
+		offset += len(line)
+		if i < len(lines)-1 {
+			offset++
+		}
+	}
+	lineOffsets[len(lines)] = len(chunk.Content)
+
 	// Estimate tokens per line (rough: ~4 chars per token)
 	tokensPerLine := make([]int, len(lines))
 	for i, line := range lines {
@@ -105,9 +115,8 @@ func splitChunk(chunk schema.Chunk, cfg Config) []schema.Chunk {
 			}
 		}
 
-		// Create window chunk
-		windowLines := lines[startLine:endLine]
-		windowContent := strings.Join(windowLines, "\n")
+		// Re-slice the original content to avoid rebuilding strings line-by-line.
+		windowContent := chunk.Content[lineOffsets[startLine]:lineOffsets[endLine]]
 
 		if tokenCount >= cfg.MinTokens || len(windows) == 0 {
 			window := schema.Chunk{
@@ -123,7 +132,7 @@ func splitChunk(chunk schema.Chunk, cfg Config) []schema.Chunk {
 				StartLine:   chunk.StartLine + startLine,
 				EndLine:     chunk.StartLine + endLine - 1,
 				StartColumn: 0,
-				EndColumn:   len(windowLines[len(windowLines)-1]),
+				EndColumn:   len(lines[endLine-1]),
 
 				Name:       chunk.Name,
 				Signature:  chunk.Signature,
@@ -135,7 +144,7 @@ func splitChunk(chunk schema.Chunk, cfg Config) []schema.Chunk {
 				Defs:       nil,
 
 				TokenCount:  tokenCount,
-				IndexedAt:   time.Now().UTC(),
+				IndexedAt:   chunk.IndexedAt,
 				SchemaVer:   schema.Version,
 				ContentHash: schema.ContentHash(windowContent),
 				Content:     windowContent,

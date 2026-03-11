@@ -38,7 +38,7 @@ func TestBuildCatalogEntries_SortsAndResolvesSpec(t *testing.T) {
 		},
 	}
 
-	got := buildCatalogEntries(reg, "codex", "")
+	got := buildCatalogEntries(reg, nil, "codex", "")
 	if len(got) != 2 {
 		t.Fatalf("len(entries) = %d, want 2", len(got))
 	}
@@ -59,6 +59,33 @@ func TestBuildCatalogEntries_SortsAndResolvesSpec(t *testing.T) {
 	}
 }
 
+func TestBuildCatalogEntries_EnabledStatus(t *testing.T) {
+	reg := &registry.Registry{
+		Servers: []*registry.Server{
+			{Name: "a"},
+			{Name: "b"},
+			{Name: "c"},
+		},
+	}
+
+	cs := &registry.CatalogState{}
+	cs.Disable("b")
+
+	got := buildCatalogEntries(reg, cs, "codex", "")
+	if len(got) != 3 {
+		t.Fatalf("len(entries) = %d, want 3", len(got))
+	}
+	if !got[0].Enabled {
+		t.Error("expected a to be enabled")
+	}
+	if got[1].Enabled {
+		t.Error("expected b to be disabled")
+	}
+	if !got[2].Enabled {
+		t.Error("expected c to be enabled")
+	}
+}
+
 func TestBuildCatalogEntries_CategoryFilter(t *testing.T) {
 	reg := &registry.Registry{
 		Servers: []*registry.Server{
@@ -68,7 +95,7 @@ func TestBuildCatalogEntries_CategoryFilter(t *testing.T) {
 		},
 	}
 
-	got := buildCatalogEntries(reg, "codex", "DEV")
+	got := buildCatalogEntries(reg, nil, "codex", "DEV")
 	if len(got) != 1 {
 		t.Fatalf("len(entries) = %d, want 1", len(got))
 	}

@@ -66,8 +66,28 @@ func run(cfg daemon.Config, metricsAddr string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Load file config early so OTel settings are available before daemon init.
+	fileCfg, fcErr := daemon.LoadConfigFile()
+	if fcErr != nil {
+		slog.Warn("failed to load config file for OTel", "error", fcErr)
+	}
+
+	// Build OTel options from file config (env vars take precedence).
+	otelOpts := mcpotel.Options{
+		Endpoint: fileCfg.OTel.Endpoint,
+		Protocol: fileCfg.OTel.Protocol,
+		Headers:  fileCfg.OTel.Headers,
+	}
+	if fileCfg.OTel.SampleRate != nil {
+		otelOpts.SampleRate = *fileCfg.OTel.SampleRate
+	}
+	serviceName := "loomd"
+	if fileCfg.OTel.ServiceName != "" {
+		serviceName = fileCfg.OTel.ServiceName
+	}
+
 	// Initialize OTel tracing for daemon lifecycle and request handling.
-	_, shutdownTracer, err := mcpotel.InitTracer(ctx, "loomd", slog.Default())
+	_, shutdownTracer, err := mcpotel.InitTracerWithOptions(ctx, serviceName, slog.Default(), otelOpts)
 	if err != nil {
 		slog.Warn("OTel tracer init failed, continuing without tracing", "error", err)
 	}

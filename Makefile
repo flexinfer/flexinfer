@@ -1,7 +1,8 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd \
 		install-core install-all bootstrap-local dev-upgrade dev-reload \
-		ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
+	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
+	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
 		changelog changelog-html changelog-json \
 		docker-build docker-build-loom-core docker-build-custom-server \
@@ -21,6 +22,7 @@ GOIMPORTS := $(GOPATH)/bin/goimports
 GOSEC := $(GOPATH)/bin/gosec
 GOVULNCHECK := $(GOPATH)/bin/govulncheck
 BASELINE_DIR ?= .loom/baselines
+CODEBASE_BENCH_DIR ?= .loom/codebase-bench
 LOOM_BUILD_P ?= 1
 CGO_ENABLED ?= 0
 MOBILE_IOS_PROJECT ?= apps/loom-companion-ios/LoomCompanion.xcodeproj
@@ -96,6 +98,10 @@ help:
 	@echo "  make ci-benchmark    - Run benchmarks"
 	@echo "  make ci-security     - Run CI security stage (gosec + govulncheck)"
 	@echo "  make ci-baseline     - Capture benchmark + health baseline artifacts"
+	@echo "  make codebase-bench-baseline    - Run full + incremental + watch codebase benchmarks"
+	@echo "  make codebase-bench-full        - Run full-refresh codebase benchmark"
+	@echo "  make codebase-bench-incremental - Run unchanged-rerun codebase benchmark"
+	@echo "  make codebase-bench-watch       - Run watch-latency benchmark on fixture repo"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-build              - Build all Docker images"
@@ -672,6 +678,38 @@ ci-baseline: ci-build
 		echo "Skipped daemon health snapshot (loomd not running on http://localhost:9876/health)"; \
 	fi
 	@echo "Baseline artifacts saved in $(BASELINE_DIR)/"
+
+codebase-bench-baseline:
+	@echo "Running codebase benchmark baseline..."
+	@mkdir -p $(CODEBASE_BENCH_DIR)
+	go run ./cmd/codebase-bench \
+		-scenario all \
+		-root "$$(pwd)" \
+		-output-dir "$(CODEBASE_BENCH_DIR)"
+
+codebase-bench-full:
+	@echo "Running full-refresh codebase benchmark..."
+	@mkdir -p $(CODEBASE_BENCH_DIR)
+	go run ./cmd/codebase-bench \
+		-scenario full \
+		-root "$$(pwd)" \
+		-output-dir "$(CODEBASE_BENCH_DIR)"
+
+codebase-bench-incremental:
+	@echo "Running incremental codebase benchmark..."
+	@mkdir -p $(CODEBASE_BENCH_DIR)
+	go run ./cmd/codebase-bench \
+		-scenario incremental \
+		-root "$$(pwd)" \
+		-output-dir "$(CODEBASE_BENCH_DIR)"
+
+codebase-bench-watch:
+	@echo "Running watch-latency codebase benchmark..."
+	@mkdir -p $(CODEBASE_BENCH_DIR)
+	go run ./cmd/codebase-bench \
+		-scenario watch \
+		-root "$$(pwd)" \
+		-output-dir "$(CODEBASE_BENCH_DIR)"
 
 # =============================================================================
 # HUD TARGETS - Agent Command Center (Go HTTP + Svelte 5)
