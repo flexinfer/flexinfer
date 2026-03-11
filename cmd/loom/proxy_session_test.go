@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
@@ -39,6 +42,38 @@ func (s *sessionStubTransport) Recv(_ context.Context) (*mcp.Message, error) {
 
 func (s *sessionStubTransport) Close() error {
 	return nil
+}
+
+type serializedSessionTransport struct {
+	sessionStubTransport
+	recvEntered         chan struct{}
+	releaseRecv         chan struct{}
+	firstRecvHook       sync.Once
+	sendDuringRecvCount atomic.Int32
+	recvActive          atomic.Bool
+}
+
+func (s *serializedSessionTransport) Send(ctx context.Context, msg *mcp.Message) error {
+	if s.recvActive.Load() {
+		s.sendDuringRecvCount.Add(1)
+	}
+	return s.sessionStubTransport.Send(ctx, msg)
+}
+
+func (s *serializedSessionTransport) Recv(ctx context.Context) (*mcp.Message, error) {
+	s.recvActive.Store(true)
+	s.firstRecvHook.Do(func() {
+		close(s.recvEntered)
+	})
+	select {
+	case <-s.releaseRecv:
+	case <-ctx.Done():
+		s.recvActive.Store(false)
+		return nil, ctx.Err()
+	}
+	resp, err := s.sessionStubTransport.Recv(ctx)
+	s.recvActive.Store(false)
+	return resp, err
 }
 
 func TestProxyOpenSession_Success(t *testing.T) {
@@ -313,5 +348,75 @@ func TestProxyOpenSession_PreservesPriorID(t *testing.T) {
 	json.Unmarshal(transport.sentMessages[0].Params, &params)
 	if params["prior_session_id"] != "prior-123" {
 		t.Fatalf("expected prior_session_id 'prior-123', got %v", params["prior_session_id"])
+	}
+}
+
+func TestProxySessionLifecycleRPCsSerializeWithForegroundCalls(t *testing.T) {
+	oldSessionID := proxySessionID
+	oldEpoch := proxyDaemonEpoch
+	oldDisabled := proxySessionDisabled
+	defer func() {
+		proxySessionID = oldSessionID
+		proxyDaemonEpoch = oldEpoch
+		proxySessionDisabled = oldDisabled
+	}()
+
+	proxySessionID = ""
+	proxyDaemonEpoch = 0
+	proxySessionDisabled = false
+
+	openResult, _ := json.Marshal(map[string]any{
+		"session_id":   "sess-serial",
+		"daemon_epoch": int64(1),
+	})
+	openResp, _ := mcp.NewResponse(json.RawMessage(`99`), json.RawMessage(openResult))
+	toolResp, _ := mcp.NewResponse(json.RawMessage(`1`), json.RawMessage(`{"ok":true}`))
+
+	transport := &serializedSessionTransport{
+		sessionStubTransport: sessionStubTransport{
+			recvQueue: []*mcp.Message{openResp, toolResp},
+		},
+		recvEntered: make(chan struct{}),
+		releaseRecv: make(chan struct{}),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		proxyOpenSession(context.Background(), transport)
+		errCh <- nil
+	}()
+
+	<-transport.recvEntered
+
+	respCh := make(chan *mcp.Message, 1)
+	go func() {
+		req, _ := mcp.NewRequest(1, "loom/status", nil)
+		resp, err := proxyDaemonRoundTrip(context.Background(), transport, req, "loom/status")
+		if err != nil {
+			t.Errorf("proxyDaemonRoundTrip error: %v", err)
+			respCh <- nil
+			return
+		}
+		respCh <- resp
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if got := transport.sendDuringRecvCount.Load(); got != 0 {
+		t.Fatalf("expected no concurrent send during recv, got %d", got)
+	}
+
+	close(transport.releaseRecv)
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("proxyOpenSession returned error: %v", err)
+	}
+	if got := <-respCh; got == nil {
+		t.Fatal("expected foreground round trip response")
+	}
+	if transport.sendDuringRecvCount.Load() != 0 {
+		t.Fatalf("expected serialized daemon RPCs, got %d concurrent sends during recv", transport.sendDuringRecvCount.Load())
+	}
+	if proxySessionID != "sess-serial" {
+		t.Fatalf("expected proxySessionID to be set from open response, got %q", proxySessionID)
 	}
 }
