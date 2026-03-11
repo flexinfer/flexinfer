@@ -5,20 +5,20 @@
 
 <Modal title="Create Handoff" open={presenceActionsStore.showHandoffModal} onClose={() => presenceActionsStore.closeHandoffModal()}>
   <div class="form-group">
-    <label class="form-label" for="handoff-to-agent">To Agent (optional)</label>
-    <input id="handoff-to-agent" type="text" bind:value={presenceActionsStore.newHandoffTo} placeholder="Agent ID or leave blank for any..." class="form-input" />
+    <label class="form-label" for="handoff-to-agent">Target Agent *</label>
+    <input id="handoff-to-agent" type="text" bind:value={presenceActionsStore.newHandoffTo} placeholder="Target agent ID..." class="form-input" />
   </div>
   <div class="form-group">
-    <label class="form-label" for="handoff-summary">Summary *</label>
-    <input id="handoff-summary" type="text" bind:value={presenceActionsStore.newHandoffSummary} placeholder="What needs to be done..." class="form-input" />
+    <label class="form-label" for="handoff-summary">Instructions *</label>
+    <input id="handoff-summary" type="text" bind:value={presenceActionsStore.newHandoffSummary} placeholder="What should the target agent do next..." class="form-input" />
   </div>
   <div class="form-group">
-    <label class="form-label" for="handoff-context">Context</label>
-    <textarea id="handoff-context" bind:value={presenceActionsStore.newHandoffContext} placeholder="Additional context, findings, decisions..." class="form-input" rows="4"></textarea>
+    <label class="form-label" for="handoff-context">Additional Details</label>
+    <textarea id="handoff-context" bind:value={presenceActionsStore.newHandoffContext} placeholder="Relevant findings, constraints, and follow-up notes..." class="form-input" rows="4"></textarea>
   </div>
   <div class="form-actions">
     <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeHandoffModal()}>Cancel</button>
-    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitHandoff()} disabled={presenceActionsStore.creatingHandoff || !presenceActionsStore.newHandoffSummary.trim()}>
+    <button class="btn btn-primary" onclick={() => presenceActionsStore.submitHandoff()} disabled={presenceActionsStore.creatingHandoff || !presenceActionsStore.newHandoffTo.trim() || !presenceActionsStore.newHandoffSummary.trim()}>
       {presenceActionsStore.creatingHandoff ? 'Creating...' : 'Create Handoff'}
     </button>
   </div>

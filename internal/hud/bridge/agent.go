@@ -81,9 +81,6 @@ func (a *AgentBridge) callAgentTool(toolName string, args map[string]any, target
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
 
-	if target == nil {
-		return nil
-	}
 	if err := UnmarshalToolResult(raw, target); err != nil {
 		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
 	}
@@ -98,9 +95,6 @@ func (a *AgentBridge) callAgentToolTimeout(toolName string, args map[string]any,
 		return fmt.Errorf("agent tool %s: %w", toolName, err)
 	}
 
-	if target == nil {
-		return nil
-	}
 	if err := UnmarshalToolResult(raw, target); err != nil {
 		return fmt.Errorf("unmarshal %s result: %w", toolName, err)
 	}

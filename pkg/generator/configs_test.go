@@ -199,6 +199,19 @@ func TestEmitCodexPreamble(t *testing.T) {
 			t.Errorf("expected Codex preamble to contain %q", want)
 		}
 	}
+
+	for _, want := range []string{
+		`.cache/loom/agent-id-codex-${WS_HASH}`,
+		`codex-${WS_HASH}`,
+		`--agent-id \"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected Codex notify flow to contain %q", want)
+		}
+	}
+	if strings.Contains(content, "codex-${WS_HASH}-$$") {
+		t.Fatalf("expected Codex notify identity to avoid per-hook $$ churn, got: %s", content)
+	}
 }
 
 func TestEmitCodexPreambleNilRegistry(t *testing.T) {
@@ -954,16 +967,21 @@ func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	for _, want := range []string{
 		"WS_HASH=",
 		"cksum",
-		"codex-${WS_HASH}-$$",
+		"AGENT_ID_FILE",
+		"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}",
+		"codex-${WS_HASH}",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("Codex preamble missing %q\ngot: %s", want, content)
 		}
 	}
 
-	// Old global pattern should be gone.
+	// Old unstable agent ID patterns should be gone.
 	if strings.Contains(content, `--agent-id "codex-$$"`) {
 		t.Error("found old global agent ID pattern codex-$$ without workspace hash")
+	}
+	if strings.Contains(content, "codex-${WS_HASH}-$$") {
+		t.Error("found old per-process codex agent ID pattern")
 	}
 }
 

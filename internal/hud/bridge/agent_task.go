@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+const (
+	hudDispatchAgentID   = "hud-dispatcher"
+	hudDispatchNamespace = "loom-core/hud-dispatch"
+)
+
 // Tasks returns tasks for a specific session.
 func (a *AgentBridge) Tasks(sessionID string) ([]TaskInfo, error) {
 	args := map[string]any{}
@@ -37,10 +42,15 @@ type CreateTaskParams struct {
 	BlockedBy  []string // Task IDs this is blocked by
 }
 
+type CreateTaskResult struct {
+	TaskIDs []string `json:"task_ids"`
+	Count   int      `json:"count,omitempty"`
+}
+
 // CreateTask creates a new task in a session.
-func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
+func (a *AgentBridge) CreateTask(p CreateTaskParams) (*CreateTaskResult, error) {
 	if p.SessionID == "" {
-		return fmt.Errorf("session_id is required")
+		return nil, fmt.Errorf("session_id is required")
 	}
 	task := map[string]any{
 		"title": p.Title,
@@ -67,7 +77,11 @@ func (a *AgentBridge) CreateTask(p CreateTaskParams) error {
 		"session_id": p.SessionID,
 		"tasks":      []map[string]any{task},
 	}
-	return a.callAgentTool("agent_task_add", args, nil)
+	var result CreateTaskResult
+	if err := a.callAgentTool("agent_task_add", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // UpdateTaskParams holds all fields for task updates.
@@ -97,14 +111,15 @@ func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
 
 // DispatchTaskParams holds parameters for dispatching a task to an agent.
 type DispatchTaskParams struct {
-	TargetAgentID string
-	Title         string
-	Context       string
-	Priority      string
-	Tags          []string
-	FilePath      string
-	LineNumber    int
-	BlockedBy     []string
+	TargetAgentID   string
+	SourceSessionID string
+	Title           string
+	Context         string
+	Priority        string
+	Tags            []string
+	FilePath        string
+	LineNumber      int
+	BlockedBy       []string
 }
 
 // DispatchTask creates a task and a handoff targeting a specific agent.
@@ -117,6 +132,7 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 	}
 
 	sessionID := ""
+	createdTaskID := ""
 	if session != nil {
 		sessionID = session.ID
 	}
@@ -125,7 +141,7 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 
 	// Create the task.
 	if sessionID != "" {
-		if err := a.CreateTask(CreateTaskParams{
+		taskResult, err := a.CreateTask(CreateTaskParams{
 			SessionID:  sessionID,
 			Title:      p.Title,
 			Context:    p.Context,
@@ -134,27 +150,69 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 			FilePath:   p.FilePath,
 			LineNumber: p.LineNumber,
 			BlockedBy:  p.BlockedBy,
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, fmt.Errorf("create task: %w", err)
+		}
+		if taskResult != nil && len(taskResult.TaskIDs) > 0 {
+			createdTaskID = strings.TrimSpace(taskResult.TaskIDs[0])
 		}
 		taskCreated = true
 	}
 
+	sourceSessionID, err := a.resolveDispatchSourceSessionID(strings.TrimSpace(p.SourceSessionID))
+	if err != nil {
+		return nil, fmt.Errorf("resolve dispatch source session: %w", err)
+	}
+
 	// Create a handoff targeting the agent.
 	handoffSummary := fmt.Sprintf("[Dispatched] %s", p.Title)
-	if err := a.HandoffCreate(p.TargetAgentID, handoffSummary, p.Context); err != nil {
+	instructions := handoffSummary
+	if ctx := strings.TrimSpace(p.Context); ctx != "" {
+		instructions += "\n\n" + ctx
+	}
+	handoffResult, err := a.HandoffCreate(HandoffCreateParams{
+		SessionID:     sourceSessionID,
+		TargetAgentID: p.TargetAgentID,
+		Instructions:  instructions,
+		HandoffType:   "summary_only",
+	})
+	if err != nil {
 		return nil, fmt.Errorf("create handoff: %w", err)
 	}
 
 	return map[string]any{
-		"ok":              true,
-		"target_agent_id": p.TargetAgentID,
-		"session_id":      sessionID,
-		"title":           p.Title,
-		"priority":        p.Priority,
-		"task_created":    taskCreated,
-		"handoff_created": true,
+		"ok":                true,
+		"target_agent_id":   p.TargetAgentID,
+		"source_session_id": sourceSessionID,
+		"session_id":        sessionID,
+		"task_id":           createdTaskID,
+		"handoff_id":        handoffResult.HandoffID,
+		"title":             p.Title,
+		"priority":          p.Priority,
+		"task_created":      taskCreated,
+		"handoff_created":   true,
 	}, nil
+}
+
+func (a *AgentBridge) resolveDispatchSourceSessionID(sourceSessionID string) (string, error) {
+	if sourceSessionID != "" {
+		return sourceSessionID, nil
+	}
+	result, err := a.StartSession(SessionStartParams{
+		Namespace:   hudDispatchNamespace,
+		AgentID:     hudDispatchAgentID,
+		AgentType:   hudDispatchAgentID,
+		Description: "HUD dispatch handoff source",
+		AutoRecall:  false,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result == nil || strings.TrimSpace(result.SessionID) == "" {
+		return "", fmt.Errorf("dispatcher session start returned empty session_id")
+	}
+	return strings.TrimSpace(result.SessionID), nil
 }
 
 func mergeDispatchTags(tags []string) []string {

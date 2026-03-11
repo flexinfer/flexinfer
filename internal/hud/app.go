@@ -1402,7 +1402,7 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if body.LineNumber < 0 {
 		body.LineNumber = 0
 	}
-	if err := a.agent.CreateTask(bridge.CreateTaskParams{
+	taskResult, err := a.agent.CreateTask(bridge.CreateTaskParams{
 		SessionID:  body.SessionID,
 		Title:      body.Title,
 		Priority:   body.Priority,
@@ -1411,7 +1411,8 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		FilePath:   body.FilePath,
 		LineNumber: body.LineNumber,
 		BlockedBy:  body.BlockedBy,
-	}); err != nil {
+	})
+	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to create task", err)
 		return
 	}
@@ -1419,7 +1420,11 @@ func (a *App) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		"title":    body.Title,
 		"priority": body.Priority,
 	})
-	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	taskID := ""
+	if taskResult != nil && len(taskResult.TaskIDs) > 0 {
+		taskID = taskResult.TaskIDs[0]
+	}
+	a.writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "task_id": taskID})
 }
 
 func (a *App) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
@@ -1904,40 +1909,125 @@ func (a *App) handleHandoffList(w http.ResponseWriter, _ *http.Request) {
 
 func (a *App) handleHandoffCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ToAgent string `json:"to_agent"`
-		Summary string `json:"summary"`
-		Context string `json:"context"`
+		SessionID     string   `json:"session_id"`
+		TargetAgentID string   `json:"target_agent_id"`
+		Instructions  string   `json:"instructions"`
+		HandoffType   string   `json:"handoff_type"`
+		EntryIDs      []string `json:"entry_ids"`
+		TokenBudget   int      `json:"token_budget"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if body.Summary == "" {
-		a.writeError(w, http.StatusBadRequest, "summary is required", nil)
+	body.SessionID = strings.TrimSpace(body.SessionID)
+	body.TargetAgentID = strings.TrimSpace(body.TargetAgentID)
+	body.Instructions = strings.TrimSpace(body.Instructions)
+	body.HandoffType = strings.TrimSpace(body.HandoffType)
+	body.EntryIDs = normalizeStringList(body.EntryIDs)
+
+	if body.TargetAgentID == "" {
+		a.writeError(w, http.StatusBadRequest, "target_agent_id is required", nil)
 		return
 	}
-	if err := a.agent.HandoffCreate(body.ToAgent, body.Summary, body.Context); err != nil {
+	if body.Instructions == "" {
+		a.writeError(w, http.StatusBadRequest, "instructions is required", nil)
+		return
+	}
+	if body.SessionID == "" {
+		dispatchSession, err := a.agent.StartSession(bridge.SessionStartParams{
+			Namespace:   "loom-core/hud-dispatch",
+			AgentID:     "hud-dispatcher",
+			AgentType:   "hud-dispatcher",
+			Description: "HUD dispatch handoff source",
+			AutoRecall:  false,
+		})
+		if err != nil {
+			a.writeError(w, http.StatusBadGateway, "failed to resolve source session", err)
+			return
+		}
+		if dispatchSession == nil || strings.TrimSpace(dispatchSession.SessionID) == "" {
+			a.writeError(w, http.StatusBadGateway, "failed to resolve source session", fmt.Errorf("dispatcher session id is empty"))
+			return
+		}
+		body.SessionID = strings.TrimSpace(dispatchSession.SessionID)
+	}
+
+	result, err := a.agent.HandoffCreate(bridge.HandoffCreateParams{
+		SessionID:     body.SessionID,
+		TargetAgentID: body.TargetAgentID,
+		Instructions:  body.Instructions,
+		HandoffType:   body.HandoffType,
+		EntryIDs:      body.EntryIDs,
+		TokenBudget:   body.TokenBudget,
+	})
+	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to create handoff", err)
 		return
 	}
+
 	a.broadcastAgentEvent("hud.handoff.created", map[string]any{
-		"to_agent": body.ToAgent,
-		"summary":  body.Summary,
+		"target_agent_id": body.TargetAgentID,
+		"instructions":    body.Instructions,
 	})
-	a.writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	a.writeJSON(w, http.StatusCreated, map[string]any{
+		"status":     "created",
+		"handoff_id": result.HandoffID,
+		"session_id": body.SessionID,
+	})
 }
 
 func (a *App) handleHandoffAccept(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SessionID     string `json:"session_id"`
+		TargetAgentID string `json:"target_agent_id"`
+		ImportEntries bool   `json:"import_entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
 	id := r.PathValue("id")
 	if id == "" {
 		a.writeError(w, http.StatusBadRequest, "missing handoff id", nil)
 		return
 	}
-	if err := a.agent.HandoffAccept(id); err != nil {
+	body.SessionID = strings.TrimSpace(body.SessionID)
+	body.TargetAgentID = strings.TrimSpace(body.TargetAgentID)
+
+	if body.SessionID == "" {
+		if body.TargetAgentID == "" {
+			a.writeError(w, http.StatusBadRequest, "session_id or target_agent_id is required", nil)
+			return
+		}
+		active, err := a.agent.GetActiveSession(body.TargetAgentID)
+		if err != nil {
+			a.writeError(w, http.StatusBadGateway, "failed to resolve target agent session", err)
+			return
+		}
+		if active == nil || strings.TrimSpace(active.ID) == "" {
+			a.writeError(w, http.StatusBadRequest, "target agent has no active session", nil)
+			return
+		}
+		body.SessionID = strings.TrimSpace(active.ID)
+	}
+
+	result, err := a.agent.HandoffAccept(bridge.HandoffAcceptParams{
+		HandoffID:     id,
+		SessionID:     body.SessionID,
+		ImportEntries: body.ImportEntries,
+	})
+	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to accept handoff", err)
 		return
 	}
-	a.writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "accepted",
+		"handoff_id": id,
+		"session_id": body.SessionID,
+		"result":     result,
+	})
 }
 
 func (a *App) handleTemplateList(w http.ResponseWriter, _ *http.Request) {
@@ -2160,20 +2250,22 @@ func filterTimelineEntries(entries []TimelineEntry, agentID, eventType string) [
 // POST /api/agent/dispatch
 func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		TargetAgentID string   `json:"target_agent_id"`
-		Title         string   `json:"title"`
-		Context       string   `json:"context"`
-		Priority      string   `json:"priority"`
-		Tags          []string `json:"tags"`
-		FilePath      string   `json:"file_path"`
-		LineNumber    int      `json:"line_number"`
-		BlockedBy     []string `json:"blocked_by"`
+		TargetAgentID   string   `json:"target_agent_id"`
+		SourceSessionID string   `json:"source_session_id"`
+		Title           string   `json:"title"`
+		Context         string   `json:"context"`
+		Priority        string   `json:"priority"`
+		Tags            []string `json:"tags"`
+		FilePath        string   `json:"file_path"`
+		LineNumber      int      `json:"line_number"`
+		BlockedBy       []string `json:"blocked_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		a.writeError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
 	body.TargetAgentID = strings.TrimSpace(body.TargetAgentID)
+	body.SourceSessionID = strings.TrimSpace(body.SourceSessionID)
 	body.Title = strings.TrimSpace(body.Title)
 	body.Context = strings.TrimSpace(body.Context)
 	body.FilePath = strings.TrimSpace(body.FilePath)
@@ -2190,14 +2282,15 @@ func (a *App) handleAgentDispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := a.agent.DispatchTask(bridge.DispatchTaskParams{
-		TargetAgentID: body.TargetAgentID,
-		Title:         body.Title,
-		Context:       body.Context,
-		Priority:      body.Priority,
-		Tags:          body.Tags,
-		FilePath:      body.FilePath,
-		LineNumber:    body.LineNumber,
-		BlockedBy:     body.BlockedBy,
+		TargetAgentID:   body.TargetAgentID,
+		SourceSessionID: body.SourceSessionID,
+		Title:           body.Title,
+		Context:         body.Context,
+		Priority:        body.Priority,
+		Tags:            body.Tags,
+		FilePath:        body.FilePath,
+		LineNumber:      body.LineNumber,
+		BlockedBy:       body.BlockedBy,
 	})
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to dispatch task", err)

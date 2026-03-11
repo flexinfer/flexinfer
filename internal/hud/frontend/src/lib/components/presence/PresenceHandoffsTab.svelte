@@ -58,13 +58,13 @@
     >
       {#snippet row({ row: handoff })}
         <td class="text-mono">{handoff.from_agent || '---'}</td>
-        <td class="text-mono">{handoff.to_agent || 'any'}</td>
+        <td class="text-mono">{handoff.target_agent_id || handoff.to_agent || '---'}</td>
         <td class="truncate" title={handoff.summary}>{handoff.summary}</td>
         <td><Badge text={handoff.status} variant={handoffStatusVariant(handoff.status)} /></td>
         <td class="text-mono text-muted">{formatTime(handoff.created_at)}</td>
         <td>
           {#if handoff.status === 'pending'}
-            <button class="btn btn-xs btn-success" onclick={() => onAcceptHandoff(handoff.id)}>
+            <button class="btn btn-xs btn-success" onclick={() => onAcceptHandoff(handoff.id, handoff.target_agent_id || handoff.to_agent || '')}>
               Accept
             </button>
           {:else}

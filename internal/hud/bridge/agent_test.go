@@ -45,6 +45,80 @@ func TestAgentBridge_CallAgentTool_PropagatesToolErrorEnvelope(t *testing.T) {
 	}
 }
 
+func TestAgentBridge_CallAgentTool_PropagatesToolErrorEnvelopeWithNilTarget(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_task_update" {
+			t.Fatalf("unexpected tool name: %s", req.Name)
+		}
+		return map[string]any{
+			"isError": true,
+			"content": []map[string]any{
+				{"type": "text", "text": "task not found"},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	err := bridge.callAgentTool("agent_task_update", map[string]any{"task_id": "task-missing"}, nil)
+	if err == nil {
+		t.Fatal("expected tool-level error to be propagated for nil target")
+	}
+	if !strings.Contains(err.Error(), "task not found") {
+		t.Fatalf("expected error to include task failure detail, got: %v", err)
+	}
+}
+
+func TestAgentBridge_CallAgentToolTimeout_PropagatesToolErrorEnvelopeWithNilTarget(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_task_add" {
+			t.Fatalf("unexpected tool name: %s", req.Name)
+		}
+		return map[string]any{
+			"isError": true,
+			"content": []map[string]any{
+				{"type": "text", "text": "session missing"},
+			},
+		}, nil
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	err := bridge.callAgentToolTimeout("agent_task_add", map[string]any{"session_id": "missing"}, nil, time.Second)
+	if err == nil {
+		t.Fatal("expected timeout call to propagate tool-level error for nil target")
+	}
+	if !strings.Contains(err.Error(), "session missing") {
+		t.Fatalf("expected error to include tool failure detail, got: %v", err)
+	}
+}
+
 func TestAgentBridge_CallAgentTool_SucceedsWithTargetNil(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
@@ -408,7 +482,7 @@ func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 	defer client.Close()
 
 	bridge := NewAgentBridge(client)
-	err := bridge.CreateTask(CreateTaskParams{
+	result, err := bridge.CreateTask(CreateTaskParams{
 		SessionID: "sess-1",
 		Title:     "Fix HUD sync",
 		Priority:  "high",
@@ -417,6 +491,9 @@ func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create task failed: %v", err)
 	}
+	if result == nil || len(result.TaskIDs) != 1 || result.TaskIDs[0] != "t-1" {
+		t.Fatalf("expected task_ids [t-1], got %#v", result)
+	}
 }
 
 func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testing.T) {
@@ -424,6 +501,7 @@ func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testi
 
 	var taskAddSeen bool
 	var handoffSeen bool
+	var dispatcherSessionSeen bool
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -436,10 +514,36 @@ func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testi
 
 		switch req.Name {
 		case "agent_context__agent_session_list":
+			if got, _ := req.Arguments["agent_id"].(string); got == "hud-dispatcher" {
+				return map[string]any{
+					"isError": false,
+					"content": []map[string]any{
+						{"type": "text", "text": `{"sessions":[]}`},
+					},
+				}, nil
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
 					{"type": "text", "text": `{"sessions":[{"id":"sess-1","agent_id":"agent-1","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_session_start":
+			dispatcherSessionSeen = true
+			if got, _ := req.Arguments["agent_id"].(string); got != "hud-dispatcher" {
+				t.Fatalf("expected dispatcher agent_id, got %q", got)
+			}
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"session_id":"sess-dispatcher"}`},
+				},
+			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
 				},
 			}, nil
 		case "agent_context__agent_task_add":
@@ -477,13 +581,23 @@ func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testi
 			}, nil
 		case "agent_context__agent_handoff_create":
 			handoffSeen = true
-			if got, _ := req.Arguments["to_agent"].(string); got != "agent-1" {
-				t.Fatalf("expected to_agent=agent-1, got %q", got)
+			if got, _ := req.Arguments["target_agent_id"].(string); got != "agent-1" {
+				t.Fatalf("expected target_agent_id=agent-1, got %q", got)
+			}
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-dispatcher" {
+				t.Fatalf("expected dispatcher session_id, got %q", got)
+			}
+			if got, _ := req.Arguments["handoff_type"].(string); got != "summary_only" {
+				t.Fatalf("expected handoff_type=summary_only, got %q", got)
+			}
+			instructions, _ := req.Arguments["instructions"].(string)
+			if !strings.HasPrefix(instructions, "[Dispatched] Review enterprise rollout") {
+				t.Fatalf("unexpected handoff instructions: %q", instructions)
 			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
-					{"type": "text", "text": `{"ok":true}`},
+					{"type": "text", "text": `{"ok":true,"handoff_id":"handoff-1"}`},
 				},
 			}, nil
 		default:
@@ -518,8 +632,17 @@ func TestAgentBridge_DispatchTask_WithActiveSessionIncludesTaskMetadata(t *testi
 	if !handoffSeen {
 		t.Fatalf("expected handoff_create call")
 	}
+	if !dispatcherSessionSeen {
+		t.Fatalf("expected dispatcher session bootstrap")
+	}
 	if created, _ := result["task_created"].(bool); !created {
 		t.Fatalf("expected task_created=true, got %#v", result["task_created"])
+	}
+	if got, _ := result["handoff_id"].(string); got != "handoff-1" {
+		t.Fatalf("expected handoff_id handoff-1, got %#v", result["handoff_id"])
+	}
+	if got, _ := result["source_session_id"].(string); got != "sess-dispatcher" {
+		t.Fatalf("expected source_session_id sess-dispatcher, got %#v", result["source_session_id"])
 	}
 }
 
@@ -527,6 +650,7 @@ func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *test
 	sockPath, handlers := mockDaemon(t)
 
 	var handoffSeen bool
+	var dispatcherSessionSeen bool
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -539,10 +663,33 @@ func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *test
 
 		switch req.Name {
 		case "agent_context__agent_session_list":
+			if got, _ := req.Arguments["agent_id"].(string); got == "hud-dispatcher" {
+				return map[string]any{
+					"isError": false,
+					"content": []map[string]any{
+						{"type": "text", "text": `{"sessions":[]}`},
+					},
+				}, nil
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
 					{"type": "text", "text": `{"sessions":[]}`},
+				},
+			}, nil
+		case "agent_context__agent_session_start":
+			dispatcherSessionSeen = true
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"session_id":"sess-dispatcher"}`},
+				},
+			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
 				},
 			}, nil
 		case "agent_context__agent_task_add":
@@ -550,10 +697,16 @@ func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *test
 			return nil, nil
 		case "agent_context__agent_handoff_create":
 			handoffSeen = true
+			if got, _ := req.Arguments["target_agent_id"].(string); got != "agent-2" {
+				t.Fatalf("expected target_agent_id=agent-2, got %q", got)
+			}
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-dispatcher" {
+				t.Fatalf("expected dispatcher session_id, got %q", got)
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
-					{"type": "text", "text": `{"ok":true}`},
+					{"type": "text", "text": `{"ok":true,"handoff_id":"handoff-2"}`},
 				},
 			}, nil
 		default:
@@ -581,8 +734,14 @@ func TestAgentBridge_DispatchTask_WithoutActiveSessionCreatesHandoffOnly(t *test
 	if !handoffSeen {
 		t.Fatalf("expected handoff_create call")
 	}
+	if !dispatcherSessionSeen {
+		t.Fatalf("expected dispatcher session bootstrap")
+	}
 	if created, _ := result["task_created"].(bool); created {
 		t.Fatalf("expected task_created=false when no active session")
+	}
+	if got, _ := result["handoff_id"].(string); got != "handoff-2" {
+		t.Fatalf("expected handoff_id handoff-2, got %#v", result["handoff_id"])
 	}
 }
 

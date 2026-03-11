@@ -70,14 +70,16 @@ class PresenceActionsStore {
   }
 
   async submitHandoff(): Promise<void> {
-    if (!this.newHandoffSummary.trim()) return;
+    if (!this.newHandoffTo.trim() || !this.newHandoffSummary.trim()) return;
 
     this.creatingHandoff = true;
     try {
       await createHandoff({
-        to_agent: this.newHandoffTo.trim() || undefined,
-        summary: this.newHandoffSummary.trim(),
-        context: this.newHandoffContext.trim() || undefined,
+        target_agent_id: this.newHandoffTo.trim(),
+        instructions: this.newHandoffContext.trim()
+          ? `${this.newHandoffSummary.trim()}\n\n${this.newHandoffContext.trim()}`
+          : this.newHandoffSummary.trim(),
+        handoff_type: 'summary_only',
       });
       toastStore.success('Handoff created');
       this.showHandoffModal = false;
@@ -92,9 +94,13 @@ class PresenceActionsStore {
     }
   }
 
-  async onAcceptHandoff(id: string): Promise<void> {
+  async onAcceptHandoff(id: string, targetAgentID: string): Promise<void> {
+    if (!targetAgentID.trim()) {
+      toastStore.error('Cannot accept handoff without a target agent');
+      return;
+    }
     try {
-      await acceptHandoff(id);
+      await acceptHandoff(id, { target_agent_id: targetAgentID.trim() });
       toastStore.success('Handoff accepted');
       await this.refreshHandoffs();
     } catch {

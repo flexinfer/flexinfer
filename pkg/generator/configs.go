@@ -1154,12 +1154,12 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		fmt.Fprintf(sb, "# Dirty-worktree mode: %s\n\n", policy.DirtyWorktreeMode)
 	}
 
-	// Codex notify uses a TOML string array with no shell expansion. Use sh -c
-	// to get $$ expansion for a per-process agent ID. The workspace hash from
-	// cksum matches the scheme used by hookAgentIDBootstrap for Claude/Gemini,
-	// avoiding cross-workspace agent ID collisions.
+	// Codex notify runs on every turn, so use a workspace-scoped persistent
+	// AGENT_ID_FILE to avoid per-hook process-ID churn that fragments identity.
+	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
+	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-	sb.WriteString(`notify = ["sh", "-c", "WS_HASH=\"$(printf '%s' \"$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' \"$PWD\")\" | cksum | cut -d' ' -f1)\"; exec loom agent heartbeat --agent-id \"codex-${WS_HASH}-$$\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`)
+	sb.WriteString(`notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' \"$PWD\")\"; WS_HASH=\"$(printf '%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec loom agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`)
 	sb.WriteString("\n\n")
 }
 

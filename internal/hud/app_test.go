@@ -82,6 +82,8 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 		switch {
 		case strings.Contains(p.Name, "session_list"):
 			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case strings.Contains(p.Name, "session_start"):
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-mock\"}"}]}`), nil
 		case strings.Contains(p.Name, "task_list"):
 			return json.RawMessage(`{"content":[{"type":"text","text":"{\"tasks\":[]}"}]}`), nil
 		case strings.Contains(p.Name, "memory_stats"):
@@ -470,6 +472,7 @@ func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
 
 	var taskAddSeen bool
 	var handoffSeen bool
+	var dispatcherSessionSeen bool
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -482,7 +485,13 @@ func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
 
 		switch req.Name {
 		case "agent_context__agent_session_list":
+			if got, _ := req.Arguments["agent_id"].(string); got == "hud-dispatcher" {
+				return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+			}
 			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-1\",\"agent_id\":\"agent-1\",\"status\":\"active\"}]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			dispatcherSessionSeen = true
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-dispatcher\"}"}]}`), nil
 		case "agent_context__agent_task_add":
 			taskAddSeen = true
 			if got, _ := req.Arguments["session_id"].(string); got != "sess-1" {
@@ -525,13 +534,19 @@ func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
 			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
 		case "agent_context__agent_handoff_create":
 			handoffSeen = true
-			if got, _ := req.Arguments["to_agent"].(string); got != "agent-1" {
-				t.Fatalf("expected to_agent=agent-1, got %q", got)
+			if got, _ := req.Arguments["target_agent_id"].(string); got != "agent-1" {
+				t.Fatalf("expected target_agent_id=agent-1, got %q", got)
 			}
-			if got, _ := req.Arguments["summary"].(string); got != "[Dispatched] Investigate GitOps drift" {
-				t.Fatalf("unexpected handoff summary: %q", got)
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-dispatcher" {
+				t.Fatalf("expected dispatcher session_id, got %q", got)
 			}
-			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+			if got, _ := req.Arguments["handoff_type"].(string); got != "summary_only" {
+				t.Fatalf("expected handoff_type=summary_only, got %q", got)
+			}
+			if got, _ := req.Arguments["instructions"].(string); !strings.HasPrefix(got, "[Dispatched] Investigate GitOps drift") {
+				t.Fatalf("unexpected handoff instructions: %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"handoff_id\":\"handoff-1\"}"}]}`), nil
 		default:
 			// Generic success for monitor refresh calls.
 			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
@@ -562,10 +577,15 @@ func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
 	if !handoffSeen {
 		t.Fatalf("expected handoff_create call to occur")
 	}
+	if !dispatcherSessionSeen {
+		t.Fatalf("expected dispatcher session to be resolved")
+	}
 
 	var result struct {
-		Priority    string `json:"priority"`
-		TaskCreated bool   `json:"task_created"`
+		Priority        string `json:"priority"`
+		TaskCreated     bool   `json:"task_created"`
+		SourceSessionID string `json:"source_session_id"`
+		HandoffID       string `json:"handoff_id"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -575,6 +595,12 @@ func TestHandler_AgentDispatch_NormalizesExtendedTaskPayload(t *testing.T) {
 	}
 	if !result.TaskCreated {
 		t.Fatalf("expected task_created=true")
+	}
+	if result.SourceSessionID != "sess-dispatcher" {
+		t.Fatalf("expected source_session_id=sess-dispatcher, got %q", result.SourceSessionID)
+	}
+	if result.HandoffID != "handoff-1" {
+		t.Fatalf("expected handoff_id=handoff-1, got %q", result.HandoffID)
 	}
 }
 
@@ -589,6 +615,243 @@ func TestHandler_AgentDispatch_RejectsBlankTitle(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_HandoffCreate_RequiresCurrentContractFields(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	// Old payload shape should fail hard now.
+	body := `{"to_agent":"agent-1","summary":"Do work","context":"details"}`
+	req := httptest.NewRequest("POST", "/api/handoffs", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for legacy handoff payload, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_HandoffCreate_ResolvesDispatcherSessionAndUsesNewArgs(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var dispatcherSessionSeen bool
+	var handoffCreateSeen bool
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			if got, _ := req.Arguments["agent_id"].(string); got == "hud-dispatcher" {
+				return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			dispatcherSessionSeen = true
+			if got, _ := req.Arguments["agent_id"].(string); got != "hud-dispatcher" {
+				t.Fatalf("expected hud-dispatcher session start, got %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-dispatcher\"}"}]}`), nil
+		case "agent_context__agent_handoff_create":
+			handoffCreateSeen = true
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-dispatcher" {
+				t.Fatalf("expected session_id=sess-dispatcher, got %q", got)
+			}
+			if got, _ := req.Arguments["target_agent_id"].(string); got != "agent-1" {
+				t.Fatalf("expected target_agent_id=agent-1, got %q", got)
+			}
+			if got, _ := req.Arguments["instructions"].(string); got != "Continue rollout verification" {
+				t.Fatalf("unexpected instructions: %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"handoff_id\":\"handoff-123\"}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	body := `{"target_agent_id":"agent-1","instructions":"Continue rollout verification"}`
+	req := httptest.NewRequest("POST", "/api/handoffs", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if !dispatcherSessionSeen {
+		t.Fatalf("expected dispatcher session resolution")
+	}
+	if !handoffCreateSeen {
+		t.Fatalf("expected handoff_create call")
+	}
+
+	var result struct {
+		Status    string `json:"status"`
+		HandoffID string `json:"handoff_id"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if result.HandoffID != "handoff-123" {
+		t.Fatalf("expected handoff_id=handoff-123, got %q", result.HandoffID)
+	}
+	if result.SessionID != "sess-dispatcher" {
+		t.Fatalf("expected session_id=sess-dispatcher, got %q", result.SessionID)
+	}
+}
+
+func TestHandler_HandoffAccept_RequiresSessionOrTargetAgent(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	req := httptest.NewRequest("POST", "/api/handoffs/h-1/accept", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when both session_id and target_agent_id are missing, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_HandoffAccept_ResolvesTargetAgentSession(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var acceptSeen bool
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			if got, _ := req.Arguments["agent_id"].(string); got != "agent-acceptor" {
+				t.Fatalf("expected target lookup for agent-acceptor, got %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-acceptor\",\"agent_id\":\"agent-acceptor\",\"status\":\"active\"}]}"}]}`), nil
+		case "agent_context__agent_handoff_accept":
+			acceptSeen = true
+			if got, _ := req.Arguments["handoff_id"].(string); got != "handoff-7" {
+				t.Fatalf("expected handoff_id=handoff-7, got %q", got)
+			}
+			if got, _ := req.Arguments["session_id"].(string); got != "sess-acceptor" {
+				t.Fatalf("expected session_id=sess-acceptor, got %q", got)
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"handoff_id\":\"handoff-7\"}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/handoffs/handoff-7/accept", strings.NewReader(`{"target_agent_id":"agent-acceptor","import_entries":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !acceptSeen {
+		t.Fatalf("expected handoff_accept tool call")
+	}
+}
+
+func TestHandler_AgentTaskUpdate_PropagatesMutationFailure(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name == "agent_context__agent_task_update" {
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"task not found"}]}`), nil
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/task-update", strings.NewReader(`{"task_id":"missing-task","status":"completed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when task update fails, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_HandoffCreate_PropagatesMutationFailure(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-dispatcher\"}"}]}`), nil
+		case "agent_context__agent_handoff_create":
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"target agent unavailable"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/handoffs", strings.NewReader(`{"target_agent_id":"agent-1","instructions":"Continue work"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when handoff create fails, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_HandoffAccept_PropagatesMutationFailure(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name == "agent_context__agent_handoff_accept" {
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"handoff not found"}]}`), nil
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/handoffs/missing-handoff/accept", strings.NewReader(`{"session_id":"sess-1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when handoff accept fails, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

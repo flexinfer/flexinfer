@@ -319,6 +319,24 @@ type WorktreeInfo struct {
 	GitStatus    string `json:"git_status,omitempty"`
 }
 
+type WorktreeAllocateParams struct {
+	AgentID    string `json:"agent_id"`
+	SessionID  string `json:"session_id"`
+	BranchName string `json:"branch_name"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	Purpose    string `json:"purpose,omitempty"`
+	TTLHours   int    `json:"ttl_hours,omitempty"`
+}
+
+type WorktreeAllocateResult struct {
+	OK           bool   `json:"ok"`
+	AssignmentID string `json:"assignment_id"`
+	WorktreePath string `json:"worktree_path"`
+	Branch       string `json:"branch"`
+	BaseBranch   string `json:"base_branch,omitempty"`
+	Status       string `json:"status,omitempty"`
+}
+
 // CompactionInfo describes the compaction scheduler status.
 type CompactionInfo struct {
 	Running        bool   `json:"running"`
@@ -360,14 +378,15 @@ type ReasoningChainDetail struct {
 
 // HandoffInfo describes a handoff between agents.
 type HandoffInfo struct {
-	ID         string `json:"id"`
-	FromAgent  string `json:"from_agent"`
-	ToAgent    string `json:"to_agent,omitempty"`
-	Status     string `json:"status"`
-	Summary    string `json:"summary"`
-	Context    string `json:"context,omitempty"`
-	CreatedAt  string `json:"created_at"`
-	AcceptedAt string `json:"accepted_at,omitempty"`
+	ID            string `json:"id"`
+	FromAgent     string `json:"from_agent"`
+	ToAgent       string `json:"to_agent,omitempty"`
+	TargetAgentID string `json:"target_agent_id,omitempty"`
+	Status        string `json:"status"`
+	Summary       string `json:"summary"`
+	Context       string `json:"context,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	AcceptedAt    string `json:"accepted_at,omitempty"`
 }
 
 type handoffInboxEntry struct {
@@ -377,6 +396,39 @@ type handoffInboxEntry struct {
 	Instructions string `json:"instructions,omitempty"`
 	Summary      string `json:"summary"`
 	CreatedAt    string `json:"created_at"`
+}
+
+type HandoffCreateParams struct {
+	SessionID     string   `json:"session_id"`
+	TargetAgentID string   `json:"target_agent_id"`
+	Instructions  string   `json:"instructions"`
+	HandoffType   string   `json:"handoff_type,omitempty"`
+	EntryIDs      []string `json:"entry_ids,omitempty"`
+	TokenBudget   int      `json:"token_budget,omitempty"`
+}
+
+type HandoffCreateResult struct {
+	OK         bool   `json:"ok"`
+	HandoffID  string `json:"handoff_id"`
+	TokenCount int    `json:"token_count,omitempty"`
+	EntryCount int    `json:"entry_count,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+}
+
+type HandoffAcceptParams struct {
+	HandoffID     string `json:"handoff_id"`
+	SessionID     string `json:"session_id"`
+	ImportEntries bool   `json:"import_entries,omitempty"`
+}
+
+type HandoffAcceptResult struct {
+	OK            bool   `json:"ok"`
+	HandoffID     string `json:"handoff_id"`
+	SourceAgent   string `json:"source_agent,omitempty"`
+	Instructions  string `json:"instructions,omitempty"`
+	Summary       string `json:"summary,omitempty"`
+	TokenCount    int    `json:"token_count,omitempty"`
+	ImportedCount int    `json:"imported_count,omitempty"`
 }
 
 // --- Template DTOs ---

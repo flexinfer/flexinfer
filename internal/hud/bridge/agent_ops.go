@@ -212,14 +212,28 @@ func (a *AgentBridge) handoffInbox(agentID string, includeViewed bool) ([]Handof
 
 	out := make([]HandoffInfo, 0, len(result.Handoffs))
 	for _, h := range result.Handoffs {
+		summary := strings.TrimSpace(h.Summary)
+		instructions := strings.TrimSpace(h.Instructions)
+		// Keep dispatched-task routing deterministic even when the server
+		// summary payload is empty by elevating the first instruction line.
+		if strings.HasPrefix(instructions, "[Dispatched] ") {
+			firstLine := instructions
+			if idx := strings.Index(firstLine, "\n"); idx >= 0 {
+				firstLine = firstLine[:idx]
+			}
+			if strings.TrimSpace(firstLine) != "" {
+				summary = strings.TrimSpace(firstLine)
+			}
+		}
 		out = append(out, HandoffInfo{
-			ID:        h.HandoffID,
-			FromAgent: h.SourceAgent,
-			ToAgent:   agentID,
-			Status:    h.Status,
-			Summary:   h.Summary,
-			Context:   h.Instructions,
-			CreatedAt: h.CreatedAt,
+			ID:            h.HandoffID,
+			FromAgent:     h.SourceAgent,
+			ToAgent:       agentID,
+			TargetAgentID: agentID,
+			Status:        h.Status,
+			Summary:       summary,
+			Context:       instructions,
+			CreatedAt:     h.CreatedAt,
 		})
 	}
 	return out, nil
@@ -270,24 +284,47 @@ func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 	return combined, nil
 }
 
-// HandoffCreate creates a new handoff.
-func (a *AgentBridge) HandoffCreate(toAgent, summary, context string) error {
+// HandoffCreate creates a new handoff package using the current tool schema.
+func (a *AgentBridge) HandoffCreate(p HandoffCreateParams) (*HandoffCreateResult, error) {
 	args := map[string]any{
-		"summary": summary,
+		"session_id":      strings.TrimSpace(p.SessionID),
+		"target_agent_id": strings.TrimSpace(p.TargetAgentID),
 	}
-	if toAgent != "" {
-		args["to_agent"] = toAgent
+	if strings.TrimSpace(p.Instructions) != "" {
+		args["instructions"] = strings.TrimSpace(p.Instructions)
 	}
-	if context != "" {
-		args["context"] = context
+	if strings.TrimSpace(p.HandoffType) != "" {
+		args["handoff_type"] = strings.TrimSpace(p.HandoffType)
 	}
-	return a.callAgentTool("agent_handoff_create", args, nil)
+	if len(p.EntryIDs) > 0 {
+		args["entry_ids"] = p.EntryIDs
+	}
+	if p.TokenBudget > 0 {
+		args["token_budget"] = p.TokenBudget
+	}
+
+	var result HandoffCreateResult
+	if err := a.callAgentTool("agent_handoff_create", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // HandoffAccept accepts a handoff.
-func (a *AgentBridge) HandoffAccept(id string) error {
-	args := map[string]any{"handoff_id": id}
-	return a.callAgentTool("agent_handoff_accept", args, nil)
+func (a *AgentBridge) HandoffAccept(p HandoffAcceptParams) (*HandoffAcceptResult, error) {
+	args := map[string]any{
+		"handoff_id": strings.TrimSpace(p.HandoffID),
+		"session_id": strings.TrimSpace(p.SessionID),
+	}
+	if p.ImportEntries {
+		args["import_entries"] = true
+	}
+
+	var result HandoffAcceptResult
+	if err := a.callAgentTool("agent_handoff_accept", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // HandoffListForAgent returns pending handoffs targeted at a specific agent.
@@ -370,4 +407,28 @@ func (a *AgentBridge) WorktreeList(agentID, status string) ([]WorktreeInfo, erro
 		return nil, err
 	}
 	return result.Assignments, nil
+}
+
+// WorktreeAllocate allocates a managed git worktree for an agent/session.
+func (a *AgentBridge) WorktreeAllocate(p WorktreeAllocateParams) (*WorktreeAllocateResult, error) {
+	args := map[string]any{
+		"agent_id":    strings.TrimSpace(p.AgentID),
+		"session_id":  strings.TrimSpace(p.SessionID),
+		"branch_name": strings.TrimSpace(p.BranchName),
+	}
+	if strings.TrimSpace(p.BaseBranch) != "" {
+		args["base_branch"] = strings.TrimSpace(p.BaseBranch)
+	}
+	if strings.TrimSpace(p.Purpose) != "" {
+		args["purpose"] = strings.TrimSpace(p.Purpose)
+	}
+	if p.TTLHours > 0 {
+		args["ttl_hours"] = p.TTLHours
+	}
+
+	var result WorktreeAllocateResult
+	if err := a.callAgentTool("agent_worktree_allocate", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

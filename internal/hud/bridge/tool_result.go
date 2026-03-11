@@ -13,7 +13,7 @@ import (
 // It supports both raw JSON payloads and standard MCP CallToolResult envelopes
 // whose text payload may be JSON or TOON.
 func UnmarshalToolResult(raw json.RawMessage, target any) error {
-	if target == nil || raw == nil {
+	if raw == nil {
 		return nil
 	}
 
@@ -22,11 +22,17 @@ func UnmarshalToolResult(raw json.RawMessage, target any) error {
 		if envelope.IsError {
 			return toolEnvelopeError(envelope)
 		}
+		if target == nil {
+			return nil
+		}
 		text, err := firstToolText(envelope)
 		if err != nil {
 			return err
 		}
 		return unmarshalToolText(text, target)
+	}
+	if target == nil {
+		return nil
 	}
 
 	if err := json.Unmarshal(raw, target); err != nil {

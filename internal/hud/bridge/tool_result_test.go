@@ -44,3 +44,12 @@ func TestUnmarshalToolResult_PropagatesToolError(t *testing.T) {
 		t.Fatalf("expected tool error, got %v", err)
 	}
 }
+
+func TestUnmarshalToolResult_PropagatesToolErrorWithNilTarget(t *testing.T) {
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"boom"}],"isError":true}`)
+
+	err := UnmarshalToolResult(raw, nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected tool error with nil target, got %v", err)
+	}
+}

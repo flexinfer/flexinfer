@@ -108,7 +108,7 @@
         handoffLoading={presenceActionsStore.handoffLoading}
         handoffError={presenceActionsStore.handoffError}
         onOpenHandoffModal={() => presenceActionsStore.openHandoffModal()}
-        onAcceptHandoff={(id) => presenceActionsStore.onAcceptHandoff(id)}
+        onAcceptHandoff={(id, targetAgentID) => presenceActionsStore.onAcceptHandoff(id, targetAgentID)}
       />
 
     {:else if activeTab === 'diagnostics'}
