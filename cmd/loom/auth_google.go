@@ -39,6 +39,7 @@ func newGoogleAuthCmd(socketPath string) *cobra.Command {
 			listenHost, _ := cmd.Flags().GetString("listen-host")
 			noBrowser, _ := cmd.Flags().GetBool("no-browser")
 			timeout, _ := cmd.Flags().GetDuration("timeout")
+			skipLoomHubSync, _ := cmd.Flags().GetBool("skip-loom-hub-sync")
 
 			mgr, err := secrets.DefaultManager()
 			if err != nil {
@@ -109,6 +110,11 @@ func newGoogleAuthCmd(socketPath string) *cobra.Command {
 			fmt.Printf("  %s\n", googleworkspace.SecretClientSecret)
 			fmt.Printf("  %s\n", googleworkspace.SecretRefreshToken)
 			fmt.Printf("  %s\n", googleworkspace.SecretScopes)
+			if !skipLoomHubSync {
+				if syncErr := syncGoogleWorkspaceLoomHubBestEffort(mgr); syncErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: loom-hub sync failed: %v\n", syncErr)
+				}
+			}
 			reloadDaemonAfterSecretChange(socketPath, "Google Workspace auth update")
 			return nil
 		},
@@ -118,6 +124,7 @@ func newGoogleAuthCmd(socketPath string) *cobra.Command {
 	loginCmd.Flags().String("listen-host", "127.0.0.1", "Loopback host to bind for the OAuth callback")
 	loginCmd.Flags().Bool("no-browser", false, "Print the auth URL without attempting to open a browser")
 	loginCmd.Flags().Duration("timeout", 2*time.Minute, "Maximum time to wait for the OAuth browser flow")
+	loginCmd.Flags().Bool("skip-loom-hub-sync", false, "Skip syncing the updated Google auth state into loom-hub GitOps/cluster secrets")
 
 	statusCmd := &cobra.Command{
 		Use:   "status",
@@ -175,6 +182,7 @@ func newGoogleAuthCmd(socketPath string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clearClient, _ := cmd.Flags().GetBool("clear-client")
 			localOnly, _ := cmd.Flags().GetBool("local-only")
+			skipLoomHubSync, _ := cmd.Flags().GetBool("skip-loom-hub-sync")
 
 			mgr, err := secrets.DefaultManager()
 			if err != nil {
@@ -196,15 +204,83 @@ func newGoogleAuthCmd(socketPath string) *cobra.Command {
 			if clearClient {
 				fmt.Println("Stored Google OAuth client credentials also removed")
 			}
+			if !localOnly && !skipLoomHubSync {
+				if syncErr := syncGoogleWorkspaceLoomHubBestEffort(mgr); syncErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: loom-hub sync failed: %v\n", syncErr)
+				}
+			}
 			reloadDaemonAfterSecretChange(socketPath, "Google Workspace auth delete")
 			return nil
 		},
 	}
 	logoutCmd.Flags().Bool("clear-client", false, "Also delete the stored Google OAuth client ID and secret")
 	logoutCmd.Flags().Bool("local-only", false, "Delete local secrets without attempting Google token revocation")
+	logoutCmd.Flags().Bool("skip-loom-hub-sync", false, "Skip syncing the post-logout Google auth state into loom-hub GitOps/cluster secrets")
 
-	cmd.AddCommand(loginCmd, statusCmd, logoutCmd)
+	syncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sync the current Google Workspace auth state into loom-hub GitOps and live cluster secrets",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mgr, err := secrets.DefaultManager()
+			if err != nil {
+				return fmt.Errorf("init secrets: %w", err)
+			}
+			opts := defaultGoogleWorkspaceLoomHubSyncOptions()
+			opts.SkipGitOps, _ = cmd.Flags().GetBool("skip-gitops")
+			opts.SkipCluster, _ = cmd.Flags().GetBool("skip-cluster")
+			opts.RestartDeployment, _ = cmd.Flags().GetBool("restart")
+			opts.WaitForRollout, _ = cmd.Flags().GetBool("wait")
+			opts.GitOpsDir, _ = cmd.Flags().GetString("gitops-dir")
+			opts.Namespace, _ = cmd.Flags().GetString("namespace")
+			opts.SecretName, _ = cmd.Flags().GetString("secret-name")
+			opts.DeploymentName, _ = cmd.Flags().GetString("deployment")
+
+			ctx, cancel := context.WithTimeout(context.Background(), opts.WaitTimeout)
+			defer cancel()
+
+			result, err := syncGoogleWorkspaceLoomHub(ctx, mgr, opts)
+			if err != nil {
+				return err
+			}
+			if !opts.SkipGitOps {
+				if result.GitOpsUpdated {
+					fmt.Printf("Updated %s/%s\n", filepath.Clean(opts.GitOpsDir), loomHubSecretsRelativePath)
+				} else {
+					fmt.Println("GitOps secret file already matches local Google auth state")
+				}
+			}
+			if !opts.SkipCluster {
+				if result.ClusterPatched {
+					fmt.Printf("Patched live secret %s/%s\n", opts.Namespace, opts.SecretName)
+				} else {
+					fmt.Printf("Live secret %s/%s already matches local Google auth state\n", opts.Namespace, opts.SecretName)
+				}
+				if result.DeploymentReset {
+					fmt.Printf("Restarted deployment/%s and waited for rollout\n", opts.DeploymentName)
+				}
+			}
+			return nil
+		},
+	}
+	syncCmd.Flags().Bool("skip-gitops", false, "Only patch the live cluster secret; do not update platform/gitops")
+	syncCmd.Flags().Bool("skip-cluster", false, "Only update platform/gitops; do not patch the live cluster secret")
+	syncCmd.Flags().Bool("restart", true, "Restart deployment/google-workspace when the synced auth state changes")
+	syncCmd.Flags().Bool("wait", true, "Wait for the google-workspace deployment rollout after restarting it")
+	syncCmd.Flags().String("gitops-dir", defaultGoogleWorkspaceLoomHubSyncOptions().GitOpsDir, "Path to the platform/gitops repository")
+	syncCmd.Flags().String("namespace", defaultLoomHubNamespace, "Kubernetes namespace containing loom-hub")
+	syncCmd.Flags().String("secret-name", defaultLoomHubSecretName, "Kubernetes secret containing loom-hub runtime credentials")
+	syncCmd.Flags().String("deployment", defaultGoogleWorkspaceDeploymentName, "Deployment to restart after syncing Google Workspace auth")
+
+	cmd.AddCommand(loginCmd, statusCmd, logoutCmd, syncCmd)
 	return cmd
+}
+
+func syncGoogleWorkspaceLoomHubBestEffort(mgr *secrets.Manager) error {
+	opts := defaultGoogleWorkspaceLoomHubSyncOptions()
+	ctx, cancel := context.WithTimeout(context.Background(), opts.WaitTimeout)
+	defer cancel()
+	_, err := syncGoogleWorkspaceLoomHub(ctx, mgr, opts)
+	return err
 }
 
 func loadGoogleClientCredentials(mgr *secrets.Manager, clientJSONPath string) (*googleworkspace.Credentials, error) {
